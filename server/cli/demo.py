@@ -68,6 +68,7 @@ _get_json = get_json
 _post_json = post_op
 _post_bytes = post_bytes
 _sleep = time.sleep
+_monotonic = time.monotonic
 
 
 def _explain_http(op: str, status: int, body: dict[str, Any], base_url: str) -> str:
@@ -130,7 +131,7 @@ def ingest_file(
     if status != 200:
         return source_uri, job, _explain_http("knowledge.ingest", status, job, base_url)
     ask = {"org": org, "namespace": namespace, "ingestion_id": job.get("ingestion_id", "")}
-    deadline = time.monotonic() + INGEST_WAIT_S
+    deadline = _monotonic() + INGEST_WAIT_S
     while True:
         status, state = _post_json(base_url, "knowledge.ingest_status", ask, token)
         if status != 200:
@@ -140,7 +141,7 @@ def ingest_file(
                 _explain_http("knowledge.ingest_status", status, state, base_url),
             )
         done = not state.get("found") or state.get("state") in _INGEST_DONE
-        if done or time.monotonic() >= deadline:
+        if done or _monotonic() >= deadline:
             return source_uri, state, _job_error(state, ask["ingestion_id"])
         _sleep(1.0)
 

@@ -387,6 +387,13 @@ def test_a_url_is_uploaded_with_its_media_type_and_path_name(
     assert server.ingests[0]["source_uri"] == "https://docs.example.com/q1-runbook?v=2"
 
 
+def test_a_url_s_escaped_name_is_uploaded_as_written(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx as _httpx
+
+    monkeypatch.setattr(_httpx, "Client", lambda **kw: _FakeHTTPXClient(b"%PDF"))
+    assert loom_ingest._fetch_url("https://example.com/Q3%20Spec.pdf").filename == "Q3 Spec.pdf"
+
+
 def test_a_url_with_no_path_is_named_index(monkeypatch: pytest.MonkeyPatch) -> None:
     import httpx as _httpx
 

@@ -291,7 +291,7 @@ def test_demo_job_that_never_ends_names_the_worker(
 ) -> None:
     serve(fake_llm=True, job={"state": "pending"})
     clock = iter(range(0, 10_000, 60))
-    monkeypatch.setattr(demo.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(demo, "_monotonic", lambda: next(clock))
     assert demo._cmd_demo(_args()) == 1
     err = capsys.readouterr().err
     assert "still pending after 120s" in err and "LOOM_BACKGROUND_WORKERS" in err

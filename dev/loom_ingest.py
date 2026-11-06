@@ -48,7 +48,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 _S3_SCHEME = "s3://"
 _URL_FETCH_TIMEOUT_S = 30
@@ -198,7 +198,8 @@ class _Stop(Exception):
 @dataclass(frozen=True)
 class _File:
     """One file as it is uploaded: its bytes, the name the server reads its
-    format from, the media type (a URL's), and the source_uri it defaults to."""
+    format from, the media type (a URL's or an S3 object's), and the source_uri it
+    defaults to."""
 
     data: bytes
     filename: str
@@ -235,7 +236,7 @@ def _fetch_url(uri: str) -> _File:
         )
     ctype = (r.headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
     # From the path alone: a host such as `example.com` is no file name.
-    name = urlsplit(uri).path.rstrip("/").rsplit("/", 1)[-1] or "index"
+    name = unquote(urlsplit(uri).path).rstrip("/").rsplit("/", 1)[-1] or "index"
     return _File(r.content, name, ctype, uri)
 
 

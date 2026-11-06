@@ -472,8 +472,9 @@ curl -s http://localhost:7777/v1/grants.create -H "Authorization: Bearer $ADMIN_
 loom demo
 ```
 
-`loom demo` ingests this repository's `AGENTS.md` into the knowledge plane
-(`knowledge.upsert`) and asks a question about it with `knowledge.synthesize`, printing
+`loom demo` uploads this repository's `AGENTS.md`, ingests it with `knowledge.ingest` (the
+stack's reference extractor parses it) and asks a question about it with
+`knowledge.synthesize`, printing
 the answer and the chunks it cited. With the fake LLM it prints the top
 `knowledge.search` hits instead. `--file` and `--question` point it at your own document.
 
