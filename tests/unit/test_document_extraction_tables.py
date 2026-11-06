@@ -227,6 +227,18 @@ def test_a_long_xlsx_header_over_two_rows_is_cut_counted_and_bounded_per_column(
     assert [f.unit for f in a.coverage.failed] == ["S header"]
 
 
+def test_a_padded_xlsx_header_over_two_rows_reads_as_its_names() -> None:
+    rows = {
+        1: [cell("B1", "Revenue" + " " * 1000, t="inlineStr")],
+        2: [cell("B2", "H1", t="inlineStr"), cell("C2", "H2", t="inlineStr")],
+        3: [cell("B3", 1), cell("C3", 2)],
+    }
+    a = extract(workbook([("S", sheet(rows, merges=("B1:C1",)))]), "s.xlsx")
+    # Spaces padding a cell are no name, and cut nothing.
+    assert [n for n, _ in _columns(a)] == ["Revenue / H1", "Revenue / H2"]
+    assert a.coverage.failed == ()
+
+
 def test_an_xlsx_title_merged_over_its_header_row_heads_each_name() -> None:
     rows = {
         1: [cell("A1", "Sales 2025", t="inlineStr")],

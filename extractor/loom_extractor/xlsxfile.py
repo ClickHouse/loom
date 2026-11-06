@@ -656,8 +656,12 @@ def _named_over(above: Cell, below: Cell) -> Cell:
         return above
     if above.kind == "empty":
         return below
-    # What a name reads of each, not a cell's megabyte for each column it spans.
-    return Cell(f"{above.text[:NAME_READ_CHARS]} / {below.text[:NAME_READ_CHARS]}", "string")
+
+    # Each as its name reads it, folded, not a cell's megabyte for each column it spans.
+    def name(cell: Cell) -> str:
+        return " ".join(cell.text[:NAME_READ_CHARS].split())
+
+    return Cell(f"{name(above)} / {name(below)}", "string")
 
 
 def _spread(
