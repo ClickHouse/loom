@@ -53,6 +53,8 @@ describe("LibraryPassages", () => {
   it("says what it searches, tied to its field", () => {
     render(<LibraryPassages identity={identity} navEnabled onHitsShown={vi.fn()} onOpen={vi.fn()} />);
     expect(screen.getByLabelText("Passage to find")).toHaveAccessibleDescription(/whatever the tag filter/);
+    // Opened from a toolbar that stays put as the list scrolls: the field takes the focus.
+    expect(document.activeElement).toBe(screen.getByLabelText("Passage to find"));
     expect(screen.getByRole("status")).toBeEmptyDOMElement();
   });
 

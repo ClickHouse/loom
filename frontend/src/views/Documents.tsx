@@ -370,9 +370,9 @@ export function Documents() {
     fallback: () => searchRef.current,
   });
 
-  // The read behind a `?doc=` link's or a passage's open past the loaded rows. It ends with the page, with its
-  // namespace, and when the reader opens or closes a document themselves: its answer then
-  // opens nothing.
+  // The read behind a `?doc=` link's or a passage's open past the loaded rows. It ends
+  // with the page, with its namespace, and when the reader opens or closes a document
+  // themselves: its answer then opens nothing.
   const linkRead = useRef<AbortController | null>(null);
   useEffect(() => () => linkRead.current?.abort(), [identity.org, identity.namespace]);
 

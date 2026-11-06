@@ -76,6 +76,11 @@ export function LibraryPassages({
   const rowNav = useRowNav({ enabled: navEnabled && shown });
   const listEl = useRef<HTMLOListElement | null>(null);
   const fieldEl = useRef<HTMLInputElement | null>(null);
+  // Opened from the toolbar, which stays at the top as the list scrolls: the field takes
+  // the focus, which brings the panel into view wherever the list was.
+  useEffect(() => {
+    fieldEl.current?.focus();
+  }, []);
   const nav = useCallback(
     (el: HTMLOListElement | null) => {
       rowNav(el);
