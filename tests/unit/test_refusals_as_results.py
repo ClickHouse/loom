@@ -140,7 +140,7 @@ def test_owner_only_refusals_name_the_user_never_a_route() -> None:
     for text in (lock_msg, unlock["instead"], unlock["error"], other["instead"]):
         low = text.lower()
         assert "sdk" not in low and "http" not in low and "/v1" not in low, text
-    assert "dashboard" in lock_msg and "credential" in lock_msg
+    assert "only the user" in lock_msg.lower() and "credential" in lock_msg
     assert "only the user" in unlock["instead"] and "credential" in unlock["instead"]
 
 

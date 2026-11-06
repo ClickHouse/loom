@@ -98,7 +98,7 @@ def refusal(row: Any, action: str, *, op: str, mode: str) -> HTTPException:
                 # is told to leave the key, not to call an op it cannot reach.
                 # Name the person, never a route — an agent
                 # told of a route goes looking for credentials to call it.
-                + ". Only the user can unlock it (the memory's Lock control in the dashboard): "
+                + ". Only the user can unlock it: "
                 "leave the key as it is and tell them it is locked. Don't look for "
                 "another route, token or credential to unlock it yourself."
             ),

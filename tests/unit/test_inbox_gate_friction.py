@@ -206,7 +206,7 @@ def test_locked_refusal_says_who_unlocks_and_to_leave_the_key() -> None:
     assert exc.status_code == 423 and d["code"] == "LOCKED"
     msg = d["message"]
     assert "locked read_only (smoke test) by process:sa:x" in msg
-    assert "Only the user can unlock it (the memory's Lock control in the dashboard)" in msg
+    assert "Only the user can unlock it:" in msg
     assert "leave the key as it is and tell them it is locked" in msg
     # never a route an agent could take around the owner
     assert "SDK" not in msg and "HTTP" not in msg

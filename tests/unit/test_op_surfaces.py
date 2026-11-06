@@ -67,6 +67,7 @@ PENDING_PINNED = frozenset(
         "memory.extraction_status",
         "memory.health",
         "memory.lock",
+        "memory.outcome",
         "memory.owner_report",
         "memory.promote",
         "memory.proposal_decide",

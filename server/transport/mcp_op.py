@@ -161,11 +161,11 @@ _INSTEAD: dict[str, str] = {
     "memory.search_trace": (
         "call loom_search with explain=true; each memory hit carries its ranking terms"
     ),
-    # Ops a client program calls, not a person: the agent's nearest op, or nothing to call.
-    "ui.vitals": "the dashboard posts its own paint timings; nothing to call",
     "memory.outcome": (
         "call memory.outcome_run (loom_op) to record whether the memories a run recalled helped"
     ),
+    # Ops a client program calls, not a person: the agent's nearest op, or nothing to call.
+    "ui.vitals": "the dashboard posts its own paint timings; nothing to call",
     "code.outcome": "the plugin's hooks report what was done with a code answer; nothing to call",
     "code.coverage.watch": "call code.index_status (loom_op) for what the index covers now",
     "code.coverage.unwatch": "call code.index_status (loom_op) for what the index covers now",

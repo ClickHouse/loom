@@ -66,10 +66,11 @@ _QUOTED = re.compile(r"""["']([a-z_]+(?:\.[a-z_]+){1,2})["']""")
 # A dashboard call site: the path as a string literal (`post("/v1/<op>", …)`), outside
 # a comment. A bare op name there is an audit label, not a call.
 _DASHBOARD_CALL = re.compile(r"""["'`]/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b""")
-# TS comments by line shape, not by parsing strings; a block comment line not starting
-# with `*`, and a `//` after other characters, still read as code.
+# TS comments by shape, not by parsing strings: a block comment's lines, a JSX
+# comment, and a `//` not right after `:` or a quote (a URL, a string). A block
+# comment line not starting with `*` still reads as code.
 _TS_COMMENT = re.compile(
-    r"^[ \t]*(?://|/\*|\*)[^\n]*|\{/\*[\s\S]*?\*/\}|(?<=[;,{(])[ \t]*//[^\n]*", re.MULTILINE
+    r"^[ \t]*(?:/\*|\*)[^\n]*|\{/\*[\s\S]*?\*/\}|(?<![:\"'`])//[^\n]*", re.MULTILINE
 )
 _SDK_CALL = re.compile(r"\.([a-z_]+)\.([a-z_]+)\(")
 

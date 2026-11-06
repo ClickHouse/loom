@@ -7,12 +7,12 @@ dashboard is the people's surface: an op reaches it when a quoted
 `server.operations.reach`). An op a person needs (to administer, review,
 inspect, configure, or to delete with a confirmation) has a control there; an
 op only an agent or a client program calls is named in `NOT_IN_DASHBOARD` with
-the reason. `tests/unit/test_op_surfaces.py` fails on an op with neither, and
-on an entry for an op the dashboard calls.
+the reason. The census's `--check` (`tests/unit/test_op_reach_census.py`) fails
+on an op with neither, and on an entry for an op the dashboard calls.
 
 `DASHBOARD_PENDING` holds the ops a person needs whose control is not built
-yet. It only shrinks (`test_op_surfaces.py` holds its ceiling): an op leaves it
-when its control lands, and a new op ships with its control instead.
+yet. `tests/unit/test_op_surfaces.py` pins it: an op leaves it when its control
+lands, and a new op ships with its control instead.
 """
 
 from __future__ import annotations
@@ -161,7 +161,6 @@ NOT_IN_DASHBOARD: dict[str, str] = {
             "memory.export_evidence",
             "memory.import_evidence",
             "memory.keys",
-            "memory.outcome",
             "observe.crystallize",
             "observe.record",
             "ops.capabilities",
@@ -190,7 +189,8 @@ NOT_IN_DASHBOARD: dict[str, str] = {
         "the Memories page's bulk actions call the per-row ops (memory.pin, memory.delete)"
     ),
     "memory.cross_promote": (
-        "an operator's raw HTTP copy by memory id; the memory drawer copies with memory.copy_to"
+        "the admin's copy by memory id with a lineage link, which an agent makes for its "
+        "user; the memory drawer copies with memory.copy_to"
     ),
     "memory.search_trace": "the Recall lab explains each ranking with memory.search explain=true",
     "memory.update": "the memory drawer saves an edit with memory.set",
@@ -222,6 +222,7 @@ DASHBOARD_PENDING: frozenset[str] = frozenset(
         "memory.demote",
         "memory.evidence",
         "memory.lock",
+        "memory.outcome",
         "memory.promote",
         "memory.redact",
         "memory.reject",
