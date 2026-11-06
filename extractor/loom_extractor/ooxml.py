@@ -89,7 +89,8 @@ class Package:
     def __init__(self, data: bytes) -> None:
         self._zip = zipfile.ZipFile(io.BytesIO(data))
         self._names = set(self._zip.namelist())
-        self._read = 0  # bytes inflated so far, from every part
+        self._read = 0  # bytes inflated so far, from every part but media
+        self._media = 0  # bytes inflated so far, from media parts (`media`)
         self._elements = 0  # elements streamed so far, from every part
 
     def has(self, name: str) -> bool:
@@ -127,9 +128,18 @@ class Package:
             raise PartError(f"{name} is damaged: {type(e).__name__}") from e
         return _parse(name, raw)
 
-    def read(self, name: str, limit: int | None = None) -> bytes:
-        """Part `name`'s bytes, when it is at most `limit` bytes (MAX_PART_BYTES)."""
-        info = self._info(name, limit)
+    def media(self, name: str, limit: int) -> bytes:
+        """Media part `name`'s bytes (a picture), when it is at most `limit`
+        bytes. Media inflate within a bound of their own, so pictures read never
+        cost the package's text parts their room."""
+        info = self._entry(name)
+        if info.file_size > limit:
+            raise PartError(f"{name} is over {limit} bytes")
+        if self._media + info.file_size > MAX_PACKAGE_BYTES:
+            raise PartError(
+                f"{name} would inflate the package's media past {MAX_PACKAGE_BYTES} bytes"
+            )
+        self._media += info.file_size
         try:
             with self._zip.open(info) as f:
                 return f.read(info.file_size)

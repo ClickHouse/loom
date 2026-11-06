@@ -539,12 +539,11 @@ def drawing(
     return (found if len(found) <= _MAX_RULES and budget[0] > 0 else []), pictures
 
 
-def picture_spans(
-    page: pypdf.PageObject, turn: Turn, picture: Picture, words: list[Any], width: int, height: int
-) -> list[Span]:
-    """OCR's words in `picture` (boxes in its `width` by `height` pixels, top
-    left origin) as runs where the page shows them, each on its line's
-    baseline."""
+def _pixel_to_page(
+    page: pypdf.PageObject, turn: Turn, picture: Picture, width: int, height: int
+) -> Callable[[float, float], tuple[float, float]]:
+    """Where a pixel of `picture` (its `width` by `height` pixels, top left
+    origin) lands on the page as shown and turned."""
     shown, _, _ = _display(page)
     a, b, c, d, e, f = picture.ctm
 
@@ -552,28 +551,34 @@ def picture_spans(
         u, v = px / width, 1 - py / height
         return turn(*shown(a * u + c * v + e, b * u + d * v + f))
 
-    # Tesseract's point size, from its line's x-height, when it gives one (the
-    # page's points, as the image's resolution is passed); else the line's
-    # height less the room above and below.
-    sizes = [
-        w.points or abs(at(w.x0, w.baseline)[1] - at(w.x0, w.baseline - w.height)[1]) / 1.2
-        for w in words
-    ]
+    return at
+
+
+def picture_spans(
+    page: pypdf.PageObject, turn: Turn, picture: Picture, words: list[Any], width: int, height: int
+) -> list[Span]:
+    """OCR's words in `picture` (boxes in its pixels) as runs where the page
+    shows them, each on its line's baseline."""
+    at = _pixel_to_page(page, turn, picture, width, height)
     out: list[Span] = []
-    for w, size in zip(words, sizes, strict=True):
+    for w in words:
+        # Tesseract's point size, from its line's x-height, when it gives one
+        # (the page's points, as the image's resolution is passed); else the
+        # line's height less the room above and below.
+        size = w.points or abs(at(w.x0, w.baseline)[1] - at(w.x0, w.baseline - w.height)[1]) / 1.2
         x0, y = at(w.x0, w.baseline)
         x1, _ = at(w.x1, w.baseline)
         out.append(
             Span(
-                min(x0, x1),
-                max(x0, x1),
-                y,
-                size,
-                False,
-                False,
-                w.text,
-                None if w.first else True,
-                True,
+                x0=min(x0, x1),
+                x1=max(x0, x1),
+                y=y,
+                size=size,
+                bold=False,
+                mono=False,
+                text=w.text,
+                space=None if w.first else True,
+                ocr=True,
             )
         )
     return out
@@ -583,13 +588,7 @@ def picture_rules(
     page: pypdf.PageObject, turn: Turn, picture: Picture, boxes: list[Any], width: int, height: int
 ) -> list[_Rule]:
     """The rules OCR found in `picture` (boxes in its pixels) where the page shows them."""
-    shown, _, _ = _display(page)
-    a, b, c, d, e, f = picture.ctm
-
-    def at(px: float, py: float) -> tuple[float, float]:
-        u, v = px / width, 1 - py / height
-        return turn(*shown(a * u + c * v + e, b * u + d * v + f))
-
+    at = _pixel_to_page(page, turn, picture, width, height)
     out: list[_Rule] = []
     for box in boxes:
         (x0, y0), (x1, y1) = at(box.x0, box.y0), at(box.x1, box.y1)

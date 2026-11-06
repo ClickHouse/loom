@@ -44,7 +44,7 @@ The image (`extractor/Dockerfile`, built from the repository root; released as
 `ghcr.io/clickhouse/loom-extractor`) does this for you: the venv is root's, the
 service runs as uid 10001, it holds Tesseract's and Leptonica's libraries and
 English model for OCR (`docker build --build-arg OCR=off` leaves them out, about
-42 MB), and Loom's compose stack and Helm chart run it with no route out and the
+44 MB unpacked), and Loom's compose stack and Helm chart run it with no route out and the
 token alone
 ([deployment](../docs/operations/deployment.md#container-images)):
 

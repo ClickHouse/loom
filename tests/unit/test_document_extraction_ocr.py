@@ -123,8 +123,8 @@ def test_past_the_ocr_bound_a_page_is_partial(
     engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(ocr, "max_images", lambda: 1)
-    page = b"q 400 0 0 400 100 200 cm /Im1 Do Q"
-    a = extract(laid_out_pdf([page, page], image=GRAY), "s.pdf")
+    pages = [b"q 400 0 0 400 100 200 cm /Im%d Do Q" % n for n in (1, 2)]
+    a = extract(laid_out_pdf(pages, image=[GRAY, GRAY]), "s.pdf")
     assert a.attrs["ocr_pages"] == [1]
     assert [(f.unit, f.reason) for f in a.coverage.failed] == [
         (
@@ -132,6 +132,16 @@ def test_past_the_ocr_bound_a_page_is_partial(
             "no text layer, and OCR read none of its images: past the 1 images OCR reads in one file",
         )
     ]
+
+
+def test_an_image_drawn_on_many_pages_is_read_and_counted_once(
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ocr, "max_images", lambda: 1)
+    page = b"q 400 0 0 400 100 200 cm /Im1 Do Q"
+    a = extract(laid_out_pdf([page, page, page], image=GRAY), "s.pdf")
+    assert a.coverage.complete and a.attrs["ocr_pages"] == [1, 2, 3]
+    assert len(engine.seen) == 1
 
 
 def test_a_jbig2_image_is_not_read_and_says_so(engine: FakeEngine) -> None:
@@ -223,25 +233,32 @@ def test_a_tables_rules_are_taken_off_the_words_ocr_reads(raw: str, read: str) -
     assert ocr._unruled(raw) == read
 
 
-def _deck(picture_cx: int) -> bytes:
+def _deck(picture_cx: int, slides: int = 1) -> bytes:
+    """A deck of `slides` slides, each titled and showing the one image
+    `picture_cx` EMU wide."""
     from tests.unit.test_document_extraction_office import _P, _rels, _slide, _sp, _zip
 
     pic = (
         '<p:pic><p:blipFill><a:blip r:embed="img"/></p:blipFill>'
         f'<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{picture_cx}" cy="3000000"/></a:xfrm></p:spPr></p:pic>'
     )
-    return _zip(
-        {
-            "ppt/presentation.xml": (
-                f'<p:presentation {_P}><p:sldIdLst><p:sldId id="256" r:id="s1"/></p:sldIdLst>'
-                '<p:sldSz cx="12192000" cy="6858000"/></p:presentation>'
-            ),
-            "ppt/_rels/presentation.xml.rels": _rels(("s1", "slide", "slides/slide1.xml")),
-            "ppt/slides/slide1.xml": _slide(_sp("Whiteboard", "title") + pic),
-            "ppt/slides/_rels/slide1.xml.rels": _rels(("img", "image", "../media/image1.png")),
-            "ppt/media/image1.png": b"\x89PNG fake",
-        }
-    )
+    ids = "".join(f'<p:sldId id="{256 + n}" r:id="s{n}"/>' for n in range(1, slides + 1))
+    parts = {
+        "ppt/presentation.xml": (
+            f"<p:presentation {_P}><p:sldIdLst>{ids}</p:sldIdLst>"
+            '<p:sldSz cx="12192000" cy="6858000"/></p:presentation>'
+        ),
+        "ppt/_rels/presentation.xml.rels": _rels(
+            *[(f"s{n}", "slide", f"slides/slide{n}.xml") for n in range(1, slides + 1)]
+        ),
+        "ppt/media/image1.png": b"\x89PNG fake",
+    }
+    for n in range(1, slides + 1):
+        parts[f"ppt/slides/slide{n}.xml"] = _slide(_sp("Whiteboard", "title") + pic)
+        parts[f"ppt/slides/_rels/slide{n}.xml.rels"] = _rels(
+            ("img", "image", "../media/image1.png")
+        )
+    return _zip(parts)
 
 
 def test_a_slides_large_picture_is_read_with_ocr_into_a_block_of_its_own(
@@ -292,9 +309,116 @@ def test_the_services_ocr_settings_are_checked_when_it_starts() -> None:
 def test_ocr_is_off_when_configured_so_and_loads_once(monkeypatch: pytest.MonkeyPatch) -> None:
     loads: list[str] = []
     monkeypatch.setattr(ocr, "_load", lambda languages: loads.append(languages) or None)
+    monkeypatch.setattr(ocr, "_config", ocr._Config())  # put back however the test ends
+    monkeypatch.setattr(ocr, "_loaded", [])
     ocr.configure(False, "eng", 30)
     assert ocr.engine() is None and loads == []
     ocr.configure(True, "eng+deu", 5)
     assert ocr.engine() is None and ocr.engine() is None and loads == ["eng+deu"]
     assert ocr.max_images() == 5
     ocr.configure(True, "eng", 30)
+
+
+def test_a_text_layer_over_a_page_image_is_read_once_and_not_again_with_ocr(
+    engine: FakeEngine,
+) -> None:
+    # a scan with its text layer: twenty lines drawn over the full page image
+    lines = b"".join(
+        text_at(110, 580 - 18 * k, f"Line {k} of the scanned page text.") for k in range(20)
+    )
+    a = extract(
+        laid_out_pdf([b"q 400 0 0 400 100 200 cm /Im1 Do Q\n" + lines], image=GRAY), "t.pdf"
+    )
+    assert engine.seen == [] and a.coverage.complete and "ocr_pages" not in a.attrs
+    assert sum(b.text.count("Line 3 of") for b in a.blocks) == 1
+
+
+def test_an_image_that_fails_to_decode_leaves_its_page_partial_and_its_text_read(
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(image: object) -> bytes:
+        raise KeyError("/Filter")
+
+    monkeypatch.setattr(pdffile, "_image_file", broken)
+    text = text_at(72, 740, "A page of text with a whiteboard photo.")
+    a = extract(laid_out_pdf([text + b"q 400 0 0 300 100 300 cm /Im1 Do Q"], image=GRAY), "b.pdf")
+    assert [b.text for b in a.blocks] == ["A page of text with a whiteboard photo."]
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        (
+            "page 1",
+            "OCR did not read all of its pictures: its image could not be read: KeyError: '/Filter'",
+        )
+    ]
+
+
+def test_a_scan_whose_layout_is_not_trusted_keeps_its_ocr_text(
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fails(*args: object) -> None:
+        raise RuntimeError("layout")
+
+    monkeypatch.setattr(pdffile, "_lay_out_page", fails)
+    a = extract(laid_out_pdf([b"q 400 0 0 400 100 200 cm /Im1 Do Q"], image=GRAY), "s.pdf")
+    assert (
+        " ".join(b.text for b in a.blocks).split()
+        == "Scanned runbook text second line here".split()
+    )
+    assert all(b.attrs.get("ocr") for b in a.blocks) and a.coverage.complete
+
+
+def test_a_word_is_taken_off_a_rule_only_beside_one() -> None:
+    grid = ocr._RuleGrid([ocr.Box(0, 100, 900, 103), ocr.Box(400, 0, 403, 900)])
+    assert grid.touches(10, 80, 60, 98)  # just over the horizontal rule
+    assert grid.touches(404, 300, 450, 320)  # just right of the vertical one
+    assert not grid.touches(10, 300, 60, 320)  # well clear of both: `timeout = 30` stays
+
+
+def test_an_image_several_slides_show_is_read_once(
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ocr, "max_images", lambda: 1)
+    a = extract(_deck(6_000_000, slides=3), "d.pptx")
+    assert a.coverage.complete and a.attrs["ocr_slides"] == [1, 2, 3]
+    assert len(engine.seen) == 1
+
+
+def test_a_picture_read_leaves_the_text_parts_their_room() -> None:
+    from loom_extractor.ooxml import Package
+
+    pkg = Package(_deck(6_000_000))
+    before = pkg._read
+    assert pkg.media("ppt/media/image1.png", 1024) == b"\x89PNG fake"
+    assert pkg._read == before and pkg._media == len(b"\x89PNG fake")
+
+
+def test_the_real_engine_reads_a_ruled_image_end_to_end() -> None:
+    if ocr.check("eng"):
+        pytest.skip("Tesseract is not installed here")
+    eng = ocr._load("eng")
+    assert eng is not None
+    # a white image 600 x 400 with a horizontal and a vertical rule, 3 pixels wide
+    rows = []
+    for y in range(400):
+        row = bytearray(b"\xff" * 600)
+        if 200 <= y < 203:
+            row[:] = b"\x00" * 600
+        row[300:303] = b"\x00\x00\x00"
+        rows.append(bytes(row))
+    words, rules, w, h = eng.read(ocr.pnm(600, 400, 1, 8, b"".join(rows)), 2.0)
+    assert (w, h) == (600, 400) and words == []
+    assert {r.y1 - r.y0 <= 4 for r in rules} == {True, False}  # one rule each way
+
+
+def test_the_service_refuses_a_missing_model_it_was_set_to_and_warns_without_ocr(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from loom_extractor.__main__ import check_ocr
+    from loom_extractor.service import Config
+
+    config = Config(token="t", ocr_languages="deu")
+    monkeypatch.setattr(ocr, "check", lambda languages: "a model deu names is not installed")
+    with pytest.raises(SystemExit, match="LOOM_EXTRACTOR_OCR_LANGUAGES"):
+        check_ocr(config, {"LOOM_EXTRACTOR_OCR_LANGUAGES": "deu"})
+    monkeypatch.setattr(ocr, "check", lambda languages: "libtesseract.so.5 is not installed")
+    check_ocr(Config(token="t"), {})
+    assert "OCR cannot run (libtesseract.so.5 is not installed)" in caplog.text

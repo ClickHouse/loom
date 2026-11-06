@@ -23,6 +23,7 @@ import re
 from collections import Counter, defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import Any
 
 import pypdf
@@ -53,7 +54,6 @@ _TRUSTED = 0.998  # not a setting: a guard against a layout reading that drops t
 _MAX_FURNITURE = 200  # not a setting: the furniture lines the artifact names
 # A picture this share of a page with text, or larger, may carry text of its own:
 # it is read with OCR, or the page is not complete.
-_PICTURE_SHARE = 0.2  # not a setting: which pictures are read
 _NEEDS_OCR = "no text layer: its images need OCR, which is not run"
 
 
@@ -148,7 +148,12 @@ def _paragraphs(lines: list[str]) -> list[str]:
 
 
 def _page(
-    acc: Blocks, text: str, number: int, headings: list[tuple[int, str]], shift: int = 0
+    acc: Blocks,
+    text: str,
+    number: int,
+    headings: list[tuple[int, str]],
+    shift: int = 0,
+    **attrs: Any,
 ) -> None:
     """Page `number`'s blocks: its text split at the lines that hold a heading's
     title. Each heading, in outline order and `shift` levels down, takes the
@@ -174,14 +179,14 @@ def _page(
     for i, line in enumerate(lines):
         if i in at:
             for para in _paragraphs(run):
-                acc.add("paragraph", para, loc)
+                acc.add("paragraph", para, loc, **attrs)
             run = []
             for depth, title in at[i]:
                 acc.heading(depth + shift, title, loc)
         else:
             run.append(line)
     for para in _paragraphs(run):
-        acc.add("paragraph", para, loc)
+        acc.add("paragraph", para, loc, **attrs)
 
 
 @dataclass
@@ -208,16 +213,13 @@ class _Page:
 
 
 def _read_layout(
-    page: pypdf.PageObject,
-    reader: pypdf.PdfReader,
-    read: _Page,
-    eng: ocr.Engine | None,
-    left: list[int],
+    page: pypdf.PageObject, reader: pypdf.PdfReader, read: _Page, images: ocr.Images
 ) -> list[layout._Rule]:
     """The page's lines and rules, with what OCR reads in its pictures: on a
     page with no text, all of them, laid out as the page; on one with text,
-    those that cover a fifth of it, as lines of their own (`pictured`). What
-    OCR could not read is the page's partial or failure."""
+    those that cover a fifth of it and that its own text does not already fill
+    (a scan's text layer over its image), as lines of their own (`pictured`).
+    What OCR could not read is the page's partial or failure."""
     found, read.other, read.width, read.page_height, turn = layout.spans(page, read.dropped)
     try:
         rules, pictures = layout.drawing(page, reader, turn)
@@ -227,54 +229,70 @@ def _read_layout(
         rules, pictures = [], []
     texted = bool(read.text.strip())
     area = read.width * read.page_height
-    targets = [p for p in pictures if not texted or p.area >= _PICTURE_SHARE * area]
+    targets = (
+        [p for p in pictures if p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p)]
+        if texted
+        else pictures
+    )
     if not texted and not targets and _has_image(page, reader):
         read.failure = (
             _NEEDS_OCR
-            if eng is None
+            if ocr.engine() is None
             else "no text layer: its image is drawn inline, which OCR does not read"
         )
-    elif targets and eng is None:
+    problems = []
+    for picture in targets:
+        ref = getattr(picture.image, "indirect_reference", None)
+        key = (ref.idnum, ref.generation) if ref is not None else id(picture.image)
+        try:
+            words, boxes, w, h = images.read(
+                key, partial(_image_file, picture.image), (picture.box[2] - picture.box[0]) / 72
+            )
+        except ValueError as e:
+            problems.append(str(e))
+            continue
+        spans = layout.picture_spans(page, turn, picture, words, w, h)
+        if texted:
+            read.pictured += layout.lines_of(spans)
+        else:  # a scanned page: laid out as a page is, its grid its rules
+            found += spans
+            rules += layout.picture_rules(page, turn, picture, boxes, w, h)
+        read.ocr = True
+    if problems:
         if texted:
             read.partial = (
-                "a picture covers a fifth of it or more: its text needs OCR, which is not run"
+                ocr.NOT_RUN
+                if problems[0] == ocr.NOT_RUN
+                else f"OCR did not read all of its pictures: {problems[0]}"
+            )
+        elif not read.ocr:
+            read.failure = (
+                _NEEDS_OCR
+                if problems[0] == ocr.NOT_RUN
+                else f"no text layer, and OCR read none of its images: {problems[0]}"
             )
         else:
-            read.failure = _NEEDS_OCR
-    elif targets and eng is not None:
-        problems = []
-        for picture in targets:
-            if left[0] <= 0:
-                problems.append(f"past the {ocr.max_images()} images OCR reads in one file")
-                break
-            left[0] -= 1
-            try:
-                words, boxes, w, h = eng.read(
-                    _image_file(picture.image), (picture.box[2] - picture.box[0]) / 72
-                )
-            except ValueError as e:
-                problems.append(str(e))
-                continue
-            spans = layout.picture_spans(page, turn, picture, words, w, h)
-            if texted:
-                read.pictured += layout.lines_of(spans)
-            else:  # a scanned page: laid out as a page is, its grid its rules
-                found += spans
-                rules += layout.picture_rules(page, turn, picture, boxes, w, h)
-            read.ocr = True
-        if problems and not texted and not read.ocr:
-            read.failure = f"no text layer, and OCR read none of its images: {problems[0]}"
-        elif problems:
             read.partial = f"OCR did not read all of its pictures: {problems[0]}"
     read.lines = layout.lines_of(found, layout.text_words(read.text), read.dropped)
     return rules
 
 
+def _filled(found: list[layout.Span], picture: layout.Picture) -> bool:
+    """Whether the page's own text runs fill a tenth or more of the picture: a
+    scan's text layer drawn over its image, which OCR would read again."""
+    x0, y0, x1, y1 = picture.box
+    inked = sum(
+        (s.x1 - s.x0) * s.size for s in found if x0 <= (s.x0 + s.x1) / 2 <= x1 and y0 <= s.y <= y1
+    )
+    return inked >= 0.1 * picture.area
+
+
 def _image_file(image: Any) -> bytes:
     """An image XObject as a file Leptonica reads: a JPEG, JPEG 2000 or CCITT
-    one as it is (pypdf wraps CCITT data as a TIFF), raw samples as a PNM.
-    ValueError for what is not read (JBIG2, which would need a program run, a
-    colour space past gray, RGB, CMYK and an index of either)."""
+    one as it is (pypdf wraps CCITT data as a TIFF), raw samples as a PNM (a
+    CMYK one by its black). ValueError for what is not read (JBIG2, which would
+    need a program run, a colour space past gray, RGB, CMYK and an index of
+    gray or RGB)."""
     filters = image.get("/Filter")
     names = [
         str(f) for f in (filters if isinstance(filters, list) else [filters] if filters else [])
@@ -285,7 +303,7 @@ def _image_file(image: Any) -> bytes:
     if width <= 0 or height <= 0 or width * height > ocr.MAX_PIXELS:
         raise ValueError(f"its image is past {ocr.MAX_PIXELS:,} pixels or has no size")
     data = image.get_data()
-    if names and names[-1] in ("/DCTDecode", "/DCT", "/JPXDecode", "/CCITTFaxDecode", "/CCF"):
+    if names and names[-1] in ("/DCTDecode", "/JPXDecode", "/CCITTFaxDecode"):
         return bytes(data)
     if image.get("/ImageMask"):
         return ocr.pnm(width, height, 1, 1, data, black_is_one=_inverted(image))
@@ -294,16 +312,20 @@ def _image_file(image: Any) -> bytes:
     if palette is not None:
         if bits != 8:
             raise ValueError(f"its image's {bits}-bit index is not read by OCR")
-        data = b"".join(
-            palette[i * components : (i + 1) * components] for i in data[: width * height]
-        )
+        index = data[: width * height]
+        out = bytearray(len(index) * components)
+        for c in range(components):  # each channel through its own table, not per pixel
+            table = bytes(
+                palette[i * components + c] if i * components + c < len(palette) else 255
+                for i in range(256)
+            )
+            out[c::components] = index.translate(table)
+        data = bytes(out)
     if space == "/DeviceCMYK" and bits == 8:
-        cmyk = data[: width * height * 4]
-        data = bytes(
-            max(0, 255 - min(255, (cmyk[i] + cmyk[i + 1] + cmyk[i + 2]) // 3 + cmyk[i + 3]))
-            for i in range(0, len(cmyk) - 3, 4)
-        )
+        data = data[3 : width * height * 4 : 4].translate(ocr.INVERT)  # its black, as gray
         components = 1
+    elif bits == 8 and _inverted(image):
+        data = data.translate(ocr.INVERT)
     return ocr.pnm(width, height, components, bits, data, black_is_one=_inverted(image))
 
 
@@ -327,7 +349,7 @@ def _color_space(cs: Any) -> tuple[str, int, bytes | None]:
                 if n == 3
                 else ("/DeviceCMYK", 4, None)
             )
-        if kind in ("/Indexed", "/I") and len(cs) >= 4:
+        if kind == "/Indexed" and len(cs) >= 4:
             base, components, _ = _color_space(cs[1])
             if components not in (1, 3):
                 raise ValueError("its image's indexed colours are not read by OCR")
@@ -339,11 +361,11 @@ def _color_space(cs: Any) -> tuple[str, int, bytes | None]:
             return base, components, table
         cs = cs[0]
     name = str(cs or "/DeviceGray")
-    if name in ("/DeviceGray", "/CalGray", "/G"):
+    if name in ("/DeviceGray", "/CalGray"):
         return "/DeviceGray", 1, None
-    if name in ("/DeviceRGB", "/CalRGB", "/RGB"):
+    if name in ("/DeviceRGB", "/CalRGB"):
         return "/DeviceRGB", 3, None
-    if name in ("/DeviceCMYK", "/CMYK"):
+    if name == "/DeviceCMYK":
         return "/DeviceCMYK", 4, None
     raise ValueError(f"its image's colour space {name} is not read by OCR")
 
@@ -495,15 +517,16 @@ def _emit(
 ) -> None:
     loc = Locator(page_start=read.number, page_end=read.number)
     for e in read.elements or []:
+        marks = {"ocr": True} if e.ocr else {}
         if e.table is not None:
             _emit_table(acc, e.table, read.number, budget, tables, failed)
         elif e.level:
-            acc.heading(e.level, e.text, loc, **({"ocr": True} if e.ocr else {}))
+            acc.heading(e.level, e.text, loc, **marks)
         elif e.kind == "code":
-            acc.add("code", e.text, loc, **({"ocr": True} if e.ocr else {}))
+            acc.add("code", e.text, loc, **marks)
         else:
             kind: BlockType = "list" if e.kind == "item" else "paragraph"
-            acc.add(kind, e.text, loc, **({"ocr": True} if e.ocr else {}))
+            acc.add(kind, e.text, loc, **marks)
     for s in read.other:
         acc.add("paragraph", s.text, loc, orientation="rotated")
 
@@ -578,8 +601,7 @@ def extract_pdf(data: bytes) -> Artifact:
     pages = reader.pages
     reads: list[_Page] = []
     page_rules: list[list[layout._Rule]] = []
-    eng = ocr.engine()
-    ocr_left = [ocr.max_images()]  # the images OCR may still read in this file
+    images = ocr.Images()
     for index, page in enumerate(pages):
         number = index + 1
         read = _Page(number, [(d, _unicode(t)[0]) for d, t in outline.get(index, [])])
@@ -598,13 +620,15 @@ def extract_pdf(data: bytes) -> Artifact:
                 f"page {number}: a character its font maps to a lone surrogate reads U+FFFD"
             )
         try:
-            page_rules[-1] = _read_layout(page, reader, read, eng, ocr_left)
+            page_rules[-1] = _read_layout(page, reader, read, images)
         except MemoryError:
             raise
-        except Exception:  # noqa: BLE001 — a page whose layout cannot be read is read as its text layer
-            read.lines = []
+        except Exception as e:  # noqa: BLE001 — a page whose layout cannot be read is read as its text layer
+            read.lines, read.pictured, read.ocr = [], [], False
             if not read.text.strip() and _has_image(page, reader):
-                read.failure = _NEEDS_OCR
+                read.failure = (
+                    f"no text layer, and its layout could not be read: {type(e).__name__}"
+                )
     shift = _lay_out(reads, page_rules, outline_given=bool(outline), warnings=warnings)
     acc = Blocks()
     budget = Budget()
@@ -616,6 +640,10 @@ def extract_pdf(data: bytes) -> Artifact:
             failed.append(Failure(f"page {read.number}", read.failure))
             # its headings still open their sections
             _page(acc, "", read.number, read.headings, shift)
+        elif read.elements is None and read.ocr and not read.text.strip():
+            # a scan's layout not trusted: its OCR lines are its text
+            text = "\n".join(ln.text for ln in read.lines)
+            _page(acc, text, read.number, read.headings, shift, ocr=True)
         elif read.elements is None:
             _page(acc, read.text, read.number, read.headings, shift)
         else:
@@ -658,7 +686,7 @@ def extract_pdf(data: bytes) -> Artifact:
         format="pdf",
         parser="loom-pdf",
         parser_version=f"{PARSER_VERSION}+pypdf{pypdf.__version__}"
-        + (f"+tesseract{eng.version}" if eng is not None and ocr_pages else ""),
+        + (f"+tesseract{images.version}" if images.version else ""),
         blocks=tuple(acc.blocks),
         coverage=Coverage(
             "pages",

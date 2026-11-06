@@ -118,13 +118,17 @@ def _assemble(objs: list[bytes], pages_id: int) -> bytes:
 
 
 def laid_out_pdf(
-    pages: list[bytes], *, rotate: tuple[int, ...] = (), width: float = 612, image: bytes = b""
+    pages: list[bytes],
+    *,
+    rotate: tuple[int, ...] = (),
+    width: float = 612,
+    image: bytes | list[bytes] = b"",
 ) -> bytes:
     """A PDF of `pages`, each its content stream as written: fonts F1
     (Helvetica), F2 (Helvetica-Bold) and F3 (Courier), `width` points wide and
     792 high, and `/Rotate 90` on the pages `rotate` lists. `image` is an image
     XObject's dictionary entries and stream (`/Width 1 ... >>\nstream\n...`),
-    drawn as /Im1."""
+    drawn as /Im1, or a list of them, drawn as /Im1, /Im2 and on."""
     objs: list[bytes] = []
 
     def add(body: bytes) -> int:
@@ -143,9 +147,11 @@ def laid_out_pdf(
     )
     xobjects = b""
     if image:
-        xobjects = b" /XObject << /Im1 %d 0 R >>" % add(
-            b"<< /Type /XObject /Subtype /Image " + image + b"\nendstream"
+        names = b" ".join(
+            b"/Im%d %d 0 R" % (n, add(b"<< /Type /XObject /Subtype /Image " + one + b"\nendstream"))
+            for n, one in enumerate([image] if isinstance(image, bytes) else image, start=1)
         )
+        xobjects = b" /XObject << %s >>" % names
     pages_id = len(objs) + 1 + 2 * len(pages)
     page_ids = []
     for k, stream in enumerate(pages):

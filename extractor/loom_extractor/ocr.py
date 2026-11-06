@@ -16,13 +16,19 @@ from __future__ import annotations
 
 import ctypes
 import re
-from collections.abc import Iterator
-from dataclasses import dataclass
+import time
+from collections.abc import Callable, Hashable, Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # Not settings: bounds on hostile input.
 MAX_PIXELS = 40_000_000  # an image larger than this, decoded or scaled, is not read
 _MAX_RULE_BOXES = 4_000  # the rules one image's grid is read from
+_DEADLINE_S = 20  # one image's recognition; past it the image is not read
+# Not a setting: a picture this share of a page or slide, or larger, may carry
+# text of its own and is read.
+PICTURE_SHARE = 0.2
+NOT_RUN = "a picture covers a fifth of it or more: its text needs OCR, which is not run"
 _MIN_DPI = 200.0
 _TARGET_DPI = 300.0
 _MAX_SCALE = 3.0
@@ -36,13 +42,16 @@ _TESSDATA = (
 )
 
 
-# What a table's rules read as: a stroke at a word's edge, or a word of strokes alone.
+# What a table's rules read as, in a word that touches one: a stroke at its
+# edge, or a word of strokes alone.
 _STROKES = "|[]{}¦‖_—"
 _ONLY_STROKES = re.compile(f"[{re.escape(_STROKES)}=~-]+")
+_NEAR = 6  # pixels: a word this close to a rule touches it
+_CELL = 64  # pixels: the grid rules are found in by place
 
 
 def _unruled(text: str) -> str:
-    """A word OCR read without the rules drawn beside it: `[Owner` is `Owner`,
+    """A word OCR read beside a rule, without the rule: `[Owner` is `Owner`,
     `rota-8|` is `rota-8`, and `|` alone is nothing; a bracket the word closes
     (`arr[0]`, `[x]`) is its own."""
     if _ONLY_STROKES.fullmatch(text):
@@ -105,6 +114,9 @@ class Engine:
         t.TessBaseAPISetVariable.argtypes = [p, s, s]
         t.TessBaseAPISetImage2.argtypes = [p, p]
         t.TessBaseAPIRecognize.argtypes = [p, p]
+        t.TessMonitorCreate.restype = p
+        t.TessMonitorSetDeadlineMSecs.argtypes = [p, i]
+        t.TessMonitorDelete.argtypes = [p]
         t.TessBaseAPIGetIterator.restype = p
         t.TessBaseAPIGetIterator.argtypes = [p]
         t.TessBaseAPIClear.argtypes = [p]
@@ -130,12 +142,13 @@ class Engine:
         lp.pixDestroy.argtypes = [ctypes.POINTER(p)]
         lp.pixConvertTo1.restype = p
         lp.pixConvertTo1.argtypes = [p, i]
+        lp.pixConvertTo8.restype = p
+        lp.pixConvertTo8.argtypes = [p, i]
+        lp.pixPaintThroughMask.argtypes = [p, p, i, i, ctypes.c_uint32]
         lp.pixOpenBrick.restype = p
         lp.pixOpenBrick.argtypes = [p, p, i, i]
         lp.pixDilateBrick.restype = p
         lp.pixDilateBrick.argtypes = [p, p, i, i]
-        lp.pixSubtract.restype = p
-        lp.pixSubtract.argtypes = [p, p, p]
         lp.pixConnCompBB.restype = p
         lp.pixConnCompBB.argtypes = [p, i]
         lp.boxaGetCount.argtypes = [p]
@@ -149,9 +162,10 @@ class Engine:
         horizontal and vertical strokes, a scanned table's grid), and the
         image's width and height in the pixels the boxes are in. The rules are
         taken out before the words are read, as Tesseract reads a ruled table's
-        cells as a picture. `shown_inches` is the width it is shown at, which
-        says whether it is scaled first. ValueError when Leptonica cannot read
-        it or it is past the pixel bound."""
+        cells as a picture; Tesseract is given the image in gray and sets its
+        own threshold. `shown_inches` is the width it is shown at, which says
+        whether it is scaled first. ValueError when Leptonica cannot read it,
+        it is past the pixel bound, or its recognition passes _DEADLINE_S."""
         lp = self._l
         held: list[int] = []  # every image made here, destroyed at the end
         pix = lp.pixReadMem(data, len(data))
@@ -172,30 +186,43 @@ class Engine:
                 pix = scaled
                 w, h = lp.pixGetWidth(pix), lp.pixGetHeight(pix)
             dpi = w / shown_inches if shown_inches > 0 else _TARGET_DPI
-            page, rules = self._unrule(pix, dpi, held)
-            self._t.TessBaseAPISetImage2(self._api, page)
+            gray = lp.pixConvertTo8(pix, 0)
+            if not gray:
+                raise ValueError("its image could not be turned to gray")
+            held.append(gray)
+            rules = self._unrule(gray, dpi, held)
+            self._t.TessBaseAPISetImage2(self._api, gray)
             self._t.TessBaseAPISetSourceResolution(
                 self._api, max(1, round(dpi))
             )  # so a word's points are the page's
-            if self._t.TessBaseAPIRecognize(self._api, None) != 0:
+            monitor = self._t.TessMonitorCreate()
+            try:
+                self._t.TessMonitorSetDeadlineMSecs(monitor, _DEADLINE_S * 1000)
+                start = time.monotonic()
+                failed = self._t.TessBaseAPIRecognize(self._api, monitor) != 0
+                if time.monotonic() - start >= _DEADLINE_S:
+                    raise ValueError(f"its image took past {_DEADLINE_S} s to read with OCR")
+            finally:
+                self._t.TessMonitorDelete(monitor)
+            if failed:
                 raise ValueError("its image could not be recognised")
-            return list(self._words()), rules, w, h
+            return list(self._words(rules)), rules, w, h
         finally:
             self._t.TessBaseAPIClear(self._api)
             for one in held:
                 self._destroy(one)
 
-    def _unrule(self, pix: int, dpi: float, held: list[int]) -> tuple[int, list[Box]]:
-        """The image in black and white with its rules taken out, and the rules'
-        boxes: strokes longer than half an inch across or a third of an inch
-        down, longer than any letter's."""
+    def _unrule(self, gray: int, dpi: float, held: list[int]) -> list[Box]:
+        """The rules' boxes, painted out of the gray image: strokes, in black
+        and white, longer than half an inch across or a third of an inch down,
+        longer than a letter's in type up to about 36 points (a larger letter's
+        stem goes with them)."""
         lp = self._l
-        mono = lp.pixConvertTo1(pix, 160)
+        mono = lp.pixConvertTo1(gray, 160)  # where the strokes are, not what OCR reads
         if not mono:
-            return pix, []
+            return []
         held.append(mono)
         rules: list[Box] = []
-        clean = mono
         for hsize, vsize in ((max(8, round(0.5 * dpi)), 1), (1, max(8, round(0.35 * dpi)))):
             lines = lp.pixOpenBrick(None, mono, hsize, vsize)
             if not lines:
@@ -208,11 +235,8 @@ class Engine:
             if wide:
                 held.append(wide)
                 lines = wide
-            out = lp.pixSubtract(None, clean, lines)
-            if out:
-                held.append(out)
-                clean = out
-        return clean, rules[:_MAX_RULE_BOXES]
+            lp.pixPaintThroughMask(gray, lines, 0, 0, 255)
+        return rules[:_MAX_RULE_BOXES]
 
     def _boxes(self, pix: int) -> list[Box]:
         lp = self._l
@@ -235,7 +259,8 @@ class Engine:
         ref = ctypes.c_void_p(pix)
         self._l.pixDestroy(ctypes.byref(ref))
 
-    def _words(self) -> Iterator[Word]:
+    def _words(self, rules: list[Box]) -> Iterator[Word]:
+        near = _RuleGrid(rules)
         ri = self._t.TessBaseAPIGetIterator(self._api)
         if not ri:
             return
@@ -257,16 +282,92 @@ class Engine:
                     line = (base, float(bottom - top), float(max(0, font[6].value)))
                 ptr = self._t.TessResultIteratorGetUTF8Text(ri, _RIL_WORD)
                 if ptr:
-                    text = _unruled(ctypes.string_at(ptr).decode("utf-8", "replace").strip())
+                    text = ctypes.string_at(ptr).decode("utf-8", "replace").strip()
                     self._t.TessDeleteText(ptr)
                     self._t.TessPageIteratorBoundingBox(pi, _RIL_WORD, *map(ctypes.byref, box))
+                    x0, y0, x1, y1 = (b.value for b in box)
+                    if near.touches(x0, y0, x1, y1):
+                        text = _unruled(text)
                     if text:
-                        x0, y0, x1, y1 = (b.value for b in box)
                         yield Word(text, x0, y0, x1, y1, line[0], line[1], first, line[2])
                 if not self._t.TessPageIteratorNext(pi, _RIL_WORD):
                     return
         finally:
             self._t.TessResultIteratorDelete(ri)
+
+
+class _RuleGrid:
+    """Rules found by place: whether a word's box touches one."""
+
+    def __init__(self, rules: list[Box]) -> None:
+        self._rules = rules
+        self._cells: dict[tuple[int, int], list[int]] = {}
+        for n, r in enumerate(rules):
+            for cell in self._cover(r.x0 - _NEAR, r.y0 - _NEAR, r.x1 + _NEAR, r.y1 + _NEAR):
+                self._cells.setdefault(cell, []).append(n)
+
+    @staticmethod
+    def _cover(x0: int, y0: int, x1: int, y1: int) -> Iterator[tuple[int, int]]:
+        for cx in range(max(0, x0) // _CELL, max(0, x1) // _CELL + 1):
+            for cy in range(max(0, y0) // _CELL, max(0, y1) // _CELL + 1):
+                yield cx, cy
+
+    def touches(self, x0: int, y0: int, x1: int, y1: int) -> bool:
+        for cell in self._cover(x0, y0, x1, y1):
+            for n in self._cells.get(cell, ()):
+                r = self._rules[n]
+                if (
+                    x0 <= r.x1 + _NEAR
+                    and r.x0 - _NEAR <= x1
+                    and y0 <= r.y1 + _NEAR
+                    and r.y0 - _NEAR <= y1
+                ):
+                    return True
+        return False
+
+
+@dataclass
+class Images:
+    """OCR in one file: the images it may still read, and each image's reading
+    by its own object (`key`), so one drawn on many pages or slides is read,
+    and counted, once. The engine is loaded at the first image to read."""
+
+    left: int = field(default_factory=lambda: max_images())
+    _done: dict[Hashable, tuple[list[Word], list[Box], int, int] | str] = field(
+        default_factory=dict
+    )
+
+    def read(
+        self, key: Hashable, data: Callable[[], bytes], shown_inches: float
+    ) -> tuple[list[Word], list[Box], int, int]:
+        """The image's words, rules and size in pixels (`Engine.read`), from the
+        file `data()` gives; ValueError naming why it is not read."""
+        if key not in self._done:
+            eng = engine()
+            if eng is None:
+                raise ValueError(NOT_RUN)
+            if self.left <= 0:
+                raise ValueError(f"past the {max_images()} images OCR reads in one file")
+            self.left -= 1
+            try:
+                self._done[key] = eng.read(data(), shown_inches)
+            except MemoryError:
+                raise  # the extraction's limit, not this image's defect
+            except ValueError as e:
+                self._done[key] = str(e)
+            except Exception as e:  # noqa: BLE001 — an image OCR cannot read leaves its page or slide partial
+                why = f"{type(e).__name__}: {str(e)[:200]}" if str(e) else type(e).__name__
+                self._done[key] = f"its image could not be read: {why}"
+        got = self._done[key]
+        if isinstance(got, str):
+            raise ValueError(got)
+        return got
+
+    @property
+    def version(self) -> str:
+        """The Tesseract version that read this file's images, when one did."""
+        eng = engine() if any(not isinstance(v, str) for v in self._done.values()) else None
+        return eng.version if eng else ""
 
 
 @dataclass
@@ -301,8 +402,9 @@ def engine() -> Engine | None:
     return _loaded[0]
 
 
-def _load(languages: str) -> Engine | None:
-    datapath = next(
+def _datapath(languages: str) -> str | None:
+    """The directory that holds every model `languages` names, or None."""
+    return next(
         (
             d
             for d in _TESSDATA
@@ -310,6 +412,23 @@ def _load(languages: str) -> Engine | None:
         ),
         None,
     )
+
+
+def check(languages: str) -> str:
+    """Why OCR with `languages` cannot run here (no libraries, a model missing),
+    or empty when it can; the service checks it when it starts."""
+    for lib in ("libtesseract.so.5", "libleptonica.so.6"):
+        try:
+            ctypes.CDLL(lib)
+        except OSError:
+            return f"{lib} is not installed"
+    if _datapath(languages) is None:
+        return f"a model {languages} names is not installed (looked in {', '.join(_TESSDATA)})"
+    return ""
+
+
+def _load(languages: str) -> Engine | None:
+    datapath = _datapath(languages)
     if datapath is None:
         return None
     # The service starts a child with OpenMP held to one thread (`_NATIVE_ENV`):
@@ -323,6 +442,8 @@ def _load(languages: str) -> Engine | None:
 
 
 # ---- image files from a PDF's image streams
+
+INVERT = bytes(range(255, -1, -1))  # a byte's bits, or a sample's value, turned over
 
 
 def pnm(
@@ -339,6 +460,6 @@ def pnm(
         need = row * height
         body = samples[:need].ljust(need, b"\xff" if not black_is_one else b"\x00")
         if not black_is_one:
-            body = bytes(255 - b for b in body)
+            body = body.translate(INVERT)
         return b"P4\n%d %d\n" % (width, height) + body
     raise ValueError(f"its image's samples ({components} x {bits}-bit) are not read by OCR")

@@ -3,12 +3,15 @@ and LOOM_EXTRACTOR_PORT (8790), configured by `service.Config.from_env`."""
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
+from collections.abc import Mapping
 from pathlib import Path
 
 import uvicorn
 
+from loom_extractor import ocr
 from loom_extractor.child import no_dump, no_new_privileges, socket_filter
 from loom_extractor.service import Config, create_app
 
@@ -46,6 +49,21 @@ def refuse_unfiltered_machine() -> None:
         raise SystemExit(str(e)) from e
 
 
+def check_ocr(config: Config, env: Mapping[str, str]) -> None:
+    """OCR that is on and cannot run: a language set for it whose model is not
+    installed stops the service; an image without the libraries (built with
+    OCR=off) is said once, as such pages are then reported not complete."""
+    if not config.ocr:
+        return
+    why = ocr.check(config.ocr_languages)
+    if why and "LOOM_EXTRACTOR_OCR_LANGUAGES" in env and "model" in why:
+        raise SystemExit(f"LOOM_EXTRACTOR_OCR_LANGUAGES: {why}")
+    if why:
+        logging.getLogger("loom_extractor").warning(
+            "OCR cannot run (%s): scanned pages and large pictures are reported not complete", why
+        )
+
+
 def main() -> None:
     refuse_root()
     refuse_unfiltered_machine()
@@ -54,7 +72,9 @@ def main() -> None:
     # Before the token is read: a process of the same user cannot then read this
     # process's environment through /proc.
     no_dump()
-    app = create_app(Config.from_env(os.environ))
+    config = Config.from_env(os.environ)
+    check_ocr(config, os.environ)
+    app = create_app(config)
     uvicorn.run(
         app,
         host=os.environ.get("LOOM_EXTRACTOR_HOST", "127.0.0.1"),
