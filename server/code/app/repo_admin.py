@@ -618,12 +618,14 @@ async def handle_code_repo_set_source(input: Any) -> Any:
     cfg = repo_for_namespace(input.org, input.namespace)
     if cfg is None:
         raise ValidationError(f"{input.namespace} is not a repository index", code="NOT_A_REPO")
-    await binding.refresh_overrides(force=True)
+    await binding.refresh_overrides(force=True, strict=True)
     previous = binding.tracker_namespaces_for(input.namespace)
+    stored = binding.parse_binding(binding.override_for(input.namespace) or "")
     wanted = binding.parse_binding(input.tracker_namespaces)
-    # Linking decides who reads a tracker, so a new link needs its admin; keeping,
-    # reordering or dropping one already linked does not.
-    targets = [await _tracker_or_refuse(input.org, qa, new=qa not in previous) for qa in wanted]
+    # Linking decides who reads a tracker, so a link this call stores needs the tracker's
+    # admin unless a maintainer link already holds it: one only the operator map holds
+    # would outlive the map's later change.
+    targets = [await _tracker_or_refuse(input.org, qa, new=qa not in stored) for qa in wanted]
     # A record reads only the repositories it names (`splitByChar('#', source_id)[1] IN
     # repos`), so a link to one that does not name this repository answers nothing — said, not
     # refused (a fork may mean to read its upstream's record)
@@ -659,9 +661,9 @@ async def handle_code_repo_set_source(input: Any) -> Any:
 
 async def _tracker_or_refuse(org: str, qa: str, *, new: bool) -> Any:
     """The tracker namespace `qa` names, or NOT_A_TRACKER_NAMESPACE. A `new` link also
-    needs the caller to administer it: a linked standard tracker is read by every reader
-    of the repository. A reader of it is told so; anyone else gets the missing-tracker
-    answer, which confirms nothing."""
+    needs the caller to administer it, restricted or not: a linked standard tracker is
+    read by every reader of the repository. A reader of it is told so; anyone else gets
+    the missing-tracker answer."""
     from server.auth.authz import row_in_scope
     from server.operations.base import Role
     from server.tracker.domain.namespaces import tracker_namespace

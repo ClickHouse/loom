@@ -227,7 +227,7 @@ async def test_set_source_writes_the_binding_state_and_the_override_is_read_firs
     async def refresh(*a, **k):
         return []
 
-    async def refresh_over(*, force=False, ch=None):
+    async def refresh_over(*, force=False, strict=False, ch=None):
         # the "state" after a write: what set_state recorded last
         binding.reset_overrides_for_tests({ns: v for _o, ns, _k, v in states})
         return {}

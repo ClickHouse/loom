@@ -359,6 +359,21 @@ async def test_set_source_writes_the_ordered_list(wired, monkeypatch) -> None:
             CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[DESK])
         )
         assert out.tracker_namespaces == [DESK]
+        # once dropped, it is a new link again
+        await adm.handle_code_repo_set_source(
+            CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[QA])
+        )
+        with pytest.raises(AuthInsufficientError, match="needs an admin"):
+            await adm.handle_code_repo_set_source(
+                CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[QA, DESK])
+            )
+        # a tracker only the operator map links is stored by this call: it needs its admin
+        b.reset_overrides_for_tests({})
+        monkeypatch.setattr(b, "bindings", lambda: {CODE: DESK})
+        with pytest.raises(AuthInsufficientError, match="needs an admin"):
+            await adm.handle_code_repo_set_source(
+                CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[DESK])
+            )
     finally:
         for name in ("tracker-kj", "tracker-new", "tracker-hidden"):
             NAMESPACES.pop(name, None)
