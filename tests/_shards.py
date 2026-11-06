@@ -57,13 +57,13 @@ def assign(weights: Mapping[str, float], parts: int) -> dict[str, int]:
     return out
 
 
-def weigh(files: dict[str, str], recorded: dict[str, float]) -> dict[str, float]:
-    """Each file's weight: its recorded seconds, else its test functions (counted in
-    `files`, path to source) times the recorded seconds per test function."""
-    tests = {name: max(1, len(_TEST_DEF.findall(src))) for name, src in files.items()}
-    known = [name for name in files if name in recorded]
+def weigh(sources: dict[str, str], recorded: dict[str, float]) -> dict[str, float]:
+    """Each file's weight: its recorded seconds, else its test functions times the
+    recorded seconds per test function."""
+    tests = {name: max(1, len(_TEST_DEF.findall(src))) for name, src in sources.items()}
+    known = [name for name in sources if name in recorded]
     per_test = sum(recorded[n] for n in known) / sum(tests[n] for n in known) if known else 1.0
-    return {name: recorded.get(name, tests[name] * per_test) for name in files}
+    return {name: recorded.get(name, tests[name] * per_test) for name in sources}
 
 
 def test_files(paths: list[Path]) -> list[Path]:

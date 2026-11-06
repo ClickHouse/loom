@@ -89,8 +89,8 @@ def test_the_walk_finds_the_test_modules_pytest_collects(tmp_path: Path) -> None
 
 @pytest.mark.parametrize("n", [1, 2, 3, 4])
 def test_the_parts_collect_every_test_file_exactly_once(tmp_path: Path, n: int) -> None:
-    files = [p.resolve() for p in _tree(tmp_path) if p.resolve() in _shards.test_files([tmp_path])]
-    assert len(files) == 4
+    _tree(tmp_path)
+    files = _shards.test_files([tmp_path])
     kept: list[Path] = []
     for k in range(1, n + 1):
         split = _shards.Split(k, n, [tmp_path])

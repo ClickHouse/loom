@@ -180,6 +180,8 @@ jobs:
             junit-unit-${{ matrix.part }}.xml
           include-hidden-files: true
           if-no-files-found: warn
+          # A re-run of one failed part replaces the data its first attempt uploaded.
+          overwrite: true
 
   unit-coverage:
     name: pytest unit coverage, floors and bench
