@@ -95,11 +95,11 @@ async def test_an_erasure_holding_one_back_refuses_the_rest_of_the_namespace_onc
     # of the namespace in one line, before any more copies.
     assert result.moved == 0
     assert result.errors[0].startswith(f"acme/docs/{page[0].sha}: ")
-    assert result.errors[1] == (
+    assert result.refused[0] == (
         "acme/docs: erasure e1 (namespace, in_progress) covers it; the rest of its originals are left in "
         "ClickHouse"
     )
-    assert len(result.errors) == 2 and reads == ["fence", "fence"]
+    assert len(result.errors) == 1 and len(result.refused) == 1 and reads == ["fence", "fence"]
 
 
 @pytest.mark.asyncio
@@ -115,7 +115,8 @@ async def test_a_namespace_the_fence_refuses_is_reported_once_and_not_walked(
     monkeypatch.setattr(blobs, "fence", fence)
     monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
     result = await originals.migrate_originals(org="acme", namespace="docs")
-    assert result.errors == [
+    assert result.errors == []
+    assert result.refused == [
         "acme/docs: erasure e9 (user_id, failed) covers it; complete it first; the rest of its originals "
         "are left in ClickHouse"
     ]

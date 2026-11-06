@@ -99,7 +99,8 @@ def _cmd_migrate_originals(args: argparse.Namespace) -> int:
     if args.namespace and not args.org:
         print("error: --namespace needs --org", file=sys.stderr)
         return 2
-    if settings.document_object_store != "s3":
+    # A dry run only reads ClickHouse: it sizes the move before the store is switched.
+    if not args.dry_run and settings.document_object_store != "s3":
         print(
             "error: set LOOM_DOCUMENT_OBJECT_STORE=s3 (and LOOM_DOCUMENT_S3_BUCKET) first, "
             "so no new original is written to ClickHouse behind the move",
@@ -109,35 +110,46 @@ def _cmd_migrate_originals(args: argparse.Namespace) -> int:
 
     async def _run(_ch: Any) -> int:
         from server.core import object_store
-        from server.knowledge.app.originals import migrate_originals
+        from server.knowledge.app.originals import Migrated, migrate_originals
 
-        object_store.require_client()
-        result = await migrate_originals(
-            org=args.org, namespace=args.namespace, dry_run=bool(args.dry_run)
-        )
         if args.dry_run:
+            counted = await migrate_originals(org=args.org, namespace=args.namespace, dry_run=True)
             print(
-                f"{result.pending} original(s), {result.bytes} bytes, held in ClickHouse; "
-                f"{result.unneeded} more nothing needs now, left to the sweep"
+                f"{counted.pending} original(s), {counted.bytes} bytes, held in ClickHouse; "
+                f"{counted.unneeded} more nothing needs now, left to the sweep"
             )
             return 0
-        print(
-            f"{result.moved} original(s) moved to the bucket ({result.bytes} bytes), "
-            f"{result.skipped} gone, replaced or erased meanwhile, {result.unneeded} nothing "
-            f"needs now (left to the sweep), {len(result.errors)} not moved"
-        )
-        if result.moved:
-            print(
-                "the ClickHouse copies stay until loom.document_blobs merges their parts; "
-                "OPTIMIZE TABLE loom.document_blobs FINAL drops them now"
-            )
-        for line in result.errors:
-            print(f"error: {line}", file=sys.stderr)
-        for line in result.unconfirmed:
-            print(f"switched, unconfirmed: {line}", file=sys.stderr)
-        return 1 if result.errors or result.unconfirmed else 0
+        object_store.require_client()
+        result = Migrated()
+        try:
+            await migrate_originals(org=args.org, namespace=args.namespace, out=result)
+        finally:
+            # Printed even when an error stops the run: a switched row is not walked again.
+            _report_migrated(result)
+        return 1 if result.errors or result.refused or result.unconfirmed else 0
 
     return run_connected(_run)
+
+
+def _report_migrated(result: Any) -> None:
+    print(
+        f"{result.moved} original(s) moved to the bucket ({result.bytes} bytes), "
+        f"{result.skipped} gone, replaced or erased meanwhile, {result.unneeded} nothing "
+        f"needs now (left to the sweep), {len(result.errors)} not moved, "
+        f"{len(result.unconfirmed)} switched but unconfirmed, {len(result.refused)} "
+        "namespace(s) refused by an erasure"
+    )
+    if result.moved:
+        print(
+            "the ClickHouse copies stay until loom.document_blobs merges their parts; "
+            "OPTIMIZE TABLE loom.document_blobs FINAL drops them now"
+        )
+    for line in result.errors:
+        print(f"error: {line}", file=sys.stderr)
+    for line in result.refused:
+        print(f"refused: {line}", file=sys.stderr)
+    for line in result.unconfirmed:
+        print(f"switched, unconfirmed: {line}", file=sys.stderr)
 
 
 async def _record(namespace: str, started: float, result: Any) -> None:

@@ -384,8 +384,8 @@ async def test_a_move_waits_out_an_unfinished_erasure_of_its_scope(
     # This namespace's does.
     await _erasure(ch, org, "namespace", ns, "in_progress")
     result = await migrate_originals(org=org)
-    assert (result.moved, len(result.errors)) == (0, 1)
-    assert "erasure" in result.errors[0]
+    assert (result.moved, result.errors, len(result.refused)) == (0, [], 1)
+    assert "erasure" in result.refused[0]
     assert await blobs.locate(org, ns, held.sha, ch=ch) == blobs.Stored(6, "")
     assert _keys(s3) == []
 
@@ -442,8 +442,8 @@ async def test_any_user_erasure_of_the_org_fences_the_move(
     # Carol never uploaded it; a document of hers could name it at any moment.
     await _erasure(ch, org, "user_id", "carol", "in_progress")
     result = await migrate_originals(org=org)
-    assert (result.moved, len(result.errors)) == (0, 1)
-    assert "user_id, in_progress" in result.errors[0]
+    assert (result.moved, result.errors, len(result.refused)) == (0, [], 1)
+    assert "user_id, in_progress" in result.refused[0]
     assert await blobs.locate(org, ns, held.sha, ch=ch) == blobs.Stored(held.size, "")
 
 
@@ -456,7 +456,7 @@ async def test_a_failed_erasure_fences_the_move_until_it_is_completed(
     await _erasure(ch, org, "namespace", ns, "failed")
     # The advice names the worker that retries it and the command that completes it.
     result = await migrate_originals(org=org, namespace=ns)
-    (error,) = result.errors
+    (error,) = result.refused
     assert "recovery worker" in error and "loom erasure-re-verify --resume" in error
     assert await blobs.locate(org, ns, held.sha, ch=ch) == blobs.Stored(held.size, "")
     assert _keys(s3) == []
@@ -485,7 +485,7 @@ async def test_an_erasure_that_just_finished_fences_the_move(
         settings={"async_insert": 0},
     )
     result = await migrate_originals(org=org, namespace=ns)
-    (error,) = result.errors
+    (error,) = result.refused
     assert "which finished just now, covers it; run again in a minute" in error
     assert await blobs.locate(org, ns, held.sha, ch=ch) == blobs.Stored(held.size, "")
     assert _keys(s3) == []

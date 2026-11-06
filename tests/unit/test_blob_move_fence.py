@@ -34,9 +34,9 @@ def test_a_scope_it_does_not_know_counts_as_covering() -> None:
 
 
 def test_the_advice_names_the_erasure_that_holds_the_move_longest() -> None:
-    done = _Erasure("e1", "user_id", "completed")
-    running = _Erasure("e2", "namespace", "in_progress")
-    failed = _Erasure("e3", "user_id", "failed")
+    done = _Erasure("e1", "user_id", "alice", "completed")
+    running = _Erasure("e2", "namespace", "docs", "in_progress")
+    failed = _Erasure("e3", "user_id", "bob", "failed")
     advice = _fence_advice([done, running], "covers it")
     assert advice == "erasure e2 (namespace, in_progress) covers it; run again once it has finished"
     # A failed one: the recovery worker retries it, and past its attempts a re-verify.
@@ -52,11 +52,11 @@ def test_the_advice_names_the_erasure_that_holds_the_move_longest() -> None:
 
 
 def test_only_an_erasure_that_certainly_deletes_the_namespace_takes_a_move_back() -> None:
-    assert _Erasure("e", "namespace", "in_progress", "docs").deletes_namespace("docs")
-    assert _Erasure("e", "namespace_list", "in_progress", '["docs"]').deletes_namespace("docs")
-    assert not _Erasure("e", "namespace", "in_progress", "other").deletes_namespace("docs")
+    assert _Erasure("e", "namespace", "docs", "in_progress").deletes_namespace("docs")
+    assert _Erasure("e", "namespace_list", '["docs"]', "in_progress").deletes_namespace("docs")
+    assert not _Erasure("e", "namespace", "other", "in_progress").deletes_namespace("docs")
     # Fenced on, but not taken for one: a list it cannot read, a user's, a scope it does
     # not know.
-    assert not _Erasure("e", "namespace_list", "in_progress", "not json").deletes_namespace("docs")
-    assert not _Erasure("e", "user_id", "in_progress", "alice").deletes_namespace("docs")
-    assert not _Erasure("e", "org", "in_progress", "acme").deletes_namespace("docs")
+    assert not _Erasure("e", "namespace_list", "not json", "in_progress").deletes_namespace("docs")
+    assert not _Erasure("e", "user_id", "alice", "in_progress").deletes_namespace("docs")
+    assert not _Erasure("e", "org", "acme", "in_progress").deletes_namespace("docs")

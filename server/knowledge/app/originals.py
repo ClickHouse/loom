@@ -31,14 +31,16 @@ class Migrated:
     unneeded: int = 0
     pending: int = 0  # a dry run's originals still held in ClickHouse
     bytes: int = 0  # of the originals moved, or with a dry run of those held
-    errors: list[str] = field(default_factory=list)
-    # Switched as an erasure that may cover it started and had not finished (or its check
-    # failed): what that erasure decides for the original holds for the switched row.
+    errors: list[str] = field(default_factory=list)  # originals not moved, one line each
+    # Namespaces an erasure refused for the rest of the walk, one line each.
+    refused: list[str] = field(default_factory=list)
+    # Switches that could not be confirmed: an erasure that raced it has not finished, a
+    # check or the row's insert failed, or taking it back failed. Each says what to check.
     unconfirmed: list[str] = field(default_factory=list)
 
 
 async def migrate_originals(
-    *, org: str = "", namespace: str = "", dry_run: bool = False
+    *, org: str = "", namespace: str = "", dry_run: bool = False, out: Migrated | None = None
 ) -> Migrated:
     """Move every original held in ClickHouse that its namespace still needs (of
     `org`, or of its `namespace`) to the bucket, counting the others as left to the
@@ -48,7 +50,8 @@ async def migrate_originals(
     read the namespace's fence again: an erasure holding it refuses the rest of the
     namespace in one line. A ClickHouse error stops the run: the next run goes on."""
     set_query_tag("cli:knowledge-migrate-originals")
-    out = Migrated()
+    # The caller's, when given: what a run stopped by an error gathered is still its own.
+    out = out if out is not None else Migrated()
     for org_, ns in await _scopes(org, namespace):
         # One read of the ledger for the namespace; again after any original not switched
         # cleanly (gone or replaced, held back, or switched but unconfirmed).
@@ -70,7 +73,7 @@ async def migrate_originals(
             after = page.after
         if refusal:
             # The rest of the namespace is refused alike: once, not once per original.
-            out.errors.append(
+            out.refused.append(
                 f"{org_}/{ns}: {refusal}; the rest of its originals are left in ClickHouse"
             )
     return out
@@ -114,6 +117,10 @@ async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> bool:
         if e.moved:
             out.moved += 1
             out.bytes += held.size
+        # Logged now too: a switched row is not walked again, so this line is its record.
+        log.warning(
+            "originals: %s/%s/%s switched, unconfirmed: %s", held.org, held.namespace, held.sha, e
+        )
         out.unconfirmed.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
         return False
     except (

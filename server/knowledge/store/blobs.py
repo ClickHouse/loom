@@ -303,8 +303,8 @@ WHERE org = {org:String}
 class _Erasure:
     id: str
     scope_type: str
+    scope_value: str
     status: str
-    scope_value: str = ""
 
     def deletes_namespace(self, namespace: str) -> bool:
         """Whether this erasure deletes every original of `namespace` for certain: its
@@ -366,7 +366,7 @@ async def _erasures_since(org: str, namespace: str, since_s: int, ch: _CHClient)
             _ERASURES_SINCE, params={"org": org, "since": since_s, "margin": _CLOCK_MARGIN_S}
         )
     return [
-        _Erasure(str(r["erasure_id"]), str(r["scope_type"]), str(r["state"]), str(r["scope_value"]))
+        _Erasure(str(r["erasure_id"]), str(r["scope_type"]), str(r["scope_value"]), str(r["state"]))
         for r in rows
         if _covers(str(r["scope_type"]), str(r["scope_value"]), namespace)
     ]
@@ -459,7 +459,10 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     try:
         back = await objects.read(loc)
     except objects.ObjectStoreError:
-        await objects.delete(loc.bucket, [loc.key])  # no row names it yet
+        try:
+            await objects.delete(loc.bucket, [loc.key])  # no row names it yet
+        except objects.ObjectStoreError as e:
+            log.warning("blobs: %s left to the bucket walk: %s", loc.uri(), e)
         raise
     if back is not None and hashlib.sha256(back).hexdigest() != held.sha:
         await objects.delete(loc.bucket, [loc.key])
