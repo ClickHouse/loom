@@ -729,7 +729,7 @@ def test_an_inline_scan_beside_a_readable_logo_is_not_complete(engine: FakeEngin
     assert not a.coverage.complete and len(engine.seen) == 1
     assert a.coverage.failed[0].reason == (
         "OCR did not read all of its pictures:"
-        " a picture drawn inline covers a fifth of it, which OCR does not read"
+        " it draws a picture inline beside those OCR read, which OCR does not read"
     )
 
 
@@ -743,3 +743,40 @@ def test_an_inline_icon_drawn_many_times_takes_no_picture_room(
     text = text_at(72, 740, "A page of text, a row of icons and a screenshot.")
     a = extract(laid_out_pdf([text + icons + shot], image=GRAY, forms=(icon,)), "i.pdf")
     assert a.coverage.complete and len(engine.seen) == 1
+
+
+def test_a_text_page_checks_every_large_inline_picture_not_the_largest_alone(
+    engine: FakeEngine,
+) -> None:
+    lines = b"".join(
+        text_at(110, 580 - 18 * k, f"Line {k} of the scanned page text.") for k in range(20)
+    )
+    scan = b"q 400 0 0 400 100 200 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q\n"  # filled
+    figure = b"q 400 0 0 300 100 0 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q\n"  # not filled
+    a = extract(laid_out_pdf([scan + lines + figure]), "t.pdf")
+    assert [f.reason for f in a.coverage.failed] == [
+        "OCR did not read all of its pictures:"
+        " a picture drawn inline covers a fifth of it, which OCR does not read"
+    ]
+
+
+def test_an_inline_spacer_beside_a_scan_leaves_it_complete(engine: FakeEngine) -> None:
+    scan = b"q 400 0 0 400 100 200 cm /Im1 Do Q\n"
+    spacer = b"q 0.75 0 0 0.75 10 10 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q"
+    a = extract(laid_out_pdf([scan + spacer], image=GRAY), "s.pdf")
+    assert a.coverage.complete
+
+
+def test_a_text_page_whose_drawing_fails_beside_an_image_is_partial(
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*args: object) -> None:
+        raise KeyError("/Resources")
+
+    monkeypatch.setattr(layout, "drawing", broken)
+    text = text_at(72, 740, "A page of text and a screenshot.")
+    a = extract(laid_out_pdf([text + b"q 400 0 0 300 100 300 cm /Im1 Do Q"], image=GRAY), "d.pdf")
+    assert [f.reason for f in a.coverage.failed] == [
+        "OCR did not read all of its pictures:"
+        " its drawing could not be read, so a picture on it may be unread"
+    ]

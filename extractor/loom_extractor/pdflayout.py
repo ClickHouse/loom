@@ -48,6 +48,7 @@ from pypdf.generic import ContentStream
 _MAX_RULES = 4_000  # the rules a page is searched for grids by
 _MAX_OPERATIONS = 400_000  # the drawing operators a page's rules are read from
 MAX_PICTURES = 50  # the images OCR reads on one page
+_MAX_INLINE = 50  # the largest inline images a page's drawing keeps
 _MAX_DRAWN = 1_000  # the distinct images a page's drawing is collected for
 _MAX_FORM_DEPTH = 4  # how deep form XObjects are walked for rules
 _MAX_CMAP_BYTES = 1 << 20  # a ToUnicode map read for widths
@@ -447,13 +448,13 @@ class Picture:
 class Drawing:
     """What a page draws besides its text: its rules, its image XObjects (each
     once, where it is first drawn), whether every one was collected, and the
-    largest image it draws inline (None when it draws none), which OCR does not
+    largest images it draws inline (up to `_MAX_INLINE`), which OCR does not
     read."""
 
     rules: list[_Rule]
     pictures: list[Picture]
     whole: bool
-    inline: Picture | None
+    inline: list[Picture]
 
 
 def drawing(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> Drawing:
@@ -471,7 +472,7 @@ def drawing(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> Draw
     pictures: list[Picture] = []  # each image once, where it is first drawn
     collected: set[object] = set()
     cut = [False]  # an image past the cap
-    inline: list[Picture] = []  # the largest image drawn inline, at most one
+    largest_inline: list[Picture] = []  # the largest images drawn inline
     budget = [_MAX_OPERATIONS]
 
     def add(ax: float, ay: float, bx: float, by: float) -> None:
@@ -538,9 +539,11 @@ def drawing(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> Draw
             elif op == b"INLINE IMAGE":  # its box, though OCR reads no inline image
                 corners = [to(*tp(u, v)) for u, v in ((0, 0), (1, 0), (1, 1), (0, 1))]
                 xs, ys = [c[0] for c in corners], [c[1] for c in corners]
-                one = Picture(None, list(ctm), (min(xs), min(ys), max(xs), max(ys)))
-                if not inline or one.area > inline[0].area:
-                    inline[:] = [one]
+                largest_inline.append(
+                    Picture(None, list(ctm), (min(xs), min(ys), max(xs), max(ys)))
+                )
+                if len(largest_inline) > _MAX_INLINE:  # the smallest goes: only size matters
+                    largest_inline.remove(min(largest_inline, key=lambda p: p.area))
             elif op == b"Do" and operands and depth < _MAX_FORM_DEPTH and resources is not None:
                 xobjects = resources.get_object().get("/XObject")
                 if not xobjects:
@@ -575,7 +578,7 @@ def drawing(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> Draw
         found if len(found) <= _MAX_RULES and budget[0] > 0 else [],
         pictures,
         budget[0] > 0 and not cut[0],
-        inline[0] if inline else None,
+        largest_inline,
     )
 
 

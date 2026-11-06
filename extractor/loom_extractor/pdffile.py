@@ -249,24 +249,24 @@ def _read_layout(
     if len(targets) > layout.MAX_PICTURES:
         problems.append(f"it shows more than {layout.MAX_PICTURES} pictures OCR would read")
         targets = targets[: layout.MAX_PICTURES]
-    # The largest image the page draws inline, there or in a form, which OCR does
-    # not read: `drawing` says, and when it read the page whole the stream need
-    # not be parsed again.
-    largest = drew.inline if drew is not None else None
-    inline = (
-        largest is not None
+    # The images the page draws inline, there or in a form, which OCR does not
+    # read, those under a point wide aside: `drawing` lists them, and only when it
+    # did not read the page whole is the stream parsed again for one.
+    shown_inline = [p for p in (drew.inline if drew else []) if math.hypot(p.ctm[0], p.ctm[1]) >= 1]
+    draws_inline = not texted and (
+        bool(shown_inline)
         if drew is not None and drew.whole
         else _has_image(page, reader, inline_only=True)
     )
     # a page of only sub-point pictures has nothing to fail, unless it draws an image inline
-    if not texted and not targets and (inline or (not pictures and _has_image(page, reader))):
+    if not texted and not targets and (draws_inline or (not pictures and _has_image(page, reader))):
         read.failure = (
             _NEEDS_OCR
             if ocr.engine() is None
             else "no text layer, and its drawing could not be read"
             if drew is None
             else "no text layer: its image is drawn inline, which OCR does not read"
-            if inline
+            if draws_inline
             else "no text layer, and no image it draws is one OCR finds"
         )
     for picture in targets:
@@ -294,16 +294,14 @@ def _read_layout(
     # after OCR's own reasons: one of them (OCR off) is what an operator can act on
     # an inline picture a fifth of a text page (its own text not filling it), or
     # any beside the pictures OCR read on a page with no text of its own
-    if texted:
-        unread_inline = (
-            largest is not None
-            and largest.area >= ocr.PICTURE_SHARE * area
-            and not _filled(found, largest)
-        )
-    else:
-        unread_inline = bool(targets) and inline
-    if unread_inline:
+    if texted and any(
+        p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p) for p in shown_inline
+    ):
         problems.append("a picture drawn inline covers a fifth of it, which OCR does not read")
+    elif not texted and targets and draws_inline:
+        problems.append("it draws a picture inline beside those OCR read, which OCR does not read")
+    if drew is None and texted and _has_image(page, reader):
+        problems.append("its drawing could not be read, so a picture on it may be unread")
     if drew is not None and not drew.whole and (pictures or _has_image(page, reader)):
         problems.append("it draws more than its drawing is read for, so a picture may be unread")
     if problems:
