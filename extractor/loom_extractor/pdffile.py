@@ -1,15 +1,16 @@
-"""A PDF's text layer as blocks, read with pypdf: each page's text in reading
-order, cited by its page. The document's outline (its bookmarks) gives the
-headings: an entry is a heading block on the page it points to, at the line
-that holds its title (after the heading before it when no line does), and the
-text after it sits in its section.
+"""A PDF as blocks, read with pypdf: each page as it is laid out
+(`pdflayout`), cited by its page. Furniture is left out and named; columns read
+in order; ruled and borderless tables are typed tables whose rows are blocks
+cited by pages and rows; headings come from the outline (its bookmarks) when
+the file has one, else from the type. A page whose laid-out reading holds less
+of its text than its text layer, or that is past the reader's bounds, is read
+as its text layer: its text split at blank lines, the outline's headings at the
+lines that hold their titles.
 
-A PDF has no paragraphs of its own: a page's text is split at blank lines, and
-a page with none is one block. Tables are read as their text, row by row as
-the page lays them out. A page with no text that draws an image (an image
-object, one in a form, or one inline in its content) is a failed unit: its
-text needs OCR, which this parser does not run, so a page of images and no
-text is never reported as complete.
+A page with no text that draws an image (an image object, one in a form, or
+one inline in its content) is a failed unit: its text needs OCR, which this
+parser does not run, so a page of images and no text is never reported as
+complete.
 
 Pure and I/O-free.
 """
@@ -19,7 +20,7 @@ from __future__ import annotations
 import bisect
 import io
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -140,11 +141,13 @@ def _paragraphs(lines: list[str]) -> list[str]:
     return out
 
 
-def _page(acc: Blocks, text: str, number: int, headings: list[tuple[int, str]]) -> None:
+def _page(
+    acc: Blocks, text: str, number: int, headings: list[tuple[int, str]], shift: int = 0
+) -> None:
     """Page `number`'s blocks: its text split at the lines that hold a heading's
-    title. Each heading, in outline order, takes the first line after the last
-    heading's that holds its title; one that finds none follows the last heading
-    (the page's start, before any)."""
+    title. Each heading, in outline order and `shift` levels down, takes the
+    first line after the last heading's that holds its title; one that finds
+    none follows the last heading (the page's start, before any)."""
     loc = Locator(page_start=number, page_end=number)
     lines = text.split("\n")
     where: dict[str, list[int]] = {}  # each line's text: the lines that hold it, in order
@@ -160,7 +163,7 @@ def _page(acc: Blocks, text: str, number: int, headings: list[tuple[int, str]]) 
             last = found[k]
         (at.setdefault(last, []) if last >= 0 else first).append((depth, title))
     for depth, title in first:
-        acc.heading(depth, title, loc)
+        acc.heading(depth + shift, title, loc)
     run: list[str] = []
     for i, line in enumerate(lines):
         if i in at:
@@ -168,7 +171,7 @@ def _page(acc: Blocks, text: str, number: int, headings: list[tuple[int, str]]) 
                 acc.add("paragraph", para, loc)
             run = []
             for depth, title in at[i]:
-                acc.heading(depth, title, loc)
+                acc.heading(depth + shift, title, loc)
         else:
             run.append(line)
     for para in _paragraphs(run):
@@ -189,6 +192,7 @@ class _Page:
     page_height: float = 0.0
     other: list[layout.Span] = field(default_factory=list)
     furniture: list[str] = field(default_factory=list)
+    dropped: list[layout.Span] = field(default_factory=list)  # runs drawn twice, read once
     failure: str = ""
 
 
@@ -196,7 +200,7 @@ def _read_layout(
     page: pypdf.PageObject, reader: pypdf.PdfReader, read: _Page
 ) -> list[layout._Rule]:
     found, read.other, read.width, read.page_height, turn = layout.spans(page)
-    read.lines = layout.lines_of(found, layout.text_words(read.text))
+    read.lines = layout.lines_of(found, layout.text_words(read.text), read.dropped)
     try:
         return layout.rules(page, reader, turn)
     except MemoryError:
@@ -206,7 +210,8 @@ def _read_layout(
 
 
 def _layout_chars(read: _Page) -> Counter[str]:
-    """The letters and digits the page's elements, furniture and other runs hold."""
+    """The letters and digits the page's elements, furniture and other runs hold,
+    and the second copies of runs drawn twice (the text layer holds both)."""
     chars: Counter[str] = Counter()
     for e in read.elements or []:
         if e.table is not None:
@@ -216,68 +221,119 @@ def _layout_chars(read: _Page) -> Counter[str]:
             chars.update(layout.text_chars(e.text))
     for t in read.furniture:
         chars.update(layout.text_chars(t))
-    for s in read.other:
+    for s in [*read.other, *read.dropped]:
         chars.update(layout.text_chars(s.text))
     return chars
 
 
-def _merge_tables(pages: list[_Page]) -> None:
+def _merge_tables(reads: list[_Page]) -> None:
     """A table that a page ends with and the next page starts with, in the same
-    columns, is one table; the next page's repeat of its header row is dropped."""
-    for a, b in zip(pages, pages[1:], strict=False):
-        if not a.elements or not b.elements:
+    columns, is one table, carried on over as many pages as go on with it; the
+    next page's repeat of its header row is dropped. A page read as its text
+    layer, failed or blank ends it."""
+    open_: layout.TableBox | None = None  # the table the page before ended with
+    before = 0  # that page's number
+    for r in reads:
+        els = r.elements
+        if not els:
+            open_ = None
             continue
-        first, last = b.elements[0], a.elements[-1]
-        if first.table is None or last.table is None:
-            continue
-        ta, tb = last.table, first.table
-        if len(ta.x) != len(tb.x) or any(abs(p - q) > 6 for p, q in zip(ta.x, tb.x, strict=True)):
-            continue
-        rows = tb.rows[1:] if tb.rows[0] == ta.rows[0] else tb.rows
-        ta.row_pages = ta.row_pages or [a.number] * len(ta.rows)
-        ta.rows.extend(rows)
-        ta.row_pages.extend([b.number] * len(rows))
-        b.elements.pop(0)
+        first = els[0].table
+        if (
+            open_ is not None
+            and before == r.number - 1
+            and first is not None
+            and len(open_.x) == len(first.x)
+            and all(abs(p - q) <= 6 for p, q in zip(open_.x, first.x, strict=True))
+        ):
+            rows = first.rows[1:] if first.rows[0] == open_.rows[0] else first.rows
+            open_.row_pages = open_.row_pages or [before] * len(open_.rows)
+            open_.rows.extend(rows)
+            open_.row_pages.extend([r.number] * len(rows))
+            els.pop(0)
+            if not els:  # the page is all the table: it goes on
+                before = r.number
+                continue
+        last = els[-1].table if els else None
+        open_, before = last, r.number
 
 
 def _place_outline(read: _Page, shift: int) -> None:
-    """The page's outline entries as headings, each `shift` levels below the
-    headings set larger than any the outline names (a title it leaves out): an
-    entry takes the first line after the last one placed that holds its title,
-    its element split around it, else is a heading of its own after it."""
+    """The page's outline entries as headings, `shift` levels down (under a
+    title set larger than any they name). Each entry, in outline order, takes
+    the first line after the last one placed that holds its title (or a
+    paragraph whose text is its title), its paragraph split around it; one that
+    finds none is a heading of its own after the last one placed (the page's
+    start, before any). Linear in the page's lines, as the text layer's is."""
     els = read.elements or []
-    last = -1  # the element the last placed heading is
-    for depth, title in read.headings:
-        key = _key(title)
-        hit: tuple[int, int | None] | None = None
-        for k in range(last + 1, len(els)):
-            e = els[k]
-            if e.kind == "table" or e.title:
-                continue
-            if _key(e.text) == key:
-                hit = (k, None)
-                break
-            at = next((i for i, ln in enumerate(e.lines) if _key(ln.text) == key), None)
-            if at is not None:
-                hit = (k, at)
-                break
-        if hit is None:
-            els.insert(last + 1, layout.Element("text", title=title, level=depth + shift))
-            last += 1
+    where: dict[str, list[int]] = defaultdict(list)  # each text: the slots that hold it, in order
+    slots = 0  # a slot per element (a paragraph whole) and per line, in reading order
+    for e in els:
+        if e.kind == "table" or e.title:
+            slots += 1
             continue
-        k, at = hit
-        if at is not None:  # the title is a line inside an element: it becomes one of its own
-            e = els[k]
-            parts = [
-                layout.Element(e.kind, e.lines[:at]),
-                layout.Element("text", [e.lines[at]]),
-                layout.Element(e.kind, e.lines[at + 1 :]),
-            ]
-            kept = [p for p in parts if p.lines]
-            els[k : k + 1] = kept
-            k += 1 if parts[0].lines else 0
-        els[k].level = depth + shift
-        last = k
+        if len(e.lines) > 1:
+            where[_key(e.text)].append(slots)
+            slots += 1
+        for ln in e.lines:
+            where[_key(ln.text)].append(slots)
+            slots += 1
+    hit: dict[int, int] = {}  # a slot an entry takes: its depth
+    after: dict[int, list[tuple[int, str]]] = defaultdict(
+        list
+    )  # entries after a slot (-1: before any)
+    last = -1
+    for depth, title in read.headings:
+        found = where.get(_key(title), [])
+        k = bisect.bisect_right(found, last)
+        if k < len(found):
+            last = found[k]
+            hit[last] = depth
+        else:
+            after[last].append((depth, title))
+
+    def heads(slot: int) -> list[layout.Element]:
+        return [layout.Element("text", title=t, level=d + shift) for d, t in after.get(slot, [])]
+
+    out = heads(-1)
+    slot = 0
+    for e in els:
+        if e.kind == "table" or e.title:
+            out.append(e)
+            out += heads(slot)
+            slot += 1
+            continue
+        whole = None
+        if len(e.lines) > 1:
+            whole, slot = slot, slot + 1
+        if whole is not None and whole in hit:  # the paragraph is the title
+            e.level = hit[whole] + shift
+            out.append(e)
+            out += heads(whole)
+            for _ in e.lines:
+                out += heads(slot)
+                slot += 1
+            continue
+        if whole is not None:
+            out += heads(whole)
+        run: list[layout.Line] = []
+        for ln in e.lines:
+            if slot in hit:
+                if run:
+                    out.append(layout.Element(e.kind, run))
+                    run = []
+                out.append(layout.Element("text", [ln], level=hit[slot] + shift))
+            else:
+                run.append(ln)
+            if after.get(slot):
+                if run:
+                    out.append(layout.Element(e.kind, run))
+                    run = []
+                out += heads(slot)
+            slot += 1
+        if run:
+            out.append(e if len(run) == len(e.lines) else layout.Element(e.kind, run))
+    read.elements = out
 
 
 def _key(text: str) -> str:
@@ -325,7 +381,7 @@ def _emit_table(
     head = [Cell(h, "string") if h else EMPTY for h in box.rows[0]]
     rows = Rows(head, header_row=1)
     for n, row in enumerate(box.rows[1:], start=2):
-        cells = {i: c for i, c in enumerate(typed_cell(v) for v in row) if c.kind != "empty"}
+        cells = {i: c for i, c in enumerate(_shown_cell(v) for v in row) if c.kind != "empty"}
         if cells:
             rows.add(n, cells, budget)
     start = len(acc.blocks)
@@ -350,6 +406,18 @@ def _emit_table(
                 ),
             )
         )
+
+
+def _shown_cell(text: str) -> Cell:
+    """A cell typed as a CSV field is when its value reads back as the page
+    shows it, else as that text: `1.50` and the version `1.10` stay text, as
+    printing them back as numbers would change what the page says."""
+    cell = typed_cell(text)
+    return (
+        cell
+        if cell.kind in ("empty", "string") or cell.text == text.strip()
+        else Cell(text.strip(), "string")
+    )
 
 
 def extract_pdf(data: bytes) -> Artifact:
@@ -394,27 +462,38 @@ def extract_pdf(data: bytes) -> Artifact:
             raise
         except Exception:  # noqa: BLE001 — a page whose layout cannot be read is read as its text layer
             read.lines = []
-    _lay_out(reads, page_rules, outline_given=bool(outline), warnings=warnings)
+    shift = _lay_out(reads, page_rules, outline_given=bool(outline), warnings=warnings)
     acc = Blocks()
     budget = Budget()
     tables: list[Table] = []
     for read in reads:
         if read.failure:
             failed.append(Failure(f"page {read.number}", read.failure))
-            _page(acc, "", read.number, read.headings)  # its headings still open their sections
+            _page(
+                acc, "", read.number, read.headings, shift
+            )  # its headings still open their sections
         elif read.elements is None:
-            _page(acc, read.text, read.number, read.headings)
+            _page(acc, read.text, read.number, read.headings, shift)
         else:
             _emit(acc, read, budget, tables, failed)
-    furniture = Counter(_unicode(t)[0] for read in reads for t in read.furniture)
     attrs: dict[str, Any] = {"pages": len(pages)}
+    # Furniture by its shape (digits aside): a running footer is one entry,
+    # its first text and the pages it is on.
+    furniture: dict[str, list[Any]] = {}
+    for read in reads:
+        for t in read.furniture:
+            furniture.setdefault(layout.shape(t), [_unicode(t)[0], 0])[1] += 1
     if furniture:
-        attrs["furniture"] = [
-            {"text": t, "pages": n} for t, n in sorted(furniture.items())[:_MAX_FURNITURE]
-        ]
+        kinds = list(furniture.values())
+        attrs["furniture"] = [{"text": t, "pages": n} for t, n in kinds[:_MAX_FURNITURE]]
+        cut = (
+            f"; the first {_MAX_FURNITURE} of {len(kinds)} kinds named"
+            if len(kinds) > _MAX_FURNITURE
+            else ""
+        )
         warnings.append(
-            f"page furniture left out of the text: {sum(furniture.values())} header, footer"
-            " or page-number lines (attrs.furniture)"
+            f"page furniture left out of the text: {sum(n for _, n in kinds)} header, footer"
+            f" or page-number lines (attrs.furniture{cut})"
         )
     try:
         title = reader.metadata.title if reader.metadata else None
@@ -448,42 +527,78 @@ def _lay_out(
     *,
     outline_given: bool,
     warnings: list[str],
-) -> None:
-    """Each readable page's elements, from its lines: furniture out, columns in
-    order, tables found, headings marked; a page whose elements hold fewer of
-    its words than its text layer does is read as its text layer."""
+) -> int:
+    """Each readable page's elements, from its lines: columns in order, tables
+    found, furniture out (a line no table holds), headings marked. A page whose
+    elements hold less of its letters and digits than its text layer does, past
+    the reader's line bound, or whose layout fails, is read as its text layer.
+    The outline's level shift (`_outline_shift`), 0 without one."""
     live = [r for r in reads if not r.failure and r.lines]
     marks = layout.furniture([(r.lines, r.page_height) for r in live])
+    candidates: dict[int, set[int]] = {}  # per page: the runs of its furniture candidates
     for k, r in enumerate(live):
-        drop = marks.get(k, set())
-        r.furniture = [ln.text for i, ln in enumerate(r.lines) if i in drop]
-        r.lines = [ln for i, ln in enumerate(r.lines) if i not in drop]
-    body, spacing = layout.body_style(ln for r in live for ln in r.lines)
+        candidates[r.number] = {id(s) for i in marks.get(k, set()) for s in r.lines[i].spans}
+    body, spacing = layout.body_style(
+        ln
+        for r in live
+        for ln in r.lines
+        if not all(id(s) in candidates[r.number] for s in ln.spans)
+    )
     for r, found in zip(reads, page_rules, strict=True):
         if r.failure or not r.lines:
             continue
-        gx = layout.gutter(r.lines, r.width)
-        lines = layout.split_columns(r.lines, gx) if gx is not None else r.lines
-        tables = layout.ruled_tables(lines, found)
-        held = set().union(*(t.lines for t in tables)) if tables else set()
-        tables += layout.borderless_tables(lines, held, r.width)
-        r.elements = layout.elements(lines, tables, spacing)
-        want = layout.text_chars(r.text)
-        got = _layout_chars(r)
-        if want and sum((want & got).values()) < _TRUSTED * sum(want.values()):
-            r.elements = None
-            warnings.append(
-                f"page {r.number}: read as its text layer; its layout held less of its text"
-            )
-    _merge_tables([r for r in reads if r.elements is not None])
+        if len(r.lines) > layout.MAX_LINES:
+            reason = f"it holds more than {layout.MAX_LINES:,} lines"
+        else:
+            try:
+                _lay_out_page(r, found, candidates.get(r.number, set()), spacing)
+                reason = ""
+            except MemoryError:
+                raise
+            except Exception as failure:  # noqa: BLE001 — a page the reader fails on is read as its text layer
+                reason = f"its layout could not be read: {type(failure).__name__}"
+        if not reason:
+            want = layout.text_chars(r.text)
+            if want and sum((want & _layout_chars(r)).values()) < _TRUSTED * sum(want.values()):
+                reason = "its layout held less of its text"
+        if reason:
+            r.elements, r.furniture = None, []
+            warnings.append(f"page {r.number}: read as its text layer; {reason}")
+    _merge_tables(reads)
     layout.heading_levels([e for r in reads for e in (r.elements or [])], body)
-    if outline_given:
-        # The outline names the headings and their depth; the style keeps only
-        # what is set above them (a title).
-        shift = _outline_shift(reads)
-        for r in reads:
-            for e in r.elements or []:
-                if e.level > shift:
-                    e.level = 0
-            if r.elements is not None:
-                _place_outline(r, shift)
+    if not outline_given:
+        return 0
+    # The outline names the headings and their depth; the type keeps only what
+    # is set above them (a title).
+    shift = _outline_shift(reads)
+    for r in reads:
+        for e in r.elements or []:
+            if e.level > shift:
+                e.level = 0
+        if r.elements is not None:
+            _place_outline(r, shift)
+    return shift
+
+
+def _lay_out_page(r: _Page, found: list[layout._Rule], candidates: set[int], spacing: Any) -> None:
+    gx = layout.gutter(r.lines, r.width)
+    lines = layout.split_columns(r.lines, gx) if gx is not None else r.lines
+    tables = layout.ruled_tables(lines, found)
+    held = set().union(*(t.lines for t in tables)) if tables else set()
+    tables += layout.borderless_tables(lines, held, r.width)
+    held = set().union(*(t.lines for t in tables)) if tables else set()
+    furniture = {
+        i
+        for i, ln in enumerate(lines)
+        if i not in held and ln.spans and all(id(s) in candidates for s in ln.spans)
+    }
+    r.furniture = [lines[i].text for i in sorted(furniture)]
+    index: dict[int, int] = {}  # a line's place among the lines kept
+    kept: list[layout.Line] = []
+    for i, ln in enumerate(lines):
+        if i not in furniture:
+            index[i] = len(kept)
+            kept.append(ln)
+    for t in tables:
+        t.lines = {index[i] for i in t.lines}
+    r.elements = layout.elements(kept, tables, spacing)

@@ -117,10 +117,10 @@ def _assemble(objs: list[bytes], pages_id: int) -> bytes:
     return bytes(out)
 
 
-def laid_out_pdf(pages: list[bytes], *, rotate: tuple[int, ...] = ()) -> bytes:
+def laid_out_pdf(pages: list[bytes], *, rotate: tuple[int, ...] = (), width: float = 612) -> bytes:
     """A PDF of `pages`, each its content stream as written: fonts F1
-    (Helvetica), F2 (Helvetica-Bold) and F3 (Courier), US Letter, and `/Rotate
-    90` on the pages `rotate` lists."""
+    (Helvetica), F2 (Helvetica-Bold) and F3 (Courier), `width` points wide and
+    792 high, and `/Rotate 90` on the pages `rotate` lists."""
     objs: list[bytes] = []
 
     def add(body: bytes) -> int:
@@ -144,9 +144,9 @@ def laid_out_pdf(pages: list[bytes], *, rotate: tuple[int, ...] = ()) -> bytes:
         turn = b" /Rotate 90" if k in rotate else b""
         page_ids.append(
             add(
-                b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792]%s"
+                b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d 792]%s"
                 b" /Contents %d 0 R /Resources << /Font << %s >> >> >>"
-                % (pages_id, turn, contents, fonts)
+                % (pages_id, int(width), turn, contents, fonts)
             )
         )
     kids = b" ".join(b"%d 0 R" % p for p in page_ids)

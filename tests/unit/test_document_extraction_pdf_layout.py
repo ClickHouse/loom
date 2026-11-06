@@ -4,8 +4,10 @@ aligned columns, headings from type, columns, page furniture and turned pages.""
 from __future__ import annotations
 
 from collections import Counter
+from io import BytesIO
 
 import pytest
+from pypdf import PdfReader
 
 from loom_extractor import extract, pdffile
 from loom_extractor import pdflayout as layout
@@ -139,9 +141,7 @@ def test_page_furniture_is_left_out_and_named() -> None:
     ]
     assert a.attrs["furniture"] == [
         {"text": "Design review draft", "pages": 3},
-        {"text": "Page 1", "pages": 1},
-        {"text": "Page 2", "pages": 1},
-        {"text": "Page 3", "pages": 1},
+        {"text": "Page 1", "pages": 3},  # one entry for each shape, digits aside
     ]
     assert any("furniture" in w for w in a.warnings)
     assert a.coverage.complete
@@ -182,6 +182,10 @@ def test_a_page_of_more_rules_than_the_bound_is_read_without_ruled_tables() -> N
     a = extract(laid_out_pdf([page]), "m.pdf")
     assert "events" in "\n".join(b.text for b in a.blocks)
     assert a.coverage.complete
+    reader = PdfReader(BytesIO(laid_out_pdf([page])))
+    assert (
+        layout.rules(reader.pages[0], reader, lambda x, y: (x, y)) == []
+    )  # no rules past the bound
 
 
 def test_a_fonts_unicode_map_gives_its_codes_widths() -> None:
@@ -207,3 +211,138 @@ def test_a_fonts_unicode_map_gives_its_codes_widths() -> None:
         0x20: "b",
         0x21: "fi",
     }
+
+
+def _cid_font(widths: list[object], cmap: bytes) -> object:
+    from pypdf.generic import (
+        ArrayObject,
+        DecodedStreamObject,
+        DictionaryObject,
+        FloatObject,
+        NameObject,
+        NumberObject,
+    )
+
+    def num(v: object) -> object:
+        return ArrayObject(num(x) for x in v) if isinstance(v, list) else NumberObject(v)
+
+    stream = DecodedStreamObject()
+    stream.set_data(cmap)
+    desc = DictionaryObject(
+        {
+            NameObject("/DW"): FloatObject(1000),
+            NameObject("/W"): ArrayObject(num(w) for w in widths),
+        }
+    )
+    return DictionaryObject(
+        {
+            NameObject("/Subtype"): NameObject("/Type0"),
+            NameObject("/BaseFont"): NameObject("/AAAAAA+Sans-Bold"),
+            NameObject("/DescendantFonts"): ArrayObject([desc]),
+            NameObject("/ToUnicode"): stream,
+        }
+    )
+
+
+def test_a_cid_fonts_widths_come_through_its_unicode_map() -> None:
+    cmap = b"beginbfchar <0003> <0043> <0004> <0065> endbfchar beginbfrange <000A> <000B> <006C> endbfrange"
+    w = layout._Widths(_cid_font([3, [500, 600], 10, 11, 250], cmap))
+    assert w.bold and w.of("Cell") == 500 + 600 + 250 + 250
+    assert w.of("x") == 1000  # a character the map does not give: the font's default
+
+
+def test_a_fonts_widths_past_their_budget_are_read_in_bounded_time() -> None:
+    import time
+
+    start = time.perf_counter()
+    layout._Widths(_cid_font([0, 65_534, 500] * 50_000, b""))
+    assert time.perf_counter() - start < 5
+
+
+def test_a_table_over_three_pages_is_one_table_and_rows_at_the_margins_stay_rows() -> None:
+    x = [72, 200, 300, 420]
+    pages = []
+    n = 0
+    for _ in range(3):
+        rows = [
+            ["Shard", "Rows", "Bytes"],
+            *[[str(n + i), str(10 * (n + i)), str(99 + i)] for i in range(38)],
+        ]
+        n += 38
+        pages.append(_grid(x, 785, rows))  # from the page's top tenth to its bottom tenth
+    a = extract(laid_out_pdf(pages), "t.pdf")
+    (t,) = a.tables
+    assert len(t.rows) == 114 and t.rows[0] == (0, 0, 99) and t.rows[-1] == (113, 1130, 136)
+    assert t.locator.to_dict()["page_end"] == 3
+    assert "furniture" not in a.attrs
+
+
+def test_text_drawn_turned_without_rotate_reads_in_its_direction() -> None:
+    page = b"q 0 1 -1 0 612 0 cm\n" + text_at(72, 400, "Turned heading", font=2, size=16)
+    page += _grid([72, 200, 300, 420], 360, TABLE) + b"Q\n"
+    a = extract(laid_out_pdf([page]), "t.pdf")
+    assert ("heading", 1, "Turned heading") in _blocks(a)
+    assert a.tables[0].rows[0] == ("events", 30, "platform")
+
+
+def test_an_outlines_headings_sit_under_a_larger_title_on_every_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    title = text_at(72, 740, "Storage design", font=2, size=22)
+    first = (
+        title
+        + text_at(72, 700, "Scope", font=2, size=14)
+        + text_at(72, 680, "What the design covers.")
+    )
+    second = text_at(72, 740, "Limits", font=2, size=14) + text_at(
+        72, 720, "What the design bounds."
+    )
+    data = laid_out_pdf([first, second])
+    # the same pages with an outline naming the sections, not the title
+    from pypdf import PdfWriter
+
+    w = PdfWriter()
+    for p in PdfReader(BytesIO(data)).pages:
+        w.add_page(p)
+    w.add_outline_item("Scope", 0)
+    w.add_outline_item("Limits", 1)
+    out = BytesIO()
+    w.write(out)
+    real = pdffile._lay_out_page
+
+    def second_page_fails(r, *args):  # page 2 is read as its text layer
+        if r.number == 2:
+            raise ValueError("unreadable")
+        return real(r, *args)
+
+    monkeypatch.setattr(pdffile, "_lay_out_page", second_page_fails)
+    a = extract(out.getvalue(), "o.pdf")
+    heads = [(b.depth, b.text, b.section_path) for b in a.blocks if b.type == "heading"]
+    assert heads == [
+        (1, "Storage design", ("Storage design",)),
+        (2, "Scope", ("Storage design", "Scope")),
+        (2, "Limits", ("Storage design", "Limits")),
+    ]
+
+
+def test_a_very_wide_page_and_a_long_outline_are_read_in_bounded_time() -> None:
+    import time
+
+    from pypdf import PdfWriter
+
+    lines = b"".join(
+        text_at(72, 700 - 12 * i, f"Line {i} of a page wider than any screen") for i in range(40)
+    )
+    data = laid_out_pdf([lines], width=1e9)
+    start = time.perf_counter()
+    a = extract(data, "w.pdf")
+    assert "Line 39" in "\n".join(b.text for b in a.blocks)
+    w = PdfWriter()
+    w.add_page(PdfReader(BytesIO(laid_out_pdf([lines]))).pages[0])
+    for i in range(3_000):
+        w.add_outline_item(f"Entry {i}", 0)
+    out = BytesIO()
+    w.write(out)
+    a = extract(out.getvalue(), "o.pdf")
+    assert sum(1 for b in a.blocks if b.type == "heading") == 3_000
+    assert time.perf_counter() - start < 30

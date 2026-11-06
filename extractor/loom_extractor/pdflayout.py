@@ -32,6 +32,7 @@ Pure and I/O-free; bounded by the page's operators and the rules it draws.
 
 from __future__ import annotations
 
+import bisect
 import math
 import re
 from collections import Counter, defaultdict
@@ -47,7 +48,8 @@ _MAX_RULES = 4_000  # the rules a page is searched for grids by
 _MAX_OPERATIONS = 400_000  # the drawing operators a page's rules are read from
 _MAX_FORM_DEPTH = 4  # how deep form XObjects are walked for rules
 _MAX_CMAP_BYTES = 1 << 20  # a ToUnicode map read for widths
-_MAX_CMAP_CODES = 65_536  # the codes a map's ranges are read for
+_MAX_CMAP_CODES = 65_536  # the codes a map's ranges are read for, and a font's widths
+MAX_LINES = 5_000  # a page with more lines is read as its text layer
 
 # The standard fonts' widths of ASCII 32-126 (Adobe's metrics), for a font that
 # names one and carries none of its own.
@@ -182,17 +184,20 @@ class _Widths:
             w = desc.get("/W")
             arr = list(w.get_object()) if w is not None else []
             i = 0
-            while i + 1 < len(arr) and len(widths) < _MAX_CMAP_CODES:
+            budget = _MAX_CMAP_CODES  # values written, repeated ones counted again
+            while i + 1 < len(arr) and budget > 0:
                 first = int(arr[i])
                 nxt = arr[i + 1].get_object() if hasattr(arr[i + 1], "get_object") else arr[i + 1]
                 if isinstance(nxt, list):
-                    for k, v in enumerate(nxt[:_MAX_CMAP_CODES]):
+                    for k, v in enumerate(nxt[:budget]):
                         widths[first + k] = float(v)
+                    budget -= min(len(nxt), budget)
                     i += 2
                 elif i + 2 < len(arr):
                     last, v = int(nxt), float(arr[i + 2])
-                    for c in range(first, min(last, first + _MAX_CMAP_CODES) + 1):
+                    for c in range(first, min(last, first + budget - 1) + 1):
                         widths[c] = v
+                    budget -= max(1, min(last - first + 1, budget))
                     i += 3
                 else:
                     break
@@ -380,12 +385,24 @@ def spans(page: pypdf.PageObject) -> tuple[list[Span], list[Span], float, float,
     if angle in (90, 270):
         width, height = height, width
     out: list[Span] = []
-    other: list[Span] = []
+    others: dict[int, list[Span]] = defaultdict(list)  # text in another direction, by direction
     for a, b, size, fw, text in runs:
-        (x0, y0), (x1, _) = turn(*a), turn(*b)
-        span = Span(x0, x1, y0, size, fw.bold, fw.mono, text)
-        (out if direction(a, b) == angle else other).append(span)
+        d = direction(a, b)
+        own = turn if d == angle else _TURNS[d](*_shown_size(width, height, angle))
+        (x0, y0), (x1, _) = own(*a), own(*b)
+        (out if d == angle else others[d]).append(Span(x0, x1, y0, size, fw.bold, fw.mono, text))
+    # each other direction's runs as its lines, read in that direction
+    other = [
+        Span(ln.x0, ln.x1, ln.y, ln.size, ln.bold, ln.mono, ln.text)
+        for d in sorted(others)
+        for ln in lines_of(others[d])
+    ]
     return out, other, width, height, turn
+
+
+def _shown_size(width: float, height: float, angle: int) -> tuple[float, float]:
+    """The shown page's width and height, from the turned page's."""
+    return (height, width) if angle in (90, 270) else (width, height)
 
 
 @dataclass
@@ -484,7 +501,8 @@ def rules(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> list[_
     contents = page.get_contents()
     if contents is not None:
         walk(contents, page.get("/Resources"), [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 0)
-    return found if len(found) <= _MAX_RULES else []
+    # Past either bound a grid may be half read: no rules rather than a wrong table.
+    return found if len(found) <= _MAX_RULES and budget[0] > 0 else []
 
 
 # ---- lines
@@ -541,12 +559,15 @@ def seg_box(seg: list[Span]) -> tuple[float, float]:
     return seg[0].x0, max(s.x1 for s in seg)
 
 
-def lines_of(found: Iterable[Span], words: Counter[str] | None = None) -> list[Line]:
+def lines_of(
+    found: Iterable[Span], words: Counter[str] | None = None, dropped: list[Span] | None = None
+) -> list[Line]:
     """Runs on one baseline as lines, top to bottom, each cut into segments at a
     gap wider than its font size. With `words` (the page's text layer), two runs
     the geometry sets together are parted when the word they would make is not
     one of the page's and both of its parts are: a width read too wide is no
-    reason to join two words."""
+    reason to join two words. A run drawn twice in place is read once, the
+    second copy added to `dropped`."""
     ordered = sorted(found, key=lambda s: (round(s.y, 1), s.x0))
     groups: list[list[Span]] = []
     for s in ordered:
@@ -560,6 +581,8 @@ def lines_of(found: Iterable[Span], words: Counter[str] | None = None) -> list[L
         kept: list[Span] = []
         for s in g:  # a run drawn twice in place (a faked bold, a shadow) is read once
             if kept and s.text == kept[-1].text and abs(s.x0 - kept[-1].x0) < 1:
+                if dropped is not None:
+                    dropped.append(s)
                 continue
             kept.append(s)
         line = Line(kept)
@@ -597,18 +620,20 @@ def _parted(left: str, right: str, words: Counter[str]) -> bool:
 # ---- furniture
 
 
-def _shape(text: str) -> str:
+def shape(text: str) -> str:
+    """A line's text with its digits as `#`: the same footer on every page."""
     return re.sub(r"\d+", "#", " ".join(text.lower().split()))
 
 
 def furniture(pages: list[tuple[list[Line], float]]) -> dict[int, set[int]]:
-    """Per page, the indexes of its lines that are page furniture: a header or
-    footer line whose shape (digits aside) recurs in that zone on other pages,
-    or a page number alone in it."""
+    """Per page, the indexes of its lines that may be page furniture: a header
+    or footer line with a letter whose shape (digits aside) recurs in that zone
+    on other pages, or a page number alone in it. A table's line is not, which
+    the caller decides once it has found the tables."""
     zone: list[list[tuple[int, str]]] = []
     for lines, height in pages:
         cand = [(i, ln) for i, ln in enumerate(lines) if ln.y < 0.1 * height or ln.y > 0.9 * height]
-        zone.append([(i, _shape(ln.text)) for i, ln in cand])
+        zone.append([(i, shape(ln.text)) for i, ln in cand])
     seen: Counter[str] = Counter()
     for z in zone:
         seen.update({s for _, s in z})
@@ -617,7 +642,14 @@ def furniture(pages: list[tuple[list[Line], float]]) -> dict[int, set[int]]:
     for p, z in enumerate(zone):
         for i, s in z:
             text = pages[p][0][i].text.strip()
-            if (n >= 2 and seen[s] >= max(2, math.ceil(0.4 * n))) or _PAGE_NUMBER.match(text):
+            if _PAGE_NUMBER.match(text):
+                out[p].add(i)
+            # a line of digits alone (a table's row of numbers) is no running header
+            elif (
+                n >= 2
+                and seen[s] >= max(2, math.ceil(0.4 * n))
+                and any(ch.isalpha() for ch in text)
+            ):
                 out[p].add(i)
     return out
 
@@ -631,7 +663,7 @@ def gutter(lines: list[Line], width: float) -> float | None:
     lines' text on either side of it reaching up to it."""
     if len(lines) < 8:
         return None
-    step = 2.0
+    step = max(2.0, width / 2000)  # at most a few thousand slots, however wide the page
     bins = int(width / step) + 1
     occupied = [0] * bins
     for ln in lines:
@@ -733,9 +765,16 @@ def grids(found: list[_Rule]) -> list[tuple[list[float], list[float]]]:
             i = parent[i]
         return i
 
+    order = sorted(range(len(vs)), key=lambda j: vs[j].x0)
+    xs_sorted = [vs[j].x0 for j in order]
     for i, h in enumerate(hs):
-        for j, v in enumerate(vs):
-            if h.x0 - 2 <= v.x0 <= h.x1 + 2 and v.y0 - 2 <= h.y0 <= v.y1 + 2:
+        # only the vertical rules within the horizontal one's span
+        for k in range(
+            bisect.bisect_left(xs_sorted, h.x0 - 2), bisect.bisect_right(xs_sorted, h.x1 + 2)
+        ):
+            j = order[k]
+            v = vs[j]
+            if v.y0 - 2 <= h.y0 <= v.y1 + 2:
                 parent[root(i)] = root(len(hs) + j)
     comps: dict[int, tuple[list[_Rule], list[_Rule]]] = defaultdict(lambda: ([], []))
     for i, h in enumerate(hs):
