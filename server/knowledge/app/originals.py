@@ -260,17 +260,22 @@ async def _drop(loc: objects.Location) -> None:
 
 
 async def _stands(held: blobs.Held, loc: objects.Location, ch: _CHClient | None) -> bool:
-    """Whether the switched row is still the original's latest; False leaves its object
-    to the bucket walk, which takes it once no row names it."""
+    """Whether the switched row is still the original's latest. Outranked, its object is
+    left to the bucket walk, which takes it once no row names it; with no row left (the
+    sweep took the original with the switched row), the move deletes its object now, as
+    no row can name it again."""
     try:
         now = await blobs.latest(held, ch=ch)
-        return now is not None and now.location == loc.uri()
     except Exception as e:  # the row is switched: an unread latest row is reported, not lost
         raise SwitchUnconfirmed(
             f"switched to {loc.uri()}, but reading whether a later write outranked it failed "
             f"({e}); check whether the latest loom.document_blobs row of this original names "
             f"{loc.uri()}"
         ) from e
+    if now is None:
+        await _drop(loc)
+        return False
+    return now.location == loc.uri()
 
 
 async def _settle(

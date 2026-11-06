@@ -410,3 +410,29 @@ async def test_the_walk_follows_each_page_to_the_namespaces_last(
     result = await originals.migrate_originals(org="acme", namespace="docs")
     assert result.moved == 3
     assert reads == ["", page[1].sha]
+
+
+@pytest.mark.asyncio
+async def test_a_switch_the_sweep_took_deletes_its_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core import object_store as objects
+
+    loc = objects.Location("bucket", "k")
+    deleted: list[tuple[str, list[str]]] = []
+
+    async def no_erasures(*a: Any) -> list[Any]:
+        return []
+
+    async def no_row(*a: Any, **kw: Any) -> None:
+        return None  # the sweep's age-bound delete took the original and the switched row
+
+    async def delete(bucket: str, keys: list[str]) -> None:
+        deleted.append((bucket, keys))
+
+    monkeypatch.setattr(originals, "_erasures_since", no_erasures)
+    monkeypatch.setattr(blobs, "latest", no_row)
+    monkeypatch.setattr(objects, "delete", delete)
+    assert await originals._settle(_held(0), 0, loc, None) is False
+    # No row can name the move's own object again: it goes now, not after the bucket walk's age.
+    assert deleted == [("bucket", ["k"])]
