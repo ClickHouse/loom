@@ -272,10 +272,13 @@ redirect that names the span: `code.enclosing locations=<path>:<offset>
 neighbours=true` for the unit enclosing the first line (with callers, callees
 and tests), `code.symbol` for a name, `code.outline` to pick a smaller span,
 and "read at most `<cap>` lines at a time" if the file must be read directly.
-Each file may be denied this way **twice per session** — the count is kept in
-`$TMPDIR/loom-shunt-cap-<hash of the session id>.json` as `{"<path>": n}`, any I/O error
-reading as zero — and the third over-cap read of that file passes with reason
-`cap_spent`, so a model that insists is never denied the same file forever. A
+Each file may be denied this way **twice per session**, and the third over-cap
+read of that file passes with reason `cap_spent`. The count is kept in
+`$TMPDIR/loom-shunt-cap-<hash of the session id>.json` as `{"<path>": n}`, beside
+the symbol-grep (`sym:`) and tracker-search (`qa:`) budgets. While that file
+cannot be kept (tmp not writable, or a file planted there), no budget is spent:
+every over-cap read, every symbol grep and every answered tracker search is
+denied for that session. A
 modified or untracked file is never capped. The bench harness's arm D should
 set `LOOM_SHUNT_READ_CAP=200` so the measured arm is this product rule rather
 than its own clamp.

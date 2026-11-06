@@ -137,10 +137,13 @@ function deny(reason) {
   );
 }
 
-/** Per-session denial counts, {key: n}; {} when the file is missing or refused.
- *  Each hook run is its own process, so nothing outlives a failed write: while
- *  the file cannot be kept (tmp not writable, or a file planted there), every
- *  over-cap read is denied and the budget never runs out for that session. */
+/** Per-session denial counts, {key: n}, for three budgets: over-cap reads (the
+ *  file's path), symbol greps (`sym:`) and answered tracker searches (`qa:`).
+ *  {} when the file is missing or refused. Each hook run is its own process, so
+ *  nothing outlives a failed write: while the file cannot be kept (tmp not
+ *  writable, or a file planted there), no budget is ever spent, and every
+ *  over-cap read, every symbol grep and every answered tracker search is denied
+ *  for that session. */
 function readCapCounts(sessionId) {
   return readSessionState("shunt-cap", sessionId);
 }
@@ -187,7 +190,9 @@ function logDecision({ decision, tool, tokensSaved, reason, passReason, path, st
 }
 
 /** Ship the pending batch as code.outcome rows and truncate it. Fire-and-
- *  forget with a 300 ms ceiling; a lost batch costs a few counter ticks. */
+ *  forget with a 300 ms ceiling; a lost batch costs a few counter ticks. Only
+ *  a batch this run emptied is sent, so a file that cannot be truncated is
+ *  never posted twice. */
 function flushPending(repo) {
   if (!REPORT_ON) return;
   let text = "";
@@ -200,7 +205,7 @@ function flushPending(repo) {
   try {
     writePrivateFile(PENDING_PATH, "");
   } catch {
-    /* ignore */
+    return;
   }
   const agg = aggregateShuntLog(text);
   const opts = { timeoutMs: FLUSH_TIMEOUT_MS };

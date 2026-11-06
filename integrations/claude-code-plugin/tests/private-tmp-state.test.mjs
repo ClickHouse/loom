@@ -10,7 +10,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { readJsonFile, sweepStaleStateFiles, writeJsonFile, writePrivateFile } from "../lib/tmp-state.mjs";
+import {
+  readJsonFile,
+  readPrivateFile,
+  sweepStaleStateFiles,
+  writeJsonFile,
+  writePrivateFile,
+} from "../lib/tmp-state.mjs";
 import { appendTurn, journalPath, readJournal } from "../lib/turn-journal.mjs";
 
 const posix = process.platform !== "win32";
@@ -55,6 +61,15 @@ test("a planted hard link to a file of ours is refused before it is truncated", 
   assert.equal(writeJsonFile(path.join(dir, "loom-x.json"), { a: 1 }), false);
   assert.throws(() => writePrivateFile(path.join(dir, "loom-x.json"), "x", { append: true }));
   assert.equal(fs.readFileSync(target, "utf8"), "original");
+});
+
+test("a planted hard link is not read as state", { skip: !posix }, () => {
+  const dir = tmp();
+  const target = path.join(dir, "victim.json");
+  fs.writeFileSync(target, '{"secret":1}');
+  fs.linkSync(target, path.join(dir, "loom-x.json"));
+  assert.throws(() => readPrivateFile(path.join(dir, "loom-x.json")), /hard links/);
+  assert.deepEqual(readJsonFile(path.join(dir, "loom-x.json")), {});
 });
 
 test("a rewrite replaces the whole file", { skip: !posix }, () => {

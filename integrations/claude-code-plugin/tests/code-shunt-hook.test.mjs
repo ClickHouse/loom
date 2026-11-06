@@ -292,7 +292,7 @@ test("the read cap denies a file twice per session, then passes it as cap_spent"
 test("symlinks planted at the shunt's tmp files are not followed: no write, no truncation, no post", async () => {
   const { dir } = checkout({ "src/a.cpp": BIG });
   const tmp = seed(dir);
-  const plantedBatch = "1\thit\tRead\t999\t\t\t\tplanted\n";
+  const plantedBatch = "1\thit\tRead\t999\t\t\tplanted.cpp\t1\t2\n";
   const planted = {
     log: path.join(tmp, "loom-shunt.log"),
     pending: pendingPath(tmp),
@@ -315,4 +315,21 @@ test("symlinks planted at the shunt's tmp files are not followed: no write, no t
     assert.equal(fs.readFileSync(victims[name], "utf8"), name === "pending" ? plantedBatch : "keep", name);
     assert.ok(fs.lstatSync(at).isSymbolicLink(), name);
   }
+});
+
+test("a hard link planted at the pending batch is neither posted nor truncated", {
+  skip: process.platform === "win32",
+}, async () => {
+  const { dir } = checkout({ "src/a.cpp": BIG });
+  const tmp = seed(dir);
+  const victim = path.join(tmp, "victim-log");
+  const batch = "1\thit\tRead\t999\t\t\tplanted.cpp\t1\t2\n";
+  fs.writeFileSync(victim, batch);
+  fs.linkSync(victim, pendingPath(tmp));
+  await withServer({}, async (url, seen) => {
+    for (let i = 0; i < 2; i++) assert.ok((await runHook(readOf(dir, "src/a.cpp"), { tmp, url, env: reporting })).deny);
+    await settle();
+    assert.equal(seen.filter((s) => s.url === "/v1/code.outcome").length, 0);
+  });
+  assert.equal(fs.readFileSync(victim, "utf8"), batch);
 });

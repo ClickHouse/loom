@@ -42,14 +42,16 @@ export function writeSessionState(kind, sessionId, value, opts = {}) {
   return writeJsonFile(sessionStatePath(kind, sessionId, opts), value);
 }
 
-/** The text of `file`. Throws when the path is a symlink, not a regular file, or
- *  owned by another user, like writePrivateFile: a planted file is not our state. */
+/** The text of `file`. Throws when the path is a symlink, not a regular file, a
+ *  hard link, or owned by another user, like writePrivateFile: a planted file is
+ *  not our state. */
 export function readPrivateFile(file) {
   const c = fs.constants;
   const fd = fs.openSync(file, c.O_RDONLY | (c.O_NOFOLLOW ?? 0) | (c.O_NONBLOCK ?? 0));
   try {
     const st = fs.fstatSync(fd);
     if (!st.isFile()) throw new Error(`${file} is not a regular file`);
+    if (st.nlink !== 1) throw new Error(`${file} has other hard links`);
     if (typeof process.getuid === "function" && st.uid !== process.getuid()) {
       throw new Error(`${file} belongs to another user`);
     }
