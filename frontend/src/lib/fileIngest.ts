@@ -19,7 +19,7 @@ const INGEST_DONE = new Set(["ready", "partial", "failed", "cancelled"]);
 
 /** What the deployment will do with a picked file, before it is sent. */
 export interface FileVerdict {
-  /** The format it is read as; "" when the name is refused. */
+  /** The format it is read as; "" when it is refused or the server did not list its formats. */
   format: string;
   /** False when no configured extractor reads that format; null when the server did not say. */
   available: boolean | null;

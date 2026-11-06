@@ -216,10 +216,10 @@ describe("AddDocumentDialog", () => {
     await user.click(within(dialog).getByRole("button", { name: "Upload" }));
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(vi.mocked(toast).mock.calls.at(-1)).toEqual([
-      "spec.pdf goes on extracting; it is in the Library once it publishes",
+      "spec.pdf goes on extracting; it is in the Library once it publishes and the list is reloaded",
       "info",
     ]);
-    expect(onAdded).toHaveBeenCalled(); // the list reloads
+    expect(onAdded).not.toHaveBeenCalled(); // nothing has published yet
     expect(ingestKnowledge).toHaveBeenCalledTimes(1);
   });
 

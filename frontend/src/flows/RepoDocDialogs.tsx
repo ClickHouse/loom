@@ -35,6 +35,11 @@ export function repoDocUri(repo: string, title: string, taken: ReadonlySet<strin
   return `${base}-${Date.now()}`;
 }
 
+/** What a job the dialog stops following does: it goes on, and a reload lists it. */
+function goesOn(title: string): string {
+  return `${title} goes on extracting; it is listed once it publishes and the list is reloaded`;
+}
+
 export function RepoDocAddDialog({
   open,
   onOpenChange,
@@ -136,7 +141,7 @@ export function RepoDocAddDialog({
       if (following.current?.signal.aborted) return; // closed: the job goes on on the server
       if (e instanceof FollowLost) {
         // Queued, but no longer heard of: say it goes on rather than offer to send it again.
-        toast(`${title.trim()} goes on extracting; it is listed once it publishes and the list is reloaded`, "info");
+        toast(goesOn(title.trim()), "info");
         onOpenChange(false);
         return;
       }
@@ -150,8 +155,7 @@ export function RepoDocAddDialog({
   // text save hold the dialog; once the job is followed it goes on, and the card says so.
   const close = (v: boolean) => {
     if (!v && (busy === "queue" || busy === "saving")) return;
-    if (!v && busy === "follow")
-      toast(`${title.trim()} goes on extracting; it is listed once it publishes and the list is reloaded`, "info");
+    if (!v && busy === "follow") toast(goesOn(title.trim()), "info");
     onOpenChange(v);
   };
 

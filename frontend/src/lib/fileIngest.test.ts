@@ -177,10 +177,24 @@ describe("ingestFile", () => {
     await expect(ingestFile({ org: "o", namespace: "n" }, f, { source_uri: "a" }, () => {})).resolves.toMatchObject({
       state: "ready",
     });
+    // Three in a row: misses a success came between do not add up.
+    const down = new TypeError("Failed to fetch");
+    const processing = { ...ready, state: "processing", stage: "parse" };
+    vi.mocked(knowledgeIngestStatus)
+      .mockReset()
+      .mockRejectedValueOnce(down)
+      .mockRejectedValueOnce(down)
+      .mockResolvedValueOnce(processing)
+      .mockRejectedValueOnce(down)
+      .mockRejectedValueOnce(down)
+      .mockResolvedValueOnce(ready);
+    await expect(ingestFile({ org: "o", namespace: "n" }, f, { source_uri: "a" }, () => {})).resolves.toMatchObject({
+      state: "ready",
+    });
     vi.mocked(knowledgeIngestStatus).mockReset().mockRejectedValue(new TypeError("Failed to fetch"));
     const lost = ingestFile({ org: "o", namespace: "n" }, f, { source_uri: "a" }, () => {});
     await expect(lost).rejects.toBeInstanceOf(FollowLost);
     await expect(lost).rejects.toMatchObject({ ingestionId: "job-1" });
-    expect(knowledgeIngestStatus).toHaveBeenCalledTimes(3);
+    expect(knowledgeIngestStatus).toHaveBeenCalledTimes(3); // since the reset before this run
   });
 });

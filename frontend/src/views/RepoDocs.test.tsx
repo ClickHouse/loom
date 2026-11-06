@@ -353,6 +353,7 @@ describe("RepoDocsList", () => {
   });
 
   it("closing while it follows says the job goes on and stops the polls", async () => {
+    const prior = ingestClock.sleep;
     let release = () => {};
     ingestClock.sleep = () => new Promise<void>((r) => (release = r));
     vi.mocked(knowledgeIngestStatus).mockResolvedValue(repoStatus("processing", { stage: "parse" }));
@@ -369,7 +370,7 @@ describe("RepoDocsList", () => {
       await new Promise((r) => setTimeout(r, 20));
       expect(vi.mocked(knowledgeIngestStatus).mock.calls.length).toBe(polls);
     } finally {
-      ingestClock.sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      ingestClock.sleep = prior;
     }
   });
 
