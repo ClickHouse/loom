@@ -40,7 +40,7 @@ from server.memory.app.ask.identifiers import _injectable_identifiers as inj
         ),
     ],
 )
-def test_an_identifier_shape_semantic_recall_misses_is_injected(
+def test_an_identifier_shape_that_semantic_recall_misses_is_injected(
     question: str, identifier: str
 ) -> None:
     assert identifier in inj(question)

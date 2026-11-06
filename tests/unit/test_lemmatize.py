@@ -27,19 +27,28 @@ from server.memory.domain.lemmatize import lemma_tokens, lemmatize
         # The tokenizer drops punctuation but joins the tokens with spaces, so
         # substring search still works.
         pytest.param("Deploys, Tuesdays.", "deploy tuesday", id="punctuation passes as spaces"),
+        # Intentional imperfection: "plan" and "plann" both overlap on the "plan"
+        # prefix that BM25 and substring matchers use.
+        pytest.param("planned", "plann", id="double letter kept"),
+    ],
+)
+def test_lemmatize_strips_the_suffixes_of_each_token(text: str, lemma: str) -> None:
+    assert lemmatize(text) == lemma
+
+
+@pytest.mark.parametrize(
+    ("text", "lemma"),
+    [
         # Children doesn't follow the -s rule; it passes through.
         pytest.param("children", "children", id="irregular word passes through"),
         # 3-char words skip suffix-strip ("the" doesn't become "th").
         pytest.param("the", "the", id="short word unchanged"),
         # Single-char tokens are filtered by the token regex (need >=2 chars).
         pytest.param("a", "", id="single char dropped"),
-        # Intentional imperfection: "plan" and "plann" both overlap on the "plan"
-        # prefix that BM25 and substring matchers use.
-        pytest.param("planned", "plann", id="double letter kept"),
         pytest.param("", "", id="empty"),
     ],
 )
-def test_lemmatize_strips_the_suffixes_of_each_token(text: str, lemma: str) -> None:
+def test_lemmatize_leaves_or_drops_a_token_it_has_no_rule_for(text: str, lemma: str) -> None:
     assert lemmatize(text) == lemma
 
 
