@@ -60,6 +60,7 @@ the operations reference.
 | `knowledge.ingest`          | writer | Extract an uploaded file and publish it as a document revision (a job).                |
 | `knowledge.ingest_status`   | viewer | A job's state, stage, coverage, warnings, failure and published revision.              |
 | `knowledge.ingest_cancel`   | writer | Stop a job before it publishes.                                                        |
+| `knowledge.formats`         | viewer | The formats an ingest reads, the names that select each, and the upload's limits.      |
 
 `knowledge.search` and `knowledge.reads` are hidden from MCP: neither is listed, and
 `loom_op` refuses them too. An agent reaches the knowledge plane through
@@ -904,7 +905,11 @@ formulas' values or a Parquet column of bytes, makes the job partial, and it nee
 `allow_partial`: see
 [tables](../architecture/document-extraction.md#formats-in-the-reference-extractor);
 another format fails `format_unavailable` until an extractor that declares it is
-configured. `knowledge.update_metadata` with `reindex=true` refuses an ingested document
+configured. `knowledge.formats` lists every format with the extensions and media types
+that select it and whether a configured extractor declares it (each service's
+capabilities are cached a minute, and a listing waits at most 5 s for them, so an
+unreachable service declares nothing), with `max_upload_bytes` and the extensions the
+upload refuses; a client can tell a person before sending a file that it would not be read. `knowledge.update_metadata` with `reindex=true` refuses an ingested document
 (its chunks come from the artifact): ingest it again to re-index it. A chunk's context
 (the title, description and section breadcrumb both search legs read) is filled as for
 `knowledge.add`.

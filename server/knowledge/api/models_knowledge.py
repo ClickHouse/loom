@@ -846,6 +846,37 @@ class KnowledgeIngestCancelInput(BaseModel):
     ingestion_id: str
 
 
+class KnowledgeFormatsInput(BaseModel):
+    """The document formats this deployment reads, as `knowledge.ingest` sends
+    them to its extractors, and the upload's limits."""
+
+    org: str
+    namespace: str
+
+
+class KnowledgeFormat(BaseModel):
+    # The format's name, as `knowledge.ingest_status` and a document's `format` say it.
+    format: str
+    # The file name extensions that name it, without the dot.
+    extensions: list[str] = Field(default_factory=list)
+    # The media types that name it, when the file name does not.
+    media_types: list[str] = Field(default_factory=list)
+    # True when a configured extractor declares it; a file of a format that is not
+    # fails `format_unavailable`.
+    available: bool = False
+
+
+class KnowledgeFormatsOutput(BaseModel):
+    # Every format the server routes, sorted by name.
+    formats: list[KnowledgeFormat] = Field(default_factory=list)
+    # The largest file POST /v1/knowledge.upload stores, in bytes.
+    max_upload_bytes: int = 0
+    # Extensions the upload refuses by name (`doc`, `xls`, `ppt`).
+    refused_extensions: list[str] = Field(default_factory=list)
+    # The format of a file whose name and media type name none.
+    default_format: str = "text"
+
+
 class KnowledgeIngestCancelOutput(BaseModel):
     # False when no job of this id is in the namespace.
     found: bool

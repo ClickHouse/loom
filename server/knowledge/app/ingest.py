@@ -16,6 +16,9 @@ from typing import Any
 
 from server.core.errors import NotFoundError, PreconditionFailedError
 from server.knowledge.api.models_knowledge import (
+    KnowledgeFormat,
+    KnowledgeFormatsInput,
+    KnowledgeFormatsOutput,
     KnowledgeIngestCancelInput,
     KnowledgeIngestCancelOutput,
     KnowledgeIngestInput,
@@ -157,4 +160,25 @@ async def handle_knowledge_ingest_cancel(
     # It ended between the two reads: a published revision stays published.
     return KnowledgeIngestCancelOutput(
         found=True, state=job["state"], cancelled=job["state"] == "cancelled"
+    )
+
+
+async def handle_knowledge_formats(input: KnowledgeFormatsInput) -> KnowledgeFormatsOutput:
+    """Each known format with the names that select it and whether a configured
+    extractor declares it (each service read at most once a minute)."""
+    from server.core.document_formats import KNOWN_FORMATS, legacy_extensions, names_of
+    from server.knowledge.app.extractors import available_formats
+    from server.settings import settings
+
+    served = await available_formats()
+    formats = []
+    for fmt in sorted(KNOWN_FORMATS):
+        exts, media = names_of(fmt)
+        formats.append(
+            KnowledgeFormat(format=fmt, extensions=exts, media_types=media, available=fmt in served)
+        )
+    return KnowledgeFormatsOutput(
+        formats=formats,
+        max_upload_bytes=settings.knowledge_upload_max_bytes,
+        refused_extensions=legacy_extensions(),
     )

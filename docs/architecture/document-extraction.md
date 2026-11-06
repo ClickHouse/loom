@@ -29,7 +29,9 @@ media type, else `text`) without reading the bytes, and sends the original to th
 to `LOOM_DOCUMENT_EXTRACTOR_URL`. A format is extracted only when that service's `/v1/capabilities` declares it; the
 declaration is read again after a minute. A `.doc`, `.xls` or `.ppt` name is refused before any call. A route key is a
 format name or a media type that names one, matched without its parameters and case; any other key is refused when the
-settings load.
+settings load. What a deployment advertises is what these declarations say: `knowledge.formats` reports a format as
+available when the service its route picks declares it, reading the services together within 5 s so an unreachable one
+declares nothing.
 
 **Fail closed.** A format with no configured service, a service that does not declare it, is unreachable, takes longer
 than `LOOM_DOCUMENT_EXTRACTOR_TIMEOUT_S` for a whole call, refuses the server's token (`401`, `403`, `407`), answers

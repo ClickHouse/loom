@@ -823,6 +823,10 @@
               "body",
               "options"
             ],
+            "formats": [
+              "body",
+              "options"
+            ],
             "get": [
               "body",
               "options"

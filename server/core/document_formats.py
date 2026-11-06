@@ -66,6 +66,17 @@ _MEDIA_TYPES = {
 }
 
 
+def names_of(fmt: str) -> tuple[list[str], list[str]]:
+    """The file extensions and media types that name `fmt`, sorted."""
+    exts = sorted(e for e, f in _EXTENSIONS.items() if f == fmt)
+    return exts, sorted(m for m, f in _MEDIA_TYPES.items() if f == fmt)
+
+
+def legacy_extensions() -> list[str]:
+    """The extensions an upload refuses by name (legacy binary Office files)."""
+    return sorted(_LEGACY)
+
+
 def media_type_of(media_type: str) -> str:
     """`media_type` without its parameters, lowercased: `Text/HTML; charset=x`
     is `text/html`."""

@@ -206,22 +206,21 @@ def _origin(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}"
 
 
-async def available_formats() -> dict[str, str]:
+# How long a listing of the formats waits for the services' capabilities.
+FORMATS_READ_S = 5.0  # not a setting: a listing's read, which must not hold its caller
+
+
+async def available_formats(*, timeout_s: float = FORMATS_READ_S) -> dict[str, str]:
     """Each format some configured service declares, with the first such
-    service's URL. A service that cannot be read declares nothing, and is read
-    once per listing, so it costs one timeout, not one per format."""
+    service's URL. The services are read at once, all within `timeout_s`; one
+    that cannot be read in time declares nothing."""
+    declared = {
+        s.url: s.formats or frozenset() for s in await configured_services(timeout_s=timeout_s)
+    }
     out: dict[str, str] = {}
-    read: dict[str, Capabilities | None] = {}
     for fmt in KNOWN_FORMATS:
         for url in _endpoints(fmt):
-            if url not in read:
-                try:
-                    read[url] = await capabilities(url)
-                except ExtractorUnavailable as e:
-                    logger.warning("document extractor %s: %s", _origin(url), e)
-                    read[url] = None
-            caps = read[url]
-            if caps is not None and fmt in caps.formats:
+            if fmt in declared.get(url, frozenset()):
                 out[fmt] = url
                 break
     return out

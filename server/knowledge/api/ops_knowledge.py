@@ -20,6 +20,8 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeDedupResolveOutput,
     KnowledgeDeleteInput,
     KnowledgeDeleteOutput,
+    KnowledgeFormatsInput,
+    KnowledgeFormatsOutput,
     KnowledgeGetInput,
     KnowledgeGetOutput,
     KnowledgeIngestCancelInput,
@@ -55,6 +57,7 @@ from server.knowledge.app.document_reads import (
     handle_knowledge_outline,
 )
 from server.knowledge.app.ingest import (
+    handle_knowledge_formats,
     handle_knowledge_ingest,
     handle_knowledge_ingest_cancel,
     handle_knowledge_ingest_status,
@@ -251,6 +254,17 @@ knowledge_ingest_status = Operation(
     maturity="experimental",
 )
 
+knowledge_formats = Operation(
+    name="knowledge.formats",
+    input_model=KnowledgeFormatsInput,
+    output_model=KnowledgeFormatsOutput,
+    handler=handle_knowledge_formats,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+    maturity="experimental",
+)
+
 knowledge_ingest_cancel = Operation(
     name="knowledge.ingest_cancel",
     input_model=KnowledgeIngestCancelInput,
@@ -324,6 +338,7 @@ OPERATIONS: list[Operation] = [
     knowledge_dedup_resolve,
     knowledge_ingest,
     knowledge_ingest_status,
+    knowledge_formats,
     knowledge_ingest_cancel,
     knowledge_dataset_get,
     knowledge_dataset_approve,

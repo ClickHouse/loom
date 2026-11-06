@@ -176,6 +176,24 @@ Soft-delete a document by source_uri: tombstones all live chunks and version-bum
 | `deleted` | `bool` | true if any live chunks were tombstoned |
 | `chunks_tombstoned` | `int` | How many live chunks were tombstoned; 0 when the document was already gone. |
 
+## `knowledge.formats`
+
+The document formats this deployment reads, as `knowledge.ingest` sends them to its extractors, and the upload's limits.
+
+`POST /v1/knowledge.formats` · MCP `loom_knowledge_formats` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `formats` | `list[KnowledgeFormat]` | Every format the server routes, sorted by name. |
+| `max_upload_bytes` | `int` | The largest file POST /v1/knowledge.upload stores, in bytes. |
+| `refused_extensions` | `list[str]` | Extensions the upload refuses by name (`doc`, `xls`, `ppt`). |
+| `default_format` | `str` | The format of a file whose name and media type name none. |
+
 ## `knowledge.get`
 
 Fetch a single document by source_uri.
