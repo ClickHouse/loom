@@ -121,10 +121,14 @@ def original_prefix(org: str, namespace: str, sha: str) -> str:
     return f"{namespace_prefix(org, namespace)}{sha}/"
 
 
+# A write id is a uuid4's hex: 32 characters.
+_WRITE_ID_LEN = 32  # not a setting: the length of a uuid4 hex
+
+
 def check_key_fits(org: str, namespace: str) -> None:
     """Refuse an org and namespace whose originals' keys would pass MAX_KEY: a key's
     sha and write id have fixed lengths, so the names alone decide."""
-    length = len(original_prefix(org, namespace, "0" * 64)) + len(uuid.uuid4().hex)
+    length = len(original_prefix(org, namespace, "0" * 64)) + _WRITE_ID_LEN
     if length > MAX_KEY:
         raise ValidationError(
             f"the org and namespace names are too long for an object key ({length} > {MAX_KEY})"

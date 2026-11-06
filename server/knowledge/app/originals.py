@@ -281,6 +281,16 @@ async def _settle(
         # originals; any other is waited for and decided by the moved object.
         taken = any(e.deletes_namespace(held.namespace) for e in raced)
         if not taken:
+            # Logged before the wait: the row is switched, and a stop during the wait
+            # would otherwise leave no line naming it.
+            log.warning(
+                "originals: %s/%s/%s switched to %s; waiting on %s",
+                held.org,
+                held.namespace,
+                held.sha,
+                loc.uri(),
+                ", ".join(str(e) for e in raced),
+            )
             await _await_erasures(held, since, {e.id for e in raced})
             # Listed, not read: whether it is there is all that decides.
             taken = not await objects.count_under(loc.bucket, loc.key)
@@ -391,8 +401,9 @@ async def _scopes(org: str, namespace: str) -> list[tuple[str, str]]:
 
 
 async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> bool:
-    """Count one original. False when it was not switched cleanly (an erasure may have
-    held it back, raced its switch or taken it), so the walk reads the fence again."""
+    """Count one original. False when an erasure may explain its outcome (it held it
+    back, raced its switch, or took it), so the walk reads the fence again; a corrupt or
+    refused one is an error the fence does not explain."""
     if dry_run:
         out.pending += 1
         out.bytes += held.size
