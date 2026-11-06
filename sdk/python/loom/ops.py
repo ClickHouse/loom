@@ -10193,7 +10193,7 @@ class KnowledgeFormat(TypedDict, total=False):
     format: Required[str]
     extensions: NotRequired[list[str]]
     media_types: NotRequired[list[str]]
-    available: NotRequired[bool]
+    available: NotRequired[Optional[bool]]
 
 
 class KnowledgeGetInput(TypedDict, total=False):

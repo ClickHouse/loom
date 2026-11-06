@@ -225,37 +225,43 @@ async def _formats_within(url: str, timeout_s: float) -> frozenset[str] | None:
         return None
 
 
-async def _declared_within(url: str, timeout_s: float) -> frozenset[str]:
-    """`_formats_within` for a listing: nothing for a service not read, which is not
-    read again for a minute."""
+async def _declared_within(url: str, timeout_s: float) -> frozenset[str] | None:
+    """`_formats_within` for a listing: None for a service not read, which is not
+    read again for a minute (unless a capabilities read of it succeeds first)."""
     # A fresh read (an ingest's) wins over a mark a slower read left after it.
     hit = _declared.get(url)
     if hit is not None and hit[0] > time.monotonic():
         return hit[1].formats
     if _unreadable.get(url, 0.0) > time.monotonic():
-        return frozenset()
+        return None
     formats = await _formats_within(url, timeout_s)
     if formats is None:
         _unreadable[url] = time.monotonic() + _CAPABILITIES_TTL_S
-        return frozenset()
     return formats
 
 
-async def available_formats(*, timeout_s: float = CAPABILITIES_READ_S) -> dict[str, str]:
-    """Each format some service it can go to declares, with the first such
-    service's URL (`_endpoints`: its own route, else the default service and the
-    routes of the media types that name it; a media type's route serves uploads
-    of that media type). The services are read at once, within `timeout_s`."""
+async def format_availability(*, timeout_s: float = CAPABILITIES_READ_S) -> dict[str, str | None]:
+    """Each known format: the URL of the first service it can go to that declares it
+    (`_endpoints`: its own route, else the default service and the routes of the
+    media types that name it; a media type's route serves uploads of that media type),
+    '' when every such service was read and none does, or None when none declares it
+    and one could not be read. The services are read at once, within `timeout_s`."""
     endpoints = {fmt: _endpoints(fmt) for fmt in KNOWN_FORMATS}
     unique = sorted({url for urls in endpoints.values() for url in urls})
     read = await asyncio.gather(*(_declared_within(u, timeout_s) for u in unique))
     declared = dict(zip(unique, read, strict=True))
-    out: dict[str, str] = {}
+    out: dict[str, str | None] = {}
     for fmt, urls in endpoints.items():
-        url = next((u for u in urls if fmt in declared[u]), "")
-        if url:
-            out[fmt] = url
+        hit = next((u for u in urls if fmt in (declared[u] or frozenset())), "")
+        out[fmt] = hit if hit or all(declared[u] is not None for u in urls) else None
     return out
+
+
+async def available_formats(*, timeout_s: float = CAPABILITIES_READ_S) -> dict[str, str]:
+    """Each format some service it can go to declares, with that service's URL."""
+    return {
+        fmt: url for fmt, url in (await format_availability(timeout_s=timeout_s)).items() if url
+    }
 
 
 @dataclass(frozen=True)

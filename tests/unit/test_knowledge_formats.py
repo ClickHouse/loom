@@ -78,17 +78,20 @@ def _input() -> KnowledgeFormatsInput:
 async def test_each_format_says_its_names_and_whether_an_extractor_serves_it(
     hosts: _Hosts, settings_override: Any
 ) -> None:
-    # PDF goes to its own route, which declares it; DOCX's route is unreachable, so the
-    # reference service's DOCX does not count (a format's own route hides the default).
+    # PDF goes to its own route, which declares it; PPTX to one that is read and does not;
+    # DOCX's route is unreachable, so whether it is read is unknown (the reference
+    # service's DOCX does not count: a format's own route hides the default).
     hosts.apps["pdf-x"] = _declaring(["pdf"])
     settings_override(
-        document_extractors_json=json.dumps({"pdf": "http://pdf-x", "docx": "http://gone"}),
+        document_extractors_json=json.dumps(
+            {"pdf": "http://pdf-x", "pptx": "http://pdf-x", "docx": "http://gone"}
+        ),
         knowledge_upload_max_bytes=1234,
     )
     out = await handle_knowledge_formats(_input())
     by = {f.format: f for f in out.formats}
     assert [f.format for f in out.formats] == sorted(by)
-    assert by["pdf"].available and not by["docx"].available
+    assert (by["pdf"].available, by["pptx"].available, by["docx"].available) == (True, False, None)
     assert by["markdown"].available and by["toml"].available  # the reference service's
     assert by["markdown"].extensions == ["markdown", "md", "mdx"]
     assert "text/markdown" in by["markdown"].media_types
@@ -105,7 +108,7 @@ async def test_with_no_extractor_configured_nothing_is_available(
 ) -> None:
     settings_override(document_extractor_url="")
     out = await handle_knowledge_formats(_input())
-    assert out.formats and not any(f.available for f in out.formats)
+    assert out.formats and all(f.available is False for f in out.formats)
 
 
 async def test_a_slow_service_costs_the_listing_its_bound_and_declares_nothing(
@@ -116,6 +119,8 @@ async def test_a_slow_service_costs_the_listing_its_bound_and_declares_nothing(
     served = await extractors.available_formats(timeout_s=0.2)  # returns, though the read hangs
     assert "sql" not in served and served["markdown"] == "http://ref"
     assert "document extractor http://slow: timed out" in caplog.text
+    # Not "not read here": unknown, for the minute it is not asked again.
+    assert (await extractors.format_availability(timeout_s=0.2))["sql"] is None
 
 
 async def test_a_down_service_costs_one_wait_a_minute_not_one_per_listing(

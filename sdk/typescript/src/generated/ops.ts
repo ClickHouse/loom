@@ -3377,7 +3377,7 @@ export interface KnowledgeFormat {
   format: string;
   extensions?: string[];
   media_types?: string[];
-  available?: boolean;
+  available?: boolean | null;
 }
 
 export interface KnowledgeFormatsOutput {

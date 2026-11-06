@@ -28,7 +28,7 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeIngestStatusInput,
     KnowledgeIngestStatusOutput,
 )
-from server.knowledge.app.extractors import available_formats
+from server.knowledge.app.extractors import format_availability
 from server.knowledge.store import ingestions
 from server.settings import settings
 
@@ -169,13 +169,19 @@ async def handle_knowledge_ingest_cancel(
 
 async def handle_knowledge_formats(input: KnowledgeFormatsInput) -> KnowledgeFormatsOutput:
     """Each known format with the names that select it and whether a configured
-    extractor declares it (each service read at most once a minute)."""
-    served = await available_formats()
+    extractor declares it: unknown (None) while the service it goes to cannot be read."""
+    served = await format_availability()
     formats = []
     for fmt in sorted(KNOWN_FORMATS):
         exts, media = names_of(fmt)
+        url = served[fmt]
         formats.append(
-            KnowledgeFormat(format=fmt, extensions=exts, media_types=media, available=fmt in served)
+            KnowledgeFormat(
+                format=fmt,
+                extensions=exts,
+                media_types=media,
+                available=None if url is None else bool(url),
+            )
         )
     return KnowledgeFormatsOutput(
         formats=formats,

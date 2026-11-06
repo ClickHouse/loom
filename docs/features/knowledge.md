@@ -889,16 +889,16 @@ last change, an upload's for 7 days after it expires. A failed job names why in
 A transient failure (an extractor that cannot be reached, times out, or answers a `5xx`,
 `408`, `429` or another status that is neither a result nor a refusal; a provider or a
 store outage) puts the job back with a doubling delay (at most an hour); a source the
-extractor refuses, or an artifact that breaks the contract, fails at once with its code.
-A pass runs one due job, one source's jobs in order and namespaces in turn, and is
-cancelled after `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS` (15 minutes); a job cut off
-there, or by a process that stopped, runs again from its start and counts the attempt. A
-job that fails, or is cancelled, publishes nothing, so the earlier revision keeps
-serving. `knowledge.ingest_cancel` stops a pending job at once and a running one before
-it publishes; a job past its publish check finishes. The reference extractor reads
-Markdown, HTML, plain text, SQL, TOML, CSV, PDF (its text layer: a scanned page needs OCR,
-so the job needs `allow_partial`), DOCX, PPTX, XLSX (a table of each sheet, and its rows
-as passages) and Parquet (a table, a decimal's digits kept; its dataset holds them as
+extractor refuses, or an artifact that breaks the contract, fails at once with its code. A
+pass runs one due job, one source's jobs in order and namespaces in turn, and is cancelled
+after `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS` (15 minutes); a job cut off there, or by a
+process that stopped, runs again from its start and counts the attempt. A job that fails,
+or is cancelled, publishes nothing, so the earlier revision keeps serving.
+`knowledge.ingest_cancel` stops a pending job at once and a running one before it
+publishes; a job past its publish check finishes. The reference extractor reads Markdown,
+HTML, plain text, SQL, TOML, CSV, PDF (its text layer: a scanned page needs OCR, so the
+job needs `allow_partial`), DOCX, PPTX, XLSX (a table of each sheet, and its rows as
+passages) and Parquet (a table, a decimal's digits kept; its dataset holds them as
 [Datasets](#datasets) says); any unit of a tabular file the extractor could not read, or a
 capability it lost, such as a table cut at its budget, a workbook saved without its
 formulas' values or a Parquet column of bytes, makes the job partial, and it needs
@@ -906,16 +906,16 @@ formulas' values or a Parquet column of bytes, makes the job partial, and it nee
 [tables](../architecture/document-extraction.md#formats-in-the-reference-extractor);
 another format fails `format_unavailable` until an extractor that declares it is
 configured. `knowledge.formats` lists every format with the extensions and media types
-that select it and whether an extractor a file of it can go to declares it (each service's
-capabilities are cached a minute; a listing waits at most 5 s for them, and a service it
-could not read declares nothing for up to a minute, until a capabilities read succeeds),
-with `max_upload_bytes` and the extensions the upload refuses; a client can tell a person
-before sending a file that it would not be read (false also while the service cannot be
-read, when an ingest waits for it and retries instead of failing).
-`knowledge.update_metadata` with `reindex=true` refuses an ingested document (its chunks
-come from the artifact): ingest it again to re-index it. A chunk's context (the title,
-description and section breadcrumb both search legs read) is filled as for
-`knowledge.add`.
+that select it, `max_upload_bytes` and the extensions the upload refuses, so a client can
+say before sending a file whether it will be read. A format's `available` is true when an
+extractor a file of it can go to declares it, and false when none does (an ingest fails
+`format_unavailable`). It is null while that service cannot be read: a listing waits at
+most 5 s for each service's capabilities (cached a minute), and one it could not read is
+not asked again for up to a minute, until a capabilities read of it succeeds; an ingest
+sent meanwhile waits for the service and retries. `knowledge.update_metadata` with
+`reindex=true` refuses an ingested document (its chunks come from the artifact): ingest it
+again to re-index it. A chunk's context (the title, description and section breadcrumb
+both search legs read) is filled as for `knowledge.add`.
 
 The Python and TypeScript SDKs run the two steps (TypeScript: `loom.knowledge.upload`,
 `waitForIngest` and `ingestFile`, in the [TypeScript SDK
