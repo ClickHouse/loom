@@ -27,7 +27,7 @@ export function useKnowledgeFormats(id: Pick<Identity, "org" | "namespace">, ope
   return formats;
 }
 
-/** The formats a person can pick, in words: "PDF, Markdown, …" (the available ones). */
+/** The formats a person can pick, in words: "markdown, pdf, …" (the available ones). */
 export function readableFormats(formats: KnowledgeFormats | null): string {
   if (!formats) return "";
   return formats.formats

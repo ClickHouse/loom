@@ -259,7 +259,6 @@ export interface KnowledgeIngestJob {
   source_uri: string;
 }
 
-/** Have the server's extractor parse an upload and publish it as `source_uri`'s next revision. */
 /** What `knowledge.ingest` publishes an upload as. */
 export interface KnowledgeIngestFields {
   source_uri: string;
@@ -272,6 +271,7 @@ export interface KnowledgeIngestFields {
   expected_revision?: number;
 }
 
+/** Have the server's extractor parse an upload and publish it as `source_uri`'s next revision. */
 export async function ingestKnowledge(
   id: Pick<Identity, "org" | "namespace">,
   opts: KnowledgeIngestFields & { upload_id: string },
