@@ -186,25 +186,37 @@ def _entries(pkg: Package, part: str) -> _Entries:
 
 class _Holders:
     """The deck's layouts' and masters' placeholders, each part and each layout's
-    relationships read once a deck, however many pictures sit in them."""
+    relationships read once a deck, however many pictures sit in them: one that
+    cannot be read fails every slide that asks for it, without a second read."""
 
     def __init__(self, pkg: Package) -> None:
         self._pkg = pkg
-        self._entries: dict[str, _Entries] = {}
-        self._masters: dict[str, str | None] = {}
+        self._parts: dict[str, _Entries | PartError | RecursionError] = {}
+        self._masters: dict[str, str | None | PartError | RecursionError] = {}
 
-    def _of(self, part: str) -> _Entries:
-        if part not in self._entries:
-            self._entries[part] = _entries(self._pkg, part)
-        return self._entries[part]
+    def _part(self, part: str) -> _Entries:
+        if part not in self._parts:
+            try:
+                self._parts[part] = _entries(self._pkg, part)
+            except (PartError, RecursionError) as e:
+                self._parts[part] = e
+        got = self._parts[part]
+        if isinstance(got, Exception):
+            raise got
+        return got
 
-    def of(self, layout: str) -> tuple[_Entries, _Entries]:
+    def placeholders(self, layout: str) -> tuple[_Entries, _Entries]:
         """The layout's placeholders and its master's."""
         if layout not in self._masters:
-            rels = self._pkg.rels(layout).values()
-            self._masters[layout] = next((t for k, t in rels if k == "slideMaster"), None)
+            try:
+                rels = self._pkg.rels(layout).values()
+                self._masters[layout] = next((t for k, t in rels if k == "slideMaster"), None)
+            except (PartError, RecursionError) as e:
+                self._masters[layout] = e
         master = self._masters[layout]
-        return self._of(layout), self._of(master) if master else []
+        if isinstance(master, Exception):
+            raise master
+        return self._part(layout), self._part(master) if master else []
 
 
 def _placeholder_extent(ph: Element, layout: _Entries, master: _Entries) -> tuple[int, int] | None:
@@ -240,7 +252,7 @@ def _picture_texts(
     rels = pkg.rels(part)
     layout = next((t for k, t in rels.values() if k == "slideLayout"), None)
     placed = any(isinstance(e, Element) for _, e in slide.pictures)
-    held = holders.of(layout) if layout is not None and placed else ([], [])
+    held = holders.placeholders(layout) if layout is not None and placed else ([], [])
     # a placeholder whose size is nowhere stated is taken as the slide's
     sized = [
         (rid, e if isinstance(e, tuple) else _placeholder_extent(e, *held) or size)

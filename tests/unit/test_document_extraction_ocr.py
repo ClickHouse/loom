@@ -569,9 +569,10 @@ _UNSIZED = (
             ),
             True,
         ),
-        # an untyped placeholder is content, its layout's untyped one of the same index
+        # an untyped placeholder is content: of no index the layout has, it takes the
+        # layout's untyped one, not its body
         (
-            '<p:ph sz="quarter" idx="2"/>',
+            '<p:ph sz="quarter" idx="5"/>',
             _layout(
                 _holder('<p:ph type="body" idx="1"/>', 1_000_000)
                 + _holder('<p:ph sz="quarter" idx="2"/>', 9_000_000),
@@ -620,8 +621,9 @@ def test_a_slides_picture_in_a_placeholder_is_sized_by_its_layout(
     assert [b.attrs for b in a.blocks][1:] == ([{"ocr": True}] if read else [])
 
 
+@pytest.mark.parametrize("broken", [False, True])
 def test_layouts_and_their_master_are_read_once_however_many_pictures_sit_in_them(
-    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch, broken: bool
 ) -> None:
     from loom_extractor.ooxml import Package
     from tests.unit.test_document_extraction_office import _P, _rels, _slide, _sp, _zip
@@ -651,9 +653,10 @@ def test_layouts_and_their_master_are_read_once_however_many_pictures_sit_in_the
             *[(f"s{n}", "slide", f"slides/slide{n}.xml") for n in (1, 2, 3, 4)]
         ),
         "ppt/media/image1.png": b"\x89PNG fake",
-        "ppt/slideMasters/slideMaster1.xml": part(
-            "sldMaster", _holder('<p:ph type="body"/>', 1_000_000)
-        ),
+        # a master that is not XML fails each slide that asks it, read once all the same
+        "ppt/slideMasters/slideMaster1.xml": "not xml"
+        if broken
+        else part("sldMaster", _holder('<p:ph type="body"/>', 1_000_000)),
     }
     for n in (1, 2):
         parts[f"ppt/slideLayouts/slideLayout{n}.xml"] = unsized
@@ -665,7 +668,12 @@ def test_layouts_and_their_master_are_read_once_however_many_pictures_sit_in_the
             ("lay", "slideLayout", f"../slideLayouts/slideLayout{1 + n % 2}.xml"),
         )
     a = extract(_zip(parts), "p.pptx")
-    assert a.coverage.complete and engine.seen == []
+    assert engine.seen == []
+    if broken:
+        assert [f.unit for f in a.coverage.failed] == [f"slide {n}" for n in (1, 2, 3, 4)]
+        assert all("its pictures could not be read" in f.reason for f in a.coverage.failed)
+    else:
+        assert a.coverage.complete
     for n in (1, 2):
         assert reads.count(f"ppt/slideLayouts/slideLayout{n}.xml") == 1
         assert reads.count(f"ppt/slideLayouts/_rels/slideLayout{n}.xml.rels") == 1
