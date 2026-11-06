@@ -736,3 +736,36 @@ def test_a_blacklist_regex_keeps_no_captures_and_a_small_memory() -> None:
     assert compiled.groups == 0 and compiled.options.never_capture
     assert compiled.options.max_mem == REGEX_MAX_MEMORY
     assert compiled.search(b"xabbc") is not None  # the write path searches UTF-8 bytes
+
+
+def test_a_bulk_writes_entries_share_one_regex_budget(monkeypatch) -> None:
+    """Each entry of a bulk write is checked in the same request: the budget is the
+    request's, so a thousand entries cannot each spend a write's worth. A substring
+    pattern that matches still names itself once the regexes are out of budget."""
+    import server.memory.app.blacklist_guard as bl
+    from server.core import request_work
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    regex = _pattern("r", "namespace", "x+", "regex")
+    monkeypatch.setattr(bl, "_cache", [regex, _pattern("s", "namespace", "secret", "substring")])
+    monkeypatch.setattr(bl, "REGEX_WORK_BUDGET", 3 * 1_000 * regex.compiled.programsize)
+
+    async def _bulk() -> list[Any]:
+        request_work.begin()
+        return [
+            await bl.find_match(org=ORG, namespace=NS, value=value)
+            for value in (
+                "y" * 1_000,
+                "y" * 1_000,
+                "y" * 1_000,
+                "y" * 1_000,
+                "a secret" + "y" * 990,
+            )
+        ]
+
+    hits = asyncio.run(_bulk())
+    assert hits[:3] == [None, None, None]
+    assert hits[3] is not None and hits[3].pattern_id == "" and "too long" in hits[3].reason
+    assert hits[4] is not None and hits[4].pattern_id == "s"
+    # a new request has its own budget
+    assert asyncio.run(bl.find_match(org=ORG, namespace=NS, value="y" * 1_000)) is None

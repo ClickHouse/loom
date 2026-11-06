@@ -670,7 +670,7 @@ limiter error admits the call and is counted. Sizing and the shared backend are 
 `blacklist.add` registers a `substring` or `regex` pattern at `global`, `org` or
 `namespace` scope (`server/memory/app/blacklist_guard.py`). A regex runs on RE2, in time
 linear in the value; its length, its compiled program and a scope's total program are
-capped, one write's regex work (bytes times instructions) is bounded, and it runs on the
+capped, one request's regex work (bytes times instructions) is bounded, and it runs on the
 blacklist's own threads, so no pattern stalls the event loop. Matching writes get 422
 `BLACKLISTED` on `memory.set` and the other write paths before anything is
 stored; `sweep=true` tombstones existing matches. Replicas invalidate their pattern

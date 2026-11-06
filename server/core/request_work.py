@@ -62,6 +62,9 @@ class RequestWork:
     # resolved (a code op naming none runs in the code namespace): the ledger
     # row's tenant where the request named none.
     admitted: tuple[str, str] | None = None
+    # Bytes x RE2 instructions the blacklist's regexes scanned for this request, every
+    # entry of a bulk write together (`blacklist_guard.REGEX_WORK_BUDGET`).
+    regex_work: int = 0
 
     def mark(self, name: str) -> float:
         now = time.perf_counter()

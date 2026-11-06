@@ -20,6 +20,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from server.core import request_work
 from server.core.caller_regex import compile_caller_regex
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now_seconds
@@ -41,8 +42,9 @@ REGEX_MAX_MEMORY = 256 * 1024  # not a setting: bounds what a writer's patterns 
 # RE2 instructions the regexes of one scope may hold together: checked at add, and again
 # at cache load, which keeps the oldest when racing adds or an older build stored more.
 REGEX_PROGRAM_PER_SCOPE = 3_000  # not a setting: with the budget below, bounds one write
-# Bytes x RE2 instructions one write's regexes may scan, about a second of a matcher
-# thread at worst; a value past it is refused, as if a pattern matched.
+# Bytes x RE2 instructions one request's regexes may scan (a bulk write's entries
+# together), about a second of a matcher thread at worst; a value past it is refused,
+# as if a pattern matched.
 REGEX_WORK_BUDGET = 250_000_000  # not a setting: what keeps one write from holding them
 # Regex matching runs on its own few threads (RE2 releases the GIL), so a long value
 # under many patterns waits for these, never the event loop or the shared pool.
@@ -231,9 +233,17 @@ async def find_match(
     # cost is per byte.
     data = value.encode("utf-8", "replace")
     program = sum(p.compiled.programsize for p in regexes)
-    if len(data) * program > REGEX_WORK_BUDGET:
+    bag = request_work.current()  # a bulk write's entries share one request's budget
+    spent = (bag.regex_work if bag is not None else 0) + len(data) * program
+    if spent > REGEX_WORK_BUDGET:
+        # A substring pattern costs nothing to check: one that matches still names itself.
+        hit = next((p for p in applicable if p.compiled is None and p.pattern in value), None)
+        if hit is not None:
+            return hit
         widest = max(regexes, key=lambda p: _SCOPE_PRECEDENCE.get(p.scope, 0)).scope
         return _over_budget(org, namespace, widest, len(data), program)
+    if bag is not None:
+        bag.regex_work = spent
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(_MATCHERS, _first_match, applicable, value, data)
 
@@ -257,8 +267,9 @@ def _over_budget(org: str, namespace: str, scope: str, size: int, program: int) 
         pattern_type="regex",
         scope=scope,
         reason=(
-            f"a {size}-byte value is too long to check against the blacklist regexes that "
-            f"apply ({program} RE2 instructions); store it shorter or remove regex patterns"
+            f"this request's values are too long to check against the blacklist regexes "
+            f"that apply ({size} bytes here, {program} RE2 instructions); send less in one "
+            "request, or remove regex patterns"
         ),
     )
 
