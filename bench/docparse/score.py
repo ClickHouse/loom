@@ -96,8 +96,8 @@ def _index(stream: list[str]) -> dict[tuple[str, ...], list[int]]:
 
 
 def order_score(g: dict, p: dict) -> float | None:
-    """The share of consecutive gold text units (paragraphs, items, headings of
-    five words or more) that the parse holds in the same order."""
+    """The share of consecutive gold text units of five words or more
+    (paragraphs, items, headings, code) that the parse holds in the same order."""
     units = [
         words(b["text"])
         for b in g["blocks"]
