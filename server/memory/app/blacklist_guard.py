@@ -76,14 +76,18 @@ def compile_regex(pattern: str) -> Any:
 
 
 async def scope_program(scope: str, org: str, namespace: str) -> int:
-    """The RE2 instructions of the regexes stored at exactly this scope, read fresh (an
-    add decides on it; a stale cache would let two adds each pass)."""
-    await _refresh_cache()
-    return sum(
-        p.compiled.programsize
-        for p in _cache
-        if p.compiled is not None and (p.scope, p.org, p.namespace) == (scope, org, namespace)
-    )
+    """The RE2 instructions of the regexes stored at exactly this scope, read from
+    ClickHouse (an add decides on it); a stored one RE2 refuses counts nothing, as at
+    cache load. Two adds racing can still both pass: cache load keeps the oldest."""
+    with sequential_reads():
+        patterns = await _repo.scope_regexes(scope, org, namespace, ch=get_client())
+    total = 0
+    for pattern in patterns:
+        try:
+            total += compile_regex(pattern).programsize
+        except ValidationError:
+            continue
+    return total
 
 
 @dataclass(frozen=True)
@@ -220,12 +224,6 @@ def _applies_to(p: BlacklistPattern, org: str, namespace: str) -> bool:
     return p.org == org and p.namespace == namespace
 
 
-def _matches(p: BlacklistPattern, value: str | bytes) -> bool:
-    if p.compiled is not None:
-        return bool(p.compiled.search(value))
-    return p.pattern_type != "regex" and p.pattern in str(value)
-
-
 async def find_match(
     *,
     org: str,
@@ -262,7 +260,14 @@ def _first_match(
 ) -> BlacklistPattern | None:
     """The first pattern that matches: a substring in `value`, a regex in `data` (the
     value as UTF-8, which RE2 reads without copying it again per pattern)."""
-    return next((p for p in patterns if _matches(p, data if p.compiled else value)), None)
+    return next(
+        (
+            p
+            for p in patterns
+            if (p.compiled.search(data) if p.compiled is not None else p.pattern in value)
+        ),
+        None,
+    )
 
 
 def _over_budget(org: str, namespace: str, scope: str, size: int, program: int) -> BlacklistPattern:

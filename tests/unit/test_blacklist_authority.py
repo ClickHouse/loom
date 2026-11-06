@@ -616,18 +616,22 @@ def test_the_matcher_thread_keeps_scope_precedence_and_reads_a_lone_surrogate(
     assert hit is not None and hit.pattern_id == "global"
 
 
-def test_scope_program_sums_the_regexes_at_exactly_the_scope(monkeypatch) -> None:
+def test_scope_program_sums_the_regexes_stored_at_exactly_the_scope(monkeypatch) -> None:
+    """Read from ClickHouse at add; a stored regex RE2 refuses counts nothing, as at
+    cache load."""
     import server.memory.app.blacklist_guard as bl
 
-    rows = [
-        _pattern("a", "namespace", "x+", "regex"),
-        _pattern("b", "namespace", "y", "substring"),
-        _pattern("c", "global", "z+", "regex"),
-        _pattern("d", "global", "w+", "regex"),
-    ]
-    monkeypatch.setattr(bl, "_refresh_cache", _loaded)  # read fresh at add
-    monkeypatch.setattr(bl, "_cache", rows)
-    size = rows[0].compiled.programsize
+    stored = {
+        ("namespace", ORG, NS): ["x+", "(?=a)b"],
+        ("global", *h._scope_args("global", ORG, NS)): ["z+", "w+"],
+    }
+
+    async def _scope_regexes(scope, org, namespace, *, ch=None):
+        return stored.get((scope, org, namespace), [])
+
+    monkeypatch.setattr(bl._repo, "scope_regexes", _scope_regexes)
+    monkeypatch.setattr(bl, "get_client", lambda: None)
+    size = compile_regex("x+").programsize
     assert asyncio.run(bl.scope_program("namespace", ORG, NS)) == size
     assert asyncio.run(bl.scope_program("global", *h._scope_args("global", ORG, NS))) == 2 * size
     assert asyncio.run(bl.scope_program("namespace", ORG, "other")) == 0
@@ -693,14 +697,14 @@ def test_regexes_match_across_newlines_on_the_matcher_threads(monkeypatch) -> No
     import server.memory.app.blacklist_guard as bl
 
     ran_on: list[str] = []
-    matches = bl._matches
+    first_match = bl._first_match
 
-    def _recording(p: Any, value: str) -> bool:
+    def _recording(*args: Any) -> Any:
         ran_on.append(threading.current_thread().name)
-        return matches(p, value)
+        return first_match(*args)
 
     monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
-    monkeypatch.setattr(bl, "_matches", _recording)
+    monkeypatch.setattr(bl, "_first_match", _recording)
     monkeypatch.setattr(bl, "_cache", [_pattern("r", "namespace", "secret.code", "regex")])
     hit = asyncio.run(bl.find_match(org=ORG, namespace=NS, value="secret\ncode"))
     assert hit is not None and hit.pattern_id == "r"
@@ -774,3 +778,24 @@ def test_a_bulk_writes_entries_share_one_regex_budget(monkeypatch) -> None:
         return [await bl.find_match(org=ORG, namespace=NS, value="y" * 1_000) for _ in range(5)]
 
     assert asyncio.run(_worker_pass()) == [None] * 5
+
+
+def test_each_op_the_transports_begin_starts_one_regex_budget(monkeypatch) -> None:
+    """The transports bind the budget at each op (`_common.begin_request`, which MCP's
+    `begin_call` runs per call): two checks after one begin share it, a new begin
+    starts again at zero."""
+    import server.memory.app.blacklist_guard as bl
+    from server.transport import _common
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    regex = _pattern("r", "namespace", "x+", "regex")
+    monkeypatch.setattr(bl, "_cache", [regex])
+    monkeypatch.setattr(bl, "REGEX_WORK_BUDGET", 1_500 * regex.compiled.programsize)
+
+    async def _op() -> list[Any]:
+        _common.begin_request()
+        return [await bl.find_match(org=ORG, namespace=NS, value="y" * 1_000) for _ in range(2)]
+
+    first, second = asyncio.run(_op())
+    assert first is None and second is not None and second.pattern_id == ""
+    assert asyncio.run(_op())[0] is None  # the next op starts at zero

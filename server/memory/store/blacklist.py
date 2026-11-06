@@ -136,6 +136,22 @@ async def active_patterns(*, ch: _CHClient | None = None) -> list[dict[str, Any]
     )
 
 
+async def scope_regexes(
+    scope: str, org: str, namespace: str, *, ch: _CHClient | None = None
+) -> list[str]:
+    """The live regex patterns stored at exactly this scope."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT pattern FROM loom.blacklist FINAL
+        WHERE tombstoned_at IS NULL AND pattern_type = 'regex'
+          AND scope = {scope:String} AND org = {org:String} AND namespace = {ns:String}
+        """,
+        params={"scope": scope, "org": org, "ns": namespace},
+    )
+    return [str(r["pattern"]) for r in rows]
+
+
 async def version_watermark(*, ch: _CHClient | None = None) -> tuple[int, int]:
     """(rows, sum of versions) over the watermark table's unmerged rows. Every
     add/remove inserts a row with a fresh version, so the pair moves on every
