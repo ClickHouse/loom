@@ -652,8 +652,10 @@ refuses, none is decremented.
 | ------------------------- | ------------------------------------------------ |
 | `memory`                  | Memory and conversation ops, writes and searches |
 | `memory.read`             | Exact-key reads such as `memory.get`             |
-| `knowledge.add`           | Every other `knowledge.*` op                     |
 | `knowledge.search`        | `knowledge.search`                               |
+| `knowledge.query`         | `knowledge.query`                                |
+| `knowledge.read`          | Other `knowledge.*` reads a viewer may call      |
+| `knowledge.add`           | Every other `knowledge.*` op                     |
 | `code`                    | `code.*` (`code.outcome` rides `memory`)         |
 | `default`                 | Everything else                                  |
 

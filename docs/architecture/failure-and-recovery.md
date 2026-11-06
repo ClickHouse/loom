@@ -299,7 +299,8 @@ pass every bucket, and a refusal decrements none.
 | `memory.read`      | Exact-key reads: `memory.get`, `bulk_get`, `history`, `working_memory.get`, … | 300      | 50         |
 | `knowledge.search` | `knowledge.search`                                                            | 20       | 3          |
 | `knowledge.query`  | `knowledge.query`                                                             | 20       | 3          |
-| `knowledge.add`    | Other `knowledge.*` ops                                                       | 10       | 2          |
+| `knowledge.read`   | Other `knowledge.*` reads a viewer may call: `knowledge.get`, `list`, …       | 50       | 10         |
+| `knowledge.add`    | Other `knowledge.*` ops, `knowledge.synthesize` and `dedup_list` included     | 10       | 2          |
 | `code`             | `code.*`                                                                      | 60       | 10         |
 | `default`          | Everything else                                                               | 50       | 10         |
 

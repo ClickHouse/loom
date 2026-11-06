@@ -6,10 +6,11 @@ knowledge_ingest worker pass runs one, so it fails `format_unavailable` as produ
 it on a deployment with no extractor for Parquet.
 Tune cuts the documents again in process and reports the cut: every section is cut, and
 no larger size is drafted because the test embedder states no input limit, which
-`skipped` says. The Parquet file is named in `skipped` with no route invented (as one to
-upload again when the server's own extractor declares Parquet), decision extraction
-is said to take no instructions, the same sample comes back on a second call, and nothing
-is written: the document rows and chunks are as they were.
+`skipped` says. The Parquet file is named in `skipped` with no route drafted: as a source to
+upload again when the server's extractor declares Parquet, else as one no configured
+extractor declares. Decision extraction is said to take no instructions, the same sample
+comes back on a second call, and nothing is written: the document rows and chunks are as
+they were.
 """
 
 from __future__ import annotations
