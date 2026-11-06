@@ -199,6 +199,7 @@ async def test_ingest_file_uploads_ingests_and_waits(
     assert json.loads(first.content)["source_uri"] == f"file://{doc.resolve()}"
     assert json.loads(first.content)["title"] == "Runbook"
     assert json.loads(second.content)["source_uri"] == "repo://r.md"
+    assert json.loads(second.content)["title"] == "runbook"  # the name less its extension
     uploads = [r for r in server.requests if r.url.path == "/v1/knowledge.upload"]
     assert [r.url.params["filename"] for r in uploads] == ["runbook.md", "runbook.md"]
 

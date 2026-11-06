@@ -315,13 +315,15 @@ class KnowledgeClient:
         timeout_s: float = 600.0,
         **ingest_args: Any,
     ) -> dict[str, Any]:
-        """Upload a local file and ingest it (`source_uri` defaults to its
-        `file://` path). With `wait`, returns the job's final `ingest_status`;
+        """Upload a local file and ingest it, named as the ingest CLI names it:
+        `source_uri` defaults to its `file://` path and `title` to its name less
+        the extension. With `wait`, returns the job's final `ingest_status`;
         without, the `ingest` answer. `ingest_args` are `ingest`'s keywords."""
         file = Path(path)
         # Read off the event loop: a large file must not stall the agent's other calls.
         data = await asyncio.to_thread(file.read_bytes)
         source_uri = source_uri or f"file://{await asyncio.to_thread(file.resolve)}"
+        ingest_args.setdefault("title", file.stem)
         up = await self.upload(data, file.name)
         job = await self.ingest(up["upload_id"], source_uri=source_uri, **ingest_args)
         if not wait:
