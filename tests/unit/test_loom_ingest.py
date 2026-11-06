@@ -387,7 +387,7 @@ def test_a_url_is_uploaded_with_its_media_type_and_path_name(
     assert server.ingests[0]["source_uri"] == "https://docs.example.com/q1-runbook?v=2"
 
 
-def test_a_url_s_escaped_name_is_uploaded_as_written(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_url_s_escaped_name_is_uploaded_unescaped(monkeypatch: pytest.MonkeyPatch) -> None:
     import httpx as _httpx
 
     monkeypatch.setattr(_httpx, "Client", lambda **kw: _FakeHTTPXClient(b"%PDF"))
