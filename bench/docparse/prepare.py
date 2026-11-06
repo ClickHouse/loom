@@ -31,6 +31,7 @@ CONTAINER = "docparse-tools-run"
 
 
 def docker(*cmd: str) -> None:
+    """`cmd` run in the tools container; CalledProcessError, its output kept, when it fails."""
     subprocess.run(["docker", "exec", CONTAINER, *cmd], check=True, capture_output=True)
 
 
@@ -46,6 +47,10 @@ def prepare(out: Path, src: Path) -> Dirs:
         raise SystemExit(
             f"{src} lacks pep{missing[0]}.html: save each from https://peps.python.org/pep-0NNN/"
         )
+    if not d.out.parent.is_dir():
+        raise SystemExit(
+            f"{d.out.parent} is not a directory: build makes only the corpus directory itself"
+        )
     left = {p.name for p in d.out.iterdir()} if d.out.is_dir() else set()
     # a corpus holds gold.jsonl; one a build stopped in, its _work
     if left and not {"gold.jsonl", "_work"} & left:
@@ -56,7 +61,7 @@ def prepare(out: Path, src: Path) -> Dirs:
     # The container's /c must be this directory: a file of a fresh name, written
     # here, is looked for there before anything here is removed.
     made = [p for p in (d.out, d.work) if not p.exists()]  # to remove again on a refusal
-    d.work.mkdir(parents=True, exist_ok=True)
+    d.work.mkdir(parents=True, exist_ok=True)  # its parent is there: at most these two
     marker = d.work / f"mount-{uuid.uuid4().hex}"
     marker.touch()
     try:
@@ -73,7 +78,9 @@ def prepare(out: Path, src: Path) -> Dirs:
             f"the tools container {CONTAINER} cannot be used ({reason}): mount {d.out} at /c"
         ) from None
     marker.unlink()
-    for p in d.out.iterdir():  # an interrupted build's scratch too
+    # what says this is a corpus goes last, so a build stopped here can run again
+    markers = {d.out / "gold.jsonl", d.work}
+    for p in sorted(d.out.iterdir(), key=lambda p: p in markers):
         shutil.rmtree(p) if p.is_dir() else p.unlink()
     d.work.mkdir()
     return d

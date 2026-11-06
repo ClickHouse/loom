@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from bench.docparse import prepare as P
 from bench.docparse import run as R
 from bench.docparse import score as S
 
@@ -241,48 +242,91 @@ def test_a_heading_is_cited_whether_the_parse_keeps_its_number_or_not() -> None:
     assert S.locator_scores(g, p)["locator_acc"] == 1.0
 
 
-def test_a_build_the_container_cannot_see_removes_nothing_and_a_stopped_one_can_run_again(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    from bench.docparse import prepare as C
-
-    def unseen(*cmd: str) -> None:
-        raise subprocess.CalledProcessError(1, cmd, stderr=b"")
-
-    monkeypatch.setattr(C, "docker", unseen)
+@pytest.fixture
+def pep_src(tmp_path: Path) -> Path:
     src = tmp_path / "src"
     src.mkdir()
-    for n, _ in C.PEPS:
+    for n, _ in P.PEPS:
         (src / f"pep{n}.html").write_text("")
+    return src
+
+
+def _no_container(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    def fail(*cmd: str) -> None:
+        raise error
+
+    monkeypatch.setattr(P, "docker", fail)
+
+
+def test_a_build_the_container_cannot_see_leaves_its_directory_as_found(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pep_src: Path
+) -> None:
+    _no_container(
+        monkeypatch, subprocess.CalledProcessError(1, ["docker"], stderr=b"no such container")
+    )
     corpus = tmp_path / "corpus"
     corpus.mkdir()
     (corpus / "gold.jsonl").write_text("{}\n")
     (corpus / "keep.pdf").write_bytes(b"%PDF")
-    empty = tmp_path / "empty"
-    # a build stopped midway: its rendered files and _work, no gold.jsonl yet
-    stopped = tmp_path / "stopped"
+    stopped = tmp_path / "stopped"  # a build stopped midway: rendered files and _work, no gold yet
     (stopped / "_work").mkdir(parents=True)
     (stopped / "web_doc_0.pdf").write_bytes(b"%PDF")
-    for out in (corpus, empty, stopped):
+    for out in (corpus, tmp_path / "empty", stopped):
         before = sorted(p.name for p in out.iterdir()) if out.exists() else []
-        for _ in range(2):  # refused at the mount twice: nothing it left stops a second try
-            with pytest.raises(SystemExit, match="cannot be used"):
-                C.prepare(out, src)
-        # as it was found: the same files, and no directory made where there was none
+        for _ in range(2):  # refused twice: nothing the first refusal left stops the second
+            with pytest.raises(SystemExit, match="no such container"):
+                P.prepare(out, pep_src)
         assert (sorted(p.name for p in out.iterdir()) if out.exists() else []) == before
-    with pytest.raises(SystemExit, match="lacks pep518.html"):  # checked before anything is removed
-        C.prepare(corpus, tmp_path / "nowhere")
-    with pytest.raises(SystemExit, match="cannot be used"):  # nothing made where nothing was
-        C.prepare(tmp_path / "typo", src)
-    assert not (tmp_path / "typo").exists() and not (empty / "_work").exists()
+
+
+def test_a_build_without_docker_says_so(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pep_src: Path
+) -> None:
+    _no_container(monkeypatch, FileNotFoundError("docker"))
+    with pytest.raises(SystemExit, match="no docker program"):
+        P.prepare(tmp_path / "corpus", pep_src)
+
+
+def test_a_build_refuses_before_making_or_removing_anything(tmp_path: Path, pep_src: Path) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "gold.jsonl").write_text("{}\n")
+    with pytest.raises(SystemExit, match="lacks pep518.html"):
+        P.prepare(corpus, tmp_path / "nowhere")
+    with pytest.raises(SystemExit, match="is not a directory"):  # a corpus's parent is not made
+        P.prepare(tmp_path / "missing" / "corpus", pep_src)
     other = tmp_path / "other"
     other.mkdir()
     (other / "notes.txt").write_text("x")
     with pytest.raises(SystemExit, match="neither gold.jsonl"):
-        C.prepare(other, src)
-    # once the container sees the directory, it is emptied, a stopped build's scratch too
-    monkeypatch.setattr(C, "docker", lambda *cmd: None)
+        P.prepare(other, pep_src)
+    assert not (tmp_path / "missing").exists() and [p.name for p in other.iterdir()] == [
+        "notes.txt"
+    ]
+    assert sorted(p.name for p in corpus.iterdir()) == ["gold.jsonl"]
+
+
+def test_a_build_the_container_sees_empties_its_directory_markers_last(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pep_src: Path
+) -> None:
+    monkeypatch.setattr(P, "docker", lambda *cmd: None)
+    removed: list[str] = []
+    real = Path.unlink
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        removed.append(self.name)
+        real(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    stopped = tmp_path / "stopped"
+    (stopped / "_work").mkdir(parents=True)
     (stopped / "_work" / "scan_old-1.png").write_bytes(b"png")
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    for name in ("a.pdf", "gold.jsonl", "z.pdf"):
+        (corpus / name).write_bytes(b"x")
     for out in (corpus, stopped):
-        d = C.prepare(out, src)
+        d = P.prepare(out, pep_src)
         assert [p.name for p in out.iterdir()] == ["_work"] and list(d.work.iterdir()) == []
+    order = [n for n in removed if not n.startswith("mount-")]
+    assert order.index("gold.jsonl") > max(order.index("a.pdf"), order.index("z.pdf"))

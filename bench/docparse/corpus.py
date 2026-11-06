@@ -590,6 +590,16 @@ def landscape_table_pdf(d: Dirs, spec: dict, path: Path) -> None:
 
 
 def build(out: Path, src: Path) -> None:
+    try:
+        _build(out, src)
+    except subprocess.CalledProcessError as e:  # a render in the container failed: say why
+        tool = " ".join(str(c) for c in e.cmd[3:5])
+        raise SystemExit(
+            f"{tool} failed: {(e.stderr or b'').decode(errors='replace').strip()[-2000:]}"
+        ) from None
+
+
+def _build(out: Path, src: Path) -> None:
     d = prepare(out, src)
     src = src.resolve()
     gold_all: list[dict] = []
