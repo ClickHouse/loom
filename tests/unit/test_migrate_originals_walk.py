@@ -23,7 +23,7 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
     page = [_held(i) for i in range(5)]
 
     async def held_in_clickhouse(org: str, ns: str, after: str, limit: int) -> blobs.HeldPage:
-        return blobs.HeldPage(page, "") if after == "" else blobs.HeldPage([], "")
+        return blobs.HeldPage(page, "")  # one page: the namespace's last
 
     async def needed(org: str, ns: str, shas: list[str]) -> set[str]:
         return set(shas[1:])  # the first: nothing needs it
@@ -71,7 +71,7 @@ async def test_an_erasure_holding_one_back_refuses_the_rest_of_the_namespace_onc
     reads: list[str] = []
 
     async def held_in_clickhouse(org: str, ns: str, after: str, limit: int) -> blobs.HeldPage:
-        return blobs.HeldPage(page, "") if after == "" else blobs.HeldPage([], "")
+        return blobs.HeldPage(page, "")  # one page: the namespace's last
 
     async def needed(org: str, ns: str, shas: list[str]) -> set[str]:
         return set(shas)
@@ -129,7 +129,7 @@ async def test_an_erased_original_whose_take_back_failed_is_not_counted_moved(
     page = [_held(0)]
 
     async def held_in_clickhouse(org: str, ns: str, after: str, limit: int) -> blobs.HeldPage:
-        return blobs.HeldPage(page, "") if after == "" else blobs.HeldPage([], "")
+        return blobs.HeldPage(page, "")  # one page: the namespace's last
 
     async def needed(org: str, ns: str, shas: list[str]) -> set[str]:
         return set(shas)
@@ -377,3 +377,34 @@ async def test_missing_bytes_are_corrupt_only_under_the_row_the_walk_read(
 
     monkeypatch.setattr(blobs, "latest", gone)
     assert await originals.move_to_bucket(held) is False  # gone since the walk: nothing to move
+
+
+@pytest.mark.asyncio
+async def test_the_walk_follows_each_page_to_the_namespaces_last(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = [_held(i) for i in range(4)]
+    reads: list[str] = []
+
+    async def held_in_clickhouse(org: str, ns: str, after: str, limit: int) -> blobs.HeldPage:
+        reads.append(after)
+        if after == "":
+            return blobs.HeldPage(page[:2], page[1].sha)
+        return blobs.HeldPage(page[2:], "")  # a short page: no page follows
+
+    async def needed(org: str, ns: str, shas: list[str]) -> set[str]:
+        return set(shas)
+
+    async def fence(org: str, ns: str) -> str:
+        return ""
+
+    async def move(held: blobs.Held) -> bool:
+        return True
+
+    monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
+    monkeypatch.setattr(blobs, "needed", needed)
+    monkeypatch.setattr(originals, "fence", fence)
+    monkeypatch.setattr(originals, "move_to_bucket", move)
+    result = await originals.migrate_originals(org="acme", namespace="docs")
+    assert result.moved == 4
+    assert reads == ["", page[1].sha]
