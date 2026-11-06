@@ -4,7 +4,8 @@ Per file: text recall and precision (word multisets), reading-order accuracy,
 heading F1 and level accuracy, table cell F1 and table detection F1 (headings
 or tables where the file has none score 0), locator accuracy, notes membership
 (decks), lost blocks and silent loss, errors, parse time and peak memory. A
-parse that failed scores 0 on every metric its file's gold defines.
+parse that failed scores 0 on every metric its file's gold defines but level
+accuracy, which is taken over the matched headings and so has none.
 Per category and overall: the mean of each, and for every system after the
 first, the paired difference from the first with a 95% bootstrap interval
 (`bench.bootstrap.paired_bootstrap`, files resampled).
@@ -305,8 +306,8 @@ def lost_blocks(g: dict, p: dict) -> int:
 
 def score_file(g: dict, p: dict) -> dict:
     """One file's scores. A parse that failed is scored as an empty one that
-    says it is incomplete: 0 on every metric the gold defines, and no time or
-    memory, which the means leave out."""
+    says it is incomplete: 0 on every metric the gold defines, no level accuracy
+    (no heading matched), and no time or memory, which the means leave out."""
     if "error" in p:
         s = score_file(g, {"complete": False, "blocks": [], "tables": []})
         # no time or memory: a failed parse is not faster or leaner for failing

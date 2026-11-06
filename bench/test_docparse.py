@@ -206,6 +206,7 @@ def test_a_failed_parse_scores_zero_on_every_metric_its_gold_defines(tmp_path: P
     assert (
         s["error"] == 1 and s["silent_loss"] == 0 and s["seconds"] is None and s["peak_mb"] is None
     )
+    assert s["heading_level_acc"] is None  # taken over matched headings, of which there are none
     for m in (
         "text_recall",
         "order_acc",

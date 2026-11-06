@@ -8,6 +8,7 @@ from the rendered file (poppler's pdftotext, a parser the scorer does not grade)
 
 from __future__ import annotations
 
+import copy
 import io
 import json
 import random
@@ -97,7 +98,7 @@ def gold_doc(spec: dict) -> dict:
     return {"blocks": blocks, "tables": tables}
 
 
-def gold_deck(spec: dict, *, notes: bool, image_text: bool = True) -> dict:
+def gold_deck(spec: dict, *, notes: bool) -> dict:
     blocks: list[dict] = []
     tables: list[dict] = []
     for n, s in enumerate(spec["elements"], start=1):
@@ -106,9 +107,8 @@ def gold_deck(spec: dict, *, notes: bool, image_text: bool = True) -> dict:
             blocks.append({"kind": "item", "text": b, "page": n})
         for lab in s.get("labels", []):
             blocks.append({"kind": "label", "text": lab, "page": n})
-        if image_text:
-            for lab in s.get("image", []):
-                blocks.append({"kind": "image_text", "text": lab, "page": n})
+        for lab in s.get("image", []):
+            blocks.append({"kind": "image_text", "text": lab, "page": n})
         if "table" in s:
             tables.append({"rows": s["table"], "page_start": n, "page_end": n, "_at": len(blocks)})
         if notes and s.get("notes"):
@@ -422,7 +422,8 @@ def whiteboard(labels: list[str], path: Path, seed: int) -> None:
     img.save(path)
 
 
-def scan(d: Dirs, pdf: Path, out: Path, seed: int, dpi: int = 110) -> None:
+def scan(d: Dirs, pdf: Path, out: Path, seed: int) -> None:
+    dpi = 110
     r = random.Random(seed)
     prefix = d.work / f"scan_{out.stem}"
     docker(
@@ -559,11 +560,11 @@ def rl_pdf(
         )
 
 
-def rotate_pages(src: Path, out: Path, which: set[int], angle: int = 90) -> None:
+def rotate_pages(src: Path, out: Path, which: set[int]) -> None:
     w = PdfWriter()
     for i, p in enumerate(PdfReader(src).pages):
         if i in which:
-            p.rotate(angle)
+            p.rotate(90)
         w.add_page(p)
     with open(out, "wb") as f:
         w.write(f)
@@ -607,9 +608,8 @@ def _build(out: Path, src: Path) -> None:
         *,
         origin: str,
         ocr: bool = False,
-        path: Path | None = None,
     ) -> None:
-        path = path or d.out / name
+        path = d.out / name
         if fmt == "pdf":
             miss = [] if ocr else locate(d, gold, path)
             if miss:
@@ -754,7 +754,7 @@ def _build(out: Path, src: Path) -> None:
         ["office_export_1.pdf", "web_doc_2.pdf", "typeset_1.pdf", "web_deck_1.pdf"]
     ):
         scan(d, d.out / source, d.out / f"scan_{k}.pdf", seed=k)
-        g = json.loads(json.dumps(next(x for x in gold_all if x["file"] == source)))
+        g = copy.deepcopy(next(x for x in gold_all if x["file"] == source))
         for key in ("file", "category", "format", "source", "ocr"):
             g.pop(key)
         add(
@@ -799,7 +799,7 @@ def _build(out: Path, src: Path) -> None:
         if root != g["file"]:
             g["split"] = split[root]
         elif g["file"] == "whiteboard.pdf":
-            g["split"] = "heldout"
+            g["split"] = "heldout"  # the one photo, so OCR of a photo is scored on held-out only
     with open(d.out / "gold.jsonl", "w") as f:
         for g in gold_all:
             f.write(json.dumps(g, ensure_ascii=False, sort_keys=True) + "\n")
