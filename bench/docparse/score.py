@@ -245,7 +245,9 @@ def locator_scores(g: dict, p: dict) -> dict:
     cited right when that block's pages hold its page and span no more pages
     than it does: one block over every page cites nothing. A table is cited
     right when a parse table with its header starts on its first page and
-    spans no more pages than it does."""
+    spans no more pages than it does. Words are compared as `probe_words` and
+    `text_words` hold them, so a list the parse runs onto one line keeps an
+    enumerator inside it and is not found by its opening words."""
     if g["format"] == "docx":
         return {}
     blocks = [b for b in p.get("blocks", []) if b["type"] != "table"]
