@@ -124,7 +124,7 @@ barrier._server_side_settled = AsyncMock(return_value=True)
 barrier.record_participant = AsyncMock()
 # The parent measures from here to the process's exit, imports left out
 # (CLOCK_MONOTONIC is one clock for every process on the host).
-print(time.monotonic(), flush=True)
+print("retiring", time.monotonic(), flush=True)
 assert asyncio.run(barrier.retire_process())
 """
 
@@ -138,5 +138,6 @@ def test_the_process_exits_without_waiting_on_a_stuck_heartbeat() -> None:
         timeout=60,
     )
     assert done.returncode == 0, done.stderr[-2000:]
-    retiring = float(done.stdout.split()[-1])
+    (line,) = [ln for ln in done.stdout.splitlines() if ln.startswith("retiring ")]
+    retiring = float(line.split()[1])
     assert time.monotonic() - retiring < 5, "exit waited on the heartbeat thread"
