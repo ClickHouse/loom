@@ -1264,3 +1264,10 @@ def test_repeats_with_one_time_in_two_zone_spellings_are_the_same_entry() -> Non
     ]
     parsed = MemoryImportInput(**_IDENT, entries=entries)
     assert parsed.entries[0].valid_at == parsed.entries[1].valid_at == datetime(2024, 1, 1)
+
+
+def test_an_entry_the_blacklist_could_not_check_names_that_reason() -> None:
+    """Told apart from a match: sent in a smaller import it is checked."""
+    from server.memory.api.models_bulk import UNCHECKED
+
+    assert _import_mod._CHECK_OF[UNCHECKED] == "blacklist_unchecked"

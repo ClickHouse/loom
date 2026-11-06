@@ -155,10 +155,6 @@ def coarse_shape_re(shapes: set[str]) -> str:
     return "|".join(rx for shape, rx in _COARSE_BY_SHAPE.items() if not shapes or shape in shapes)
 
 
-# A probe shape reported beside the detector's levels, so a dry run says how many
-# e-mail-shaped rows it found.
-
-
 @dataclass
 class SweepCandidate:
     memory_id: str
@@ -209,7 +205,6 @@ class SweepReport:
 
 
 def _shapes(text: str, level: str) -> tuple[str, ...]:
-
     shapes: list[str] = []
     # The `credential` shape names every row the detector reads as high, whatever it holds
     # (a key, a card number, an SSN, a stated PIN): the scheduled pass applies `credential`

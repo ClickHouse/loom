@@ -39,6 +39,8 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> tuple[_CH, list[str]]:
     async def _find_match(*, org: str, namespace: str, value: str) -> Any:
         if SECRET in value:
             return SimpleNamespace(pattern_id="p-1", scope="namespace", reason="secret")
+        if "too long to check" in value:  # what the regex budget answers past it
+            return SimpleNamespace(pattern_id="", scope="namespace", reason="too long")
         return None
 
     async def _note_hit(pattern_id: str) -> None:
@@ -97,3 +99,24 @@ async def test_blacklisted_chunks_and_digests_are_dropped_not_written(wired) -> 
     # The refused chunk's evidence link is not written either.
     assert "user_key" not in repr(ch.inserts.get(SOURCES_TABLE, []))
     assert hits == ["p-1", "p-1", "p-1"]
+
+
+@pytest.mark.asyncio
+async def test_a_chunk_the_blacklist_could_not_check_is_counted_apart(wired) -> None:
+    """Past the request's regex budget a chunk is skipped, and `unchecked` says so: the
+    same chunk in a smaller request is checked."""
+    from server.memory.api.models_evidence_transfer import EvidenceChunk, MemoryImportEvidenceInput
+    from server.memory.app.evidence_transfer import handle_memory_import_evidence
+
+    out = await handle_memory_import_evidence(
+        MemoryImportEvidenceInput(
+            org="acme",
+            namespace="ns",
+            agent="a",
+            chunks=[
+                EvidenceChunk(session_id="s1", chunk_index=0, content="too long to check"),
+                EvidenceChunk(session_id="s1", chunk_index=1, content=f"my key is {SECRET}"),
+            ],
+        )
+    )
+    assert (out.chunks_written, out.skipped, out.unchecked) == (0, 2, 1)

@@ -126,14 +126,13 @@ async def handle_blacklist_add(input: BlacklistAddInput) -> BlacklistAddOutput:
     # reads and blocks writes for other namespaces or other tenants, so it needs the role
     # whose reach matches.
     _require_scope_authority(input.scope, "add", row_org=input.org)
+    stored = _scope_args(input.scope, input.org, input.namespace)
     if input.pattern_type == "regex":
-        await _reject_bad_regex(
-            input.pattern, input.scope, *_scope_args(input.scope, input.org, input.namespace)
-        )
+        await _reject_bad_regex(input.pattern, input.scope, *stored)
 
     pattern_id = str(uuid.uuid4())
     now = naive_utc_now_seconds()
-    stored_org, stored_ns = _scope_args(input.scope, input.org, input.namespace)
+    stored_org, stored_ns = stored
     created_by = _stamped_author(input.created_by)
     await blacklist_repo.insert_row(
         {

@@ -13186,6 +13186,7 @@ class MemoryImportResult(TypedDict, total=False):
         Literal[
             "",
             "blacklist",
+            "blacklist_unchecked",
             "pinned",
             "locked",
             "pinned_peer",
@@ -13280,6 +13281,7 @@ class MemoryImportEvidenceOutput(TypedDict, total=False):
     embedding_dim: NotRequired[int]
     edited: NotRequired[list[str]]
     skipped: NotRequired[int]
+    unchecked: NotRequired[int]
 
 
 class MemoryInspectInput(TypedDict, total=False):

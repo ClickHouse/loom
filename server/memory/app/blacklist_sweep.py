@@ -10,7 +10,7 @@ pattern so the ledger says what a Refuse removed, and a `memory.tombstoned` even
 row for the namespace's webhooks. A token narrowed to one user never
 reaches a sweep (no blacklist op is in NARROW_SAFE_OPS).
 
-Matching is the SQL twin of `server.memory.app.blacklist_guard._matches`: `position(value,
+Matching is the SQL twin of `server.memory.app.blacklist_guard.find_match`: `position(value,
 pattern) > 0` for a substring pattern (case-sensitive, like the in-process
 check) and `match(value, pattern)` for a regex. Both run RE2, and the write path
 compiles with `.` matching a newline as ClickHouse does, so a sweep tombstones the

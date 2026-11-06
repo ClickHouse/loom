@@ -277,7 +277,11 @@ def _importer_user(input: MemoryImportEvidenceInput) -> str | None:
 
 
 async def _refused(
-    input: MemoryImportEvidenceInput, kind: str, session_id: str, texts: list[str]
+    input: MemoryImportEvidenceInput,
+    kind: str,
+    session_id: str,
+    texts: list[str],
+    out: MemoryImportEvidenceOutput,
 ) -> bool:
     """Refuse (blacklist), as memory.bulk_set: a matching item is dropped, its pattern's hit
     counted and logged, and the rest of the batch is written. Every text the row stores is
@@ -287,6 +291,8 @@ async def _refused(
     for text in texts:
         hit = await find_match(org=input.org, namespace=input.namespace, value=text)
         if hit is not None:
+            if not hit.pattern_id:  # too long for this request's regexes, not a match
+                out.unchecked += 1
             await note_hit(hit.pattern_id)
             log.warning(
                 "import_evidence dropped blacklisted %s session=%r pattern=%s scope=%s",
@@ -315,7 +321,7 @@ async def handle_memory_import_evidence(
         for c in input.chunks
         if c.content.strip()
         and c.session_id
-        and not await _refused(input, "chunk", c.session_id, [c.content])
+        and not await _refused(input, "chunk", c.session_id, [c.content], out)
     ]
     out.skipped += len(input.chunks) - len(chunks)
     importer_user = _importer_user(input)
@@ -401,7 +407,7 @@ async def handle_memory_import_evidence(
         for d in input.digests
         if d.summary_text.strip()
         and d.session_id
-        and not await _refused(input, "digest", d.session_id, [d.summary_text, *d.key_facts])
+        and not await _refused(input, "digest", d.session_id, [d.summary_text, *d.key_facts], out)
     ]
     out.skipped += len(input.digests) - len(digests)
     if digests:

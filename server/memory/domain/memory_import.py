@@ -18,6 +18,7 @@ Outcome = Literal["written", "held", "skipped", "refused"]
 Reason = Literal[
     "",
     "blacklist",
+    "blacklist_unchecked",
     "pinned",
     "locked",
     "pinned_peer",

@@ -49,7 +49,7 @@ log = logging.getLogger(__name__)
 # The check behind each verdict of `models_bulk.REFUSED`, the entries a bulk write refuses.
 _CHECK_OF: dict[str, Reason] = {
     BLACKLISTED: "blacklist",
-    UNCHECKED: "blacklist",
+    UNCHECKED: "blacklist_unchecked",
     PINNED: "pinned",
     LOCKED: "locked",
     REJECTED: "pinned_peer",

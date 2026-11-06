@@ -5513,7 +5513,7 @@ export interface MemoryImportResult {
   index: number;
   key: string;
   outcome: "written" | "held" | "skipped" | "refused";
-  reason?: "" | "blacklist" | "pinned" | "locked" | "pinned_peer" | "merge" | "identity_duplicate" | "unchanged" | "deleted" | "superseded" | "rejected" | "proposed" | "revised" | "sensitivity_kept" | "repeated" | "unknown" | "duplicate" | "conflicted" | "refines";
+  reason?: "" | "blacklist" | "blacklist_unchecked" | "pinned" | "locked" | "pinned_peer" | "merge" | "identity_duplicate" | "unchanged" | "deleted" | "superseded" | "rejected" | "proposed" | "revised" | "sensitivity_kept" | "repeated" | "unknown" | "duplicate" | "conflicted" | "refines";
   held_by?: string;
   note?: "" | "category_unregistered" | "category_refused" | "category_not_linked" | "category_rescinded";
 }
@@ -5568,6 +5568,7 @@ export interface MemoryImportEvidenceOutput {
   embedding_dim?: number;
   edited?: string[];
   skipped?: number;
+  unchecked?: number;
 }
 
 export interface MemoryInspectInput {

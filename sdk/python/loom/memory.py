@@ -1852,9 +1852,10 @@ class MemoryClient:
         not written and why — `skipped_pinned` / `skipped_locked` (the live
         row is pinned or locked), `skipped_blacklisted`, `merged`,
         `rejected_pinned`. A row not written has version 0, and its
-        `conflict_verdict` says why: `blacklisted`, `pinned`, `locked` or
-        `rejected` (close to a pinned row), with `pinned_blocker_id` naming
-        the pinned row for the last two.
+        `conflict_verdict` says why: `blacklisted`, `blacklist_unchecked`
+        (too long for this request's blacklist regexes: send it in a smaller
+        request), `pinned`, `locked` or `rejected` (close to a pinned row), with
+        `pinned_blocker_id` naming the pinned row for the last two.
 
         `idempotency_key`: unlike `set` (idempotent on identity+memory_key),
         a bulk insert is replayed verbatim — an app-level retry of a failed
