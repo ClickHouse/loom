@@ -10,7 +10,7 @@ import { BigStat } from "@clickhouse/click-ui/BigStat";
 export interface StatProps {
   label: string;
   value: ReactNode;
-  hint?: string;
+  hint?: ReactNode;
   error?: boolean;
 }
 

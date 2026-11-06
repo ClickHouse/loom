@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import type { InspectSubject, InventoryPlane, InventoryPopulationName, NamespaceInventory } from "../../api";
 import { NameBadge } from "../../components/AgentBadge";
-import { Unavailable } from "../../components/ui";
+import { Stat, Unavailable } from "../../components/ui";
+import { useClamped } from "../../components/ui/TextClamp";
 import { Tip } from "../../components/ui/Tooltip";
 import { ListTime } from "../../components/ui/ListTime";
 import { displayAgent, fmtInt } from "../../lib/format";
@@ -19,25 +21,29 @@ const PLANE_LABEL: Record<InventoryPlane, string> = {
 export function InventorySections({ inventory }: { inventory: NamespaceInventory }) {
   return (
     <div data-testid="assistant-inventory">
-      <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
         {inventory.sections.map((s) => (
-          <div key={s.plane} className="rounded-md border border-border px-3 py-2 min-w-0" data-plane={s.plane}>
-            <dt className="text-xs text-text-muted">{PLANE_LABEL[s.plane] ?? s.plane}</dt>
-            <dd className="text-lg text-text tabular">{s.count === null ? "—" : fmtInt(s.count)}</dd>
-            {s.complete ? (
-              s.latest_at && (
-                <dd className="text-xs text-text-muted">
-                  Newest <ListTime time={s.latest_at} />
-                </dd>
-              )
-            ) : (
-              <dd className="text-xs text-text-muted break-words" data-testid="inventory-incomplete">
-                Not counted: {s.reason || "no reason given"}
-              </dd>
-            )}
+          <div key={s.plane} data-plane={s.plane}>
+            <Stat
+              label={PLANE_LABEL[s.plane] ?? s.plane}
+              value={s.count === null ? "—" : fmtInt(s.count)}
+              hint={
+                !s.complete ? (
+                  <span className="break-words" data-testid="inventory-incomplete">
+                    Not counted: {s.reason || "no reason given"}
+                  </span>
+                ) : (
+                  s.latest_at && (
+                    <>
+                      Newest <ListTime time={s.latest_at} />
+                    </>
+                  )
+                )
+              }
+            />
           </div>
         ))}
-      </dl>
+      </div>
       <p className="mt-2 text-xs text-text-muted">
         {inventory.capabilities
           .map((c) => `${c.name === "llm" ? "Model" : "Embedder"}: ${c.enabled ? "enabled" : "not enabled"}`)
@@ -62,7 +68,10 @@ const POPULATION_LABEL: Record<InventoryPopulationName, { title: string; what: s
 
 const ORDER: InventoryPopulationName[] = ["subjects", "agents", "authors", "members"];
 // A population this page does not know yet goes last.
-const rank = (p: InventoryPopulationName) => (ORDER.includes(p) ? ORDER.indexOf(p) : ORDER.length);
+const rank = (p: InventoryPopulationName) => {
+  const i = ORDER.indexOf(p);
+  return i < 0 ? ORDER.length : i;
+};
 
 /** Who appears in the namespace. Users and agents are buttons that inspect that subject;
  *  authors and members are listed only, as no inspection is filed under them. Members are
@@ -95,48 +104,66 @@ export function InventoryPopulations({
             {!p.complete && <p className="text-xs text-text-muted">Not complete: {p.reason || "no reason given"}</p>}
             {p.top.length > 0 && (
               <ul className="mt-1.5 flex flex-wrap gap-1.5" aria-label={`${label.title}, most memories first`}>
-                {p.top.map((who) => {
-                  const shown = subject === "agent" ? displayAgent(who.name) : who.name;
-                  // The button cuts a name past 24 characters; the tip shows the whole id then,
-                  // or when the name shown is not the id itself.
-                  const needsTip = shown.length > 24 || shown !== who.name;
-                  const pick = subject && (
-                    <Button
-                      type="secondary"
-                      htmlType="button"
-                      onClick={() => onPick(subject, who.name)}
-                      data-testid={`pick-${subject}`}
-                    >
-                      <span className="truncate max-w-[24ch]">{shown}</span>{" "}
-                      <span className="text-text-muted tabular">
-                        {fmtInt(who.rows)} <span className="sr-only">memories</span>
-                      </span>
-                    </Button>
-                  );
-                  return (
-                    <li key={who.name} className="inline-flex items-center gap-1 text-xs text-text-muted tabular">
-                      {/* A blocked pick's tip says why; an open one's shows a cut id whole. */}
-                      {!pick ? (
-                        <>
-                          <NameBadge name={who.name} />
-                          {fmtInt(who.rows)}
-                        </>
-                      ) : pickBlocked ? (
-                        <Unavailable reason={pickBlocked}>{pick}</Unavailable>
-                      ) : (
-                        <Tip content={who.name} disabled={!needsTip}>
-                          {pick}
-                        </Tip>
-                      )}
-                    </li>
-                  );
-                })}
+                {p.top.map((who) => (
+                  <li key={who.name} className="inline-flex items-center gap-1 text-xs text-text-muted tabular">
+                    {subject ? (
+                      <PickButton
+                        subject={subject}
+                        name={who.name}
+                        rows={who.rows}
+                        blocked={pickBlocked}
+                        onPick={() => onPick(subject, who.name)}
+                      />
+                    ) : (
+                      <>
+                        <NameBadge name={who.name} />
+                        {fmtInt(who.rows)}
+                      </>
+                    )}
+                  </li>
+                ))}
               </ul>
             )}
           </li>
         );
       })}
     </ul>
+  );
+}
+
+/** One user or agent to inspect. Its name is cut past 24 characters, with the whole id in a
+ *  tip when cut, as the name badges do; a blocked pick shows the id whole, as its tip says why. */
+function PickButton({
+  subject,
+  name,
+  rows,
+  blocked,
+  onPick,
+}: {
+  subject: InspectSubject;
+  name: string;
+  rows: number;
+  blocked: string | null;
+  onPick: () => void;
+}) {
+  const [label, setLabel] = useState<HTMLSpanElement | null>(null);
+  const shown = subject === "agent" ? displayAgent(name) : name;
+  const cut = useClamped(blocked ? null : label, shown);
+  const button = (
+    <Button type="secondary" htmlType="button" onClick={onPick} data-testid={`pick-${subject}`}>
+      <span ref={setLabel} className={blocked ? "break-all" : "truncate max-w-[24ch]"}>
+        {shown}
+      </span>{" "}
+      <span className="text-text-muted tabular">
+        {fmtInt(rows)} <span className="sr-only">memories</span>
+      </span>
+    </Button>
+  );
+  if (blocked) return <Unavailable reason={blocked}>{button}</Unavailable>;
+  return (
+    <Tip content={name} disabled={!cut && shown === name}>
+      {button}
+    </Tip>
   );
 }
 

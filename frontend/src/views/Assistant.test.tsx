@@ -886,7 +886,10 @@ describe("Assistant: overview", () => {
     await userEvent.click(draft);
     expect(tuneNamespace).not.toHaveBeenCalled();
     expect(namespaceInventory).not.toHaveBeenCalled();
-    expect(screen.getAllByText("Your role on this namespace is not known.").length).toBeGreaterThan(0);
+    const overview = screen.getByRole("region", { name: "Overview" });
+    expect(
+      within(overview).getByText("Your role on this namespace is not known.", { selector: "p" }),
+    ).toBeInTheDocument();
   });
 
   it("reads the overview once the role is known, showing a loader rather than a refusal while it loads", async () => {
@@ -958,7 +961,22 @@ describe("Assistant: overview", () => {
     expect(inspectMemories).toHaveBeenCalledWith(expect.anything(), "agent", "claude-code", expect.anything());
     await screen.findByTestId("assistant-inspection");
     expect(screen.getByRole("region", { name: "Memories" })).toHaveFocus();
-    expect(screen.getByLabelText("Agent")).toHaveValue("claude-code");
+    expect(screen.getByLabelText("Agent name")).toHaveValue("claude-code");
+  });
+
+  it("labels an agent suggestion and pick as the dashboard names that agent", async () => {
+    namespaceInventory.mockResolvedValueOnce({
+      ...INVENTORY,
+      populations: INVENTORY.populations.map((p) =>
+        p.population === "agents" ? { ...p, top: [{ name: "-", rows: 5 }] } : p,
+      ),
+    });
+    render(<Assistant />);
+    await screen.findByTestId("assistant-populations");
+    expect(screen.getByRole("button", { name: "No agent (admin / me) 5 memories" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Agent" }));
+    const option = document.querySelector("#assistant-subject-suggestions option");
+    expect([option?.getAttribute("value"), option?.textContent]).toEqual(["-", "No agent (admin / me)"]);
   });
 
   it("lists authors without offering to inspect them", async () => {
@@ -1014,6 +1032,8 @@ describe("Assistant: overview", () => {
     await userEvent.click(draft);
     const pick = screen.getByRole("button", { name: "ada 12 memories" });
     expect(pick).toHaveAccessibleDescription(/bound to one user or session/);
+    // A blocked pick's tip is the reason, so its id is shown whole, never cut.
+    expect(within(pick).getByText("ada")).toHaveClass("break-all");
     expect(screen.queryByRole("button", { name: "About Who appears here" })).toBeNull();
     await userEvent.click(pick);
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
@@ -1159,7 +1179,7 @@ describe("Assistant: inspection", () => {
   });
 
   it.each([
-    ["Agent", "Agent", "agent", "claude-code", "Written by this agent"],
+    ["Agent", "Agent name", "agent", "claude-code", "Written by this agent"],
     ["Session", "Session id", "session", "s-1", "Written in this session"],
   ] as const)("inspects a %s with its own heading", async (label, field, subject, id, heading) => {
     render(<Assistant />);

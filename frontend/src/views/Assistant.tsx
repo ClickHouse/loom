@@ -49,7 +49,7 @@ const SUBJECTS: Array<{ value: InspectSubject; label: string }> = [
 // is empty: `pick` when the overview suggests names, else `empty`. No session is suggested.
 const SUBJECT_COPY: Record<InspectSubject, { field: string; empty: string; pick?: string }> = {
   user: { field: "User id", empty: "Type a user id.", pick: "Pick a user above or type an id." },
-  agent: { field: "Agent", empty: "Type an agent name.", pick: "Pick an agent above or type its name." },
+  agent: { field: "Agent name", empty: "Type an agent name.", pick: "Pick an agent above or type its name." },
   session: { field: "Session id", empty: "Type a session id." },
 };
 
@@ -97,7 +97,8 @@ export function Assistant() {
   const tuneGate = gate("namespace.tune");
   const copy = SUBJECT_COPY[subject];
   const suggestions = inventory.data?.populations.find((p) => SUBJECT_OF[p.population] === subject)?.top ?? [];
-  const inspectBlocked = memoryGate ?? (subjectId.trim() ? null : (suggestions.length && copy.pick) || copy.empty);
+  const emptyReason = suggestions.length > 0 && copy.pick ? copy.pick : copy.empty;
+  const inspectBlocked = memoryGate ?? (subjectId.trim() ? null : emptyReason);
 
   const org = identity?.org ?? "";
   const namespace = identity?.namespace ?? "";
@@ -106,8 +107,8 @@ export function Assistant() {
     () => runInventory((signal) => namespaceInventory({ org, namespace }, { signal })),
     [runInventory, org, namespace],
   );
-  // The overview is the page's first answer, read once per namespace and token scope as
-  // soon as the role allows it; Refresh reads it again.
+  // The overview is the page's first answer: read on load, as soon as the role allows it,
+  // again when the namespace or token scope changes, and on Refresh.
   useEffect(() => {
     if (org && overviewGate === null) readOverview();
   }, [org, overviewGate, readOverview]);

@@ -588,7 +588,10 @@ async function openWithEveryPanel(page: Page) {
   await expect(page.getByTestId("assistant-populations")).toBeVisible();
   await page.getByRole("button", { name: "Inspect documents" }).click();
   await expect(page.getByTestId("assistant-documents")).toBeVisible();
-  // The longest user id, picked from the overview: no typing.
+  // The longest user id, picked from the overview: no typing. Its name is cut, and the tip
+  // shows it whole.
+  await page.getByTestId("pick-user").first().hover();
+  await expect(page.getByRole("tooltip")).toContainText(LONG_ID);
   await page.getByTestId("pick-user").first().click();
   await expect(page.getByTestId("assistant-inspection")).toBeVisible();
   await expect(page.getByRole("region", { name: "Memories", exact: true })).toBeFocused();
