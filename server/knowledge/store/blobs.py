@@ -403,42 +403,18 @@ async def fence(org: str, namespace: str, *, ch: _CHClient | None = None) -> str
 async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     """Copy one original from its ClickHouse row to a new object in the bucket and
     switch its catalog row to that object; every document naming the sha reads from
-    the bucket from then on. False when there is nothing to move: the row went (an
-    erasure, the sweep) or was replaced since the walk read it, or an erasure deleted
-    the original while it moved.
+    the bucket from then on. The walk reads the namespace's erasure fence first
+    (`fence`); the order of the move and how it meets each erasure, the sweep and the
+    bucket walk are in docs/features/knowledge.md, "Where originals are stored".
 
-    The bytes are checked against the size and sha256 before the write, by the store
-    as it writes them, and again as read back from the bucket. The object is written
-    before the row naming it, as an upload's is, and the row is written only within
-    DOCUMENT_UPLOAD_BUDGET_S of the write: past `document_blob_min_age_seconds` the
-    bucket walk may take an object no row names. An object no row will name (a row gone
-    or replaced meanwhile, an erasure that overtook the copy, a write past the budget)
-    is deleted at once; one a crash or a failed bucket call leaves is the bucket walk's
-    once it is old enough.
-    The new row is a later version of the same key: the ClickHouse row's bytes stay
-    until the table merges the two. The upload records are keyed by the sha and stay
-    as they are.
-
-    A move copies bytes an erasure may be deleting, so it is fenced by the erasure
-    ledger, read with sequential consistency. An erasure covers the original when it
-    is its namespace's or any user's of the org (`_covers`).
-
-    - The walk does not start a namespace while the ledger holds a covering erasure that
-      is unfinished or finished within `_CLOCK_MARGIN_S` (`fence`).
-    - One registered while the object was written and read back ends the move before
-      its row: it deletes its own object, and an original that erasure kept (a user's
-      erasure keeps one another writer still needs) stays held and is reported
-      (`ErasureOpen`).
-    - One registered between that check and the row landing, the time of one insert,
-      may have deleted the original's rows first. A namespace's erasure deletes every
-      original of its namespace, so the move deletes its row and object at once. A
-      user's erasure deletes every object under an original's prefix when it takes the
-      original, the move's included, so the move waits for it to finish and deletes its
-      row when its object is gone; when the object is still there the erasure kept the
-      original and the switch stands. One that does not finish in _ERASURE_WAIT_S, or a
-      check that fails, leaves the switched row to it (`SwitchUnconfirmed`).
-    - An erasure registered after the row landed reads that row.
-    """
+    True when the switch stands. False when there is nothing to move or the move did
+    not stand: the row went or was replaced since the walk read it, or an erasure took
+    the original while it moved; no object of its is left named by nothing.
+    `CorruptOriginal`: the bytes do not fill their size or hash to their sha256, in
+    ClickHouse or read back. `ErasureOpen`: an erasure that overlapped the copy, the
+    original still held in ClickHouse. `SwitchUnconfirmed`: the row switched (or may
+    have) but could not be confirmed against an erasure. `ObjectStoreError`: the bucket
+    refused, or the copy outlasted DOCUMENT_UPLOAD_BUDGET_S."""
     ch = ch or _default_client()
     # This move's own start: an erasure that finished before it cannot race its copy, and
     # one still running then, or finished within the margin, is caught after the copy.
@@ -529,7 +505,8 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
     - none: the switch stands;
     - a namespace's: the move is taken back at once;
     - a user's: once it has finished, the move is taken back if the erasure took the
-      moved object, and stands if it kept it.
+      moved object, its object deleted if the erasure took the row alone, and it stands
+      if it kept both.
 
     A read or delete that fails here leaves the switched row, reported
     (`SwitchUnconfirmed`)."""
@@ -549,7 +526,13 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
             # Listed, not read: whether it is there is all that decides.
             taken = not await objects.count_under(loc.bucket, loc.key)
         if not taken:
-            return True  # the erasure kept the original
+            if await _row_names(held, loc, ch):
+                return True  # the erasure kept the original
+            # It took the row but not the object: a replica without the bucket set that
+            # read the scope's rows before this one landed deletes rows only. The object
+            # holds bytes nothing names, and goes now.
+            await objects.delete(loc.bucket, [loc.key])
+            return False
     except SwitchUnconfirmed:
         raise
     except Exception as e:  # the row is switched: an unread ledger or object is reported, not lost
@@ -566,6 +549,16 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
             moved=False,
         ) from e
     return False
+
+
+async def _row_names(held: Held, loc: objects.Location, ch: _CHClient) -> bool:
+    """Whether a row of the original still names the move's object."""
+    with sequential_reads():
+        row = await ch.query_one(
+            f"SELECT count() AS n FROM {TABLE} WHERE {_KEY} AND location = {{loc:String}}",
+            params={"org": held.org, "ns": held.namespace, "sha": held.sha, "loc": loc.uri()},
+        )
+    return bool(row and int(row["n"]))
 
 
 async def _unwrite(held: Held, loc: objects.Location, ch: _CHClient) -> None:

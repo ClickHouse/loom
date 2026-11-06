@@ -241,8 +241,8 @@ async def test_the_upload_record_cleanup_statement_runs_on_clickhouse(s3: Any, c
     assert [str(r["sha"]) for r in rows] == [kept]
 
 
-async def _document(ch: Any, org: str, ns: str, sha: str, uri: str = "") -> None:
-    """A live document naming `sha` as its original: the namespace needs it."""
+async def _document(ch: Any, org: str, ns: str, sha: str, uri: str = "", user: str = "-") -> None:
+    """A live document of `user` naming `sha` as its original: the namespace needs it."""
     await ch.insert(
         "loom.documents",
         [
@@ -254,6 +254,7 @@ async def _document(ch: Any, org: str, ns: str, sha: str, uri: str = "") -> None
                 "tags": [],
                 "version": 1,
                 "blob_path": sha,
+                "user_id": user,
             }
         ],
         settings={"async_insert": 0},
@@ -498,32 +499,43 @@ async def test_a_failed_check_after_the_switch_is_reported_as_switched(
     org, ns = unique_org("objstore-unchecked"), "docs"
     held = await _held(ch, org, ns, b"checked after", monkeypatch)
     erasures = blobs._erasures_since
-    calls: list[int] = []
+    insert = ch.insert
+    switched: list[str] = []
 
-    async def third_fails(*a: Any, **kw: Any) -> Any:
-        calls.append(1)
-        if len(calls) == 3:
+    async def insert_then_mark(table: str, rows: Any, **kw: Any) -> Any:
+        out = await insert(table, rows, **kw)
+        if table == blobs.TABLE and rows[0]["location"]:
+            switched.append(rows[0]["location"])
+        return out
+
+    async def fails_after_the_switch(*a: Any, **kw: Any) -> Any:
+        if switched:
             raise RuntimeError("ClickHouse went away")
         return await erasures(*a, **kw)
 
-    monkeypatch.setattr(blobs, "_erasures_since", third_fails)
-    result = await migrate_originals(org=org)
-    assert (result.moved, result.errors) == (1, [])
-    (line,) = result.unconfirmed
-    assert "ClickHouse went away" in line
+    monkeypatch.setattr(ch, "insert", insert_then_mark)
+    monkeypatch.setattr(blobs, "_erasures_since", fails_after_the_switch)
+    with pytest.raises(blobs.SwitchUnconfirmed, match="ClickHouse went away"):
+        await blobs.move_to_bucket(held, ch=ch)
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
-    assert stored is not None and stored.location.startswith("s3://")
+    assert stored is not None and stored.location == switched[0]
 
 
 async def _raced(
-    ch: Any, s3: Any, monkeypatch: pytest.MonkeyPatch, label: str, scopes: list[tuple[str, str]]
+    ch: Any,
+    s3: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    label: str,
+    scopes: list[tuple[str, str]],
+    step: Any = None,
 ) -> tuple[str, str, Any, list[str]]:
     """An original of alice's, and the move's insert of its switched row followed at once
-    by erasures of `scopes`: they register as the row lands."""
+    by erasures of `scopes`: they register as the row lands, and `step` (the erasure's
+    own blob step, when given) runs then too."""
     org, ns = unique_org(label), "docs"
     monkeypatch.setattr(settings, "document_object_store", "clickhouse")
     sha = await blobs.put(org, ns, b"erased as it lands", uploader="alice", ch=ch)
-    await _document(ch, org, ns, sha)
+    await _document(ch, org, ns, sha, user="alice")
     monkeypatch.setattr(settings, "document_object_store", "s3")
     (held,) = (await blobs.held_in_clickhouse(org, ns, "", 10, ch=ch)).held
     monkeypatch.setattr(blobs, "_ERASURE_POLL_S", 0.05)
@@ -536,6 +548,8 @@ async def _raced(
             landed.append(rows[0]["location"])
             for scope_type, scope_value in scopes:
                 await _erasure(ch, org, scope_type, scope_value, "in_progress")
+            if step is not None:
+                await step(org, ns)
         return out
 
     monkeypatch.setattr(ch, "insert", insert_then_erasures)
@@ -568,16 +582,17 @@ async def test_a_namespace_erasure_as_the_row_lands_takes_the_move_back(
 ) -> None:
     # A namespace's erasure, alone or with a user's: the move deletes its row and object
     # at once, without waiting.
+    async def namespace_step(org: str, ns: str) -> None:
+        await steps_memory.delete_document_blobs_by_namespace(org, ns, ch=ch)
+
     for label, scopes in (
         ("objstore-race-ns", [("namespace", "docs")]),
         ("objstore-race-both", [("user_id", "alice"), ("namespace", "docs")]),
     ):
-        org, ns, held, landed = await _raced(ch, s3, monkeypatch, label, scopes)
+        # The namespace erasure's own blob step runs as the row lands.
+        org, ns, held, landed = await _raced(ch, s3, monkeypatch, label, scopes, namespace_step)
         assert await blobs.move_to_bucket(held, ch=ch) is False
-        stored = await blobs.locate(org, ns, held.sha, ch=ch)
-        # The ClickHouse version is the erasure's: here, where the erasure is only a
-        # ledger row, still there unless the table merged it away.
-        assert stored is None or stored.location == ""
+        assert await blobs.locate(org, ns, held.sha, ch=ch) is None
         assert not _keys(s3, object_store.namespace_prefix(org, ns))
 
 
@@ -595,15 +610,13 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
     )
 
     async def took() -> None:
-        prefix = object_store.original_prefix(org, ns, held.sha)
-        for key in _keys(s3, prefix):
-            client.delete_object(Bucket=bucket, Key=key)
+        # Alice's erasure's own blob step: the original is hers alone.
+        await steps_memory.erase_blobs_by_user(org, "alice", ch=ch)
 
     finishing = asyncio.create_task(_finish_erasures(ch, org, 0.3, took))
     assert await blobs.move_to_bucket(held, ch=ch) is False
     await finishing
-    stored = await blobs.locate(org, ns, held.sha, ch=ch)
-    assert stored is None or stored.location == ""
+    assert await blobs.locate(org, ns, held.sha, ch=ch) is None
     assert not _keys(s3, object_store.namespace_prefix(org, ns))
 
     # The erasure kept it (another writer needs it): the moved object is still there, and
@@ -611,11 +624,50 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
     org, ns, held, landed = await _raced(
         ch, s3, monkeypatch, "objstore-race-kept", [("user_id", "alice")]
     )
-    finishing = asyncio.create_task(_finish_erasures(ch, org, 0.3))
+    # Bob's live document names the same bytes, so alice's erasure keeps them.
+    await ch.insert(
+        "loom.documents",
+        [
+            {
+                "org": org,
+                "namespace": ns,
+                "source_uri": "docs/bobs.md",
+                "content": "",
+                "tags": [],
+                "version": 1,
+                "user_id": "bob",
+                "blob_path": held.sha,
+            }
+        ],
+        settings={"async_insert": 0},
+    )
+
+    async def kept() -> None:
+        await steps_memory.erase_blobs_by_user(org, "alice", ch=ch)
+
+    finishing = asyncio.create_task(_finish_erasures(ch, org, 0.3, kept))
     assert await blobs.move_to_bucket(held, ch=ch) is True
     await finishing
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
     assert stored is not None and stored.location == landed[0]
+    assert _keys(s3, object_store.original_prefix(org, ns, held.sha))
+
+    # It took the row but not the object, as a replica without the bucket set does when
+    # it read the scope's rows before the switched row landed: the object goes too.
+    org, ns, held, landed = await _raced(
+        ch, s3, monkeypatch, "objstore-race-rowonly", [("user_id", "alice")]
+    )
+
+    async def row_only() -> None:
+        await ch.execute(
+            "DELETE FROM loom.document_blobs WHERE org = {org:String} AND namespace = {ns:String}",
+            params={"org": org, "ns": ns},
+        )
+
+    finishing = asyncio.create_task(_finish_erasures(ch, org, 0.3, row_only))
+    assert await blobs.move_to_bucket(held, ch=ch) is False
+    await finishing
+    assert not _keys(s3, object_store.namespace_prefix(org, ns))
 
     # One that does not finish in time leaves the switched row to it, named.
     org, ns, held, landed = await _raced(

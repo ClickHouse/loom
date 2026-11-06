@@ -9,9 +9,12 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.cli._ch import run_connected
+
+if TYPE_CHECKING:
+    from server.knowledge.app.originals import Migrated
 
 
 def register_knowledge_cli(sub: Any) -> None:
@@ -131,7 +134,7 @@ def _cmd_migrate_originals(args: argparse.Namespace) -> int:
     return run_connected(_run)
 
 
-def _report_migrated(result: Any) -> None:
+def _report_migrated(result: Migrated) -> None:
     print(
         f"{result.moved} original(s) moved to the bucket ({result.bytes} bytes), "
         f"{result.skipped} gone, replaced or erased meanwhile, {result.unneeded} nothing "

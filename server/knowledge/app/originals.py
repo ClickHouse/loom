@@ -108,10 +108,6 @@ async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> bool:
             # Gone, replaced, or erased: an erasure may be what took it.
             out.skipped += 1
             return False
-    except blobs.ErasureOpen as e:
-        log.warning("originals: %s/%s/%s not moved: %s", held.org, held.namespace, held.sha, e)
-        out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
-        return False
     except blobs.SwitchUnconfirmed as e:
         # Listed as unconfirmed; counted as moved only when the switch stands.
         if e.moved:
@@ -125,9 +121,12 @@ async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> bool:
         return False
     except (
         blobs.CorruptOriginal,
+        blobs.ErasureOpen,
         objects.ObjectStoreError,
         ValidationError,  # its object key would be too long for the bucket
     ) as e:
         log.warning("originals: %s/%s/%s not moved: %s", held.org, held.namespace, held.sha, e)
         out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
+        # An erasure that held it back may hold the rest: the walk reads the fence again.
+        return not isinstance(e, blobs.ErasureOpen)
     return True
