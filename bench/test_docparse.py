@@ -7,6 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import httpx
 import pytest
 
 from bench.docparse import prepare as P
@@ -688,11 +689,18 @@ def test_downstream_refuses_what_would_mix_or_stall_its_systems(
         (["a=x", "A=y", "--token", "t"], "share a namespace"),
         (["a=x", "a=y", "--token", "t"], "share a namespace"),
         (["a=x", "--token", ""], "--token"),
-        (["a=x", "--token", "t", "--decisions", "99"], "--decisions is at most"),
+        (["a=x", "--token", "t", "--decisions", "99"], "--decisions is 0 to"),
+        (["a=x", "--token", "t", "--decisions", "-1"], "--decisions is 0 to"),
     ]:
         with pytest.raises(SystemExit):
             main([*base, *argv])
         assert why in capsys.readouterr().err
+    art = tmp_path / "art"
+    art.mkdir()
+    (art / "old.pdf.json").write_text("{}")
+    with pytest.raises(SystemExit):
+        main(["run", "--out", str(tmp_path / "p.jsonl"), "--artifacts", str(art)])
+    assert "is not empty" in capsys.readouterr().err
 
 
 def test_the_stub_serves_a_systems_artifact_to_the_token_alone(tmp_path: Path) -> None:
@@ -737,3 +745,58 @@ def test_the_stub_serves_a_systems_artifact_to_the_token_alone(tmp_path: Path) -
     finally:
         stub.shutdown()
         stub.server_close()
+
+
+class _FakeLoom:
+    """A Loom's ops as the harness calls them: each request recorded, each
+    ingest job's state the one `state` gives."""
+
+    def __init__(self, state: str = "ready") -> None:
+        self.state, self.sent = state, []
+
+    def request(self, method: str, url: str, **kw: object) -> httpx.Response:
+        self.sent.append((url, kw.get("json")))
+        body: dict = {"upload_id": "u", "ingestion_id": "j", "state": self.state, "results": []}
+        return httpx.Response(200, json=body, request=httpx.Request(method, "http://loom" + url))
+
+
+def test_search_stays_in_the_systems_namespace_and_scores_an_unfinished_file_zero() -> None:
+    from bench.docparse.downstream import search
+
+    loom = _FakeLoom()
+    q = {"file": "a.pdf", "query": "q", "answer": ["a"], "page": 1, "page_end": 1}
+    out = search(
+        loom,
+        "o",
+        "docparse-new",
+        [q, {**q, "file": "b.pdf"}],
+        5,
+        {"a.pdf": "ready", "b.pdf": "failed"},
+    )  # type: ignore[arg-type]
+    assert out == [{"found": 0, "cited": 0}, {"found": 0, "cited": 0}]
+    ((url, payload),) = loom.sent  # b.pdf, failed this run, is not searched
+    assert url == "/v1/knowledge.search" and payload["namespace_scope"] == "this"
+    assert payload["uri_prefix"] == ["docparse://a.pdf"] and payload["namespace"] == "docparse-new"
+
+
+def test_ingest_stops_on_a_token_the_stub_refused(tmp_path: Path) -> None:
+    from bench.docparse.downstream import ingest
+
+    (tmp_path / "a.pdf").write_bytes(b"%PDF")
+    with pytest.raises(SystemExit, match="another token"):
+        ingest(_FakeLoom("running"), "o", "n", tmp_path, ["a.pdf"], refused=lambda: 1)  # type: ignore[arg-type]
+
+
+def test_a_file_still_ingesting_at_the_deadline_stops_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import socket
+
+    from bench.docparse import downstream
+
+    monkeypatch.setattr(downstream, "ingest", lambda *a, **kw: {"a.pdf": "timeout"})
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    with pytest.raises(SystemExit, match="still running"):
+        downstream.run("http://127.0.0.1:1", "o", CORPUS, {"new": tmp_path}, port, "t" * 16)

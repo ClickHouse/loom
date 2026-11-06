@@ -149,6 +149,7 @@ class _Stub(ThreadingHTTPServer):
     def __init__(self, port: int, token: str, systems: dict[str, Path]) -> None:
         super().__init__(("127.0.0.1", port), _Handler)
         self.token, self.systems, self.system = token, systems, ""
+        self.refused = 0  # requests with another token: the server is set up with a different one
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -166,6 +167,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _authorized(self) -> bool:
         if self.headers.get("authorization") != f"Bearer {self.server.token}":
+            self.server.refused += 1
             self._send(401, b'{"error": {"code": "unauthorized", "message": "token"}}')
             return False
         return True
@@ -212,7 +214,12 @@ def _post(client: httpx.Client, op: str, payload: dict[str, Any]) -> dict[str, A
 
 
 def ingest(
-    client: httpx.Client, org: str, namespace: str, corpus: Path, files: list[str]
+    client: httpx.Client,
+    org: str,
+    namespace: str,
+    corpus: Path,
+    files: list[str],
+    refused: Any = lambda: 0,
 ) -> dict[str, str]:
     """Upload and ingest each file (partial ones too), waiting for every job up
     to half an hour: each file's final state, `timeout` for one still running."""
@@ -242,6 +249,8 @@ def ingest(
     states: dict[str, str] = {}
     deadline = time.monotonic() + 1800
     while len(states) < len(jobs) and time.monotonic() < deadline:
+        if refused():
+            raise SystemExit("the server sent the stub another token: --token is not its own")
         for f, jid in jobs.items():
             if f in states:
                 continue
@@ -302,7 +311,7 @@ def judge(q: dict, hits: list[dict], namespace: str = "") -> dict[str, Any]:
     for rank, h in enumerate(hits, start=1):
         if h.get("source_uri") != f"docparse://{q['file']}":
             continue
-        if namespace and h.get("namespace", namespace) != namespace:
+        if namespace and h.get("namespace") != namespace:
             continue  # another system's copy of the document
         have = set(words(h.get("content", "")))
         if len(want & have) < 0.7 * len(want):
@@ -319,12 +328,23 @@ def judge(q: dict, hits: list[dict], namespace: str = "") -> dict[str, Any]:
     return {"found": found, "cited": cited}
 
 
-def search(client: httpx.Client, org: str, namespace: str, qs: list[dict], k: int) -> list[dict]:
+def search(
+    client: httpx.Client,
+    org: str,
+    namespace: str,
+    qs: list[dict],
+    k: int,
+    states: dict[str, str] | None = None,
+) -> list[dict]:
+    """Each query's judgement. A query of a file whose ingest this run did not
+    finish (`states`) is not found: an earlier run's revision may still serve."""
     out = []
     for q in qs:
-        # within the query's own document: the parse decides what its chunks hold and
-        # cite, while ranking against other documents is the search's own question
-        # and within the system's own namespace: every system's copy has the same URI
+        if states is not None and states.get(q["file"]) not in ("ready", "partial"):
+            out.append({"found": 0, "cited": 0})
+            continue
+        # within its own document (the parse decides what chunks hold and cite) and
+        # its system's own namespace (every system's copy has the same URI)
         payload = {
             "org": org,
             "namespace": namespace,
@@ -354,7 +374,7 @@ def report(systems: list[str], qs: list[dict], results: dict[str, list[dict]], k
             vals = {
                 s: [1.0 if 0 < results[s][i][field] <= at else 0.0 for i in idx] for s in systems
             }
-            row: dict[str, Any] = {s: sum(v) / len(v) if v else 0.0 for s, v in vals.items()}
+            row: dict[str, Any] = {s: sum(v) / len(v) for s, v in vals.items()}
             for s in systems[1:]:
                 b = paired_bootstrap(
                     [a - c for a, c in zip(vals[s], vals[systems[0]], strict=True)],
@@ -403,10 +423,12 @@ def run(
         with httpx.Client(base_url=base_url) as client:
             for name, namespace in namespaces.items():
                 stub.system = name
-                states[name] = ingest(client, org, namespace, corpus, files)
+                states[name] = ingest(
+                    client, org, namespace, corpus, files, refused=lambda: stub.refused
+                )
                 if late := [f for f, st in states[name].items() if st == "timeout"]:
                     raise SystemExit(f"{name}: {len(late)} ingests still running, {late[0]} first")
-                results[name] = search(client, org, namespace, qs, k)
+                results[name] = search(client, org, namespace, qs, k, states[name])
     finally:
         stub.shutdown()
         stub.server_close()

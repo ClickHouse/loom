@@ -148,6 +148,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "run":
         from bench.docparse.run import run
 
+        if args.artifacts and args.artifacts.is_dir() and any(args.artifacts.iterdir()):
+            ap.error(
+                f"{args.artifacts} is not empty: an artifact left there would be served as a parse"
+            )
         if args.artifacts:
             args.artifacts.mkdir(parents=True, exist_ok=True)
         only = set(filter(None, args.only.split(","))) or None
@@ -163,8 +167,8 @@ def main(argv: list[str] | None = None) -> int:
             ap.error(f"two systems share a namespace: {', '.join(names)}")
         if not args.token:
             ap.error("--token (or LOOM_DOCUMENT_EXTRACTOR_TOKEN): the token the server sends")
-        if args.decisions > len(downstream.DECISION_FILES):
-            ap.error(f"--decisions is at most {len(downstream.DECISION_FILES)}")
+        if not 0 <= args.decisions <= len(downstream.DECISION_FILES):
+            ap.error(f"--decisions is 0 to {len(downstream.DECISION_FILES)}")
         systems = {p.split("=", 1)[0]: Path(p.split("=", 1)[1]) for p in args.artifacts}
         out = downstream.run(
             args.base_url,
