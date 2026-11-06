@@ -482,7 +482,7 @@ export function Documents() {
     void findDocument({ org: identity.org, namespace: identity.namespace }, uri, ac.signal)
       .then((found) => {
         if (ac.signal.aborted) return;
-        // The latest render's open: the place may have moved on while this read ran.
+        // The latest render's open: its preview state, not the one this read started from.
         if (found) void handlers.current.onOpen(found);
         else onMissing();
       })
