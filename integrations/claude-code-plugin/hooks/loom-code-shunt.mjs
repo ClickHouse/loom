@@ -17,8 +17,9 @@
 //
 // Side effects, all in $TMPDIR: the shared repository cache
 // (lib/repo-scope.mjs); per-session denial budgets for the read-window cap,
-// symbol greps and tracker searches (loom-shunt-cap-<session>.json); the
-// decision log loom-shunt.log and its unflushed copy loom-shunt-pending.log,
+// symbol greps and tracker searches (sessionStatePath "shunt-cap"); the
+// decision log loom-shunt.log and its unflushed copy (tmpStatePath
+// "shunt-pending"), all through lib/tmp-state.mjs's private-file helpers,
 // flushed as code.outcome rows (fire-and-forget, 300 ms) on a deny or every
 // SHUNT_FLUSH_EVERY lines (lib/shunt-ledger.mjs).
 import fs from "node:fs";
@@ -67,6 +68,13 @@ import {
   shouldFlushShunt,
 } from "../lib/shunt-ledger.mjs";
 import { repoLookupOutcome, resolveIndexedRepo, resolveTimeoutMs } from "../lib/repo-scope.mjs";
+import {
+  readPrivateFile,
+  readSessionState,
+  tmpStatePath,
+  writePrivateFile,
+  writeSessionState,
+} from "../lib/tmp-state.mjs";
 
 const ENABLED = envSwitch("LOOM_CODE_SHUNT", true);
 const MAX_LINES = Number(process.env.LOOM_SHUNT_MAX_LINES || DEFAULT_MAX_LINES);
@@ -81,8 +89,9 @@ const TRACKER_SEARCH_TIMEOUT_MS = Math.max(500, Number(process.env.LOOM_TRACKER_
 const LOG_ON = envSwitch("LOOM_SHUNT_LOG", true);
 const REPORT_ON = envSwitch("LOOM_SHUNT_REPORT", true);
 const FLUSH_TIMEOUT_MS = 300;
+// The log keeps its fixed, documented name; the batch is internal state.
 const LOG_PATH = path.join(os.tmpdir(), "loom-shunt.log");
-const PENDING_PATH = path.join(os.tmpdir(), "loom-shunt-pending.log");
+const PENDING_PATH = tmpStatePath("shunt-pending", "", { ext: ".log" });
 
 function countLines(abs) {
   try {
@@ -127,29 +136,12 @@ function deny(reason) {
 
 /** Per-session read-cap denial counts, {rel: n}. Unreadable → {} (fail-open:
  *  a lost file costs at most READ_CAP_DENIALS_PER_FILE more denials). */
-function capStatePath(sessionId) {
-  const sid =
-    String(sessionId || "nosession")
-      .replace(/[^A-Za-z0-9_.-]/g, "_")
-      .slice(0, 80) || "nosession";
-  return path.join(os.tmpdir(), `loom-shunt-cap-${sid}.json`);
-}
-
 function readCapCounts(sessionId) {
-  try {
-    const c = JSON.parse(fs.readFileSync(capStatePath(sessionId), "utf8"));
-    return c && typeof c === "object" && !Array.isArray(c) ? c : {};
-  } catch {
-    return {};
-  }
+  return readSessionState("shunt-cap", sessionId);
 }
 
 function writeCapCounts(sessionId, counts) {
-  try {
-    fs.writeFileSync(capStatePath(sessionId), JSON.stringify(counts));
-  } catch {
-    /* tmp not writable: fine */
-  }
+  writeSessionState("shunt-cap", sessionId, counts);
 }
 
 function fileBytes(abs) {
@@ -176,13 +168,13 @@ function logDecision({ decision, tool, tokensSaved, reason, passReason, path, st
     endLine,
   });
   try {
-    fs.appendFileSync(LOG_PATH, line);
+    writePrivateFile(LOG_PATH, line, { append: true });
   } catch {
-    /* tmp not writable: fine */
+    /* tmp not writable, or a file we do not own: fine */
   }
   try {
-    fs.appendFileSync(PENDING_PATH, line);
-    const text = fs.readFileSync(PENDING_PATH, "utf8");
+    writePrivateFile(PENDING_PATH, line, { append: true });
+    const text = readPrivateFile(PENDING_PATH);
     return text.split("\n").length - 1;
   } catch {
     return 0;
@@ -195,13 +187,13 @@ function flushPending(repo) {
   if (!REPORT_ON) return;
   let text = "";
   try {
-    text = fs.readFileSync(PENDING_PATH, "utf8");
+    text = readPrivateFile(PENDING_PATH);
   } catch {
     return;
   }
   if (!text) return;
   try {
-    fs.writeFileSync(PENDING_PATH, "");
+    writePrivateFile(PENDING_PATH, "");
   } catch {
     /* ignore */
   }

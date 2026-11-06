@@ -246,11 +246,14 @@ plugin's five entries each declare `timeout: 10` so the last one is not cancelle
 
 ### Recalled content and local data
 
-The primer and the per-prompt recall carry other people's writes when the namespace is
-shared. Loom escapes recalled text so a stored value cannot close its section, labels each
-item with its writer (`by=`), wraps the injected text in a `<loom-recalled-data>` block that
-says it is data and not instructions, and injects only procedures the caller wrote (a
-teammate's still answers an explicit `procedure.match`). Loom cannot control what an agent
+The primer, the per-prompt recall and the file rules injected before an edit
+(`loom-file-context`) carry other people's writes when the namespace is shared: team file
+rules live in the repository's code namespace, where every member writes. Loom escapes
+recalled text so a stored value cannot close its section (the file-rules hook escapes `<`
+and `>` itself), labels each item with its writer (`by=` in recall, the author on a team
+file rule), wraps the injected text in a `<loom-recalled-data>` block that says it is data
+and not instructions, and injects only procedures the caller wrote (a teammate's still
+answers an explicit `procedure.match`). Loom cannot control what an agent
 then does: keeping tool authority independent of retrieved text is the client's job.
 
 The hooks' temp files (turn journal, cursors, stashes, flush jobs) are created `0600`,

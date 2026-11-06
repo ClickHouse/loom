@@ -60,16 +60,22 @@ export function decideInject(cache, key, now, ttlMs) {
   return { inject: true, cache: { seen: next } };
 }
 
-export const FILE_RULES_HEADING = "Loom file rules and notes for the file this edit touches, each with its author:";
+export const FILE_RULES_HEADING =
+  "Loom file rules and notes for the file this edit touches; a teammate's rule names its author:";
 
 /** The hook's stdout payload: additional context only — never a permission decision.
- *  Team rules come from a namespace every member writes, so the rendered text
- *  goes inside the recalled-data block, under a heading the plugin writes. */
+ *  Team rules come from a namespace every member writes, and memory.for_file does
+ *  not escape them: `<` and `>` are escaped here, so no variant of a closing tag
+ *  survives, and the text goes inside the recalled-data block under a heading the
+ *  plugin writes. */
 export function contextPayload(rendered) {
+  const safe = String(rendered || "")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      additionalContext: `${FILE_RULES_HEADING}\n${recalledDataBlock(rendered)}`,
+      additionalContext: `${FILE_RULES_HEADING}\n${recalledDataBlock(safe)}`,
     },
   };
 }

@@ -139,7 +139,7 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   pass. With LOOM_SHUNT_READ_CAP=<lines> (default 0 = off) a ranged Read
   whose span is longer than the cap on an indexed, unmodified file is denied
   too — redirect to code.enclosing/code.symbol/code.outline — at most twice
-  per file per session ($TMPDIR/loom-shunt-cap-<session_id>.json), then it
+  per file per session ($TMPDIR/loom-shunt-cap-<hash of session_id>.json), then it
   passes as cap_spent. The deny text never names
   LOOM_CODE_SHUNT=off. The once-per-10-min repository lookup names
   the checkout's repo (code.repos repo=owner/name), has its own bound

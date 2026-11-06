@@ -273,7 +273,7 @@ neighbours=true` for the unit enclosing the first line (with callers, callees
 and tests), `code.symbol` for a name, `code.outline` to pick a smaller span,
 and "read at most `<cap>` lines at a time" if the file must be read directly.
 Each file may be denied this way **twice per session** — the count is kept in
-`$TMPDIR/loom-shunt-cap-<session_id>.json` as `{"<path>": n}`, any I/O error
+`$TMPDIR/loom-shunt-cap-<hash of the session id>.json` as `{"<path>": n}`, any I/O error
 reading as zero — and the third over-cap read of that file passes with reason
 `cap_spent`, so a model that insists is never denied the same file forever. A
 modified or untracked file is never capped. The bench harness's arm D should

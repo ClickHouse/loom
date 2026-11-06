@@ -11,6 +11,7 @@ import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { cachePathFor } from "../lib/repo-scope.mjs";
+import { sessionStatePath, tmpStatePath } from "../lib/tmp-state.mjs";
 
 const HOOK = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "hooks", "loom-code-shunt.mjs");
 const BIG = Array.from({ length: 900 }, (_, i) => `int f${i}() { return ${i}; }`).join("\n") + "\n";
@@ -251,4 +252,42 @@ test("a chained Bash read is judged segment by segment; the first deny wins", as
   const p = await runHook(bash("cd src && sed -n '1,40p' a.cpp; echo ---"), { tmp: seed(dir) });
   assert.equal(p.deny, null, "a ranged read passes (no read cap set)");
   assert.match(p.log, /\tpass\tBash:sed\t.*targeted_span\tsrc\/a\.cpp\t1\t40/);
+});
+
+test("symlinks planted at the shunt's tmp files are not followed: no write, no truncation, no post", async () => {
+  const { dir } = checkout({ "src/a.cpp": BIG });
+  const tmp = seed(dir);
+  const planted = {
+    log: path.join(tmp, "loom-shunt.log"),
+    pending: tmpStatePath("shunt-pending", "", { ext: ".log", tmp }),
+    cap: sessionStatePath("shunt-cap", "e2e", { tmp }),
+  };
+  const victims = {};
+  for (const [name, at] of Object.entries(planted)) {
+    victims[name] = path.join(tmp, `victim-${name}`);
+    // A pending batch someone else planted: it must never reach code.outcome.
+    fs.writeFileSync(victims[name], name === "pending" ? "1\thit\tRead\t999\t\t\t\tplanted\n" : "keep");
+    fs.symlinkSync(victims[name], at);
+  }
+  await withServer({}, async (url, seen) => {
+    const env = { LOOM_SHUNT_REPORT: "on", LOOM_SHUNT_READ_CAP: "200" };
+    const whole = await runHook(readOf(dir, "src/a.cpp"), { tmp, url, env });
+    assert.ok(whole.deny);
+    const ranged = {
+      ...readOf(dir, "src/a.cpp"),
+      tool_input: { file_path: path.join(dir, "src/a.cpp"), offset: 1, limit: 500 },
+    };
+    const capped = await runHook(ranged, { tmp, url, env });
+    assert.ok(capped.deny);
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(seen.filter((s) => s.url === "/v1/code.outcome").length, 0);
+  });
+  for (const [name, at] of Object.entries(planted)) {
+    assert.equal(
+      fs.readFileSync(victims[name], "utf8"),
+      name === "pending" ? "1\thit\tRead\t999\t\t\t\tplanted\n" : "keep",
+      name,
+    );
+    assert.ok(fs.lstatSync(at).isSymbolicLink(), name);
+  }
 });
