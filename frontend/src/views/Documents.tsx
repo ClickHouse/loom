@@ -280,8 +280,9 @@ export function Documents() {
           setRows(r.rows || []);
           setRowsScope(scope);
           // A read that returned a document: the library holds one, whatever filter
-          // narrows a later read.
+          // narrows a later read. An unfiltered read that returned none: it holds none.
           if (r.rows?.length) setListedScope(scope);
+          else if (!tags.length) setListedScope("");
           // A collection that answers again earns a fresh re-read if it is refused later.
           reReadFor.current = "";
           setRowsFor(serverTags);

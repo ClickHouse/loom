@@ -363,6 +363,13 @@ describe("Find a passage in the Library", () => {
     fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "" } });
     await waitFor(() => expect(screen.queryByLabelText("Passage to find")).toBeNull());
     expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
+    // A tag typed into the now empty library, its read finding nothing: still no toggle.
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:y" } });
+    await waitFor(() =>
+      expect(api.listKnowledge).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ tags: ["y"] })),
+    );
+    await settle();
+    expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
     // A document again: the toggle comes back folded, not open.
     api.listKnowledge.mockResolvedValue({ rows: ROWS, next_cursor: null });
     fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:x" } });
