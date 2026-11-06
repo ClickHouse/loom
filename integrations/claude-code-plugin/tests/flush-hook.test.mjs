@@ -11,11 +11,11 @@ import { fileURLToPath } from "node:url";
 
 const HOOK = fileURLToPath(new URL("../hooks/loom-flush.mjs", import.meta.url));
 
-async function server() {
+async function server(status = 200) {
   const srv = http.createServer((req, res) => {
     req.resume();
     req.on("end", () => {
-      res.writeHead(200, { "content-type": "application/json" });
+      res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true }));
     });
   });
@@ -36,7 +36,11 @@ function flush(dir, url, job) {
 
 const append = { org: "o", namespace: "n", session_id: "s", turns: [{ role: "user", content: "hi" }] };
 
-test("the flusher advances a cursor it owns and never follows a symlink at the cursor path", async () => {
+const posix = process.platform !== "win32";
+
+test("the flusher advances a cursor it owns and never follows a symlink at the cursor path", {
+  skip: !posix,
+}, async () => {
   const { srv, url } = await server();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-flushhook-"));
   try {
@@ -53,6 +57,35 @@ test("the flusher advances a cursor it owns and never follows a symlink at the c
     assert.equal(fs.readFileSync(victim, "utf8"), "keep");
     assert.equal(fs.existsSync(plantedJob), false);
     assert.ok(fs.lstatSync(planted).isSymbolicLink());
+  } finally {
+    srv.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a failed post rolls back a cursor it owns and never a symlink at the cursor path", { skip: !posix }, async () => {
+  const { srv, url } = await server(500);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-flushhook-"));
+  const job = (cursorPath) => ({
+    posts: [{ op: "memory.set", body: { k: 1 } }],
+    cursorPath,
+    advanceTo: 42,
+    rollbackTo: 7,
+  });
+  try {
+    const own = path.join(dir, "loom-brief-a.offset");
+    fs.writeFileSync(own, "42", { mode: 0o600 });
+    await flush(dir, url, job(own));
+    assert.equal(fs.readFileSync(own, "utf8"), "7");
+
+    const victim = path.join(dir, "victim.txt");
+    fs.writeFileSync(victim, "42");
+    const planted = path.join(dir, "loom-brief-b.offset");
+    fs.symlinkSync(victim, planted);
+    const jobPath = await flush(dir, url, job(planted));
+    assert.equal(fs.readFileSync(victim, "utf8"), "42");
+    assert.ok(fs.lstatSync(planted).isSymbolicLink());
+    assert.equal(fs.existsSync(jobPath), false);
   } finally {
     srv.close();
     fs.rmSync(dir, { recursive: true, force: true });

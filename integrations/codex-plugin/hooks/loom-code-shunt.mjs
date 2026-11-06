@@ -18,8 +18,9 @@
 // Side effects, all in $TMPDIR: the shared repository cache
 // (lib/repo-scope.mjs); per-session denial budgets for the read-window cap,
 // symbol greps and tracker searches (sessionStatePath "shunt-cap"); the
-// decision log loom-shunt.log and its unflushed copy (tmpStatePath
-// "shunt-pending"), all through lib/tmp-state.mjs's private-file helpers,
+// decision log loom-shunt.log and its unflushed per-session copy
+// (sessionStatePath "shunt-pending"), all through lib/tmp-state.mjs's
+// private-file helpers,
 // flushed as code.outcome rows (fire-and-forget, 300 ms) on a deny or every
 // SHUNT_FLUSH_EVERY lines (lib/shunt-ledger.mjs).
 import fs from "node:fs";
@@ -40,6 +41,7 @@ import {
 import {
   DEFAULT_MAX_LINES,
   DEFAULT_READ_CAP,
+  READ_CAP_DENIALS_PER_FILE,
   SYMBOL_GREP_DENIALS_PER_SYMBOL,
   TRACKER_SEARCH_DENIALS_PER_QUERY,
   capBudgetSpent,
@@ -71,6 +73,8 @@ import { repoLookupOutcome, resolveIndexedRepo, resolveTimeoutMs } from "../lib/
 import {
   readPrivateFile,
   readSessionState,
+  removeFile,
+  sessionStatePath,
   tmpStatePath,
   writePrivateFile,
   writeSessionState,
@@ -91,10 +95,9 @@ const REPORT_ON = envSwitch("LOOM_SHUNT_REPORT", true);
 const FLUSH_TIMEOUT_MS = 300;
 // The log keeps its fixed, documented name; the batch is internal state.
 const LOG_PATH = path.join(os.tmpdir(), "loom-shunt.log");
-// One batch per user, so users sharing a TMPDIR keep their own.
-const PENDING_PATH = tmpStatePath("shunt-pending", typeof process.getuid === "function" ? process.getuid() : "", {
-  ext: ".log",
-});
+// The unflushed batch, one per session (set in main): a name nobody can guess
+// ahead of the session, swept with the other state files.
+let PENDING_PATH = "";
 
 function countLines(abs) {
   try {
@@ -139,17 +142,17 @@ function deny(reason) {
 
 /** Per-session denial counts, {key: n}, for three budgets: over-cap reads (the
  *  file's path), symbol greps (`sym:`) and answered tracker searches (`qa:`).
- *  {} when the file is missing or refused. Each hook run is its own process, so
- *  nothing outlives a failed write: while the file cannot be kept (tmp not
- *  writable, or a file planted there), no budget is ever spent, and every
- *  over-cap read, every symbol grep and every answered tracker search is denied
- *  for that session. */
+ *  {} when the file is missing or refused. A denial is given only when its
+ *  spend was written: when the file cannot be kept (tmp not writable, or a file
+ *  planted there) the call passes as if its budget were spent, so a planted
+ *  file cannot lock the agent out. */
 function readCapCounts(sessionId) {
   return readSessionState("shunt-cap", sessionId);
 }
 
+/** True when the spend was kept. */
 function writeCapCounts(sessionId, counts) {
-  writeSessionState("shunt-cap", sessionId, counts);
+  return writeSessionState("shunt-cap", sessionId, counts);
 }
 
 function fileBytes(abs) {
@@ -189,24 +192,27 @@ function logDecision({ decision, tool, tokensSaved, reason, passReason, path, st
   }
 }
 
-/** Ship the pending batch as code.outcome rows and truncate it. Fire-and-
- *  forget with a 300 ms ceiling; a lost batch costs a few counter ticks. Only
- *  a batch this run emptied is sent, so a file that cannot be truncated is
- *  never posted twice. */
+/** Ship the pending batch as code.outcome rows. Fire-and-forget with a 300 ms
+ *  ceiling; a lost batch costs a few counter ticks. The batch is claimed first by
+ *  renaming it to a name of this process: of two hooks flushing at once only one
+ *  gets it, and the claimed file is read with the private-file checks and removed,
+ *  so each batch is posted at most once. */
 function flushPending(repo) {
-  if (!REPORT_ON) return;
+  if (!REPORT_ON || !PENDING_PATH) return;
+  const claimed = tmpStatePath("shunt-claim", `${PENDING_PATH}:${process.pid}`, { ext: ".log" });
+  try {
+    fs.renameSync(PENDING_PATH, claimed);
+  } catch {
+    return; // nothing pending, or another hook claimed it
+  }
   let text = "";
   try {
-    text = readPrivateFile(PENDING_PATH);
+    text = readPrivateFile(claimed);
   } catch {
-    return;
+    /* planted: not ours to post */
   }
+  removeFile(claimed);
   if (!text) return;
-  try {
-    writePrivateFile(PENDING_PATH, "");
-  } catch {
-    return;
-  }
   const agg = aggregateShuntLog(text);
   const opts = { timeoutMs: FLUSH_TIMEOUT_MS };
   const scope = { org: repo.org || "", namespace: repo.namespace || "", consumer: "claude-code-shunt" };
@@ -242,20 +248,20 @@ function settleRead(repo, { tool, rel, abs, offset, limit, sessionId, ctxBase, d
   const bytes = fileBytes(abs);
   const ranged = offset != null || limit != null;
   const capCounts = READ_CAP > 0 && ranged ? readCapCounts(sessionId) : {};
-  const verdict = classifyRead(
-    {
-      ...ctxBase,
-      rel,
-      offset,
-      limit,
-      lineCount,
-      modified: gitStatusClass(repo.root, rel),
-      readCap: READ_CAP,
-      capCounts,
-    },
-    MAX_LINES,
-  );
-  if (verdict.capped) writeCapCounts(sessionId, spendCapBudget(capCounts, rel));
+  const readCtx = {
+    ...ctxBase,
+    rel,
+    offset,
+    limit,
+    lineCount,
+    modified: gitStatusClass(repo.root, rel),
+    readCap: READ_CAP,
+    capCounts,
+  };
+  let verdict = classifyRead(readCtx, MAX_LINES);
+  if (verdict.capped && !writeCapCounts(sessionId, spendCapBudget(capCounts, rel))) {
+    verdict = classifyRead({ ...readCtx, capCounts: { [rel]: READ_CAP_DENIALS_PER_FILE } }, MAX_LINES);
+  }
   if (verdict.deny && denyRewrite) verdict.deny = denyRewrite(verdict.deny);
   // A whole-file hit kept the whole file out; a cap hit kept the SPAN out
   // (what the ranged read would have let in); a pass let its span in.
@@ -278,7 +284,9 @@ function classifySymbolGrep(ctx, sessionId) {
     symbol,
     symbolBudgetSpent: capBudgetSpent(counts, key, SYMBOL_GREP_DENIALS_PER_SYMBOL),
   });
-  if (verdict.symbol) writeCapCounts(sessionId, spendCapBudget(counts, key));
+  if (verdict.symbol && !writeCapCounts(sessionId, spendCapBudget(counts, key))) {
+    return classifyGrep({ ...ctx, symbol, symbolBudgetSpent: true });
+  }
   return verdict;
 }
 
@@ -361,9 +369,10 @@ async function settleTrackerSearch(repo, { search, sessionId, ctxBase }) {
           { timeoutMs: TRACKER_SEARCH_TIMEOUT_MS },
         ));
       const answer = target ? trackerAnswerText(res, { query: search.query, namespace: target.namespace }) : "";
-      if (answer) {
+      if (answer && writeCapCounts(sessionId, spendCapBudget(counts, key))) {
         verdict.deny = denyGhSearchWithAnswer({ ...ctxBase, namespace: target.namespace }, answer);
-        writeCapCounts(sessionId, spendCapBudget(counts, key));
+      } else if (answer) {
+        verdict.reason = "tracker_search_repeat";
       }
     } catch {
       /* the search runs */
@@ -384,6 +393,7 @@ async function main() {
   const input = payload.tool_input || {};
   const cwd = payload.cwd || process.cwd();
   const sessionId = payload.session_id || "nosession";
+  PENDING_PATH = sessionStatePath("shunt-pending", sessionId, { ext: ".log" });
   if (!["Read", "Grep", "Bash"].includes(tool)) return;
   // The one opt-out is the developer's own — local-first
   // (LOOM_CODE_LOCAL_FIRST=on / the `local_first` option, off by default)

@@ -64,18 +64,13 @@ export const FILE_RULES_HEADING =
   "Loom file rules and notes for the file this edit touches; a teammate's rule names its author:";
 
 /** The hook's stdout payload: additional context only — never a permission decision.
- *  Team rules come from a namespace every member writes, and memory.for_file does
- *  not escape them. These left angle brackets become `&lt;`: ASCII `<`, fullwidth
- *  U+FF1C, small-form U+FE64 and U+226E (not-less-than), so none of them can open
- *  or close a tag inside the block; `>` stays as written so text like
- *  `memory_key=<id>` still reads. The text goes inside the recalled-data block under a heading the
- *  plugin writes. */
+ *  Team rules come from a namespace every member writes, so the text goes inside the
+ *  recalled-data block under a heading the plugin writes. */
 export function contextPayload(rendered) {
-  const safe = String(rendered || "").replace(/[<\uFF1C\uFE64\u226E]/g, "&lt;");
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      additionalContext: `${FILE_RULES_HEADING}\n${recalledDataBlock(safe)}`,
+      additionalContext: `${FILE_RULES_HEADING}\n${recalledDataBlock(rendered)}`,
     },
   };
 }

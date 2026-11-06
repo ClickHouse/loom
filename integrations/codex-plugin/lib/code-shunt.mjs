@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { recalledDataBlock } from "./prompt-recall.mjs";
 
 // Decision policy and deny text for the loom-code-shunt PreToolUse hook.
 // Pure functions of what the hook hands in (runLocalGrep, the one exception,
@@ -419,8 +420,14 @@ function trackerItemLines(items, max = 5) {
   return out;
 }
 
+/** Item lines as recalled data: anyone who can file an issue writes its title. */
+function fencedItems(lines) {
+  return lines.length ? [recalledDataBlock(lines.join("\n"))] : [];
+}
+
 /** The tracker record's answer to an issue search, or "" when the record could
- *  not answer (tracker_unavailable, an error shape, no verdict): then gh runs. */
+ *  not answer (tracker_unavailable, an error shape, no verdict): then gh runs.
+ *  The heads are the plugin's; the item lines go inside recalled-data blocks. */
 export function trackerAnswerText(result, { query = "", namespace = "" } = {}) {
   if (!result || typeof result !== "object" || result.tracker_unavailable || !result.verdict) return "";
   const verdict = String(result.verdict);
@@ -441,12 +448,12 @@ export function trackerAnswerText(result, { query = "", namespace = "" } = {}) {
   } else if (nearest.length) {
     return [
       `tracker record${where}: ${q} has no likely duplicate (verdict ${verdict}, ${result.epistemic || "calibrated"}); ${nearestHead}`,
-      ...nearest,
+      ...fencedItems(nearest),
     ].join("\n");
   } else {
     head = `tracker record${where}: ${q} has no likely duplicate in the tracker index (verdict ${verdict}, ${result.epistemic || "calibrated"}${result.undecided ? ", undecided" : ""}).`;
   }
-  return [head, ...lines, ...(nearest.length ? [nearestHead, ...nearest] : [])].join("\n");
+  return [head, ...fencedItems(lines), ...(nearest.length ? [nearestHead, ...fencedItems(nearest)] : [])].join("\n");
 }
 
 /** The gh-search denial when the tracker record answered: the answer, then the
