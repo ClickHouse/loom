@@ -46,13 +46,16 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
 
 ## Cutting the release
 
-1. On a branch from `main`, open a pull request that sets the version everywhere above, with the
+1. Check that the latest scheduled run of `.github/workflows/docker-smoke.yml` on `main` passed
+   (`gh run list -R ClickHouse/loom --workflow docker-smoke.yml --event schedule --branch main -L 1`,
+   or `gh workflow run docker-smoke.yml -R ClickHouse/loom --ref main` for a fresh one). It scans both
+   images as the release does, and a scheduled run's failure notifies only the last editor of its
+   schedule. A red scan names the package: move the pin that brings it in (a `Dockerfile` `ARG` or
+   base-image digest, or a lock file) on `main` first.
+2. On a branch from `main`, open a pull request that sets the version everywhere above, with the
    [release notes](#release-notes) section in its description. CI must pass, including
    `make schema-check` and the strict migration dry run.
-2. Before tagging, check that the latest scheduled `docker-smoke` run on `main` passed: it scans both
-   images as the release does, and a scheduled run's failure notifies only the last editor of its
-   schedule. A red scan means a pin in the `Dockerfile` needs moving first.
-3. After it merges, tag the merge commit and push the tag:
+3. After the release pull request merges, tag its merge commit and push the tag:
 
    ```bash
    git tag vX.Y.Z <merge commit>
