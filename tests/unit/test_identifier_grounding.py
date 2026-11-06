@@ -27,41 +27,10 @@ from server.memory.domain.retrieval_calibration import (
             id="PR number absent",
         ),
         pytest.param(
-            "fix status of PR 113594",
-            ["the fix for PR 113594 was reverted"],
-            None,
-            id="PR number present",
-        ),
-        # Query says "#113594"; the hit writes the bare number: still grounded.
-        pytest.param(
-            "what about #113594", ["closed 113594 as dup"], None, id="hash and bare number"
-        ),
-        pytest.param(
             "did @octocat approve it",
             ["approved by someone on the team"],
             "entity_absent:octocat",
             id="handle absent",
-        ),
-        pytest.param(
-            "did @octocat approve it",
-            ["approved by @octocat yesterday"],
-            None,
-            id="handle present",
-        ),
-        pytest.param(
-            "how do I tune the abstain threshold",
-            ["set LOOM_MEMORY_SEARCH_..."],
-            None,
-            id="no identifier",
-        ),
-        # @Handle in the query, @handle in the hit: grounded.
-        pytest.param("ping @Handle", ["notified @handle earlier"], None, id="case insensitive"),
-        # Two ids; only 117593 is in a hit. ANY grounded identifier keeps the result.
-        pytest.param(
-            "compare PR 113594 and issue 117593",
-            ["issue 117593 tracks the rollout"],
-            None,
-            id="one of several present",
         ),
         pytest.param(
             "compare PR 113594 and issue 117593",
@@ -73,9 +42,43 @@ from server.memory.domain.retrieval_calibration import (
     ],
 )
 def test_identifier_grounding_missing_names_the_first_identifier_when_none_is_grounded(
-    query: str, hits: list[str], reason: str | None
+    query: str, hits: list[str], reason: str
 ) -> None:
     assert identifier_grounding_missing(query, hits) == reason
+
+
+@pytest.mark.parametrize(
+    ("query", "hits"),
+    [
+        pytest.param(
+            "fix status of PR 113594",
+            ["the fix for PR 113594 was reverted"],
+            id="PR number present",
+        ),
+        # Query says "#113594"; the hit writes the bare number: still grounded.
+        pytest.param("what about #113594", ["closed 113594 as dup"], id="hash and bare number"),
+        pytest.param(
+            "did @octocat approve it", ["approved by @octocat yesterday"], id="handle present"
+        ),
+        pytest.param(
+            "how do I tune the abstain threshold",
+            ["set LOOM_MEMORY_SEARCH_..."],
+            id="no identifier",
+        ),
+        # @Handle in the query, @handle in the hit: grounded.
+        pytest.param("ping @Handle", ["notified @handle earlier"], id="case insensitive"),
+        # Two ids; only 117593 is in a hit. ANY grounded identifier keeps the result.
+        pytest.param(
+            "compare PR 113594 and issue 117593",
+            ["issue 117593 tracks the rollout"],
+            id="one of several present",
+        ),
+    ],
+)
+def test_identifier_grounding_missing_is_none_when_an_identifier_is_grounded_or_there_is_none(
+    query: str, hits: list[str]
+) -> None:
+    assert identifier_grounding_missing(query, hits) is None
 
 
 def test_finalize_abstain_forces_entity_absent_above_threshold() -> None:

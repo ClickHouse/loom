@@ -39,7 +39,7 @@ from server.memory.domain.lemmatize import lemma_tokens, lemmatize
         pytest.param("", "", id="empty"),
     ],
 )
-def test_lemmatize_maps_a_word_to_its_lemma(text: str, lemma: str) -> None:
+def test_lemmatize_strips_the_suffixes_of_each_token(text: str, lemma: str) -> None:
     assert lemmatize(text) == lemma
 
 
