@@ -71,7 +71,7 @@ def bindings() -> dict[str, str]:
 
 
 # A maintainer's binding, written by `code.repo.set_source` as
-# the `tracker_binding` state row of the code namespace; "" clears the config's.
+# the `OVERRIDE_KEY` state row of the code namespace; "" clears the config's.
 OVERRIDE_KEY = "qa_binding"  # storage key
 _OVERRIDES: dict[str, str] = {}
 _OVERRIDES_AT = 0.0
