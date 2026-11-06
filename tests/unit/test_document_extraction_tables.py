@@ -308,7 +308,8 @@ def test_an_xlsx_merge_left_unspread_groups_no_header(
         3: [cell("A3", 1), cell("B3", 2)],
     }
     # A cell budget too small for the merge, which is skipped.
-    monkeypatch.setattr(tabular, "MAX_CELLS", 5)  # the five cells the rows hold
+    # The rows hold five cells; one is left, so the merge is read but too big to spread.
+    monkeypatch.setattr(tabular, "MAX_CELLS", 6)
     a = extract(workbook([("S", sheet(rows, merges=(merge,)))]), "s.xlsx")
     assert a.tables[0].header_rows == 1
     assert "S merges" in [f.unit for f in a.coverage.failed]

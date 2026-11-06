@@ -422,8 +422,7 @@ class _Reader:
         rest = sheet.past
         last = rest.more_from - 1 if rest.more_from else max(sheet.grid, default=0)
         unspread, clipped = _spread(sheet.grid, sorted(sheet.merges), budget, last)
-        skipped = len(unspread)
-        skipped += sheet.merges_dropped
+        skipped = len(unspread) + sheet.merges_dropped
         if skipped or clipped or merges_cut:  # one unit for the sheet's merges, its reasons joined
             reasons = (
                 merges_cut,
@@ -632,7 +631,8 @@ class _SheetStream:
             self.open = False
             if not (self._row or self._filled):
                 return
-            # The header and up to MAX_ROWS rows under it, as the budget allows.
+            # The header and up to MAX_ROWS rows under it, as the budget allows (a
+            # second header row, known only once the sheet is read, counts as one).
             if self._row and not self._full() and self.budget.collect(list(self._row.values())):
                 held = self.grid.setdefault(self.number, {})
                 self.repeated += len(held.keys() & self._row.keys())
