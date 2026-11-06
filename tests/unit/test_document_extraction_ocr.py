@@ -681,3 +681,18 @@ def test_the_real_engine_refuses_an_image_past_its_pixels_from_its_header() -> N
     # a header of 10,000 by 10,000 pixels over a few bytes: refused before it is decoded
     with pytest.raises(ValueError, match="past 40,000,000 pixels"):
         eng.read(b"P5\n10000 10000\n255\n" + bytes(16), 1.0)
+
+
+def test_a_text_page_with_a_large_inline_picture_is_partial(engine: FakeEngine) -> None:
+    text = text_at(72, 740, "A caption above a screenshot.")
+    shot = b"q 400 0 0 300 100 300 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q"
+    a = extract(laid_out_pdf([text + shot]), "i.pdf")
+    assert [f.reason for f in a.coverage.failed] == [
+        "OCR did not read all of its pictures:"
+        " a picture drawn inline covers a fifth of it, which OCR does not read"
+    ]
+
+
+def test_a_gifs_size_is_read_from_its_first_bytes() -> None:
+    gif = b"GIF89a" + (30_000).to_bytes(2, "little") + (30_000).to_bytes(2, "little") + bytes(4)
+    assert ocr._header_pixels(None, gif) == 900_000_000  # a GIF never reaches Leptonica

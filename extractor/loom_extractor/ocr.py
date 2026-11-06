@@ -184,10 +184,8 @@ class Engine:
         held: list[int] = []  # every image made here, destroyed at the end
         # its size from its header, before it is decoded: a file's own size may
         # say otherwise than the PDF's /Width and /Height
-        dims = [ctypes.c_int() for _ in range(6)]
-        if lp.pixReadHeaderMem(data, len(data), *map(ctypes.byref, dims)) == 0:
-            if dims[1].value * dims[2].value > MAX_PIXELS:
-                raise ValueError(f"its image is past {MAX_PIXELS:,} pixels")
+        if _header_pixels(lp, data) > MAX_PIXELS:
+            raise ValueError(f"its image is past {MAX_PIXELS:,} pixels")
         pix = lp.pixReadMem(data, len(data))
         if not pix:
             raise ValueError("its image could not be decoded")
@@ -344,6 +342,18 @@ class Engine:
                     return
         finally:
             self._t.TessResultIteratorDelete(ri)
+
+
+def _header_pixels(lp: ctypes.CDLL, data: bytes) -> int:
+    """The pixels an image file's header declares, 0 when it cannot be read. A
+    GIF's are read here: Leptonica decodes a GIF whole to give its header."""
+    if data[:6] in (b"GIF87a", b"GIF89a") and len(data) >= 10:
+        return int.from_bytes(data[6:8], "little") * int.from_bytes(data[8:10], "little")
+    fmt, w, h, bps, spp, cmap = (ctypes.c_int() for _ in range(6))
+    refs = (ctypes.byref(v) for v in (fmt, w, h, bps, spp, cmap))
+    if lp.pixReadHeaderMem(data, len(data), *refs) != 0:
+        return 0
+    return w.value * h.value
 
 
 def page_points(dpi: float) -> Callable[[float], float]:

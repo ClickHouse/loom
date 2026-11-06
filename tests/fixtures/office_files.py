@@ -147,26 +147,22 @@ def laid_out_pdf(
         )
         for i, name in enumerate((b"Helvetica", b"Helvetica-Bold", b"Courier"), start=1)
     )
-    xobjects = b""
-    if image:
-        names = b" ".join(
-            b"/Im%d %d 0 R" % (n, add(b"<< /Type /XObject /Subtype /Image " + one + b"\nendstream"))
-            for n, one in enumerate([image] if isinstance(image, bytes) else image, start=1)
+    entries = [
+        b"/Im%d %d 0 R" % (n, add(b"<< /Type /XObject /Subtype /Image " + one + b"\nendstream"))
+        for n, one in enumerate([image] if isinstance(image, bytes) else image, start=1)
+        if one
+    ] + [
+        b"/Fm%d %d 0 R"
+        % (
+            n,
+            add(
+                b"<< /Type /XObject /Subtype /Form /BBox [0 0 1 1] /Length %d >>\nstream\n%s\nendstream"
+                % (len(one), one)
+            ),
         )
-        xobjects = b" /XObject << %s >>" % names
-    if forms:
-        named = b" ".join(
-            b"/Fm%d %d 0 R"
-            % (
-                n,
-                add(
-                    b"<< /Type /XObject /Subtype /Form /BBox [0 0 1 1] /Length %d >>\nstream\n%s\nendstream"
-                    % (len(one), one)
-                ),
-            )
-            for n, one in enumerate(forms, start=1)
-        )
-        xobjects = (xobjects[:-3] + b" " + named + b" >>") if xobjects else b" /XObject << %s >>" % named
+        for n, one in enumerate(forms, start=1)
+    ]
+    xobjects = b" /XObject << %s >>" % b" ".join(entries) if entries else b""
     pages_id = len(objs) + 1 + 2 * len(pages)
     page_ids = []
     for k, stream in enumerate(pages):

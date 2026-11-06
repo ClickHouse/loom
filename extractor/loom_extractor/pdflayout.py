@@ -430,8 +430,9 @@ class _Rule:
 
 @dataclass
 class Picture:
-    """An image XObject the page draws: the object, the matrix it is drawn with
-    (its unit square to user space), and its box as shown and turned."""
+    """An image the page draws: its XObject (None for one drawn inline, which OCR
+    does not read), the matrix it is drawn with (its unit square to user
+    space), and its box as shown and turned."""
 
     image: Any
     ctm: list[float]
@@ -522,6 +523,13 @@ def drawing(
                 path = []
             elif op == b"n":
                 path = []
+            elif op == b"INLINE IMAGE":  # its box, though OCR reads no inline image
+                corners = [to(*tp(u, v)) for u, v in ((0, 0), (1, 0), (1, 1), (0, 1))]
+                xs, ys = [c[0] for c in corners], [c[1] for c in corners]
+                if len(pictures) >= _MAX_DRAWN:
+                    cut[0] = True
+                else:
+                    pictures.append(Picture(None, list(ctm), (min(xs), min(ys), max(xs), max(ys))))
             elif op == b"Do" and operands and depth < _MAX_FORM_DEPTH and resources is not None:
                 xobjects = resources.get_object().get("/XObject")
                 if not xobjects:

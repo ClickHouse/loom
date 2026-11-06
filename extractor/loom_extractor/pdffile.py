@@ -243,7 +243,8 @@ def _read_layout(
         p
         for p in pictures
         # one shown under a point wide (a spacer, a tracking pixel) holds no text
-        if math.hypot(p.ctm[0], p.ctm[1]) >= 1
+        if p.image is not None
+        and math.hypot(p.ctm[0], p.ctm[1]) >= 1
         and (not texted or (p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p)))
     ]
     if len(targets) > layout.MAX_PICTURES:
@@ -285,6 +286,8 @@ def _read_layout(
             rules += layout.picture_rules(page, turn, picture, boxes, w, h)
         read.ocr = True
     # after OCR's own reasons: one of them (OCR off) is what an operator can act on
+    if texted and any(p.image is None and p.area >= ocr.PICTURE_SHARE * area for p in pictures):
+        problems.append("a picture drawn inline covers a fifth of it, which OCR does not read")
     if not whole and (pictures or _has_image(page, reader)):
         problems.append("it draws more than its drawing is read for, so a picture may be unread")
     if problems:
