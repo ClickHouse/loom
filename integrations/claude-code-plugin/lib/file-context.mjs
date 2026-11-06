@@ -8,6 +8,7 @@
 
 import path from "node:path";
 import { patchFiles } from "./loom-client.mjs";
+import { recalledDataBlock } from "./prompt-recall.mjs";
 
 export const FILE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"]);
 
@@ -59,12 +60,16 @@ export function decideInject(cache, key, now, ttlMs) {
   return { inject: true, cache: { seen: next } };
 }
 
-/** The hook's stdout payload: additional context only — never a permission decision. */
+export const FILE_RULES_HEADING = "Loom file rules and notes for the file this edit touches, each with its author:";
+
+/** The hook's stdout payload: additional context only — never a permission decision.
+ *  Team rules come from a namespace every member writes, so the rendered text
+ *  goes inside the recalled-data block, under a heading the plugin writes. */
 export function contextPayload(rendered) {
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      additionalContext: String(rendered || ""),
+      additionalContext: `${FILE_RULES_HEADING}\n${recalledDataBlock(rendered)}`,
     },
   };
 }
