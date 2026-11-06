@@ -106,7 +106,7 @@ def repo(monkeypatch) -> _Repo:
     async def _none_stored(scope, org, namespace):
         return 0
 
-    monkeypatch.setattr(h, "count_regexes", _none_stored)
+    monkeypatch.setattr(h, "scope_program", _none_stored)
 
     async def _no_grant(org, namespace, subject):
         return None
@@ -424,6 +424,15 @@ def test_sweep_by_another_orgs_org_admin_is_refused(repo: _Repo, monkeypatch) ->
 # ----------------------------------------------------------- regex bounds
 
 
+def _refusal(pattern: str) -> str | None:
+    """Why `compile_regex` refuses the pattern, or None."""
+    try:
+        compile_regex(pattern)
+    except ValidationError as e:
+        return str(e)
+    return None
+
+
 @pytest.mark.parametrize(
     "pattern",
     [
@@ -440,16 +449,7 @@ def test_sweep_by_another_orgs_org_admin_is_refused(repo: _Repo, monkeypatch) ->
     ],
 )
 def test_ordinary_regexes_are_accepted(pattern: str) -> None:
-    assert validate_regex(pattern) is None
-
-
-def validate_regex(pattern: str) -> str | None:
-    """Why `compile_regex` refuses the pattern, or None."""
-    try:
-        compile_regex(pattern)
-    except ValidationError as e:
-        return str(e)
-    return None
+    assert _refusal(pattern) is None
 
 
 def _search_seconds(compiled: Any, text: str) -> float:
@@ -470,7 +470,7 @@ def test_a_backtracking_shape_runs_in_linear_time(pattern: str) -> None:
     """Every regex runs on RE2, so a shape that backtracks exponentially in
     Python's engine searches a hostile value in time linear in it: no shape check
     or probe to slip past (`q?(\\d|\\d)*z` passed both)."""
-    assert validate_regex(pattern) is None
+    assert _refusal(pattern) is None
     compiled = compile_regex(pattern)
     for unit in ("a", "1", "x"):
         n = 20_000
@@ -483,22 +483,22 @@ def test_a_backtracking_shape_runs_in_linear_time(pattern: str) -> None:
 
 @pytest.mark.parametrize("pattern", [r"(a)\1", r"foo(?=bar)", r"(?<!x)y", r"end\Z"])
 def test_a_regex_re2_cannot_run_is_refused(pattern: str) -> None:
-    reason = validate_regex(pattern)
+    reason = _refusal(pattern)
     assert reason is not None and "RE2" in reason
 
 
 def test_a_regex_whose_program_outgrows_the_cap_is_refused() -> None:
     """A counted class keeps RE2's DFA from caching, so each character costs a step
     per instruction: the program is capped."""
-    reason = validate_regex("a[ab]{400}c")
+    reason = _refusal("a[ab]{400}c")
     assert reason is not None and "RE2 instructions" in reason
-    assert validate_regex("x" * REGEX_MAX_LENGTH) is None  # a long literal stays under it
+    assert _refusal("x" * REGEX_MAX_LENGTH) is None  # a long literal stays under it
 
 
 def test_length_and_syntax_bounds() -> None:
-    assert validate_regex("a" * (REGEX_MAX_LENGTH + 1)) is not None
-    assert validate_regex("a" * REGEX_MAX_LENGTH) is None
-    assert "RE2" in (validate_regex("(") or "")
+    assert _refusal("a" * (REGEX_MAX_LENGTH + 1)) is not None
+    assert _refusal("a" * REGEX_MAX_LENGTH) is None
+    assert "RE2" in (_refusal("(") or "")
 
 
 def test_add_refuses_a_bad_regex_with_422_before_it_is_stored(repo: _Repo) -> None:
@@ -566,18 +566,20 @@ def test_cache_refresh_drops_a_stored_regex_re2_cannot_run(monkeypatch) -> None:
     assert asyncio.run(bl.find_match(org="o", namespace="n", value='"assn"')) is None
 
 
-def test_a_scope_holds_a_bounded_number_of_regexes(repo: _Repo, monkeypatch) -> None:
-    """Every regex a write's scopes hold runs on that write: a scope's count is capped."""
-    from server.memory.app.blacklist_guard import REGEXES_PER_SCOPE
+def test_a_scopes_regexes_hold_a_bounded_program(repo: _Repo, monkeypatch) -> None:
+    """Every regex a write's scopes hold runs on that write: a scope's regexes together
+    compile to a bounded program."""
+    from server.memory.app.blacklist_guard import REGEX_PROGRAM_PER_SCOPE
 
     async def _full(scope, org, namespace):
-        return REGEXES_PER_SCOPE
+        return REGEX_PROGRAM_PER_SCOPE - 2
 
-    monkeypatch.setattr(h, "count_regexes", _full)
+    monkeypatch.setattr(h, "scope_program", _full)
     set_current_auth(_auth("WRITER"))
     with pytest.raises(HTTPException) as ei:
-        asyncio.run(h.handle_blacklist_add(_add("namespace", pattern_type="regex", pattern="x+")))
+        asyncio.run(h.handle_blacklist_add(_add("namespace", pattern_type="regex", pattern="xyz+")))
     assert ei.value.detail["code"] == "BLACKLIST_PATTERN_INVALID"
+    assert "RE2 instructions" in ei.value.detail["message"]
     assert repo.inserted == []
     # a substring pattern is not a regex and is not counted
     asyncio.run(h.handle_blacklist_add(_add("namespace", pattern="plain")))
@@ -614,42 +616,41 @@ def test_the_matcher_thread_keeps_scope_precedence_and_reads_a_lone_surrogate(
     assert hit is not None and hit.pattern_id == "global"
 
 
-def test_count_regexes_counts_regex_rows_at_exactly_the_scope(monkeypatch) -> None:
+def test_scope_program_sums_the_regexes_at_exactly_the_scope(monkeypatch) -> None:
     import server.memory.app.blacklist_guard as bl
 
-    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
-    monkeypatch.setattr(
-        bl,
-        "_cache",
-        [
-            _pattern("a", "namespace", "x+", "regex"),
-            _pattern("b", "namespace", "y", "substring"),
-            _pattern("c", "global", "z+", "regex"),
-            _pattern("d", "global", "w+", "regex"),
-        ],
-    )
-    assert asyncio.run(bl.count_regexes("namespace", ORG, NS)) == 1
-    assert asyncio.run(bl.count_regexes("global", *h._scope_args("global", ORG, NS))) == 2
-    assert asyncio.run(bl.count_regexes("namespace", ORG, "other")) == 0
-
-
-def test_the_cache_keeps_a_scopes_first_regexes_past_the_cap(monkeypatch) -> None:
-    """Racing adds or a lagging replica can store more than the cap; every replica
-    keeps the same first ones, by pattern id."""
-    import server.memory.app.blacklist_guard as bl
-
-    monkeypatch.setattr(bl, "REGEXES_PER_SCOPE", 2)
     rows = [
+        _pattern("a", "namespace", "x+", "regex"),
+        _pattern("b", "namespace", "y", "substring"),
+        _pattern("c", "global", "z+", "regex"),
+        _pattern("d", "global", "w+", "regex"),
+    ]
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "_cache", rows)
+    size = rows[0].compiled.programsize
+    assert asyncio.run(bl.scope_program("namespace", ORG, NS)) == size
+    assert asyncio.run(bl.scope_program("global", *h._scope_args("global", ORG, NS))) == 2 * size
+    assert asyncio.run(bl.scope_program("namespace", ORG, "other")) == 0
+
+
+def test_the_cache_keeps_a_scopes_oldest_regexes_within_its_program(monkeypatch) -> None:
+    """Racing adds or an older build can store past a scope's program; every replica
+    keeps the oldest that fit, and a row RE2 refuses takes no room."""
+    import server.memory.app.blacklist_guard as bl
+
+    size = compile_regex("c+").programsize
+    monkeypatch.setattr(bl, "REGEX_PROGRAM_PER_SCOPE", 2 * size)
+    rows = [  # as `active_patterns` returns them: oldest first
         {
             "pattern_id": pid,
             "org": ORG,
             "namespace": NS,
-            "pattern": f"{pid}+",
+            "pattern": pattern,
             "pattern_type": "regex",
             "scope": "namespace",
             "reason": "",
         }
-        for pid in ("c", "a", "b")
+        for pid, pattern in (("c", "c+"), ("bad", "(?=a)b"), ("a", "a+"), ("b", "b+"))
     ]
 
     class _CH:
@@ -661,7 +662,7 @@ def test_the_cache_keeps_a_scopes_first_regexes_past_the_cap(monkeypatch) -> Non
 
     monkeypatch.setattr(bl, "get_client", lambda: _CH())
     asyncio.run(bl._refresh_cache())
-    assert [p.pattern_id for p in bl._cache] == ["a", "b"]
+    assert [p.pattern_id for p in bl._cache] == ["c", "a"]
 
 
 def test_a_value_past_the_regex_work_budget_is_refused(monkeypatch) -> None:
@@ -677,4 +678,30 @@ def test_a_value_past_the_regex_work_budget_is_refused(monkeypatch) -> None:
     assert asyncio.run(bl.find_match(org=ORG, namespace=NS, value="x" * budget)) is None
     hit = asyncio.run(bl.find_match(org=ORG, namespace=NS, value="x" * (budget + 1)))
     assert hit is not None and hit.pattern_id == "" and "too long" in hit.reason
+    assert hit.scope == "namespace"
     asyncio.run(bl.note_hit(""))  # no stored pattern to count against
+    # the budget is in bytes: RE2 scans UTF-8
+    wide = "\u00e9" * (budget // 2 + 1)
+    assert asyncio.run(bl.find_match(org=ORG, namespace=NS, value=wide)) is not None
+
+
+def test_regexes_match_across_newlines_on_the_matcher_threads(monkeypatch) -> None:
+    """`.` matches a newline, as ClickHouse's `match()` does in the sweep, and the
+    search runs on the blacklist's threads, never the event loop."""
+    import threading
+
+    import server.memory.app.blacklist_guard as bl
+
+    ran_on: list[str] = []
+    matches = bl._matches
+
+    def _recording(p: Any, value: str) -> bool:
+        ran_on.append(threading.current_thread().name)
+        return matches(p, value)
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "_matches", _recording)
+    monkeypatch.setattr(bl, "_cache", [_pattern("r", "namespace", "secret.code", "regex")])
+    hit = asyncio.run(bl.find_match(org=ORG, namespace=NS, value="secret\ncode"))
+    assert hit is not None and hit.pattern_id == "r"
+    assert ran_on and all(name.startswith("loom-blacklist") for name in ran_on)

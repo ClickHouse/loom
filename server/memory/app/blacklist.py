@@ -18,11 +18,11 @@ from server.memory.api.models_blacklist import (
     _BlacklistRow,
 )
 from server.memory.app.blacklist_guard import (
-    REGEXES_PER_SCOPE,
+    REGEX_PROGRAM_PER_SCOPE,
     _bump_version,
     compile_regex,
-    count_regexes,
     invalidate_cache,
+    scope_program,
 )
 from server.memory.store import blacklist as blacklist_repo
 
@@ -97,20 +97,24 @@ def _stamped_author(body_value: str) -> str:
 
 
 async def _reject_bad_regex(pattern: str, scope: str, org: str, namespace: str) -> None:
-    """422 for a regex `compile_regex` refuses, or one past the scope's regex budget:
+    """422 for a regex `compile_regex` refuses, or one past the scope's program budget:
     every regex a write's scopes hold runs on that write."""
     from fastapi import HTTPException
 
     from server.core.errors import ValidationError
 
     try:
-        compile_regex(pattern)
+        size = compile_regex(pattern).programsize
     except ValidationError as e:
         reason = str(e)
     else:
-        if await count_regexes(scope, org, namespace) < REGEXES_PER_SCOPE:
+        held = await scope_program(scope, org, namespace)
+        if held + size <= REGEX_PROGRAM_PER_SCOPE:
             return
-        reason = f"this {scope} already holds {REGEXES_PER_SCOPE} regex patterns"
+        reason = (
+            f"this {scope}'s regexes would pass {REGEX_PROGRAM_PER_SCOPE} RE2 instructions "
+            f"({held} held, {size} more)"
+        )
     raise HTTPException(
         status_code=422,
         detail={"code": "BLACKLIST_PATTERN_INVALID", "message": reason},

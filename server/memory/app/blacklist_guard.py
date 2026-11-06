@@ -34,10 +34,12 @@ log = logging.getLogger(__name__)
 # defeats RE2's DFA cache), so the program and the count per scope are capped.
 REGEX_MAX_LENGTH = 256
 REGEX_MAX_PROGRAM = 300  # not a setting: the bound that keeps a pattern cheap per character
-REGEXES_PER_SCOPE = 50  # not a setting: the add-time cap, enforced again at cache load
-# Characters x RE2 instructions one write's regexes may scan, a few seconds of the
-# matcher threads at worst; a value past it is refused, as if a pattern matched.
-REGEX_WORK_BUDGET = 1_000_000_000  # not a setting: what keeps one write from holding them
+# RE2 instructions the regexes of one scope may hold together: checked at add, and again
+# at cache load, which keeps the oldest when racing adds or an older build stored more.
+REGEX_PROGRAM_PER_SCOPE = 3_000  # not a setting: with the budget below, bounds one write
+# Bytes x RE2 instructions one write's regexes may scan, about a second of a matcher
+# thread at worst; a value past it is refused, as if a pattern matched.
+REGEX_WORK_BUDGET = 250_000_000  # not a setting: what keeps one write from holding them
 # Regex matching runs on its own few threads (RE2 releases the GIL), so a long value
 # under many patterns waits for these, never the event loop or the shared pool.
 _MATCHERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="loom-blacklist")
@@ -59,13 +61,13 @@ def compile_regex(pattern: str) -> Any:
     return compiled
 
 
-async def count_regexes(scope: str, org: str, namespace: str) -> int:
-    """The active regex patterns stored at exactly this scope, from the cache."""
+async def scope_program(scope: str, org: str, namespace: str) -> int:
+    """The RE2 instructions of the regexes stored at exactly this scope, from the cache."""
     await _ensure_loaded()
     return sum(
-        1
+        p.compiled.programsize
         for p in _cache
-        if p.pattern_type == "regex" and (p.scope, p.org, p.namespace) == (scope, org, namespace)
+        if p.compiled is not None and (p.scope, p.org, p.namespace) == (scope, org, namespace)
     )
 
 
@@ -144,23 +146,11 @@ async def _refresh_cache() -> None:
         new_version = await _current_version()
         rows = await _repo.active_patterns(ch=get_client())
     new_cache: list[BlacklistPattern] = []
-    regexes: dict[tuple[str, str, str], int] = {}
-    # In one order on every replica, so each keeps the same regexes past the cap.
-    for r in sorted(rows, key=lambda r: str(r["pattern_id"])):
+    program: dict[tuple[str, str, str], int] = {}
+    for r in rows:  # oldest first: past a scope's budget, the newest regexes are dropped
         pattern_type = r["pattern_type"]
         compiled: Any = None
         if pattern_type == "regex":
-            # The add-time cap can be passed by adds racing, or replicas lagging.
-            where = (r["scope"], r["org"], r["namespace"])
-            regexes[where] = regexes.get(where, 0) + 1
-            if regexes[where] > REGEXES_PER_SCOPE:
-                log.warning(
-                    "blacklist: dropping regex pattern %s from the cache: its scope holds "
-                    "more than %d",
-                    r["pattern_id"],
-                    REGEXES_PER_SCOPE,
-                )
-                continue
             # A row written past add-time validation is dropped from the hot
             # path rather than run on every write; the refusal is logged so
             # the operator can remove it.
@@ -170,6 +160,17 @@ async def _refresh_cache() -> None:
                 log.warning(
                     "blacklist: dropping regex pattern %s from the cache: %s", r["pattern_id"], e
                 )
+                continue
+            where = (r["scope"], r["org"], r["namespace"])
+            program[where] = program.get(where, 0) + compiled.programsize
+            if program[where] > REGEX_PROGRAM_PER_SCOPE:
+                log.warning(
+                    "blacklist: dropping regex pattern %s from the cache: its scope's regexes "
+                    "pass %d RE2 instructions",
+                    r["pattern_id"],
+                    REGEX_PROGRAM_PER_SCOPE,
+                )
+                program[where] -= compiled.programsize
                 continue
         new_cache.append(
             BlacklistPattern(
@@ -219,13 +220,17 @@ async def find_match(
     """Return the first applicable + matching pattern, or None."""
     await _ensure_loaded()
     applicable = [p for p in _cache if _applies_to(p, org, namespace)]
-    program = sum(p.compiled.programsize for p in applicable if p.compiled is not None)
-    if not program:
+    regexes = [p for p in applicable if p.compiled is not None]
+    if not regexes:
         return _first_match(applicable, value, value)
-    if len(value) * program > REGEX_WORK_BUDGET:
-        return _over_budget(org, namespace, len(value), program)
-    # RE2 reads UTF-8: a lone surrogate (an unpaired JSON escape) is read as `?`.
-    text = value.encode("utf-8", "replace").decode("utf-8")
+    # RE2 reads UTF-8 (a lone surrogate, an unpaired JSON escape, reads as `?`) and its
+    # cost is per byte.
+    data = value.encode("utf-8", "replace")
+    program = sum(p.compiled.programsize for p in regexes)
+    if len(data) * program > REGEX_WORK_BUDGET:
+        widest = max(regexes, key=lambda p: _SCOPE_PRECEDENCE.get(p.scope, 0)).scope
+        return _over_budget(org, namespace, widest, len(data), program)
+    text = data.decode("utf-8")
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(_MATCHERS, _first_match, applicable, value, text)
 
@@ -237,19 +242,21 @@ def _first_match(
     return next((p for p in patterns if _matches(p, text if p.compiled else value)), None)
 
 
-def _over_budget(org: str, namespace: str, chars: int, program: int) -> BlacklistPattern:
-    """The refusal of a value too long for the regexes its scopes hold to check."""
+def _over_budget(
+    org: str, namespace: str, scope: str, size: int, program: int
+) -> BlacklistPattern:
+    """The refusal of a value too long for the regexes its scopes hold to check;
+    `scope` is the widest that holds one."""
     return BlacklistPattern(
         pattern_id="",
         org=org,
         namespace=namespace,
         pattern="",
         pattern_type="regex",
-        scope="namespace",
+        scope=scope,
         reason=(
-            f"a {chars}-character value is too long to check against this scope's "
-            f"blacklist regexes ({program} RE2 instructions); store it shorter or "
-            "remove regex patterns"
+            f"a {size}-byte value is too long to check against the blacklist regexes that "
+            f"apply ({program} RE2 instructions); store it shorter or remove regex patterns"
         ),
     )
 

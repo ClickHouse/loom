@@ -290,9 +290,11 @@ user (`read_scope` `own_user` / `own_session`) gets `AUTH_INSUFFICIENT` on every
 
 A regex is at most 256 characters, is RE2 syntax (no backreferences or lookaround, `\z`
 rather than `\Z`) and compiles to at most 300 RE2 instructions (a long non-ASCII literal
-can exceed that: use a substring pattern for it); a scope holds at most 50 regex patterns.
-It runs on RE2, in time linear in the value, on writes (on a few threads of its own, off
-the event loop) and in the sweep alike.
+can exceed that: use a substring pattern for it), and a scope's regexes together compile
+to at most 3,000. It runs on RE2, in time linear in the value, on writes (on a few threads
+of its own, off the event loop) and in the sweep alike. A value whose size in bytes times
+the instructions of the regexes that apply to it passes 250 million is refused as
+`BLACKLISTED` with an empty `pattern_id` and a reason saying it is too long to check.
 
 | Operation          | Role   | Does                                                                              |
 | ------------------ | ------ | --------------------------------------------------------------------------------- |
