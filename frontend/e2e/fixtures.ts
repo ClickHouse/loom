@@ -362,6 +362,19 @@ export interface CodeRepoFixture {
 }
 
 /** Roles `namespace.join` can grant; a join never yields a non-member, so `""` is not one. */
+// `knowledge.formats`: what the add dialogs read a picked file as, as a deployment with
+// the reference extractor lists it.
+const KNOWLEDGE_FORMATS = {
+  formats: [
+    { format: "text", extensions: ["txt"], media_types: ["text/plain"], available: true },
+    { format: "markdown", extensions: ["md", "markdown"], media_types: ["text/markdown"], available: true },
+    { format: "pdf", extensions: ["pdf"], media_types: ["application/pdf"], available: true },
+  ],
+  max_upload_bytes: 64 * 1024 * 1024,
+  refused_extensions: ["doc", "ppt", "xls"],
+  default_format: "text",
+};
+
 const JOIN_ROLES = ["viewer", "writer", "admin"] as const;
 
 function isJoinRole(v: unknown): v is (typeof JOIN_ROLES)[number] {
@@ -1049,6 +1062,8 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
           status: "active",
         });
       }
+      case "/v1/knowledge.formats":
+        return json(KNOWLEDGE_FORMATS);
       case "/v1/knowledge.list":
         calls.knowledge.push(body);
         if (!options.knowledgeRows) break;
