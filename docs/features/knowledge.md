@@ -1037,23 +1037,23 @@ finished. A failed erasure holds it until `loom erasure-re-verify --resume` comp
 erasure.
 
 One registered while the object was written ends the move before its row, and the move
-deletes its own object, which no row names. A namespace's erasure deletes the original,
-which counts as erased; under a user's, the original stays in ClickHouse and is reported,
-to move on a later run if that erasure keeps it. One registered as the row lands may have
-deleted the original first. A namespace's erasure deletes every original of its namespace,
-so the move deletes its row and object at once. A user's erasure deletes every object of
-an original it takes, so the move waits for it to finish and deletes its row when its
-object is gone; when the object is still there, the erasure kept the original and the
-switch stands. One that has not finished after 600 seconds, or that has failed (it waits
-for a re-verify), or a check that fails after the switch, is named, and the switched row
-is left to it.
+deletes its own object, which no row names. While the original is still held in ClickHouse
+after that (the erasure has not reached it yet, or a user's erasure kept it for another
+writer), it is reported, to move on a later run if it is still there. One registered as
+the row lands may have deleted the original first. A namespace's erasure deletes every
+original of its namespace, so the move deletes its row and object at once. A user's
+erasure deletes every object of an original it takes, so the move waits for it to finish
+and deletes its row when its object is gone; when the object is still there, the erasure
+kept the original and the switch stands. One that has not finished after 600 seconds, or
+that has failed (it waits for a re-verify), or a check that fails after the switch, is
+named, and the switched row is left to it.
 
 The row is written only within the time an upload has to write its object, counted from
 the write as an upload's is and well inside `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`, after
 which the bucket walk may take an object no row names; a copy that takes longer deletes
 its object and is reported. An original nothing needs any more by the time its row lands
-(its last document went meanwhile) is taken back too, so the moved row never outlives the
-upload records an erasure finds it by.
+(its last document went meanwhile) keeps its switched row, which the sweep deletes once it
+is old enough, as any original nothing names.
 
 An original whose bytes do not hash to their sha256 or fill their size, one an erasure
 held back, one whose object key would be too long, or one the bucket refused or was too

@@ -35,7 +35,10 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
         page[4].sha: False,
     }
 
+    fences: list[int] = []
+
     async def fence(org: str, ns: str) -> blobs.Fence:
+        fences.append(1)
         return blobs.Fence(0)
 
     async def move(held: blobs.Held, fenced: blobs.Fence | None = None) -> bool:
@@ -53,5 +56,44 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
     assert result.bytes == 20
     (error,) = result.errors
     assert error.startswith(f"acme/docs/{page[2].sha}: ") and "too long" in error
+    # One read for the page: no erasure held an original back.
+    assert len(fences) == 1
     (unconfirmed,) = result.left_to_erasure
     assert unconfirmed.startswith(f"acme/docs/{page[3].sha}: switched")
+
+
+@pytest.mark.asyncio
+async def test_an_erasure_holding_one_back_rereads_the_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = [_held(i) for i in range(3)]
+    reads: list[str] = []
+
+    async def held_in_clickhouse(org: str, ns: str, after: str, limit: int) -> blobs.HeldPage:
+        return blobs.HeldPage(page, "") if after == "" else blobs.HeldPage([], "")
+
+    async def needed(org: str, ns: str, shas: list[str]) -> set[str]:
+        return set(shas)
+
+    async def fence(org: str, ns: str) -> blobs.Fence:
+        reads.append("fence")
+        # The second read sees the erasure that held the first original back.
+        return blobs.Fence(
+            0, "erasure e1 (namespace, in_progress) covers it" if len(reads) > 1 else ""
+        )
+
+    async def move(held: blobs.Held, fenced: blobs.Fence | None = None) -> bool:
+        if held is page[0] or (fenced and fenced.refusal):
+            raise blobs.ErasureOpen(
+                "erasure e1 (namespace, in_progress) started while it was copied"
+            )
+        return True
+
+    monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
+    monkeypatch.setattr(blobs, "needed", needed)
+    monkeypatch.setattr(blobs, "fence", fence)
+    monkeypatch.setattr(blobs, "move_to_bucket", move)
+    result = await originals.migrate_originals(org="acme", namespace="docs")
+    assert result.moved == 0 and len(result.errors) == 3
+    # The page's read, then one after each original an erasure held back.
+    assert reads == ["fence"] * 4

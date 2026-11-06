@@ -330,16 +330,16 @@ def _fence_advice(erasures: list[_Erasure], what: str) -> str:
     return f"{erasures[0]} {what} and finished just now; run again in a minute"
 
 
-async def _erasures_since(held: Held, since_s: int, ch: _CHClient) -> list[_Erasure]:
+async def _erasures_since(org: str, namespace: str, since_s: int, ch: _CHClient) -> list[_Erasure]:
     """The erasures that cover the original and had not finished at `since_s`."""
     with sequential_reads():
         rows = await ch.query_all(
-            _ERASURES_SINCE, params={"org": held.org, "since": since_s, "margin": _CLOCK_MARGIN_S}
+            _ERASURES_SINCE, params={"org": org, "since": since_s, "margin": _CLOCK_MARGIN_S}
         )
     return [
         _Erasure(str(r["erasure_id"]), str(r["scope_type"]), str(r["state"]))
         for r in rows
-        if _covers(str(r["scope_type"]), str(r["scope_value"]), held.namespace)
+        if _covers(str(r["scope_type"]), str(r["scope_value"]), namespace)
     ]
 
 
@@ -348,7 +348,8 @@ async def _await_erasures(held: Held, since_s: int, ch: _CHClient) -> None:
     `since_s` has completed; `SwitchedUnderErasure` after ERASURE_WAIT_S."""
     deadline = time.monotonic() + ERASURE_WAIT_S
     while True:
-        open_ = [e for e in await _erasures_since(held, since_s, ch) if not e.done]
+        raced = await _erasures_since(held.org, held.namespace, since_s, ch)
+        open_ = [e for e in raced if not e.done]
         if not open_:
             return
         # A failed erasure finishes only through a re-verify: waiting gains nothing.
@@ -380,7 +381,7 @@ async def fence(org: str, namespace: str, *, ch: _CHClient | None = None) -> Fen
     """The namespace's fence now: the refusal names the erasure that holds it longest."""
     ch = ch or _default_client()
     since = await _cutoff_ms(0, ch) // 1000
-    fenced = await _erasures_since(Held(org, namespace, "", 0), since, ch)
+    fenced = await _erasures_since(org, namespace, since, ch)
     return Fence(since, _fence_advice(fenced, "covers it") if fenced else "")
 
 
@@ -453,7 +454,7 @@ async def move_to_bucket(
     if now is None or now.location:
         await objects.delete(loc.bucket, [loc.key])  # no row names it, nor will
         return False
-    overtaken = await _erasures_since(held, since, ch)
+    overtaken = await _erasures_since(held.org, held.namespace, since, ch)
     if overtaken or back is None:
         # No row names the object yet. The original is the erasure's: gone, or kept,
         # and then still held here.
@@ -462,13 +463,12 @@ async def move_to_bucket(
             after = await locate(held.org, held.namespace, held.sha, ch=ch)
         if after is None or after.location:
             return False
-        users = [e for e in overtaken if e.scope_type == "user_id"]
-        if users:
-            raise ErasureOpen(
-                _fence_advice(users, "started while it was copied, and it stays in ClickHouse")
-            )
         if overtaken:
-            return False  # a namespace's erasure, which deletes it
+            # Still held here: the erasure has not reached it yet, or kept it (a user's
+            # erasure keeps one another writer still needs). Reported, not counted as gone.
+            raise ErasureOpen(
+                _fence_advice(overtaken, "started while it was copied, and it stays in ClickHouse")
+            )
         raise objects.ObjectStoreError(
             "object store read failed (its new object was gone before its read-back)",
             operation="read",
@@ -502,7 +502,7 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
     has finished, the move is taken back if the erasure took the moved object. A read that
     fails here leaves the switched row, reported (`SwitchedUnderErasure`)."""
     try:
-        raced = await _erasures_since(held, since, ch)
+        raced = await _erasures_since(held.org, held.namespace, since, ch)
         namespace_raced = any(e.scope_type != "user_id" for e in raced)
         taken = False
         if raced and not namespace_raced:
@@ -515,16 +515,19 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
             f"switched to {loc.uri()}, but the check for an erasure that raced it failed ({e}); "
             "check that no erasure of its namespace or a user ran then"
         ) from e
-    if namespace_raced or taken:
+    if not (namespace_raced or taken):
+        # An original nothing needs any more by now (its last document went as it moved)
+        # is left to the sweep, which deletes it once older than its min age: a delete
+        # here, unbounded by age, could take the only row a racing writer's merge left.
+        return True
+    try:
         await _unwrite(held, loc, ch)
-        return False
-    # Nothing needs it any more (its last document went, and the sweep may have taken its
-    # ClickHouse row and upload records meanwhile): the move's row and object go too,
-    # rather than outlive the records an erasure finds them by.
-    if not await needed(held.org, held.namespace, [held.sha], ch=ch):
-        await _unwrite(held, loc, ch)
-        return False
-    return True
+    except Exception as e:  # the row is switched: a failed take-back is reported, not lost
+        raise SwitchedUnderErasure(
+            f"switched to {loc.uri()} as an erasure took it, but taking the switch back failed "
+            f"({e}); run that erasure again"
+        ) from e
+    return False
 
 
 async def _unwrite(held: Held, loc: objects.Location, ch: _CHClient) -> None:

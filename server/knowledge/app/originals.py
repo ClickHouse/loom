@@ -58,7 +58,10 @@ async def migrate_originals(
                 if held.sha not in wanted:
                     out.unneeded += 1
                     continue
-                await _one(held, fenced, dry_run, out)
+                if not await _one(held, fenced, dry_run, out):
+                    # An erasure held this one back: read the fence again for the rest,
+                    # so they are refused by it before a copy rather than after.
+                    fenced = await blobs.fence(org_, ns)
             if not page.after:
                 break
             after = page.after
@@ -79,26 +82,31 @@ async def _scopes(org: str, namespace: str) -> list[tuple[str, str]]:
         after = page[-1]
 
 
-async def _one(held: blobs.Held, fenced: blobs.Fence | None, dry_run: bool, out: Migrated) -> None:
+async def _one(held: blobs.Held, fenced: blobs.Fence | None, dry_run: bool, out: Migrated) -> bool:
+    """Count one original. False when an erasure held it back."""
     if dry_run:
         out.pending += 1
         out.bytes += held.size
-        return
+        return True
     try:
         if await blobs.move_to_bucket(held, fenced):
             out.moved += 1
             out.bytes += held.size
         else:
             out.skipped += 1
+    except blobs.ErasureOpen as e:
+        log.warning("originals: %s/%s/%s not moved: %s", held.org, held.namespace, held.sha, e)
+        out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
+        return False
     except blobs.SwitchedUnderErasure as e:
         out.moved += 1
         out.bytes += held.size
         out.left_to_erasure.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
     except (
         blobs.CorruptOriginal,
-        blobs.ErasureOpen,
         objects.ObjectStoreError,
         ValidationError,  # its object key would be too long for the bucket
     ) as e:
         log.warning("originals: %s/%s/%s not moved: %s", held.org, held.namespace, held.sha, e)
         out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
+    return True

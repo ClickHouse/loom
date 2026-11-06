@@ -617,7 +617,7 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
 
 
 @pytest.mark.asyncio
-async def test_a_move_whose_original_stopped_being_needed_is_taken_back(
+async def test_a_move_whose_original_stopped_being_needed_is_left_to_the_sweep(
     s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     org, ns = unique_org("objstore-unneeded"), "docs"
@@ -634,10 +634,12 @@ async def test_a_move_whose_original_stopped_being_needed_is_taken_back(
         return out
 
     monkeypatch.setattr(ch, "insert", insert_then_document_goes)
-    assert await blobs.move_to_bucket(held, ch=ch) is False
+    # The switch stands: a delete unbounded by age could take a racing writer's only row.
+    assert await blobs.move_to_bucket(held, ch=ch) is True
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
-    assert stored is None or stored.location == ""
-    assert _keys(s3) == []
+    assert stored is not None and stored.location.startswith("s3://")
+    # The sweep takes it once it is old enough, as any original nothing names.
+    assert await blobs.unreferenced(org, ns, 0, 10, ch=ch) == [held.sha]
 
 
 @pytest.mark.asyncio
