@@ -327,8 +327,11 @@ first choice) is a block, and the speaker notes are a block marked `attrs.notes`
 and marked `attrs.hidden`. A picture that covers a fifth of its slide or more is read with OCR into a paragraph block
 marked `attrs.ocr` after the slide's shapes (an image several slides show is read once, and pictures inflate within a
 bound of their own, apart from the package's parts), and without OCR, or for a picture linked rather than held in the
-file, the slide is a failed unit that says why. A slide whose pictures, charts, diagrams or embedded objects carry all
-it shows, with no text, is a failed unit, unless OCR read its pictures. So is a slide id whose relationship names no
+file, the slide is a failed unit that says why. A picture's size is its own, scaled by each group it sits in, or else
+its placeholder's in the slide's layout and then its master; one stated nowhere is taken as the slide's, and a deck
+that names no slide size has the default 10 by 7.5 inches. A slide whose pictures, charts, diagrams or embedded
+objects carry all it shows, with no text, is a failed unit, unless OCR read its pictures; one whose only text is what
+OCR read is a failed unit too when it holds a chart, diagram or embedded object. So is a slide id whose relationship names no
 slide part, and a slide nested deeper than the reader walks. A table, in either format, is one block, a row per line
 with its cells joined by a pipe, and `attrs.table` its `rows` and `columns`.
 

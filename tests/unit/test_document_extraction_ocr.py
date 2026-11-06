@@ -484,6 +484,148 @@ def test_a_slide_with_a_chart_beside_a_picture_ocr_read_is_not_complete(
     ]
 
 
+def _one_slide(shapes: str, parts: dict[str, str] | None = None, size: bool = True) -> bytes:
+    """A deck of one slide of `shapes` showing image `img`, the slide's layout and
+    master from `parts`, and a slide size of 12192000 x 6858000 EMU unless not `size`."""
+    from tests.unit.test_document_extraction_office import _P, _rels, _slide, _zip
+
+    rels = [("img", "image", "../media/image1.png")]
+    if parts:
+        rels.append(("lay", "slideLayout", "../slideLayouts/slideLayout1.xml"))
+    sld_sz = '<p:sldSz cx="12192000" cy="6858000"/>' if size else ""
+    return _zip(
+        {
+            "ppt/presentation.xml": (
+                f'<p:presentation {_P}><p:sldIdLst><p:sldId id="256" r:id="s1"/></p:sldIdLst>'
+                f"{sld_sz}</p:presentation>"
+            ),
+            "ppt/_rels/presentation.xml.rels": _rels(("s1", "slide", "slides/slide1.xml")),
+            "ppt/slides/slide1.xml": _slide(shapes),
+            "ppt/slides/_rels/slide1.xml.rels": _rels(*rels),
+            "ppt/media/image1.png": b"\x89PNG fake",
+            **(parts or {}),
+        }
+    )
+
+
+def _pic(spPr: str = "<p:spPr/>", ph: str = "") -> str:
+    return (
+        f'<p:pic><p:nvPicPr><p:cNvPr id="4" name="p"/><p:cNvPicPr/><p:nvPr>{ph}</p:nvPr></p:nvPicPr>'
+        f'<p:blipFill><a:blip r:embed="img"/></p:blipFill>{spPr}</p:pic>'
+    )
+
+
+def _holder(ph: str, cx: int) -> str:
+    """A placeholder `ph` of a layout or master, `cx` EMU wide."""
+    return (
+        f'<p:sp><p:nvSpPr><p:cNvPr id="2" name="h"/><p:cNvSpPr/><p:nvPr>{ph}</p:nvPr></p:nvSpPr>'
+        f'<p:spPr><a:xfrm><a:ext cx="{cx}" cy="5000000"/></a:xfrm></p:spPr></p:sp>'
+    )
+
+
+def _layout(layout: str, master: str) -> dict[str, str]:
+    from tests.unit.test_document_extraction_office import _P, _rels
+
+    def part(tag: str, shapes: str) -> str:
+        return f"<p:{tag} {_P}><p:cSld><p:spTree>{shapes}</p:spTree></p:cSld></p:{tag}>"
+
+    return {
+        "ppt/slideLayouts/slideLayout1.xml": part("sldLayout", layout),
+        "ppt/slideLayouts/_rels/slideLayout1.xml.rels": _rels(
+            ("m", "slideMaster", "../slideMasters/slideMaster1.xml")
+        ),
+        "ppt/slideMasters/slideMaster1.xml": part("sldMaster", master),
+    }
+
+
+_IN_PLACE = '<p:ph type="pic" idx="1"/>'
+
+
+@pytest.mark.parametrize(
+    ("parts", "read"),
+    [
+        # sized by its layout's placeholder of the same index, small or large
+        (_layout(_holder('<p:ph type="pic" idx="1"/>', 9_000_000), ""), True),
+        (_layout(_holder('<p:ph type="pic" idx="1"/>', 1_000_000), ""), False),
+        # the layout's placeholder has no size: the master's of its type has
+        (
+            _layout(
+                '<p:sp><p:nvSpPr><p:cNvPr id="2" name="h"/><p:cNvSpPr/><p:nvPr><p:ph type="pic" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp>',
+                _holder('<p:ph type="pic"/>', 9_000_000),
+            ),
+            True,
+        ),
+        # no layout: a size stated nowhere is taken as the slide's
+        (None, True),
+    ],
+)
+def test_a_slides_picture_in_a_placeholder_is_sized_by_its_layout(
+    engine: FakeEngine, parts: dict[str, str] | None, read: bool
+) -> None:
+    from tests.unit.test_document_extraction_office import _sp
+
+    a = extract(_one_slide(_sp("Architecture", "title") + _pic(ph=_IN_PLACE), parts), "p.pptx")
+    assert a.coverage.complete and len(engine.seen) == int(read)
+    assert [b.attrs for b in a.blocks][1:] == ([{"ocr": True}] if read else [])
+
+
+def test_a_grouped_picture_is_sized_on_its_slide_and_a_deck_with_no_size_has_the_default(
+    engine: FakeEngine,
+) -> None:
+    from tests.unit.test_document_extraction_office import _sp
+
+    title = _sp("Architecture", "title")
+    small = '<p:spPr><a:xfrm><a:ext cx="1000000" cy="500000"/></a:xfrm></p:spPr>'
+    # a group drawn nine times the size of its own child space
+    group = (
+        '<p:grpSp><p:nvGrpSpPr><p:cNvPr id="3" name="g"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>'
+        '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="9000000" cy="4500000"/>'
+        '<a:chOff x="0" y="0"/><a:chExt cx="1000000" cy="500000"/></a:xfrm></p:grpSpPr>'
+        f"{_pic(small)}</p:grpSp>"
+    )
+    assert extract(_one_slide(title + _pic(small)), "g.pptx").coverage.complete
+    assert engine.seen == []
+    a = extract(_one_slide(title + group), "g.pptx")
+    assert [b.attrs for b in a.blocks] == [{}, {"ocr": True}] and len(engine.seen) == 1
+    large = '<p:spPr><a:xfrm><a:ext cx="9000000" cy="4500000"/></a:xfrm></p:spPr>'
+    b = extract(_one_slide(title + _pic(large), size=False), "g.pptx")
+    assert [b.attrs for b in b.blocks] == [{}, {"ocr": True}] and len(engine.seen) == 2
+
+
+def test_a_chart_beside_a_picture_whose_text_ocr_read_still_fails_its_slide(
+    engine: FakeEngine,
+) -> None:
+    large = '<p:spPr><a:xfrm><a:ext cx="9000000" cy="4500000"/></a:xfrm></p:spPr>'
+    chart = "<p:graphicFrame><a:graphic><a:graphicData/></a:graphic></p:graphicFrame>"
+    a = extract(_one_slide(_pic(large) + chart), "c.pptx")
+    assert [b.attrs for b in a.blocks] == [{"ocr": True}]
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        ("slide 1", "its charts or diagrams are not read")
+    ]
+
+
+def test_an_image_the_engine_cannot_decode_leaves_the_files_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Undecodable(FakeEngine):
+        def read(
+            self, data: bytes, shown_inches: float = 0.0
+        ) -> tuple[list[ocr.Word], list[ocr.Box], int, int]:
+            if data == b"emf":
+                raise ocr.NotDecoded("its image could not be decoded")
+            return super().read(data, shown_inches)
+
+    eng = Undecodable([["text"]])
+    monkeypatch.setattr(ocr, "engine", lambda: eng)
+    images = ocr.Images(left=1)
+    for n in range(3):
+        with pytest.raises(ValueError, match="could not be decoded"):
+            images.read(("emf", n), lambda: b"emf", 1.0)
+    assert images.read("png", lambda: b"png", 1.0)[0][0].text == "text"
+    with pytest.raises(ValueError, match="past the"):
+        images.read("png2", lambda: b"png", 1.0)
+
+
 def test_an_image_page_whose_layout_fails_says_so(
     engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -71,6 +71,11 @@ def _unruled(text: str) -> str:
     return core if core and any(ch.isalnum() for ch in core) else text
 
 
+class NotDecoded(ValueError):
+    """An image refused before it is decoded: Leptonica cannot read its format,
+    or its header is past the pixel bound."""
+
+
 @dataclass(frozen=True)
 class Box:
     """A rule's box in an image's pixels, top left origin."""
@@ -185,10 +190,10 @@ class Engine:
         # its size from its header, before it is decoded: a file's own size may
         # say otherwise than the PDF's /Width and /Height
         if _header_pixels(lp, data) > MAX_PIXELS:
-            raise ValueError(f"its image is past {MAX_PIXELS:,} pixels")
+            raise NotDecoded(f"its image is past {MAX_PIXELS:,} pixels")
         pix = lp.pixReadMem(data, len(data))
         if not pix:
-            raise ValueError("its image could not be decoded")
+            raise NotDecoded("its image could not be decoded")
         held.append(pix)
         try:
             w, h = lp.pixGetWidth(pix), lp.pixGetHeight(pix)
@@ -443,7 +448,7 @@ class Images:
     ) -> tuple[list[Word], list[Box], int, int]:
         """The image's words, rules and size in pixels (`Engine.read`), from the
         file `data()` gives; ValueError naming why it is not read. Only an image
-        the engine reads counts against the file's bound, and one past it is
+        the engine decodes counts against the file's bound, and one past it is
         not decoded."""
         got = self._done.get(key)
         if got is None:
@@ -472,15 +477,21 @@ class Images:
             return str(e), True
         except Exception as e:  # noqa: BLE001 — an image that cannot be decoded leaves its page or slide partial
             return f"its image could not be read: {_why(e)}", True
-        self.left -= 1
+        charged = True
         try:
             return eng.read(file, shown_inches), True
+        except NotDecoded as e:  # refused before it was decoded: no work spent on it
+            charged = False
+            return str(e), True
         except MemoryError:
             raise
         except ValueError as e:
             return str(e), True
         except Exception as e:  # noqa: BLE001 — an image OCR fails on leaves its page or slide partial
             return f"its image could not be read: {_why(e)}", True
+        finally:
+            if charged:
+                self.left -= 1
 
     @property
     def version(self) -> str:
