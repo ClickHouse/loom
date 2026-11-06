@@ -48,10 +48,11 @@ def _lines(name: str, loc: Locator) -> str:
 
 
 def _zip(*names: str) -> bytes:
+    """Entries dated 1980-01-01 by ZipInfo, not the current time, so the bytes match in every process."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         for n in names:
-            z.writestr(n, "<x/>")
+            z.writestr(zipfile.ZipInfo(n), "<x/>")
     return buf.getvalue()
 
 
@@ -62,9 +63,9 @@ def _zip(*names: str) -> bytes:
     ("data", "name", "fmt"),
     [
         (b"%PDF-1.7\n...", "report.bin", "pdf"),
-        (_zip("[Content_Types].xml", "word/document.xml"), "a.docx", "docx"),
-        (_zip("ppt/presentation.xml"), "deck", "pptx"),
-        (_zip("xl/workbook.xml"), "book.xlsx", "xlsx"),
+        pytest.param(_zip("[Content_Types].xml", "word/document.xml"), "a.docx", "docx", id="docx"),
+        pytest.param(_zip("ppt/presentation.xml"), "deck", "pptx", id="pptx"),
+        pytest.param(_zip("xl/workbook.xml"), "book.xlsx", "xlsx", id="xlsx"),
         (b"PAR1....PAR1", "t.parquet", "parquet"),
         (b"SELECT 1;", "q.sql", "sql"),
         (b"a = 1", "c.toml", "toml"),
@@ -85,7 +86,7 @@ def test_detect_format_reads_content_before_the_name(data: bytes, name: str, fmt
         (b"just text", "report.pdf", "", "format_mismatch"),
         (b"%PDF-1.4", "report.docx", "", "format_mismatch"),
         (b"%PDF-1.4", "x", "sql", "format_mismatch"),
-        (_zip("data.txt"), "a.zip", "", "unsupported_format"),
+        pytest.param(_zip("data.txt"), "a.zip", "", "unsupported_format", id="plain-zip"),
         (b"PK\x03\x04broken", "a.docx", "", "corrupt"),
         (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1rest", "old.bin", "", "unsupported_format"),
         (b"anything", "old.xls", "", "unsupported_format"),
