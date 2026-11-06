@@ -85,7 +85,8 @@ def test_the_handler_prices_each_written_row_from_the_requests_accumulator(
     # Its own context, so the accumulator it binds ends with it.
     contextvars.copy_context().run(request)
     assert seen == [{"namespace_kind": "unclassified", "cost_usd": 0.3, "rows": 3}]
-    h._account_build("ns", 1, 1, 3, 1)  # no accumulator outside a request: nothing priced
+    # No accumulator outside a request: nothing priced.
+    contextvars.Context().run(h._account_build, "ns", 1, 1, 3, 1)
     assert len(seen) == 1
 
 

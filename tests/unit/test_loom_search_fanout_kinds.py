@@ -97,8 +97,10 @@ class _Directory:
 
     def __init__(self) -> None:
         self.fail = False
+        self.reads = 0
 
     async def query_all(self, sql: str, params: dict[str, str]) -> list[dict[str, str]]:
+        self.reads += 1
         if self.fail:
             raise ConnectionError("ClickHouse went away")
         return [{"namespace": ns, "kind": kind} for ns, kind in KINDS.items()]
@@ -118,6 +120,7 @@ def test_a_failed_read_after_the_ttl_serves_the_last_snapshot(
     clock.advance(nk._TTL_S + 1)
     directory.fail = True
     assert asyncio.run(nk.kind_map(ORG)) == KINDS
+    assert directory.reads == 2  # the TTL ran out, so the second call read and failed
 
 
 def test_a_failed_read_with_no_snapshot_narrows_nothing(monkeypatch: pytest.MonkeyPatch) -> None:

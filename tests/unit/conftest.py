@@ -648,6 +648,23 @@ def _query_tag_left_as_found() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _cost_accumulator_left_as_found() -> Iterator[None]:
+    """Start every test with no cost accumulator, and put back what was there.
+
+    `cost_accumulator.begin_op()` binds the op's tally to the current context, and a
+    sync test that calls it binds the main thread's: every later test in the process
+    then prices its rows into that tally, so a path that runs only inside a request
+    ran (and was covered) only after such a test. A tally is accounting only, so it
+    is reset here rather than failing the test that bound it.
+    """
+    from server.observability.cost_accumulator import _current
+
+    token = _current.set(None)
+    yield
+    _current.reset(token)
+
+
+@pytest.fixture(autouse=True)
 def _trace_tasks_left_as_found() -> Iterator[None]:
     """Drain `code_common._TRACE_TASKS` after every test.
 

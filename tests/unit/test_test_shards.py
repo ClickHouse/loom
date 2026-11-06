@@ -174,7 +174,7 @@ def test_files_and_node_ids_named_on_the_command_line_run_in_one_part_each() -> 
     args = (
         "tests/unit/test_request_ids.py",
         "tests/unit/test_lemmatize.py",
-        "tests/unit/test_migrate_settings.py::test_a_statement_gets_the_flags_its_features_or_table_need",
+        "tests/unit/test_test_shards.py::test_a_shard_spec_reads_as_index_and_count",
     )
     whole = _collect(*args, shard=None)
     parts = [_collect(*args, shard=f"{k}/2") for k in (1, 2)]
