@@ -1,6 +1,7 @@
 """A DOCX file's body as blocks, read from its XML parts with the standard
 library: headings by their style (a `Heading N` or `Title` style, or an
-outline level on the paragraph or its style chain), list paragraphs (a
+outline level on the paragraph or its style chain; the headings after a title
+sit one level under their own), list paragraphs (a
 numbered paragraph or a `List` style) as one list block per run, other
 paragraphs, tables (one block each, a row per line and its cells joined by
 ` | `, `attrs.table` its shape), then footnotes and endnotes.
@@ -188,11 +189,14 @@ class _Body:
         style = _val(ppr, "w:pStyle")
         own = _val(ppr, "w:outlineLvl")
         depth = 0 if own == _BODY_TEXT else _OUTLINE.get(own) or self.levels.get(style, 0)
-        if depth and style not in self.titles:
+        title = depth and style in self.titles
+        if depth and not title:
             depth += self.shift
         if depth:
             self.close_list()
             self.acc.heading(depth, " ".join(text.split()), _NO_LOC)
+            if title:
+                self.shift = 1
         elif (ppr is not None and ppr.find(q("w:numPr")) is not None) or "list" in style.lower():
             self.items.append(text)
         else:
@@ -249,11 +253,7 @@ def extract_docx(data: bytes) -> Artifact:
         (levels, titles), styles_failed = _heading_levels(pkg), None
     except PartError as e:  # the headings a style makes are lost, not the text
         levels, titles, styles_failed = {}, set(), Failure("styles", str(e))
-    # A document whose title is a Title paragraph puts its headings under it.
-    titled = body is not None and any(
-        _val(p.find(q("w:pPr")), "w:pStyle") in titles for p in body.iter(q("w:p"))
-    )
-    reader = _Body(levels, titles, 1 if titled else 0)
+    reader = _Body(levels, titles)
     if styles_failed:
         reader.failed.append(styles_failed)
     if body is not None:

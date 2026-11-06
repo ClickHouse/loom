@@ -81,9 +81,17 @@ def test_a_docx_title_paragraph_holds_the_headings_under_it() -> None:
         (3, "Limits"),
     ]
     assert a.blocks[-1].section_path == ("Storage design", "Goals", "Limits")
-    # without a title paragraph the headings keep their own levels
-    b = extract(_docx(_wp("Goals", "Heading1") + _wp("Limits", "Heading2")), "u.docx")
-    assert [b.depth for b in b.blocks] == [1, 2]
+    # an outline level of its own goes under the title too
+    outlined = extract(
+        _docx(_wp("Title", "Title") + _wp("X", extra='<w:outlineLvl w:val="0"/>')), "o.docx"
+    )
+    assert [b.depth for b in outlined.blocks] == [1, 2]
+    # without a title heading (none, or one with no text) the headings keep their own levels
+    for body in ("", _wp("", "Title")):
+        untitled = extract(
+            _docx(body + _wp("Goals", "Heading1") + _wp("Limits", "Heading2")), "u.docx"
+        )
+        assert [b.depth for b in untitled.blocks] == [1, 2]
 
 
 def _texts(a: Artifact) -> list[tuple[str, str, tuple[str, ...]]]:
