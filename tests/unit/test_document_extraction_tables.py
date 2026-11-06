@@ -222,8 +222,8 @@ def test_a_long_xlsx_header_over_two_rows_is_cut_counted_and_bounded_per_column(
     assert table.header_rows == 2 and all(len(c.name) <= 500 for c in table.columns)
     assert table.columns[0].name == "x" * 500
     # A joined name holds no more of a cell than a name reads, whatever the cell's size.
-    joined = xlsxfile._named_over(tabular.Cell(long, "string"), tabular.Cell("h", "string"))
-    assert joined.text == "x" * tabular.NAME_READ_CHARS + " / h"
+    joined, cut = xlsxfile._named_over(tabular.Cell(long, "string"), tabular.Cell("h", "string"))
+    assert joined.text == "x" * tabular.NAME_READ_CHARS + " / h" and cut
     assert [f.unit for f in a.coverage.failed] == ["S header"]
 
 
@@ -237,6 +237,45 @@ def test_a_padded_xlsx_header_over_two_rows_reads_as_its_names() -> None:
     # Spaces padding a cell are no name, and cut nothing.
     assert [n for n, _ in _columns(a)] == ["Revenue / H1", "Revenue / H2"]
     assert a.coverage.failed == ()
+
+
+@pytest.mark.parametrize(
+    ("top", "names"),
+    [
+        # Text past what a name reads is cut, and counted.
+        ("Revenue" + " " * 1000 + "Total", ["Revenue / H1", "Revenue / H2"]),
+        # A name that reads as nothing is the other row's, and the text past it is counted.
+        (" " * 1001 + "Revenue", ["H1", "H2"]),
+    ],
+    ids=["text after padding", "padding then text"],
+)
+def test_xlsx_header_text_past_what_a_joined_name_reads_is_counted_as_cut(
+    top: str, names: list[str]
+) -> None:
+    rows = {
+        1: [cell("B1", top, t="inlineStr")],
+        2: [cell("B2", "H1", t="inlineStr"), cell("C2", "H2", t="inlineStr")],
+        3: [cell("B3", 1), cell("C3", 2)],
+    }
+    a = extract(workbook([("S", sheet(rows, merges=("B1:C1",)))]), "s.xlsx")
+    assert [n for n, _ in _columns(a)] == names
+    assert [f.unit for f in a.coverage.failed] == ["S header"]
+
+
+def test_the_columns_a_header_rows_merges_cover_are_found_in_one_pass() -> None:
+    assert xlsxfile._covered([(1, 3), (2, 2), (6, 9)], 0, 7) == [
+        False,
+        True,
+        True,
+        True,
+        False,
+        False,
+        True,
+        True,
+    ]
+    # A million spans over the sheet's width cost one pass, not one per column.
+    spans = [(0, 16_383)] + [(c, c + 1) for c in range(1_000_000)]
+    assert all(xlsxfile._covered(spans, 0, 16_383))
 
 
 def test_an_xlsx_title_merged_over_its_header_row_heads_each_name() -> None:

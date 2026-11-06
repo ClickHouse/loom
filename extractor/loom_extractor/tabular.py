@@ -130,6 +130,9 @@ class Rows:
     # (a Parquet file's schema), whose rows count from 1.
     header_row: int = 1
     header_rows: int = 1  # the rows the header is read from, from `header_row` on
+    # The header's columns, by their index in it, whose names were cut before they
+    # were read here (an XLSX name joined from two rows).
+    cut_names: frozenset[int] = frozenset()
     more: int = 0
     more_from: int = 0
     first_column: int = 0  # the source's column the table starts at, from 0
@@ -147,10 +150,20 @@ class Rows:
             self.count(number)
 
 
-def _names(header: list[Cell], width: int, first: int = 0) -> tuple[list[str], int]:
+def read_name(cell: Cell) -> tuple[str, bool]:
+    """What a header cell's name is read as: its first NAME_READ_CHARS, spaces
+    folded (a header cell may hold a megabyte), and whether text lies past them."""
+    folded = " ".join(cell.text[:NAME_READ_CHARS].split())
+    return folded, _NON_SPACE.search(cell.text, NAME_READ_CHARS) is not None
+
+
+def _names(
+    header: list[Cell], width: int, first: int = 0, cut_before: frozenset[int] = frozenset()
+) -> tuple[list[str], int]:
     """Column names from the header, one per column, unique and at most
     MAX_COLUMN_CHARS: an empty one is `column N`, a repeated one gets ` (2)`,
-    ` (3)`, ... after it (its text cut to make room)."""
+    ` (3)`, ... after it (its text cut to make room). A column in `cut_before` was
+    cut before it got here."""
     out: list[str] = []
     seen: set[str] = set()
     cut = 0
@@ -161,15 +174,12 @@ def _names(header: list[Cell], width: int, first: int = 0) -> tuple[list[str], i
         cell = header[i] if i < len(header) else EMPTY
         hit = read.get(id(cell))
         if hit is None:
-            # Cut before the spaces are folded: a header cell may hold a megabyte.
-            folded = " ".join(cell.text[:NAME_READ_CHARS].split())
-            tail = _NON_SPACE.search(cell.text, NAME_READ_CHARS) is not None
-            hit = read[id(cell)] = folded, tail
+            hit = read[id(cell)] = read_name(cell)
         folded, tail = hit
         base = folded[:MAX_COLUMN_CHARS] or f"column {first + i + 1}"  # as the source counts
         name = base
         # Cut when the folded name is too long, or text lies past what was read of the cell.
-        was_cut = len(folded) > MAX_COLUMN_CHARS or tail
+        was_cut = len(folded) > MAX_COLUMN_CHARS or tail or i in cut_before
         if name in seen:
             stem = base[:_STEM_CHARS]
             was_cut = was_cut or len(base) > _STEM_CHARS  # a suffix cuts the stem
@@ -247,7 +257,7 @@ def table(
     failed: list[Failure] = []
     header_end = rows.header_row + rows.header_rows - 1 if rows.header_row else 0
     width = max([len(rows.header), *(max(r) + 1 for _, r in rows.rows if r)], default=0)
-    names, cut = _names(rows.header, width, rows.first_column)
+    names, cut = _names(rows.header, width, rows.first_column, rows.cut_names)
     if cut:  # the header's text past the names a table holds is not in the artifact
         reason = f"{counted(cut, 'column name')} cut to {MAX_COLUMN_CHARS} characters"
         fail(budget, failed, f"{name} header", reason)

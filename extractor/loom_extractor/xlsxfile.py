@@ -43,13 +43,13 @@ from loom_extractor.ooxml import Cut, Exhausted, Package, PartError, q
 from loom_extractor.tabular import (
     EMPTY,
     MAX_ROWS,
-    NAME_READ_CHARS,
     Budget,
     Cell,
     Rows,
     counted,
     fail,
     heading,
+    read_name,
     table,
 )
 
@@ -458,19 +458,23 @@ class _Reader:
         above, under = sheet.grid[top], sheet.grid.get(top + 1, {})
         # The second row's own cells: those not merged down from the first.
         own = {col: cell for col, cell in under.items() if cell is not above.get(col)}
+        covered = _covered(spans, left, right)
         grouped = bool(own) and all(
-            cell.kind == "string" and any(c <= col <= r for c, r in spans)
-            for col, cell in own.items()
+            cell.kind == "string" and covered[col - left] for col, cell in own.items()
         )
+        cut: set[int] = set()
         if grouped:
-            header = [
+            joined = [
                 _named_over(above.get(col, EMPTY), under.get(col, EMPTY))
                 for col in range(left, right + 1)
             ]
+            header = [name for name, _ in joined]
+            cut = {i for i, (_, was_cut) in enumerate(joined) if was_cut}
         out = Rows(
             header,
             header_row=top,
             header_rows=2 if grouped else 1,
+            cut_names=frozenset(cut),
             more=rest.more,
             more_from=rest.more_from,
             first_column=left,
@@ -647,21 +651,38 @@ class _SheetStream:
         return over or bool(self.past.more) or len(self.grid) > MAX_ROWS or self.budget.cut
 
 
-def _named_over(above: Cell, below: Cell) -> Cell:
-    """A column's name from a header over two rows: the first row's cell, the
-    second's under it joined after ` / `; one merged down both rows (the same
-    cell) or with nothing under it is its own name, and one with nothing above
-    the second's."""
+def _covered(spans: list[tuple[int, int]], left: int, right: int) -> list[bool]:
+    """For each column from `left` to `right`, whether a span covers it: one pass
+    over the spans and the columns, however many spans a hostile sheet holds."""
+    starts = [0] * (right - left + 2)
+    for c, r in spans:
+        c, r = max(c, left), min(r, right)
+        if c <= r:
+            starts[c - left] += 1
+            starts[r - left + 1] -= 1
+    out, depth = [], 0
+    for n in starts[:-1]:
+        depth += n
+        out.append(depth > 0)
+    return out
+
+
+def _named_over(above: Cell, below: Cell) -> tuple[Cell, bool]:
+    """A column's name from a header over two rows, and whether it was cut: the
+    first row's cell and the second's under it, each as a name reads it, joined
+    after ` / `. One merged down both rows (the same cell), or with nothing under
+    it or above it, is the other's name; so is one whose name reads as nothing."""
     if below is above or below.kind == "empty":
-        return above
+        return above, False
     if above.kind == "empty":
-        return below
-
-    # Each as its name reads it, folded, not a cell's megabyte for each column it spans.
-    def name(cell: Cell) -> str:
-        return " ".join(cell.text[:NAME_READ_CHARS].split())
-
-    return Cell(f"{name(above)} / {name(below)}", "string")
+        return below, False
+    a, a_cut = read_name(above)
+    b, b_cut = read_name(below)
+    if not a:
+        return below, a_cut
+    if not b:
+        return above, b_cut
+    return Cell(f"{a} / {b}", "string"), a_cut or b_cut
 
 
 def _spread(
