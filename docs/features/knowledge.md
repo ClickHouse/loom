@@ -77,13 +77,13 @@ A repository's admins register the document sources Loom pulls the repository's
 documents from. A source lives on the repository's trunk code namespace, the one its
 documents live in, so whoever reads the repository sees where its documents come from,
 and only the namespace's admins change that. Four kinds are served: `gdrive`, a shared
-folder of docs, slides, decks, Word documents and PDFs, read with a service account the
-folders are shared to read-only, whose credential is the account's JSON key; `linear`,
-the documents of a project tracker's projects, read with a read-only API key of an
-account that sees the projects; `notion`, a page store's pages and databases, read with
-an integration that has read content access and that the pages and databases are shared
-with, whose credential is the integration's token; and `recording`, the transcripts of a
-meeting store's recordings ([recordings](#a-recording-source)). The
+folder of docs, slides, PDFs and `.pptx` and `.docx` files, read with a service account
+the folders are shared to read-only, whose credential is the account's JSON key;
+`linear`, the documents of a project tracker's projects, read with a read-only API key
+of an account that sees the projects; `notion`, a page store's pages and databases, read
+with an integration that has read content access and that the pages and databases are
+shared with, whose credential is the integration's token; and `recording`, the
+transcripts of a meeting store's recordings ([recordings](#a-recording-source)). The
 `knowledge_source_sync` worker pulls each source's files into the repository's documents
 ([syncing](#syncing-a-source)); `list` says whether this deployment runs it (`enabled`,
 `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default).
