@@ -70,7 +70,8 @@ class WorkflowState:
     # Memories retired because the user asked to forget them.
     forgotten: int = 0
     forgotten_keys: list[str] = field(default_factory=list)
-    # Requests to forget read from the user's own sentences.
+    # Requests to forget read from the user's own sentences and resolved by
+    # content (a window's latest MAX_FORGET_REQUESTS).
     forget_requests: int = 0
     # Rows written with `about:other` (read from the sentence's subject).
     about_other: int = 0

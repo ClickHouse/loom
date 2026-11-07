@@ -414,8 +414,8 @@ async def test_a_correction_past_the_forget_cap_keeps_its_replacement(monkeypatc
     """Past the requests resolved by content, the extractor's own forget entry
     still retires the old row, and the message's replacement is still written."""
     cap = forget.MAX_FORGET_REQUESTS
-    turns = [("user", f"forget jazz{i}.") for i in range(cap)]
-    turns.append(("user", "forget that I use Vim, I switched to Emacs."))
+    turns = [("user", "forget that I use Vim, I switched to Emacs.")]
+    turns += [("user", f"forget jazz{i}.") for i in range(cap)]
     fetched: list[list[str]] = []
     written, deleted = await _write(
         monkeypatch,
@@ -426,14 +426,13 @@ async def test_a_correction_past_the_forget_cap_keeps_its_replacement(monkeypatc
                 "key": "user_editor_forget",
                 "value": "User asked to forget that they use Vim.",
                 "forget": True,
-                "source_message_indices": [cap],
+                "source_message_indices": [0],
             },
-            {"key": "user_editor", "value": "User uses Emacs.", "source_message_indices": [cap]},
+            {"key": "user_editor", "value": "User uses Emacs.", "source_message_indices": [0]},
         ],
         fetched,
     )
     assert written.get("user_editor") == "User uses Emacs."
     assert "user_editor" in deleted
     # the per-request candidate reads stop at the cap, on the latest requests
-    assert len(fetched[0]) == cap and fetched[0][-1] == "I use Vim"
-    assert "jazz0" not in fetched[0]
+    assert len(fetched[0]) == cap and "I use Vim" not in fetched[0]

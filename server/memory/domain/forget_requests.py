@@ -218,7 +218,7 @@ def replacement_facts(
             continue
         rest = set().union(*(rest_by_msg.get(i, set()) for i in src)) if src else set()
         value = str(f.get("value") or "")
-        novel = _new_content(value, _words(forgotten) | asked) & rest
+        novel = (_new_content(value, asked) - _words(forgotten)) & rest
         if not rest or not novel:
             out.append(f)
             continue
@@ -386,8 +386,8 @@ def _request_words(
     memo = {} if value_words is None else value_words
     if value not in memo:
         memo[value] = _content_tokens(value)
-    key = _FORGET_KEY_RE.sub(" ", str(fact.get("key") or "").replace("_", " "))
-    return memo[value] | _content_tokens(key)
+    key = _content_tokens(_FORGET_KEY_RE.sub(" ", str(fact.get("key") or "").replace("_", " ")))
+    return memo[value] if key <= memo[value] else memo[value] | key
 
 
 def _row_words(rows: list[dict[str, Any]] | None) -> list[tuple[str, set[str]]]:

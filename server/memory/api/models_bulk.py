@@ -258,8 +258,9 @@ class MemorySetFromMessagesOutput(BaseModel):
     forgotten: int = 0
     # The keys of the memories those forget requests retired.
     forgotten_keys: list[str] = Field(default_factory=list)
-    # Requests to forget read from the user's own sentences;
-    # with `forgotten` it says how many found a row to retire.
+    # Requests to forget read from the user's own sentences and resolved by
+    # content (a window's latest 50); with `forgotten` it says how many found
+    # a row to retire.
     forget_requests: int = 0
     # Rows written as another person's (`about:other`), whether the extractor
     # said so or the sentence's subject did.
