@@ -678,6 +678,34 @@ An original gone from the store fails `original_gone` (in the same file).
 object store's read failing, the embedder down and the document row refused after the chunks against a server and its
 ClickHouse, reading the earlier revision back through `knowledge.get` and `knowledge.search`.
 
+## Service levels
+
+The levels a deployment holds knowledge ops to under mixed load: interactive reads at their p95 and p99, and the time
+from `knowledge.ingest` to a small document's job ending ready. Each op's p99 is its latency budget
+(`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`), which a unit test checks.
+
+| Measure               | p95 ms | p99 ms |
+| --------------------- | ------ | ------ |
+| `knowledge.search`    | 150    | 250    |
+| `knowledge.query`     | 1,000  | 1,500  |
+| `knowledge.ingest`    | 40     | 60     |
+| ingest small document | 20,000 | 30,000 |
+
+`bench/knowledge_load.py` runs the mixed load against a server and checks it against this table: small-document ingests,
+a large PDF and a CSV import at once, with searches and structured queries over what is published, and the namespace's
+open jobs sampled for queue depth. Calls arrive at a set rate whether or not earlier ones answered; `--tenants` runs the
+load in several orgs at once, since a namespace's rate limits (`server/core/ratelimit.py`) cap what one tenant sends. It
+reports p50, p95 and p99 per op, errors and rejected calls (429, 503), and exits non-zero when a measure is past its
+level.
+
+Ingest is bounded for the whole deployment: one process runs the ingest worker (the supervisor that holds the workers'
+lease under `LOOM_BACKGROUND_WORKERS=auto`), it runs one job per pass, and it waits
+`LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` between passes even after one that did work, so the deployment finishes fewer
+than one job per interval however many replicas serve, and a job queued behind a large file waits for it. A pass that
+found no job waits `LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS` (15 s) instead, so on a quiet deployment a document
+waits up to that long before its job starts. The small-document level allows for that wait, and holds only while small
+documents arrive slower than the worker's interval.
+
 ## Datasets
 
 A table of the artifact (a sheet, a CSV or Parquet file, a PDF's table) also becomes a typed dataset
