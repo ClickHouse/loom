@@ -665,7 +665,5 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
         tokens_estimate=tokens,
         truncated=truncated,
     )
-    out._served_rows = [
-        (str(h["namespace"] or input.namespace), str(h["memory_key"])) for h in shown
-    ]
+    out._served_rows = [(str(h["namespace"]), str(h["memory_key"])) for h in shown]
     return out

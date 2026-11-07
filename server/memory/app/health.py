@@ -4,9 +4,10 @@ Reports coverage by type, top recalled entries, silent entries (no recall credit
 served to an agent in the last `silent_after_days`) and the staleness of live rows, so a
 namespace where most rows are never read shows it. One query over loom.memory FINAL joined
 to the summed loom.memory_usage_totals and to loom.memory_served_daily's last
-`silent_after_days` days, scoped to (org, namespace). A key counts as read when any of its
-live rows carries a recall credit or a served row in that window: a read lands on one copy
-of the key only (the newest inside the reader's scope).
+`silent_after_days` days, scoped to (org, namespace); the served side maps the rows served
+in that window to their keys. A key counts as read when any of its live rows carries a
+recall credit or a served row in that window: a read lands on one copy of the key only
+(the newest inside the reader's scope), which may not be an active one.
 """
 
 from __future__ import annotations
@@ -54,6 +55,10 @@ _LIVE = """
             SELECT memory_id, memory_key
             FROM loom.memory FINAL
             WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL
+              AND memory_id IN (
+                  SELECT memory_id FROM loom.memory_served_daily
+                  WHERE org = {org:String} AND namespace = {ns:String} AND day > {since:Date}
+              )
         ) AS k ON k.memory_id = d.memory_id
         WHERE d.org = {org:String} AND d.namespace = {ns:String}
           AND d.day > {since:Date}

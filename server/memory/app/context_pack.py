@@ -545,9 +545,7 @@ async def _pack_decisions_from_hits(
         citations=citations,
         # An abstaining search's rows are no answer: the answer marks them so, and a
         # client drops them (the prompt-recall hook does), so none counts as served.
-        rows=None
-        if abstained
-        else [(h.namespace or input.namespace, str(h.memory_key)) for h in decision_hits],
+        rows=None if abstained else [hit_row(h, input.namespace) for h in decision_hits],
         source_count=len(decision_hits),
     )
 
