@@ -373,12 +373,15 @@ def coverage_of(artifact: Artifact) -> dict[str, Any]:
 
 
 # A reference definition whose destination is an inline picture (`[image1]:
-# <data:image/png;base64,...>`, with or without a title), as a native document's
+# <data:image/png;base64,...>`, with or without a quoted title), as a native document's
 # Markdown export holds each pasted picture, and a reference or inline image that
 # shows one. `store.sources._INLINE_PICTURE` flags these lines in stored text, and a few
 # more (a fenced one, one that only starts like a definition), which the stored-copy
 # comparison then finds unchanged.
-_DATA_DEFINITION = re.compile(r" {0,3}\[([^\]\n]+)\]:[ \t]*<?data:[^\s>]*>?(?:[ \t]+.*)?\s*")
+_DATA_DEFINITION = re.compile(
+    r" {0,3}\[([^\]\n]+)\]:[ \t]*<?data:[^\s>]*>?"
+    r"""(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)\n]*\)))?[ \t]*\r?"""
+)
 _IMAGE_REF = re.compile(r"!\[([^\]\n]*)\](?:\[([^\]\n]+)\]|\(<?data:[^)\s>]*>?\))")
 # What opens a list item, a quote line or a heading, kept in front of a marker that
 # replaces the line's pictures.

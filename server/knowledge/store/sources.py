@@ -256,7 +256,7 @@ async def source_revisions(
     written (`text_sha256`). With `pictures`, also whether the stored text still
     holds a picture's bytes as a reference definition (`inline_pictures`, "1" or
     ""), as a native document stored by an earlier conversion does, and the
-    SHA-256 of the stored text (`text_hash`): that reads every document's text, so
+    SHA-256 of the stored text (`stored_content_sha256`): that reads every document's text, so
     only a full listing asks; the hash is computed only for a flagged copy. One
     statement, a tag filter over the namespace's key prefix like `source_documents`.
 
@@ -274,9 +274,9 @@ async def source_revisions(
     )
     checks = (
         "match(content, {pic:String}) AS inline_pictures, "
-        "if(inline_pictures, lower(hex(SHA256(content))), '') AS text_hash"
+        "if(inline_pictures, lower(hex(SHA256(content))), '') AS stored_content_sha256"
         if pictures
-        else "0 AS inline_pictures, '' AS text_hash"
+        else "0 AS inline_pictures, '' AS stored_content_sha256"
     )
     rows = await (ch or _default_client()).query_all(
         "SELECT source_uri, JSONExtractString(metadata, 'ingested_from') AS file_id, "
@@ -304,7 +304,7 @@ async def source_revisions(
             "read_at": str(r.get("read_at") or ""),
             "text_sha256": str(r.get("text_sha256") or ""),
             "inline_pictures": "1" if r.get("inline_pictures") else "",
-            "text_hash": str(r.get("text_hash") or ""),
+            "stored_content_sha256": str(r.get("stored_content_sha256") or ""),
         }
         for r in rows
     ]

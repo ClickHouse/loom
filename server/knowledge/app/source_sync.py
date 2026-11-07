@@ -710,26 +710,27 @@ async def _sync_file(
     listing lists it."""
     uri = source_uri_of(f)
     revision = str(f.get("modifiedTime") or "")
-    reconvert = bool(
-        prior
-        and f.get("mimeType") == GDRIVE_MIME_TYPES["docs"]
-        and prior.get("inline_pictures")
-        and prior["source_revision"] == revision
-        # Checked at this revision already: its conversion changed nothing.
-        and turn.kind_state.get(_PICTURES_CHECKED, {}).get(str(f["id"])) != revision
-    )
+    reconvert = False
+    # The stored content's hash, from the full listing's read: set for a reconversion at
+    # the stored address only; a moved file takes the ordinary write-and-retire path.
+    stored_content_sha256 = ""
+    if prior is not None:
+        reconvert = bool(
+            f.get("mimeType") == GDRIVE_MIME_TYPES["docs"]
+            and prior.get("inline_pictures")
+            and prior["source_revision"] == revision
+            # Checked at this revision already: its conversion changed nothing.
+            and turn.kind_state.get(_PICTURES_CHECKED, {}).get(str(f["id"])) != revision
+        )
+        if reconvert and prior["source_uri"] == uri:
+            stored_content_sha256 = prior["stored_content_sha256"]
     if reconvert and _given_up(turn, f):
         # Its older copy is still served: not counted unconverted; the waits say when
         # it is tried again.
         return True
     before_fetch = functools.partial(_fetchable, f, run, turn)
-    # The stored text's hash, from the full listing's read: set for a reconversion at the
-    # stored address only; a moved file takes the ordinary write-and-retire path.
-    stored_sha = ""
-    if reconvert and prior is not None and prior["source_uri"] == uri:  # `prior` for mypy
-        stored_sha = prior["text_hash"]
     fetch_and_write = functools.partial(
-        _fetch_and_write, src, token, f, uri, turn, stored_sha=stored_sha
+        _fetch_and_write, src, token, f, uri, turn, stored_content_sha256=stored_content_sha256
     )
     return await sync_item(
         src, f, uri, prior, run, turn, fetch_and_write, before_fetch, refetch=reconvert
@@ -768,7 +769,7 @@ async def _fetch_and_write(
     uri: str,
     turn: TurnResult,
     *,
-    stored_sha: str,
+    stored_content_sha256: str,
 ) -> str:
     """Fetch, convert and write one file: `written`, `unchanged` (a reconversion whose
     text equals the stored copy), `waiting` (a failure that may pass holds the turn
@@ -804,8 +805,8 @@ async def _fetch_and_write(
         return wait(f, turn, f"fetch_failed:{type(e).__name__}", type(e).__name__)
     await require_current(src)
     extra: dict[str, Any] = {"extraction_coverage": fetched.coverage} if fetched.coverage else {}
-    if stored_sha:  # a reconversion of a stored copy that held its pictures' bytes
-        if sha256_text(fetched.content) == stored_sha:
+    if stored_content_sha256:  # a reconversion of a stored copy that held pictures' bytes
+        if sha256_text(fetched.content) == stored_content_sha256:
             # The stored text only shows a definition (in a code sample, say): nothing
             # to write, mine or embed again, and not fetched again at this revision.
             checked = turn.kind_state.setdefault(_PICTURES_CHECKED, {})

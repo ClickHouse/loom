@@ -155,7 +155,7 @@ class _World:
                 "source_revision": d["metadata"]["source_revision"],
                 "text_sha256": d["metadata"].get("text_sha256", ""),
                 "inline_pictures": "1" if pictures and "]: <data:" in d.get("content", "") else "",
-                "text_hash": sha256_text(d.get("content", ""))
+                "stored_content_sha256": sha256_text(d.get("content", ""))
                 if pictures and "]: <data:" in d.get("content", "")
                 else "",
             }
@@ -628,6 +628,8 @@ def test_a_document_export_keeps_its_text_and_marks_its_inlined_pictures() -> No
     )
     tilde = "~~~\n![][image1]\n~~~\n``` x ` ```\n\n[image1]: <data:image/png;base64,AAAA>\n"
     assert convert.exported_markdown(tilde) == "~~~\n![][image1]\n~~~\n``` x ` ```\n"
+    prose = "[Step 1]: data: the raw input\n\n[image1]: <data:a>\n"
+    assert convert.exported_markdown(prose) == "[Step 1]: data: the raw input\n"
     bracketed = "see (![Fig][image1]) here\n\n[image1]: <data:a>\n"
     assert convert.exported_markdown(bracketed) == "see (Fig) here\n"
     ended = "The flow is ![][image1]. Then ![Flow][image1], done.\n\n[image1]: <data:a>\n"

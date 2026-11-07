@@ -49,26 +49,33 @@ async def test_a_full_listing_learns_which_stored_copies_hold_pictures_bytes(
     flagged = {r["file_id"] for r in rows if r["inline_pictures"]}
     assert len(rows) == len(DOCS)
     assert flagged == ({"angle", "bare", "indented"} if pictures else set())
-    hashes = {r["file_id"]: r["text_hash"] for r in rows}
+    hashes = {r["file_id"]: r["stored_content_sha256"] for r in rows}
     expected = {n: sha256_text(c) if n in flagged else "" for n, c in DOCS.items()}
     assert hashes == expected
 
 
+# Each line, whether the stored check flags it and whether the conversion drops it: the
+# check flags every line the conversion drops, and a line that only starts like a
+# definition too, which the stored-copy comparison then finds unchanged.
 LINES = [
-    "[image1]: <data:image/png;base64,AAAA>",
-    "[image1]: data:image/png;base64,AAAA",
-    "   [image2]: <data:image/jpeg;base64,BBBB>  ",
-    '[image3]: <data:image/png;base64,CCCC> "Figure 1"',
-    "[image4]: <data:image/png;base64,DDDD>\r",
-    "[spec]: https://example.com/spec",
-    "The [image1]: <data:image/png;base64,AAAA> sits inside a line.",
+    ("[image1]: <data:image/png;base64,AAAA>", True, True),
+    ("[image1]: data:image/png;base64,AAAA", True, True),
+    ("   [image2]: <data:image/jpeg;base64,BBBB>  ", True, True),
+    ('[image3]: <data:image/png;base64,CCCC> "Figure 1"', True, True),
+    ("[image4]: <data:image/png;base64,DDDD>\r", True, True),
+    ("[Step 1]: data: the raw input", True, False),
+    ("[spec]: https://example.com/spec", False, False),
+    ("The [image1]: <data:image/png;base64,AAAA> sits inside a line.", False, False),
 ]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("line", LINES)
-async def test_the_stored_check_and_the_conversion_agree_on_these_lines(line: str) -> None:
+@pytest.mark.parametrize(("line", "flagged", "dropped"), LINES)
+async def test_the_stored_check_flags_every_line_the_conversion_drops(
+    line: str, flagged: bool, dropped: bool
+) -> None:
     rows = await LocalCH().query_all(
         "SELECT match({t:String}, {pic:String}) AS m", {"t": line, "pic": store._INLINE_PICTURE}
     )
-    assert bool(rows[0]["m"]) == (_DATA_DEFINITION.fullmatch(line) is not None)
+    assert bool(rows[0]["m"]) is flagged
+    assert (_DATA_DEFINITION.fullmatch(line) is not None) is dropped
