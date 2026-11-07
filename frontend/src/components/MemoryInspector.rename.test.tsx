@@ -206,8 +206,8 @@ describe("MemoryInspector rename with redirect", () => {
 
   it("a rename that answers after the drawer moved leaves the new key's drawer, and says where the old key went", async () => {
     seed("writer");
-    let finish: (r: unknown) => void = () => {};
-    vi.mocked(moveMemory).mockImplementationOnce(() => new Promise((r) => (finish = r)) as never);
+    let finish: (r: MemoryMoveResult) => void = () => {};
+    vi.mocked(moveMemory).mockImplementationOnce(() => new Promise((r) => (finish = r)));
     const view = render(
       <MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />,
     );
@@ -223,11 +223,11 @@ describe("MemoryInspector rename with redirect", () => {
       <MemoryInspector identity={identity} memoryKey="morning_routine" onClose={() => {}} onChanged={() => {}} />,
     );
     await screen.findByText("black");
-    await act(async () =>
-      finish({ from_key: "coffee_pref", to_key: "prefs/coffee", redirected: false, dry_run: false }),
-    );
-    expect(useStore.getState().inspectedMemoryKey).toBe("coffee_pref");
-    expect(toast).toHaveBeenCalledWith("Renamed coffee_pref to prefs/coffee", "ok");
+    await act(async () => finish({ ...MOVED, redirected: false }));
+    // The drawer stays on the key it moved to and does not follow the rename.
+    expect(screen.getByText("black")).toBeInTheDocument();
+    expect(useStore.getState().inspectedMemoryKey).not.toBe("prefs/coffee");
+    expect(toast).toHaveBeenCalledWith("Renamed coffee_pref to prefs/coffee — the old key was deleted", "ok");
   });
 
   it("unticking the redirect sends keep_redirect false and follows the new key", async () => {

@@ -204,8 +204,10 @@ export function MemoryInspector({
   // The memory the drawer has open, compared by value (parents rebuild identity): a write
   // that answers late checks it before touching the drawer.
   const shown = useRef<string | null>(null);
-  // Bumped by each Edit, so a save that answers late closes only the edit it saved.
+  // Bumped by each Edit and each Rename (they are exclusive), so a save or a move that
+  // answers late closes only the form it came from.
   const editSession = useRef(0);
+  const [renameSession, setRenameSession] = useState(0);
   const toggleSection = (id: SectionId) =>
     setSections((cur) => {
       const next = { ...cur, [id]: !cur[id] };
@@ -751,9 +753,8 @@ export function MemoryInspector({
         charLimit: detail.char_limit ?? undefined,
       });
       toast("Saved", "ok");
-      // A save that answers after the drawer moved, or after another Edit, leaves that
-      // editor open.
-      if (showing() && editSession.current === session) setEditing(false);
+      // A save that answers after another Edit leaves that editor open.
+      if (editSession.current === session) setEditing(false);
     } catch (e) {
       toast(`Save failed: ${humanizeError(e)}`, "error");
       return;
@@ -765,20 +766,16 @@ export function MemoryInspector({
   // `canonical_key`), so the row is re-read and the badge appears; without
   // one the old key is tombstoned and the drawer follows the new key.
   const onRenamed = async (r: MemoryMoveResult) => {
-    // A move that answers after the drawer moved leaves the next key's drawer as it is,
-    // and says where the key it left went.
-    if (!showing()) {
+    const left = r.redirected ? "the old key redirects to it" : "the old key was deleted";
+    // A move that answers after the drawer moved, or after another Edit or Rename, leaves
+    // the drawer as it is and says where the key went.
+    if (!showing() || editSession.current !== renameSession) {
       onChanged();
-      toast(`Renamed ${memoryKey} to ${r.to_key}`, "ok");
+      toast(`Renamed ${memoryKey} to ${r.to_key} — ${left}`, "ok");
       return;
     }
     setRenaming(false);
-    toast(
-      r.redirected
-        ? `Renamed to ${r.to_key} — the old key redirects to it`
-        : `Renamed to ${r.to_key} — the old key was deleted`,
-      "ok",
-    );
+    toast(`Renamed to ${r.to_key} — ${left}`, "ok");
     if (r.redirected) {
       await reread();
     } else {
@@ -1443,6 +1440,8 @@ export function MemoryInspector({
                     <Dropdown.Item
                       onSelect={() => {
                         menuHandsOff.current = true;
+                        editSession.current += 1;
+                        setRenameSession(editSession.current);
                         setRenaming(true);
                       }}
                     >
