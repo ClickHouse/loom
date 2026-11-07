@@ -25,7 +25,7 @@ A document is notes by its title, in one of three shapes:
 Without a date the same words name a topic as often ("Standup reminder bot", "Order
 sync 24/7"), and a title holding a design-document, release or incident word
 ("Calendar sync design 2026-01-15", "Release notes 2026-03-04") is never notes, unless
-it names a transcript (below). A document with no title is named by its first heading.
+it is a recording's transcript (below). A document with no title is named by its first heading.
 Lines inside a fenced code block are code, never questions.
 
 Notes a meeting tool writes from a recording carry the meeting's date and clock time and
@@ -50,7 +50,7 @@ _CHOICE_VERB = (
     r"keep|keeping|drop|dropping|"
     r"switch(?:ing)? to|move|moving|migrate|migrating|adopt|adopting|support|supporting|"
     r"ship|shipping|pick|choose|stick with|stay with|replace|replacing|"
-    r"enable|enabling|disable|disabling|lower|remove|removing|deprecate|disallow|"
+    r"enable|enabling|disable|disabling|lower|remove|removing|deprecate|deprecating|disallow|"
     r"roll out|rolling out))"
 )
 _CHOSE = (
@@ -134,7 +134,7 @@ _RECORDED_STAMP = re.compile(rf"\b{_DAY}\s+\d{{1,2}}[:.]\d{{2}}\b", re.IGNORECAS
 # A transcript mark is a whole part of the title ("Planner sync — Transcript & notes — ...",
 # "... - Transcript"); "Incident ... - transcript export failing" names a topic.
 _TRANSCRIPT_MARK = re.compile(
-    r"(?:^|[-\u2013\u2014|:])\s*transcript(?:\s*&\s*notes)?\s*(?:$|[-\u2013\u2014|:])",
+    r"(?:^|\\?[-\u2013\u2014|:])\s*transcript(?:\s*&\s*notes)?\s*(?:$|\\?[-\u2013\u2014|:])",
     re.IGNORECASE,
 )
 _NOTES_BY_MARK = re.compile(r"\bnotes by\b", re.IGNORECASE)
@@ -151,9 +151,14 @@ _TRANSCRIPT_HEADING = re.compile(
 # as links ("Invited [Ana](...)", "Mar 4, 2026 [Ana](...)"), the transcript's preamble,
 # the footer that asks for a rating or a review of the notes. "Invited the vendor to
 # demo" is a topic's text.
+# A line of links with at most a short label before them: the invite header's attendees,
+# attachments and meeting records ("Attachments [Planner sync](...)").
+# A line with no word in it (an empty heading marker "##") carries nothing.
+_WORD = re.compile(r"\w")
+_LINKS = re.compile(r"^\W*(?:\w+\s+){0,2}(?:\[[^\]]*\]\([^)]*\)\W*)+$")
 _TEMPLATE_TEXT = re.compile(
     rf"^\W*(?:invited\s+\[|{_MONTH}\s+\d{{1,2}},\s+\d{{4}}(?:\s+\[|\W*$)|"
-    r"this editable transcript\b|please\W+rate\s+(?:these|the|this)\s+(?:\w+\s+){0,2}notes\b|"
+    r"this editable transcript\b|please\W+rate\b[^.]{0,60}\bsurvey\b|"
     r"you should review\s+\S+'s\s+notes(?:\W*$|\s+(?:to make sure|for accuracy)\b))",
     re.IGNORECASE,
 )
@@ -220,8 +225,13 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
     if recorded:
         # The title's own heading names the recording, not a part of it.
         own = _below_title(name, headings)
+        # Template text fills its section: a summary after the meeting's date is content.
         return any(_TRANSCRIPT_HEADING.search(h) for h in own) or bool(
-            prose and _TEMPLATE_TEXT.match(prose[0])
+            prose
+            and all(
+                _TEMPLATE_TEXT.match(line) or _LINKS.match(line) or not _WORD.search(line)
+                for line in prose
+            )
         )
     return notes
 

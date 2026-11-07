@@ -346,10 +346,24 @@ _TRANSCRIPT = "Planner sync — Transcript & notes — 2026-03-04 10.00.12 CET"
             (),
             "This editable transcript was computer generated and might contain errors.",
         ),
-        (_RECORDED, (), "Please rate these notes."),
         (_RECORDED, ("Planner sync",), "Invited [Ana](mailto:ana@example.com)"),
         (_RECORDED, (), "You should review Assistant's notes for accuracy."),
-        (_RECORDED, (), "Please rate the new notes tab."),
+        (
+            _RECORDED,
+            (),
+            "*Please **rate the new notes tab** by taking a [short survey](https://x.example)\n##",
+        ),
+        (
+            _RECORDED,
+            ("Planner sync",),
+            "Invited [Ana](mailto:a@example.com)\nAttachments [Planner sync](https://x.example)",
+        ),
+        ("", ("Planner sync \\- Transcript \\- 2026-03-04 10:00 CET", "00:01:02"), "**Ana:** okay"),
+        (
+            "Planner sync - Mar 4, 2026 10:00 CET - Notes by Assistant",
+            ("Next steps",),
+            "- [ ] [Ana] bench",
+        ),
         (_RECORDED, ("Transcription ended after 00:41:12",), "**Ana:** bye"),
         (_TRANSCRIPT, ("Transcript", "00:01:02"), "**Ana:** okay let's start"),
         (_RECORDED, ("Transcript", "00:12:30"), "**Ana:** I'll move on to the next slide"),
@@ -400,6 +414,13 @@ def test_a_recorded_meetings_transcript_and_template_are_noise(
             "Errors passed 5%.",
         ),
         (_RECORDED, ("Details",), "Please rate the three vendors by cost before Friday."),
+        (_RECORDED, (), "Please rate the new notes tab."),
+        (_RECORDED, ("Planner sync",), "Mar 4, 2026\nThe team reviewed the fallback list."),
+        (
+            _RECORDED,
+            ("Summary",),
+            "Invited [Ana](mailto:a@example.com)\nThe team reviewed the cache.",
+        ),
         (_RECORDED, ("Details",), "You should review Ana's notes on the cache budget first."),
         # a transcript segment that records a decision or a plan
         (_RECORDED, ("Transcript", "00:14:10"), "**Ana:** so the plan is to drop the cache"),
@@ -421,6 +442,7 @@ def test_a_recorded_meetings_account_is_content(
         "We are rolling out the new router on Monday.",
         "The plan is to lower the alert to info.",
         "I'll remove the old flag in the next release.",
+        "We're deprecating the v1 export API.",
     ],
 )
 def test_a_stated_plan_is_a_decision_in_notes(text: str) -> None:
