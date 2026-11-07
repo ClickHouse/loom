@@ -30,6 +30,7 @@ from server.memory.domain.extracted_facts import (
     keep_latest_relation_keyed,
 )
 from server.memory.domain.forget_requests import (
+    MAX_FORGET_REQUESTS,
     forget_requests_from_messages,
     forget_targets,
     is_forget_request,
@@ -779,6 +780,8 @@ async def _forget_plan(
     # the extractor is not asked to notice it.
     forget_requests = forget_requests_from_messages(state.messages)
     state.forget_requests = len(forget_requests)
+    if len(forget_requests) == MAX_FORGET_REQUESTS:
+        log.info("forget requests: read the first %d of the window", MAX_FORGET_REQUESTS)
     # The batch-level fetch is similarity to the whole window; a short
     # "please forget that I keep a journal" rarely pulls its target into
     # those fifty rows. Each request fetches

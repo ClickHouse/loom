@@ -38,6 +38,7 @@ from server.memory.domain import (
     forget_requests,
     passage_trim,
     precedents,
+    premise_facts,
     query_nodes,
     query_planner,
     retrieval_calibration,
@@ -302,6 +303,26 @@ def test_a_message_names_at_most_a_bounded_number_of_forget_requests() -> None:
     requests = forget_requests.forget_requests_from_messages([{"role": "user", "content": text}])
     assert len(requests) == forget_requests.MAX_FORGET_REQUESTS
     assert requests[0]["value"] == "jazz0"
+
+
+def test_no_replacement_is_kept_for_a_request_past_the_cap() -> None:
+    cap = forget_requests.MAX_FORGET_REQUESTS
+    msgs = [{"role": "user", "content": f"forget jazz{i}."} for i in range(cap)]
+    msgs.append({"role": "user", "content": "forget that I prefer Neovim, I switched to VS Code."})
+    assert cap not in forget_requests.forget_sentences(msgs)
+    assert cap - 1 in forget_requests.forget_sentences(msgs)
+
+
+def test_a_window_states_at_most_a_bounded_number_of_premises() -> None:
+    turns = [
+        {
+            "role": "assistant",
+            "content": " ".join(f"Since you enjoy qa{i}x{j} qb{i}x{j}." for j in range(20)),
+        }
+        for i in range(10)
+    ]
+    out = premise_facts.premise_facts_from_messages(turns, [])
+    assert len(out) == premise_facts.MAX_PREMISES
 
 
 def test_forget_targets_reads_the_batch_once_not_once_per_request() -> None:

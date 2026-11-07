@@ -145,12 +145,14 @@ _REPLACEMENT_META = frozenset(
 )
 
 
+def _words(texts: list[str]) -> set[str]:
+    """The content words of all of `texts`."""
+    return set().union(*(_content_tokens(t) for t in texts))
+
+
 def _new_content(value: str, against: list[str]) -> set[str]:
     """Content words of `value` that none of `against` holds."""
-    have: set[str] = set()
-    for text in against:
-        have |= _content_tokens(text)
-    return _content_tokens(value) - have - _REPLACEMENT_META
+    return _content_tokens(value) - _words(against) - _REPLACEMENT_META
 
 
 def replacement_facts(
@@ -182,6 +184,7 @@ def replacement_facts(
     rest_by_msg = {i: _content_tokens(t) for i, t in rest_text.items()}
     msgs = set(rest_by_msg)
     clauses = [str(r.get("value") or "") for r in requests]
+    asked = _words(clauses)  # what the user asked to forget
     # Messages whose replacement is already an ordinary fact of the batch.
     kept_msgs: set[int] = set()
     for f in facts:
@@ -203,7 +206,6 @@ def replacement_facts(
             # sentence has no cut ("the 30s cap, retries now cap at 60s").
             if src & msgs and _new_content(str(f.get("value") or ""), forgotten or clauses):
                 protected.add(str(f.get("key") or ""))
-                asked = set().union(*(_content_tokens(c) for c in clauses)) if clauses else set()
                 retire.update(
                     k
                     for k in links
@@ -223,12 +225,11 @@ def replacement_facts(
         # A carrier's own text is the replacement, so its links are checked
         # against what the user asked to forget, not against that text: the
         # extractor linked "forget that, I prefer coffee" to the dark-roast row.
-        asked_words = set().union(*(_content_tokens(c) for c in clauses)) if clauses else set()
         kept_links = [
             k
             for k in (f.get("linked_keys") or [])
             if k not in by_key
-            or asked_words & (_content_tokens(by_key[k]) | _content_tokens(k.replace("_", " ")))
+            or asked & (_content_tokens(by_key[k]) | _content_tokens(k.replace("_", " ")))
         ]
         # ...and the request resolves by what was asked to forget, never by
         # the replacement's words.
@@ -258,10 +259,11 @@ def _said_corrections(
     whose replacement a fact already carries; `known`: what the request named
     and the rows it may retire."""
     out: list[dict[str, Any]] = []
+    known_words = _words(known)  # once, not once per message
     for i, said in forget_sentences(messages, same_sentence=True).items():
         if i in kept_msgs or not said or not _FIRST_PERSON_RE.match(said):
             continue
-        if not _new_content(said, known):
+        if not _content_tokens(said) - known_words - _REPLACEMENT_META:
             continue
         key = f"user_said_{i}_" + "_".join(sorted(_content_tokens(said)))[:40].strip("_")
         out.append(
@@ -327,6 +329,7 @@ def forget_sentences(
     A pronoun request ("forget that, I prefer coffee") counts here even though
     it names nothing to resolve: its message still carries the replacement."""
     out: dict[int, str] = {}
+    requests = 0
     for i, m in enumerate(messages or []):
         if str(m.get("role") or "").lower() != "user":
             continue
@@ -336,15 +339,19 @@ def forget_sentences(
         others: list[str] = []
         for raw in sents:
             sent = raw.strip("\"'“”‘’")
-            # the length forget_requests_from_messages reads, so both see the
-            # same requests; a longer sentence that opens like a request is no
-            # other sentence of the message
+            # the length forget_requests_from_messages reads; a longer
+            # sentence that opens like a request is no other sentence of the message
             if len(sent) > MAX_FORGET_SENTENCE_CHARS:
                 if not same_sentence and not _FORGET_MSG_RE.match(sent[:MAX_FORGET_SENTENCE_CHARS]):
                     others.append(raw)
                 continue
             mt = _FORGET_MSG_RE.match(sent)
+            if mt and requests == MAX_FORGET_REQUESTS:
+                # past the requests forget_requests_from_messages reads, a
+                # replacement is not kept for a request nobody resolves
+                return out
             if mt:
+                requests += 1
                 rests.append(split_replacement(mt.group("what"))[1])
             elif not same_sentence:
                 others.append(raw)
@@ -372,6 +379,23 @@ def forget_targets_by_content(
     key; a row whose tokens cover at least `min_overlap` of the request's
     (and at least two of them) is a target. The candidates are the rows the
     pipeline already fetched as semantically relevant to this batch."""
+    return _targets_by_words(fact, _row_words(existing), min_overlap=min_overlap)
+
+
+def _row_words(rows: list[dict[str, Any]] | None) -> list[tuple[str, set[str]]]:
+    """Each keyed row with the content words of its value and key."""
+    out = []
+    for row in rows or []:
+        key = str(row.get("memory_key") or "").strip()
+        if key:
+            words = _content_tokens(row.get("value") or "") | _content_tokens(key.replace("_", " "))
+            out.append((key, words))
+    return out
+
+
+def _targets_by_words(
+    fact: dict[str, Any], rows: list[tuple[str, set[str]]], *, min_overlap: float = 0.5
+) -> set[str]:
     want = _content_tokens(fact.get("value") or "") | _content_tokens(
         _FORGET_KEY_RE.sub(" ", str(fact.get("key") or "").replace("_", " "))
     )
@@ -381,13 +405,9 @@ def forget_targets_by_content(
     # only against rows keyed to the user; two or more words resolve anywhere.
     need = 2 if len(want) >= 2 else 1
     out: set[str] = set()
-    for row in existing or []:
-        key = str(row.get("memory_key") or "").strip()
-        if not key:
-            continue
+    for key, have in rows:
         if need == 1 and not key.startswith("user_"):
             continue
-        have = _content_tokens(row.get("value") or "") | _content_tokens(key.replace("_", " "))
         hit = len(want & have)
         if hit >= need and hit / len(want) >= min_overlap:
             out.add(key)
@@ -423,7 +443,7 @@ def forget_targets(
     content names. Empty when no entry asks to
     forget."""
     out: set[str] = set()
-    # The batch's own facts a request may name, gathered once for every request.
+    # The rows and batch facts a request may name, read once for every request.
     batch = [
         {"memory_key": gk, "value": g.get("value") or ""}
         for g in facts
@@ -431,6 +451,7 @@ def forget_targets(
         and (gk := str(g.get("key") or "").strip())
         and gk not in protected  # the replacement is not a target
     ]
+    candidates = _row_words([*(existing or []), *batch])
     for f in facts:
         if not is_forget_request(f):
             continue
@@ -456,7 +477,5 @@ def forget_targets(
             # the request names may be in this very batch, not yet written:
             # resolve against the batch's own facts too, and the write step
             # drops the ones named.
-            candidates = [*(existing or []), *batch]
-            if candidates:
-                out.update(forget_targets_by_content(f, candidates))
+            out.update(_targets_by_words(f, candidates))
     return out

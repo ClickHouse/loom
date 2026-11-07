@@ -137,6 +137,9 @@ def _premise_key(value: str) -> str:
     return "user_" + "_".join(toks[:5]) if toks else ""
 
 
+# Each premise is compared with every one before it.
+MAX_PREMISES = 50  # not a setting: more than a window's assistant turns state as premises
+
 _PREMISE_PREFERENCE_VERBS = frozenset(
     "enjoy like love prefer dislike hate avoid value prize collect practice follow favor favour "
     "appreciate cherish seek pursue".split()
@@ -235,4 +238,6 @@ def premise_facts_from_messages(
                     "source_message_indices": [idx],
                 }
             )
+            if len(out) == MAX_PREMISES:
+                return out
     return out
