@@ -91,11 +91,21 @@ def test_status_switches_list_what_loads_false_not_what_is_declared_false(monkey
     assert "| `LOOM_CODE_ORG_READABLE` |" in rendered
 
 
-def test_status_ops_counts_each_groups_ops_once() -> None:
-    """Each group's Stable count plus its experimental links is the group's size."""
+def test_status_ops_lists_each_experimental_op_once_and_counts_the_rest() -> None:
+    from server.operations import registry
+
     groups = gen._op_groups()
+    rows = {}
     for line in gen.render_status_ops().splitlines():
         m = re.match(r"\| `([a-z_]+)` \| (\d+) \| (.*) \|$", line)
         if m:
-            group, stable, experimental = m.group(1), int(m.group(2)), m.group(3)
-            assert stable + experimental.count("](operations/") == len(groups[group]), group
+            rows[m.group(1)] = (int(m.group(2)), re.findall(r"\[`([^`]+)`\]", m.group(3)))
+    assert set(rows) == set(groups)
+    for group, (stable, experimental) in rows.items():
+        want = [op.name for op in groups[group] if op.maturity == "experimental"]
+        assert experimental == want, group
+        assert stable == len(groups[group]) - len(want), group
+    listed = [name for _, names in rows.values() for name in names]
+    assert sorted(listed) == sorted(
+        op.name for op in registry.ALL_OPERATIONS if op.maturity == "experimental"
+    )

@@ -112,11 +112,12 @@ def _listed_under_all(op: Operation) -> bool:
 
 
 def _op_groups() -> dict[str, list[Operation]]:
-    """The registry's ops by group, the part of the name before the first dot."""
+    """The registry's ops by group (the part of the name before the first dot), each
+    sorted by name."""
     from server.operations import registry
 
     groups: dict[str, list[Operation]] = defaultdict(list)
-    for op in registry.ALL_OPERATIONS:
+    for op in sorted(registry.ALL_OPERATIONS, key=lambda o: o.name):
         groups[op.name.split(".")[0]].append(op)
     return groups
 
@@ -141,7 +142,7 @@ def render_operations() -> str:
         "Groups: " + " · ".join(f"[`{g}`](#{g.replace('_', '_')})" for g in sorted(groups)) + "\n",
     ]
     for group in sorted(groups):
-        ops = sorted(groups[group], key=lambda o: o.name)
+        ops = groups[group]
         out.append(f"### {group}\n")
         page = f"operations/{group}.md"
         out.append(f"Fields for every `{group}` op: [{page}]({page}).\n")
@@ -166,18 +167,20 @@ def render_operations() -> str:
 def render_status_ops() -> str:
     """How many of each op group's ops are stable (`Operation.maturity`), and each
     experimental op linked to its field reference."""
+    from server.operations import registry
+
     groups = _op_groups()
     rows: list[str] = []
     experimental_total = 0
     for group in sorted(groups):
-        ops = sorted(groups[group], key=lambda o: o.name)
+        ops = groups[group]
         experimental = [op for op in ops if op.maturity == "experimental"]
         experimental_total += len(experimental)
         links = ", ".join(
             f"[`{op.name}`](operations/{group}.md#{_op_anchor(op.name)})" for op in experimental
         )
         rows.append(f"| `{group}` | {len(ops) - len(experimental)} | {links} |")
-    total = sum(len(ops) for ops in groups.values())
+    total = len(registry.ALL_OPERATIONS)
     return "\n".join(
         [
             f"{total} operations, {experimental_total} of them experimental.\n",
@@ -359,7 +362,7 @@ def render_group(group: str, ops: list[Operation]) -> str:
         "listing. Unknown input fields are served and named in `ignored_args`.\n",
         "<!-- prettier-ignore-start -->\n",
     ]
-    for op in sorted(ops, key=lambda o: o.name):
+    for op in ops:
         kind = "read" if op.read_only else ("idempotent" if op.idempotent else "write")
         out.append(f"## `{op.name}`\n")
         summary = _op_summary(op, _TOOL_DESCRIPTIONS)
