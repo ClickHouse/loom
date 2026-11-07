@@ -1,7 +1,7 @@
 """scripts/release/release_clickhouse.sh picks the ClickHouse release a bundle
-names: a published bundle's own, a dispatch's, for a final the newest candidate
-on its commit with a published bundle, or the newest release. Its sibling
-scripts are stubbed; git is real."""
+names: a published bundle's own, a dispatch's, for a final the highest-numbered
+candidate on its commit with a published bundle, or the newest release. Its
+sibling scripts are stubbed; git is real."""
 
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def test_a_re_run_keeps_its_published_bundles_release(resolve: Resolve) -> None:
     assert "::warning::clickhouse_image=ch:b ignored" in result.stderr
 
 
-def test_a_final_keeps_its_last_candidates_release(resolve: Resolve) -> None:
+def test_a_final_keeps_its_highest_candidates_release(resolve: Resolve) -> None:
     result = resolve("1.2.0", {"v1.2.0-rc.9": "ch:old", "v1.2.0-rc.10": "ch:soaked"})
     assert result.stdout == "ch:soaked\n", result.stderr
 

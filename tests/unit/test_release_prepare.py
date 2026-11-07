@@ -1143,7 +1143,7 @@ def test_a_soaked_candidate_run_again_after_its_final_is_not_told_to_delete_itse
     git_repo.git(tmp_path, "tag", "v1.2.0")
     error = prepare.check_tag("1.2.0-rc.2", tmp_path)
     assert error == "v1.2.0-rc.2 is on v1.2.0's commit, which is released: run v1.2.0 instead"
-    assert prepare.check_tag("1.2.0", tmp_path) is None  # rc.2 stays the last candidate
+    assert prepare.check_tag("1.2.0", tmp_path) is None  # rc.2 stays the highest-numbered candidate
     _commit(tmp_path, "after the release")
     git_repo.git(tmp_path, "tag", "v1.2.0-rc.3")  # a stray, on another commit than the final
     error = prepare.check_tag("1.2.0-rc.3", tmp_path)

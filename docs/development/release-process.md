@@ -107,14 +107,14 @@ A release candidate is a `vX.Y.Z-rc.N` tag, and makes a GitHub pre-release; the 
 other prerelease tag. The first candidate goes on the release pull request's merge commit, whose
 files name `X.Y.Z`, so the candidate's server already reports `X.Y.Z`; a later one, after a fix,
 goes on a later commit of `main`. The final `vX.Y.Z` tag goes on the last candidate's commit after
-the soak. The final's bundle keeps the ClickHouse release that candidate's bundle names (the highest-numbered
-candidate on that commit with a published bundle); its images are built again from the same
-commit, uncached, so an OS package may be newer than in the soaked image. A run of a candidate tag
-after its final is refused. One on the final's commit is told to run the final. One numbered below
-the highest-numbered candidate on the final's commit, such as an older candidate dispatched to publish its
-SDKs, has nothing to run, and its tag stays. Any other is a stray: it also fails the final's later
-runs until it is deleted. The chart's `appVersion` names `X.Y.Z` too, so a soak on Kubernetes sets
-`image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`.
+the soak. The final's bundle keeps the ClickHouse release that candidate's bundle names (the
+highest-numbered candidate on that commit with a published bundle); its images are built again
+from the same commit, uncached, so an OS package may be newer than in the soaked image. A run of a
+candidate tag after its final is refused. One on the final's commit is told to run the final. One
+numbered below the highest-numbered candidate on the final's commit, such as an older candidate
+dispatched to publish its SDKs, has nothing to run, and its tag stays. Any other is a stray: it
+also fails the final's later runs until it is deleted. The chart's `appVersion` names `X.Y.Z` too,
+so a soak on Kubernetes sets `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`.
 
 Only the highest final version becomes the repository's Latest release (`releases/latest` serves the
 installer) and moves `:latest`: a prerelease or a patch to an older line leaves both where they are.
@@ -171,7 +171,7 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    - `prepare.py check`: `server/__init__.py` reads `__version__ = "X.Y.Z"`, and every other
      version file, `server.json` included, names that version;
    - `prepare.py check-tag`: a candidate `vX.Y.Z-rc.N` before `vX.Y.Z` is tagged, and a final
-     `vX.Y.Z` on the commit of its last candidate;
+     `vX.Y.Z` on the commit of its highest-numbered candidate;
    - `prepare.py check-chart`: the chart's version is above the previous release's;
 2. `preflight` fails the run on a missing [prerequisite](#before-the-first-release);
 3. `clickhouse` names the ClickHouse release the Compose bundle runs
@@ -184,8 +184,8 @@ the package's visibility to public in its settings, then re-run the failed jobs.
      never replaces one, so nobody can have installed it);
    - a dispatch's `clickhouse_image`, which for a final is used in place of any release its
      candidates on the same commit published;
-   - for a final, the one the highest-numbered candidate on the same commit with a published bundle was
-     soaked with;
+   - for a final, the one the highest-numbered candidate on the same commit with a published
+     bundle was soaked with;
    - the release `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`);
 4. `build` writes the version into the Python and TypeScript SDK sources and builds the
    Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),

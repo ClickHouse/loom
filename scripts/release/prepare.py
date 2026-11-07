@@ -254,12 +254,12 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
             return (
                 f"v{tag_version} is on v{final}'s commit, which is released: run v{final} instead"
             )
-        soaked = candidates_at(final, final_sha, root)
-        if soaked and _candidate_number(tag_version) < _candidate_number(soaked[0]):
-            # Most likely soaked before soaked[0]; git cannot tell when a tag
+        on_final = candidates_at(final, final_sha, root)
+        if on_final and _candidate_number(tag_version) < _candidate_number(on_final[0]):
+            # Most likely soaked before on_final[0]; git cannot tell when a tag
             # was pushed, so its tag is kept.
             return (
-                f"v{tag_version} is numbered below {soaked[0]}, the highest-numbered candidate"
+                f"v{tag_version} is numbered below {on_final[0]}, the highest-numbered candidate"
                 f" on v{final}'s commit: nothing to run"
             )
         return (
@@ -616,7 +616,8 @@ def main() -> None:
     check_cmd.add_argument("tag_version", type=_tag_version, help=tag_version_help)
     check_cmd.set_defaults(run=_check)
     tag_cmd = commands.add_parser(
-        "check-tag", help="a candidate before its final, the final on its last candidate's commit"
+        "check-tag",
+        help="a candidate before its final, the final on its highest-numbered candidate's commit",
     )
     tag_cmd.add_argument("tag_version", type=_tag_version, help=tag_version_help)
     tag_cmd.add_argument(

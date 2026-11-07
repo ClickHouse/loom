@@ -4,8 +4,8 @@
 #     installed version's ClickHouse (CLICKHOUSE_IMAGE is then ignored, with a
 #     warning);
 #   - else CLICKHOUSE_IMAGE, when the dispatch names one;
-#   - else, for a final, the one its highest-numbered candidate on this commit with a
-#     published bundle was soaked with;
+#   - else, for a final, the one its highest-numbered candidate on this commit
+#     with a published bundle was soaked with;
 #   - else the release clickhouse/clickhouse-server:latest names now.
 # Every pin but this version's own published bundle's is checked for a downgrade
 # (refuse_downgrade.sh). Run with the repository's tags fetched.
