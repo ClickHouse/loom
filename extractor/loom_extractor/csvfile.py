@@ -108,8 +108,9 @@ class _Sniffer(csv.Sniffer):
 
     def _guess_quote_and_delimiter(
         self, data: str, delimiters: str | None
-    ) -> tuple[str, bool, str | None, bool]:
-        # The stdlib method `sniff` calls first; typeshed does not declare it.
+    ) -> tuple[str, bool, str | None, bool | int]:
+        # The stdlib method `sniff` calls first (its last item may be 0); typeshed does
+        # not declare it.
         return super()._guess_quote_and_delimiter(  # type: ignore[misc,no-any-return]
             _whole_lines(data, _QUOTE_SNIFF_CHARS), delimiters
         )
