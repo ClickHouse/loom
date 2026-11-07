@@ -333,6 +333,23 @@ schema. These rules keep that safe. The operator procedure is in
     run by N writes them again from the document; a `source-changed` tag stays until a
     run by N emits the key and finds it stated. No gate holds the rollout: the cost is
     that churn while N-1 serves, and after a rollback until the document is mined by N.
+31. **A new shared-folder file kind** (`docx` in a `gdrive` source's `include`): N
+    accepts the kind and writes it only when a caller names it; a config without
+    `include`, and the dashboard form's default, take the four kinds N-1 knows. N-1 has
+    no `docx` in its file-kind table, so it refuses to add a config that names it
+    (`BAD_CONFIG`), its `check` and `rotate` of such a source answer a server error, and
+    its sync worker fails such a source's turn before any request: the source's state
+    shows status `failed`, error `KeyError`, nothing is retired, and the next turn by N
+    syncs it. No gate holds the rollout: the cost falls only on sources whose config
+    names `docx`, and it ends once no N-1 replica serves. After a rollback it stays for
+    those sources, every file kind of them unsynced, until each is removed; a second
+    source that names only `docx` beside one that names the other kinds (the way
+    [document sources](../features/knowledge.md#document-sources) add a kind) confines
+    that to the `.docx` files. N+1 may take `docx` by default. This departs from rule 3
+    the way rule 28 does for a new source kind: holding `add` back a release would hold
+    back every folder of `.docx` files, while the cost falls on the sources a maintainer
+    opts in, ends with the rollout, and loses nothing. The mixed-version gate does not
+    check this rule.
 
 ## What checks them
 

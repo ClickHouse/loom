@@ -190,7 +190,7 @@ type SourceKind = (typeof SOURCE_KINDS)[number];
 export const KIND_FORM: Record<SourceKind, { about: string; reads: string; noCredential: string }> = {
   gdrive: {
     about:
-      "A shared folder of documents, presentations and PDFs. Share it read-only with a service account and paste the account's key; Loom checks the key and the folders before anything is stored.",
+      "A shared folder of documents, presentations, PDFs, .pptx decks and .docx documents. Share it read-only with a service account and paste the account's key; Loom checks the key and the folders before anything is stored.",
     reads: "The key reads the folders",
     noCredential: "Paste the service account's key.",
   },
@@ -226,7 +226,12 @@ export const INCLUDE_OPTIONS = [
   { value: "slides", label: "Presentations" },
   { value: "pdf", label: "PDF files" },
   { value: "pptx", label: ".pptx decks" },
+  { value: "docx", label: ".docx documents" },
 ] as const;
+
+/** The kinds a folder takes unless its form says otherwise: the server's default
+ *  `include` (GDRIVE_DEFAULT_INCLUDE), which leaves .docx out. */
+export const DEFAULT_INCLUDE = ["docs", "slides", "pdf", "pptx"] as const;
 
 /** A meeting store's providers, with the credential each takes. */
 export const RECORDING_PROVIDERS = [
@@ -271,7 +276,7 @@ export function emptySourceForm(): SourceForm {
     name: "",
     kind: "gdrive",
     folders: "",
-    include: INCLUDE_OPTIONS.map((o) => o.value),
+    include: [...DEFAULT_INCLUDE],
     projects: "",
     pages: "",
     databases: "",

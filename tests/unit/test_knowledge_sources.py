@@ -235,6 +235,16 @@ def test_a_failed_probe_stores_nothing(
     assert fake.rows == {}
 
 
+def test_a_folder_config_naming_docx_is_stored_in_the_table_s_order_and_probed(
+    fake: _Store,
+) -> None:
+    config = {"folder_ids": [FOLDER], "include": ["docx", "pdf"]}
+    out = asyncio.run(app.handle_knowledge_source_add(_add(config=config)))
+    assert out.config["include"] == ["pdf", "docx"]
+    assert fake.rows[(ORG, NS, "design-decks")].config == out.config
+    assert fake.probes[-1][1]["include"] == ["pdf", "docx"]  # type: ignore[attr-defined]
+
+
 def test_list_and_inspect_return_config_and_sync_never_the_credential(
     fake: _Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:

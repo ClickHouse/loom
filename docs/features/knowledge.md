@@ -77,16 +77,16 @@ A repository's admins register the document sources Loom pulls the repository's
 documents from. A source lives on the repository's trunk code namespace, the one its
 documents live in, so whoever reads the repository sees where its documents come from,
 and only the namespace's admins change that. Four kinds are served: `gdrive`, a shared
-folder of docs, slides, decks and PDFs, read with a service account the folders are
-shared to read-only, whose credential is the account's JSON key; `linear`, the
-documents of a project tracker's projects, read with a read-only API key of an account
-that sees the projects; `notion`, a page store's pages and databases, read with an
-integration that has read content access and that the pages and databases are shared
-with, whose credential is the integration's token; and `recording`, the transcripts of
-a meeting store's recordings ([recordings](#a-recording-source)). The
-`knowledge_source_sync` worker pulls each source's files into the repository's
-documents ([syncing](#syncing-a-source)); `list` says whether this deployment runs it
-(`enabled`, `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default).
+folder of docs, slides, PDFs, `.pptx` decks and `.docx` documents, read with a service
+account the folders are shared to read-only, whose credential is the account's JSON key;
+`linear`, the documents of a project tracker's projects, read with a read-only API key
+of an account that sees the projects; `notion`, a page store's pages and databases, read
+with an integration that has read content access and that the pages and databases are
+shared with, whose credential is the integration's token; and `recording`, the
+transcripts of a meeting store's recordings ([recordings](#a-recording-source)). The
+`knowledge_source_sync` worker pulls each source's files into the repository's documents
+([syncing](#syncing-a-source)); `list` says whether this deployment runs it (`enabled`,
+`LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default).
 
 On the dashboard, an opened repository on the Repositories page shows its sources under
 Sources: each source's kind, last sync and counts, to anyone who reads the repository. A
@@ -113,13 +113,13 @@ changing the provider also clears the ids typed for the other one.
 | [`knowledge.source.sync_now`](../reference/operations/knowledge.md#knowledgesourcesync_now) | admin  | Record a request for a sync pass over this source (`full`: list every document).                           |
 
 A source's `config` holds ids and filters, never a host or a URL: `gdrive` takes
-`folder_ids` (1 to 20) and `include` (any of `docs`, `slides`, `pdf`, `pptx`; all by
-default); `linear` takes `project_ids` (1 to 20 project UUIDs); `notion` takes
-`page_ids` and `database_ids`, 1 to 20 ids in all, each 32 hex digits with or without
-dashes (stored dashed, lower case); `recording` takes `provider` (`meet` or `zoom`) and
-`ids` (1 to 20 meeting space ids for `meet`, numeric meeting ids for `zoom`). The
-store's API hosts are fixed in the server, so a registered source cannot point the
-server at another host. The credential is sealed at rest under its own purpose
+`folder_ids` (1 to 20) and `include` (any of `docs`, `slides`, `pdf`, `pptx`, `docx`;
+all but `docx` by default); `linear` takes `project_ids` (1 to 20 project UUIDs);
+`notion` takes `page_ids` and `database_ids`, 1 to 20 ids in all, each 32 hex digits
+with or without dashes (stored dashed, lower case); `recording` takes `provider` (`meet`
+or `zoom`) and `ids` (1 to 20 meeting space ids for `meet`, numeric meeting ids for
+`zoom`). The store's API hosts are fixed in the server, so a registered source cannot
+point the server at another host. The credential is sealed at rest under its own purpose
 (`loom secrets reseal` covers it), held in memory only for a probe, never returned by
 any op and never written to an audit row. `add` records the namespace, name, kind,
 config and `dry_run`; `rotate` the namespace and name; `remove` and `sync_now` their
@@ -179,6 +179,17 @@ are gone; one whose documents were kept refuses it with `SOURCE_DOCUMENTS_KEPT` 
 they are deleted (`knowledge.delete`). A removed source with no documents frees its
 name at once.
 
+No op changes a stored source's `config`: a `gdrive` source lists only the kinds its
+stored `include` names. To take in a kind it leaves out, add a second source on the same
+folders with only that kind in its `include`: it writes those files, whose addresses no
+source holds yet, and the first source's documents are not touched. To drop a kind, or
+to have one source hold them all, `remove` the source, and any second source on the same
+folders, with `delete_documents`, wait for the sync worker to retire their documents (an
+`add` of a removed source's name answers `SOURCE_DELETE_PENDING` until that source's
+documents are gone), and add the one source again: a document another source still holds
+is skipped, never taken over. Every document is then written, embedded and mined for
+decisions again.
+
 | Code                    | When                                                                                                                                                                                                                         |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `NOT_A_CODE_NAMESPACE`  | `add`, `check`, `rotate` or `sync_now` names a namespace that is not a repository's trunk code namespace.                                                                                                                    |
@@ -218,11 +229,11 @@ with the next full listing. A listed file whose stored copy has the same revisio
 whose chunks are live, is skipped without a fetch, so a write cut between its document
 and its chunks is redone. A changed file is fetched and written with `knowledge.upsert`:
 
-| File                  | Text                                                                                                                                                                                                                                                                                                                                                                                                      | Original                       |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| A document (`docs`)   | Exported by the store as Markdown.                                                                                                                                                                                                                                                                                                                                                                        | none                           |
-| A deck (`slides`)     | One `# Slide N: <title>` section per slide, so a chunk is a slide: its shapes' text (groups read through, a table one row per line), then `> Notes: …` from the speaker notes. A run of eight or more bare numbers is dropped. A slide whose text is under 120 characters beside a picture, chart or video ends with `> [image-only: N pictures, rationale not extracted]`.                               | none                           |
-| A PDF, a `.pptx` file | Sent to the [extractor service](../architecture/document-extraction.md) its format is routed to; the artifact's headings become Markdown headings and its code and SQL blocks are fenced, and how much of the file it read goes in the metadata (`extraction_coverage`). With no extractor configured for the format, or one that does not declare it, the file is counted `unconverted` and not written. | the file's bytes, downloadable |
+| File                             | Text                                                                                                                                                                                                                                                                                                                                                                                                      | Original                       |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| A document (`docs`)              | Exported by the store as Markdown.                                                                                                                                                                                                                                                                                                                                                                        | none                           |
+| A deck (`slides`)                | One `# Slide N: <title>` section per slide, so a chunk is a slide: its shapes' text (groups read through, a table one row per line), then `> Notes: …` from the speaker notes. A run of eight or more bare numbers is dropped. A slide whose text is under 120 characters beside a picture, chart or video ends with `> [image-only: N pictures, rationale not extracted]`.                               | none                           |
+| A PDF, a `.pptx` or `.docx` file | Sent to the [extractor service](../architecture/document-extraction.md) its format is routed to; the artifact's headings become Markdown headings and its code and SQL blocks are fenced, and how much of the file it read goes in the metadata (`extraction_coverage`). With no extractor configured for the format, or one that does not declare it, the file is counted `unconverted` and not written. | the file's bytes, downloadable |
 
 Each document's address (`source_uri`) is the link the store reports for the file,
 without its query, so a `knowledge.synthesize` citation of it reads `<link>#<chunk>`.
@@ -644,9 +655,9 @@ bounds the listed documents and every finding's samples.
 
 - **`documents`**: live and deleted (`knowledge.delete`) documents by format (the row's
   `format`, which `knowledge.ingest` sets, else the `ingested_format` a source sync
-  records in its metadata (`transcript`, `markdown`, `slides`, or the extractor's `pdf`
-  or `pptx`), else the stored content type, else the extension of the original filename
-  or the `source_uri` path) and by `source_uri` scheme, and the newest ingest. A
+  records in its metadata (`transcript`, `markdown`, `slides`, or the extractor's `pdf`,
+  `pptx` or `docx`), else the stored content type, else the extension of the original
+  filename or the `source_uri` path) and by `source_uri` scheme, and the newest ingest. A
   document row holds only its current version, and its `revision` numbers it (1, 2,
   ...): `earlier_revisions` sums the revisions before each current one, and `unnumbered`
   counts rows no write numbered (`revision` 0). An earlier revision's text is known only

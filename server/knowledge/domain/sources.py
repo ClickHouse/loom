@@ -26,7 +26,12 @@ GDRIVE_MIME_TYPES = {
     "slides": "application/vnd.google-apps.presentation",
     "pdf": "application/pdf",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
+# The kinds a config without `include` takes. `docx` is read when a config names it and
+# is left out of the default, so a build that does not know it still syncs every source
+# a default config made (docs/architecture/rolling-upgrades.md).
+GDRIVE_DEFAULT_INCLUDE = ("docs", "slides", "pdf", "pptx")
 # A folder id goes into the store's query string, so only its own alphabet passes.
 _FOLDER_ID_RE = re.compile(r"[A-Za-z0-9_-]{10,128}")
 MAX_FOLDERS = 20  # not a setting: the add op's wire contract (1 to 20 folders)
@@ -133,7 +138,7 @@ def _gdrive_config(config: dict[str, Any]) -> dict[str, Any]:
             folders.append(folder)
     if len(folders) > MAX_FOLDERS:
         raise SourceConfigError(f"config.folder_ids: at most {MAX_FOLDERS} folders")
-    include = config.get("include", list(GDRIVE_MIME_TYPES))
+    include = config.get("include", list(GDRIVE_DEFAULT_INCLUDE))
     if not isinstance(include, list) or not include:
         raise SourceConfigError("config.include: a list of " + ", ".join(GDRIVE_MIME_TYPES))
     # Type first: a list or an object element is unhashable for the membership test.

@@ -82,9 +82,10 @@ class KnowledgeSourceSync(BaseModel):
 class KnowledgeSourceEntry(BaseModel):
     # The source's name, unique in the namespace.
     name: str
-    # The source's kind (`gdrive`: a shared folder of docs, slides, decks and PDFs;
-    # `linear`: a project tracker's project documents; `notion`: a page store's pages
-    # and databases; `recording`: the transcripts of a meeting store's recordings).
+    # The source's kind (`gdrive`: a shared folder of docs, slides, PDFs, .pptx decks
+    # and .docx documents; `linear`: a project tracker's project documents; `notion`: a
+    # page store's pages and databases; `recording`: the transcripts of a meeting
+    # store's recordings).
     kind: str
     # The ids and filters the source reads; never a credential.
     config: dict[str, Any] = Field(default_factory=dict)
@@ -137,9 +138,9 @@ class KnowledgeSourceAddInput(BaseModel):
     config: dict[str, Any] = Field(
         ...,
         description="The ids and filters the source reads, per kind; gdrive: {folder_ids: "
-        "[1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}; linear: "
-        "{project_ids: [1-20 project ids, UUIDs]}; notion: {page_ids: [...], database_ids: "
-        "[...]} (1-20 ids in all); recording: {provider: meet | zoom, ids: "
+        "[1-20 folder ids], include: [docs, slides, pdf, pptx, docx] (default all but docx)}; "
+        "linear: {project_ids: [1-20 project ids, UUIDs]}; notion: {page_ids: [...], "
+        "database_ids: [...]} (1-20 ids in all); recording: {provider: meet | zoom, ids: "
         "[1-20 space ids (meet) or meeting ids (zoom)]}.",
     )
     credential: str = Field(

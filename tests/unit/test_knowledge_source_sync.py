@@ -40,6 +40,7 @@ DOCS = "application/vnd.google-apps.document"
 SLIDES = "application/vnd.google-apps.presentation"
 PDF = "application/pdf"
 PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 KEY = '{"type": "service_account", "client_email": "a@b", "private_key": "k"}'
 
 
@@ -93,8 +94,8 @@ class _World:
         self.upserts: list[Any] = []
         self.fail_listing: int = 0
         # Formats an extractor is configured for, and those its service declares.
-        self.routes: set[str] = {"pdf", "pptx"}
-        self.declared: set[str] = {"pdf", "pptx"}
+        self.routes: set[str] = {"pdf", "pptx", "docx"}
+        self.declared: set[str] = {"pdf", "pptx", "docx"}
         self.extractor_down = False
         self.extract_error: Exception | None = None
         # Per-file extraction failures, by file id.
@@ -181,7 +182,11 @@ class _World:
                 return httpx.Response(self.fail_listing, json={"error": {"status": "x"}})
             q = request.url.params["q"]
             after = q.split("modifiedTime > '")[1].rstrip("'") if "modifiedTime >" in q else ""
-            files = [f for f in self.files if f["modifiedTime"] > after]
+            files = [
+                f
+                for f in self.files
+                if f["modifiedTime"] > after and f"mimeType = '{f['mimeType']}'" in q
+            ]
             return httpx.Response(
                 200, json={"files": files, "incompleteSearch": self.incomplete_search}
             )
@@ -844,13 +849,17 @@ def test_a_file_the_extractor_refuses_is_unconverted(world: _World) -> None:
     assert world.states["decks"]["state_value"] == "2026-01-03T00:00:00.000Z"
 
 
-def test_a_pptx_file_goes_to_the_extractor_with_its_bytes_kept(world: _World) -> None:
-    world.files = [_file("deck2", PPTX, "2026-01-03T00:00:00.000Z", size="14")]
+@pytest.mark.parametrize(("mime", "fmt"), [(PPTX, "pptx"), (DOCX, "docx")])
+def test_an_uploaded_deck_or_document_goes_to_the_extractor_with_its_bytes_kept(
+    world: _World, mime: str, fmt: str
+) -> None:
+    world.sources = [_source(config={"folder_ids": [FOLDER], "include": [fmt]})]
+    world.files = [_file("file2", mime, "2026-01-03T00:00:00.000Z", size="14")]
     asyncio.run(source_sync.run_sync())
     [(inp, _)] = world.upserts
-    assert inp.metadata["ingested_format"] == "pptx"
+    assert inp.metadata["ingested_format"] == fmt
     assert inp.metadata["extraction_coverage"]["complete"] is True
-    assert inp.blob_content_type == PPTX and inp.original_bytes_b64
+    assert inp.blob_content_type == mime and inp.original_bytes_b64
 
 
 def test_a_changed_address_retires_the_old_one(world: _World) -> None:
@@ -879,6 +888,25 @@ def test_two_sources_sharing_a_folder_do_not_take_each_other_s_documents(
     assert world.docs[_uri("doc1")]["tags"][-1] == "source:aaa"
     assert len(world.upserts) == 1
     assert _detail(world, "bbb")["skipped"] == 1
+    assert world.audits == []
+
+
+def test_a_second_source_with_only_docx_adds_a_folder_s_docx_files_and_nothing_else(
+    world: _World,
+) -> None:
+    world.sources = [
+        _source("aaa"),
+        _source("bbb", config={"folder_ids": [FOLDER], "include": ["docx"]}),
+    ]
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
+        _file("docx1", DOCX, "2026-01-02T00:00:00.000Z", size="14"),
+    ]
+    asyncio.run(source_sync.run_sync())
+    asyncio.run(source_sync.run_sync(full=True))
+    tags = {uri: d["tags"][-1] for uri, d in world.docs.items()}
+    assert tags == {_uri("doc1"): "source:aaa", _uri("docx1", "file"): "source:bbb"}
+    assert len(world.upserts) == 2
     assert world.audits == []
 
 
