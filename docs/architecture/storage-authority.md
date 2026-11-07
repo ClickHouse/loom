@@ -500,26 +500,34 @@ in the row's namespace. A Postgres table that holds no memory content is listed 
 reason (`PG_NO_MEMORY_CONTENT`). Under the ClickHouse authority the saga has no Postgres
 step and the census no Postgres rows.
 
-Under the Postgres authority `namespace.snapshot` reads the heads the authority holds, so
-a delete ClickHouse has not published, or never will (a parked delivery), is not
+Under the Postgres authority `namespace.snapshot` reads the heads the authority holds,
+so a delete ClickHouse has not published, or never will (a parked delivery), is not
 snapshotted. `namespace.inventory`'s memory counts read ClickHouse once it holds every
 revision committed so far, at the same barrier as a search (503 `PROJECTION_BEHIND` past
-its wait), and then read it sequentially; a parked delivery is not waited for. A copy of
-a head its writer read (`lifecycle.insert_versions_over_heads`: a tombstone, a status, a
-pin, a touch, the supersessions and cascades of any write), `memory.reject`,
-`memory.clear` and a period digest's row are done once committed, even when their
-publication is pending: the delivery worker publishes them, a search serves a hit only
-while the authority's head shows its content, and a point read answers from the
-authority. The write goes on as on the ClickHouse authority, where a row once inserted
-stands: what it derived retires, its webhook is sent, and a ClickHouse follow-up that
-fails answers its own error. A by-id write is confirmed by its commit, which keeps the
-newer version: a row older than the head it was read from is overtaken. Every other write
-answers 503 `PUBLICATION_PENDING`. `memory.bulk_get` (and the OKF export, which reads
-values through it) answers from the authority's heads, as `memory.get` does, and so does
-`erasure.export`'s memory section. `memory.list`, in
-either order, serves a ClickHouse row only while it is the authority's live head at that
-version, redacted or not alike (`lifecycle.served_rows`), so a delete, a rewrite or a
-redaction ClickHouse has not published is not read back.
+its wait), and then read it sequentially; a parked delivery is not waited for. The
+diagnostic reports (`namespace.audit`, `namespace.validate`, `namespace.tune`,
+`memory.inspect`, and `knowledge.inspect`'s decision counts and memory findings) start
+at the same barrier, but a wait that runs out, or a Postgres that does not answer, does
+not fail them: they read what ClickHouse holds and name `projection` in `skipped`, and
+audit and validate also in `coverage`, which then is not `complete`. As a search's does,
+the wait may publish another writer's lapsed deliveries. A finding cites a sampled row
+only while it is its key's live head at the version ClickHouse read, in the same
+redaction state, with the hash of the value `memory.get` serves there; a row rewritten,
+deleted or redacted since is not cited. A copy of a head its writer read
+(`lifecycle.insert_versions_over_heads`: a tombstone, a status, a pin, a touch, the
+supersessions and cascades of any write), `memory.reject`, `memory.clear` and a period
+digest's row are done once committed, even when their publication is pending: the
+delivery worker publishes them, a search serves a hit only while the authority's head
+shows its content, and a point read answers from the authority. The write goes on as on
+the ClickHouse authority, where a row once inserted stands: what it derived retires, its
+webhook is sent, and a ClickHouse follow-up that fails answers its own error. A by-id
+write is confirmed by its commit, which keeps the newer version: a row older than the
+head it was read from is overtaken. Every other write answers 503 `PUBLICATION_PENDING`.
+`memory.bulk_get` (and the OKF export, which reads values through it) answers from the
+authority's heads, as `memory.get` does, and so does `erasure.export`'s memory section.
+`memory.list`, in either order, serves a ClickHouse row only while it is the authority's
+live head at that version, redacted or not alike (`lifecycle.served_rows`), so a delete,
+a rewrite or a redaction ClickHouse has not published is not read back.
 
 The background reads whose rows go to a model, or onto a plain derived row, keep to the
 same rule; two of them also keep ClickHouse's row while the authority's head is only a
@@ -559,12 +567,9 @@ trace or status filter; never under `as_of`) as that deleted head, with ClickHou
 preview of the text (`lifecycle.recovered_rows`); a row restored, or changed otherwise,
 since ClickHouse's copy joins either listing once ClickHouse holds it. Open against the
 isolation gate: reads of ClickHouse alone, among them `memory.keys`, `memory.statuses`,
-`memory.list`'s counts, `memory.related`, the graph walk's recent seeds,
-`memory.aggregate`, `memory.inspect`'s counts, tags and categories (its newest rows go
-through `lifecycle.served_rows`) and the revisions `namespace.audit` and
-`namespace.validate` findings cite, show a write the authority holds once it is
-published; a cited revision carries the hash of the authority's head, as `memory.get`
-serves it. A decision record's writer counts as live only if the authority holds its
+`memory.list`'s counts, `memory.related`, the graph walk's recent seeds and
+`memory.aggregate`, show a write the authority holds once it is published. A decision
+record's writer counts as live only if the authority holds its
 decision head; whether a live decision is still proposed is read from ClickHouse alone.
 
 The blacklist sweep waits until ClickHouse holds the memory rows committed in the

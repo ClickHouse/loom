@@ -55,6 +55,7 @@ from server.knowledge.app.ingest_run import JOB_LEASE_S
 from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.store import inspect as store
 from server.memory.app.query import document_decision_tally
+from server.memory.app.search import pg_validation
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -725,8 +726,17 @@ async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeIns
     if incomplete is not None:
         ingest_findings.append(incomplete)
     listed = await run.listed(model)
-    decisions = await run.decisions(listed)
-    memory_findings = await run.memory_findings()
+    # The decision rows and the audit's findings are memory rows: under Postgres they are
+    # read once ClickHouse holds what the namespace committed, in one wait the audit
+    # does not repeat.
+    published = pg_validation.published_reads(
+        input.org,
+        [input.namespace],
+        lambda reason: run.skipped.append(f"{pg_validation.PROJECTION}: {reason}"),
+    )
+    async with published:
+        decisions = await run.decisions(listed)
+        memory_findings = await run.memory_findings()
     return KnowledgeInspectOutput(
         org=input.org,
         namespace=input.namespace,

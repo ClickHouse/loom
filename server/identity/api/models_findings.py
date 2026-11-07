@@ -61,7 +61,8 @@ class FindingContract(BaseModel):
     # against all gets). Required, so no finding claims completeness by default.
     samples_complete: bool
     # The live revision of each row the samples matched, read after the checks under the
-    # request's read scope; a sample that names no single row has none.
+    # request's read scope; a sample that names no single row has none, and under Postgres
+    # neither has one whose key the authority no longer serves at that version.
     evidence: list[FindingEvidence] = Field(default_factory=list)
     # What the rule leaves out by design.
     exceptions: str = ""

@@ -56,6 +56,7 @@ from server.knowledge.app.tune import DocumentDrafts, document_drafts
 from server.memory.app import extraction_policy
 from server.memory.app.finding_evidence import IDENTITY, revisions_for
 from server.memory.app.pipeline import OFFERED_CATEGORIES
+from server.memory.app.search import pg_validation
 
 log = logging.getLogger(__name__)
 
@@ -537,6 +538,16 @@ def _guide_proposal(
 
 async def handle_namespace_tune(input: NamespaceTuneInput) -> NamespaceTuneOutput:
     run = _Tune(input)
+    published = pg_validation.published_reads(
+        input.org,
+        [input.namespace],
+        lambda reason: run.skipped.append(f"{pg_validation.PROJECTION}: {reason}"),
+    )
+    async with published:
+        return await _tune(input, run)
+
+
+async def _tune(input: NamespaceTuneInput, run: _Tune) -> NamespaceTuneOutput:
     out = NamespaceTuneOutput(org=input.org, namespace=input.namespace, computed_at=naive_utc_now())
     org, ns = input.org, input.namespace
 

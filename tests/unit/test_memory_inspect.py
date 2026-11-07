@@ -403,6 +403,7 @@ async def test_a_row_the_authority_no_longer_serves_is_not_listed(
     """Under Postgres a row ClickHouse still shows, deleted, revised or redacted in the
     authority, is left out, and its preview is not read."""
     from server.core import pg
+    from server.memory.app.search import pg_validation
     from server.memory.store import pg_memory
 
     def located(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -414,8 +415,13 @@ async def test_a_row_the_authority_no_longer_serves_is_not_listed(
     fake = _ch(newest=located)
     fake.strict = False
     fake.install(monkeypatch, "server.identity.app.namespace_catalog")
+
+    async def published(*_: object) -> bool:
+        return False  # ClickHouse holds every commit
+
     monkeypatch.setattr(pg, "enabled", lambda: True)
     monkeypatch.setattr(pg_memory, "heads_by_keys", heads_by_keys)
+    monkeypatch.setattr(pg_validation, "admit", published)
     out = await mi.handle_memory_inspect(_inp(sample_limit=1))
     assert out.own.newest == []
     assert not fake.statements("value_preview")
@@ -521,3 +527,23 @@ def test_an_uncut_preview_is_decoded_whole_or_kept(preview: str, text: str) -> N
 
 def _boom(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
     raise RuntimeError("read failed")
+
+
+@pytest.mark.asyncio
+async def test_an_unpublished_projection_reads_on_and_says_so(
+    ch: RecordingCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under Postgres, a Postgres that does not answer the wait does not fail the report:
+    its sections are read from ClickHouse and `skipped` names the projection."""
+    from server.core import pg
+    from server.memory.app.search import pg_validation
+
+    async def down(*_: object) -> bool:
+        raise pg.PostgresUnavailableError()
+
+    monkeypatch.setattr(pg_validation, "admit", down)
+    out = await mi.handle_memory_inspect(_inp(sample_limit=1))
+    assert [s.split(": ")[:2] for s in out.skipped] == [["projection", "POSTGRES_UNAVAILABLE"]]
+    assert out.own.newest
+    # Read short of what the namespace committed, neither view is the whole of it.
+    assert not out.own.complete and not out.others.complete

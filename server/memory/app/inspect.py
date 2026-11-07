@@ -13,7 +13,12 @@ It changes nothing it reads: plain reads of the namespace's rows, ledger, direct
 guide, categories, grants and extraction policy, and no recall credit. Its one write is
 an exposure-ledger row for the rows it lists, as memory.list writes, which inside a run
 can feed the usage fold's `acted` credit. A section that cannot be read lands in
-`skipped`, never raises.
+`skipped`, never raises. Under Postgres the report starts once ClickHouse holds what
+the namespace committed (`pg_validation.published_reads`), so its counts, tags and
+categories show every committed write but a parked one, which is not waited for; as
+for a search, the wait may publish another writer's lapsed deliveries. A wait that
+runs out, or a Postgres that does not answer, is reported as `projection` in
+`skipped`.
 """
 
 from __future__ import annotations
@@ -42,6 +47,7 @@ from server.memory.api.models_inspect import (
 from server.memory.app import extraction_policy
 from server.memory.app.exposure_ledger import record_exposure
 from server.memory.app.finding_evidence import IDENTITY, revisions_for
+from server.memory.app.search import pg_validation
 from server.memory.store import inspect as store
 from server.observability.consumer import INSPECTOR_CONSUMERS
 from server.settings import settings
@@ -103,6 +109,13 @@ class _Inspect:
         self.scope = request_scope()
         self.skipped: list[str] = []
         self.category_names: dict[str, str] = {}
+        # Under Postgres, whether ClickHouse held what the namespace committed when the
+        # views were read (`published_reads`); a view read short of it is not complete.
+        self.published = True
+
+    def unpublished(self, reason: str) -> None:
+        self.published = False
+        self.skipped.append(f"{pg_validation.PROJECTION}: {reason}")
 
     async def guarded[T](self, section: str, read: Callable[[], Awaitable[T]], default: T) -> T:
         """One section's read; a failure lands in `skipped` and the default stands."""
@@ -178,7 +191,7 @@ class _Inspect:
                 )
                 for r in newest
             ]
-        out.complete = counted and len(out.newest) >= out.live_rows
+        out.complete = self.published and counted and len(out.newest) >= out.live_rows
         return out
 
     async def activity(self) -> InspectActivity:
@@ -264,6 +277,11 @@ def _record_exposure(input: MemoryInspectInput, keys: list[str]) -> None:
 
 async def handle_memory_inspect(input: MemoryInspectInput) -> MemoryInspectOutput:
     run = _Inspect(input)
+    async with pg_validation.published_reads(input.org, [input.namespace], run.unpublished):
+        return await _inspect(input, run)
+
+
+async def _inspect(input: MemoryInspectInput, run: _Inspect) -> MemoryInspectOutput:
     own_def, others_def = _DEFINITIONS[input.subject]
     # Settings first: the views name categories from it.
     settings_out = await run.settings_section()

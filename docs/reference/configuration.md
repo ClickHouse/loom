@@ -1741,7 +1741,7 @@ Opt-in tiering, applied as idempotent ALTER TABLE MODIFY TTL by server/storage/r
 | `LOOM_PG_ADMISSION_RECENT_VECTORS` | `int` | `4096` |  | Vectors of this process's recent writes kept to rule out a commit landing in another write's check without reading ClickHouse. |
 | `LOOM_PG_LEASE_MARGIN_SECONDS` | `float` | `1.0` |  | Seconds before its lease ends that a publisher stops sending, for clock drift and the time a send takes to leave the process; under Postgres, shorter than both leases (`LOOM_PG_REQUEST_LEASE_SECONDS`, `LOOM_PG_DELIVERY_LEASE_SECONDS`). |
 | `LOOM_PG_ADMISSION_HELP_ROWS` | `int` | `20` |  | Revisions a waiting admission publishes itself for a writer that stopped before publishing them; the delivery worker publishes the rest. |
-| `LOOM_PG_PROJECTION_WAIT_MS` | `int` | `2000` |  | Milliseconds an admission waits for earlier commits in its scope to reach search before answering 503 PROJECTION_BEHIND. |
+| `LOOM_PG_PROJECTION_WAIT_MS` | `int` | `2000` |  | Milliseconds an admission waits for earlier commits in its scope to reach search before answering 503 PROJECTION_BEHIND; a diagnostic report waits as long, then reads on and names `projection` in `skipped`. |
 | `LOOM_PG_REQUEST_LEASE_SECONDS` | `int` | `5` |  | Seconds the writing request holds its revisions' delivery; past it, the delivery worker or a waiting admission in the namespace publishes them instead. |
 | `LOOM_PG_DELIVERY_LEASE_SECONDS` | `int` | `30` |  | Seconds the delivery worker holds a revision's delivery before another may take it; also how long the conflict resolver sets aside a row whose flagged peer is not yet in ClickHouse. |
 | `LOOM_PG_DELIVERY_ENABLED` | `bool` | `True` |  | Background delivery of committed revisions a request did not publish. |

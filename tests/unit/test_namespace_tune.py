@@ -746,3 +746,32 @@ async def test_a_category_draft_says_what_it_does_to_the_offered_ones(world: Wor
     (p,) = _by_target(out, "namespace.category")
     assert "offers the first" not in p.limits
     assert f"extraction offers the first {full} by name" in p.rationale
+
+
+@pytest.mark.asyncio
+async def test_an_unpublished_projection_is_waited_for_once_and_said(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tune waits once for ClickHouse to publish the namespace's commits; the audit it
+    runs inside that wait does not wait again, and a wait that runs out is named in
+    `skipped` while the drafts are still built."""
+    from server.memory.app.pg_admission import ProjectionBehindError
+    from server.memory.app.search import pg_validation
+
+    waits: list[str] = []
+
+    async def behind(org: str, namespaces: Any) -> bool:
+        waits.append(org)
+        raise ProjectionBehindError()
+
+    async def audit(inp: Any) -> Any:
+        async with pg_validation.published_reads(inp.org, [inp.namespace]):
+            return SimpleNamespace(findings=world.findings, skipped=[])
+
+    monkeypatch.setattr(tune, "handle_namespace_audit", audit)
+    published = await tune.handle_namespace_tune(_inp())
+    monkeypatch.setattr(pg_validation, "admit", behind)
+    out = await tune.handle_namespace_tune(_inp())
+    assert waits == ["o"]
+    assert [s.split(": ")[:2] for s in out.skipped] == [["projection", "PROJECTION_BEHIND"]]
+    assert out.proposals == published.proposals

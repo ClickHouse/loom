@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import asynccontextmanager, nullcontext
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from server.core import pg
-from server.memory.app.pg_admission import wait_searchable
+from server.core.ch import sequential_reads
+from server.memory.app.pg_admission import ProjectionBehindError, wait_searchable
 from server.memory.app.search.telemetry import record_page
 from server.memory.app.set_chunks import set_chunk_identities
 from server.memory.domain.search_types import hit_row_key
@@ -45,6 +48,48 @@ async def admit(
     for namespace, through in sorted(behind.items()):
         await wait_searchable(org, namespace, through, deadline=deadline, owed=owed)
     return bool(behind)
+
+
+# The wait's name in a report's `skipped` lines and, for audit and validate, coverage.
+PROJECTION = "projection"
+# True inside a report's `published_reads`: a report nested in it waits no second time.
+_published: ContextVar[bool] = ContextVar("pg_published_reads", default=False)
+
+
+_UNPUBLISHED = {
+    ProjectionBehindError.code: "ClickHouse has not yet published every write the "
+    "namespace committed; the report reads what it holds",
+    pg.PostgresUnavailableError.code: "the Postgres authority did not answer; the report "
+    "reads what ClickHouse holds, which may miss committed writes",
+}
+
+
+@asynccontextmanager
+async def published_reads(
+    org: str, namespaces: Sequence[str], skip: Callable[[str], None] | None = None
+) -> AsyncIterator[None]:
+    """A report's reads of ClickHouse under Postgres: they start once ClickHouse holds
+    every revision committed in `namespaces` so far (`admit`; a parked delivery is not
+    waited for) and read sequentially when anything was behind. Past the wait, or with
+    Postgres down, the call fails with that 503, or, given `skip`, reads what ClickHouse
+    holds and reports why through `skip`. A report run inside another's reads (tune's
+    audit) waits no second time. On ClickHouse, the reads as they are."""
+    if _published.get():
+        yield
+        return
+    try:
+        behind = await admit(org, namespaces)
+    except (ProjectionBehindError, pg.PostgresUnavailableError) as e:
+        if skip is None:
+            raise
+        skip(f"{e.code}: {_UNPUBLISHED[e.code]}")
+        behind = True
+    token = _published.set(True)
+    try:
+        with sequential_reads() if behind else nullcontext():
+            yield
+    finally:
+        _published.reset(token)
 
 
 def _judged_by_authority(hit: Any) -> bool:

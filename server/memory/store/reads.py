@@ -1539,7 +1539,9 @@ async def live_revisions(
     The hash is the one memory.get serves (`_served_hashes`), for a row whose value is at
     most `hash_max_bytes`. A high-sensitivity row gets none: a short secret's hash can be
     guessed, and these reports are unaudited reads, so it is left out as memory.list
-    leaves it out."""
+    leaves it out. Under Postgres a row is cited only while it is its key's live head at
+    the version read, in the same redaction state, so a delete, a rewrite or a redaction
+    ClickHouse has not published is not cited."""
     if not memory_ids and not identities:
         return []
     ch = ch or _default_client()
@@ -1556,6 +1558,7 @@ async def live_revisions(
     rows = await ch.query_all(
         f"""
         SELECT memory_key, toString(memory_id) AS id, version, sensitivity, value_len,
+               redacted_at IS NOT NULL AS redacted,
                agent, user_id, session_id, memory_type, source_class, updated_at
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}} AND tombstoned_at IS NULL
@@ -1567,6 +1570,9 @@ async def live_revisions(
         """,
         params=params,
     )
+    heads = await _authority_heads(org, namespace, rows)
+    if heads is not None:
+        rows = [r for r in rows if _served(r, heads.get(_row_key(r)))]
     # 0 cites no hash; otherwise every row but a high one or one over the bound.
     hashable = (
         []
@@ -1575,39 +1581,69 @@ async def live_revisions(
             r for r in rows if r["sensitivity"] != "high" and int(r["value_len"]) <= hash_max_bytes
         ]
     )
-    hashes = await _served_hashes(org, namespace, hashable, hash_max_bytes, ch)
+    hashes = await _served_hashes(org, namespace, hashable, hash_max_bytes, ch, heads)
     for r in rows:
         r["memory_id"] = r.pop("id")
-        del r["sensitivity"], r["value_len"]
+        del r["sensitivity"], r["value_len"], r["redacted"]
         r["content_sha256"] = hashes.get(_revision_key(r), "")
     return rows
 
 
+def _row_key(r: dict[str, Any]) -> RowKey:
+    return (r["agent"], r["user_id"], r["session_id"], r["memory_key"])
+
+
 def _revision_key(r: dict[str, Any]) -> RevisionKey:
-    return (r["agent"], r["user_id"], r["session_id"], r["memory_key"], r["version"])
+    return (*_row_key(r), r["version"])
+
+
+def _served(r: dict[str, Any], head: dict[str, Any] | None) -> bool:
+    """Whether the authority's `head` of the ClickHouse row `r`'s key serves it: the same
+    version in the same redaction state, as `lifecycle.served_rows` judges a listed row."""
+    return (
+        head is not None
+        and int(head["version"]) == int(r["version"])
+        and (head.get("redacted_at") is not None) == bool(r["redacted"])
+    )
+
+
+async def _authority_heads(
+    org: str, namespace: str, rows: list[dict[str, Any]]
+) -> dict[RowKey, dict[str, Any]] | None:
+    """The Postgres authority's head of each row's key; None on the ClickHouse authority."""
+    if not pg.enabled():
+        return None
+    heads = await pg_memory.heads_by_keys([(org, namespace, *_row_key(r)) for r in rows])
+    return {k[2:]: h for k, h in heads.items()}
 
 
 async def _served_hashes(
-    org: str, namespace: str, revisions: list[dict[str, Any]], max_bytes: int, ch: _CHClient
+    org: str,
+    namespace: str,
+    revisions: list[dict[str, Any]],
+    max_bytes: int,
+    ch: _CHClient,
+    heads: dict[RowKey, dict[str, Any]] | None,
 ) -> dict[RevisionKey, str]:
     """The hash memory.get serves for each revision, by its row key and version: the hash
     of the value it serves, not the stored column, which can differ for an object (the
     JSON column drops a null field). The value is read by each row's whole sorting key
     (the primary index prunes to their granules), hashed here and never returned. Under
-    Postgres the value is the authority's head's, at the version ClickHouse selected. A
-    row revised between the two reads gets none rather than another revision's."""
+    Postgres (`heads`) the value is the authority's head's, which `live_revisions` kept
+    only at the version ClickHouse selected. On ClickHouse, a row revised between the two
+    reads gets none rather than another revision's."""
     if not revisions:
         return {}
-    keys = [(r["agent"], r["user_id"], r["session_id"], r["memory_key"]) for r in revisions]
-    if pg.enabled():
-        # memory.get serves the authority's head, whose value keeps a null field.
-        heads = await pg_memory.heads_by_keys([(org, namespace, *k) for k in keys])
-        wanted = {_revision_key(r) for r in revisions}
+    if heads is not None:
+        # memory.get serves the authority's head, whose value keeps a null field; every
+        # revision here is its head's version (`_served`).
         return {
-            rk: served_content_sha256(parse_memory_value(h.get("value")))
-            for k, h in heads.items()
-            if (rk := (*k[2:], int(h["version"]))) in wanted
+            _revision_key(r): served_content_sha256(
+                parse_memory_value(heads[_row_key(r)].get("value"))
+            )
+            for r in revisions
         }
+    keys = [_row_key(r) for r in revisions]
     rows = await ch.query_all(
         f"""
         SELECT agent, user_id, session_id, memory_key, version, {SERVED_VALUE} AS value

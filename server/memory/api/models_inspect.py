@@ -102,7 +102,9 @@ class InspectView(BaseModel):
     last_updated_at: datetime | None = None
     # The newest rows, at most `sample_limit`.
     newest: list[InspectRow] = Field(default_factory=list)
-    # True when `newest` lists every row of the view and the view's counts were read.
+    # True when `newest` lists every row of the view and the view's counts were read, and,
+    # under Postgres, ClickHouse held what the namespace committed (else `skipped` names
+    # `projection`).
     complete: bool = True
 
 

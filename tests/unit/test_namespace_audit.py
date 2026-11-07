@@ -796,6 +796,7 @@ def _revision(key: str, version: int, *, agent: str = "writer", mid: str = "") -
         "version": version,
         "sensitivity": "",
         "value_len": 10,
+        "redacted": False,
         "agent": agent,
         "user_id": "-",
         "session_id": "-",
@@ -1651,3 +1652,67 @@ async def test_a_procedure_read_over_mcp_is_left_out_of_the_object_store_gauge()
     # The hot key the gauge samples is the plain fact, named from args.
     exact = _finding(audit, "exact_key_store")
     assert exact.count == 21 and exact.samples == [{"memory_key": "team/fact", "reads": 21}]
+
+
+@pytest.mark.asyncio
+async def test_an_unpublished_projection_reads_on_and_marks_the_report_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under Postgres, a wait for ClickHouse to publish the namespace's commits that runs
+    out does not fail the report: it reads what ClickHouse holds, sequentially, and names
+    the projection in `skipped` and `coverage`."""
+    from server.core.ch import sequential_reads_active
+    from server.memory.app.pg_admission import ProjectionBehindError
+    from server.memory.app.search import pg_validation
+
+    async def behind(*_: object, **__: object) -> bool:
+        raise ProjectionBehindError("behind")
+
+    seen: list[bool] = []
+    run_checks = na.run_checks
+
+    async def checks(audit: Any, codes: Any) -> None:
+        seen.append(sequential_reads_active())
+        await run_checks(audit, codes)
+
+    monkeypatch.setattr(pg_validation, "admit", behind)
+    monkeypatch.setattr(na, "run_checks", checks)
+    out, _ = await _run(monkeypatch, {M_LIVE: _live(10, 1)})
+    assert seen == [True]
+    assert "projection" in out.coverage.rules_skipped and not out.coverage.complete
+    assert any(s.startswith("projection: PROJECTION_BEHIND: ") for s in out.skipped)
+
+
+@pytest.mark.asyncio
+async def test_a_postgres_down_at_the_citation_read_leaves_the_findings_uncited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under Postgres the citation read checks each row against the authority's heads; a
+    Postgres that does not answer there leaves every finding uncited and names the
+    evidence read in `skipped`, and the report still answers."""
+    from server.core import pg
+    from server.memory.app.search import pg_validation
+    from server.memory.store import pg_memory
+
+    async def published(*_: object) -> bool:
+        return False
+
+    async def down(*_: object, **__: object) -> dict[Any, Any]:
+        raise pg.PostgresUnavailableError()
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_validation, "admit", published)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", down)
+    out, _ = await _run(
+        monkeypatch,
+        {
+            M_LIVE: _live(10, 1),
+            M_OVER: _value_rows(3, 3_000_000, ["a", "b"]),
+            M_CITE: [_revision("a", 1), _revision("b", 2)],
+        },
+        sample_limit=2,
+    )
+    f = _finding(out, "oversized_values")
+    assert f.count == 3 and f.evidence == []
+    assert "evidence" in out.coverage.rules_skipped and not out.coverage.complete
+    assert "evidence: PostgresUnavailableError" in out.skipped

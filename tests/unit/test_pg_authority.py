@@ -5332,29 +5332,112 @@ def test_a_commit_owes_the_retirement_only_over_a_live_embedded_head() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_findings_citation_hashes_the_value_the_authority_serves(
+async def test_a_report_waits_once_for_the_projection_and_reads_sequentially(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Under Postgres memory.get serves the authority's head, whose object keeps a null
-    field the JSON column drops: a citation hashes that value, by the head's version. A
-    revision the authority has since replaced (made 'high', rewritten) cites none."""
+    """A report's reads wait for ClickHouse to publish what the namespace committed, read
+    sequentially when it was behind, and a report run inside another's reads (tune's
+    audit) waits no second time."""
+    from server.core.ch import sequential_reads_active
+    from server.memory.app.search import pg_validation
+
+    calls: list[tuple[str, list[str]]] = []
+
+    async def admit(org: str, namespaces: list[str]) -> bool:
+        calls.append((org, list(namespaces)))
+        return True
+
+    monkeypatch.setattr(pg_validation, "admit", admit)
+    async with pg_validation.published_reads("o", ["n"]):
+        assert sequential_reads_active()
+        async with pg_validation.published_reads("o", ["n"]):
+            assert sequential_reads_active()
+    assert calls == [("o", ["n"])]
+    assert not sequential_reads_active()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unpublished", ["behind", "down"])
+async def test_a_report_without_a_skip_fails_on_an_unpublished_projection(
+    monkeypatch: pytest.MonkeyPatch, unpublished: str
+) -> None:
+    """Past the wait, or with Postgres down, a caller with nowhere to say so (the
+    inventory) gets the 503; one with a `skip` reads on and is told why."""
+    from server.core import pg
+    from server.core.ch import sequential_reads_active
+    from server.memory.app.pg_admission import ProjectionBehindError
+    from server.memory.app.search import pg_validation
+
+    error = ProjectionBehindError() if unpublished == "behind" else pg.PostgresUnavailableError()
+
+    async def admit(*_: object) -> bool:
+        raise error
+
+    monkeypatch.setattr(pg_validation, "admit", admit)
+    with pytest.raises(type(error)):
+        async with pg_validation.published_reads("o", ["n"]):
+            pass
+    reasons: list[str] = []
+    async with pg_validation.published_reads("o", ["n"], reasons.append):
+        assert sequential_reads_active()
+    assert [r.split(":")[0] for r in reasons] == [error.code]
+
+
+@pytest.mark.asyncio
+async def test_a_findings_citation_is_the_head_the_authority_serves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under Postgres a report cites a ClickHouse row only while it is its key's live head
+    at the version read, in the same redaction state, and hashes the value memory.get serves
+    there, whose object keeps a null field the JSON column drops. A row the authority has
+    rewritten, deleted or redacted since is not cited."""
     from server.core import pg
     from server.core.hashing import served_content_sha256
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.store import reads
 
-    async def _heads(keys: list[Any], **_: object) -> dict[Any, Any]:
-        assert keys == [("o", "n", "a", "-", "-", "k"), ("o", "n", "a", "-", "-", "moved")]
+    def _row(key: str, version: int, *, redacted: bool = False) -> dict[str, Any]:
         return {
-            keys[0]: {"version": 3, "value": '{"a": null, "b": 1}'},
-            keys[1]: {"version": 9, "value": "the newer value"},
+            "memory_key": key,
+            "id": str(uuid.uuid5(uuid.NAMESPACE_OID, key)),
+            "version": version,
+            "sensitivity": "",
+            "value_len": 10,
+            "redacted": redacted,
+            "agent": "a",
+            "user_id": "-",
+            "session_id": "-",
+            "memory_type": "semantic",
+            "source_class": "tool",
+            "updated_at": datetime(2026, 1, 1),
+        }
+
+    class _CH:
+        async def query_all(self, sql: str, **_: object) -> list[dict[str, Any]]:
+            return [_row("k", 3), _row("moved", 4), _row("gone", 1), _row("scrubbed", 2)]
+
+    async def _heads(keys: list[Any], **_: object) -> dict[Any, Any]:
+        assert [k[-1] for k in keys] == ["k", "moved", "gone", "scrubbed"]
+        return {
+            keys[0]: {"version": 3, "value": '{"a": null, "b": 1}', "redacted_at": None},
+            keys[1]: {"version": 9, "value": "the newer value", "redacted_at": None},
+            keys[3]: {"version": 2, "value": "[redacted]", "redacted_at": datetime(2026, 1, 2)},
         }
 
     monkeypatch.setattr(pg, "enabled", lambda: True)
     monkeypatch.setattr(pg_memory, "heads_by_keys", _heads)
-    revision = {"agent": "a", "user_id": "-", "session_id": "-", "memory_key": "k"}
-    moved = {**revision, "memory_key": "moved", "version": 4}
-    hashes = await reads._served_hashes("o", "n", [{**revision, "version": 3}, moved], 100, ch=None)
-    assert hashes == {("a", "-", "-", "k", 3): served_content_sha256({"a": None, "b": 1})}
+    cited = await reads.live_revisions(
+        "o",
+        "n",
+        scope=WHOLE_NAMESPACE,
+        memory_ids=[],
+        identities=[("a", "-", "-", k) for k in ("k", "moved", "gone", "scrubbed")],
+        hash_max_bytes=100,
+        ch=_CH(),  # type: ignore[arg-type]
+    )
+    assert [(r["memory_key"], r["version"]) for r in cited] == [("k", 3)]
+    assert cited[0]["content_sha256"] == served_content_sha256({"a": None, "b": 1})
+    assert "redacted" not in cited[0]
 
 
 @pytest.mark.asyncio

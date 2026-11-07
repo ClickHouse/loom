@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable
-from contextlib import nullcontext
 from datetime import datetime
 from typing import cast, get_args
 
@@ -21,7 +20,6 @@ from server.auth import sharing
 from server.auth.authz import check_authorized, is_org_readable_code_namespace
 from server.auth.context import current_auth
 from server.auth.fail_closed import note_answered_unverified
-from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.errors import BACKEND_NOT_NOW
 from server.embedding.embedder import embedder_is_fake
@@ -63,11 +61,7 @@ _COLUMN: dict[ObservedPopulation, IdentityColumn] = {
 
 
 async def handle_namespace_inventory(input: NamespaceInventoryInput) -> NamespaceInventoryOutput:
-    # Under Postgres the whole inventory waits until ClickHouse holds what was committed in
-    # the namespace (503 PROJECTION_BEHIND past the bound), then reads sequentially, as a
-    # search does.
-    behind = await pg_validation.admit(input.org, [input.namespace])
-    with sequential_reads() if behind else nullcontext():
+    async with pg_validation.published_reads(input.org, [input.namespace]):
         return await _inventory(input)
 
 
