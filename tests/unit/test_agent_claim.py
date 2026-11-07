@@ -335,12 +335,22 @@ def _refresh(c: TestClient, refresh_token: str) -> Any:
 
 
 def test_a_claim_ends_the_tokens_and_sessions_the_code_started(world) -> None:
-    from server.auth.jwt import mint_token, verify_token
+    from server.auth.jwt import TokenError, mint_token, verify_token
 
     c = TestClient(oauth_app())
     session = _code_grant(c)
     dashboard = mint_token(subject=_LEGACY, org="dev", namespaces=[_LEGACY], roles=["writer"])
     issued = verify_token(dashboard).issued_at
+    # A personal token that session made, under a subject of its own.
+    personal = mint_token(
+        subject=f"sa:{_LEGACY}-abc123",
+        org="dev",
+        namespaces=[_LEGACY],
+        roles=["writer"],
+        creator=_LEGACY,
+        issued_at=issued,
+    )
+    verify_token(personal)
     assert not revocation.is_revoked(_LEGACY, issued_at=issued)
     # The session refreshes before the claim, and the rotated token is the one held.
     refreshed = _refresh(c, session["refresh_token"])
@@ -350,6 +360,8 @@ def test_a_claim_ends_the_tokens_and_sessions_the_code_started(world) -> None:
         _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY).status_code == 200
     )
     assert revocation.is_revoked(_LEGACY, issued_at=issued)
+    with pytest.raises(TokenError, match="creator"):
+        verify_token(personal)
     r = _refresh(c, refreshed.json()["refresh_token"])
     assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
     # The page answers once every replica is past the cutoff, so the claimer's

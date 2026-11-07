@@ -371,16 +371,13 @@ async def _audit(org: str, namespace: str, *, confirmed: bool = True) -> list[st
         others = await _other_grants(org, namespace)
     except Exception as e:  # noqa: BLE001 — the claim is written; it is audited without them
         log.warning("agent claim of %s/%s: listing its grants failed: %r", org, namespace, e)
-    try:
-        await audit.emit(
-            "auth.agent_claimed",
-            org=org,
-            namespace=namespace,
-            actor=namespace,
-            subject={"other_grants": others, "confirmed": confirmed},
-        )
-    except Exception as e:  # noqa: BLE001 — the claim is written; the page must still answer
-        log.warning("agent claim of %s/%s: the audit row failed: %r", org, namespace, e)
+    await audit.emit(  # never raises
+        "auth.agent_claimed",
+        org=org,
+        namespace=namespace,
+        actor=namespace,
+        subject={"other_grants": others, "confirmed": confirmed},
+    )
     return others
 
 

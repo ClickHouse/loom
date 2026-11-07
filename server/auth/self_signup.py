@@ -331,9 +331,9 @@ def _claimable_namespace(name: str) -> str:
 # ============================================================
 
 AGENT_NAMESPACE_PREFIX = "agent-"
-# An agent namespace's description when its sign-up names no purpose, and the
-# default rows signed up earlier carry, which a claim replaces with it.
+# The description when an agent's sign-up names no purpose.
 AGENT_DESCRIPTION = "Created via agent self-signup."
+# The default of rows signed up before the claim page; a claim replaces it.
 AGENT_DESCRIPTION_UNCLAIMED = "Created via agent self-signup; unclaimed."
 # An agent's own token row (`loom.service_accounts`) is named this plus the
 # agent's name; a person's token cannot take such a name.
