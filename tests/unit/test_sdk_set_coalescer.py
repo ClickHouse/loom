@@ -693,32 +693,6 @@ async def test_close_waits_for_a_first_set_queued_behind_a_flush(agent: Agent) -
     await asyncio.gather(*earlier)
 
 
-async def test_a_cancelled_queued_flush_keeps_the_next_window_behind_the_one_ahead(
-    agent: Agent,
-) -> None:
-    # The first flush holds an unchecked set of k it sends again; the second, queued, is
-    # cancelled. The next window's set of k still waits for the first flush.
-    t: Any = agent.transport
-    t.bulk_gate = asyncio.Event()
-    t.value_verdicts = {"old": "blacklist_unchecked"}
-    first = [asyncio.create_task(agent.memory.set(k, v)) for k, v in [("a", "a"), ("b", "b")]]
-    first += [asyncio.create_task(agent.memory.set(k, v)) for k, v in [("k", "old"), ("x", "x")]]
-    await _settle()
-    _close_windows(agent)
-    second = [asyncio.create_task(agent.memory.set(k, k)) for k in "efgh"]
-    await _settle()
-    _close_windows(agent)
-    co: Any = agent.memory._coalescer
-    (queued,) = co._flushes.values()
-    queued.cancel()
-    await _settle()
-    newer = asyncio.create_task(agent.memory.set("k", "new"))
-    await _settle()
-    t.bulk_gate.set()
-    await asyncio.gather(*first, *second, newer, return_exceptions=True)
-    assert _landed(t, "k") == ["old", "new"]
-
-
 async def test_a_first_set_its_caller_cancels_still_lands_before_the_windows_flush(
     agent: Agent,
 ) -> None:
@@ -748,4 +722,37 @@ async def test_cancelling_a_flush_sets_call_leaves_the_writes_going(agent: Agent
     waiting.cancel()
     await _settle()
     t.bulk_gate.set()
+    assert all(r["version"] for r in await asyncio.gather(*sets))
+
+
+async def test_close_waits_for_sets_made_while_it_waits(agent: Agent) -> None:
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    earlier = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
+    await _settle()
+    closing = asyncio.create_task(agent.close())
+    await _settle()
+    late = [asyncio.create_task(agent.memory.set(k, k)) for k in "fghi"]
+    await _settle()
+    t.bulk_gate.set()
+    await closing
+    assert all(r["version"] for r in await asyncio.gather(*earlier, *late))
+
+
+async def test_a_cancelled_close_lets_the_writes_land_before_the_transport_closes(
+    agent: Agent,
+) -> None:
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    sets = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
+    await _settle()
+    closing = asyncio.create_task(agent.close())
+    await _settle()
+    closing.cancel()
+    await _settle()
+    assert not t.closed
+    t.bulk_gate.set()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    assert t.closed
     assert all(r["version"] for r in await asyncio.gather(*sets))

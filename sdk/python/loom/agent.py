@@ -175,6 +175,7 @@ class Agent:
 
         base_url, api_key, auth = _credentials(base_url, api_key, profile)
 
+        self._timeout_s = float(timeout_s)
         self.transport = Transport(
             base_url=base_url,
             api_key=api_key,
@@ -539,4 +540,7 @@ class Agent:
             if self.ambient_run is not None:
                 await self.ambient_run.complete(failed=failed)
         finally:
+            # A close() cancelled while sets are still going out lets them land, up to
+            # one request's timeout, before the pool closes under them.
+            await self.memory._wait_for_sets(self._timeout_s)
             await self.transport.close()  # the pool closes even when the flush fails
