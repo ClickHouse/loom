@@ -482,6 +482,11 @@ def test_a_recorded_meetings_transcript_and_template_are_noise(
             ("Summary",),
             "The team reviewed the fallback list.",
         ),
+        (
+            "Planner sync - 2026-03-04 10:00 CET - Transcript.docx",
+            ("Planner sync - 2026-03-04 10:00 CET - Transcript", "Summary"),
+            "The team reviewed the fallback list.",
+        ),
         ("Planner sync | 2026-03-04 10:00 CET | Transcript", ("Summary",), "The team met."),
         ("Planner sync 2026-03-04 10:00 CET: Transcript", ("Summary",), "The team met."),
         # a clock time without a transcript or notes-by mark names no recording

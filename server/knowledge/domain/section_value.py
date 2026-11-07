@@ -143,6 +143,7 @@ _TRANSCRIPT_MARK = re.compile(
     r"(?:^|[\u2013\u2014|:]|\s-)\s*transcript(?:\s*&\s*notes)?(?:\s*(?:\.\w+)?$|\s*[\u2013\u2014|:]|\s+-)",
     re.IGNORECASE,
 )
+_EXTENSION = re.compile(r"\.\w+$")
 _NOTES_BY_MARK = re.compile(r"\bnotes by\b", re.IGNORECASE)
 # A transcript's segment (a clock-time heading such as "00:12:30"), the transcript itself
 # ("Transcript", "Planner sync - Transcript", "Transcription ended after ...") and the
@@ -278,8 +279,13 @@ def _below_title(name: str, section_path: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _same(heading: str, name: str) -> bool:
-    # Words only: an export may turn the title's hyphens into dashes.
-    return re.findall(r"\w+", heading.casefold()) == re.findall(r"\w+", name.casefold())
+    # Words only: an export may turn the title's hyphens into dashes. An upload's title is
+    # its file name, whose extension the heading leaves out.
+    return _words(heading) in (_words(name), _words(_EXTENSION.sub("", name)))
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"\w+", text.casefold())
 
 
 def _decides(line: str, notes: bool) -> bool:
