@@ -498,8 +498,10 @@ async def revoke_repo_maintainer(
         await _read_registry_now(client)
     if repo_of(org, namespace) != repo:
         raise GrantBusyError("the repository's branches changed; retry shortly")
-    sources = _branches(org, repo) if repo is not None else {}
-    own = sources.get(namespace, "")
+    if repo is None:
+        return 0
+    sources = _branches(org, repo)
+    own = sources[namespace]
     branches = [b for b, source in sources.items() if b != namespace and _reaches(own, source)]
     if not branches:
         return 0
