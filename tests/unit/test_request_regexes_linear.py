@@ -50,7 +50,7 @@ from server.tracker.api.models import (
     TrackerSimilarInput,
     checkable_frames,
 )
-from server.tracker.domain import defect_answer, similar
+from server.tracker.domain import bisect, defect_answer, similar
 
 # A run this long takes a quadratic pattern well past the 8x bound, and the
 # whole file stays within a few seconds.
@@ -223,6 +223,9 @@ CASES: list[tuple[str, Callable[[str], object], str, str]] = [
     # Per-text work done once, not once per match.
     ("facets.extract_code_facets hex runs", facets.extract_code_facets, "", "deadbee "),
     ("prompts.amount_candidates", _amounts, "", "Ab 1 km "),
+    ("bisect.report_text unclosed comments", bisect.report_text, "", "<!--"),
+    ("bisect.report_text unpaired markers", bisect.report_text, "", "<!-- a -->"),
+    ("bisect.report_text unpaired start markers", bisect.report_text, "", "<!-- a:start -->"),
     ("forget_requests.forget_sentences", _forget, "", "forget that I like jazz. "),
 ]
 
