@@ -127,7 +127,7 @@ def require_real_embedder(control_plane_url: str) -> None:
 
 
 @pytest_asyncio.fixture
-async def agent(control_plane_url: str, _seed_test_api_key: None):
+async def agent(control_plane_url: str):
     """A Loom Agent in a unique namespace of `test-org`, authenticated with the
     `LOOM_API_KEY` the root conftest seeds for every test (or the caller's own)."""
     from loom import Agent
