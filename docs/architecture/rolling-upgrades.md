@@ -348,7 +348,8 @@ schema. These rules keep that safe. The operator procedure is in
     that to the `.docx` files. N+1 may take `docx` by default. This departs from rule 3
     the way rule 28 does for a new source kind: holding `add` back a release would hold
     back every folder of `.docx` files, while the cost falls on the sources a maintainer
-    opts in, ends with the rollout, and loses nothing.
+    opts in, ends with the rollout, and loses nothing. The mixed-version gate does not
+    check this rule.
 
 ## What checks them
 
