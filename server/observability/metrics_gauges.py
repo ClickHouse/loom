@@ -817,7 +817,7 @@ def _register_code_tier_gauges(meter: Any) -> None:
                 from server.observability.state_inputs import state_inputs
 
                 failing, lag = code_tier_series(state_inputs().failing_code_tiers())
-                points = failing if series == "failing" else lag
+                points = {"failing": failing, "lag": lag}[series]
             except Exception:  # noqa: BLE001 — a gauge reading must not fail export
                 return []
             return [Observation(v, attributes=a) for v, a in points]
