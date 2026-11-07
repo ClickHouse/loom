@@ -27,7 +27,7 @@ export function isClientId(v: string | null): v is ClientId {
 }
 
 // Clients that speak MCP only over stdio — need the npx mcp-remote shim to
-// bridge to a remote HTTP MCP server. Mirrors server/cli/install.py _mcp_entry.
+// bridge to a remote HTTP MCP server. Mirrors server/identity/app/token_clients.py.
 const STDIO_VIA_NPX: ReadonlySet<ClientId> = new Set(["claude-desktop", "zed", "cline"]);
 
 // Coding agents mount the `coding` toolset: 19 tools, where the deployment default `core`
@@ -79,12 +79,9 @@ interface FormattedMcpConfig {
   envLines?: string;
 }
 
-/** Build an MCP config block for a client — the same entry and command as the
- *  `clients` the server's token mint returns for API callers. The dashboard builds
- *  it here because the checklist's connect line and the result dialog need only the
- *  token and the URL (which an answer from the previous build's replica lacks the
- *  `clients` of), and one fixture, `clientSetups.fixture.json`, checked from both
- *  sides, keeps the two alike.
+/** Build an MCP config block for a client. Built here as well as by the server's
+ *  mint, because an answer from the previous build has no `clients`;
+ *  `clientSetups.fixture.json` keeps the two alike.
  *  For Claude Code the block is the project-scoped `.mcp.json` form and
  *  `command` is the `claude mcp add` one-liner (user scope) — the two places
  *  Claude Code actually reads. For Codex the block is `[mcp_servers.loom]`,
@@ -139,7 +136,7 @@ export function formatMcpConfig(args: { client: ClientId; token: string; mcpUrl:
   return out;
 }
 
-/** What the Setup dialog shows in its config box: the client's own file text
+/** What the token dialog shows in its config box: the client's own file text
  *  when the file is not JSON, else the JSON block. */
 export function configPreviewText(cfg: FormattedMcpConfig): string {
   return cfg.fileText ?? JSON.stringify(cfg.block, null, 2);

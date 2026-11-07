@@ -141,3 +141,18 @@ async def test_a_subject_with_no_aliases_lists_its_own_rows_only(
     rows = await _list_mine(monkeypatch, fake)
     assert set(rows) == {other}
     assert fake.subs[0] == [other]
+
+
+@pytest.mark.asyncio
+async def test_visits_are_read_by_the_spellings_they_are_written_under() -> None:
+    # Grants match in any case; visits by the exact spellings, which keeps the key prune.
+    seen: dict = {}
+
+    class _CH:
+        async def query_all(self, sql, params=None):
+            seen.update(params)
+            return []
+
+    await membership._membership_rows(_CH(), ORG, ["Kim@Acme.dev", "kim"])
+    assert seen["subs"] == ["kim@acme.dev", "kim"]
+    assert seen["visitors"] == ["Kim@Acme.dev", "kim"]

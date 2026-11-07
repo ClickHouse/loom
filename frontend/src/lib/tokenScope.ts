@@ -20,8 +20,6 @@ export interface ScopeRepo {
 }
 
 export interface TokenReadScope {
-  /** Where the token saves: memories, captured sessions, working notes. */
-  home: string;
   /** Memory / tracker namespaces the token reads (active membership). */
   namespaces: string[];
   /** Repositories the token reads, grouped from their branch namespaces. */
@@ -50,15 +48,10 @@ function groupRepos(rows: MyNamespaceEntry[], facts: Record<string, RepoFacts>):
   return Array.from(by.values()).sort((a, b) => a.repo.localeCompare(b.repo));
 }
 
-/** What a token that reads everything its owner belongs to reads, saving to
- *  `home`. `mine` is the caller's `namespace.list_mine` rows (null while
+/** What a token that reads everything its owner belongs to reads. `mine` is the caller's `namespace.list_mine` rows (null while
  *  loading); `repos` the `code.repos` rows, which carry each repository's
  *  classification (null when the caller may not list them). */
-export function everythingScope(
-  mine: MyNamespaceEntry[] | null,
-  repos: RepoFacts[] | null,
-  home: string,
-): TokenReadScope {
+export function everythingScope(mine: MyNamespaceEntry[] | null, repos: RepoFacts[] | null): TokenReadScope {
   const rows = mine ?? [];
   const facts: Record<string, RepoFacts> = Object.fromEntries((repos ?? []).map((r) => [r.namespace, r]));
   const active = rows.filter((r) => r.status !== "pending");
@@ -67,9 +60,7 @@ export function everythingScope(
   const restricted = codeRows.filter((r) => facts[r.namespace]?.classification === "restricted");
   const readableCode = codeRows.filter((r) => facts[r.namespace]?.classification !== "restricted");
   const namespaces = active.filter((r) => r.kind !== "code").map((r) => r.namespace);
-  if (home && !namespaces.includes(home)) namespaces.unshift(home);
   return {
-    home,
     namespaces,
     repositories: groupRepos(readableCode, facts),
     excludedRestricted: groupRepos(restricted, facts),

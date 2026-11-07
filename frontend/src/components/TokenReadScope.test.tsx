@@ -11,7 +11,6 @@ describe("TokenReadScopePanel", () => {
     render(
       <TokenReadScopePanel
         scope={{
-          home: "me",
           namespaces: ["me", "team"],
           repositories: [
             {
@@ -39,7 +38,7 @@ describe("TokenReadScopePanel", () => {
   it("says pending joins become readable without a new token", () => {
     render(
       <TokenReadScopePanel
-        scope={{ home: "me", namespaces: ["me"], repositories: [], excludedRestricted: [], pending: ["shared"] }}
+        scope={{ namespaces: ["me"], repositories: [], excludedRestricted: [], pending: ["shared"] }}
         included={new Set()}
         onToggleRepo={noop}
       />,
@@ -50,7 +49,6 @@ describe("TokenReadScopePanel", () => {
   it("a restricted repository is a checkbox; ticked, it moves into the read set with a lock", () => {
     const onToggle = vi.fn();
     const scope = {
-      home: "me",
       namespaces: ["me"],
       repositories: [],
       excludedRestricted: [{ repo: "org/private", branches: [{ namespace: "code-private", branch: "master" }] }],

@@ -24,13 +24,11 @@ const repos = [
 ];
 
 describe("everythingScope", () => {
-  it("reads every active membership; the home pick only sets where it writes", () => {
+  it("reads every active membership, repositories grouped by repository", () => {
     const s = everythingScope(
       [row("me", "memory"), row("team", "memory"), row("code-ch", "code"), row("code-ch-26-8", "code")],
       repos,
-      "me",
     );
-    expect(s.home).toBe("me");
     expect(s.namespaces).toEqual(["me", "team"]);
     expect(s.repositories).toEqual([
       {
@@ -46,7 +44,7 @@ describe("everythingScope", () => {
   });
 
   it("a restricted repository the person belongs to is listed as excluded, never as readable", () => {
-    const s = everythingScope([row("me", "memory"), row("code-private", "code")], repos, "me");
+    const s = everythingScope([row("me", "memory"), row("code-private", "code")], repos);
     expect(s.repositories).toEqual([]);
     expect(s.excludedRestricted).toEqual([
       { repo: "org/private", branches: [{ namespace: "code-private", branch: "master" }] },
@@ -54,19 +52,13 @@ describe("everythingScope", () => {
   });
 
   it("pending joins are neither readable nor excluded; they are pending", () => {
-    const s = everythingScope([row("me", "memory"), row("shared", "memory", "pending")], null, "me");
+    const s = everythingScope([row("me", "memory"), row("shared", "memory", "pending")], null);
     expect(s.namespaces).toEqual(["me"]);
     expect(s.pending).toEqual(["shared"]);
   });
 
-  it("the home namespace is always in the read set, even before the list loads", () => {
-    const s = everythingScope(null, null, "me");
-    expect(s.namespaces).toEqual(["me"]);
-    expect(s.repositories).toEqual([]);
-  });
-
   it("a code namespace with no repo facts keeps its identifier and counts as readable", () => {
-    const s = everythingScope([row("code-x", "code")], null, "me");
+    const s = everythingScope([row("code-x", "code")], null);
     expect(s.repositories).toEqual([{ repo: "code-x", branches: [{ namespace: "code-x", branch: "code-x" }] }]);
   });
 });

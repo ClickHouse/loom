@@ -72,13 +72,13 @@ export function Setup() {
 
   // The tokens list is owned here so the Connect section and the checklist
   // read the same fetch (a list is one request).
-  const [sa, setSa] = useState<TokenEntry[] | null>(null);
-  const loadSa = () => {
+  const [tokens, setTokens] = useState<TokenEntry[] | null>(null);
+  const loadTokens = () => {
     listTokens()
-      .then(setSa)
-      .catch(() => setSa([]));
+      .then(setTokens)
+      .catch(() => setTokens([]));
   };
-  useEffect(loadSa, []);
+  useEffect(loadTokens, []);
   const [lastMint, setLastMint] = useState<{ token: string; mcpUrl: string } | null>(null);
 
   // One `memory.list` with `count_only` for the namespace-wide total
@@ -202,7 +202,7 @@ export function Setup() {
           identity={identity}
           mine={mine}
           memoryTotal={memoryTotal}
-          tokens={sa}
+          tokens={tokens}
           lastMint={lastMint}
           onConnect={focusConnect}
           onMemoryAdded={bumpMemoriesVersion}
@@ -230,8 +230,8 @@ export function Setup() {
         </Tabs.TriggersList>
         <Tabs.Content value="tokens">
           <TokensSection
-            tokens={sa}
-            reloadTokens={loadSa}
+            tokens={tokens}
+            reloadTokens={loadTokens}
             onMinted={setLastMint}
             formOpen={formOpen}
             onFormOpenChange={setFormOpen}

@@ -420,7 +420,6 @@ async def test_a_token_naming_the_repository_brings_every_restricted_linked_trac
         return "viewer" if ns == PRIV else None
 
     monkeypatch.setattr("server.identity.app.namespace_classification.is_restricted", _restricted)
-    monkeypatch.setattr(me, "is_restricted", _restricted)
     monkeypatch.setattr(me_callers, "caller_role_on", _role)
     from server.auth.jwt import AuthInfo
     from server.operations.base import Role

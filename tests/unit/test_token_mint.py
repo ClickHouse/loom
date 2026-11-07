@@ -214,7 +214,6 @@ def restricted(monkeypatch: pytest.MonkeyPatch, grants: dict) -> list[tuple[str,
         return list(roles)
 
     monkeypatch.setattr(nc, "is_restricted", _isr)
-    monkeypatch.setattr(me, "is_restricted", _isr)
     monkeypatch.setattr(
         binding, "tracker_namespaces_for", lambda ns: ["tracker-secret"] if ns == "secret" else []
     )

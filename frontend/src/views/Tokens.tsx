@@ -348,9 +348,8 @@ function TokenForm({
       everythingScope(
         rows,
         Object.entries(repoInfo).map(([namespace, f]) => ({ namespace, ...f })),
-        everythingHome,
       ),
-    [rows, repoInfo, everythingHome],
+    [rows, repoInfo],
   );
 
   const toggleNs = (ns: string) => {

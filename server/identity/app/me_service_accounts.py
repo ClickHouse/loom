@@ -24,9 +24,8 @@ from server.auth.service_accounts import hand_down_lineage, revoked_row
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.errors import BackendUnavailableError
 from server.core.grant_sql import LIVE_GRANT
-from server.identity.app import me_callers, token_grants
+from server.identity.app import me_callers, namespace_classification, token_grants
 from server.identity.app.caller_home import caller_org, default_namespace
-from server.identity.app.namespace_classification import is_restricted
 from server.identity.app.restricted_access import note_restricted_grants
 from server.identity.app.token_clients import client_configs
 from server.operations.base import GRANT_ROLES, Role, grant_rank
@@ -121,7 +120,9 @@ async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[
         for qa in tracker_namespaces_for(ns):  # every linked tracker
             if qa in out or qa in repos or ceiling_role(parent, org, qa) is None:
                 continue
-            if await is_restricted(org, qa) and await me_callers.caller_role_on(org, qa, subject):
+            if await namespace_classification.is_restricted(
+                org, qa
+            ) and await me_callers.caller_role_on(org, qa, subject):
                 out.append(qa)
     return out
 
@@ -323,13 +324,17 @@ async def me_service_accounts_create(
         parent = dev_parent(request, payload)
     subject, org = parent.subject, parent.org
 
-    blank = not str(payload.get("name") or "").strip()
-    name = token_name(generated_name(naive_utc_now_seconds()) if blank else payload["name"])
+    raw_name = str(payload.get("name") or "").strip()
+    name = token_name(raw_name or generated_name(naive_utc_now_seconds()))
     requested_role = _requested_roles(payload)
     ttl_seconds = parse_ttl_days(payload.get("ttl_days"))
     everything = "*" in requested_role
     # A restricted repository's bound tracker record is named beside it, read-only.
-    named = [ns for ns in requested_role if ns != "*" and await is_restricted(org, ns)]
+    named = [
+        ns
+        for ns in requested_role
+        if ns != "*" and await namespace_classification.is_restricted(org, ns)
+    ]
     for qa in await _bound_trackers(org, subject, parent, named):
         requested_role.setdefault(qa, None if everything else "viewer")
 
