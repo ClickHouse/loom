@@ -99,9 +99,10 @@ def test_an_acronym_is_not_a_plural(raw: str, canonical: str) -> None:
     assert canonical_entities(["HTTP", "HTTPS"]) == ["http", "https"]
 
 
-def test_text_longer_than_the_cap_once_normalised_is_no_entity() -> None:
-    # each ligature is "fi" once normalised
-    assert canonical_entity_text("\ufb01" * MAX_ENTITY_CHARS) == ""
+# each ligature is "fi" once normalised
+@pytest.mark.parametrize("n", [MAX_ENTITY_CHARS // 2 + 1, MAX_ENTITY_CHARS])
+def test_text_longer_than_the_cap_once_normalised_is_no_entity(n: int) -> None:
+    assert canonical_entity_text("\ufb01" * n) == ""
 
 
 @pytest.mark.parametrize("unit", ["re.S", "x", "the ", "s."])
@@ -117,15 +118,11 @@ def test_a_long_name_keeps_all_of_itself() -> None:
 
 
 @pytest.mark.parametrize(
-    "raw", ["İstanbul/" + "a" * 191, "İ" * 200, "ß" * 50 + "S", "\ufb01" * 128]
+    "raw", ["İstanbul/" + "a" * 191, "İ" * 200, "ß" * 50 + "S", "\ufb01" * (MAX_ENTITY_CHARS // 2)]
 )
-def test_text_lowercasing_lengthens_is_a_fixed_point_too(raw: str) -> None:
+def test_text_normalising_lengthens_is_a_fixed_point_too(raw: str) -> None:
     once = canonical_entity_text(raw)
     assert once and canonical_entity_text(once) == once
-
-
-def test_text_normalised_one_past_the_cap_is_no_entity() -> None:
-    assert canonical_entity_text("\ufb01" * 129) == ""  # 258 characters once normalised
 
 
 @pytest.mark.parametrize(
