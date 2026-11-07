@@ -67,11 +67,22 @@ def schedule_served(org: str, agent: str, keys: Iterable[tuple[str, str]]) -> No
 
 
 class _AgentRead(Protocol):
-    """The input of an agent read op: the org it reads. The agent comes from its `agent`
-    field when it has one (memory.for_file names none; the consumer says who read)."""
+    """The input of an agent read op: the org it reads, and the agent from its `agent`
+    field when it has one (`_reader`)."""
 
     @property
     def org(self) -> str: ...
+
+
+def _reader(input: Any) -> str:
+    """Who read: the input's `agent`, else (memory.for_file names none) the named
+    consumer; '' when neither names one, which records nothing, as a sentinel agent with
+    no consumer records nothing."""
+    from server.memory.app import recall_credit
+
+    if hasattr(input, "agent"):
+        return str(input.agent or "")
+    return recall_credit.current_named_consumer()
 
 
 def records_served[I: _AgentRead, O](
@@ -86,7 +97,9 @@ def records_served[I: _AgentRead, O](
             try:
                 keys = keys_of(input, out)
                 if keys:
-                    schedule_served(input.org, str(getattr(input, "agent", "") or ""), keys)
+                    reader = _reader(input)
+                    if reader:
+                        schedule_served(input.org, reader, keys)
             except Exception as e:  # noqa: BLE001 — a served row must not fail the read
                 log.warning("served keys of %s failed (non-fatal): %s", handler.__name__, e)
             return out
@@ -97,9 +110,10 @@ def records_served[I: _AgentRead, O](
 
 
 def _hit_keys(hits: Iterable[Any], namespace: str) -> Keys:
-    """The stored row each hit came from: a chunk hit (`chunk:<session>:<n>`) is its
-    parent fact's."""
-    return [(str(h.namespace or namespace), str(h.parent_memory_key or h.memory_key)) for h in hits]
+    """The stored row each hit came from (a chunk's is its parent fact's)."""
+    from server.memory.domain.served import hit_row
+
+    return [hit_row(h, namespace) for h in hits]
 
 
 def search_keys(input: Any, out: Any) -> Keys:
@@ -122,15 +136,10 @@ def procedure_keys(input: Any, out: Any) -> Keys:
     return [(str(m.namespace or input.namespace), str(m.memory_key)) for m in out.matches]
 
 
-def pack_keys(input: Any, out: Any) -> Keys:
-    """context.pack: the stored rows whose item lines its `rendered` answer still holds
-    after every section and pack budget (`context_layout.served_rows`)."""
-    return list(out._served_rows)
-
-
-def for_file_keys(input: Any, out: Any) -> Keys:
-    """memory.for_file: the rows its `rendered` block prints (the pre-edit hook injects
-    it), not the ones a budget left out of it."""
+def rendered_rows(input: Any, out: Any) -> Keys:
+    """context.pack, memory.for_file: the stored rows the op noted its `rendered` answer
+    prints (`_served_rows`), after every budget: a pack's sections and its own
+    (`context_layout.served_rows`), a file block's row budget (`for_file.render_block`)."""
     return list(out._served_rows)
 
 

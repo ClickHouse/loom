@@ -8,6 +8,7 @@ rank: nothing ranks on this table and the usage fold never reads it.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from server.core.ch_writes import async_insert_settings
@@ -61,7 +62,7 @@ async def record_served(
 _BY_AGENT_SQL = """
     SELECT agent,
            sum(served) AS n,
-           sumIf(served, day > today() - 30) AS n_30d,
+           sumIf(served, day > {since:Date}) AS n_30d,
            max(last_at) AS last_at
     FROM loom.memory_served_daily
     WHERE org = {org:String}
@@ -88,6 +89,8 @@ async def served_by_agent(
     from server.core.repo_base import _default_client
 
     ch = ch or _default_client()
-    params: dict[str, Any] = {"org": org, "ns": namespace, "key": memory_key}
+    # `day` is the UTC date record_served wrote; the 30-day cutoff is bound in it too.
+    since = naive_utc_now().date() - timedelta(days=30)
+    params: dict[str, Any] = {"org": org, "ns": namespace, "key": memory_key, "since": since}
     sql = _BY_AGENT_SQL.replace("{scope}", scope_and(scope, params))
     return await ch.query_all(sql, params=params)

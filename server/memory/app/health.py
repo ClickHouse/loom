@@ -49,7 +49,7 @@ _LIVE = """
         SELECT memory_id, sum(served) AS served_count
         FROM loom.memory_served_daily
         WHERE org = {org:String} AND namespace = {ns:String}
-          AND day > today() - {days:UInt32}
+          AND day > {since:Date}
         GROUP BY memory_id
     ) AS s ON s.memory_id = m.memory_id
 """
@@ -201,8 +201,13 @@ def staleness(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def handle_memory_health(input: MemoryHealthInput) -> MemoryHealthOutput:
+    from datetime import timedelta
+
+    # The served rows' `day` is the UTC date the server wrote; the cutoff is bound in it
+    # too, whatever the ClickHouse server's own zone.
+    since = naive_utc_now().date() - timedelta(days=input.silent_after_days)
     rows = await get_client().query_all(
-        _LIVE, {"org": input.org, "ns": input.namespace, "days": input.silent_after_days}
+        _LIVE, {"org": input.org, "ns": input.namespace, "since": since}
     )
     return MemoryHealthOutput(
         **summarise(

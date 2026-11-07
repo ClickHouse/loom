@@ -47,6 +47,7 @@ from server.memory.domain.decision_statement import states_reason
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
 from server.memory.domain.memory_types import excluded_from_unfiltered_search
 from server.memory.domain.search_types import hit_row_key, names_row
+from server.memory.domain.served import hit_row
 from server.memory.store.shared import SHARED_AGENT
 
 log = logging.getLogger(__name__)
@@ -443,8 +444,7 @@ async def _pack_startup_recall(st: _PackState) -> None:
 
 def _hit_ns_key(input: ContextPackInput, h: Any) -> tuple[str, str]:
     """The (namespace, memory_key) of the stored row a hit came from: a chunk's parent."""
-    key = getattr(h, "parent_memory_key", "") or h.memory_key
-    return (getattr(h, "namespace", "") or input.namespace, str(key))
+    return hit_row(h, input.namespace)
 
 
 _KeyWriters = dict[tuple[str, str], list[dict[str, str]]]

@@ -4,10 +4,12 @@ which rows of a key memory.get counts, and the window memory.health reads."""
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
+from server.core.datetimes import naive_utc_now
 from server.identity.domain.read_scope import ReadFilters
 from server.memory.store import served
 from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl
@@ -75,13 +77,15 @@ def test_the_key_counts_every_live_row_and_a_narrowed_reader_its_own(ch: KeptCH)
 def test_health_counts_served_rows_inside_the_silent_window_only(ch: KeptCH) -> None:
     from server.memory.app import health
 
+    day = (naive_utc_now().date() - timedelta(days=40)).isoformat()
     ch.create(
         "INSERT INTO loom.memory_served_daily (org, namespace, memory_id, agent, day, served, "
-        f"last_at) VALUES ('o', 'n', '{M1}', 'a', today() - 40, 3, now() - INTERVAL 40 DAY)"
+        f"last_at) VALUES ('o', 'n', '{M1}', 'a', '{day}', 3, '{day} 12:00:00')"
     )
 
     def served_count(days: int) -> int:
-        rows = asyncio.run(ch.query_all(health._LIVE, {"org": "o", "ns": "n", "days": days}))
+        since = naive_utc_now().date() - timedelta(days=days)
+        rows = asyncio.run(ch.query_all(health._LIVE, {"org": "o", "ns": "n", "since": since}))
         return {r["memory_id"]: int(r["served_count"]) for r in rows}[M1]
 
     assert served_count(30) == 0
