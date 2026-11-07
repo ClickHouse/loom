@@ -1032,12 +1032,6 @@ export async function unlockMemory(id: Identity, memoryKey: string): Promise<{ u
   return post("/v1/memory.unlock", { ...id, memory_key: memoryKey });
 }
 
-/** POST /v1/memory.touch: a new expiry, or none, without rewriting the value. */
-export async function touchMemoryExpiry(id: Identity, memoryKey: string, ttlSeconds: number | null): Promise<unknown> {
-  const expiry = ttlSeconds === null ? { clear_expiry: true } : { ttl_seconds: ttlSeconds };
-  return post("/v1/memory.touch", { ...id, memory_key: memoryKey, ...expiry });
-}
-
 /** POST /v1/memory.reject: the fact is wrong; it is retired and not extracted again. */
 export async function rejectMemory(id: Identity, memoryKey: string, reason: string): Promise<{ rejected: boolean }> {
   return post("/v1/memory.reject", { ...id, memory_key: memoryKey, rejection_reason: reason });
@@ -1099,12 +1093,13 @@ export async function recordMemoryOutcome(
   id: Identity,
   memoryKey: string,
   outcome: "positive" | "negative",
-): Promise<unknown> {
+): Promise<{ recorded: boolean; quarantined: boolean }> {
   return post("/v1/memory.outcome", { ...id, memory_key: memoryKey, outcome, source: "dashboard" });
 }
 
 /** POST /v1/memory.redact (ADMIN): scrub one past version's value, keeping its row and
- *  audit trail. The live version is refused (`refused_head`). */
+ *  audit trail. The live version is refused (`refused_head`); `redacted: false` otherwise
+ *  means the version is not recorded or the caller is not admin of its namespace. */
 export async function redactMemoryVersion(
   org: string,
   memoryId: string,

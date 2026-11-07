@@ -1159,12 +1159,10 @@ class MemoryRedactInput(BaseModel):
     left alone), so a restore of the deleted key brings no text back (it answers
     `redacted: true`).
 
-    Best-effort: loom.memory is ReplacingMergeTree(version) keyed by
-    identity+memory_key (version is NOT in the sort key), so a background merge
-    collapses non-head versions into the head — a targeted historical row may
-    already be gone. Non-head versions are also never served (reads use FINAL),
-    so this matters only for the audit trail. For a durable scrub of live data,
-    delete + re-set the head.
+    The version is looked up in loom.memory_versions, the history mirror, which
+    keeps every version (a merge of loom.memory folds non-head versions into the
+    head, but not the mirror). For a durable scrub of live data, delete and
+    re-set the head.
     """
 
     org: str

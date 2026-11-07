@@ -42,14 +42,13 @@ import {
   relatedFacts,
   memoryEvidence,
   memoryBacklinks,
-  touchMemoryExpiry,
   unlockMemory,
   shareMemory,
   unshareMemory,
   redactMemoryVersion,
   recordMemoryOutcome,
 } from "../api";
-import { LockMemoryDialog, RejectMemoryDialog } from "../flows/MemoryReasonDialogs";
+import { LockMemoryDialog, RedactVersionDialog, RejectMemoryDialog } from "../flows/MemoryReasonDialogs";
 import { navigationHref, useStore } from "../lib/state";
 import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { AgentBadge } from "./AgentBadge";
@@ -184,8 +183,8 @@ export function MemoryInspector({
   const [renaming, setRenaming] = useState(false);
   const [namespaceTags, setNamespaceTags] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState("");
-  // The drawer reads what is open. History, related, provenance and lineage are
-  // disclosures, closed by default; a section reads once when it is opened, and which
+  // The drawer reads what is open. History, related, provenance, lineage, evidence and
+  // links are disclosures, closed by default; a section reads once when it is opened, and which
   // ones a person keeps open is remembered for the session so their next card opens the
   // same way.
   const [sections, setSections] = useState<Record<SectionId, boolean>>(
@@ -344,7 +343,7 @@ export function MemoryInspector({
         toast(`Load failed: ${humanizeError(e)}`, "error");
         setLoading(false);
       });
-    // Nothing else is read on open. The four secondary sections read when opened (below);
+    // Nothing else is read on open. The secondary sections read when opened (below);
     // the tag vocabulary when the add-tag input is focused. Reading every section on open
     // costs seven reads and about 118 MB of ClickHouse for six kilobytes on the screen.
     return () => {
@@ -398,15 +397,18 @@ export function MemoryInspector({
           if (fresh()) setLineage([]);
         }),
     );
-    want("evidence", () =>
-      memoryEvidence(identity, k)
-        .then((r) => {
-          if (fresh()) setEvidence(r.items ?? []);
-        })
-        .catch(() => {
-          if (fresh()) setEvidence([]);
-        }),
-    );
+    // Evidence is looked up under the row's own identity (an extracted row carries its
+    // session), so it waits for the row.
+    if (detail)
+      want("evidence", () =>
+        memoryEvidence(rowIdentity(identity, detail), k)
+          .then((r) => {
+            if (fresh()) setEvidence(r.items ?? []);
+          })
+          .catch(() => {
+            if (fresh()) setEvidence([]);
+          }),
+      );
     want("links", () =>
       memoryBacklinks(identity, k)
         .then((r) => {
@@ -425,7 +427,7 @@ export function MemoryInspector({
           if (fresh()) setProvenance(null);
         }),
     );
-  }, [identity, memoryKey, sections]);
+  }, [identity, memoryKey, sections, detail]);
 
   // The conflict count is its own effect so a role that resolves after the
   // drawer opened does not re-read the memory. Only when the role here is
@@ -445,7 +447,6 @@ export function MemoryInspector({
   const canShare = canCall("memory.promote", role, whoami);
   const canRedact = canCall("memory.redact", role, whoami);
   const canJudge = canCall("memory.outcome", role, whoami);
-  const canTouch = canCall("memory.touch", role, whoami);
   const verified = detail?.verification === "human" || detail?.verification === "process";
   useEffect(() => {
     setConflictCount(0);
@@ -511,47 +512,62 @@ export function MemoryInspector({
   const onOutcome = async (outcome: "positive" | "negative") => {
     if (!detail) return;
     try {
-      await recordMemoryOutcome(rowIdentity(identity, detail), memoryKey, outcome);
+      const r = await recordMemoryOutcome(rowIdentity(identity, detail), memoryKey, outcome);
+      if (!r.recorded) {
+        toast("This memory is no longer live", "error");
+        return;
+      }
+      if (r.quarantined) {
+        // Enough bad outcomes retire the memory: it leaves search.
+        toast("Recorded as unhelpful; the memory is now rejected", "ok");
+        await reread();
+        return;
+      }
       toast(outcome === "positive" ? "Recorded as helpful" : "Recorded as unhelpful", "ok");
     } catch (e) {
       toast(`Couldn't record that: ${humanizeError(e)}`, "error");
     }
   };
 
-  // A past version's value is scrubbed in place: for a leaked secret or personal data.
-  const onRedact = async (h: MemoryHistoryEntry, label: string) => {
-    const ok = await confirmAction({
-      title: `Redact ${label} of ${memoryKey}?`,
-      message: "Its value is scrubbed for good; the version and its audit row stay.",
-      confirmLabel: "Redact",
-      danger: true,
-    });
-    if (!ok || !h.memory_id || !h.version_text) return;
-    try {
-      const r = await redactMemoryVersion(identity.org, h.memory_id, h.version_text, "");
-      toast(r.redacted ? `Redacted ${label}` : "That version could not be redacted", r.redacted ? "ok" : "error");
-      const fresh = await memoryHistory(identity, memoryKey, 8);
-      setHistory(fresh.rows || []);
-    } catch (e) {
-      toast(`Redact failed: ${humanizeError(e)}`, "error");
-    }
+  // A past version's value is scrubbed in place, with the reason (for a leaked secret or
+  // personal data): `memory.redact`, through RedactVersionDialog.
+  const [redacting, setRedacting] = useState<{ entry: MemoryHistoryEntry; label: string } | null>(null);
+  const redact = async (h: MemoryHistoryEntry, label: string, reason: string) => {
+    if (!h.memory_id || !h.version_text) return;
+    const r = await redactMemoryVersion(identity.org, h.memory_id, h.version_text, reason);
+    if (r.refused_head) throw new Error(`${label} is a live version; edit or delete the memory instead.`);
+    if (!r.redacted) throw new Error(`${label} is no longer recorded.`);
+    toast(`Redacted ${label}`, "ok");
+    memoryHistory(identity, memoryKey, 8)
+      .then((fresh) => setHistory(fresh.rows || []))
+      .catch(() => {});
   };
 
-  // A lock, an unlock or a reject changes the row: read it again.
+  // A lock, an unlock or a reject changes the row: read it again. A failed re-read leaves
+  // the drawer as it was; the write itself already landed.
   const reread = async () => {
-    setDetail(await getMemory(identity, memoryKey));
     onChanged();
+    try {
+      setDetail(await getMemory(identity, memoryKey, { include_recall_breakdown: true }));
+    } catch (e) {
+      toast(`Couldn't read the memory again: ${humanizeError(e)}`, "error");
+    }
   };
 
   const onUnlock = async () => {
     if (!detail) return;
     try {
       const r = await unlockMemory(rowIdentity(identity, detail), memoryKey);
-      toast(r.unlocked ? "Unlocked" : "This memory carried no lock", "ok");
-      await reread();
+      if (!r.unlocked) {
+        toast(r.reason === "not_found" ? "This memory is no longer live" : "This memory carried no lock", "info");
+        return;
+      }
+      toast("Unlocked", "ok");
     } catch (e) {
       toast(`Unlock failed: ${humanizeError(e)}`, "error");
+      return;
     }
+    await reread();
   };
 
   // Promote copies the row to the namespace's shared layer, read by every agent there;
@@ -639,8 +655,15 @@ export function MemoryInspector({
   const onChangeExpiry = async (ttlSeconds: number | null) => {
     if (!detail) return;
     try {
-      // The expiry alone: the value, its version history and its attestation stay.
-      await touchMemoryExpiry(rowIdentity(identity, detail), memoryKey, ttlSeconds);
+      await setMemory(identity, memoryKey, detail.value, {
+        memoryType: detail.memory_type || "semantic",
+        tags: detail.tags,
+        // ttlSeconds=null is "Never expire" — clearExpiry overrides any
+        // inherited per-tag retention default.
+        ttlSeconds: ttlSeconds ?? undefined,
+        clearExpiry: ttlSeconds === null,
+        charLimit: detail.char_limit ?? undefined,
+      });
       toast(ttlSeconds === null ? "Expiry cleared — never expires" : "Expiry updated", "ok");
       const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
       setDetail(fresh);
@@ -919,10 +942,7 @@ export function MemoryInspector({
                     )}
                     <dt className="text-text-muted">Expires</dt>
                     <dd>
-                      <ExpiryEditor
-                        expiresAt={detail.expires_at ?? null}
-                        onChange={canTouch ? onChangeExpiry : undefined}
-                      />
+                      <ExpiryEditor expiresAt={detail.expires_at ?? null} onChange={onChangeExpiry} />
                     </dd>
                     <TipRow label="Last recalled" tip={RECALLED_TIP} value={recalledLabel(detail)} />
                     <TipRow label="Recall credit" tip={CREDIT_TIP} value={creditLabel(detail.recall_count)} />
@@ -1219,7 +1239,7 @@ export function MemoryInspector({
                                     type="danger"
                                     htmlType="button"
                                     className="mt-2"
-                                    onClick={() => void onRedact(h, label)}
+                                    onClick={() => setRedacting({ entry: h, label })}
                                   >
                                     Redact {label}
                                   </Button>
@@ -1361,7 +1381,7 @@ export function MemoryInspector({
                       </Dropdown.Item>
                     </>
                   )}
-                  {canReject && (
+                  {canReject && !detail.lock_mode && (
                     <Dropdown.Item
                       type="danger"
                       onSelect={() => {
@@ -1398,6 +1418,14 @@ export function MemoryInspector({
             </footer>
           )}
           <CopyToNamespaceDialog open={copyOpen} onOpenChange={setCopyOpen} source={identity} memoryKey={memoryKey} />
+          {redacting && (
+            <RedactVersionDialog
+              memoryKey={memoryKey}
+              label={redacting.label}
+              onSubmit={(reason) => redact(redacting.entry, redacting.label, reason)}
+              onClose={() => setRedacting(null)}
+            />
+          )}
           {reasonDialog && detail && (
             <ReasonDialogFor
               kind={reasonDialog}
@@ -1857,8 +1885,7 @@ function ExpiryEditor({
   onChange,
 }: {
   expiresAt: string | null;
-  /** Absent for a role that cannot change it (memory.touch is WRITER). */
-  onChange?: (ttlSeconds: number | null) => void;
+  onChange: (ttlSeconds: number | null) => void;
 }) {
   const current = expiresAt ? `Expires ${relativeTime(expiresAt)}` : "Never expires";
   const expiry = parseChTime(expiresAt);
@@ -1867,22 +1894,20 @@ function ExpiryEditor({
   return (
     <div className="inline-flex items-center gap-2">
       <span className={isExpired ? "text-danger" : "text-text"}>{isExpired ? "Expired" : current}</span>
-      {onChange && (
-        <Dropdown modal={false}>
-          <MenuTrigger>
-            <Button type="empty" htmlType="button" iconRight="chevron-down">
-              Change
-            </Button>
-          </MenuTrigger>
-          <Dropdown.Content align="end">
-            {EXPIRY_PRESETS.map((opt) => (
-              <Dropdown.Item key={opt.label} onSelect={() => onChange(opt.ttl)}>
-                {opt.label}
-              </Dropdown.Item>
-            ))}
-          </Dropdown.Content>
-        </Dropdown>
-      )}
+      <Dropdown modal={false}>
+        <MenuTrigger>
+          <Button type="empty" htmlType="button" iconRight="chevron-down">
+            Change
+          </Button>
+        </MenuTrigger>
+        <Dropdown.Content align="end">
+          {EXPIRY_PRESETS.map((opt) => (
+            <Dropdown.Item key={opt.label} onSelect={() => onChange(opt.ttl)}>
+              {opt.label}
+            </Dropdown.Item>
+          ))}
+        </Dropdown.Content>
+      </Dropdown>
     </div>
   );
 }

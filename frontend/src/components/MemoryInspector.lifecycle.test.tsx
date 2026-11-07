@@ -41,12 +41,11 @@ vi.mock("../api", async (importOriginal) => {
     listMine: vi.fn(async () => []),
     lockMemory: vi.fn(async () => ({ locked: true })),
     unlockMemory: vi.fn(async () => ({ unlocked: true, reason: "" })),
-    touchMemoryExpiry: vi.fn(async () => ({})),
     rejectMemory: vi.fn(async () => ({ rejected: true })),
     shareMemory: vi.fn(async () => ({ shared_memory_key: "coffee_pref" })),
     unshareMemory: vi.fn(async () => ({ demoted: true })),
     redactMemoryVersion: vi.fn(async () => ({ redacted: true, refused_head: false })),
-    recordMemoryOutcome: vi.fn(async () => ({})),
+    recordMemoryOutcome: vi.fn(async () => ({ recorded: true, quarantined: false })),
     memoryEvidence: vi.fn(async () => ({
       found: true,
       truncated: false,
@@ -113,17 +112,8 @@ afterEach(() => {
 });
 
 describe("MemoryInspector lifecycle actions", () => {
-  it("changes only the expiry, through memory.touch on the row", async () => {
-    await open("writer");
-    await userEvent.click(screen.getByRole("button", { name: "Change" }));
-    await userEvent.click(await screen.findByRole("menuitem", { name: "1 day" }));
-    await waitFor(() => expect(api.touchMemoryExpiry).toHaveBeenCalledWith(row, "coffee_pref", 86400));
-    expect(api.setMemory).not.toHaveBeenCalled();
-  });
-
-  it("offers a viewer no expiry change and no lifecycle action", async () => {
+  it("offers a viewer no lifecycle action", async () => {
     await open("viewer");
-    expect(screen.queryByRole("button", { name: "Change" })).toBeNull();
     const items = within(await menu())
       .getAllByRole("menuitem")
       .map((i) => i.textContent);
@@ -166,6 +156,8 @@ describe("MemoryInspector lifecycle actions", () => {
       .map((i) => i.textContent);
     expect(items).not.toContain("Unlock");
     expect(items).not.toContain("Lock…");
+    // A locked memory is not retired from the drawer.
+    expect(items).not.toContain("Mark as wrong…");
     cleanup();
 
     await open("admin", locked);
@@ -195,13 +187,14 @@ describe("MemoryInspector lifecycle actions", () => {
     expect(api.memoryEvidence).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: /Evidence/ }));
     expect(await screen.findByText("oat milk")).toBeInTheDocument();
-    expect(api.memoryEvidence).toHaveBeenCalledWith(identity, "coffee_pref");
+    // Under the row's own identity: an extracted row carries its agent, user and session.
+    expect(api.memoryEvidence).toHaveBeenCalledWith(row, "coffee_pref");
     await userEvent.click(screen.getByRole("button", { name: /Links/ }));
     expect(await screen.findByRole("button", { name: "morning_routine" })).toBeInTheDocument();
     expect(screen.getByText("mentions from")).toBeInTheDocument();
   });
 
-  it("redacts a past version by its exact version, for an admin", async () => {
+  it("redacts a past version by its exact version and the reason, for an admin", async () => {
     const v = (version_text: string, value: string) => ({
       memory_id: "m1",
       version: Number(version_text),
@@ -219,12 +212,63 @@ describe("MemoryInspector lifecycle actions", () => {
     await userEvent.click(screen.getByRole("button", { name: /History/ }));
     await userEvent.click(await screen.findByText(/card 4111/));
     await userEvent.click(await screen.findByRole("button", { name: "Redact v1" }));
-    await waitFor(() => expect(api.redactMemoryVersion).toHaveBeenCalledWith("dev", "m1", "1790000000000000001", ""));
+    const dialog = await screen.findByRole("dialog", { name: "Redact v1" });
+    await userEvent.type(within(dialog).getByLabelText("Reason"), "card number");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Redact" }));
+    await waitFor(() =>
+      expect(api.redactMemoryVersion).toHaveBeenCalledWith("dev", "m1", "1790000000000000001", "card number"),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Redact v1" })).toBeNull());
+  });
+
+  it("keeps the redact dialog open with the reason when the version is live", async () => {
+    vi.mocked(api.redactMemoryVersion).mockResolvedValueOnce({ redacted: false, refused_head: true });
+    vi.mocked(api.memoryHistory).mockResolvedValue({
+      rows: [
+        {
+          memory_id: "m1",
+          version: 2,
+          version_text: "2",
+          value: "oat milk",
+          created_at: "2026-09-18T09:00:00Z",
+          written_at: "2026-09-18T09:00:00Z",
+          confidence: 0.8,
+          pinned: false,
+        },
+        {
+          memory_id: "m1",
+          version: 1,
+          version_text: "1",
+          value: "card 4111 1111",
+          created_at: "2026-09-18T09:00:00Z",
+          written_at: "2026-09-18T09:00:00Z",
+          confidence: 0.8,
+          pinned: false,
+        },
+      ],
+    } as never);
+    await open("admin");
+    await userEvent.click(screen.getByRole("button", { name: /History/ }));
+    await userEvent.click(await screen.findByText(/card 4111/));
+    await userEvent.click(await screen.findByRole("button", { name: "Redact v1" }));
+    const dialog = await screen.findByRole("dialog", { name: "Redact v1" });
+    await userEvent.type(within(dialog).getByLabelText("Reason"), "card number");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Redact" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("live version");
   });
 
   it("records a writer's verdict on the memory", async () => {
     await open("writer");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "This misled" }));
     await waitFor(() => expect(api.recordMemoryOutcome).toHaveBeenCalledWith(row, "coffee_pref", "negative"));
+  });
+
+  it("reads the memory again when a bad outcome rejects it", async () => {
+    vi.mocked(api.recordMemoryOutcome).mockResolvedValueOnce({ recorded: true, quarantined: true });
+    await open("writer");
+    const reads = vi.mocked(api.getMemory).mock.calls.length;
+    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "This misled" }));
+    await waitFor(() => expect(vi.mocked(api.getMemory).mock.calls.length).toBe(reads + 1));
+    expect(vi.mocked(api.getMemory).mock.calls.at(-1)?.[2]).toEqual({ include_recall_breakdown: true });
   });
 });

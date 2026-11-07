@@ -91,7 +91,6 @@ export const OP_MIN_ROLE = {
   // The inspector's lifecycle actions and its Evidence and Links sections.
   "memory.lock": WRITER,
   "memory.unlock": ADMIN,
-  "memory.touch": WRITER,
   "memory.reject": WRITER,
   "memory.promote": ADMIN,
   "memory.demote": ADMIN,

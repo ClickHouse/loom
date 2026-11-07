@@ -82,6 +82,37 @@ export function RejectMemoryDialog({
   );
 }
 
+/** memory.redact: one past version's value scrubbed for good, with the reason, which the
+ *  redaction keeps. `onSubmit` throws to keep the dialog open with the reason it failed. */
+export function RedactVersionDialog({
+  memoryKey,
+  label,
+  onSubmit,
+  onClose,
+}: {
+  memoryKey: string;
+  /** The version as the history names it (`v3`). */
+  label: string;
+  onSubmit: (reason: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  return (
+    <ReasonDialog
+      title={`Redact ${label}`}
+      intro={
+        <>
+          The value of {label} of <span className="font-mono text-text">{memoryKey}</span> is scrubbed for good; the
+          version and its audit row stay.
+        </>
+      }
+      confirm="Redact"
+      danger
+      onClose={onClose}
+      onSubmit={onSubmit}
+    />
+  );
+}
+
 function ReasonDialog({
   title,
   intro,

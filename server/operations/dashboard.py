@@ -203,6 +203,10 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "the Memories page's bulk actions call the per-row ops (memory.pin, memory.delete)"
         ),
         "memory.search_trace": "Recall Lab explains each ranking with memory.search explain=true",
+        "memory.touch": (
+            "an agent's keep-alive on memories it relies on; the memory drawer changes an "
+            "expiry with memory.set, which audits the change"
+        ),
         "memory.update": "the memory drawer saves an edit with memory.set",
         "memory.update_by_id": "the memory drawer saves an edit with memory.set",
         "namespace.list": (
