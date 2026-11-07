@@ -290,12 +290,13 @@ A run that stopped in `clickhouse` published nothing.
   new candidate with the same `-f clickhouse_image=...`, as its tag push resolves `latest` again;
   soak it, and tag the final there, which keeps that release.
 - **A downgrade during the soak**: a final carrying its candidate's release is checked too, so a
-  patch to an older line published during the soak with a newer release stops it. Either delete
-  the final's tag (it published nothing), tag a new candidate on that commit, soak it, and tag
-  the final there again. The candidate's tag push resolves `latest`; when that is older than the
-  release the error names, dispatch the candidate with `-f clickhouse_image=<that release>`. Or
-  dispatch the final with `-f allow_clickhouse_downgrade=true` and accept the downgrade for that
-  patch's installs.
+  patch to an older line published during the soak with a newer release stops it. Two ways out:
+  - delete the final's tag as above (it published nothing), tag a new candidate on that commit,
+    soak it, and tag the final there again. The candidate's tag push resolves `latest`; when that
+    is older than the release the error names, dispatch the candidate with
+    `-f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D` naming that release;
+  - or dispatch the final with `-f allow_clickhouse_downgrade=true` and accept the downgrade for
+    that patch's installs.
 
 Each dispatch above also runs the `pypi` and `npm` jobs, so a dispatched candidate publishes its
 SDKs once their environments are approved; decline those approvals to publish only the images and
