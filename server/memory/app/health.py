@@ -5,8 +5,8 @@ served to an agent in the last `silent_after_days`) and the staleness of live ro
 namespace where most rows are never read shows it. One query over loom.memory FINAL joined
 to the summed loom.memory_usage_totals and to loom.memory_served_daily's last
 `silent_after_days` days, scoped to (org, namespace); the served side maps the rows served
-in that window to their keys. A key counts as read on a recall credit of one of its
-active rows, or a served row in that window on any of its live copies: a read lands on one
+in that window to their keys. A row counts as read on its own recall credit, as ever,
+or a served row in that window on any live copy of its key: a read lands on one
 copy of the key only (the newest inside the reader's scope), which may not be an active
 one.
 """
@@ -88,15 +88,10 @@ def summarise(rows: list[dict[str, Any]], *, silent_after_days: int, top_k: int)
     cutoff = naive_utc_now() - timedelta(days=silent_after_days)
     live = len(rows)
 
-    # `served_count` is already the key's, over its live copies; a credit is the row's.
-    reads_by_key: dict[str, int] = {}
-    for r in rows:
-        key = str(r.get("memory_key") or "")
-        reads = int(r.get("recall_count") or 0) + int(r.get("served_count") or 0)
-        reads_by_key[key] = reads_by_key.get(key, 0) + reads
-
     def _read(r: dict[str, Any]) -> bool:
-        return reads_by_key.get(str(r.get("memory_key") or ""), 0) > 0
+        """The row's own recall credit, as ever, or a served row on any live copy of its
+        key (`served_count` is the key's: a read lands on one copy only)."""
+        return int(r.get("recall_count") or 0) > 0 or int(r.get("served_count") or 0) > 0
 
     recalled = [r for r in rows if int(r.get("recall_count") or 0) > 0]
     used = sum(1 for r in rows if int(r.get("used_count") or 0) > 0)

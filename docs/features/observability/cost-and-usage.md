@@ -177,18 +177,19 @@ trims before answering is not counted; what a client discards from an answer is 
 counted either: a `memory.search` sent with `auto_touch: false`, a `memory.ask` with
 `reinforce: false`, a read by the dashboard or the assistant, a measurement read (a bench
 label, or the `*` / `-` agent with no named consumer), a key lookup (`memory.get`,
-`memory.bulk_get`, `memory.list`: the agent names the key it reads), or an op that runs a
-search for its own use (`decision.precedents`, `memory.apply`, the workers' passes). The
-table is a `SummingMergeTree` per memory, agent and day; nothing ranks on it and
-`usage_fold` never reads it.
+`memory.bulk_get`, `memory.list`: the agent names the key it reads), an op that runs a
+search for its own use (`decision.precedents`, `memory.apply`, the workers' passes), or the
+code plane's reads that annotate code with the memories naming it (`code.review_brief`, the
+lesson notes on code results). The table is a `SummingMergeTree` per memory, agent and day;
+nothing ranks on it and `usage_fold` never reads it.
 
 A read lands on the newest live row of the key inside the reading request's scope: for a
 namespace-wide reader, whichever user or session wrote it; for a token narrowed to one user
 or session, a row of its own. `memory.get` with `include_recall_breakdown` reads the key's
 live rows inside the same scope and answers `served_count` and `last_served_at` (never
 below `recall_count`, which a bulk import can seed with no reads behind it); the
-inspector's **Last recalled** shows them. `memory.health` counts a key as recalled, not
-silent, on a recall credit of an active row or a served row on any live copy within
+inspector's **Last recalled** shows them. `memory.health` counts a row as recalled, not
+silent, on its own recall credit or a served row on any live copy of its key within
 `silent_after_days`.
 
 ## Settings

@@ -14,7 +14,8 @@ or a `memory.ask` with `reinforce: false` (evaluation reads), a key lookup (`mem
 `memory.bulk_get`, `memory.list`: the agent names the key it reads), a read by the
 dashboard or the assistant (a person inspecting), and a measurement read (a bench label,
 or the `*` / `-` agent with no named consumer behind it, as
-`recall_credit.is_measurement_read` says).
+`recall_credit.is_measurement_read` says). The code plane's reads that annotate code with
+the memories naming it (code.review_brief, lesson notes) are not memory recalls.
 """
 
 from __future__ import annotations
@@ -105,6 +106,8 @@ def records_served[I: _AgentRead, O](
                 log.warning("served keys of %s failed (non-fatal): %s", handler.__name__, e)
             return out
 
+        # which answer keys this op records, for the test that pins each op's extractor
+        handle.served_keys = keys_of  # type: ignore[attr-defined]
         return handle
 
     return wrap

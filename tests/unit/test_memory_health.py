@@ -113,8 +113,9 @@ def test_a_key_served_to_an_agent_is_not_silent_on_any_of_its_copies() -> None:
     """A context pack or ask writes `served`, not a recall credit, and an agent read puts its
     event on the newest copy of the key: every live copy of that key in the namespace counts as read."""
     rows = [
+        # the query sums the served rows per key over its live copies, onto every copy
         {**_r("k", age=40), "served_count": 3},  # the newest copy, served by a context pack
-        _r("k", age=40),  # another session's copy of the same key, no event of its own
+        {**_r("k", age=40), "served_count": 3},  # another session's copy of the same key
         _r("credited", rc=1, age=40),
         _r("never", age=40),
     ]
@@ -124,3 +125,11 @@ def test_a_key_served_to_an_agent_is_not_silent_on_any_of_its_copies() -> None:
     assert out["by_type"][0] == {"memory_type": "semantic", "live": 4, "recalled": 3}
     # the ranking list stays the credited rows
     assert [t["memory_key"] for t in out["top_recalled"]] == ["credited"]
+
+
+def test_a_recall_credit_counts_for_its_own_row_only() -> None:
+    """Credits are read per row, as ever: a second copy of a credited key with no credit
+    and no served row stays silent."""
+    rows = [_r("k", rc=5, age=40), _r("k", age=40)]
+    out = summarise(rows, silent_after_days=30, top_k=5)
+    assert (out["recalled_ever"], out["silent"]) == (1, 1)

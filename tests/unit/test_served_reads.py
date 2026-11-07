@@ -158,24 +158,23 @@ def test_a_failing_key_read_never_fails_the_answer(written: list[dict[str, Any]]
     assert written == []
 
 
-def test_the_agent_read_ops_record_served() -> None:
-    """The ops that recall memory for an agent: a search, a pack or stack, an ask, a
-    procedure match, the pre-edit file read. A key lookup is the agent naming a key it
-    knows, and decision.precedents, memory.apply and the workers search for their own use;
-    none of them records."""
+def test_each_agent_read_op_records_its_own_answers_keys() -> None:
+    """The ops that recall memory for an agent, each with the extractor for its answer;
+    a key lookup is the agent naming a key it knows, and decision.precedents, memory.apply
+    and the workers search for their own use: none of them records."""
     from server.operations.registry import OPERATIONS_BY_NAME
 
-    for name in (
-        "memory.search",
-        "context.pack",
-        "memory.ask",
-        "procedure.match",
-        "search.query",
-        "memory.stack",
-        "memory.for_file",
-    ):
-        assert getattr(OPERATIONS_BY_NAME[name].handler, "__wrapped__", None) is not None, name
-    # key lookups (the agent names the key it reads) and ops that search for their own use
+    expected = {
+        "memory.search": served_reads.search_keys,
+        "search.query": served_reads.search_query_keys,
+        "context.pack": served_reads.rendered_rows,
+        "memory.stack": served_reads.stack_keys,
+        "memory.ask": served_reads.ask_keys,
+        "procedure.match": served_reads.procedure_keys,
+        "memory.for_file": served_reads.rendered_rows,
+    }
+    for name, keys_of in expected.items():
+        assert getattr(OPERATIONS_BY_NAME[name].handler, "served_keys", None) is keys_of, name
     for name in (
         "memory.get",
         "memory.bulk_get",
@@ -183,7 +182,7 @@ def test_the_agent_read_ops_record_served() -> None:
         "decision.precedents",
         "memory.apply",
     ):
-        assert getattr(OPERATIONS_BY_NAME[name].handler, "__wrapped__", None) is None, name
+        assert not hasattr(OPERATIONS_BY_NAME[name].handler, "served_keys"), name
 
 
 def test_an_evaluation_ask_records_nothing() -> None:
