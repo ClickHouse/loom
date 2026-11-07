@@ -1,4 +1,5 @@
 import "./temp-home.mjs";
+import { noIds } from "./recalled-block.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -16,9 +17,6 @@ import {
   RECALL_SECTIONS,
   SEEN_CAP,
 } from "../lib/prompt-recall.mjs";
-
-// The block's id (derived from its text), removed so text around it can be compared.
-const noIds = (t) => String(t).replace(/ id="[0-9a-f]{16}"/g, "");
 
 const PACK = {
   rendered: "...",
@@ -204,7 +202,7 @@ test("an empty or wrong-length key file of ours is replaced with a new key", { s
   }
 });
 
-test("two hooks creating the key at once end with one key", { skip: !posix }, async (t) => {
+test("four hooks creating the key at once all get the one stored key", { skip: !posix }, async (t) => {
   const file = keyFile(t);
   const lib = new URL("../lib/prompt-recall.mjs", import.meta.url).href;
   const script = `import(${JSON.stringify(lib)}).then((m) => { const k = m.loadRecallKey(${JSON.stringify(file)}); process.stdout.write(k ? k.toString("hex") : "null"); });`;
@@ -218,10 +216,7 @@ test("two hooks creating the key at once end with one key", { skip: !posix }, as
   const got = await Promise.all(Array.from({ length: 4 }, run));
   const stored = fs.readFileSync(file, "utf8");
   assert.match(stored, /^[0-9a-f]{64}$/);
-  // A hook that reads during another's link sees a second link for a moment and refuses
-  // it (null: random ids for that process); every key handed out is the stored one.
-  assert.ok(got.includes(stored), got.join(" "));
-  for (const k of got) assert.ok(k === stored || k === "null", k);
+  assert.deepEqual(got, [stored, stored, stored, stored]);
   assert.deepEqual(fs.readdirSync(path.dirname(file)), ["recall-key"]);
 });
 
@@ -238,4 +233,26 @@ test("a symlink planted at the recall key is refused, and ids fall back to rando
   assert.equal(fs.readFileSync(victim, "utf8"), "a".repeat(64));
   assert.ok(fs.lstatSync(file).isSymbolicLink(), "the link is left, not replaced");
   assert.notEqual(blockId("x", null), blockId("x", null));
+});
+
+test("a hard link planted at the recall key is refused and left in place", { skip: !posix }, (t) => {
+  const dir = keyDir(t);
+  const victim = path.join(dir, "victim");
+  fs.writeFileSync(victim, "b".repeat(64), { mode: 0o600 });
+  fs.mkdirSync(path.join(dir, ".loom"));
+  const file = path.join(dir, ".loom", "recall-key");
+  fs.linkSync(victim, file);
+  assert.equal(loadRecallKey(file), null);
+  assert.equal(fs.readFileSync(victim, "utf8"), "b".repeat(64));
+  assert.equal(fs.statSync(file).nlink, 2, "neither link is removed");
+});
+
+test("a key whose second link is a temporary name a creator left is repaired", { skip: !posix }, (t) => {
+  const file = keyFile(t);
+  const key = loadRecallKey(file);
+  const stray = `${file}.4242.0123456789ab`;
+  fs.linkSync(file, stray);
+  assert.deepEqual(loadRecallKey(file), key);
+  assert.equal(fs.existsSync(stray), false);
+  assert.equal(fs.statSync(file).nlink, 1);
 });

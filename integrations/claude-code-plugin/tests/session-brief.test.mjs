@@ -1,4 +1,5 @@
 import "./temp-home.mjs";
+import { noIds } from "./recalled-block.mjs";
 // The session brief hook: transcript → typed events, the
 // save bar, the body, the primer line, the CLI helpers, and the hook end to
 // end against a local server (the detached flusher's post, the optimistic
@@ -25,9 +26,6 @@ import {
   transcriptEvents,
   worthSaving,
 } from "../lib/session-brief.mjs";
-
-// The block's id (derived from its text), removed so text around it can be compared.
-const noIds = (t) => String(t).replace(/ id="[0-9a-f]{16}"/g, "");
 
 process.env.LOOM_HOOK_NO_MAIN = "1";
 const { formatList, isListNumber, localTranscript, parseArgs, renderTranscript, sinceLines } = await import(

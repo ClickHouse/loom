@@ -1,4 +1,5 @@
 import "./temp-home.mjs";
+import { noIds } from "./recalled-block.mjs";
 import { test } from "node:test";
 import path from "node:path";
 import os from "node:os";
@@ -650,9 +651,6 @@ test("deny texts carry the repository's namespace without suggesting an unsuppor
 // ---- the repository lookup's cache and outcome -------------
 
 import { UNRESOLVED_TTL_MS, cacheIsFresh, repoLookupOutcome } from "../lib/repo-scope.mjs";
-
-// The block's id (derived from its text), removed so text around it can be compared.
-const noIds = (t) => String(t).replace(/ id="[0-9a-f]{16}"/g, "");
 
 test("a lookup that did not answer is unresolved, not 'not indexed'", () => {
   assert.deepEqual(repoLookupOutcome(null, "clickhouse/example-private"), { unresolved: true });

@@ -101,47 +101,107 @@ export function recallKeyPath(home = os.homedir()) {
 }
 
 const KEY_HEX = /^[0-9a-f]{64}$/;
+const KEY_PASSES = 5;
+
+/** A private name next to `file` for one step of this process: the key's temporary
+ *  copy before it is linked into place, or a bad key moved aside. */
+const besideKey = (file) => `${file}.${process.pid}.${randomBytes(6).toString("hex")}`;
 
 /** A new key written to a private temporary name, then linked into place: the link
- *  never replaces a key another hook put there first. null when it cannot be made. */
+ *  never replaces a key another hook put there first. The temporary name is removed
+ *  whatever happens. null when it cannot be made. */
 function createRecallKey(file) {
+  let tmp = "";
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     const key = randomBytes(32);
-    const tmp = `${file}.${process.pid}.${randomBytes(6).toString("hex")}`;
+    tmp = besideKey(file);
     writePrivateFile(tmp, key.toString("hex"));
-    try {
-      fs.linkSync(tmp, file);
-      return key;
-    } catch {
-      return null; // one exists already (or the directory refuses it)
-    } finally {
-      removeFile(tmp);
-    }
+    fs.linkSync(tmp, file);
+    return key;
   } catch {
-    return null;
+    return null; // one exists already, or the directory refuses it
+  } finally {
+    if (tmp) removeFile(tmp);
   }
 }
 
+/** True when `file` is ours and its only other links are this install's names beside
+ *  it (`recall-key.*`: a creator between its link and its unlink, or one that died
+ *  there); those are removed. False for any other link. */
+function dropStrayLinks(file) {
+  try {
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || st.nlink < 2) return false;
+    if (typeof process.getuid === "function" && st.uid !== process.getuid()) return false;
+    const dir = path.dirname(file);
+    const prefix = `${path.basename(file)}.`;
+    const strays = fs
+      .readdirSync(dir)
+      .filter((n) => n.startsWith(prefix))
+      .map((n) => path.join(dir, n))
+      .filter((p) => {
+        try {
+          const o = fs.lstatSync(p);
+          return o.ino === st.ino && o.dev === st.dev;
+        } catch {
+          return false;
+        }
+      });
+    if (strays.length !== st.nlink - 1) return false;
+    for (const p of strays) removeFile(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Move a bad key of ours aside under a private name, so only the hook whose rename
+ *  took it removes it; a good key someone made in the meantime is put back. */
+function replaceBadKey(file) {
+  const aside = besideKey(file);
+  try {
+    fs.renameSync(file, aside);
+  } catch {
+    return; // another hook moved it first
+  }
+  let text = "";
+  try {
+    text = readPrivateFile(aside).trim();
+  } catch {
+    /* not readable as ours: removed below */
+  }
+  if (KEY_HEX.test(text)) {
+    try {
+      fs.linkSync(aside, file);
+    } catch {
+      /* a new key is there already */
+    }
+  }
+  removeFile(aside);
+}
+
 /** The 32-byte secret in `file`, created once when missing. A file of ours that is
- *  empty or the wrong length (a write that failed) is removed and made again. null,
- *  and then a block's id is random, when the key cannot be read or made, or the path
- *  is a link, a hard link or another user's file (readPrivateFile's checks). */
+ *  empty or the wrong length (a write that failed) is moved aside and made again; a
+ *  second link that is only this install's own temporary name is removed. null, and
+ *  then a block's id is random, when the key cannot be read or made, or the path is a
+ *  link, a hard link elsewhere or another user's file (readPrivateFile's checks). */
 export function loadRecallKey(file = recallKeyPath()) {
-  for (let pass = 0; pass < 3; pass++) {
+  for (let pass = 0; pass < KEY_PASSES; pass++) {
     let text = null;
     try {
       text = readPrivateFile(file).trim();
     } catch (e) {
-      if (!e || e.code !== "ENOENT") return null; // not ours: refused
+      if (e && e.code === "ENOENT") {
+        const made = createRecallKey(file);
+        if (made) return made;
+        continue; // another hook linked its key first: read that one
+      }
+      if (dropStrayLinks(file)) continue;
+      return null; // a link, a hard link elsewhere, or not ours: refused
     }
-    if (text !== null) {
-      if (KEY_HEX.test(text)) return Buffer.from(text, "hex");
-      if (!removeFile(file)) return null;
-    }
-    const made = createRecallKey(file);
-    if (made) return made;
-    // Another hook linked its key first: read that one on the next pass.
+    if (KEY_HEX.test(text)) return Buffer.from(text, "hex");
+    replaceBadKey(file);
   }
   return null;
 }

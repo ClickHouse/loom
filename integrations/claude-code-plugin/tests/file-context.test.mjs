@@ -1,4 +1,5 @@
 import "./temp-home.mjs";
+import { noIds } from "./recalled-block.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -8,9 +9,6 @@ import {
   relativeForLookup,
   targetPath,
 } from "../lib/file-context.mjs";
-
-// The block's id (derived from its text), removed so text around it can be compared.
-const noIds = (t) => String(t).replace(/ id="[0-9a-f]{16}"/g, "");
 
 test("targetPath: only file-editing tools, any of the path field names", () => {
   assert.equal(targetPath("Edit", { file_path: "/r/src/a.cpp" }), "/r/src/a.cpp");

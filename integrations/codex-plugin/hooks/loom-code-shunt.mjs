@@ -239,7 +239,9 @@ function scopeBatches(pending) {
  *  private-file checks, and remove it: of two hooks flushing at once only one
  *  gets each batch. "" when another hook claimed it first, or it is not ours. */
 function claimBatch(file) {
-  const claimed = tmpStatePath("shunt-claim", `${file}:${process.pid}`, { ext: ".log" });
+  const claimed = tmpStatePath("shunt-claim", `${file}:${process.pid}:${crypto.randomBytes(8).toString("hex")}`, {
+    ext: ".log",
+  });
   try {
     fs.renameSync(file, claimed);
   } catch {
