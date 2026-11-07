@@ -731,11 +731,6 @@ def test_a_candidate_comes_before_its_final_and_the_final_goes_where_it_was_soak
     assert "delete v1.2.0-rc.1 (git push origin :refs/tags/v1.2.0-rc.1) if it is a stray" in error
     git_repo.git(tmp_path, "tag", "v1.2.0-rc.2")  # the fix soaked as rc.2: its commit is HEAD
     assert prepare.check_tag("1.2.0", tmp_path) is None
-    git_repo.git(tmp_path, "tag", "v1.2.0-rc.3")
-    error = prepare.check_tag("1.2.0-rc.3", tmp_path)
-    assert error == "v1.2.0-rc.3 is on v1.2.0's commit, which is released: run v1.2.0 instead"
-    # A stray candidate on the final's own commit leaves the final's runs alone.
-    assert prepare.check_tag("1.2.0", tmp_path) is None
 
 
 def test_the_last_candidate_is_the_highest_number_not_the_last_string(tmp_path: Path) -> None:
@@ -1062,19 +1057,24 @@ def test_a_chart_unreadable_at_a_tag_names_the_tag(
         prepare.released_chart("v1.0.0", tmp_path)
 
 
-def test_an_older_candidate_run_after_its_final_is_not_told_to_delete_itself(
-    tmp_path: Path,
+@pytest.mark.parametrize("rc1_after_final", [False, True], ids=["soaked before", "pushed after"])
+def test_a_candidate_below_the_finals_is_not_told_to_delete_itself(
+    tmp_path: Path, rc1_after_final: bool
 ) -> None:
-    """rc.1 was soaked and released before rc.2; the final went on rc.2's commit."""
+    """rc.1 on another commit than rc.2 and the final: git cannot tell an older
+    candidate from one pushed later, so either way its tag stays."""
     git_repo.git(tmp_path, "init", "-q")
-    _commit(tmp_path, "rc.1")
-    git_repo.git(tmp_path, "tag", "v1.2.0-rc.1")
-    _commit(tmp_path, "the fix")
-    git_repo.git(tmp_path, "tag", "v1.2.0-rc.2")
-    git_repo.git(tmp_path, "tag", "v1.2.0")
+    _commit(tmp_path, "first")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.2" if rc1_after_final else "v1.2.0-rc.1")
+    _commit(tmp_path, "second")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.1" if rc1_after_final else "v1.2.0-rc.2")
+    git_repo.git(tmp_path, "tag", "v1.2.0", "v1.2.0-rc.2")
     git_repo.git(tmp_path, "checkout", "-q", "v1.2.0-rc.1")
     error = prepare.check_tag("1.2.0-rc.1", tmp_path)
-    assert error == "v1.2.0-rc.1 is numbered below v1.2.0-rc.2, v1.2.0's candidate: nothing to run"
+    assert error == (
+        "v1.2.0-rc.1 is numbered below v1.2.0-rc.2, the newest candidate on v1.2.0's commit:"
+        " nothing to run"
+    )
     git_repo.git(tmp_path, "checkout", "-q", "v1.2.0")
     assert prepare.check_tag("1.2.0", tmp_path) is None  # the final's runs still pass
 
@@ -1094,20 +1094,6 @@ def test_every_stray_above_the_finals_candidate_is_told_to_go(tmp_path: Path) ->
         assert error and f":refs/tags/v1.2.0-rc.{n}" in error  # the stray tag to delete
 
 
-def test_a_candidate_numbered_below_the_finals_is_not_called_released(tmp_path: Path) -> None:
-    """rc.1 pushed after the final on rc.2 looks like an older candidate: its tag stays."""
-    git_repo.git(tmp_path, "init", "-q")
-    _commit(tmp_path, "rc.2")
-    git_repo.git(tmp_path, "tag", "v1.2.0-rc.2")
-    git_repo.git(tmp_path, "tag", "v1.2.0")
-    _commit(tmp_path, "later")
-    git_repo.git(tmp_path, "tag", "v1.2.0-rc.1")
-    error = prepare.check_tag("1.2.0-rc.1", tmp_path)
-    assert error == "v1.2.0-rc.1 is numbered below v1.2.0-rc.2, v1.2.0's candidate: nothing to run"
-    git_repo.git(tmp_path, "checkout", "-q", "v1.2.0")
-    assert prepare.check_tag("1.2.0", tmp_path) is None
-
-
 def test_a_candidate_is_compared_with_the_newest_on_the_finals_commit(tmp_path: Path) -> None:
     """rc.2, rc.4 and the final on one commit; rc.3 is below rc.4, so it stays."""
     git_repo.git(tmp_path, "init", "-q")
@@ -1118,7 +1104,12 @@ def test_a_candidate_is_compared_with_the_newest_on_the_finals_commit(tmp_path: 
         git_repo.git(tmp_path, "tag", "-a", "-m", tag, tag)
     git_repo.git(tmp_path, "checkout", "-q", "v1.2.0-rc.3")
     error = prepare.check_tag("1.2.0-rc.3", tmp_path)
-    assert error == "v1.2.0-rc.3 is numbered below v1.2.0-rc.4, v1.2.0's candidate: nothing to run"
+    assert error == (
+        "v1.2.0-rc.3 is numbered below v1.2.0-rc.4, the newest candidate on v1.2.0's commit:"
+        " nothing to run"
+    )
+    git_repo.git(tmp_path, "checkout", "-q", "v1.2.0")
+    assert prepare.check_tag("1.2.0", tmp_path) is None
 
 
 def test_either_candidate_on_the_finals_commit_is_told_to_run_the_final(tmp_path: Path) -> None:
@@ -1131,6 +1122,7 @@ def test_either_candidate_on_the_finals_commit_is_told_to_run_the_final(tmp_path
         assert (
             error == f"v1.2.0-rc.{n} is on v1.2.0's commit, which is released: run v1.2.0 instead"
         )
+    assert prepare.check_tag("1.2.0", tmp_path) is None  # they leave the final's runs alone
 
 
 def test_a_soaked_candidate_run_again_after_its_final_is_not_told_to_delete_itself(
