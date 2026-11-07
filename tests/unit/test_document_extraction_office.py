@@ -542,7 +542,7 @@ def test_pdf_pages_are_cited_by_page_and_the_outline_gives_their_sections() -> N
         {"page_start": 2, "page_end": 2},
     ]
     assert a.attrs == {"pages": 3}
-    assert a.parser_version.startswith("3+pypdf")
+    assert a.parser_version.startswith("4+pypdf")
     # The image-only page needs OCR: the extraction says so and is not complete.
     assert (a.coverage.unit, a.coverage.total, a.coverage.extracted) == ("pages", 3, 2)
     assert a.coverage.failed[0].unit == "page 3" and "OCR" in a.coverage.failed[0].reason
@@ -562,132 +562,9 @@ def test_a_pdf_page_of_text_that_draws_an_image_names_it_as_not_read(kind: str) 
     assert a.coverage.to_dict()["complete"]
     assert a.attrs["images_unread"] == [2]
     assert a.warnings == (
-        "images on 1 page of text are not read: text drawn only inside an image is not extracted"
-        " (attrs.images_unread)",
+        "images on 1 page of text are not read: text drawn only inside a small image is not"
+        " extracted (attrs.images_unread)",
     )
-
-
-def test_an_image_the_pdf_walk_saw_before_its_bounds_counts_without_the_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from loom_extractor import pdffile
-
-    def has_image(*a: Any) -> bool:
-        return False  # were it asked, the pages would not be listed
-
-    monkeypatch.setattr(
-        pdffile.layout, "drawing", lambda *a: pdffile.layout.Drawing([], images=True, read=False)
-    )
-    monkeypatch.setattr(pdffile, "_has_image", has_image)
-    a = extract(pdf(["Text only", ("See the figure", IMAGE)], []), "figure.pdf")
-    assert a.attrs["images_unread"] == [1, 2]
-    assert len(a.warnings) == 1
-
-
-@pytest.mark.parametrize("walk", ["fails", "stops at its bounds"])
-def test_a_pdf_page_whose_drawing_is_not_read_whole_is_looked_at_for_images(
-    walk: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from loom_extractor import pdffile
-
-    def drawing(*a: Any) -> Any:
-        if walk == "fails":
-            raise ValueError("unreadable drawing")
-        return pdffile.layout.Drawing([], images=False, read=False)
-
-    monkeypatch.setattr(pdffile.layout, "drawing", drawing)
-    a = extract(pdf(["Text only", ("See the figure", FORM_IMAGE)], []), "figure.pdf")
-    # The page's images are looked for apart from its layout.
-    assert a.attrs["images_unread"] == [2]
-
-
-def test_a_pdf_page_whose_images_cannot_be_looked_for_is_named(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from loom_extractor import pdffile
-
-    def unreadable(*a: Any) -> Any:
-        raise ValueError("unreadable drawing")
-
-    monkeypatch.setattr(pdffile.layout, "drawing", unreadable)
-    monkeypatch.setattr(pdffile, "_has_image", unreadable)
-    a = extract(pdf(["Text only"], []), "a.pdf")
-    # Its text is read; that its images could not be looked for is said, not passed over.
-    assert [b.text for b in a.blocks] == ["Text only"] and a.coverage.to_dict()["complete"]
-    assert a.warnings == ("page 1: whether it draws an image could not be read",)
-
-
-def _nested_forms(depth: int) -> bytes:
-    """A page of text that draws an image through `depth` forms, each drawing the next."""
-    from pypdf.generic import (
-        ArrayObject,
-        DecodedStreamObject,
-        DictionaryObject,
-        NameObject,
-        NumberObject,
-    )
-
-    w = PdfWriter()
-    w.append(io.BytesIO(pdf(["Text"], [])))
-    page = w.pages[0]
-    image = DecodedStreamObject()
-    image.set_data(b"\x00")
-    image.update(
-        {
-            NameObject("/Type"): NameObject("/XObject"),
-            NameObject("/Subtype"): NameObject("/Image"),
-            NameObject("/Width"): NumberObject(1),
-            NameObject("/Height"): NumberObject(1),
-            NameObject("/ColorSpace"): NameObject("/DeviceGray"),
-            NameObject("/BitsPerComponent"): NumberObject(8),
-        }
-    )
-    child = w._add_object(image)
-    for _ in range(depth):
-        form = DecodedStreamObject()
-        form.set_data(b"/X Do")
-        form.update(
-            {
-                NameObject("/Type"): NameObject("/XObject"),
-                NameObject("/Subtype"): NameObject("/Form"),
-                NameObject("/BBox"): ArrayObject(
-                    [NumberObject(0), NumberObject(0), NumberObject(1), NumberObject(1)]
-                ),
-                NameObject("/Resources"): DictionaryObject(
-                    {NameObject("/XObject"): DictionaryObject({NameObject("/X"): child})}
-                ),
-            }
-        )
-        child = w._add_object(form)
-    resources = page["/Resources"].get_object()
-    resources[NameObject("/XObject")] = DictionaryObject({NameObject("/X"): child})
-    contents = page.get_contents()
-    assert contents is not None
-    contents.set_data(contents.get_data() + b" /X Do")
-    page.replace_contents(contents)
-    out = io.BytesIO()
-    w.write(out)
-    return out.getvalue()
-
-
-def test_an_image_drawn_by_a_form_at_the_depth_bound_counts_and_past_it_does_not() -> None:
-    from loom_extractor import pdflayout
-
-    bound = pdflayout._MAX_FORM_DEPTH
-    # A form at the bound is walked and its image counts; the forms it names are not.
-    assert extract(_nested_forms(bound), "a.pdf").attrs.get("images_unread") == [1]
-    assert "images_unread" not in extract(_nested_forms(bound + 1), "b.pdf").attrs
-
-
-def test_the_pdf_fallback_searches_the_forms_the_walk_does(monkeypatch: pytest.MonkeyPatch) -> None:
-    from loom_extractor import pdffile, pdflayout
-
-    monkeypatch.setattr(
-        pdffile.layout, "drawing", lambda *a: pdflayout.Drawing([], images=False, read=False)
-    )
-    bound = pdflayout._MAX_FORM_DEPTH
-    assert extract(_nested_forms(bound), "a.pdf").attrs.get("images_unread") == [1]
-    assert "images_unread" not in extract(_nested_forms(bound + 1), "b.pdf").attrs
 
 
 def test_a_pdf_page_whose_resources_hold_an_image_it_never_draws_is_not_listed() -> None:

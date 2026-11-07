@@ -409,8 +409,9 @@ def extract_pptx(data: bytes) -> Artifact:
         coverage=Coverage("slides", len(parts), len(parts) - len(incomplete), failed=tuple(failed)),
         warnings=(
             (
-                f"pictures, charts, diagrams or embedded objects on {counted(len(not_read), 'slide')}"
-                " of text are not read: text inside them is not extracted (attrs.images_unread)",
+                "pictures, charts, diagrams or embedded objects on"
+                f" {counted(len(not_read), 'slide')} of text are not read: text inside them is"
+                " not extracted (attrs.images_unread)",
             )
             if not_read
             else ()

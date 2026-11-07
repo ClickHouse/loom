@@ -84,9 +84,12 @@ def test_a_large_picture_on_a_text_page_is_read_and_a_small_one_is_not(engine: F
     text = text_at(72, 740, "A page of text with a whiteboard photo.")
     big = extract(laid_out_pdf([text + b"q 400 0 0 300 100 300 cm /Im1 Do Q"], image=GRAY), "b.pdf")
     assert "Scanned runbook text" in "\n".join(b.text for b in big.blocks)
+    assert "images_unread" not in big.attrs  # OCR read it
     small = extract(laid_out_pdf([text + b"q 40 0 0 30 100 300 cm /Im1 Do Q"], image=GRAY), "s.pdf")
     assert [b.text for b in small.blocks] == ["A page of text with a whiteboard photo."]
     assert small.coverage.complete and len(engine.seen) == 1
+    # OCR leaves the small one: the page is named as holding an image not read.
+    assert small.attrs["images_unread"] == [1] and len(small.warnings) == 1
 
 
 def test_a_diagrams_labels_on_a_text_page_are_text_not_a_table_or_a_heading(
@@ -337,6 +340,7 @@ def test_a_text_layer_over_a_page_image_is_read_once_and_not_again_with_ocr(
         laid_out_pdf([b"q 400 0 0 400 100 200 cm /Im1 Do Q\n" + lines], image=GRAY), "t.pdf"
     )
     assert engine.seen == [] and a.coverage.complete and "ocr_pages" not in a.attrs
+    assert "images_unread" not in a.attrs  # its own text layer is its text
     assert sum(b.text.count("Line 3 of") for b in a.blocks) == 1
 
 
@@ -481,7 +485,7 @@ def test_a_slide_with_a_chart_beside_a_picture_ocr_read_is_not_complete(
     a = extract(deck, "c.pptx")
     assert not a.coverage.complete and len(eng.seen) == 1
     assert [f.reason for f in a.coverage.failed] == [
-        "no text: its pictures, charts or diagrams are not read"
+        "no text: its pictures, charts, diagrams or embedded objects are not read"
     ]
 
 
