@@ -1,9 +1,9 @@
 """Fixtures shared by the integration and analyzer suites, and the
 LOOM_TEST_SHARD split a run can ask for (`_shards`).
 
-They need a control plane at $LOOM_BASE_URL (tests that ask for it skip
-without one), its ClickHouse at $LOOM_CH_* (default localhost:8123), and the
-migrations applied (`make migrate`). The unit suite shadows both autouse
+They need a ClickHouse at $LOOM_CH_* (default localhost:8123) with the
+migrations applied (`make migrate`); the fixtures that need a control plane
+at $LOOM_BASE_URL live in tests/integration/conftest.py. The unit suite shadows both autouse
 fixtures here (tests/unit/conftest.py) and needs none of this.
 """
 
@@ -13,9 +13,7 @@ import os
 import sys
 from pathlib import Path
 
-import httpx
 import pytest
-import pytest_asyncio
 
 from tests import _shards
 
@@ -147,23 +145,6 @@ def _seed_test_api_key(_load_repo_dotenv):
 
 
 @pytest.fixture
-def require_real_embedder(control_plane_url: str):
-    """Skip search-quality tests when the server runs the fake embedder.
-
-    The fake-ngram embedder is documented to mis-rank every search, so
-    ranking-threshold assertions (entity-boost beating a cosine winner,
-    procedure.match surfacing a hit) structurally can't hold on it. They
-    exercise quality only against a real embedder — CI with a key, or a
-    local real-embedder stack. Authoritative: reads the server's own
-    /v1/health.fake_embedding, not a test-process env guess.
-    """
-    with httpx.Client(base_url=control_plane_url, timeout=2.0) as c:
-        health = c.get("/v1/health").json()
-    if health.get("fake_embedding"):
-        pytest.skip("search-quality test needs a real embedder (server is on the fake embedder)")
-
-
-@pytest.fixture
 def pause_loom_memory_merges(ch_client):
     """Pause background merges on loom.memory for the test's duration.
 
@@ -225,36 +206,6 @@ def ch_client():
     )
     yield client
     client.close()
-
-
-@pytest_asyncio.fixture
-async def agent(control_plane_url: str):
-    """A Loom Agent in a unique namespace, JWT-authenticated.
-
-    Mints a writer-scoped token on the fly so the suite runs against a
-    server with `LOOM_AUTH_REQUIRED=true`. Tests don't need to know about
-    auth — they just use `agent` as before.
-    """
-    from loom import Agent
-
-    from server.auth.jwt import mint_token
-
-    ns = f"test-{os.urandom(4).hex()}"
-    tok = os.environ.get("LOOM_API_KEY") or mint_token(
-        subject="test-suite",
-        org="test-org",
-        namespaces=["*"],
-        roles=["writer"],
-        ttl_seconds=600,
-    )
-    async with Agent(
-        org="test-org",
-        namespace=ns,
-        agent="test-agent",
-        base_url=control_plane_url,
-        api_key=tok,
-    ) as a:
-        yield a
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
