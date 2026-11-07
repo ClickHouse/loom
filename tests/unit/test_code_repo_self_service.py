@@ -504,7 +504,7 @@ async def test_a_branch_of_a_self_service_source_ignores_an_operator_entry_of_it
 
 
 @pytest.mark.asyncio
-async def test_a_branch_of_a_cleared_source_copies_no_qa_binding(plane, links) -> None:
+async def test_a_branch_of_a_cleared_operator_source_copies_no_qa_binding(plane, links) -> None:
     plane.stored[(ORG, "code-clickhouse", links.OVERRIDE_KEY)] = ""
     await admin.handle_code_repo_add_branch(
         CodeRepoAddBranchInput(org=ORG, namespace="code-clickhouse", branch="26.8")
