@@ -21,7 +21,10 @@ from server.auth.jwt import mint_token
 from server.identity.app import account_admin
 from server.identity.app import claim_release as cr
 from server.identity.app import namespace_classification as nc
+from server.memory.domain.trust import actor_for
 from server.settings import settings
+
+_REAL_IS_RESTRICTED = nc.is_restricted
 
 _ROW: dict[str, Any] = {
     "org": "acme",
@@ -149,6 +152,40 @@ def test_a_restricted_namespace_is_answered_like_a_missing_one(env: Any) -> None
     assert _status(run, _tok(["platform_admin"]), row=None) == 404
     state["allows"] = True  # a direct admin grant + a claim naming it
     assert run(_tok(["org_admin"]))[0].released
+
+
+def test_a_release_of_a_restricted_namespace_writes_the_access_audit_row(
+    env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, state = env
+    rows: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(event_type: str, **kw: Any) -> str:
+        rows.append((event_type, kw))
+        return "hash"
+
+    monkeypatch.setattr("server.observability.audit.emit", emit)
+    monkeypatch.setattr(settings, "restricted_audit_inline", True)
+
+    class _Directory:  # the classification read, which fills the snapshot the row reads
+        _client = object()
+
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, str]]:
+            return [{"namespace": "repo-x"}]
+
+    monkeypatch.setattr(nc, "is_restricted", _REAL_IS_RESTRICTED)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Directory())
+    monkeypatch.setattr(nc, "_cache", {})  # cold, and restored after the test
+    assert _status(run, _tok(["org_admin"])) == 404
+    assert rows == []  # refused: nothing was reached
+    state["allows"] = True
+    assert run(_tok(["org_admin"]))[0].released
+    ((event, kw),) = rows
+    assert event == "namespace.restricted_access"
+    assert (kw["org"], kw["namespace"]) == ("acme", "repo-x")
+    assert kw["subject"]["op"] == "admin.claim_release"
+    assert (kw["subject"]["transport"], kw["subject"]["roles"]) == ("http", ["org_admin"])
+    assert kw["actor"] == actor_for("op", is_service_account=True)  # `_tok` mints a service account
 
 
 def test_auth_off_releases_as_local(env: Any, monkeypatch: pytest.MonkeyPatch) -> None:

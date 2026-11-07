@@ -282,9 +282,25 @@ async def _loom_primer_text(
     profile_section = ""
     if include_profile and defaults and defaults["namespace"]:
         try:
+            from server.auth.context import current_auth_var
+            from server.identity.app.namespace_classification import is_restricted
+            from server.identity.app.restricted_access import note_restricted_access
             from server.memory.api.models_profile import ProfileRenderInput
             from server.memory.app.profile import handle_profile_render
 
+            # fills the snapshot the row reads; no gate classified this default
+            if auth is not None and await is_restricted(defaults["org"], defaults["namespace"]):
+                bound = current_auth_var.set(auth)  # the row's token_id column
+                try:
+                    await note_restricted_access(
+                        auth,
+                        op="mcp.primer",
+                        org=defaults["org"],
+                        namespace=defaults["namespace"],
+                        transport="mcp",
+                    )
+                finally:
+                    current_auth_var.reset(bound)
             rendered_out = await handle_profile_render(
                 ProfileRenderInput(
                     org=defaults["org"],
@@ -302,8 +318,7 @@ async def _loom_primer_text(
                     f"{_fenced(rendered_out.rendered)}\n\n"
                     "Don't re-fetch — it's been delivered."
                 )
-        except Exception:  # noqa: BLE001 — primer ships without the profile on render failure
-            # Best-effort — primer ships without the profile on render failure.
+        except Exception:  # noqa: BLE001 — the primer ships without the profile when the classification or the render fails
             pass
 
     return (

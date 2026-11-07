@@ -21,6 +21,7 @@ from server.auth.service_accounts import hand_down_lineage, revoked_row
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.app import me_callers, token_grants
+from server.identity.app.restricted_access import note_restricted_grants
 from server.operations.base import GRANT_ROLES, Role, grant_rank
 from server.settings import settings
 
@@ -309,8 +310,9 @@ async def me_service_accounts_create(
     and an ordered `namespaces` claim (the read priority). Returns the JWT
     exactly once.
     """
+    caller: AuthInfo | None = None  # auth off: a mint writes no audit row
     if settings.auth_actually_required():
-        parent = me_callers.require_authed_info(request)
+        parent = caller = me_callers.require_authed_info(request)
     else:
         parent = dev_parent(request, payload)
     subject, org = parent.subject, parent.org
@@ -343,6 +345,13 @@ async def me_service_accounts_create(
     # would have every read of it refused.
     restricted_granted = await token_grants.grant_restricted_to_token(
         org, sa_subject, subject, ns_roles
+    )
+    await note_restricted_grants(
+        caller,
+        op="me.service_accounts.create",
+        org=org,
+        namespaces=restricted_granted,
+        granted_to=sa_subject,
     )
 
     return {

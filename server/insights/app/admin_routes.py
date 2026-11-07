@@ -831,6 +831,7 @@ async def admin_token_mint(
     from server.core.datetimes import naive_utc_now_seconds
     from server.identity.app import me_service_accounts as tokens
     from server.identity.app import token_grants
+    from server.identity.app.restricted_access import note_restricted_grants
 
     # Redundant with the router-level dependency; kept so the gate holds even
     # if this handler is ever mounted on another router.
@@ -897,7 +898,10 @@ async def admin_token_mint(
     # A restricted namespace is read only by a subject with a direct grant there.
     flat_role = (delegated.roles or ["viewer"])[0]
     roles_on = delegated.ns_roles or dict.fromkeys(delegated.namespaces, flat_role)
-    await token_grants.grant_restricted_to_token(input.org, sa_subject, creator, roles_on)
+    granted = await token_grants.grant_restricted_to_token(input.org, sa_subject, creator, roles_on)
+    await note_restricted_grants(
+        info, op="admin.token.mint", org=input.org, namespaces=granted, granted_to=sa_subject
+    )
     if info is not None:
         await _audit_mint(info, input, delegated, sa_subject, jti)
     # Retired: the token's subject is its own, and it is always a service account.

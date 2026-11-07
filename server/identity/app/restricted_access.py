@@ -1,15 +1,17 @@
 """What a request against a restricted namespace leaves behind.
 
-Three writers run after the authorization gate and would otherwise record
-what the gate protected: the agent_events argument projection (query /
-question text), the code_search_trace row (query text, returned paths) and
-the audit ledger, which otherwise records nothing for a plain read. For a
-restricted namespace the first two keep identifiers and digests and drop
-the text, and the third gains one row per request — the same shape as
-`memory.sensitive_read`, per request rather than per row.
+Three writers run after a request is admitted (by the op gate, or by a raw
+route's own check) and would otherwise record what the check protected: the
+agent_events argument projection (query / question text), the
+code_search_trace row (query text, returned paths) and the audit ledger,
+which otherwise records nothing for a plain read. For a restricted namespace
+the first two keep identifiers and digests and drop the text, and the third
+gains one row per request, or per granted namespace for a token mint — the
+same shape as `memory.sensitive_read`, per request rather than per row.
 
 Every check here is `is_restricted_cached`: synchronous, no I/O, answered
-from the snapshot the gate populated a moment earlier in the same request.
+from the snapshot the caller's own authorization (or classification read)
+filled a moment earlier in the same request.
 """
 
 from __future__ import annotations
@@ -69,13 +71,19 @@ async def drain(timeout_s: float = 5.0) -> int:
 
 
 async def note_restricted_access(
-    auth: Any, *, op: str, org: str | None, namespace: str | None, transport: str
+    auth: Any,
+    *,
+    op: str,
+    org: str | None,
+    namespace: str | None,
+    transport: str,
+    granted_to: str = "",
 ) -> bool:
-    """One audit row for a request the gate admitted to a restricted
-    namespace. Returns True when the row was written (or, with
-    `restricted_audit_inline` off, scheduled). Never raises.
+    """One audit row for a request admitted to a restricted namespace (by the
+    op gate, or by a raw route's own check). Returns True when the row was
+    written (or, with `restricted_audit_inline` off, scheduled). Never raises.
 
-    By default the row is written and waited for before the handler runs, so a
+    By default the row is written and waited for before the answer, so a
     process killed after answering never loses it; the read pays that insert's
     round trip, up to `ch_batched_insert_wait_max_ms` of batching, and the part
     write. `restricted_audit_inline=false` writes it beside the request instead
@@ -105,6 +113,8 @@ async def note_restricted_access(
                 "transport": transport,
                 "token_id": str(getattr(auth, "token_id", "") or ""),
                 "roles": [r.name.lower() for r in getattr(auth, "roles", ())],
+                # a mint: the token subject the namespace was granted to
+                **({"granted_to": granted_to} if granted_to else {}),
             },
         )
         if settings.restricted_audit_inline:
@@ -117,4 +127,19 @@ async def note_restricted_access(
         return False
 
 
-__all__ = ["EVENT_TYPE", "digest_text", "drain", "note_restricted_access"]
+async def note_restricted_grants(
+    auth: Any, *, op: str, org: str, namespaces: list[str], granted_to: str
+) -> None:
+    """The row of each restricted namespace a token mint granted `granted_to`,
+    written concurrently."""
+    await asyncio.gather(
+        *(
+            note_restricted_access(
+                auth, op=op, org=org, namespace=ns, transport="http", granted_to=granted_to
+            )
+            for ns in namespaces
+        )
+    )
+
+
+__all__ = ["EVENT_TYPE", "digest_text", "drain", "note_restricted_access", "note_restricted_grants"]

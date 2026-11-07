@@ -13,8 +13,10 @@ from fastapi.responses import Response, StreamingResponse
 
 from server.auth.authz import check_authorized
 from server.auth.bearer import missing_bearer, verify_bearer_header
+from server.auth.context import set_current_auth
 from server.auth.gateway import effective_auth, personal_namespace
 from server.core.ch import sequential_reads
+from server.identity.app.restricted_access import note_restricted_access
 from server.knowledge.domain.documents import text_download_filename
 from server.knowledge.store import documents as documents_repo
 from server.operations.base import Role
@@ -35,7 +37,8 @@ async def knowledge_download(
 
     GET-shaped (not POST/JSON like the ops) so the browser's <a download> has a
     plain URL and gets raw bytes, not a JSON envelope. Auth: bearer + VIEWER on
-    (org, namespace) via the same check_authorized the ops use.
+    (org, namespace) via the same check_authorized the ops use; an admitted
+    read of a restricted namespace leaves its audit row, as an op's does.
 
     A document with no preserved blob (added through
     `knowledge.add`/`upsert` with `content` only) downloads as Markdown built
@@ -50,6 +53,7 @@ async def knowledge_download(
     try:
         if auth is not None:
             auth = effective_auth(auth, request.headers.get("X-Loom-On-Behalf-Of") or "")
+        set_current_auth(auth)  # the reader, as an op's transport binds it (the audit row's token)
         namespace = personal_namespace(auth, org, namespace)
         await check_authorized(auth, Role.VIEWER, org=org, namespace=namespace)
     except ValueError as e:
@@ -62,6 +66,9 @@ async def knowledge_download(
             status_code=403,
             detail={"code": "AUTH_INSUFFICIENT", "message": str(e)},
         ) from e
+    await note_restricted_access(
+        auth, op="knowledge.download", org=org, namespace=namespace, transport="http"
+    )
 
     doc = await documents_repo.get_one(org, namespace, source_uri)
     if doc is None:

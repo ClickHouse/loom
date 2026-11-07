@@ -19,6 +19,7 @@ from server.identity.app.me_service_accounts import (
     parse_ttl_days,
     save_token,
 )
+from server.identity.app.restricted_access import note_restricted_grants
 from server.settings import settings
 
 router = APIRouter()
@@ -232,11 +233,12 @@ async def _save_mcp_token(
     client: str,
     delegated: Delegated,
     restricted_names: list[str],
-) -> tuple[str, str, datetime | None]:
+) -> tuple[str, str, datetime | None, list[str]]:
     """Track a Setup-page token in `service_accounts` (kind='mcp') so it is revocable from
     the Tokens list, minted under its own `sa:` subject so revocation-by-sub kills this
     token and not the person's JWT. Restricted namespaces get the token's own direct grant.
-    Returns (minted token, sa_subject, the saved row's expires_at)."""
+    Returns (minted token, sa_subject, the saved row's expires_at, the restricted
+    namespaces granted)."""
     org = delegated.org
     sa_subject = new_token_subject(org, client, subject)
     sa_hash = sa_subject.removeprefix(f"sa:{client}-")
@@ -247,14 +249,17 @@ async def _save_mcp_token(
     await save_token(
         token_name, sa_subject, delegated, created_by=subject, now=now, kind="mcp", client=client
     )
+    granted: list[str] = []
     if restricted_names:
         caller_roles = {
             ns: (await me_callers.caller_role_on(org, ns, subject) or "viewer")
             for ns in restricted_names
         }
-        await token_grants.grant_restricted_to_token(org, sa_subject, subject, caller_roles)
+        granted = await token_grants.grant_restricted_to_token(
+            org, sa_subject, subject, caller_roles
+        )
 
-    return minted, sa_subject, delegated.expires_at(now)
+    return minted, sa_subject, delegated.expires_at(now), granted
 
 
 def _setup_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
@@ -300,6 +305,8 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
       }
     """
     parent = _setup_parent(request, payload)
+    # auth off: a mint writes no audit row
+    caller = parent if settings.auth_actually_required() else None
     subject, org = parent.subject, parent.org
 
     client = str(payload.get("client") or "")
@@ -337,11 +344,18 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         ttl_seconds=parse_ttl_days(payload.get("ttl_days")),
         is_service_account=True,
     )
-    minted, sa_subject, expires_at = await _save_mcp_token(
+    minted, sa_subject, expires_at, granted = await _save_mcp_token(
         subject=subject,
         client=client,
         delegated=delegated,
         restricted_names=restricted_names,
+    )
+    await note_restricted_grants(
+        caller,
+        op="me.setup.mcp_config",
+        org=org,
+        namespaces=granted,
+        granted_to=sa_subject,
     )
     reads_everywhere = "*" in delegated.namespaces
     # The page names where this token's unaddressed MCP calls land: the MCP

@@ -28,7 +28,9 @@ from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.context import set_current_auth
 from server.auth.gateway import effective_auth, personal_namespace
 from server.core import fail_open, tenant_slots
+from server.core.document_formats import format_of
 from server.core.errors import RateLimitedError
+from server.identity.app.restricted_access import note_restricted_access
 from server.operations.base import Role
 from server.settings import settings
 
@@ -96,11 +98,22 @@ async def knowledge_upload(
     sha256: str = "",
 ) -> Any:
     """Store one file for `knowledge.ingest`. Auth: bearer + WRITER on (org,
-    namespace), as the ops check it. Answers the upload's id, sha256, size,
-    detected format and expiry."""
+    namespace), as the ops check it; an admitted upload to a restricted
+    namespace leaves the audit row an op leaves. Answers the upload's id,
+    sha256, size, detected format and expiry."""
     auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None and settings.auth_actually_required():
         raise missing_bearer()
+    name = filename.strip().replace("\\", "/").rsplit("/", 1)[-1]
+    if not name:
+        raise _refuse(400, "VALIDATION_FAILED", "filename is required")
+    # Named from the file name and media type, never by reading the bytes: the
+    # server parses no original. One whose content is another format is refused
+    # by the extractor at ingest (`format_mismatch`).
+    try:
+        fmt = format_of(name, content_type)
+    except ValueError as e:
+        raise _refuse(415, "UNSUPPORTED_FILE", str(e)) from e
     try:
         if auth is not None:
             auth = effective_auth(auth, request.headers.get("X-Loom-On-Behalf-Of") or "")
@@ -111,20 +124,24 @@ async def knowledge_upload(
         raise _refuse(400, "VALIDATION_FAILED", str(e)) from e
     except PermissionError as e:
         raise _refuse(403, "AUTH_INSUFFICIENT", str(e)) from e
-
-    name = filename.strip().replace("\\", "/").rsplit("/", 1)[-1]
-    if not name:
-        raise _refuse(400, "VALIDATION_FAILED", "filename is required")
+    await note_restricted_access(
+        auth, op="knowledge.upload", org=org, namespace=namespace, transport="http"
+    )
     _admit(auth, org, namespace)
     with tenant_slots.hold(_bucket_org(auth, org)):
-        return await _store(request, org, namespace, name, content_type, sha256)
+        return await _store(request, org, namespace, name, fmt, content_type, sha256)
 
 
 async def _store(
-    request: Request, org: str, namespace: str, name: str, content_type: str, sha256: str
+    request: Request,
+    org: str,
+    namespace: str,
+    name: str,
+    fmt: str,
+    content_type: str,
+    sha256: str,
 ) -> JSONResponse:
     """Read, check and store the file; answers the upload."""
-    from server.core.document_formats import format_of
     from server.knowledge.app.writes import authorship_of
     from server.knowledge.store import blobs, ingestions
 
@@ -134,14 +151,6 @@ async def _store(
     digest = hashlib.sha256(data).hexdigest()
     if sha256 and sha256.lower() != digest:
         raise _refuse(422, "CHECKSUM_MISMATCH", "the bytes do not hash to the sha256 sent")
-    # Named from the file name and media type, never by reading the bytes: the
-    # server parses no original. One whose content is another format is refused
-    # by the extractor at ingest (`format_mismatch`).
-    try:
-        fmt = format_of(name, content_type)
-    except ValueError as e:
-        raise _refuse(415, "UNSUPPORTED_FILE", str(e)) from e
-
     author = authorship_of(agent="", session_id="", source_class=None)
     await blobs.put(org, namespace, data, uploader=author["user_id"])
     row = ingestions.upload_row(
