@@ -281,10 +281,11 @@ user, Loom's own included, reading the tables as before, whatever the server's
 The key and the analyst's password are random and kept together, as one sealed value, in
 one row of `loom.analysis_secrets`, sealed with `server/core/secrets_at_rest.py` in the
 shape `loom secrets reseal` rewrites (`SEALED` in `server/cli/secrets.py`, whose reads
-part 1 moves under `own_write_reads` and which re-reads the row before it writes and
-skips it when the version moved, so a reseal never writes back a lagging replica's row
-or one a rotation replaced meanwhile). The first write draws them under the lease below
-and every replica reads the same row. A root-secret rotation only reseals them, so the
+part 1 moves under `own_write_reads` and which skips a row that is gone; a rotation
+stores its row at the server clock's version in nanoseconds, which a reseal's
+`version + 1` cannot reach, so a reseal never writes back a lagging replica's row or one
+a rotation replaced meanwhile). The first write draws them under the lease below and
+every replica reads the same row. A root-secret rotation only reseals them, so the
 policies never change key; when the key cannot be read, [provisioning](#provisioning)
 says what happens. The analyst user cannot read the key: it has no grant on
 `system.row_policies` or on `loom.analysis_secrets`, and it cannot run `EXPLAIN`. Every
@@ -306,7 +307,7 @@ The analyst user, its settings profiles, grants and policies will be written wit
 never in a ClickHouse config file, which would put the key in the repository. A server
 whose ClickHouse user has access management (the bundled ClickHouse's `loom` user, a
 self-managed admin) writes them itself, and draws the secrets row when there is none and
-it sees no analyst user, in the order that _the order of a write_, below, gives, so a
+it sees no analyst user, in the order the rules below give (the order of a write), so a
 first install cut short is a row without a user, which the next boot finishes with the
 stored key. Elsewhere an admin uses one of two commands:
 
@@ -322,10 +323,10 @@ stored key. Elsewhere an admin uses one of two commands:
   prints a complete rotation, with the command that runs it in one session
   (`clickhouse-client --log_queries=0 --multiquery --queries-file <file>`): a delete of
   the secrets row, the full entity set under the new key, and last the `INSERT` of the
-  new sealed row at a version above the one it read. Run in full, it starts analysis on
-  a first install, recovers it after a lost row and rotates a healthy key alike. It is
-  outside the lease and the version rule, so it is printed by the newest build's CLI,
-  and it is run, not kept.
+  new sealed row at the server clock's version in nanoseconds. Run in full, it starts
+  analysis on a first install, recovers it after a lost row and rotates a healthy key
+  alike. It is outside the lease and the rules below, so it is printed by the newest
+  build's CLI, and it is run, not kept.
 
 From the printed delete on, replicas have no key and answer `ANALYSIS_UNAVAILABLE`, so a
 printed rotation run only in part is never an empty answer. Its statements must run in
@@ -363,21 +364,24 @@ keeps:
 - **The key never changes by itself.** The secrets row is drawn once, and every read of
   it, the one under the lease included, runs with the read-your-writes setting Loom uses
   across replicas (`own_write_reads` in `server/core/ch.py`). A replica reads the key
-  from the row before each statement. A row that does not open, or is gone while the
-  analyst user exists, answers `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem.
-  `loom ch-setup --rotate-analysis-key` is the recovery. It runs from a CLI at least as
-  new as the stored version, first proves its `LOOM_JWT_SECRET` is the deployment's
-  against the root's own record in `loom.signing_keys` (refusing where none is
-  recorded), and refuses while the analysis row opens; then, holding the lease, it draws
-  a new key and password and does a full write of its own version under them (password,
-  policies, grants, version) and stores the row last, at a version above the one it
-  read. Until the row is stored no replica has a key to sign with, so every replica
-  answers `ANALYSIS_UNAVAILABLE`, never an empty answer, and a run cut short leaves that
-  state for the next run to finish. A rotation on purpose, after a key may have leaked,
-  is the same command with `--live`, which skips the refusal for a row that opens and
-  drops the row once the version and root checks pass, so analysis is unavailable for
-  the length of the run; a replica that still holds the old password gets an
-  authentication failure, which answers `ANALYSIS_UNAVAILABLE` too.
+  and the row's version before each statement and the version again after it: a version
+  that moved while the statement ran answers `ANALYSIS_UNAVAILABLE`, since the statement
+  may have been signed with a key the policies no longer accept. A row that does not
+  open, or is gone while the analyst user exists, answers `ANALYSIS_UNAVAILABLE` and is
+  a `loom doctor` problem. `loom ch-setup --rotate-analysis-key` is the recovery. It
+  runs from a CLI at least as new as the stored version, first proves its
+  `LOOM_JWT_SECRET` is the deployment's against the root's own record in
+  `loom.signing_keys` (refusing where none is recorded), and refuses while the analysis
+  row opens; then, holding the lease, it draws a new key and password and does a full
+  write of its own version under them (password, policies, grants, version) and stores
+  the row last, at the server clock's version in nanoseconds. Until the row is stored no
+  replica has a key to sign with, so every replica answers `ANALYSIS_UNAVAILABLE`, never
+  an empty answer, and a run cut short leaves that state for the next run to finish. A
+  rotation on purpose, after a key may have leaked, is the same command with `--live`,
+  which skips the refusal for a row that opens and drops the row once the version and
+  root checks pass, so analysis is unavailable for the length of the run; a replica that
+  still holds the old password gets an authentication failure, which answers
+  `ANALYSIS_UNAVAILABLE` too.
 
 A replica probes the analyst user at boot and then a minute after each probe, in the
 background, as the analyst itself, so the probe needs no access management:
@@ -513,7 +517,9 @@ viewer token. Each case must be refused or return no canary:
   the next run finishes with the stored key, never an empty answer;
 - `loom.analysis_secrets` and `loom.analysis_canary` read directly, and neither the
   statement's text nor the key in `system.query_log`, the printed SQL run as printed
-  included; a reseal running beside a printed rotation, which leaves the new key.
+  included; a reseal whose read comes before a printed rotation and whose insert after
+  it, which leaves the new key; and a statement whose key was read before a rotation
+  replaced the policies, which answers `ANALYSIS_UNAVAILABLE`.
 
 The same file will show that a revoked token stops new calls and that an erased memory
 is gone from the next statement. A unit test pins the generated grants and policies to
