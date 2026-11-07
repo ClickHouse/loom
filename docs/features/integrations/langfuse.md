@@ -115,12 +115,12 @@ python scripts/codegen/push_langfuse_prompts.py --write  # push, then write the 
 `--write` needs both Langfuse settings. A prompt whose text is already the latest version
 is not pushed again.
 
-`POST /v1/admin/prompts.evaluate` (platform admin) reads Langfuse traces tagged
-`prompt:<name>:<version>` and returns a should-promote verdict from their rubric scores
-against a minimum count and threshold. It never writes to Langfuse, and answers 501
-`INTEGRATION_NOT_CONFIGURED` when Langfuse is not set up. It reads the trace list, which
-only Langfuse 3 serves: on Langfuse 4 it finds no traces and answers
-`should_promote: false`.
+`POST /v1/admin/prompts.evaluate` (platform admin) returns a should-promote verdict for
+one prompt version from its traces' rubric scores, against a minimum count and threshold.
+Each generation linked to a prompt version tags its trace `prompt:<name>:<version>`, and
+the evaluation reads up to 200 traces with that tag and their scores, on Langfuse 3 and 4
+alike. It never writes to Langfuse, answers 501 `INTEGRATION_NOT_CONFIGURED` when
+Langfuse is not set up, and 502 `BACKEND_UNAVAILABLE` when Langfuse cannot be read.
 
 ## Erasure
 

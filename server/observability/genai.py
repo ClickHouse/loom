@@ -524,6 +524,14 @@ class _Generation:
             if name and version is not None:
                 self._span.set_attribute("langfuse.prompt.name", name)
                 self._span.set_attribute("langfuse.prompt.version", int(version))
+                # The tag `prompts.evaluate` finds the prompt version's traces by,
+                # on Langfuse 3 and 4 alike. Tags are set whole, so the identity
+                # tags are repeated beside it.
+                ident = _identity.get() or {}
+                tags = [f"{k}:{ident[k]}" for k in ("org", "namespace") if ident.get(k)]
+                self._span.set_attribute(
+                    "langfuse.trace.tags", [*tags, f"prompt:{name}:{int(version)}"]
+                )
 
             # Tiered by what THIS leg's prompt contains, then by namespace consent.
             # A query-only leg records at the default level; a leg that embeds

@@ -8,6 +8,7 @@ cross-cutting tables); handlers are dispatch+adapt only.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any
@@ -680,18 +681,74 @@ async def admin_fleet_cost(input: FleetCostInput) -> FleetCostOutput:
 # ============================================================
 
 
+# The traces and scores one evaluation reads; one page each keeps the gate cheap.
+_EVAL_TRACES = 200
+
+
+async def _traces_tagged(c: Any, backend: Any, base: str, tag: str, major: int) -> list[str]:
+    """Up to `_EVAL_TRACES` trace ids carrying `tag`.
+
+    Langfuse 3 lists traces by tag; Langfuse 4 has no trace list, so the tag is
+    matched on observations and their trace ids are taken in order."""
+    headers = backend.auth_headers
+    if major >= 4:
+        flt = [{"type": "arrayOptions", "column": "tags", "operator": "all of", "value": [tag]}]
+        r = await c.get(
+            f"{base}/api/public/v2/observations",
+            headers=headers,
+            params={"fields": "core", "limit": 1000, "filter": json.dumps(flt)},
+        )
+        r.raise_for_status()
+        ids = dict.fromkeys(
+            str(o["traceId"]) for o in r.json().get("data") or [] if o.get("traceId")
+        )
+        return list(ids)[:_EVAL_TRACES]
+    r = await c.get(
+        f"{base}/api/public/traces",
+        headers=headers,
+        params={"tags": tag, "limit": _EVAL_TRACES, "fields": "core"},
+    )
+    r.raise_for_status()
+    return [str(t["id"]) for t in r.json().get("data") or [] if t.get("id")]
+
+
+async def _rubric_scores(
+    c: Any, backend: Any, base: str, trace_ids: list[str], rubric: str, major: int
+) -> list[float]:
+    """The numeric `rubric` scores on each trace. Langfuse 4 serves the score
+    list only under `/api/public/v3/scores`."""
+    path = "/api/public/v3/scores" if major >= 4 else "/api/public/scores"
+    scores: list[float] = []
+    for tid in trace_ids:
+        try:
+            r = await c.get(
+                f"{base}{path}",
+                headers=backend.auth_headers,
+                params={"traceId": tid, "name": rubric, "limit": 10},
+            )
+            r.raise_for_status()
+            rows = r.json().get("data") or []
+        except Exception:  # noqa: BLE001 — one trace's score read failing skips that trace
+            continue
+        for row in rows:
+            try:
+                scores.append(float(row.get("value")))
+            except (TypeError, ValueError):
+                pass
+    return scores
+
+
 @admin_router.post("/v1/admin/prompts.evaluate")
 async def admin_prompts_evaluate(input: PromptsEvaluateInput) -> PromptsEvaluateOutput:
     """Compute a should-promote verdict for one prompt version.
 
-    Queries Langfuse traces tagged `prompt:<name>:<version>`, applies the
-    (min_evals, threshold) gate on `rubric` scores. Never mutates Langfuse.
+    Finds the Langfuse traces tagged `prompt:<name>:<version>` (each generation
+    linked to that prompt version carries the tag) and applies the
+    (min_evals, threshold) gate to their `rubric` scores. Never mutates Langfuse.
     """
-    import base64
-    import json as _json
-    import urllib.error
-    import urllib.parse
-    import urllib.request
+    import httpx
+
+    from server.erasure.app.backends import ErasureBackendError, LangfuseBackend
 
     name = input.prompt_name
     version = input.prompt_version
@@ -711,62 +768,22 @@ async def admin_prompts_evaluate(input: PromptsEvaluateInput) -> PromptsEvaluate
             },
         )
 
-    auth = (
-        "Basic "
-        + base64.b64encode(
-            settings.langfuse_admin_token.encode(),
-        ).decode()
+    backend = LangfuseBackend(
+        settings.langfuse_url, settings.langfuse_admin_token, settings.langfuse_timeout_s
     )
-
+    base = settings.langfuse_url.rstrip("/")
     tag = f"prompt:{name}:{version}"
-    list_url = (
-        f"{settings.langfuse_url.rstrip('/')}/api/public/traces"
-        f"?tags={urllib.parse.quote(tag, safe='')}&limit=200"
-    )
     try:
-        req = urllib.request.Request(list_url, headers={"Authorization": auth})
-
-        def _fetch_traces() -> Any:
-            with urllib.request.urlopen(req, timeout=settings.langfuse_timeout_s) as r:
-                return _json.load(r)
-
-        traces_body = await asyncio.to_thread(_fetch_traces)
-    except urllib.error.HTTPError as e:
-        # 400/404/422 = clean empty (no traces match the filter); only
-        # true server faults bubble.
-        if e.code in (400, 404, 422):
-            return PromptsEvaluateOutput.model_validate(
-                {
-                    "should_promote": False,
-                    "eval_count": 0,
-                    "mean_score": None,
-                    "min_score": None,
-                    "threshold": threshold,
-                    "rationale": (
-                        f"Langfuse returned HTTP {e.code} for tag {tag!r} — no traces to evaluate"
-                    ),
-                    "prompt_name": name,
-                    "prompt_version": version,
-                }
-            )
-        log.exception("prompt eval: list traces failed for %s", tag)
+        async with httpx.AsyncClient(timeout=settings.langfuse_timeout_s) as c:
+            major = await backend.api_major(c)
+            trace_ids = await _traces_tagged(c, backend, base, tag, major)
+            scores = await _rubric_scores(c, backend, base, trace_ids, rubric, major)
+    except (ErasureBackendError, httpx.HTTPError, ValueError) as e:
+        log.exception("prompt eval: Langfuse read failed for %s", tag)
         raise HTTPException(
             status_code=502,
-            detail={
-                "code": "BACKEND_UNAVAILABLE",
-                "message": f"Langfuse trace list failed: HTTP {e.code}",
-            },
+            detail={"code": "BACKEND_UNAVAILABLE", "message": f"Langfuse read failed: {e}"},
         ) from e
-    except Exception as e:
-        log.exception("prompt eval: list traces failed for %s", tag)
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "BACKEND_UNAVAILABLE",
-                "message": f"Langfuse trace list failed: {e}",
-            },
-        ) from e
-    trace_ids = [t["id"] for t in (traces_body.get("data") or []) if "id" in t]
     if not trace_ids:
         return PromptsEvaluateOutput.model_validate(
             {
@@ -780,28 +797,6 @@ async def admin_prompts_evaluate(input: PromptsEvaluateInput) -> PromptsEvaluate
                 "prompt_version": version,
             }
         )
-
-    scores: list[float] = []
-    for tid in trace_ids[:200]:
-        url = (
-            f"{settings.langfuse_url.rstrip('/')}/api/public/scores"
-            f"?traceId={tid}&name={rubric}&limit=10"
-        )
-        try:
-            req = urllib.request.Request(url, headers={"Authorization": auth})
-
-            def _fetch_score(req: urllib.request.Request = req) -> Any:
-                with urllib.request.urlopen(req, timeout=settings.langfuse_timeout_s) as r:
-                    return _json.load(r)
-
-            body = await asyncio.to_thread(_fetch_score)
-        except Exception:  # noqa: BLE001 — one trace's score fetch failure skips that trace
-            continue
-        for s in body.get("data") or []:
-            try:
-                scores.append(float(s.get("value")))
-            except (TypeError, ValueError):
-                pass
 
     if not scores:
         return PromptsEvaluateOutput.model_validate(

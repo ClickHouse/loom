@@ -145,6 +145,8 @@ def test_prompt_version_is_an_int_and_never_sent_alone(
         "a string version makes Langfuse drop the entire observation"
     )
     assert version == 4
+    # The tag prompts.evaluate finds the version's traces by.
+    assert "prompt:loom-test:4" in span.attrs["langfuse.trace.tags"]
 
 
 def test_unregistered_prompt_gets_no_link_but_keeps_the_sha(

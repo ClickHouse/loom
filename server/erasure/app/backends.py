@@ -141,6 +141,11 @@ class LangfuseBackend:
         # namespace-list erasure runs one lookup per namespace.
         self._major: int | None = None
 
+    @property
+    def auth_headers(self) -> dict[str, str]:
+        """The Authorization header for another read of the same project."""
+        return dict(self._headers)
+
     # Langfuse has no bulk-by-filter delete, so erasure is query-then-delete:
     # find the matching trace ids, then delete them in batches. Bounded so a
     # runaway filter cannot loop forever on a GDPR path that must terminate.
@@ -165,7 +170,7 @@ class LangfuseBackend:
     _PAGE_ATTEMPTS: ClassVar[int] = 3
     _PAGE_BACKOFF_S: ClassVar[float] = 2.0
 
-    async def _api_major(self, c: httpx.AsyncClient) -> int:
+    async def api_major(self, c: httpx.AsyncClient) -> int:
         """The Langfuse server's major version, from `GET /api/public/health`.
 
         Langfuse 4 removed the trace list (`GET /api/public/traces` answers 404)
@@ -202,7 +207,7 @@ class LangfuseBackend:
         user_id: str = "",
     ) -> list[str]:
         """Every trace id carrying all of `tags` (and `user_id`, when given)."""
-        if await self._api_major(c) >= 4:
+        if await self.api_major(c) >= 4:
             return await self._find_trace_ids_v4(c, tags=tags, user_id=user_id)
         return await self._find_trace_ids_v3(c, tags=tags, user_id=user_id)
 
@@ -440,7 +445,7 @@ class LangfuseBackend:
         # Probed before the concurrent lookups, so they share one answer.
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as c:
-                await self._api_major(c)
+                await self.api_major(c)
         except httpx.HTTPError as e:
             raise ErasureBackendError(
                 f"langfuse.delete_namespaces {org} transport error: {_describe(e)}"
