@@ -70,6 +70,9 @@ _CROSS_CHECKED = {
     "inference_customer_format",
     # A URL checked by a model validator (test_oidc_backchannel.py).
     "oidc_backchannel_base_url",
+    # Host lists checked by a model validator (test_llm_gateway.py).
+    "memory_classify_private_hosts",
+    "memory_webhook_private_hosts",
 }
 
 

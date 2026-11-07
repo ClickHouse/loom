@@ -722,9 +722,11 @@ dependencies = [
     { name = "aiohttp" },
     { name = "argon2-cffi" },
     { name = "clickhouse-connect" },
+    { name = "dnspython" },
     { name = "fastapi" },
     { name = "google-re2" },
     { name = "httpx", extra = ["http2"] },
+    { name = "idna" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-instrumentation-fastapi" },
@@ -805,10 +807,12 @@ requires-dist = [
     { name = "clickhouse-loom-server", extras = ["aws"], marker = "extra == 'dev'" },
     { name = "clickhouse-loom-server", extras = ["extractor"], marker = "extra == 'dev'" },
     { name = "cryptography", marker = "extra == 'extractor'", specifier = ">=50,<51" },
+    { name = "dnspython", specifier = ">=2.6" },
     { name = "fastapi", specifier = ">=0.118" },
     { name = "fastembed", marker = "extra == 'local-embedder'", specifier = ">=0.4" },
     { name = "google-re2", specifier = ">=1.1" },
     { name = "httpx", extras = ["http2"], specifier = ">=0.27" },
+    { name = "idna", specifier = ">=3.7" },
     { name = "lemmagen3", marker = "extra == 'dev'", specifier = ">=3.3" },
     { name = "lemmagen3", marker = "extra == 'lemma'", specifier = ">=3.3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==2.3.1" },
@@ -1007,6 +1011,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/63/8e/f1f955e0921dd2b6d22eae7e8d24a4c4b638d10735ffbf6a71f99eb0fcb8/cryptography-50.0.1-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:fd3718b960d0b5dd213cdf03f3bcb7000e69dda0de8b956061947ff6bcff5558", size = 4888413, upload-time = "2026-08-25T19:45:20.4Z" },
     { url = "https://files.pythonhosted.org/packages/1f/ab/89e2b798d2c3925f82e2bb72d5979f3d2f6da2dd22ef4a8cd8b70d920039/cryptography-50.0.1-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:2a93d05e34d5f67fba6f891fe85d929999baa7195e853923ea6d7576c9e68c5e", size = 5044355, upload-time = "2026-08-25T19:45:22.353Z" },
     { url = "https://files.pythonhosted.org/packages/99/89/87ef49ffe383ef4e147d27b7bf2088fb0b54ea409dd87b5a89442e5828a5/cryptography-50.0.1-cp39-abi3-win_amd64.whl", hash = "sha256:55d16b1ef3ee0958d893a977b19777887e546c9954ea81b200c3301a864013f2", size = 3875429, upload-time = "2026-08-25T19:45:24.418Z" },
+]
+
+[[package]]
+name = "dnspython"
+version = "2.8.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8c/8b/57666417c0f90f08bcafa776861060426765fdb422eb10212086fb811d26/dnspython-2.8.0.tar.gz", hash = "sha256:181d3c6996452cb1189c4046c61599b84a5a86e099562ffde77d26984ff26d0f", size = 368251, upload-time = "2025-09-07T18:58:00.022Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ba/5a/18ad964b0086c6e62e2e7500f7edc89e3faa45033c71c1893d34eed2b2de/dnspython-2.8.0-py3-none-any.whl", hash = "sha256:01d9bbc4a2d76bf0db7c1f729812ded6d912bd318d3b1cf81d30c0f845dbf3af", size = 331094, upload-time = "2025-09-07T18:57:58.071Z" },
 ]
 
 [[package]]

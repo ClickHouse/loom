@@ -1078,6 +1078,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_CLASSIFY_TIMEOUT_S` | `float` | `8.0` | live | Seconds a namespace's classify_endpoint may take to answer a write's classification; past it the write keeps the caller's memory_type. |
+| `LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS` | `str` | `''` |  | Comma-separated hostnames or IP literals, no port, a classify_endpoint may reach on a private address and over http, on any port: list only a host that serves nothing else. |
 
 ### Delete-version checks
 
@@ -1393,7 +1394,7 @@ Memory webhooks: their delivery worker and the URLs they may reach.
 | `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS` | `float` | `10.0` | live | Seconds between each process's reads of the registered memory webhooks; a webhook registered or removed on another process applies to writes here within it. |
 | `LOOM_MEMORY_WEBHOOK_MAX_PER_NAMESPACE` | `int` | `10` | live | Live memory webhooks a namespace may hold: every memory write inserts one outbox row per webhook that takes its event. |
 | `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` | `bool` | `False` |  | True lets a memory webhook use plain http (a local receiver in development); false: https only. |
-| `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` | `str` | `''` |  | Comma-separated hostnames or IP literals (exact, any case) a memory webhook may reach although they resolve to a private, loopback or link-local address; "" = none. |
+| `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` | `str` | `''` |  | Comma-separated hostnames or IP literals, no port (exact, any case; an IDN in either spelling) a memory webhook may reach although they resolve to a private, loopback or link-local address; "" = none. |
 
 ## Model
 

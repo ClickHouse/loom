@@ -355,7 +355,9 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   fetch) may print up to 64 MiB, and past that the whole job is killed and fails;
 - no network, except for clones, fetches, submodules and dependency downloads, and then
   only through an egress proxy outside the sandbox. It accepts `CONNECT` to ports 443,
-  22 and the remote's own port, resolves the name, refuses it unless **every** address
+  22 and the remote's own port, resolves the name (from `/etc/resolv.conf` alone: not
+  `/etc/hosts` or nsswitch, and no search domains, so a remote needs its full DNS name),
+  refuses it unless **every** address
   is public (loopback, private ranges, link-local and the cloud metadata address are
   refused, including when reached through a redirect or a `.gitmodules` URL) and
   connects to the address it vetted. Plain HTTP has no route. One job holds at most 32

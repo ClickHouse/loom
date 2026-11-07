@@ -3690,6 +3690,11 @@
           "type": "integer",
           "description": "Max ~800-char verbatim chunks one set_from_messages call writes (512 ≈ 400K chars; agent transcripts run ~190K chars a session at the median). Text past the cap is recorded in loom.memory_drops as chunk.split/truncated."
         },
+        "memory_classify_private_hosts": {
+          "default": "",
+          "type": "string",
+          "description": "Comma-separated hostnames or IP literals, no port, a classify_endpoint may reach on a private address and over http, on any port: list only a host that serves nothing else."
+        },
         "memory_classify_timeout_s": {
           "default": 8.0,
           "exclusiveMinimum": 0,
@@ -4805,7 +4810,7 @@
         "memory_webhook_private_hosts": {
           "default": "",
           "type": "string",
-          "description": "Comma-separated hostnames or IP literals (exact, any case) a memory webhook may reach although they resolve to a private, loopback or link-local address; \"\" = none."
+          "description": "Comma-separated hostnames or IP literals, no port (exact, any case; an IDN in either spelling) a memory webhook may reach although they resolve to a private, loopback or link-local address; \"\" = none."
         },
         "memory_webhook_refresh_seconds": {
           "default": 10.0,

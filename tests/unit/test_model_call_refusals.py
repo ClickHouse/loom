@@ -345,6 +345,8 @@ def test_operator_endpoints_defer_a_short_identity_wait(wire, monkeypatch, sende
         if sender == "classify":
             asyncio.run(
                 classify.classify(
+                    org="acme",
+                    namespace="ns",
                     endpoint="https://gateway.example/classify",
                     prompt_template="",
                     value="v",
@@ -638,14 +640,23 @@ def test_identity_headers_go_only_to_the_gateways_hosts(wire, monkeypatch) -> No
         asyncio.run(
             rerank.rerank(endpoint=endpoint, prompt_template="", query="q", candidates=candidates)
         )
-    for url in ("https://gateway.example/classify", "https://classify.example/classify"):
-        asyncio.run(classify.classify(endpoint=url, prompt_template="", value="v", valid_types=[]))
+    # Only a classifier at a gateway host is a model call; one elsewhere is posted on its
+    # own client with no identity headers (tests/unit/test_classify_endpoint_off_gateway.py).
+    asyncio.run(
+        classify.classify(
+            org="acme",
+            namespace="ns",
+            endpoint="https://gateway.example/classify",
+            prompt_template="",
+            value="v",
+            valid_types=[],
+        )
+    )
     assert [(r.url.host, r.headers.get("x-agent")) for r in wire.sent] == [
         ("gateway.example", "agent-b"),
         ("rerank.example", None),
         ("api.cohere.com", None),
         ("gateway.example", "agent-b"),
-        ("classify.example", None),
     ]
 
 
@@ -664,6 +675,8 @@ def test_a_reranker_or_classifier_refusal_is_an_error_not_a_kept_order(wire, mon
     with pytest.raises(ModelCallRefused):
         asyncio.run(
             classify.classify(
+                org="acme",
+                namespace="ns",
                 endpoint="https://gateway.example/classify",
                 prompt_template="",
                 value="v",

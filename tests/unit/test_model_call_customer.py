@@ -167,12 +167,19 @@ def test_rerank_and_classify_requests_carry_the_customer(metered, monkeypatch) -
 
     sent = _sent_headers(monkeypatch, {})
     monkeypatch.setenv("COHERE_API_KEY", "key")
+    # A classifier at a listed gateway host is a model call; any other is posted apart.
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "classify.example")
     _request("acme")
     candidates = [rerank_mod.RerankCandidate("k", "ns", "v", "fact", 1.0)]
     asyncio.run(rerank_mod._rerank_with_builtin_cohere("builtin:cohere", "q", candidates))
     asyncio.run(
         classify_mod.classify(
-            endpoint="https://classify.example", prompt_template="t", value="v", valid_types=["a"]
+            org="acme",
+            namespace="ns",
+            endpoint="https://classify.example",
+            prompt_template="t",
+            value="v",
+            valid_types=["a"],
         )
     )
     assert [h.get("X-Customer") for h in sent] == ["acme", "acme"]
@@ -568,6 +575,7 @@ def test_inline_classify_lets_a_refusal_through_and_is_untouched_without_a_heade
         return [{"memory_type": "observation"}]
 
     sent = _sent_headers(monkeypatch, {"memory_type": "observation"})
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "classify.example")
     monkeypatch.setattr(classify_mod, "get_namespace_classify_config", config)
     monkeypatch.setattr(namespace_types, "list_type_configs", types)
     body = MemorySetInput(

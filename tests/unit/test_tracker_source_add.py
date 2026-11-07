@@ -42,6 +42,7 @@ from server.tracker.app.sources import (
 )
 from server.tracker.domain import contract as rc
 from server.tracker.store.source import contract_reports as reports
+from tests.unit._hosts import resolves
 from tests.unit._tracker_config import tracker_credentials_json, tracker_sources_json
 
 REAL_HOST_REFUSAL = ob.host_refusal  # captured before the fixture replaces it
@@ -201,8 +202,8 @@ def _cfg(monkeypatch):
         monkeypatch.setattr(settings, "jwt_secret", "unit-test-secret")
     monkeypatch.setattr(qi, "_build_client", _no_tracker_service)
     # A public address for any host the test names; a test about resolution
-    # patches `_resolve` itself.
-    monkeypatch.setattr(hosts, "_resolve", lambda host: ["93.184.215.14"])
+    # patches the lookups itself.
+    resolves(monkeypatch, lambda host: ["93.184.215.14"])
     ch = _Ch()
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     monkeypatch.setattr(ob, "host_refusal", _public)
@@ -309,8 +310,14 @@ async def test_host_refusal_rejects_private_and_local_addresses(monkeypatch) -> 
             raise socket.gaierror("no such host")
         return [(2, 1, 6, "", (table[host], 0))]
 
+    async def _in_loop(host: str) -> list[str]:
+        return [_gai(host)[0][4][0]]
+
+    # the system resolver (an allowlisted host) over a fake getaddrinfo, the in-loop
+    # one (any other) over the same table
     monkeypatch.setattr(socket, "getaddrinfo", _gai)
     monkeypatch.setattr(hosts, "_resolve", REAL_RESOLVE)
+    monkeypatch.setattr(hosts, "_resolve_in_loop", _in_loop)
     real = REAL_HOST_REFUSAL
     assert await real("cs.example") == ""
     assert "private or local" in await real("tail.example")

@@ -1207,11 +1207,31 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   signed body.
 - **No request forgery inward.** Each delivery resolves the host, refuses loopback,
   private, link-local and multicast addresses (`server/core/hosts.py`), connects to the
-  address it vetted and follows no redirect. Memory webhooks also refuse plain `http`
+  address it vetted and follows no redirect. A host a caller names is looked up on the
+  event loop (A then AAAA, from `/etc/resolv.conf`, read again when it changes; not
+  `/etc/hosts` or nsswitch, and no search domains), so a deadline ends the lookup and
+  nothing of it outlives the call; a host an operator allowlisted is looked up by the
+  system resolver. Memory webhooks also refuse plain `http`
   and refuse an inward URL at registration; `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` and
   `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` are the operator's exceptions. A refusal does not
   name the address, a URL with a user name or password is refused, and logs name the
   host only.
+- **A namespace's classifier is held to the same rule.** Off the inference gateway, a
+  `classify_endpoint` must be https (`namespace.register` refuses another with 422), and
+  `memory.set(classify=true)` posts only to the public address its host was vetted to,
+  with no redirect and no gateway identity headers. On every path, `namespace.register`
+  also refuses a URL with a user name or password, a control or whitespace character, a
+  host httpx and `urlsplit` read apart, or a host that is not a bare name or address
+  literal (a zone id, a percent-encoded name). A URL at a listed gateway host is held to
+  the gateway's rule, https at the default port, also while the gateway is not required:
+  another port of that host is inward reach. A host `LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS`
+  names is the operator's exception, reachable on any port and path, so it lists only a
+  host that serves nothing else. A failed call is reported in `degraded` by its kind
+  alone, so the write's answer cannot map which addresses and ports answer. Its name
+  is looked up on the event loop, as a delivery's is, so the call's deadline ends the
+  lookup: however many namespaces aim at names that never answer, nothing of their
+  lookups outlives their calls, and no namespace holds a resource another one's
+  classifier needs.
 - **No slow receiver holds a worker.** One deadline per POST covers the name lookup, the
   connection and the status line (`LOOM_MEMORY_WEBHOOK_ACK_TIMEOUT_SECONDS` for memory
   webhooks, a fixed 10 s for task inbox notices), and the answer's body is never read.

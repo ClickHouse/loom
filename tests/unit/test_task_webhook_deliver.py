@@ -19,6 +19,7 @@ import pytest
 
 from server.core import webhooks
 from server.tasks.workers import webhook_deliver as wd
+from tests.unit._hosts import resolves
 
 SECRET = "whsec_" + base64.b64encode(b"0123456789abcdef0123456789abcdef").decode()
 NOW = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
@@ -511,7 +512,7 @@ async def test_a_webhook_to_a_non_public_address_is_never_sent(
     import server.core.hosts as hosts
 
     monkeypatch.setattr(webhooks, "vet_host", hosts.vet_host)
-    monkeypatch.setattr(hosts, "_resolve", lambda host: [resolves_to])
+    resolves(monkeypatch, lambda host: [resolves_to])
     fake.inboxes[0]["webhook_url"] = url
     seen: list[httpx.Request] = []
     async with _client(lambda r: seen.append(r) or httpx.Response(204)) as client:
@@ -538,6 +539,49 @@ async def test_pinned_target_connects_to_the_vetted_address_only_over_http_or_ht
     )
     assert (await webhooks.pinned_target("ftp://hook.example/a"))[0]
     assert (await webhooks.pinned_target("file:///etc/passwd"))[0]
+
+
+@pytest.mark.asyncio
+async def test_an_internationalized_host_goes_as_its_idna_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Host header and the SNI are ASCII: httpx refuses a Unicode header value."""
+
+    async def resolver(host: str, **_: Any) -> tuple[str, str]:
+        return "", "203.0.113.7"
+
+    monkeypatch.setattr(webhooks, "vet_host", resolver)
+    assert await webhooks.pinned_target("https://bücher.example:8443/h") == (
+        "",
+        "https://203.0.113.7:8443/h",
+        "xn--bcher-kva.example:8443",
+        "xn--bcher-kva.example",
+    )
+    assert (await webhooks.pinned_target("https://bü..example/h"))[0] == "the URL is not valid"
+    # UTS 46, not IDNA 2003: ß is kept, not mapped to "ss"
+    assert (await webhooks.pinned_target("https://faß.example/h"))[2] == "xn--fa-hia.example"
+
+
+@pytest.mark.asyncio
+async def test_the_ascii_name_is_resolved_and_matched_against_the_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings.catalog import ascii_host_set
+
+    asked: list[tuple[str, bool]] = []
+
+    async def resolver(host: str, *, allow_private: bool, **_: Any) -> tuple[str, str]:
+        asked.append((host, allow_private))
+        return "", ""
+
+    monkeypatch.setattr(webhooks, "vet_host", resolver)
+    for listed, url in (
+        ("xn--bcher-kva.local", "https://bücher.local/h"),
+        ("bücher.local", "https://xn--bcher-kva.local/h"),
+    ):
+        target = await webhooks.pinned_target(url, private_hosts=ascii_host_set(listed))
+        assert target == ("", "https://xn--bcher-kva.local/h", "", "")
+    assert asked == [("xn--bcher-kva.local", True)] * 2
 
 
 @pytest.mark.asyncio

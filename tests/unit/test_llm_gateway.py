@@ -584,7 +584,14 @@ def test_no_rerank_or_classify_endpoint_posts_off_the_gateways_hosts(
         assert out == candidates  # fails open, in input order
     for url in _OFF:
         label = asyncio.run(
-            classify.classify(endpoint=url, prompt_template="", value="v", valid_types=[])
+            classify.classify(
+                org="acme",
+                namespace="ns",
+                endpoint=url,
+                prompt_template="",
+                value="v",
+                valid_types=[],
+            )
         )
         assert label == ""  # the caller's type stays
     assert wire.posted == []
@@ -603,7 +610,8 @@ def test_no_rerank_or_classify_endpoint_posts_off_the_gateways_hosts(
 )
 def test_the_gateway_check_reads_a_url_as_httpx_sends_it(required: None, url: str) -> None:
     # Checked with the parser that sends, so the two never disagree: refused
-    # exactly when httpx would send somewhere other than gateway.example.
+    # whenever httpx would send somewhere other than gateway.example, and a classifier
+    # otherwise only for the user name it carries.
     from server.memory.domain.classify_endpoints import classify_refusal
 
     try:
@@ -612,7 +620,17 @@ def test_the_gateway_check_reads_a_url_as_httpx_sends_it(required: None, url: st
         sent_to = ""
     off = sent_to != "gateway.example"
     assert bool(settings.off_gateway(url)) is off
-    assert bool(classify_refusal(url)) is off
+    refusal = classify_refusal(url)
+    assert bool(refusal) is off or refusal == "the URL may not carry a user name or password"
+
+
+def test_a_classify_endpoint_at_the_gateways_explicit_default_port_is_accepted(
+    required: None,
+) -> None:
+    from server.memory.domain.classify_endpoints import classify_refusal
+
+    assert classify_refusal("https://gateway.example:443/c") == ""
+    assert classify_refusal("https://gateway.example:8443/c") != ""
 
 
 def test_an_idn_host_is_matched_as_the_punycode_httpx_sends_to(
@@ -632,6 +650,8 @@ def test_a_classify_endpoint_at_a_listed_host_receives_the_post(
     wire = _posts(monkeypatch, {"memory_type": "decision"})
     label = asyncio.run(
         classify.classify(
+            org="acme",
+            namespace="ns",
             endpoint="https://gateway.example/classify",
             prompt_template="",
             value="v",
@@ -672,13 +692,13 @@ def test_a_stored_classify_endpoint_off_the_gateways_hosts_is_never_called(
     assert classify.classify_refusal("https://gateway.example:8443/c")  # stored, another port
 
     monkeypatch.setattr(ch, "get_client", lambda: _CH())
-    monkeypatch.setattr(classify, "_OFF_GATEWAY_LOGGED", LogOnce())
+    monkeypatch.setattr(classify, "_REFUSED_LOGGED", LogOnce())
     for _ in range(2):
         assert asyncio.run(classify.get_namespace_classify_config("acme", "ns")) == ("", "")
     warned = [r for r in caplog.records if "classify_endpoint is refused" in r.getMessage()]
     assert len(warned) == 1 and "10.0.0.5" in warned[0].getMessage()
     caplog.clear()
-    monkeypatch.setattr(classify, "_OFF_GATEWAY_LOGGED", _full_log_once())
+    monkeypatch.setattr(classify, "_REFUSED_LOGGED", _full_log_once())
     assert asyncio.run(classify.get_namespace_classify_config("acme", "new")) == ("", "")
     assert not caplog.records  # capped: still refused, not logged
     monkeypatch.setattr(settings, "inference_gateway_required", False)
@@ -833,6 +853,39 @@ def test_a_gateway_host_is_a_bare_hostname(monkeypatch: pytest.MonkeyPatch, host
     monkeypatch.setenv("LOOM_INFERENCE_GATEWAY_HOSTS", hosts)
     with pytest.raises(ValueError, match="is not a hostname"):
         Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+_HOST_LISTS = (
+    "LOOM_INFERENCE_GATEWAY_HOSTS",
+    "LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS",
+    "LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS",
+)
+
+
+@pytest.mark.parametrize("name", _HOST_LISTS)
+@pytest.mark.parametrize(
+    "entry", ["box.local:8080", "[::1]", "*.local", "bü..local", "fe80::1%eth0", "a/b"]
+)
+def test_a_host_list_entry_that_is_not_a_bare_host_is_refused_at_load(
+    monkeypatch: pytest.MonkeyPatch, name: str, entry: str
+) -> None:
+    """A port, brackets, a wildcard, a zone or a name IDNA cannot encode would match no
+    URL's host: refused, never dropped."""
+    monkeypatch.setenv(name, f"ok.local, {entry}")
+    with pytest.raises(ValueError, match=f"{name}: .* is not a hostname or IP literal"):
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_a_private_host_list_loads_names_and_address_literals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    listed = "Box.Local., bücher.local, my_classifier, 127.0.0.1, ::1"
+    monkeypatch.setenv("LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS", listed)
+    monkeypatch.setenv("LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS", listed)
+    loaded = Settings(_env_file=None)  # type: ignore[call-arg]
+    spelled = {"box.local", "xn--bcher-kva.local", "my_classifier", "127.0.0.1", "::1"}
+    assert loaded.memory_classify_private_host_set() == spelled
+    assert loaded.memory_webhook_private_host_set() == spelled
 
 
 def test_the_gateway_required_loads_with_every_root_at_its_hosts(

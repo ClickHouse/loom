@@ -3072,6 +3072,11 @@ settings:
   # past it the write keeps the caller's memory_type. [live]
   # memory_classify_timeout_s: 8.0
 
+  # Comma-separated hostnames or IP literals, no port, a classify_endpoint may reach on
+  # a private address and over http, on any port: list only a host that serves nothing
+  # else. [restart]
+  # memory_classify_private_hosts: ""
+
   # --- delete-version checks ---
 
   # Run the delete_version_check worker, which finishes the memory.delete_version checks
@@ -4168,9 +4173,9 @@ settings:
   # https only. [restart]
   # memory_webhook_allow_http: false
 
-  # Comma-separated hostnames or IP literals (exact, any case) a memory webhook may
-  # reach although they resolve to a private, loopback or link-local address; "" = none.
-  # [restart]
+  # Comma-separated hostnames or IP literals, no port (exact, any case; an IDN in either
+  # spelling) a memory webhook may reach although they resolve to a private, loopback or
+  # link-local address; "" = none. [restart]
   # memory_webhook_private_hosts: ""
 
   # ===== Namespace registration, write marks and bench-namespace GC =====

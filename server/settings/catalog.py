@@ -25,6 +25,7 @@ from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
+import idna
 from pydantic import AfterValidator, BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from server.core.document_formats import route_key
@@ -2605,6 +2606,21 @@ class MemorySettings(BaseModel):
     # Seconds a namespace's classify_endpoint may take to answer a write's
     # classification; past it the write keeps the caller's memory_type.
     memory_classify_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
+    # Comma-separated hostnames or IP literals, no port, a classify_endpoint may reach on a
+    # private address and over http, on any port: list only a host that serves nothing else.
+    memory_classify_private_hosts: str = ""
+
+    def memory_classify_private_host_set(self) -> frozenset[str]:
+        return ascii_host_set(self.memory_classify_private_hosts)
+
+    @model_validator(mode="after")
+    def _check_classify_private_hosts(self) -> MemorySettings:
+        refusal = host_list_refusal(
+            "LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS", self.memory_classify_private_hosts
+        )
+        if refusal:
+            raise ValueError(refusal)
+        return self
 
     # ---- delete-version checks ----
     # Run the delete_version_check worker, which finishes the memory.delete_version checks a
@@ -3547,8 +3563,9 @@ class MemoryWebhookSettings(BaseModel):
     # True lets a memory webhook use plain http (a local receiver in development);
     # false: https only.
     memory_webhook_allow_http: bool = False
-    # Comma-separated hostnames or IP literals (exact, any case) a memory webhook may
-    # reach although they resolve to a private, loopback or link-local address; "" = none.
+    # Comma-separated hostnames or IP literals, no port (exact, any case; an IDN in either
+    # spelling) a memory webhook may reach although they resolve to a private, loopback or
+    # link-local address; "" = none.
     memory_webhook_private_hosts: str = ""
 
     @model_validator(mode="after")
@@ -3565,9 +3582,16 @@ class MemoryWebhookSettings(BaseModel):
         return self
 
     def memory_webhook_private_host_set(self) -> frozenset[str]:
-        return frozenset(
-            h.strip().lower() for h in self.memory_webhook_private_hosts.split(",") if h.strip()
+        return ascii_host_set(self.memory_webhook_private_hosts)
+
+    @model_validator(mode="after")
+    def _check_webhook_private_hosts(self) -> MemoryWebhookSettings:
+        refusal = host_list_refusal(
+            "LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS", self.memory_webhook_private_hosts
         )
+        if refusal:
+            raise ValueError(refusal)
+        return self
 
 
 # ===== Model ==================================================================
@@ -3953,6 +3977,31 @@ class ObservabilitySettings(BaseModel):
 # ===== Provider ===============================================================
 
 
+def ascii_host(host: str) -> str:
+    """`host` as a host list names it: lower-case, no trailing dot, a non-ASCII name as
+    its UTS 46 IDNA form (`faß.example` is `xn--fa-hia.example`, a fullwidth name its
+    ASCII one). An ASCII name or an address literal is kept as it is. ValueError when
+    IDNA cannot encode it."""
+    host = host.strip().lower().rstrip(".")
+    if host.isascii():
+        return host
+    return idna.encode(host, uts46=True).decode("ascii").lower().rstrip(".")
+
+
+def ascii_host_set(hosts: str) -> frozenset[str]:
+    """The comma-separated `hosts`, each as `ascii_host` spells it. One IDNA cannot
+    encode is refused at load (`host_list_refusal`), and dropped here: no URL's host
+    can equal it."""
+    out = set()
+    for h in hosts.split(","):
+        try:
+            out.add(ascii_host(h))
+        except ValueError:
+            continue
+    out.discard("")
+    return frozenset(out)
+
+
 def url_host(url: str) -> str:
     """The host httpx sends `url` to, as LOOM_INFERENCE_GATEWAY_HOSTS names it:
     ASCII (an IDN as punycode), lower-case, no trailing dot; "" when httpx
@@ -3982,17 +4031,41 @@ def _is_http_url(url: str) -> bool:
 
 
 # A DNS name LOOM_INFERENCE_GATEWAY_HOSTS may name: no scheme, port, path or wildcard.
-_GATEWAY_HOST_RE = re.compile(r"[a-z0-9][a-z0-9.-]*")
+# `_` too: a Compose service name has one, and httpx and urlsplit read it alike.
+_GATEWAY_HOST_RE = re.compile(r"[a-z0-9_][a-z0-9_.-]*")
 
 
-def _is_gateway_host(host: str) -> bool:
-    """A bare DNS name, or an IPv6 address (its colons are not a port)."""
+def is_bare_host(host: str) -> bool:
+    """A bare DNS name or IPv4 address, or an IPv6 address (its colons are not a port)
+    with no zone: no `%`, so no percent-encoding either."""
+    if "%" in host:
+        return False
     if ":" not in host:
         return bool(_GATEWAY_HOST_RE.fullmatch(host))
     try:
         return ipaddress.ip_address(host).version == 6
     except ValueError:
         return False
+
+
+def host_list_refusal(setting: str, hosts: str) -> str:
+    """Why an entry of the comma-separated `hosts` is not a bare hostname or IP literal
+    as `ascii_host` spells it (a scheme, port, brackets, path, wildcard, or a name IDNA
+    cannot encode); "" when every entry is one."""
+    for entry in hosts.split(","):
+        if not entry.strip():
+            continue
+        try:
+            host = ascii_host(entry)
+        except ValueError:
+            host = ""
+        if not is_bare_host(host):
+            return (
+                f"{setting}: {entry.strip()[:64]!r} is not a hostname or IP literal (no "
+                "scheme, port, brackets, path, wildcard, zone, percent-encoding or a name "
+                "IDNA cannot encode)"
+            )
+    return ""
 
 
 # The settings the gateway check reads; a dashboard configuration overrides the embedding ones.
@@ -4559,11 +4632,7 @@ class ProviderSettings(ModelSettings):
 
     def gateway_hosts(self) -> frozenset[str]:
         """The hosts of inference_gateway_hosts, as `url_host` spells them."""
-        return frozenset(
-            h.strip().lower().rstrip(".")
-            for h in self.inference_gateway_hosts.split(",")
-            if h.strip()
-        )
+        return ascii_host_set(self.inference_gateway_hosts)
 
     def off_gateway(self, url: str) -> str:
         """While the gateway is required, the host of a `url` it does not list
@@ -4636,12 +4705,9 @@ class ProviderSettings(ModelSettings):
         """Every gateway host is a bare hostname, and with the gateway required
         every address Loom sends model calls to is one of them (the senders
         refuse any other too, on every redirect hop)."""
-        for host in self.gateway_hosts():
-            if not _is_gateway_host(host):
-                raise ValueError(
-                    f"LOOM_INFERENCE_GATEWAY_HOSTS: {host[:64]!r} is not a hostname "
-                    "(no scheme, port, path or wildcard)"
-                )
+        refusal = host_list_refusal("LOOM_INFERENCE_GATEWAY_HOSTS", self.inference_gateway_hosts)
+        if refusal:
+            raise ValueError(refusal)
         refusal = self.gateway_refusal()
         if refusal:
             raise ValueError(refusal)

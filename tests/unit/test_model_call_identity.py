@@ -354,7 +354,12 @@ def test_classify_requests_carry_the_identity(directory, monkeypatch) -> None:
     _as(AGENT)
     asyncio.run(
         classify_mod.classify(
-            endpoint="https://classify.example", prompt_template="t", value="v", valid_types=["a"]
+            org="acme",
+            namespace="ns",
+            endpoint="https://classify.example",
+            prompt_template="t",
+            value="v",
+            valid_types=["a"],
         )
     )
     assert _carries(sent[0])
