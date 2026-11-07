@@ -645,7 +645,8 @@ def _no_test_double_bound_at_import() -> Iterator[None]:
     package: a module that bound a name from a poisoned one at its own import was
     imported in the same test, so the next import of either runs it again and binds
     the real names instead of later tests seeing the double. Import the module at the
-    top of the test file, before the patch, or patch the name on that module."""
+    top of the test file (before the patch), patch the name on that module, or put an
+    assignment back with monkeypatch."""
     before = set(sys.modules)
     yield
     bound = _doubles_bound_at_import(before)
