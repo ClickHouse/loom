@@ -27,7 +27,7 @@ variables. Use it as the reference environment.
 
 | Dependency         | Provided by                                                                  | When absent                                                                                              |
 | ------------------ | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Loom server        | `LOOM_BASE_URL`                                                              | skipped when unset, and when set but `/v1/health` is not 200                                             |
+| Loom server        | `LOOM_BASE_URL`                                                              | skipped when unset; failed when set but `/v1/health` is not 200                                          |
 | ClickHouse         | `LOOM_CH_HOST/PORT/USER/PASSWORD/DATABASE/SECURE`; the host must be explicit | every test that builds a client, calls handlers in-process or runs a ClickHouse-reading `dev/` CLI skips |
 | JWT signing        | `LOOM_JWT_SECRET` in the test process, the same value as the server's        | minted tokens are rejected (401)                                                                         |
 | Real embedder      | server `LOOM_EMBEDDING_MODEL` (read from `/v1/health.fake_embedding`)        | search-quality tests skip (`require_real_embedder`)                                                      |
