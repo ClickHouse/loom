@@ -17,7 +17,7 @@ it on a laptop.
 | Optional `<release>-publish`          | A pre-upgrade Job for a change that cannot roll ([below](#changing-what-cannot-roll)).                                                                        |
 | Optional `<release>-analytics-export` | A daily CronJob and its own ServiceAccount (`analyticsExport.enabled`, [below](#analytics-export)).                                                           |
 | Optional `<release>-extractor`        | The document extractor's Deployment, Service and NetworkPolicy (`extractor.enabled`, [below](#document-extractor)).                                           |
-| NetworkPolicy `<release>`             | By default, egress to all but the metadata service ([below](#instance-metadata-service)); with `networkPolicy.enabled`, the full policy.                      |
+| Optional NetworkPolicy `<release>`    | By default (not with `guardMetadata: false` or `egressExcept: []`), egress to all but the metadata service ([below](#instance-metadata-service)).             |
 | Optional dev ClickHouse               | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                                                                     |
 
 ## Before you install
@@ -356,18 +356,21 @@ Pod Security level must allow it (`baseline` and `restricted` do not). Run
 
 By default, and with `networkPolicy.enabled`, a NetworkPolicy keeps the Loom pods off
 `networkPolicy.egressExcept` (the instance metadata service), so repository code a pod
-runs cannot take the node's cloud role. Off, `networkPolicy.guardMetadata` renders an egress-only
-NetworkPolicy whose one rule allows every pod and every address but those (none with
-`egressExcept: []`); the cluster needs a policy engine for it to hold. What changes:
+runs cannot take the node's cloud role. With the policy off, `networkPolicy.guardMetadata`
+renders an egress-only NetworkPolicy whose one rule allows every pod and every address
+but those (none with `egressExcept: []`); the cluster needs a policy engine for it to
+hold. A `helm upgrade --reuse-values` from a chart with a shorter `egressExcept` keeps
+that list: set `networkPolicy.egressExcept` again, or upgrade with
+`--reset-then-reuse-values`. Its effects:
 
-- A pod that took cloud credentials from the metadata service has none: the node's
-  instance role, and GKE Workload Identity on Dataplane V2. IRSA, and EKS Pod Identity
-  on an engine that matches node addresses by range, are not affected; a client with no
-  region set looks it up there, so set `AWS_REGION` (the identity webhooks inject it).
-  Set `guardMetadata: false` to keep that access.
-- A customised `egressExcept` now applies with the policy off as well: a range listed
-  there (a VPC range, say) cuts the pods off every address in it but other pods, and
-  an entry that is not a CIDR fails the upgrade.
+- A pod has no cloud credentials from the metadata service: not the node's instance
+  role, and not GKE Workload Identity on Dataplane V2. IRSA, and EKS Pod Identity on an
+  engine that matches node addresses by range, work; a client with no region set looks
+  it up there, so set `AWS_REGION` (the identity webhooks inject it). Set
+  `guardMetadata: false` to keep metadata access.
+- `egressExcept` applies with the policy off too: a range listed there (a VPC range,
+  say) cuts the pods off every address in it but other pods, and an entry that is not a
+  CIDR fails the upgrade.
 - A metadata proxy that redirects 169.254.169.254 to another address is reached at
   that address, which the engine may check instead. One that serves only the pod's own
   identity (GKE's metadata server without Dataplane V2) needs nothing; add the address of
@@ -376,13 +379,13 @@ NetworkPolicy whose one rule allows every pod and every address but those (none 
   ClickHouse whose `url()` reaches any host, such as the test-only dev ClickHouse) reaches
   `egressExcept` for them: deny those addresses in its own policy.
 - NetworkPolicies add up: where your own policies limit the pods' egress, this one
-  would let them reach everything else. Set `guardMetadata: false` and deny the
-  metadata addresses in your own policy.
+  lets them reach everything else. Set `guardMetadata: false` and deny the metadata
+  addresses in your own policy.
 - An engine that keeps address ranges off node IPs (Cilium's default) blocks host-network
   endpoints and the nodes' own addresses: NodeLocal DNSCache (so DNS), the EKS Pod
-  Identity agent, and a host-network API server (which `retireLostPods` calls). Turn on
-  the engine's node matching, or set `guardMetadata: false` and allow them in your own
-  policy.
+  Identity agent, and the API server (which `retireLostPods` calls) where the engine
+  gives it an identity of its own. Turn on the engine's node matching, or set
+  `guardMetadata: false` and allow them in your own policy.
 
 ## Separate workers
 
