@@ -181,3 +181,13 @@ def test_a_branch_row_with_no_repository_entry_is_not_followed(monkeypatch) -> N
     # self-service switched off: the registry reads empty, and the row is not followed
     monkeypatch.setattr(settings, "code_self_service_enabled", False)
     assert binding.tracker_namespaces_for(ORG_X, branch) == []
+
+
+def test_the_registry_namespaces_are_built_once_per_snapshot(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_repos", [_entry(ORG_X, "code-widgets-26-8")])
+    first = repos.registry_namespaces()
+    assert first == {(ORG_X, "code-widgets-26-8")}
+    assert repos.registry_namespaces() is first
+    repos.set_registry_repos([_entry(ORG_Y, "code-widgets-26-8")])
+    assert repos.registry_namespaces() == {(ORG_Y, "code-widgets-26-8")}

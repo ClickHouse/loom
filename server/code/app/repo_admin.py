@@ -119,6 +119,9 @@ async def _register(
     from server.code.store.index import CodeRepo
 
     subject = current_caller()[0] or auth_off_subject()
+    # A removed namespace of this name may have left rows (a removal on N-1 clears none,
+    # the purge is detached), and this replica's snapshot may hold rows another replica's
+    # removal emptied or its purge deleted.
     await _empty_tracker_links(org, namespace, detail="stale row of a removed namespace")
     await reg.insert_entry(
         org=org,
@@ -434,6 +437,8 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
     ch = get_client()
     async with sources_lease(input.org, input.namespace):
         # Under the lease and before any deactivation: a refused removal keeps the links.
+        # The purge is detached, and a namespace of this name registered before it runs
+        # must not follow the removed one's source or links.
         await _empty_tracker_links(input.org, input.namespace, detail="repository removed")
         sources_off = await deactivate_namespace_sources(input.org, input.namespace)
         registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)
@@ -524,14 +529,10 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
 
 
 async def _empty_tracker_links(org: str, namespace: str, *, detail: str) -> None:
-    """Empty the namespace's `qa_branch_of` and `qa_binding` rows that hold a value, then
-    refresh this replica's snapshot. On removal: the purge that deletes the rows is
-    detached, and a namespace of the same name registered before it runs must not follow
-    the removed one's source or links. On registration: rows a removed namespace of this
-    name left, and a snapshot that still holds them after a removal on another replica;
-    the snapshot drops the namespace even when the refresh fails. An absent row stays
-    absent: an empty `qa_binding` reads as cleared, so writing one for a namespace that
-    had no links would hide the operator's."""
+    """Empty the namespace's `qa_branch_of` and `qa_binding` rows that hold a value and
+    drop the name from this replica's snapshot, even when the refresh fails. An absent row
+    stays absent: an empty `qa_binding` reads as cleared, which would hide the operator's
+    map from a namespace that never had links."""
     from server.code.store.index import CodeRepo
     from server.tracker.app import binding
 

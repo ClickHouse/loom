@@ -284,6 +284,20 @@ def registry_repos() -> list[RepoConfig]:
     return list(_registry_repos) if settings.code_self_service_enabled else []
 
 
+_registry_keys: tuple[list[RepoConfig] | None, frozenset[tuple[str, str]]] = (None, frozenset())
+
+
+def registry_namespaces() -> frozenset[tuple[str, str]]:
+    """(org, namespace) of every registry entry, built once per snapshot (no I/O); empty
+    while self-service is off."""
+    global _registry_keys
+    if not settings.code_self_service_enabled:
+        return frozenset()
+    if _registry_keys[0] is not _registry_repos:
+        _registry_keys = (_registry_repos, frozenset((c.org, c.namespace) for c in _registry_repos))
+    return _registry_keys[1]
+
+
 def set_registry_repos(entries: list[RepoConfig]) -> None:
     """Replace the registry snapshot with a fresh read."""
     global _registry_repos

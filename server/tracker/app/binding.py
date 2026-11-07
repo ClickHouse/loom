@@ -147,13 +147,6 @@ def operator_repositories() -> frozenset[tuple[str, str]]:
     return frozenset((c.org, c.namespace) for c in repos.configured_repos() if c.source == "config")
 
 
-def _registered(org: str, code_namespace: str) -> bool:
-    """Whether the namespace is a self-service entry (the registry snapshot, no I/O)."""
-    from server.code.domain.index import repos
-
-    return any(c.org == org and c.namespace == code_namespace for c in repos.registry_repos())
-
-
 def tracker_namespaces_for(
     org: str, code_namespace: str, *, operator: Collection[tuple[str, str]] | None = None
 ) -> list[str]:
@@ -178,8 +171,11 @@ def tracker_namespaces_for(
         # Issue and PR numbers are repository-wide: a branch reads its repository's
         # trackers. Only an operator source is followed, one level, and only for a
         # registered branch: a removal or a late copy can leave the row behind.
-        if source and (org, source) in operator and _registered(org, code_namespace):
-            return tracker_namespaces_for(org, source, operator=operator)
+        if source and (org, source) in operator:
+            from server.code.domain.index import repos
+
+            if (org, code_namespace) in repos.registry_namespaces():
+                return tracker_namespaces_for(org, source, operator=operator)
         return []
     if not m:
         return []
