@@ -73,7 +73,7 @@ describe("privacy filters, a failed read", () => {
   });
 });
 
-describe("privacy filters across a namespace switch", () => {
+describe("privacy filters under the store's identity", () => {
   afterEach(() => {
     cleanup();
     useStore.setState({ identity: null, whoami: null });

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api/webhooks";
@@ -116,6 +116,24 @@ describe("WebhooksSection", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
     await waitFor(() => expect(api.removeWebhook).toHaveBeenCalled());
     await userEvent.click(screen.getByRole("button", { name: `Actions for ${HOOK.url}` }));
+    expect(await screen.findByRole("menuitem", { name: "Remove" })).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("keeps one Remove held while another one answers", async () => {
+    const other = { ...HOOK, webhook_id: "w2", url: "https://hooks.example.com/other" };
+    vi.mocked(api.listWebhooks).mockResolvedValue({ webhooks: [HOOK, other] });
+    let answer: (r: { removed: boolean }) => void = () => {};
+    vi.mocked(api.removeWebhook)
+      .mockImplementationOnce(() => new Promise((r) => (answer = r)))
+      .mockImplementationOnce(() => new Promise(() => {}));
+    render(<WebhooksSection />);
+    for (const h of [HOOK, other]) {
+      await userEvent.click(await screen.findByRole("button", { name: `Actions for ${h.url}` }));
+      await userEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
+    }
+    await waitFor(() => expect(api.removeWebhook).toHaveBeenCalledTimes(2));
+    await act(async () => answer({ removed: true }));
+    await userEvent.click(screen.getByRole("button", { name: `Actions for ${other.url}` }));
     expect(await screen.findByRole("menuitem", { name: "Remove" })).toHaveAttribute("aria-disabled", "true");
   });
 
