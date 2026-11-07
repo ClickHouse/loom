@@ -152,8 +152,9 @@ async def emit_many(
         log.exception("audit.emit_many failed for event_type=%s: %s", event_type, e)
 
 
-# Input fields whose text an audit subject keeps: identity, principals, ids, keys and
-# URIs, which name what a call acted on and who acted. Every other text field (a value, a
+# Input fields whose text an audit subject keeps: identity, principals, ids, keys, URIs
+# and versions (`memory.delete_version`'s is `int | str`, which the number rule misses),
+# which name what a call acted on and who acted. Every other text field (a value, a
 # reason, a payload) is kept as its SHA-256 and length, so `loom.audit_log` holds no text
 # an erasure must reach.
 _NAMING_FIELDS = frozenset(
@@ -225,7 +226,11 @@ def _nested_model(annotation: Any) -> type[BaseModel] | None:
 def _digest(value: Any) -> dict[str, Any]:
     """A value's `sha256_value` (so a memory value's matches its `content_sha256`) and
     length: a string's characters, else its compact JSON's."""
-    size = len(value) if isinstance(value, str) else len(json.dumps(value, separators=(",", ":")))
+    size = (
+        len(value)
+        if isinstance(value, str)
+        else len(json.dumps(value, separators=(",", ":"), ensure_ascii=False))
+    )
     return {"sha256": sha256_value(value), "chars": size}
 
 

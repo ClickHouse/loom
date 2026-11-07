@@ -36,7 +36,11 @@ SECRET = "the merger closes on 12 March at 40 dollars a share"
 
 def _digest(value: Any) -> dict[str, Any]:
     text = json.dumps(value, sort_keys=True, separators=(",", ":"))
-    size = len(value) if isinstance(value, str) else len(text)
+    size = (
+        len(value)
+        if isinstance(value, str)
+        else len(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+    )
     return {"sha256": hashlib.sha256(text.encode()).hexdigest(), "chars": size}
 
 
