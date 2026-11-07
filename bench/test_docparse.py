@@ -714,6 +714,15 @@ def test_downstream_refuses_what_would_mix_its_systems(
         assert why in capsys.readouterr().err
 
 
+def test_score_refuses_two_parses_that_share_a_name(capsys: pytest.CaptureFixture[str]) -> None:
+    # the second would overwrite the first and its paired difference would read 0
+    from bench.docparse.__main__ import main
+
+    with pytest.raises(SystemExit):
+        main(["score", "b=x.jsonl", "a=y.jsonl", "b=z.jsonl", "a=w.jsonl", "c=v.jsonl"])
+    assert capsys.readouterr().err.endswith("more than one parse is named: a, b\n")
+
+
 def test_the_stub_serves_a_systems_artifact_to_the_token_alone(tmp_path: Path) -> None:
     import socket
     import threading
