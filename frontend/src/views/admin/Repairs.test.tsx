@@ -81,7 +81,19 @@ describe("RepairsPanel", () => {
       });
     render(<RepairsPanel />);
     await userEvent.click(screen.getByRole("button", { name: "Apply expiries now" }));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Expired 2, but not all landed: insert: down", "error"));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("The expiry did not land: insert: down", "error"));
+  });
+
+  it("says a pass whose search mirror failed expired its memories", async () => {
+    const pass = { scanned: 9, tombstoned: 2, demoted: 0, anonymized: 0, locked_skipped: 0 };
+    vi.mocked(api.sweepExpired)
+      .mockResolvedValueOnce({ ...pass, failures: [] })
+      .mockResolvedValueOnce({ ...pass, failures: ["mirror:2 keys: Timeout"] });
+    render(<RepairsPanel />);
+    await userEvent.click(screen.getByRole("button", { name: "Apply expiries now" }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith("Expired 2; search may list some until the next pass", "info"),
+    );
   });
 
   it("says to run a full pass again only when it expired something", async () => {
@@ -106,7 +118,10 @@ describe("RepairsPanel", () => {
     // A preview that finds only locked rows says so and writes nothing.
     await userEvent.click(apply);
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith(`${api.SWEEP_LIMIT} memories are past their expiry but locked.`, "info"),
+      expect(toast).toHaveBeenCalledWith(
+        `${api.SWEEP_LIMIT} or more memories are past their expiry but locked.`,
+        "info",
+      ),
     );
     expect(api.sweepExpired).toHaveBeenCalledTimes(3);
   });

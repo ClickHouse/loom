@@ -47,8 +47,9 @@ export function RepairsPanel() {
       const due = preview.tombstoned + preview.demoted + preview.anonymized;
       if (due === 0) {
         const locked = preview.locked_skipped;
+        const atLeast = preview.scanned === SWEEP_LIMIT ? " or more" : "";
         return toast(
-          locked ? `${locked} memories are past their expiry but locked.` : "No memory is past its expiry.",
+          locked ? `${locked}${atLeast} memories are past their expiry but locked.` : "No memory is past its expiry.",
           "info",
         );
       }
@@ -61,7 +62,11 @@ export function RepairsPanel() {
         return;
       const r = await sweepExpired(identity, false);
       const done = r.tombstoned + r.demoted + r.anonymized;
-      if (r.failures.length) return toast(`Expired ${done}, but not all landed: ${r.failures.join("; ")}`, "error");
+      // The pass counts before it writes: a scan or insert failure wrote nothing, and only
+      // the search mirror's write comes after the memory rows landed.
+      if (r.failures.some((f) => !f.startsWith("mirror")))
+        return toast(`The expiry did not land: ${r.failures.join("; ")}`, "error");
+      if (r.failures.length) return toast(`Expired ${done}; search may list some until the next pass`, "info");
       // A full pass may have left more; one that expired nothing only met locked rows.
       const rest = r.scanned === SWEEP_LIMIT && done > 0 ? "; run it again for the rest" : "";
       toast(`Expired ${done}; ${r.locked_skipped} locked kept${rest}`, "ok");
@@ -222,8 +227,10 @@ function restoreWarning(payload: unknown, here: { org: string; namespace: string
   };
   const when = listTimeTitle(p.created_at) || "at an unknown time";
   const taken = `It holds ${p.memory_count ?? "an unknown number of"} memories, taken ${when}.`;
-  const from = p.org && p.org !== here.org ? `${p.org}/${p.source_namespace}` : p.source_namespace;
-  if (from && from !== here.namespace)
-    return `${taken} It is a snapshot of ${from}: its memories are written here, and its members get the grants they had there.`;
+  const otherOrg = !!p.org && p.org !== here.org;
+  if (otherOrg || (p.source_namespace && p.source_namespace !== here.namespace)) {
+    const name = [otherOrg ? p.org : "", p.source_namespace ?? ""].filter(Boolean).join("/");
+    return `${taken} It is a snapshot of ${name}: its memories are written here, and its members get the grants they had there.`;
+  }
   return `${taken} Its memories replace their current versions here, deleted ones come back, and its grants are active again, including any revoked since.`;
 }

@@ -46,8 +46,7 @@ export interface ExtractionBatch {
   enqueued_at: string | null;
 }
 
-/** The newest batches in any state. `pending` counts every batch not yet extracted in the
- *  namespace; `failed` counts the returned batches that failed. */
+/** The newest batches in any state; the counts cover those batches only. */
 export interface ExtractionBatches {
   batches: ExtractionBatch[];
   pending: number;
@@ -159,8 +158,9 @@ export async function listProjectionFailures(
 }
 
 /** Mirrors `server/insights/api/models_ops.py::ProjectionFailureRetryRow`. `reason` says
- *  why a failure was not retried: `pending` or `model_calls_held` wait for a later pass,
- *  `unsupported_projection` has no retry. `error` is set when a retry failed again. */
+ *  why a row was given up on or not retried: `pending` (too new, or the org is under
+ *  erasure) and `model_calls_held` wait for a later pass, `unsupported_projection` has no
+ *  retry. `error` is set when a retry failed again. */
 export interface ProjectionRetry {
   failure_id: string;
   projection: string;

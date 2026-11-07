@@ -56,14 +56,18 @@ export function ProjectionFailuresPanel() {
     act(async () => {
       const r = await retryProjectionFailures(identity);
       const count = (keep: (x: ProjectionRetry) => boolean) => r.results.filter(keep).length;
-      const parts = [
-        `${r.resolved} fixed`,
-        `${count((x) => x.retried && !x.resolved && !x.abandoned)} failed again`,
-        `${r.abandoned} given up`,
-        `${count((x) => x.reason === "pending" || x.reason === "model_calls_held")} waiting for a later pass`,
-        `${count((x) => x.reason === "unsupported_projection")} with no retry`,
-      ].filter((p) => !p.startsWith("0 "));
-      toast(`Tried ${r.results.length}: ${parts.join(", ") || "nothing changed"}`, r.resolved ? "ok" : "info");
+      const fixed = count((x) => x.resolved);
+      const failed = count((x) => x.retried && !x.resolved);
+      const outcomes: [number, string][] = [
+        [fixed, "fixed"],
+        [count((x) => x.retried && !x.resolved && !x.abandoned), "failed again"],
+        [count((x) => x.abandoned), "given up"],
+        [count((x) => x.reason === "pending" || x.reason === "model_calls_held"), "waiting for a later pass"],
+        [count((x) => x.reason === "unsupported_projection"), "with no retry"],
+      ];
+      const parts = outcomes.filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`);
+      const tone = fixed ? "ok" : failed ? "error" : "info";
+      toast(`Tried ${r.results.length}: ${parts.join(", ") || "nothing changed"}`, tone);
     });
   const dismiss = (id: string) =>
     act(async () => {

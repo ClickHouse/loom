@@ -64,7 +64,7 @@ describe("ProjectionFailuresPanel", () => {
       results: [
         row({ retried: true, resolved: true }),
         row({ retried: true, error: "timeout" }),
-        row({ retried: true, abandoned: true, reason: "memory_gone" }),
+        row({ retried: true, abandoned: true, reason: "malformed_payload" }),
         row({ reason: "model_calls_held" }),
         row({ reason: "pending" }),
         row({ reason: "unsupported_projection" }),
@@ -127,6 +127,6 @@ describe("ProjectionFailuresPanel", () => {
     vi.mocked(api.listProjectionFailures).mockImplementationOnce(() => new Promise(() => {}));
     act(() => useStore.setState({ identity: { org: "acme", namespace: "other", agent: "loom-ui" } }));
     await waitFor(() => expect(screen.queryByText("embedder timed out")).toBeNull());
-    expect(screen.queryByRole("button", { name: "Dismiss the embedding failure of deploy_window" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Dismiss failure f1" })).toBeNull();
   });
 });
