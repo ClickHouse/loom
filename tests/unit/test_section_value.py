@@ -83,6 +83,15 @@ def test_the_labelled_set_scores_as_measured() -> None:
         ("Storage sync 2026-03-04", ("Cache",), "Decision: TBD"),
         ("Storage sync 2026-03-04", ("Decision: TBD",), "- Redis or Memcached, revisit."),
         ("Storage sync 2026-03-04", ("Decisions pending", "Cache"), "- Revisit next week."),
+        ("Storage sync 2026-03-04", ("Decision: none",), "- Revisit next week."),
+        ("Storage sync 2026-03-04", ("Decision: deferred",), "- Revisit next week."),
+        ("Storage sync 2026-03-04", ("Cache",), "Outcome: no decision"),
+        ("Storage sync 2026-03-04", ("Outcome: no decision",), "- Revisit next week."),
+        (
+            "Session store RFC",
+            ("Decision: TBD", "Open questions"),
+            "- Keep sessions?\n- Who owns it?",
+        ),
         ("Vector search design", ("Open questions",), "- Are we going with Redis?"),
         # no title: the first heading names the document
         ("", ("Storage sync 2026-03-04", "Cache"), "Talked about the TTL."),
@@ -140,6 +149,7 @@ def test_bookkeeping_and_discussion_without_a_decision_are_noise(
         ("Storage sync 2026-03-04", ("Queue",), "We'll go ahead with the sharded queue."),
         ("Storage sync 2026-03-04", ("Queue",), "Proceeding with option B."),
         ("Storage sync 2026-03-04", ("Ledger",), "**Outcome:** keep Postgres for the ledger."),
+        ("Storage sync 2026-03-04", ("Ledger",), "Outcome:\n- keep Postgres for the ledger"),
         ("Storage sync 2026-03-04", ("Ledger",), "We opted for Postgres."),
         ("Storage sync 2026-03-04", ("Cache",), "We rejected Redis: its memory cost is too high."),
         ("Storage sync 2026-03-04", ("Options",), "Option B accepted."),
