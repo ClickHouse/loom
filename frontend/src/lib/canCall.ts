@@ -40,7 +40,7 @@ export interface OpGate {
   readonly by: "namespace" | "claim";
 }
 
-// One shared object per gate: the table sits in the boot chunk, and a literal per entry
+// One shared object per gate: the table sits in the index chunk, and a literal per entry
 // costs bytes on every page load.
 const VIEWER: OpGate = { min: "viewer", by: "namespace" };
 const WRITER: OpGate = { min: "writer", by: "namespace" };
