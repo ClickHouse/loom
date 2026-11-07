@@ -128,7 +128,8 @@ def classify_code_concept(concept: str) -> str:
     'library' for a bare lowercase package-ish token, 'error' for an
     error/exception token, 'commit' for a "commit:<sha>" surface.
     """
-    c = str(concept or "").strip()
+    # Markdown or quotes around a name ("`ConnectError`") do not change its kind.
+    c = str(concept or "").strip().strip("`'\"* ")
     if not c:
         return "function"
     if c.lower().startswith("commit:"):
@@ -435,44 +436,15 @@ def _normalise(lowered: str) -> str:
     text = unicodedata.normalize("NFKC", lowered).lower()
     text = fold_case(text.replace("'s", "").replace("’s", ""))
     text = _PUNCT_RE.sub(_marks_kept, text)
-    text = _settle(_lead(_SPACE_RE.sub(" ", text)))
+    text = _lead(_SPACE_RE.sub(" ", text))
+    text = text.rstrip(" .") if _CODE_FACET_NAME.match(text) else _settle(text)
     return SELF_SUBJECT if text in _FIRST_PERSON_FORMS else text
 
 
-# A commit or error facet ("commit:<sha>", "error:<name>") names an identifier: it is
-# case-folded, its blanks collapse to one space and its wrapping is trimmed (a leading
-# article, a closing dot, a matched outer pair of quotes or brackets), but it is never
-# singularised and its own punctuation stays ("error:httperror(404)"). A blank right
-# after the colon reads as prose ("Error: the build failed"), normalised as usual.
+# A commit or error facet ("commit:<sha>", "error:<name>") names an identifier, so its
+# last segment is never singularised; the rest of the canonical form applies as to any
+# name. A blank right after the colon reads as prose ("Error: the build failed").
 _CODE_FACET_NAME = re.compile(r"(?:commit|error):\S")
-_BRACKETS = {"(": ")", "[": "]", "{": "}", "<": ">"}
-_QUOTES = {"`": "`", '"': '"', "'": "'", "“": "”", "‘": "’"}
-
-
-def _wrapped(text: str) -> bool:
-    """Whether `text` is one pair of quotes around something, or a bracket whose match is
-    its last character (`(a(b))` is, `(a) (b)` is not)."""
-    if len(text) < 2:
-        return False
-    if _QUOTES.get(text[0]) == text[-1]:
-        return True
-    closer = _BRACKETS.get(text[0])
-    if closer is None or text[-1] != closer:
-        return False
-    depth = 0
-    for i, char in enumerate(text):
-        depth += (char == text[0]) - (char == closer)
-        if depth == 0:
-            return i == len(text) - 1
-    return False
-
-
-def _code_facet_name(folded: str) -> str | None:
-    """`folded` as a commit or error facet name, or None when it is not one."""
-    text = _lead(_SPACE_RE.sub(" ", folded)).rstrip(" .")
-    while _wrapped(text):
-        text = _lead(text[1:-1]).rstrip(" .")
-    return text if _CODE_FACET_NAME.match(text) else None
 
 
 def _capped_normal(original: str) -> str | None:
@@ -480,7 +452,7 @@ def _capped_normal(original: str) -> str | None:
     "\ufb01" is "fi") is longer than `MAX_ENTITY_CHARS`."""
     if len(original) > MAX_ENTITY_CHARS:
         return None
-    text = _code_facet_name(fold_case(original)) or _normalise(original.lower())
+    text = _normalise(original.lower())
     return text if len(text) <= MAX_ENTITY_CHARS else None
 
 
@@ -495,7 +467,7 @@ def canonical_entity(raw: str) -> CanonicalEntity:
     Collapses first-person forms (i / me / user / ...) to "user" to match the
     read side (graph seeds and query triples use `canonical_entity_text`); the original
     surface form is preserved in `aliases` for provenance and recall. A "commit:" or
-    "error:" name is only case-folded and trimmed (`_code_facet_name`). Text longer than
+    "error:" name keeps its last segment as written. Text longer than
     `MAX_ENTITY_CHARS`, as written or once normalised, is no entity: its text is empty."""
 
     original = str(raw or "").strip()
@@ -510,7 +482,7 @@ def canonical_entity_text(raw: str) -> str:
     """The one entity normalizer for writes and reads: strips articles,
     possessives and punctuation and folds first-person forms to "user", so a
     query seed and the stored node land on identical text; a "commit:" or "error:"
-    name is only case-folded and trimmed (`_code_facet_name`). Idempotent."""
+    name is never singularised. Idempotent."""
     return canonical_entity(raw).text
 
 

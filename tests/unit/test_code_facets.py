@@ -496,22 +496,26 @@ def test_a_prose_name_that_starts_with_error_is_normalised_as_prose() -> None:
 def test_a_wrapped_or_spaced_code_facet_name_is_the_bare_names_node() -> None:
     from server.memory.domain.graph_quality import canonical_entity, canonical_entity_text
 
-    for written in (
-        "error:Timeouts.",
-        " error:Timeouts ",
-        "the error:Timeouts",
-        "(`error:Timeouts`).",
-    ):
-        assert canonical_entity_text(written) == "error:timeouts", written
-    for bare in (
-        "error:HTTPError(404)",
-        "error:List[int]",
-        "error:<lambda>",
-        "error:can't connect",
-    ):
-        assert canonical_entity_text(bare) == bare.lower(), bare
-        for written in (f"`{bare}`", f"({bare})", f"(({bare}))", f"'{bare}'", f"the [{bare}]."):
-            assert canonical_entity_text(written) == bare.lower(), written
-    # Two bracketed parts are not one wrapped name.
-    assert canonical_entity_text("(error:a) or (b)") != "error:a) or (b"
+    assert canonical_entity_text("error:Timeouts") == "error:timeouts"
+    for bare in ("error:Timeouts", "error:HTTPError(404)", "error:can't connect", "commit:ABC123"):
+        node = canonical_entity_text(bare)
+        for written in (
+            f"`{bare}`",
+            f"**{bare}**",
+            f"(({bare}))",
+            f'"{bare}',
+            f"the [{bare}].",
+            f"{bare},",
+            f" {bare} ",
+        ):
+            assert canonical_entity_text(written) == node, written
     assert canonical_entity("error:a \t b").entity_id == "error:a_b"
+
+
+def test_a_wrapped_error_concept_keeps_its_relation_verb() -> None:
+    from server.memory.domain.graph_quality import facet_triples
+
+    bare = list(facet_triples("a", [], [], ["ConnectError"], []))
+    assert bare[0][1] != "references"
+    for written in ("`ConnectError`", "**ConnectError**", '"ConnectError"'):
+        assert list(facet_triples("a", [], [], [written], [])) == bare, written

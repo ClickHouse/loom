@@ -38,10 +38,9 @@ edges of the entities its writer declared, never its text.
    `entity_extractor` worker (`LOOM_ENTITY_EXTRACT_ENABLED`, on) tags rows written without them, off the write path;
    it needs a real LLM provider. Entity text is canonicalised the same way on write and read (articles and
    possessives stripped, head noun singularised, first person mapped to `user`), so "The Billing Service's" and
-   "billing service" are one node. A `commit:<sha>` or `error:<name>` name is an identifier: it is case-folded, its
-   blanks collapse to one space and a leading article, a closing dot and a matched outer pair of quotes or brackets
-   are trimmed, but it is never singularised and keeps its own punctuation (`error:HTTPError(404)`). A blank right
-   after the colon (`Error: the build failed`) makes it prose, canonicalised as above. Pronouns, interjections, light
+   "billing service" are one node. A `commit:<sha>` or `error:<name>` name is an identifier: it
+   is canonicalised the same way but never singularised, so `error:Timeouts` and `` `error:Timeouts` `` are one node.
+   A blank right after the colon (`Error: the build failed`) makes it prose. Pronouns, interjections, light
    verbs and two-character tokens are dropped, and so is text longer than 256 characters as written or once normalised
    (NFKC turns `ﬁ` into `fi`), on write and in an `entity_filter`; a point write refuses such a fact subject or object
    instead.
