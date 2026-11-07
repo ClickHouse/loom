@@ -409,7 +409,25 @@ def test_blocks_of_one_section_pack_up_to_the_size() -> None:
                 ("paragraph", "three"),
             ],
         ),
-        ("<table><tr><td>a<td>b</tr></table>", [("paragraph", "a"), ("paragraph", "b")]),
+        # A cell's end tag left out: the next cell ends it.
+        ("<table><tr><td>a<td>b</tr></table>", [("paragraph", "a | b")]),
+        # A caption's too: the first row or cell ends it, and so does the document's end.
+        ("<table><caption>c<tr><td>a<td>b</table>", [("paragraph", "c"), ("paragraph", "a | b")]),
+        ("<table><caption>c", [("paragraph", "c")]),
+        ("<table><caption>c</table><p>x</p>", [("paragraph", "c"), ("paragraph", "x")]),
+        ("<table><caption>c<td>a</table>", [("paragraph", "c"), ("paragraph", "a")]),
+        # A second caption ends the first.
+        (
+            "<table><caption>a<caption>b</caption><tr><td>x</table>",
+            [("paragraph", "a"), ("paragraph", "b"), ("paragraph", "x")],
+        ),
+        # A cell after a row's end starts the next row.
+        ("<table><tr><td>a</td></tr><td>b</td></table>", [("paragraph", "a\nb")]),
+        # A caption inside a row ends the row: the cell after it starts the next.
+        (
+            "<table><tr><td>a<caption>c</caption><td>b</table>",
+            [("paragraph", "c"), ("paragraph", "a\nb")],
+        ),
         ("<ul><li>x<li><p>y</p></ul>", [("list", "x"), ("list", "y")]),
         (
             "<ul><li><p>a</p><p>b</p></li><li>c<p>d</p></ul>",
@@ -427,6 +445,340 @@ def test_html_blocks_close_where_html_lets_an_end_tag_be_left_out(
 ) -> None:
     a = extract(html.encode(), "x.html")
     assert [(b.type, b.text) for b in a.blocks] == want
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        "<table><tr><td><p>First para.</p><p>Second para.</p><blockquote>Third.</blockquote></td></tr></table>",
+        "<table><tr><td>First para.<p>Second para.<p>Third.</td></tr></table>",
+    ],
+)
+def test_a_page_set_in_a_table_cell_keeps_its_paragraphs(page: str) -> None:
+    """A second paragraph in a cell lays the table out."""
+    a = extract(page.encode(), "mail.html")
+    assert [(b.type, b.text) for b in a.blocks] == [
+        ("paragraph", "First para."),
+        ("paragraph", "Second para."),
+        ("paragraph", "Third."),
+    ]
+    assert not any("table" in b.attrs for b in a.blocks)
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        b"<table><tr><td><div>Hi,</div><div>Body.</div></td></tr></table>",
+        # spacer cells beside the one that holds the page
+        b"<table><tr><td></td><td>Hi, Body.</td><td>&nbsp;</td></tr></table>",
+    ],
+)
+def test_a_one_cell_table_is_a_paragraph_not_a_table(page: bytes) -> None:
+    a = extract(page, "m.html")
+    assert [(b.type, b.text, b.attrs) for b in a.blocks] == [("paragraph", "Hi, Body.", {})]
+    assert a.coverage.to_dict()["complete"]
+
+
+def test_a_table_of_one_column_of_text_beside_spacer_columns_holds_no_grid() -> None:
+    page = (
+        b"<table><tr><td></td><td>Hi,</td><td></td></tr>"
+        b"<tr><td></td><td>Body.</td><td></td></tr></table>"
+    )
+    a = extract(page, "m.html")
+    assert [(b.text, b.attrs) for b in a.blocks] == [("Hi,\nBody.", {})]
+    assert a.coverage.to_dict()["complete"]
+    # a full-width footer fills no column of its own: the spacers still go
+    footer = page.replace(b"</table>", b'<tr><td colspan="3">Footer</td></tr></table>')
+    a = extract(footer, "f.html")
+    assert [(b.text, b.attrs) for b in a.blocks] == [("Hi,\nBody.\nFooter", {})]
+    # a spanning cell beside spacers in a data table keeps the columns it spans; a
+    # colspan that is no number is 1
+    a = extract(
+        b'<table><tr><td>a<td><td>b<tr><td colspan="2">c<td>d<tr><td colspan="x">e<td><td>f</table>',
+        "s.html",
+    )
+    assert [(b.text, b.attrs) for b in a.blocks] == [
+        ("a | b\nc | d\ne | f", {"table": {"rows": 3, "columns": 2}})
+    ]
+    # a spacer a rowspan carries down holds its column in the rows below
+    rowspan = (
+        b'<table><tr><td rowspan="2"></td><td>Hi,</td><td rowspan="2"></td></tr>'
+        b"<tr><td>Body.</td></tr></table>"
+    )
+    a = extract(rowspan, "r.html")
+    assert [(b.text, b.attrs) for b in a.blocks] == [("Hi,\nBody.", {})]
+    # a span that is no ASCII number is 1
+    odd = b'<table><tr><td colspan="\xc2\xb2">a</td><td>b</td></tr></table>'
+    assert [b.text for b in extract(odd, "o.html").blocks] == ["a | b"]
+    # a column empty in every row is dropped from a data table too
+    a = extract(b"<table><tr><td>a<td><td>b<tr><td>c<td><td>d</table>", "d.html")
+    assert [(b.text, b.attrs) for b in a.blocks] == [
+        ("a | b\nc | d", {"table": {"rows": 2, "columns": 2}})
+    ]
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        b"<table><thead><tr><th>A<th>B</thead><tbody><td>1<td>2</tbody></table>",
+        b"<table><thead><tr><th>A<th>B</thead><td>1<td>2</table>",  # its end alone
+    ],
+)
+def test_a_row_group_ends_the_open_row(page: bytes) -> None:
+    a = extract(page, "g.html")
+    assert [(b.text, b.attrs) for b in a.blocks] == [
+        ("A | B\n1 | 2", {"table": {"rows": 2, "columns": 2}})
+    ]
+
+
+def test_a_cell_a_rowspan_carries_down_holds_its_column_in_the_rows_below() -> None:
+    page = (
+        b"<table><tr><th>Region<th>Team<th>Owner"
+        b"<tr><td rowspan=2>EMEA<td>Ops<td>Ann<tr><td>Data<td>Bob</table>"
+    )
+    a = extract(page, "r.html")
+    # each value stays under its header, as a DOCX merged cell keeps its place
+    assert [b.text for b in a.blocks] == ["Region | Team | Owner\nEMEA | Ops | Ann\n | Data | Bob"]
+    # a rowspan ends with its row group, and one of 0 reaches to the group's end
+    groups = (
+        b"<table><tbody><tr><td rowspan=5>EMEA<td>Ops</tbody>"
+        b"<tbody><tr><td>APAC<td>Data</tbody></table>"
+    )
+    assert [b.text for b in extract(groups, "g.html").blocks] == ["EMEA | Ops\nAPAC | Data"]
+    zero = b"<table><tr><td rowspan=0></td><td>a<td>b<tr><td>c<td>d</table>"
+    assert [b.text for b in extract(zero, "z.html").blocks] == ["a | b\nc | d"]
+
+
+@pytest.mark.parametrize(
+    ("span", "text"),
+    [
+        ('colspan="2px"', "a | b"),  # its leading digits, as HTML reads it
+        ('colspan="' + "9" * 5000 + '"', "a | b"),  # past what int() reads: the bound
+        ('rowspan="' + "9" * 5000 + '"', "a | b"),
+    ],
+)
+def test_a_span_is_read_as_html_reads_it(span: str, text: str) -> None:
+    page = f"<table><tr><td {span}>a</td><td>b</td></tr></table>".encode()
+    assert [b.text for b in extract(page, "s.html").blocks] == [text]
+
+
+def test_a_table_past_the_placing_bound_keeps_every_cell(monkeypatch: pytest.MonkeyPatch) -> None:
+    from loom_extractor import text
+
+    monkeypatch.setattr(text, "_MAX_PLACING", 3)
+    page = b"<table><tr><td></td><td>Hi,</td></tr><tr><td></td><td>Body.</td></tr></table>"
+    assert [b.text for b in extract(page, "b.html").blocks] == [" | Hi,\n | Body."]
+
+
+def test_a_blockquote_after_text_in_a_cell_lays_the_table_out() -> None:
+    page = "<table><tr><td>First.<blockquote>Quoted.</blockquote></td><td>x</td></tr></table>"
+    a = extract(page.encode(), "q.html")
+    assert [(b.type, b.text) for b in a.blocks] == [
+        ("paragraph", "First."),
+        ("paragraph", "Quoted."),
+        ("paragraph", "x"),
+    ]
+    assert not any("table" in b.attrs for b in a.blocks)
+
+
+def test_an_html_table_is_one_block_a_row_per_line_its_cells_joined_by_a_pipe() -> None:
+    page = (
+        "<h1>Regions</h1>\n"
+        "<table>\n"
+        "<caption>Owners</caption>\n"
+        "<thead><tr><th>Region</th><th>Owner</th></tr></thead>\n"
+        "<tbody><tr><td>EM<b>EA</b></td><td><p>Ops on call</p></td></tr>\n"
+        "<tr><td>APAC<br>Tokyo</td><td>Data</td></tr>\n"
+        "<tr><td></td><td>spare</td></tr>\n"
+        "<tr><td></td></tr></tbody>\n"
+        "</table>\n"
+        "<p>After.</p>\n"
+    )
+    a = extract(page.encode(), "t.html")
+    assert [(b.type, b.text) for b in a.blocks] == [
+        ("heading", "Regions"),
+        # The caption names the table, before it; an empty cell keeps its place, an
+        # empty row is dropped.
+        ("paragraph", "Owners"),
+        ("paragraph", "Region | Owner\nEMEA | Ops on call\nAPAC Tokyo | Data\n | spare"),
+        ("paragraph", "After."),
+    ]
+    table = a.blocks[2]
+    assert table.attrs == {"table": {"rows": 4, "columns": 2}}
+    assert (table.locator.line_start, table.locator.line_end) == (4, 7)
+    # The pipes joining cells are no text of the page.
+    assert a.coverage.to_dict()["complete"]
+
+
+def test_an_html_table_laying_out_a_page_is_read_as_the_blocks_its_cells_hold() -> None:
+    page = (
+        "<table><tr>\n"
+        "<td>Menu</td>\n"
+        "<td><h2>Setup</h2><pre>make\nmake test</pre>\n"
+        "<table><tr><td>k</td><td>v</td></tr></table></td>\n"
+        "</tr></table>\n"
+    )
+    a = extract(page.encode(), "layout.html")
+    # A heading, list, pre or table in a cell: the cells are blocks, and a table
+    # inside one is a table.
+    assert [(b.type, b.text) for b in a.blocks] == [
+        ("paragraph", "Menu"),
+        ("heading", "Setup"),
+        ("code", "make\nmake test"),
+        ("paragraph", "k | v"),
+    ]
+    assert a.coverage.to_dict()["complete"]
+
+
+def test_html_table_text_in_no_cell_is_a_paragraph_and_a_block_after_ends_an_open_table() -> None:
+    page = "<table><tr><td>a</td></tr>stray<tr><td>b</td></tr>\n<h2>Next</h2><p>More.</p>"
+    a = extract(page.encode(), "t.html")
+    # Text between rows is shown apart from the table, as a browser shows it; a
+    # heading in no cell ends a table whose end tag is left out.
+    assert [(b.type, b.text) for b in a.blocks] == [
+        ("paragraph", "stray"),
+        ("paragraph", "a\nb"),
+        ("heading", "Next"),
+        ("paragraph", "More."),
+    ]
+
+
+@pytest.mark.parametrize(
+    "held", ["<ul><li>one</li></ul>", "<ol><li>one</li></ol>", "<dl><dt>one</dt></dl>"]
+)
+def test_a_list_in_an_html_table_cell_lays_the_table_out(held: str) -> None:
+    a = extract(f"<table><tr><td>Menu</td><td>{held}</td></tr></table>".encode(), "t.html")
+    assert [b.text for b in a.blocks] == ["Menu", "one"]
+
+
+def test_a_heading_or_a_list_in_an_html_caption_is_the_captions_text() -> None:
+    page = "<table><caption><h3>Q3</h3> totals<ul><li>EMEA</li></ul></caption><tr><td>EMEA</td><td>64</td></tr></table>"
+    a = extract(page.encode(), "t.html")
+    assert [(b.type, b.text) for b in a.blocks] == [
+        ("paragraph", "Q3 totals EMEA"),
+        ("paragraph", "EMEA | 64"),
+    ]
+
+
+def test_html_table_captions_and_text_in_no_cell_keep_their_order() -> None:
+    page = "<table>stray<caption>c</caption><tr><td>a</td><td>b</td></tr></table>"
+    assert [b.text for b in extract(page.encode(), "t.html").blocks] == ["stray", "c", "a | b"]
+    # In a table laying out a page too, among its cells.
+    page = "<table><caption>Site</caption><tr><td>Menu</td><td><h2>H</h2></td></tr></table>"
+    assert [b.text for b in extract(page.encode(), "t.html").blocks] == ["Site", "Menu", "H"]
+
+
+def test_each_paragraph_in_no_html_table_cell_is_its_own() -> None:
+    page = "<table><tr><td>a</td></tr><p>One</p><p>Two</p><tr><td>b</td></tr></table>"
+    assert [b.text for b in extract(page.encode(), "t.html").blocks] == ["One", "Two", "a\nb"]
+    # A container's text too.
+    page = "<table><tr><td>a</td></tr><div>One</div><div>Two</div></table>"
+    assert [b.text for b in extract(page.encode(), "t.html").blocks] == ["One", "Two", "a"]
+
+
+def test_a_stray_caption_end_in_an_html_cell_is_ignored() -> None:
+    page = "<table><tr><td>a</caption>b</td><td>c</td></tr></table>"
+    assert [b.text for b in extract(page.encode(), "t.html").blocks] == ["ab | c"]
+
+
+def test_a_data_table_in_a_layout_table_is_one_block_and_coverage_holds() -> None:
+    page = (
+        "<table><tr><td><h2>Prices</h2>"
+        "<table><tr><td>a</td><td>b</td><td>c</td></tr><tr><td>1</td><td>2</td><td>3</td></tr></table>"
+        "</td></tr></table>"
+    )
+    a = extract(page.encode(), "t.html")
+    assert [b.text for b in a.blocks] == ["Prices", "a | b | c\n1 | 2 | 3"]
+    assert a.coverage.to_dict()["complete"]
+
+
+def test_the_end_of_an_element_around_an_html_table_is_no_end_of_it() -> None:
+    # HTML holds a table as a scope of its own: the div's end inside it is ignored, and
+    # what lies in no cell is shown before the table, as a browser shows it.
+    page = "<div><table><tr><td>a</td></tr></div><p>One</p><p>Two</p><tr><td>b</td></tr></table>"
+    assert [b.text for b in extract(page.encode(), "t.html").blocks] == ["One", "Two", "a\nb"]
+    # In a cell, an end tag separates the words around it, as any block's does.
+    page = "<table><tr><td>a</div>b</td></tr></table>"
+    assert [b.text for b in extract(page.encode(), "t.html").blocks] == ["a b"]
+
+
+@pytest.mark.parametrize(
+    ("page", "blocks"),
+    [
+        (
+            "<ul><li><table><tr><td>a</td></tr><li>One</li></ul>",
+            [("paragraph", "a"), ("list", "One")],
+        ),
+        (
+            "<dl><dd><table><tr><td>a</td></tr><dt>Term</dt></dl>",
+            [("paragraph", "a"), ("paragraph", "Term")],
+        ),
+    ],
+    ids=["list item", "definition"],
+)
+def test_a_list_item_or_definition_in_no_cell_ends_a_table_left_open(
+    page: str, blocks: list[tuple[str, str]]
+) -> None:
+    assert [(b.type, b.text) for b in extract(page.encode(), "t.html").blocks] == blocks
+
+
+def test_a_caption_left_open_holds_what_follows_it_as_a_browser_does() -> None:
+    page = "<div><table><caption>Totals</div><h2>Next</h2><tr><td>a</td></tr></table>"
+    assert [b.text for b in extract(page.encode(), "t.html").blocks] == ["Totals Next", "a"]
+
+
+def test_a_heading_between_html_table_rows_ends_the_table() -> None:
+    page = "<table><tr><td>a</td><td>c</td></tr><h2>X</h2><tr><td>b</td></tr></table>"
+    a = extract(page.encode(), "t.html")
+    # Its end tag is there, but a heading in no cell ends the table all the same: a
+    # table left open would hold the rest of the page. The rows after it are paragraphs.
+    assert [(b.type, b.text, "table" in b.attrs) for b in a.blocks] == [
+        ("paragraph", "a | c", True),
+        ("heading", "X", False),
+        ("paragraph", "b", False),
+    ]
+
+
+def test_an_html_tables_columns_are_its_widest_row_as_written() -> None:
+    page = '<table><tr><td colspan="2">Region</td></tr><tr><td>EMEA</td><td>64</td></tr></table>'
+    a = extract(page.encode(), "t.html")
+    # A cell spanning columns is one cell: the table is as wide as its widest row.
+    assert a.blocks[0].text == "Region\nEMEA | 64"
+    assert a.blocks[0].attrs == {"table": {"rows": 2, "columns": 2}}
+
+
+def test_an_html_caption_keeps_its_inline_markup_whole_and_a_table_in_it_is_its_text() -> None:
+    page = "<table><caption>EM<b>EA</b> <table><tr><td>in</td></tr></table>sum</caption><tr><td>a</td></tr></table>"
+    assert [b.text for b in extract(page.encode(), "t.html").blocks] == ["EMEA in sum", "a"]
+    # The caption of a table in a caption is the outer caption's text too.
+    page = (
+        "<table><caption>Outer <table><caption>inner</caption><tr><td>x</td></tr></table>"
+        " tail</caption><tr><td>a</td></tr></table>"
+    )
+    assert [b.text for b in extract(page.encode(), "t.html").blocks] == ["Outer inner x tail", "a"]
+
+
+def test_a_layout_tables_text_in_no_cell_keeps_its_place_among_its_cells() -> None:
+    page = "<table><tr><td>A</td></tr>stray<tr><td><h2>H</h2></td></tr></table>"
+    assert [b.text for b in extract(page.encode(), "t.html").blocks] == ["A", "stray", "H"]
+
+
+@pytest.mark.parametrize(
+    "after",
+    ["<ul><li>More.</li></ul>", "<pre>More.</pre>", "<table><tr><td>More.</td></tr></table>"],
+)
+def test_a_list_pre_or_table_in_no_cell_ends_a_table_left_open(after: str) -> None:
+    a = extract(f"<table><tr><td>a</td><td>b</td></tr>{after}".encode(), "t.html")
+    assert [b.text for b in a.blocks] == ["a | b", "More."]
+
+
+def test_an_html_table_inside_a_list_item_ends_the_item() -> None:
+    a = extract(b"<ul><li>step<table><tr><td>x</td></tr></table>after</li></ul>", "t.html")
+    assert [(b.type, b.text) for b in a.blocks] == [
+        ("list", "step"),
+        ("paragraph", "x"),
+        ("paragraph", "after"),
+    ]
 
 
 def test_html_coverage_counts_visible_text_only() -> None:
@@ -1146,7 +1498,7 @@ def test_html_and_toml_name_the_python_whose_parser_read_them() -> None:
 
     for data, name in ((b"<p>x</p>", "x.html"), (b"a = 1\n", "c.toml")):
         assert extract(data, name).parser_version.endswith(f"+python{platform.python_version()}")
-    assert extract(b"# x\n", "a.md").parser_version == "1"
+    assert extract(b"# x\n", "a.md").parser_version == "2"
 
 
 def test_text_inside_an_unclosed_hidden_element_is_recorded_as_not_read() -> None:
