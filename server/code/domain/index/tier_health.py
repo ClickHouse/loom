@@ -154,10 +154,12 @@ def redact(text: str) -> str:
 
 # First match wins: a missing credential also makes the submodule pin look missing
 # ("did not contain <sha>"), so the credential test comes before the pin test.
+# The Go harness's line for a module it skipped because it would not build.
+_MODULE_FAILED = re.compile(r"go mod download failed|scip-go failed", re.IGNORECASE)
 _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # A Go module the harness skipped because it would not build: its line ends with the
     # module's own last log line, which can read as any other kind.
-    ("module", re.compile(r"go mod download failed|scip-go failed", re.IGNORECASE)),
+    ("module", _MODULE_FAILED),
     # A full disk also cuts a transfer short ("the remote end hung up"): before network.
     ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
     (
@@ -207,6 +209,15 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     ("harness", re.compile(r"^(?:\w+: )?harness exit", re.IGNORECASE | re.MULTILINE)),
 )
+
+
+def module_failures(text: str) -> list[str]:
+    """The Go harness's `skip <dir>: ... failed: ...` lines in `text`, without `skip `."""
+    return [
+        line[5:]
+        for line in text.splitlines()
+        if line.startswith("skip ") and _MODULE_FAILED.search(line)
+    ]
 
 
 def classify(text: str) -> str:

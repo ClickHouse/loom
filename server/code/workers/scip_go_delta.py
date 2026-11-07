@@ -18,7 +18,8 @@ touched three of hundreds of modules costs three module builds, not the tree; th
 module cache under `code_scip_go_modcache` makes the second build of a
 module cheap. A module whose `go mod download` fails (a `replace` onto a
 path the checkout lacks) is skipped by the runner and named in the pass
-outcome, never fatal.
+outcome, never fatal to the pass; it fails the tier's health record (kind `module`)
+until a run builds again.
 
 House rule: the SERVER never parses protobuf — scip-go and the
 conversion run in subprocesses; the worker consumes the JSON deltas.

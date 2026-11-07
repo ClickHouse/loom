@@ -272,9 +272,11 @@ async def _record_tier(
     org: str, ns: str, tier: str, rc: int, tail: bytes, *, stopped: bool = False
 ) -> None:
     """`entry-lock --tier`: the command's exit as the tier's health record, its error
-    the end of the command's output."""
+    the end of the command's output. The Go harness exits 0 when a module would not
+    build: the module lines in the kept tail fail the record as the worker's do."""
     from server.code.app.index import tier_health
     from server.code.app.index.compiler_tier import BASE_UNKNOWN_EXIT
+    from server.code.domain.index.tier_health import module_failures
     from server.code.store.index import CodeRepo
 
     if rc == BASE_UNKNOWN_EXIT:
@@ -282,9 +284,15 @@ async def _record_tier(
     error = None
     if stopped and rc != 0:  # the caller's time limit (`timeout`) stopped it
         error = f"harness exit {rc}: stopped by signal (the caller's time limit)"
-    elif rc != 0:
+    else:
         text = tail.decode("utf-8", "replace").strip()
-        error = f"harness exit {rc}: {text}" if text else f"harness exit {rc}"
+        modules = module_failures(text)
+        if rc != 0:
+            # a run that failed outright: an earlier module line is not its cause
+            text = "\n".join(line for line in text.splitlines() if line[5:] not in modules)
+            error = f"harness exit {rc}: {text}" if text else f"harness exit {rc}"
+        elif modules:
+            error = "; ".join(modules)
     await tier_health.record(CodeRepo(), org, ns, tier, error)
 
 

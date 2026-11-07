@@ -99,7 +99,7 @@ async def run_tier[R: TierResult](
         # The watermark reset is one of the entry's writes: under its lock too.
         skips = len(result.skipped)
         try:
-            ran = await run_repo(repo, cfg, result) is not False  # False: nothing was due
+            ran = await run_repo(repo, cfg, result) is not False  # False: leave the record
         except BaseUnknown as e:
             # Not a failure to report: the next run indexes in full.
             await restart_full(repo, cfg, watermark, e, result.errors)

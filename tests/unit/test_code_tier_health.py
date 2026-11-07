@@ -773,3 +773,23 @@ def test_an_ssh_remote_credential_fix_names_the_host_and_repository() -> None:
     record = tier_health.failed(None, "fetch", text, T0)
     assert record.kind == "credential"
     assert "(github.com/org/repo)" in record.fix and "ssh key" in record.fix
+
+
+@pytest.mark.asyncio
+async def test_entry_lock_records_the_go_modules_that_would_not_build() -> None:
+    from server.cli import code_scip
+
+    repo = _StateRepo()
+    skipped = b"done svc\nskip m: go mod download failed: dial tcp: connection refused\n"
+    with patch("server.code.store.index.CodeRepo", return_value=repo):
+        await code_scip._record_tier("o", "ns", "go", 0, skipped)
+        record = tier_health.parse("go", repo.state["tier_health:go"])
+        assert (record.kind, record.error) == (
+            "module",
+            "m: go mod download failed: dial tcp: connection refused",
+        )
+        # a run that failed outright is a harness failure, whatever modules it skipped
+        await code_scip._record_tier("o", "ns", "go", 1, skipped + b"panic: boom\n")
+        assert tier_health.parse("go", repo.state["tier_health:go"]).kind == "harness"
+        await code_scip._record_tier("o", "ns", "go", 0, b"done svc\n")
+    assert not tier_health.parse("go", repo.state["tier_health:go"]).failing
