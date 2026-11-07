@@ -85,7 +85,13 @@ def repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "p2": _Row("p2", "proposed", conflict_with=["id-fact"]),
         "fact": _Row("fact", "active"),
     }
-    seen: dict[str, Any] = {"mirror": [], "audit": [], "flagged": [], "announced": []}
+    seen: dict[str, Any] = {
+        "mirror": [],
+        "audit": [],
+        "subjects": [],
+        "flagged": [],
+        "announced": [],
+    }
 
     async def _many(
         ident: Any, keys: list[str], *, ch: Any = None, strong: bool = False, scope: Any = None
@@ -99,6 +105,7 @@ def repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     async def _emit(event_type: str, **kw: Any) -> str:
         seen["audit"].append((event_type, kw["actor"], kw["subject"]["memory_key"]))
+        seen["subjects"].append(kw["subject"])
         return ""
 
     async def _flag(org: str, ids: list[str], update: Any, *, ch: Any = None) -> int:
@@ -162,6 +169,19 @@ def test_reject_records_the_reason(repo: dict[str, Any]) -> None:
     )
     row = ch.inserts[0][0]
     assert (row["status"], row["rejection_reason"]) == ("rejected", "3 fails")
+
+
+def test_the_reject_audit_row_holds_the_reasons_hash_not_its_text(repo: dict[str, Any]) -> None:
+    """The reason is kept on the rejected row, which erasure reaches; the audit row,
+    which it does not, keeps its hash and length."""
+    from server.core.hashing import sha256_value
+
+    reason = "Dana Reyes says the vault code 4417 is wrong"
+    asyncio.run(p.decide("o", "n", ["p1"], "reject", actor="human:t", reason=reason, ch=_CH()))
+    (subject,) = repo["subjects"]
+    assert "reason" not in subject and "4417" not in str(subject)
+    assert subject["reason_sha256"] == sha256_value(reason)
+    assert subject["reason_chars"] == len(reason)
 
 
 def test_an_accepted_proposal_is_announced_as_written(repo: dict[str, Any]) -> None:

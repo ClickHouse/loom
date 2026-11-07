@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from server.auth.context import current_auth
 from server.core.datetimes import naive_utc_now
+from server.core.hashing import sha256_value
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_lifecycle import (
     MemoryCopyToInput,
@@ -189,7 +190,9 @@ async def handle_memory_cross_promote(
             "to_memory_id": target_memory_id,
             "memory_key": target_key,
             "memory_type": src.memory_type,
-            "rationale": input.rationale,
+            # Free text an erasure cannot reach in the audit log: its hash and length.
+            "rationale_sha256": sha256_value(input.rationale),
+            "rationale_chars": len(input.rationale),
         },
         request_id=target_memory_id,
     )
@@ -302,7 +305,9 @@ async def handle_memory_copy_to(
             "to_memory_id": target_memory_id,
             "memory_key": target_key,
             "memory_type": src.memory_type,
-            "rationale": input.rationale,
+            # Free text an erasure cannot reach in the audit log: its hash and length.
+            "rationale_sha256": sha256_value(input.rationale),
+            "rationale_chars": len(input.rationale),
         },
         request_id=target_memory_id,
     )

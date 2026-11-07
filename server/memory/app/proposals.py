@@ -25,6 +25,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from server.core.hashing import sha256_value
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.app import webhooks
 from server.memory.domain.proposal_policy import ProposalPolicy, parse_policy
@@ -225,7 +226,10 @@ async def _audit_decisions(
                 "memory_key": row.memory_key,
                 "memory_id": str(row.memory_id),
                 "content_sha256": str(getattr(row, "content_sha256", "") or ""),
-                "reason": reason[:200],
+                # The reason stays on the rejected row, which erasure reaches; the audit
+                # row keeps its hash and length.
+                "reason_sha256": sha256_value(reason),
+                "reason_chars": len(reason),
             },
         )
 

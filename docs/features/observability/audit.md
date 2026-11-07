@@ -30,6 +30,11 @@ the table above write their own row and carry no mark there. No read op is decla
 `audit=True`; a read of a `high` row writes `memory.sensitive_read` (above). `audit.list` is
 `audit=False`, so reading the trail does not add to it.
 
+A row a handler writes itself names ids, keys and hashes, and its actor comes from the
+token. Free text the call carried or a fact's text (a promotion's rationale, a rejected
+proposal's reason, a closed triple) is stored as `<field>_sha256` with its length, since
+erasure does not reach `loom.audit_log`.
+
 The transport writes the row after the handler succeeds (`emit_op_audit` in
 `server/transport/_common.py`, for HTTP and MCP). The write is **fail-open**: a failed
 insert is logged and loses the row; the operation still succeeds.

@@ -11,6 +11,7 @@ from typing import Any
 
 from server.core.ch_writes import async_insert_settings
 from server.core.datetimes import naive_utc_now, parse_iso_dt
+from server.core.hashing import sha256_value
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
 from server.memory.app import graph_holders
 from server.memory.app.projection_errors import (
@@ -37,6 +38,7 @@ from server.memory.app.projections import (
     triple_row_link,
     write_entity_triples,
 )
+from server.memory.app.provenance import writer_actor
 from server.memory.domain import triples_follow_rows as tfr
 from server.memory.domain.temporal_sql import (
     HOLDS_VALUE_SQL,
@@ -500,8 +502,9 @@ async def _close_planned(input: Any, plan: tfr.FollowPlan, now: datetime, *, ch:
                 event_type="triple.follows_row_supersession",
                 org=input.org,
                 namespace=input.namespace,
-                actor=str(getattr(input, "agent", "-") or "-"),
-                subject={"closed": f"{s} {r} {o}"},
+                actor=writer_actor() or "-",
+                # The fact's text is memory content; the audit log keeps its hash.
+                subject={"closed_sha256": sha256_value(f"{s} {r} {o}")},
             )
     except Exception as e:  # noqa: BLE001 — the closes are in; the trail is best effort
         log.debug("triples follow rows: audit skipped: %s", e)
