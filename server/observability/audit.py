@@ -160,10 +160,6 @@ _NAMING_FIELDS = frozenset(
         "org",
         "namespace",
         "agent",
-        "user_id",
-        "session_id",
-        "run_id",
-        "thread_id",
         "subject",
         "grantee",
         "owner_email",
@@ -215,6 +211,8 @@ def _nested_model(annotation: Any) -> type[BaseModel] | None:
 
 
 def _digest(value: Any) -> dict[str, Any]:
+    """A value's SHA-256 and length: a string's own UTF-8, anything else as the JSON
+    `json.dumps(value, sort_keys=True)` writes (default separators)."""
     text = value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
     return {"sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "chars": len(text)}
 
@@ -225,9 +223,10 @@ def _shape(model: type[BaseModel], dumped: dict[str, Any]) -> dict[str, Any]:
     for name, value in dumped.items():
         field = fields.get(name)
         annotation = field.annotation if field is not None else None
+        # A nested model is shaped field by field; a free-form dict (a record's fields)
+        # has no model and is hashed whole below.
         nested = _nested_model(annotation)
         if nested is not None and isinstance(value, dict):
-            # A free-form dict (a payload, a record's fields) has no model and is hashed.
             subject[name] = _shape(nested, value)
             continue
         keep = (

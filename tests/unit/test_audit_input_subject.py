@@ -16,7 +16,11 @@ from pydantic import BaseModel
 
 import server.observability.budgets as budgets
 import server.transport._common as common
-from server.identity.api.models import NamespaceRestoreInput, NamespaceSnapshotOutput
+from server.identity.api.models import (
+    NamespaceRestoreInput,
+    NamespaceSnapshotOutput,
+    _SnapshotMemoryRow,
+)
 from server.identity.api.models_grants import GrantsShareAgentInput
 from server.memory.api.models_apply import MemoryApplyInput
 from server.memory.api.models_bulk import MemoryImportCuratedInput
@@ -30,7 +34,8 @@ from server.transport import post_rows
 SECRET = "the merger closes on 12 March at 40 dollars a share"
 
 
-def _digest(text: str) -> dict[str, Any]:
+def _digest(value: Any) -> dict[str, Any]:
+    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
     return {"sha256": hashlib.sha256(text.encode()).hexdigest(), "chars": len(text)}
 
 
@@ -144,8 +149,20 @@ def test_a_free_form_dict_is_hashed_whole(monkeypatch) -> None:
 
 
 def test_a_restored_snapshot_keeps_its_ids_and_counts_and_hashes_its_rows(monkeypatch) -> None:
-    row = {"memory_key": "k", "value": SECRET}
-    payload = NamespaceSnapshotOutput.model_construct(
+    row = _SnapshotMemoryRow(
+        memory_id="m1",
+        agent="a",
+        user_id="-",
+        session_id="-",
+        run_id="-",
+        memory_key="k",
+        memory_type="fact",
+        value=SECRET,
+        confidence=1.0,
+        source_trace="",
+        pinned=False,
+    )
+    payload = NamespaceSnapshotOutput(
         snapshot_id="snap-1",
         org="o",
         source_namespace="src",
@@ -160,9 +177,7 @@ def test_a_restored_snapshot_keeps_its_ids_and_counts_and_hashes_its_rows(monkey
         grants=[],
         audit_tail=[],
     )
-    body = NamespaceRestoreInput.model_construct(
-        org="o", target_namespace="dst", payload=payload, rebind_agent=None
-    )
+    body = NamespaceRestoreInput(org="o", target_namespace="dst", payload=payload)
     subject = _audited_subject(monkeypatch, "namespace.restore", body)
     assert SECRET not in json.dumps(subject)
     shaped = subject["payload"]
@@ -171,7 +186,7 @@ def test_a_restored_snapshot_keeps_its_ids_and_counts_and_hashes_its_rows(monkey
         "src",
         1,
     )
-    assert shaped["memories"] == _digest(json.dumps([row]))
+    assert shaped["memories"] == _digest([row.model_dump(mode="json")])
 
 
 def test_an_enum_and_an_optional_nested_model_are_shaped_by_their_type() -> None:

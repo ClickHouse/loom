@@ -41,7 +41,8 @@ name, org, agent, namespace or `_by` suffix), numbers, booleans and Literal or E
 stay as sent; a field holding one nested model follows the same rule, and a list of
 models is hashed whole. Every other value (a memory value, a decision's reasoning, a
 reason, a record's fields, the rows of a restored snapshot) is stored as its SHA-256 and
-length, since erasure does not reach `loom.audit_log`. A hash of a short value can be
+length (a non-string value as the JSON `json.dumps(value, sort_keys=True)` writes),
+since erasure does not reach `loom.audit_log`. A hash of a short value can be
 recovered by guessing; the rule keeps long text out of the trail, not every word.
 An op whose input carries a credential (a tracker source's password, a repository's
 access token) declares an `audit_subject` that leaves it out.
