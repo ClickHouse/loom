@@ -588,7 +588,8 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     """
     import server.memory.store as memory_repo
 
-    target = await memory_repo.find_history_target(input.org, input.memory_id, input.version)
+    version = int(input.version)  # the validator took a decimal string to an int
+    target = await memory_repo.find_history_target(input.org, input.memory_id, version)
     if target is None:
         return MemoryRedactOutput(redacted=False)
     # Addressed by org-wide id: ADMIN on the row's namespace is checked here
@@ -619,7 +620,7 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         strong=True,  # ... and so must its latest version
         scope=WHOLE_NAMESPACE,
     )
-    if head is not None and head.version == input.version:
+    if head is not None and head.version == version:
         return MemoryRedactOutput(redacted=False, refused_head=True)
     if head is not None:
         # Scrubbing a historical version of a locked key is a deletion of its
@@ -647,7 +648,7 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
             target.memory_key,
         ),
         input.memory_id,
-        input.version,
+        version,
         when=now,
         reason_blob=f"{reason_blob}|{by_blob}",
         head=(str(head.memory_id), head.version) if head is not None else None,
@@ -692,7 +693,7 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     # Receivers hear of each version scrubbed, the later copies on the key included,
     # and of the newest one of each profile key built from the memory.
     await webhooks.announce(
-        [("memory.redacted", memory_change(target, v)) for v in [input.version, *copies]]
+        [("memory.redacted", memory_change(target, v)) for v in [version, *copies]]
         + [("memory.redacted", memory_change(p.head, p.newest)) for p in profiles if p.head]
     )
     return MemoryRedactOutput(
