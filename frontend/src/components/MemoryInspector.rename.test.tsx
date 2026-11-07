@@ -256,6 +256,7 @@ describe("MemoryInspector rename with redirect", () => {
     expect(await screen.findByText(/not found/i)).toBeInTheDocument();
     expect(toast).toHaveBeenCalledWith("Renamed coffee_pref to prefs/coffee — the old key was deleted", "ok");
     // The shortcuts have no row to act on, so none of them writes the deleted key back.
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     await userEvent.keyboard("edp{Meta>}{Enter}{/Meta}");
     expect(setMemory).not.toHaveBeenCalled();
     expect(deleteMemory).not.toHaveBeenCalled();
