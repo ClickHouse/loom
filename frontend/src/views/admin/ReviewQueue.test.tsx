@@ -173,7 +173,6 @@ describe("ReviewQueue", () => {
     vi.mocked(listAllowlist).mockReset();
     vi.mocked(listLearnings).mockReset();
     vi.mocked(listProposals).mockReset();
-    vi.mocked(listProposals).mockResolvedValue({ proposals: [], total: 0 });
     vi.mocked(listAllowlist).mockResolvedValue({ rows: [] });
     vi.mocked(listLearnings).mockResolvedValue({ rows: [] });
     vi.mocked(listAutoResolved).mockReset();
@@ -206,7 +205,6 @@ describe("ReviewQueue", () => {
 
   it("shows Duplicates to an admin only, Proposals to a reader, and reads none for an unknown role", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
-    vi.mocked(listProposals).mockClear();
     seed("ns-a");
     render(<ReviewQueue />);
     await screen.findByText("value of city", {}, WAIT);
@@ -272,17 +270,18 @@ describe("ReviewQueue", () => {
     render(<ReviewQueue />);
     await user.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
     expect(await screen.findByText("Tuesdays")).toBeInTheDocument();
-    vi.mocked(listProposals).mockImplementationOnce(() => new Promise(() => {}));
     seed("ns-b", "writer");
     // At once: the keyed panel starts empty, before any read or tab reset lands.
     expect(screen.queryByText("Tuesdays")).toBeNull();
     // Then let the switch settle: the page is back on Conflicts.
-    await waitFor(() => expect(screen.queryByRole("tab", { name: /Proposals/, selected: true })).toBeNull(), WAIT);
+    await waitFor(
+      () => expect(screen.getByRole("tab", { name: /Conflicts/ })).toHaveAttribute("aria-selected", "true"),
+      WAIT,
+    );
   });
 
   it("reads proposals each time the tab opens", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
-    vi.mocked(listProposals).mockClear();
     vi.mocked(listProposals).mockResolvedValueOnce({ proposals: [proposal], total: 1 });
     seed("ns-a", "writer");
     const user = userEvent.setup();
@@ -290,7 +289,6 @@ describe("ReviewQueue", () => {
     await user.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
     expect(await screen.findByText("Tuesdays")).toBeInTheDocument();
     expect(listProposals).toHaveBeenCalledTimes(1);
-    vi.mocked(listProposals).mockResolvedValue({ proposals: [], total: 0 });
     await user.click(screen.getByRole("tab", { name: /Conflicts/ }));
     await user.click(screen.getByRole("tab", { name: /Proposals/ }));
     expect(await screen.findByText("No proposals")).toBeInTheDocument();
