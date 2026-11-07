@@ -907,7 +907,7 @@ def test_the_release_runs_every_check_on_the_tag_with_its_tags() -> None:
     (checkout,) = [s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout@")]
     assert checkout["with"]["fetch-depth"] == 0  # the candidate order and the chart read tags
     script = "\n".join(s.get("run", "") for s in job["steps"])
-    # check-tag before check-chart: a stray candidate gets the candidate-order refusal.
+    # check-tag first: it refuses every tag run that check-chart would skip.
     lines = [
         'python3 scripts/release/prepare.py check "$VERSION"',
         'python3 scripts/release/prepare.py check-tag "${dry_run[@]}" "$VERSION"',

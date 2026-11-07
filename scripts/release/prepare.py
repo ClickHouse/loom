@@ -9,8 +9,8 @@ python3 without the project's environment, need only the standard library:
     .venv/bin/python scripts/release/prepare.py bump 1.2.0   # notes, then the bump
     .venv/bin/python scripts/release/prepare.py notes 1.2.0  # the notes alone
     python3 scripts/release/prepare.py check 1.2.0           # one version everywhere
-    python3 scripts/release/prepare.py check-chart 1.2.0     # the chart moved
     python3 scripts/release/prepare.py check-tag 1.2.0-rc.1  # candidate order
+    python3 scripts/release/prepare.py check-chart 1.2.0     # the chart moved
     python3 scripts/release/prepare.py previous 1.2.0-rc.1   # the notes' base tag
 
 What each file carries, the chart rule, the release candidates and the notes:
@@ -491,8 +491,9 @@ def _check_chart(args: argparse.Namespace) -> None:
     tag_version = args.tag_version
     baseline = chart_baseline(tag_version)
     if not baseline:
-        # Only off the tag's commit, which check-tag refuses before this outside a dry
-        # run. Said in the log, so a skip never reads as a chart checked.
+        # vX.Y.Z is on another commit, which check-tag has refused outside a dry run (a
+        # final off HEAD, a candidate after its final). Said in the log, so a skip never
+        # reads as a chart checked.
         print(f"::notice::no chart check: v{final_of(tag_version)} is tagged on another commit")
         return
     # Caught here, not in main(), for the annotation's file= and the baseline's name.
