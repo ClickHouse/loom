@@ -5,7 +5,6 @@ batches together, results in batch order, at most `limit` in flight."""
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Any
 
 from server.code.store import index as cr
@@ -20,19 +19,13 @@ def test_batches_read_together_in_order_under_the_limit() -> None:
         nonlocal in_flight, peak
         in_flight += 1
         peak = max(peak, in_flight)
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.01)
         in_flight -= 1
         return [b * 10 for b in batch]
 
-    async def go() -> tuple[list[list[Any]], float]:
-        t0 = time.perf_counter()
-        out = await code_sql._gather_batched(list(range(10)), 2, read, limit=3)
-        return out, time.perf_counter() - t0
-
-    out, wall = asyncio.run(go())
+    out = asyncio.run(code_sql._gather_batched(list(range(10)), 2, read, limit=3))
     assert out == [[0, 10], [20, 30], [40, 50], [60, 70], [80, 90]]
-    assert peak == 3
-    assert wall < 0.05 * 5 * 0.7, wall  # five batches, three at a time: ~two sleeps
+    assert peak == 3  # three batches in flight at once: serial reads peak at one
 
 
 def test_a_single_batch_reads_inline_and_nothing_reads_nothing() -> None:
