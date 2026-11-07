@@ -48,8 +48,7 @@ test("seen list is bounded", () => {
   assert.equal(out.seen.length, SEEN_CAP);
 });
 
-test("the index is asked about the request, not about how to answer it", async () => {
-  const { searchQuery } = await import("../lib/prompt-pack.mjs");
+test("the index is asked about the request, not about how to answer it", () => {
   const prompt =
     "Below is a question about the repository in the current directory. Find the source files " +
     "that answer it. Do not edit any file and do not run tests or builds.\n\n" +
@@ -89,8 +88,7 @@ test("a wrapper tag followed by a long whitespace run and no close tag is matche
   assert.ok(performance.now() - start < 500, "the wrapper match backtracks over the whitespace run");
 });
 
-test("a question about a change in history gets no code pointers", async () => {
-  const { shouldAsk } = await import("../lib/prompt-pack.mjs");
+test("a question about a change in history gets no code pointers", () => {
   for (const q of [
     "Which change made HTTP clients get 403 instead of 500 for ACCESS_DENIED?",
     "When did FINAL queries stop using the lazy plan?",
