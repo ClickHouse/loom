@@ -68,15 +68,17 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
         )
         outcome = {"scanned": report.scanned, "truncated": report.truncated, **result.as_dict()}
         rec.outcome = outcome
-        if result.relabelled or result.errors:
+        if result.relabelled or result.left or result.errors:
             log.info(
                 "sensitivity_sweep: %d relabelled (%d high, %d medium), %d embedding rows "
-                "tombstoned, %d tagged, %d errors",
+                "tombstoned before the relabel (ClickHouse only), %d tagged, %d left (head "
+                "gone or moved), %d errors",
                 result.relabelled,
                 result.high,
                 result.medium,
                 result.embeddings_tombstoned,
                 result.embeddings_tagged,
+                len(result.left),
                 len(result.errors),
             )
         log_pass_errors(log, "sensitivity_sweep", result.errors)
@@ -92,10 +94,12 @@ def _resume_past_agent(report: SweepReport, result: ApplyResult) -> bool:
         return False  # the scan already stopped past an agent, a namespace or an org
     if not report.candidates:
         return report.last_page_had_stale_key
-    if not result.failed:
-        return False
     stopped_in = past_agent(report.resume_after)
-    return all(past_agent(c.sort_key) == stopped_in for c, _ in result.failed)
+    if any(past_agent(c.sort_key) == stopped_in for c in result.left):
+        return False  # a head gone or moved in this agent: the next pass reads the new one
+    return bool(result.failed) and all(
+        past_agent(c.sort_key) == stopped_in for c, _ in result.failed
+    )
 
 
 def cursor_text(key: dict[str, Any] | None, *, past: bool = False) -> str:

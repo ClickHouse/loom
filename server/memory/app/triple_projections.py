@@ -11,6 +11,7 @@ from typing import Any
 
 from server.core.ch_writes import async_insert_settings
 from server.core.datetimes import naive_utc_now, parse_iso_dt
+from server.core.error_summary import error_summary
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
 from server.memory.app import graph_holders
 from server.memory.app.projection_errors import (
@@ -100,12 +101,14 @@ async def _write_stated_relations(
     try:
         write, results = as_bulk_write(row, value, relations)
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
-        log.warning("%s: relations not projected: %s", op, e)
+        log.warning("%s: relations not projected: %s", op, error_summary(e))
         return
     try:
         await write_entity_triples(write, results, ch=ch)
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
-        log.warning("%s: relations projection failed (recorded for repair): %s", op, e)
+        log.warning(
+            "%s: relations projection failed (recorded for repair): %s", op, error_summary(e)
+        )
         await record_input_projection_failure(
             write,
             projection=failed_projection("entity_triples", e),
@@ -146,7 +149,7 @@ async def reconcile_row_facts(
         else:
             await close_dropped_facts(input, ids, ch=ch)
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
-        log.warning("%s: facts not reconciled (recorded for repair): %s", op, e)
+        log.warning("%s: facts not reconciled (recorded for repair): %s", op, error_summary(e))
         payload: dict[str, Any] = {"memory_ids": ids, "reopen": reopen}
         if reopen:
             payload["restored_at"] = restored_at.isoformat()
@@ -478,7 +481,9 @@ async def _close_planned(input: Any, plan: tfr.FollowPlan, now: datetime, *, ch:
             org=input.org, namespace=input.namespace, closes=until, closed_at=now, ch=ch
         )
     except Exception as e:  # noqa: BLE001 — the closes are in; the repair re-checks them
-        log.warning("triples follow rows: re-check after the close failed (recorded): %s", e)
+        log.warning(
+            "triples follow rows: re-check after the close failed (recorded): %s", error_summary(e)
+        )
         await record_input_projection_failure(
             input,
             projection=TRIPLES_REOPEN,
@@ -507,7 +512,7 @@ async def _close_planned(input: Any, plan: tfr.FollowPlan, now: datetime, *, ch:
                 subject={"closed": _audit.digest(f"{s} {r} {o}")},
             )
     except Exception as e:  # noqa: BLE001 — the closes are in; the trail is best effort
-        log.debug("triples follow rows: audit skipped: %s", e)
+        log.debug("triples follow rows: audit skipped: %s", error_summary(e))
     return len(closed)
 
 

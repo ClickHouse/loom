@@ -294,3 +294,48 @@ def test_serve_runs_with_no_command_context_bound() -> None:
 
     assert _dispatch(argparse.Namespace(cmd="serve", func=_serve)) == 0
     assert seen == [("process:worker", "", "")]
+
+
+def test_a_command_refused_for_another_deployment_prints_one_line_and_exits_2(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from server.cli.app import _dispatch
+    from server.core.pg import AuthorityMismatch
+
+    def _func(_: argparse.Namespace) -> int:
+        raise AuthorityMismatch("this deployment's memory authority is postgres")
+
+    assert _dispatch(argparse.Namespace(cmd="decisions", func=_func)) == 2
+    assert capsys.readouterr().err.strip().splitlines() == [
+        "✗ this deployment's memory authority is postgres"
+    ]
+
+
+def test_a_platform_admin_mint_for_another_deployment_is_refused_as_such(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not as a fleet state that could not be read: the refusal names the configuration."""
+    from server.cli import access
+    from server.core.pg import AuthorityMismatch
+
+    def _refuse(_run: object) -> bool:
+        raise AuthorityMismatch("this deployment's memory authority is postgres")
+
+    monkeypatch.setattr(access, "run_connected", _refuse)
+    with pytest.raises(AuthorityMismatch):
+        access._platform_admin_rollout_ready()
+
+
+def test_a_revocation_for_another_deployment_is_refused_as_such(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The one-line refusal and exit 2, not "revocation not recorded"."""
+    from server.cli import access, main
+    from server.core.pg import AuthorityMismatch
+
+    def _refuse(_run: object) -> int:
+        raise AuthorityMismatch("this deployment's memory authority is postgres")
+
+    monkeypatch.setattr(access, "run_connected", _refuse)
+    assert main(["revoke-token", "--jti", "j", "--reason", "leaked"]) == 2
+    assert "memory authority is postgres" in capsys.readouterr().err

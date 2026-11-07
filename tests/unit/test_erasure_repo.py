@@ -307,28 +307,37 @@ async def test_consolidated_dependents_of_an_erased_user_are_tombstoned_in_both_
     """A topic memory synthesised from an erased user's rows lives under
     another identity and carries the content verbatim (tag `src:<key>`); the
     per-user tombstone never reaches it. The step retires any summary whose
-    sources overlap the erased keys, on loom.memory AND loom.memory_embeddings,
-    and deletes its code links (a suggestion rewrites its text)."""
+    sources overlap the erased keys in its own namespace, on loom.memory AND
+    loom.memory_embeddings, and deletes its code links (a suggestion rewrites its
+    text), every value bound as the replicated tables require."""
     topic = "00000000-0000-0000-0000-0000000000c1"
     ch = StubCH()
-    ch.reads.append(("toString(memory_id) AS id FROM loom.memory", [{"id": topic}]))
-    ch.query_one_returns.extend([{"keys": ["k1"]}, {"n": 2}, {"n": 2}, {"n": 1}])
+    ch.reads.append(("namespace, memory_key FROM", [{"namespace": "ns", "memory_key": "k1"}]))
+    ch.reads.append(
+        ("toString(memory_id) AS id FROM loom.memory", [{"namespace": "ns", "id": topic}])
+    )
+    ch.query_one_returns.extend([{"n": 2}, {"n": 2}, {"n": 1}])
     n = await graph_steps.tombstone_consolidated_dependents_by_user("o", "alice", ch=ch)
     assert n == 5
-    keys_sql, keys_params = ch.query_one_calls[0]
-    assert "groupUniqArray(memory_key) FROM loom.memory" in keys_sql
+    keys_sql, keys_params = ch.read_calls[0]
+    assert "namespace, memory_key FROM" in keys_sql
     assert keys_params == {"org": "o", "uid": "alice"}
     tables = [sql.split("ALTER TABLE ")[1].split()[0] for sql, _ in ch.execute_calls]
     assert tables == ["loom.memory", "loom.memory_embeddings", "loom.memory_code_links"]
     *tombstones, (links, link_params) = ch.execute_calls
     for sql, params in tombstones:
         assert "has(tags, 'consolidated') AND hasAny(tags, {src:Array(String)})" in sql
-        assert params["src"] == ["src:k1"] and "UPDATE tombstoned_at = {now:DateTime}" in sql
-    # the topic rows' ids are read after the tombstones, then bound
-    ((ids_sql, ids_params),) = ch.read_calls
-    assert "has(tags, 'consolidated')" in ids_sql and ids_params["src"] == ["src:k1"]
-    assert "DELETE" in links and "memory_id IN {ids:Array(UUID)}" in links
-    assert link_params["ids"] == [topic]
+        # Paired with the user's keys in the row's own namespace.
+        assert "{pairs:Array(Tuple(String, String))}" in sql
+        assert params["src"] == ["src:k1"] and params["pairs"] == [("ns", "src:k1")]
+        assert "UPDATE tombstoned_at = {now:DateTime}" in sql
+    # the topic rows are read after the tombstones, then bound with their namespace
+    ids_sql, ids_params = ch.read_calls[1]
+    assert "has(tags, 'consolidated')" in ids_sql and ids_params["pairs"] == [("ns", "src:k1")]
+    assert (
+        "DELETE" in links and "(namespace, memory_id) IN {rows:Array(Tuple(String, UUID))}" in links
+    )
+    assert link_params["rows"] == [("ns", topic)]
     assert not [sql for sql, _ in ch.execute_calls if "SELECT" in sql]
 
 

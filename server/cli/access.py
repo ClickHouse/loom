@@ -14,6 +14,7 @@ from typing import Any
 
 from server.cli._ch import run_connected
 from server.cli._client import token_path
+from server.core.pg import AuthorityMismatch
 
 
 def _cmd_claim_release(args: argparse.Namespace) -> int:
@@ -274,6 +275,8 @@ def _platform_admin_rollout_ready() -> bool:
 
     try:
         return bool(run_connected(machines.platform_admin_tokens_ready))
+    except AuthorityMismatch:
+        raise  # a shell configured for another deployment: its own one-line refusal
     except Exception as e:  # noqa: BLE001 — an unread fleet refuses an admin token
         print(f"  ✗ fleet state could not be read: {type(e).__name__}", file=sys.stderr)
         return False
@@ -529,6 +532,8 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
 
     try:
         return run_connected(_run)
+    except AuthorityMismatch:
+        raise  # a shell configured for another deployment: its own one-line refusal
     except Exception as e:  # noqa: BLE001 — a revocation that did not land must say so
         print(f"  ✗ revocation not recorded: {type(e).__name__}: {e}", file=sys.stderr)
         return 1

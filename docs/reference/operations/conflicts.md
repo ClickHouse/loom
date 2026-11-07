@@ -105,7 +105,7 @@ Pick the winner of a conflict (keep A, keep B, keep both, merge).
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `resolved` | `bool` | False when the memory or the named peer is unknown, or the caller is not an admin of every row it names; nothing was written then. |
+| `resolved` | `bool` | False when the memory or the named peer is unknown, or the memory is not in `namespace`; nothing was written then. |
 | `decision` | `Literal['revise', 'contract', 'allow']` | The decision, echoed. |
 | `affected_memory_ids` | `list[str]` | Every memory id this call tombstoned or reactivated. |
 | `resolved_at` | `datetime \| None` | When the resolve ran (UTC); null when nothing was resolved. |

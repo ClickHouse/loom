@@ -7,10 +7,13 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from server.core.ch import sequential_reads
 from server.embedding import get_embedder
 from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput
+from server.memory.app.search import pg_validation
 from server.memory.app.search.anchor_pool import _run_anchor_pool
 from server.memory.app.search.assemble import _assemble_final_hits
+from server.memory.app.search.budget import SearchBudget
 from server.memory.app.search.computed import (
     _computed_answer_inputs,
     _floor_and_computed_evidence,
@@ -50,6 +53,7 @@ from server.memory.app.search.scope import (
     _launch_scope_reads,
     _prelaunch_canonical_lookup,
     _resolve_entity_scope,
+    _SearchRun,
 )
 from server.memory.app.search.side_legs import (
     _launch_entity_boost,
@@ -224,6 +228,7 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
         )
 
         await _resolve_entity_scope(input, run, llm_query_entities, actual_work)
+        await _admit(input, run, search_budget)
 
         (
             input,
@@ -315,7 +320,7 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
         run.top_k_ceiling = _top_k_ceiling
         run.retrieval_cost_estimate = retrieval_cost_estimate
 
-        final_hits = ctx.final_hits
+        final_hits = await pg_validation.validate(ctx)
 
         reread_result = await _consistency_reread(ctx, final_hits)
         if reread_result is not None:
@@ -349,4 +354,13 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
         await _finish_search_output(ctx, _output, final_hits)
         return _output
     finally:
-        run.cancel_pending()
+        run.close()
+
+
+async def _admit(input: MemorySearchInput, run: _SearchRun, search_budget: SearchBudget) -> None:
+    """The Postgres barrier (`pg_validation.admit`). A re-entrant pass (a fallback, a
+    re-read) waits no longer than its parent's time left, a first pass the barrier's own
+    bound; a search that waited reads sequentially for the rest of the pass."""
+    cap_s = search_budget.wall_left_s() if getattr(input, "_pass_depth", 0) else None
+    if await pg_validation.admit(input.org, run.namespaces, cap_s):
+        run.sequential_scope.enter_context(sequential_reads())

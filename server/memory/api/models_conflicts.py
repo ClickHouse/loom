@@ -91,8 +91,8 @@ class ConflictsResolveInput(BaseModel):
 
 
 class ConflictsResolveOutput(BaseModel):
-    # False when the memory or the named peer is unknown, or the caller is not an admin
-    # of every row it names; nothing was written then.
+    # False when the memory or the named peer is unknown, or the memory is not in
+    # `namespace`; nothing was written then. A peer not in `namespace` is left as it is.
     resolved: bool
     # The decision, echoed.
     decision: ResolveDecision

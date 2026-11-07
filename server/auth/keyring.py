@@ -165,7 +165,8 @@ def load_for_offline_mint(*, run: Callable[..., Any] | None = None) -> bool:
     cannot be read. `run` is the CLI's `run_connected`; without it the read
     uses a client of its own. True when it was read. Raises ValueError when
     the keyring was recorded under another root secret: no server would
-    accept what this process signs."""
+    accept what this process signs; through `run`, raises AuthorityMismatch
+    when the shell is configured for another deployment (`connect_checked`)."""
 
     async def _read() -> bool:
         from server.core.ch import CHClient
@@ -177,6 +178,8 @@ def load_for_offline_mint(*, run: Callable[..., Any] | None = None) -> bool:
         finally:
             await ch.disconnect()
 
+    from server.core.pg import AuthorityMismatch
+
     try:
         if run is not None:
             read = bool(run(lambda ch: refresh(ch=ch)))
@@ -184,6 +187,8 @@ def load_for_offline_mint(*, run: Callable[..., Any] | None = None) -> bool:
             # A thread of its own, so a caller already inside an event loop works too.
             with ThreadPoolExecutor(1) as pool:
                 read = pool.submit(asyncio.run, _read()).result()
+    except AuthorityMismatch:
+        raise  # a shell configured for another deployment: refused, not signed by root
     except Exception:  # noqa: BLE001 — an offline mint signs with the root secret
         read = False
     if not read:

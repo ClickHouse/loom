@@ -16,7 +16,7 @@ The design, its invariants and the code paths are in [memory architecture](../..
 
 - A new version row of `loom.memory` or `loom.shared` (set, tombstone, restore, touch, `update_by_id`, `bulk_set`, promote, demote) goes through `build_memory_version_row` / `build_embedding_row` in `server/memory/store/rows.py`. Both tables are `ReplacingMergeTree(version)` read with `FINAL`, so a column the new row omits reads as zero for everyone.
 - A new column reaches those builders and every projection that feeds them in the same change; a new `loom.memory` column also goes into `loom.memory_versions` and `memory_versions_mv` (`migrations` rule). History, redact and rollback read `loom.memory_versions`, never the merged rows.
-- Every write that creates or changes memory leaves one hash-only audit row (`memory.set` and `memory.bulk_set` alike).
+- Every write that creates or changes memory leaves its hash-only audit row (`memory.set` and `memory.bulk_set` alike); under Postgres the commit adds a `memory.revision` row per revision.
 - `memory.set` and `memory.bulk_set` both run conflict surfacing, the blacklist and the pinned-peer check (a close pinned peer never refuses a `KEY_IDENTIFIED_TYPES` row) before the insert; a new write path that skips any of them is a bug ([conflicts and refusal](../../docs/features/memory/conflicts-and-refusal.md)).
 - `memory.set` / `memory.update_by_id` honour `if_match_sha256`; the current hash rides `memory.get` / `memory.get_by_id`.
 - `namespace.snapshot` / `restore` carry `version`, `content_sha256` and the attestation columns; a restore never strips `verified_by`.

@@ -47,18 +47,20 @@ def _row(mid: str, key: str, ns: str = "ns") -> memory_repo.MemoryRow:
 def cascade_spy(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Runs the real `write_versions_by_ids`; records the memory versions it
     inserts and the rows it hands the embeddings status mirror."""
-    rows = {"m1": _row("m1", "k1"), "m2": _row("m2", "k2", ns="other")}
+    rows = {"m1": _row("m1", "k1"), "m2": _row("m2", "k2"), "m3": _row("m3", "k3", ns="other")}
     spy: dict[str, Any] = {"versions": [], "mirrored": [], "overrides": [], "mirror_versions": []}
 
     async def fake_get_by_id(
         mid: str,
         *,
         org: str | None = None,
+        namespace: str | None = None,
         ch: Any = None,
         scope: Any = None,
         strong: bool = False,
     ):
-        return rows.get(mid)
+        row = rows.get(mid)
+        return row if row is not None and row.namespace == namespace else None
 
     async def fake_insert(built: list[dict[str, Any]], *, ch: Any = None) -> None:
         for r in built:
@@ -96,7 +98,7 @@ async def test_cascade_writes_tombstoned_version_and_mirrors_embeddings(
 ) -> None:
     when = datetime(2026, 9, 12, 8, 0, 0)
     tombstoned = await memory_repo.tombstone_cascade_by_ids(
-        "o", ["m1", "m2", "m1", "missing"], when=when, ch=object()
+        "o", ["m1", "m2", "m1", "m3", "missing"], when=when, ch=object(), namespace="ns"
     )
     assert [t["memory_id"] for t in tombstoned] == ["m1", "m2"]
     # Each returned change carries the version its tombstone was written at.
@@ -106,14 +108,55 @@ async def test_cascade_writes_tombstoned_version_and_mirrors_embeddings(
         assert ov["status"] == "tombstoned"
         assert ov["tombstoned_at"] == when
         assert ov["expires_at"] is None
-    # The mirror carries the full identity tuple of each row — it is the
-    # embeddings table's sort key, and the second row lives in another namespace.
+    # The mirror carries the full identity tuple of each row, the embeddings table's
+    # sort key; m3 lives in another namespace and is left alone.
     assert cascade_spy["mirrored"] == [
         ("o", "ns", "a", "-", "s1", "k1", when),
-        ("o", "other", "a", "-", "s1", "k2", when),
+        ("o", "ns", "a", "-", "s1", "k2", when),
     ]
     # Each vector retire carries its memory tombstone's version.
     assert cascade_spy["mirror_versions"] == [ov["version"] for ov in cascade_spy["overrides"]]
+
+
+@pytest.mark.asyncio
+async def test_a_cascade_draws_one_tombstone_version_and_goes_above_a_newer_head(
+    cascade_spy: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tombstones of a call share one version, drawn once every row is read; a head
+    read above it (written on a replica whose clock is ahead) is tombstoned just above it."""
+    draws: list[int] = []
+
+    def draw() -> int:
+        draws.append(100 + len(draws))
+        return draws[-1]
+
+    async def read(mid: str, **_: Any) -> memory_repo.MemoryRow:
+        assert draws == []  # drawn once every row is read, so a write before it sorts below
+        row = _row(mid, f"k-{mid}")
+        if mid == "newer":
+            return row.model_copy(update={"version": 500})
+        return row.model_copy(update={"memory_type": "decision"}) if mid == "m2" else row
+
+    records: list[Any] = []
+
+    async def retire_records(org: str, ns: str, keys: Any, *, version: int, ch: Any) -> int:
+        records.append((sorted(keys), version))
+        return len(keys)
+
+    monkeypatch.setattr(lifecycle, "next_version", draw)
+    monkeypatch.setattr(lifecycle, "get_by_id", read)
+    monkeypatch.setattr(lifecycle, "tombstone_decision_records", retire_records)
+    tombstoned = await memory_repo.tombstone_cascade_by_ids(
+        "o", ["m1", "newer", "m2"], when=datetime(2026, 9, 12), ch=object(), namespace="ns"
+    )
+    assert draws == [100]
+    assert [(t["memory_id"], t["version"]) for t in tombstoned] == [
+        ("m1", 100),
+        ("newer", 502),
+        ("m2", 100),
+    ]
+    assert cascade_spy["versions"] == ["m1", "newer", "m2"]
+    assert records == [(["k-m2"], 100)]  # the decision's records retire at the rows' version
 
 
 @pytest.mark.asyncio
@@ -127,6 +170,7 @@ async def test_cascade_update_hook_adds_overrides_without_dropping_the_tombstone
         when=when,
         update=lambda r: {"source_trace": f"{r.source_trace} | note"},
         ch=object(),
+        namespace="ns",
     )
     ov = cascade_spy["overrides"][0]
     assert ov["source_trace"] == "clickgap://x | note"
@@ -146,7 +190,7 @@ async def test_mirror_failure_is_logged_not_raised(
         lifecycle, "mirror_status_to_embeddings", memory_repo.mirror_status_to_embeddings
     )
     tombstoned = await memory_repo.tombstone_cascade_by_ids(
-        "o", ["m1"], when=datetime(2026, 9, 12), ch=_Down()
+        "o", ["m1"], when=datetime(2026, 9, 12), ch=_Down(), namespace="ns"
     )
     # The memory tombstone is durable; the reconcile worker heals the mirror.
     assert len(tombstoned) == 1
@@ -154,7 +198,7 @@ async def test_mirror_failure_is_logged_not_raised(
 
 @pytest.mark.asyncio
 async def test_tombstone_by_id_goes_through_the_cascade(cascade_spy: dict[str, Any]) -> None:
-    await memory_repo.tombstone_by_id("o", "m1", ch=object())
+    await memory_repo.tombstone_by_id("o", "m1", namespace="ns", ch=object())
     assert cascade_spy["versions"] == ["m1"]
     assert len(cascade_spy["mirrored"]) == 1
 
@@ -167,7 +211,7 @@ async def test_conflicts_tombstone_ids_cascades_with_audit_note(
 
     when = datetime(2026, 9, 12, 9)
     await conflicts_repo.tombstone_ids(
-        "o", ["m1", "m2"], "conflicts.resolve:revise by bob", when, ch=object()
+        "o", ["m1", "m2"], "conflicts.resolve:revise by bob", when, namespace="ns", ch=object()
     )
     assert cascade_spy["versions"] == ["m1", "m2"]
     assert len(cascade_spy["mirrored"]) == 2
@@ -179,7 +223,9 @@ async def test_conflicts_tombstone_ids_cascades_with_audit_note(
 async def test_conflicts_tombstone_ids_empty_is_a_noop(cascade_spy: dict[str, Any]) -> None:
     from server.memory.store import conflicts as conflicts_repo
 
-    await conflicts_repo.tombstone_ids("o", [], "note", datetime(2026, 9, 12), ch=object())
+    await conflicts_repo.tombstone_ids(
+        "o", [], "note", datetime(2026, 9, 12), namespace="ns", ch=object()
+    )
     assert cascade_spy["versions"] == []
 
 
@@ -470,3 +516,40 @@ def test_classify_hits_separates_allowed_residue_from_leaks() -> None:
         ("audit_log", True),
     ]
     assert hits[1].reason  # every allowed residue names why
+
+
+async def test_a_reject_goes_above_a_head_written_since_its_draw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On ClickHouse one version is drawn before the read: a head read newer than it is
+    rejected two above it, an older one at the draw."""
+    rows = {"m1": _row("m1", "k").model_copy(update={"version": 40})}
+    rows["m2"] = _row("m2", "k").model_copy(update={"version": 250, "session_id": "s2"})
+    read: list[Any] = []
+    written: list[dict[str, Any]] = []
+
+    class _CH:
+        async def query_all(self, *_: Any, **__: Any) -> list[dict[str, Any]]:
+            return [{"memory_id": "m1"}, {"memory_id": "m2"}]
+
+    async def _get_by_id(mid: str, *, namespace: str | None = None, **_: Any) -> Any:
+        read.append(namespace)
+        return rows[mid]
+
+    async def _insert(built: list[dict[str, Any]], *, ch: Any = None) -> None:
+        written.extend(built)
+
+    async def _mirror(built: list[dict[str, Any]], **_: Any) -> int:
+        return len(built)
+
+    monkeypatch.setattr("server.core.pg.enabled", lambda: False)
+    monkeypatch.setattr(lifecycle, "next_version", lambda: 100)
+    monkeypatch.setattr(lifecycle, "get_by_id", _get_by_id)
+    monkeypatch.setattr(lifecycle, "insert_memory_versions", _insert)
+    monkeypatch.setattr(lifecycle, "mirror_status_to_embeddings", _mirror)
+    assert len(await lifecycle.reject_by_identity("o", "ns", "a", "-", "k", "wrong", ch=_CH())) == 2
+    assert read == ["ns", "ns"]
+    assert [(r["memory_id"], r["status"], r["version"]) for r in written] == [
+        ("m1", "rejected", 100),
+        ("m2", "rejected", 252),
+    ]

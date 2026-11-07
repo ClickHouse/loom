@@ -280,17 +280,17 @@ def test_startup_on_a_reachable_bind_refuses_mcp_open_and_a_weak_root_key(
         asyncio.run(start())
 
 
-def test_the_dev_stack_publishes_clickhouse_on_loopback_only() -> None:
-    """The dev ClickHouse password is the checked-in default: its ports are never
-    published beyond loopback, by the compose file or the per-worktree start script."""
+def test_the_dev_stack_publishes_its_stores_on_loopback_only() -> None:
+    """The dev ClickHouse and Postgres passwords are checked-in defaults: their ports are
+    never published beyond loopback, by the compose file or the start scripts."""
     root = Path(__file__).resolve().parents[2]
     compose = (root / "dev/docker-compose.dev.yml").read_text()
     ports = re.findall(r'^\s*- "([^"]*):(\d+)"$', compose, flags=re.M)
     published = [p for p in ports if p[1] in ("8123", "9000")]
     assert published and all(p[0].startswith("127.0.0.1:") for p in published), published
-    script = (root / "dev/ci_start_clickhouse.sh").read_text()
-    flags = re.findall(r'-p "([^"]*)"', script)
-    assert flags and all(f.startswith("127.0.0.1:") for f in flags), flags
+    for name in ("dev/ci_start_clickhouse.sh", "dev/ci_start_postgres.sh"):
+        flags = re.findall(r'-p "([^"]*)"', (root / name).read_text())
+        assert flags and all(f.startswith("127.0.0.1:") for f in flags), (name, flags)
 
 
 def test_allow_insecure_lets_either_start() -> None:

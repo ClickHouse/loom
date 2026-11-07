@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -62,6 +63,9 @@ class _SearchRun:
     triples_matched: int = 0
     # The side legs the orchestrator launched after the scope reads.
     side_tasks: list[asyncio.Task[Any] | None] = field(default_factory=list)
+    # Sequential reads, entered once the Postgres barrier waited (`pg_validation.admit`)
+    # and left by `close`.
+    sequential_scope: ExitStack = field(default_factory=ExitStack)
 
     def cancel_pending(self) -> None:
         """Cancel every task this pass launched that is still running. The normal path has
@@ -76,6 +80,12 @@ class _SearchRun:
         ):
             if task is not None and not task.done():
                 task.cancel()
+
+    def close(self) -> None:
+        """End the pass: cancel what it launched (`cancel_pending`) and leave the
+        sequential reads `admit` entered."""
+        self.cancel_pending()
+        self.sequential_scope.close()
 
 
 def _launch_scope_reads(input: MemorySearchInput) -> _SearchRun:

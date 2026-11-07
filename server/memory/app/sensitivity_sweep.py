@@ -28,16 +28,37 @@ Read-only by construction until `apply`; `scan` is what `--dry-run` prints.
 from __future__ import annotations
 
 import json
+import logging
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from datetime import datetime
+from functools import partial
 from time import monotonic
 from typing import Any
 
+from server.core import pg
 from server.core.datetimes import naive_utc_now
+from server.core.error_summary import error_summary
 from server.core.repo_base import _CHClient, _default_client
-from server.memory.app import webhooks
-from server.memory.app.high_fence import fence_high, tombstone_chunks_of
+from server.memory.app import intent_marks, webhooks
+from server.memory.app.high_fence import (
+    fence_high,
+    fenced_once_committed,
+    tombstone_chunks_of,
+)
+from server.memory.app.projection_errors import (
+    ProjectionScope,
+    TriplesRepairFailed,
+    record_input_projection_failure,
+    restated_repair_payload,
+)
+from server.memory.app.projection_failures import (
+    SENSITIVITY_FACTS,
+    TRIPLES_RECONCILE,
+    facts_owed_payload,
+    record_projection_failure,
+)
 from server.memory.domain.sensitivity import (
     ASSIGNMENT_KEYS,
     ASSIGNMENT_WORDS,
@@ -54,6 +75,13 @@ from server.memory.domain.sensitivity import (
     sensitivity_tags,
 )
 from server.memory.domain.webhook_events import EventType, memory_change
+from server.memory.store import pg_memory
+from server.memory.store.rows import (
+    IdentityKey,
+    MemoryRow,
+    build_memory_version_row,
+    version_over,
+)
 from server.memory.store.sensitivity_sweep_sql import (
     AGENT_KEY,
     SORT_KEY,
@@ -61,6 +89,8 @@ from server.memory.store.sensitivity_sweep_sql import (
     past_agent,
     scan_sql,
 )
+
+log = logging.getLogger(__name__)
 
 # The scan matches JSON text: the `json.dumps` text in `value`, and `toString(value_json)`
 # for an object value. So an escape (`\n`, `\u000B`, `\/`) or `_` may start a PIN
@@ -166,9 +196,9 @@ class SweepCandidate:
     memory_key: str
     level: str  # 'high' | 'medium'
     shapes: tuple[str, ...]  # 'credential' | 'email' | 'phone' | 'other'
-    # The scanned row's sort key as stored: the fields above write an empty agent, user or
-    # session as '-', which sorts after ''.
+    # The scanned row's sort key as stored, for the worker's cursor.
     sort_key: dict[str, Any]
+    version: int
 
 
 @dataclass
@@ -442,13 +472,14 @@ def _add_candidates(report: SweepReport, rows: list[dict[str, Any]], keep: set[s
                 memory_id=str(r["memory_id"]),
                 org=str(r["org"]),
                 namespace=str(r["namespace"]),
-                agent=str(r.get("agent") or "-"),
-                user_id=str(r.get("user_id") or "-"),
-                session_id=str(r.get("session_id") or "-"),
+                agent=str(r["agent"]),
+                user_id=str(r["user_id"]),
+                session_id=str(r["session_id"]),
                 memory_key=str(r["memory_key"]),
                 level=level,
                 shapes=shapes,
                 sort_key={col: r[col] for col in SORT_KEY},
+                version=int(r["version"]),
             )
         )
 
@@ -458,8 +489,12 @@ class ApplyResult:
     relabelled: int = 0
     high: int = 0
     medium: int = 0
-    embeddings_tombstoned: int = 0  # high rows' embedding rows
+    # High candidates' embedding rows retired before the relabel, on ClickHouse only (under
+    # Postgres the commit's delivery retires them); the retire after it is not counted.
+    embeddings_tombstoned: int = 0
     embeddings_tagged: int = 0  # medium rows' embedding rows re-emitted with the tag
+    # Candidates whose head was gone or had moved since the scan.
+    left: list[SweepCandidate] = field(default_factory=list)
     failed: list[tuple[SweepCandidate, str]] = field(default_factory=list)  # with the error
 
     @property
@@ -473,6 +508,7 @@ class ApplyResult:
             "medium": self.medium,
             "embeddings_tombstoned": self.embeddings_tombstoned,
             "embeddings_tagged": self.embeddings_tagged,
+            "left": len(self.left),
             "errors": len(self.errors),
         }
 
@@ -519,18 +555,151 @@ async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
     return len(out)
 
 
-async def _close_mined_facts(c: SweepCandidate, version: int, *, ch: _CHClient) -> None:
+async def _close_mined_facts(
+    key: IdentityKey, memory_id: str, version: int, *, ch: _CHClient
+) -> None:
     """A row relabelled high: what its text gave the graph closes (its triples, the edges
     of entities not on the row); the edges of the entities on the row stay, its writer's
     or the extractor's when it tagged the row, as the row keeps those entities. `version`:
-    the relabel's, which dates the dropped edges' end."""
-    from server.memory.app.edge_links import drop_undeclared_edges
-    from server.memory.app.projection_errors import ProjectionScope
-    from server.memory.app.triple_projections import reconcile_row_facts
+    the relabel's, which dates the dropped edges' end. Judged from ClickHouse's rows. Both
+    run whatever the other does, and a failure raises (the triples' when both fail), so
+    the owed record stays and closes them again."""
+    from server.memory.app.edge_links import drop_undeclared_links
+    from server.memory.app.triple_projections import close_dropped_facts
 
-    scope = ProjectionScope(org=c.org, namespace=c.namespace, agent=c.agent, user_id=c.user_id)
-    await drop_undeclared_edges(scope, {c.memory_id: version}, ch=ch, op="sensitivity_sweep")
-    await reconcile_row_facts(scope, [c.memory_id], reopen=False, op="sensitivity_sweep", ch=ch)
+    org, namespace, agent, user_id, _session, _memory_key = key
+    scope = ProjectionScope(org=org, namespace=namespace, agent=agent, user_id=user_id)
+    edges_failed: Exception | None = None
+    try:
+        await drop_undeclared_links(scope, {memory_id: version}, ch=ch, op="sensitivity_sweep")
+    except Exception as e:  # noqa: BLE001 — the triples close all the same; raised after
+        edges_failed = e
+    try:
+        await close_dropped_facts(scope, [memory_id], ch=ch)
+    except Exception as e:
+        if edges_failed is not None:  # the triples' error is raised: this one would be lost
+            log.warning(
+                "sensitivity_sweep: owed facts: edge drop of %s failed: %s",
+                memory_id,
+                error_summary(edges_failed),
+            )
+        if isinstance(e, TriplesRepairFailed):
+            # The restate is in and its repair is not: owed as the reconcile owes it.
+            await record_input_projection_failure(
+                scope,
+                projection=TRIPLES_RECONCILE,
+                error=e,
+                payload={"memory_ids": [memory_id], "reopen": False, **restated_repair_payload(e)},
+                source_operation="sensitivity_sweep",
+                source_resource_id=f"sensitivity_sweep:{memory_id}",
+                ch=ch,
+            )
+        raise
+    if edges_failed is not None:
+        raise edges_failed
+
+
+async def _owe_facts(c: SweepCandidate, key: IdentityKey, version: int, *, ch: _CHClient) -> str:
+    """Record, right before a 'high' relabel at `version` commits, the close of the facts
+    its text gave the graph (`SENSITIVITY_FACTS`): whatever fails after, the projection
+    repair closes them (`close_owed_facts`). Returns the record's id."""
+    return await record_projection_failure(
+        org=c.org,
+        namespace=c.namespace,
+        agent=c.agent,
+        user_id=c.user_id,
+        projection=SENSITIVITY_FACTS,
+        source_operation="sensitivity_sweep",
+        memory_keys=[c.memory_key],
+        error="relabelled high: its facts to close",
+        payload=facts_owed_payload(key, c.memory_id, version),
+        ch=ch,
+    )
+
+
+async def _close_owed_now(
+    key: IdentityKey, memory_id: str, version: int, owed: str, *, ch: _CHClient
+) -> None:
+    """Close a relabel's facts now, and resolve their record, when ClickHouse holds it;
+    otherwise the record stays for the projection repair. Fail-open: the repair closes
+    what this leaves."""
+    try:
+        if await close_owed_facts(key, memory_id, version, ch=ch):
+            intent_marks.resolve_soon(key[0], [owed])
+    except Exception as e:  # noqa: BLE001 — recorded; the projection repair closes them
+        log.warning(
+            "sensitivity_sweep: facts of %s/%s left to the repair: %s",
+            key[1],
+            key[5],
+            error_summary(e),
+        )
+
+
+async def close_owed_facts(
+    key: IdentityKey, memory_id: str, version: int, *, ch: _CHClient
+) -> bool:
+    """Close the facts a 'high' relabel at `version` owes, judged from ClickHouse's rows as
+    the graph is. True once nothing is owed: also when the authority's head of the key, a
+    tombstone included, settled below `version` (the relabel did not land) or the key
+    holds no row; False while ClickHouse lacks the relabel. Under Postgres the head is
+    read once no commit still holds it (`settled_head_versions`), so a COMMIT waiting on
+    the standby is waited for, and a wait past the lock timeout raises."""
+    import server.memory.store as memory_repo
+
+    published = (await memory_repo.clickhouse_head_versions([key], ch=ch)).get(key)
+    # On the ClickHouse authority ClickHouse's head is the authority's.
+    head = (await pg_memory.settled_head_versions([key])).get(key) if pg.enabled() else published
+    if head is None or head < version:
+        return True
+    if published is None or published < version:
+        return False
+    await _close_mined_facts(key, memory_id, version, ch=ch)
+    return True
+
+
+def _moved(c: SweepCandidate, head: MemoryRow) -> bool:
+    """Whether the key's head is not the one scanned: a newer head holds text the detector
+    did not read, or its writer's own label."""
+    return head.version != c.version or str(head.memory_id) != c.memory_id
+
+
+async def _commit_relabel(
+    row: dict[str, Any],
+    head: MemoryRow,
+    fence: list[tuple[IdentityKey, int]],
+    *,
+    ch: _CHClient,
+    on_commit: Callable[[], None],
+) -> bool:
+    """Write `row` over `head`, and whether it is in: False when the commit is refused for
+    a head moved since the read. Under Postgres a 'high' one is fenced once its commit may
+    have landed (`fenced_once_committed`), so a refused one leaves no fence above that head.
+    `on_commit` is called once the row is in, before anything after it can fail."""
+    import server.memory.store as memory_repo
+
+    try:
+        async with fenced_once_committed(lambda: fence, op="sensitivity_sweep", ch=ch) as answer:
+
+            def committed() -> None:
+                answer.mark_committed()
+                on_commit()
+
+            await memory_repo.insert_versions_over_heads([row], [head], ch=ch, on_commit=committed)
+    except pg_memory.AdmissionContendedError:
+        return False
+    return True
+
+
+def _relabel_row(head: MemoryRow, level: str, version: int, now: datetime) -> dict[str, Any]:
+    """The scanned head's next version, labelled `level`, at `version`."""
+    tags = list(head.tags)
+    return build_memory_version_row(
+        head,
+        sensitivity=level,
+        tags=[*tags, *sensitivity_tags(level, tags)],
+        updated_at=now,
+        version=version,
+    )
 
 
 async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None) -> ApplyResult:
@@ -547,48 +716,54 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
     try:
         for c in candidates:
             try:
-                version = memory_repo.next_version()  # the relabel's, which the high retire carries
-
-                def _relabel(
-                    existing: Any, _c: SweepCandidate = c, _v: int = version
-                ) -> dict[str, Any]:
-                    tags = list(getattr(existing, "tags", None) or [])
-                    return {
-                        "sensitivity": _c.level,
-                        "tags": [*tags, *sensitivity_tags(_c.level, tags)],
-                        "updated_at": now,
-                        "version": _v,
-                    }
-
-                if c.level == HIGH:
-                    # Vectors and chunks go first, at the relabel's version: if they fail,
-                    # the row keeps its empty label and the next pass retries it (the
-                    # scan only reads unlabelled rows).
-                    key = (c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key)
-                    retired = await memory_repo.retire_vectors_for_keys([(key, version)], ch=ch)
-                    await fence_high([(key, version)], ch=ch)
-                n = await memory_repo.write_versions_by_ids(c.org, [c.memory_id], _relabel, ch=ch)
-                if not n:
-                    continue  # gone between scan and apply
-                result.relabelled += n
-                relabelled.append(("memory.revised", memory_change(c, version)))
+                # The relabel's, which the high retire carries: above the head scanned.
+                version = version_over(c)
+                # The key's head, read strong (a write acts on it) and by key: a namespace
+                # restored into itself under another agent holds the same id under another key.
+                key = (c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key)
+                heads = await memory_repo.memory_rows_by_identity_keys(
+                    [key], ch=ch, sequential=True
+                )
+                head = heads.get(key)
+                if head is None or _moved(c, head):
+                    result.left.append(c)
+                    continue
+                fence = [(key, version)] if c.level == HIGH else []
+                if fence and not pg.enabled():
+                    # On ClickHouse vectors and chunks go first, at the relabel's version: if
+                    # they fail, the row keeps its empty label and the next pass retries it
+                    # (the scan only reads unlabelled rows).
+                    result.embeddings_tombstoned += await memory_repo.retire_vectors_for_keys(
+                        fence, ch=ch, bare=True
+                    )
+                    await fence_high(fence, ch=ch)
+                # Announced once in, so one that fails or is cancelled after is too.
+                announce = partial(relabelled.append, ("memory.revised", memory_change(c, version)))
+                row = _relabel_row(head, c.level, version, now)
+                owed = await _owe_facts(c, key, version, ch=ch) if c.level == HIGH else ""
+                if not await _commit_relabel(row, head, fence, ch=ch, on_commit=announce):
+                    if owed:
+                        intent_marks.resolve_soon(c.org, [owed])  # refused: nothing landed
+                    result.left.append(c)
+                    continue
+                result.relabelled += 1
                 if c.level == HIGH:
                     result.high += 1
-                    result.embeddings_tombstoned += retired
+                    await _close_owed_now(key, c.memory_id, version, owed, ch=ch)
                     # Again now the label is in: a chunk writer re-checks the head after its
-                    # insert, and so does a reindex, so chunks or a vector that landed between
-                    # the fence and the relabel saw an unlabelled head and stayed. The vector
+                    # insert, and so does a reindex, so chunks or a vector that landed before
+                    # the relabel saw an unlabelled head and stayed (under Postgres the read
+                    # is the authority's, so this holds while the publish is pending). The
                     # retire takes a version drawn now: a reindexed row sits above the fence.
                     await tombstone_chunks_of([key], ch=ch)
                     heads = await memory_repo.memory_rows_by_identity_keys(
-                        [key], ch=ch, sequential=memory_repo.read_your_writes_enabled()
+                        [key], ch=ch, sequential=True
                     )
                     head = heads.get(key)
-                    if head is not None and int(head.version) == version:  # still this relabel
+                    if head is not None and head.version == version:  # still this relabel
                         await memory_repo.retire_vectors_for_keys(
-                            [(key, memory_repo.next_version())], ch=ch
+                            [(key, memory_repo.next_version())], ch=ch, bare=True
                         )
-                    await _close_mined_facts(c, version, ch=ch)
                 else:
                     result.medium += 1
                     result.embeddings_tagged += await _tag_embeddings(c, ch=ch)

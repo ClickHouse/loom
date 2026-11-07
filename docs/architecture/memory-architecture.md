@@ -284,7 +284,7 @@ holds the pair and the record's entry, and is resolved once both land, so a fail
 crash in between leaves them for the projection repair, which follows a pair, writes its
 record when none exists and clears the winner's flag against the loser, only while its
 loser is retired behind its winner. The repair leaves an intent under ten minutes old
-(`FOLLOW_OWED_GRACE_S`) to its writer, which records and follows the retirement itself, so
+(`OWED_GRACE_S`) to its writer, which records and follows the retirement itself, so
 the two never write a record side by side. A point write's retirement (same-key, a
 contradiction, a refine) owes its record and follow the same way: the intent goes before
 the supersede and the record names it. Once the record and the follow beside the response
@@ -1066,10 +1066,30 @@ digest to answer `stale` without a model call ([structured
 profiles](../features/memory/working-memory-and-profiles.md#structured-profiles)).
 
 `memory.consolidate` is an op, not a worker. It clusters similar active memories by
-cosine and entity overlap and asks the LLM to merge each cluster into one row. It writes
-`memory_belief_sources` lineage (`support_type='derived_from'`), tombstones the merged
-keys and logs to `loom.consolidation_runs`. A suppression memory never merges with a
-positive one.
+cosine and entity overlap (never a redacted one) and asks the LLM to merge each cluster
+into one summary. It writes `memory_belief_sources` lineage
+(`support_type='derived_from'`) from the summary to its merged rows, tombstones the
+merged keys and logs to `loom.consolidation_runs`. A suppression memory never merges with
+a positive one. The summary is written in the namespace of its sources, in session `-`,
+at the key the model chose, over its head only when that head is a merged row still as
+the merge read it. When that key holds a live row the merge did not read, or another
+cluster of the same pass took it, the summary takes a key of the cluster's own (the
+model's key and a hash of the merged ids); when that is taken too, the cluster is
+recorded as failed (`key_taken`), as it is when the summary cannot be embedded
+(`embed_failed`). A summary written over a merged row's key tombstones that row's
+verbatim chunks; a `high` summary never takes a merged row's key, so that row is
+tombstoned with its vectors. A failed fence on the summary's key is recorded
+(`fence_failed`) with the key. A merged row at the summary's key changed since the read
+fails the cluster (`held_since_read`). Any other merged row the merge cannot retire,
+changed, pinned, locked or redacted since the read, is left live beside the summary,
+recorded as a `merged_row_left_live` drop and a failure reason on the written run; under
+Postgres a merged row deleted, rewritten, redacted or erased before the commit leaves the
+cluster unmerged instead ([storage authority](storage-authority.md)). A redaction of a
+merged source after the merge does not reach the summary: redact it too. The summary's
+tags are the union of its sources'. A summary its writer tags `consolidated` and
+`src:<key>` for each source is downgraded or retired as its sources are deleted: a `src:`
+tag names a key of the row's own namespace, and a user erasure retires the row only
+through a key the user wrote there.
 
 A worker leg that catches its own failure calls `pass_context.note_failure`, so the
 supervisor counts it. A worker that declares `owned_tables` runs its first pass at boot
@@ -1196,13 +1216,13 @@ Table-level retention and tiering are operator TTLs, off by default
 
 ## History, snapshot, restore and rollback
 
-| Operation            | Reads                                           | Writes                                                                                                                                                                     |
-| -------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory.history`     | `memory_versions` for one key                   | Nothing.                                                                                                                                                                   |
-| `memory.redact`      | `memory_versions`, by org-wide `memory_id`      | Scrubs one historical version in place, and every profile version whose trace names the memory, live heads included. Refuses the memory's own live head (delete it first). |
-| `namespace.snapshot` | Live `memory` rows, type configs, curated rows  | A portable payload with `version`, `content_sha256` and the attestation columns, plus a `loom.namespace_snapshots` audit row.                                              |
-| `namespace.restore`  | A snapshot payload                              | Rows into a target namespace (created if missing; the caller becomes admin). Idempotent per `snapshot_id`. Never strips `verified_by`.                                     |
-| `namespace.rollback` | `memory` heads and `memory_versions` at `as_of` | Each changed key's older version as a new head; keys absent at `as_of` tombstoned; embedding stubs for the worker. Dry run by default.                                     |
+| Operation            | Reads                                                                                                                                 | Writes                                                                                                                                                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory.history`     | `memory_versions` for one key                                                                                                         | Nothing.                                                                                                                                                                                                                                                |
+| `memory.redact`      | The row of org-wide `(memory_id, version)` (`loom.memory_revisions` under the Postgres authority), then the later versions of its key | Scrubs one historical version in place, the later versions of its key that copy its text (the live head left alone), and every profile version whose trace names the memory, live heads included. Refuses the memory's own live head (delete it first). |
+| `namespace.snapshot` | Live `memory` rows, type configs, curated rows                                                                                        | A portable payload with `version`, `content_sha256` and the attestation columns, plus a `loom.namespace_snapshots` audit row.                                                                                                                           |
+| `namespace.restore`  | A snapshot payload                                                                                                                    | Rows into a target namespace (created if missing; the caller becomes admin). Idempotent per `snapshot_id`. Never strips `verified_by`.                                                                                                                  |
+| `namespace.rollback` | `memory` heads and `memory_versions` at `as_of`                                                                                       | Each changed key's older version as a new head; keys absent at `as_of` tombstoned; embedding stubs for the worker. Dry run by default.                                                                                                                  |
 
 Rollback restores heads, not exact state. `version` is a wall-clock stamp, so the head
 at T is the largest version at or before T. Triples, records, summaries and aggregates

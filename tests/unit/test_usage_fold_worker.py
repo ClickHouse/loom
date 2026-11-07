@@ -1,9 +1,11 @@
 """Usage fold-back worker — runs against a stub CH client.
 
 The stub answers queries in order: probe (query_one) → cold-start
-watermark derivation (query_one, first pass only) → per batch: totals
-(query_all) then identities (query_all). A batch below the cap ends the
-pass; a full batch is followed by another totals query.
+watermark derivation (query_one, first pass only) → per batch: the
+pending-mutations probe (query_one, unseeded reads as 0), totals (query_all),
+then one identity read (query_all) per size chunk of its keys.
+A batch below the cap ends the pass; a full batch is followed by another
+batch, from its pending-mutations probe.
 """
 
 from __future__ import annotations
@@ -12,7 +14,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from clickhouse_connect.driver.binding import format_bind_value
 
+from server.core import ch_params
 from server.memory.workers import usage_fold
 from server.memory.workers.usage_fold import UsageFoldConfig, run_pass
 from server.settings import settings
@@ -48,6 +52,22 @@ class StubCH:
                     getattr(self, "fail_execute_message", None)
                     or "Code: 344. DB::Exception: lightweight UPDATE unsupported"
                 )
+
+
+@pytest.fixture
+def pg_folds(monkeypatch) -> list[list[Any]]:
+    """Postgres on, with each pg_memory.fold_usage call's rows recorded."""
+    from server.core import pg
+    from server.memory.store import pg_memory
+
+    calls: list[list[Any]] = []
+
+    async def _fold(rows: Any) -> None:
+        calls.append(list(rows))
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "fold_usage", _fold)
+    return calls
 
 
 @pytest.fixture(autouse=True)
@@ -153,7 +173,12 @@ def _rc(ch: StubCH, key: str = "k", agent: str = "bot") -> int:
     return int(rows[0]["reinforcement_count"])
 
 
-def _pick(params: dict[str, Any], key_list: str, key: str, values: str) -> Any:
+def _key(memory_id: str, namespace: str = "ns") -> tuple[str, str, str]:
+    """A memory's key in the loom.memory UPDATE: its org, namespace and id."""
+    return ("clickhouse", namespace, memory_id)
+
+
+def _pick(params: dict[str, Any], key_list: str, key: tuple[str, str, str], values: str) -> Any:
     """The per-row target a transform() array carries for one key."""
     return params[values][params[key_list].index(key)]
 
@@ -239,14 +264,11 @@ async def test_fold_writes_absolute_reinforcement_base_plus_live() -> None:
     mem = _updates(ch, "loom.memory")
     assert len(mem) == 1
     sql, params = mem[0]
-    # greatest() on counters; +1 write-time evidence credit (schema DEFAULT 1).
-    assert "evidence_count = greatest(evidence_count, transform(toString(memory_id)" in sql
-    assert "recall_count = greatest(recall_count, transform(toString(memory_id)" in sql
-    assert _pick(params, "ids", MID, "evs") == 1 + 2
-    assert _pick(params, "ids", MID, "rcls") == 3
-    assert "toString(memory_id) IN {ids:Array(String)}" in sql
-    assert "tombstoned_at IS NULL" in sql
-    assert _pick(params, "ids", MID, "lras") == T0.replace(tzinfo=UTC)
+    # +1 write-time evidence credit (schema DEFAULT 1); what the SQL does with these
+    # values is checked on clickhouse-local (test_usage_fold_sql.py).
+    assert _pick(params, "keys", _key(MID), "evs") == 1 + 2
+    assert _pick(params, "keys", _key(MID), "rcls") == 3
+    assert _pick(params, "keys", _key(MID), "lras") == T0.replace(tzinfo=UTC)
 
 
 async def test_never_recalled_row_keeps_last_recalled_at_null() -> None:
@@ -261,7 +283,7 @@ async def test_never_recalled_row_keeps_last_recalled_at_null() -> None:
     await run_pass(ch=ch)
     sql, params = _updates(ch, "loom.memory")[0]
     assert "= toDateTime(0), last_recalled_at" in sql  # sentinel → keep column
-    assert _pick(params, "ids", MID, "lras") == datetime(1970, 1, 1, tzinfo=UTC)
+    assert _pick(params, "keys", _key(MID), "lras") == datetime(1970, 1, 1, tzinfo=UTC)
 
 
 async def test_refold_converges_to_same_absolute_targets() -> None:
@@ -479,8 +501,8 @@ async def test_batch_is_one_statement_per_table_not_per_identity_group() -> None
     assert result.folded == 3
     mem = _updates(ch, "loom.memory")
     assert len(mem) == 1
-    assert sorted(mem[0][1]["ids"]) == sorted([MID, MID2, mid3])
-    assert _pick(mem[0][1], "ids", MID2, "rcls") == 2
+    assert sorted(mem[0][1]["keys"]) == sorted(_key(m) for m in (MID, MID2, mid3))
+    assert _pick(mem[0][1], "keys", _key(MID2), "rcls") == 2
     batches = _reinf_batches(ch)
     assert len(batches) == 1
     assert [(r["agent"], r["memory_key"], r["reinforcement_count"]) for r in batches[0]] == [
@@ -584,13 +606,13 @@ async def test_full_batch_steps_watermark_back_and_keeps_going() -> None:
         idents=[_ident_row(), _ident_row(memory_id=MID2, memory_key="k2")],
         hwm=later,
     )
-    # Second batch: the boundary row again (tie re-fold), then drained.
+    # Second batch: the boundary row again (tie re-fold), short, so the pass ends.
     ch.query_all_returns.append([_totals_row(memory_id=MID2, bumped=later)])
     ch.query_all_returns.append([_ident_row(memory_id=MID2, memory_key="k2")])
-    ch.query_all_returns.append([])
     result = await run_pass(cfg=UsageFoldConfig(max_memories_per_pass=2), ch=ch)
     assert result.batches == 2
     assert result.candidates == 3
+    assert len(ch.query_all_calls) == 4
     # Batch 2 started from later − 1 s, then the short batch pinned the watermark.
     assert ch.query_all_calls[2][1]["wm"] == (later - timedelta(seconds=1)).replace(tzinfo=UTC)
     assert usage_fold.current_watermark() == later.replace(tzinfo=UTC)
@@ -676,11 +698,10 @@ async def test_one_statement_per_table_across_many_namespaces() -> None:
 @pytest.mark.asyncio
 async def test_pending_mutation_cap_skips_the_pass_and_holds_the_watermark() -> None:
     ch = StubCH()
-    _seed_active_pass(ch, totals=[_totals_row(recall=1)], idents=[_ident_row()])
+    ch.query_one_returns += [{"hwm": T0}, {"first_unfolded": T0}]
     # the backpressure probe (loom.memory, the one mutation target left) is
     # the query_one after the watermark probes
     ch.query_one_returns.append({"n": settings.memory_usage_fold_max_pending_mutations + 1})
-    before = usage_fold._watermark
     result = await run_pass(ch=ch)
     assert result.skipped_pending_mutations == settings.memory_usage_fold_max_pending_mutations + 1
     assert result.folded == 0 and result.statements == 0
@@ -688,7 +709,8 @@ async def test_pending_mutation_cap_skips_the_pass_and_holds_the_watermark() -> 
     assert ch.insert_calls == []
     probe_sql, probe_params = ch.query_one_calls[-1]
     assert "system.mutations" in probe_sql and probe_params["t"] == "memory"
-    assert usage_fold._watermark == before or result.candidates == 0
+    assert ch.query_all_calls == []
+    assert usage_fold.current_watermark() == (T0 - timedelta(seconds=1)).replace(tzinfo=UTC)
 
 
 @pytest.mark.asyncio
@@ -702,3 +724,141 @@ async def test_read_only_replica_does_not_fall_back_to_alter() -> None:
     with pytest.raises(RuntimeError):
         await run_pass(ch=ch)
     assert not [sql for sql, _ in ch.execute_calls if sql.startswith("ALTER TABLE ")]
+
+
+async def test_one_memory_id_in_two_namespaces_folds_into_each() -> None:
+    """A namespace restored from another's snapshot holds the same memory id: each
+    namespace's usage lands on its own row, not on whichever identity was read last."""
+    ch = StubCH()
+    _seed_active_pass(
+        ch,
+        totals=[
+            _totals_row(namespace="a", recall=2),
+            _totals_row(namespace="b", recall=7),
+        ],
+        idents=[
+            _ident_row(namespace="a", memory_key="ka"),
+            _ident_row(namespace="b", memory_key="kb"),
+        ],
+    )
+    result = await run_pass(ch=ch)
+    assert result.folded == 2
+    by_ns = {r["namespace"]: r for r in _reinf_rows(ch)}
+    assert by_ns["a"]["memory_key"] == "ka" and by_ns["b"]["memory_key"] == "kb"
+    assert _rc(ch, "ka") == 1 + 2 and _rc(ch, "kb") == 1 + 7
+    [(_, params)] = _updates(ch, "loom.memory")
+    assert _pick(params, "keys", _key(MID, "a"), "rcls") == 2
+    assert _pick(params, "keys", _key(MID, "b"), "rcls") == 7
+
+
+async def test_a_total_whose_namespace_holds_no_live_row_is_skipped() -> None:
+    """Usage for a namespace whose copy is gone folds onto nothing, not onto another
+    namespace's row of the same id."""
+    ch = StubCH()
+    _seed_active_pass(
+        ch,
+        totals=[_totals_row(namespace="b", recall=4)],
+        idents=[_ident_row(namespace="a")],
+    )
+    result = await run_pass(ch=ch)
+    assert (result.folded, result.skipped_no_memory) == (0, 1)
+    assert _updates(ch, "loom.memory") == [] and _reinf_rows(ch) == []
+
+
+async def test_two_keys_holding_one_id_in_a_namespace_are_both_folded(pg_folds) -> None:
+    """A namespace restored into itself under another agent holds the id under two
+    keys; the totals cannot tell them apart, so both keys take them."""
+    ch = StubCH()
+    _seed_active_pass(
+        ch,
+        totals=[_totals_row(recall=3)],
+        idents=[_ident_row(memory_key="k1"), _ident_row(memory_key="k2")],
+    )
+    result = await run_pass(ch=ch)
+    assert (result.folded, result.skipped_no_memory) == (1, 0)
+    assert _rc(ch, "k1") == _rc(ch, "k2") == 1 + 3
+    # one memory: the loom.memory UPDATE carries its key once
+    [(_, params)] = _updates(ch, "loom.memory")
+    assert params["keys"] == [_key(MID)]
+    assert pg_folds == [[(*_key(MID), 1, 3, T0.replace(tzinfo=UTC))]]
+
+
+async def test_under_postgres_the_fold_raises_the_heads_too(monkeypatch, pg_folds) -> None:
+    """The fold's counters reach the Postgres heads as well; a memory never recalled
+    sends no last-recall time."""
+    from server.core.datetimes import UNIX_EPOCH
+
+    async def _update(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(usage_fold, "_apply_update", _update)
+    seen = datetime(2026, 5, 1, tzinfo=UTC)
+
+    def _target(mid: str, last: datetime) -> Any:
+        return usage_fold._Target(
+            memory_id=mid,
+            org="o",
+            namespace="n",
+            agent="a",
+            user_id="-",
+            memory_key="k",
+            evidence=2,
+            recall=3,
+            last_recalled=last,
+            reinforcement=None,
+            last_activity=seen,
+        )
+
+    await usage_fold._fold_memory_rows(None, [_target("m1", UNIX_EPOCH), _target("m2", seen)], 10)
+    assert pg_folds == [[("o", "n", "m1", 2, 3, None), ("o", "n", "m2", 2, 3, seen)]]
+
+
+async def test_keys_cut_by_size_keep_each_memory_with_its_own_counters(pg_folds) -> None:
+    """Namespaces long enough that no two keys fit one parameter: every UPDATE pairs
+    its keys with their own counters, and the Postgres heads take the same rows."""
+    long = ["n" * 40_000 + str(i) for i in range(3)]
+    targets = [
+        usage_fold._Target(
+            memory_id=MID,
+            org="o",
+            namespace=ns,
+            agent="a",
+            user_id="-",
+            memory_key="k",
+            evidence=10 + i,
+            recall=i,
+            last_recalled=T0 + timedelta(hours=i),
+            reinforcement=None,
+            last_activity=T0,
+        )
+        for i, ns in enumerate(long)
+    ]
+    ch = StubCH()
+    assert await usage_fold._fold_memory_rows(ch, targets, 500) == 3
+    mem = _updates(ch, "loom.memory")
+    assert [p["keys"] for _, p in mem] == [[("o", ns, MID)] for ns in long]
+    hours = [T0 + timedelta(hours=i) for i in range(3)]
+    assert [(p["evs"], p["rcls"], p["lras"]) for _, p in mem] == [
+        ([10 + i], [i], [hours[i]]) for i in range(3)
+    ]
+    assert pg_folds == [[("o", ns, MID, 10 + i, i, hours[i])] for i, ns in enumerate(long)]
+
+
+async def test_the_identity_read_is_cut_by_size_too() -> None:
+    """Namespaces long enough that no two fit one parameter: the identity read takes
+    them in chunks, each parameter within one field, and every memory still folds."""
+    long = ["n" * 40_000 + str(i) for i in range(3)]
+    ch = StubCH()
+    _seed_active_pass(
+        ch,
+        totals=[_totals_row(namespace=ns) for ns in long],
+        idents=[_ident_row(namespace=long[0])],
+    )
+    ch.query_all_returns += [[_ident_row(namespace=ns)] for ns in long[1:]]
+    result = await run_pass(ch=ch)
+    assert result.folded == 3
+    reads = [p for sql, p in ch.query_all_calls if sql == usage_fold.IDENTITY_STATEMENT]
+    assert [p["keys"] for p in reads] == [[("clickhouse", ns, MID)] for ns in long]
+    for p in reads:
+        for value in p.values():
+            assert len(format_bind_value(value, top_level=False).encode()) <= ch_params.FIELD_BYTES

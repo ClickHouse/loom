@@ -552,6 +552,7 @@ async def check_on_commit(
     # A bulk caller's rows carry its pinned arm already; a decision needs none.
     if candidate_rows is None and not keyed:
         rows += await _foreign_pinned_rows(ch, params, scope, rows)
+    rows = await _without_erased(org, namespace, rows)
     if not rows:
         return ConflictResult(verdict="clear", peers=[])
 
@@ -754,7 +755,9 @@ async def apply_refines(
 
     # A proposal (a fact on trial) retires nothing, whichever path reached this verdict.
     try:
-        new_row = await get_by_id(new_memory_id, org=org, ch=ch, scope=WHOLE_NAMESPACE)
+        new_row = await get_by_id(
+            new_memory_id, org=org, namespace=namespace, ch=ch, scope=WHOLE_NAMESPACE
+        )
     except Exception:  # noqa: BLE001 — unreadable: the verdict applies
         new_row = None
     if new_row is not None and str(getattr(new_row, "status", "") or "") == "proposed":
@@ -779,7 +782,9 @@ async def apply_refines(
         # One difference: B's own inline check saw a peer active that this then
         # retires, so B's conflict_with can name a superseded row (review queue only).
         with sequential_reads():
-            current = await get_by_id(new_memory_id, org=org, ch=ch, scope=WHOLE_NAMESPACE)
+            current = await get_by_id(
+                new_memory_id, org=org, namespace=namespace, ch=ch, scope=WHOLE_NAMESPACE
+            )
         if current is None or str(current.content_sha256 or "") != expected_sha256:
             return 0
     n = 0
@@ -808,6 +813,7 @@ async def apply_refines(
             n = await supersede_duplicates(
                 org,
                 victims,
+                namespace=namespace,
                 ch=ch or get_client(),
                 skip=tracker.skip,
                 strong=True,
@@ -913,11 +919,12 @@ async def mark_peers_conflicted(
     peer_ids: list[str],
     expected_sha256: str = "",
     peer_sha256: dict[str, str] | None = None,
+    namespace: str,
 ) -> str:
-    """Cross-link the new row with its live peers and flag both `conflicted` (a
-    proposal keeps its status). With `expected_sha256` (the resolver's later verdict)
-    the new row, and with `peer_sha256` ({peer id: hash judged}) each unpinned peer,
-    is flagged only while it holds that hash, at its read version + 1. Returns
+    """Cross-link the new row with its live peers in `namespace` and flag both
+    `conflicted` (a proposal keeps its status). A row given a hash judged, the new row
+    by `expected_sha256` or a peer by `peer_sha256`, is flagged only while it holds it,
+    at its read version + 1. Returns
     `conflict` when flagged; `moved` when the new row was not (replaced, retired, or
     under `expected_sha256` no longer the judged write), and no peer is touched;
     `clear` when no peer was live."""
@@ -940,7 +947,9 @@ async def mark_peers_conflicted(
     # a mark is best effort.
     peers = await asyncio.gather(
         *(
-            memory_repo.get_by_id(p, org=org, scope=WHOLE_NAMESPACE, fresh=True, strong=True)
+            memory_repo.get_by_id(
+                p, org=org, namespace=namespace, scope=WHOLE_NAMESPACE, fresh=True, strong=True
+            )
             for p in peer_ids
         )
     )
@@ -975,7 +984,12 @@ async def mark_peers_conflicted(
         # by the write's own rule: a revision since owes its own judgement, so this one
         # is moved.
         row = await memory_repo.get_by_id(
-            new_memory_id, org=org, scope=WHOLE_NAMESPACE, fresh=True, strong=True
+            new_memory_id,
+            org=org,
+            namespace=namespace,
+            scope=WHOLE_NAMESPACE,
+            fresh=True,
+            strong=True,
         )
         return "clear" if row is not None and not _skip_new(row) else "moved"
 
@@ -997,6 +1011,7 @@ async def mark_peers_conflicted(
         org,
         [new_memory_id],
         lambda row: _new(row) | version(row),
+        namespace=namespace,
         skip=_skip_new,
         strong=True,
         judged=judged_skip is not None,
@@ -1020,6 +1035,7 @@ async def mark_peers_conflicted(
         },
         # Retired (or, judged, revised or pinned) between the read above and this
         # write: left as it is.
+        namespace=namespace,
         skip=_peer_moved,
         strong=True,
         judged=peer_sha256 is not None,
@@ -1040,3 +1056,84 @@ def judged_write(
         lambda row: str(getattr(row, "content_sha256", "") or "") != sha,
         lambda row: {"version": int(row.version) + 1},
     )
+
+
+async def peer_rows(
+    *,
+    org: str,
+    namespace: str,
+    memory_type: str,
+    memory_key: str,
+    embedding: list[float],
+    max_distance: float,
+) -> list[dict[str, Any]]:
+    """The rows `check_on_commit` would read for this write, fetched by the caller so it
+    can pass them back (`candidate_rows`) and add what commits next: the writer's peers
+    in its read scope and every pinned peer (a scope that does not resolve sees only
+    pinned ones), with their distances."""
+    ch = get_client()
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "mt": memory_type,
+        "self_key": memory_key,
+        "emb": embedding,
+        "max_dist": max_distance,
+        "dim": len(embedding),
+    }
+    scope = _scope_or_none()
+    rows = [] if scope is None else await _peer_rows(ch, params, scope)
+    return rows + await _foreign_pinned_rows(ch, params, scope, rows)
+
+
+async def _without_erased(
+    org: str, namespace: str, rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The peers an erasure has not removed from the Postgres authority. ClickHouse still
+    holds a peer until the erasure's ClickHouse steps run, and a verdict linking it is
+    refused at commit (`pg_memory.PeerErased`)."""
+    from server.core import pg
+    from server.memory.store import pg_memory
+
+    if not rows or not pg.enabled():
+        return rows
+    gone = await pg_memory.erased_ids(org, namespace, [str(r["memory_id"]) for r in rows])
+    return [r for r in rows if str(r["memory_id"]) not in gone]
+
+
+def trim_peers(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Nearest first, the shape `peer_rows` returns: at most `PEER_LIMIT` rows inside the
+    writer's read scope, and the pinned rows outside it among the `PEER_LIMIT` nearest
+    pinned ones (`PINNED_PEERS_SQL`)."""
+    scope = _scope_or_none()
+
+    def inside(r: Mapping[str, Any]) -> bool:
+        return scope is not None and row_in_read_scope(scope, r.get("user_id"), r.get("session_id"))
+
+    rows = sorted(rows, key=lambda r: (float(r["dist"]), str(r.get("memory_key") or "")))
+    near = [r for r in rows if inside(r)][:PEER_LIMIT]
+    pinned = [r for r in rows if r.get("pinned")][:PEER_LIMIT]
+    return near + [r for r in pinned if not inside(r)]
+
+
+def could_be_peer(row: Mapping[str, Any]) -> bool:
+    """Whether a committed row is a peer `peer_rows` would return for this writer, its
+    type, key and distance aside: live, active or conflicted, and inside the writer's
+    read scope or pinned."""
+    if row.get("tombstoned_at") is not None:
+        return False
+    if str(row.get("status") or "active") not in ("active", "conflicted"):
+        return False
+    scope = _scope_or_none()
+    if row.get("pinned"):
+        return True
+    return scope is not None and row_in_read_scope(scope, row.get("user_id"), row.get("session_id"))
+
+
+async def peer_distance(org: str, namespace: str, memory_type: str, cfg: Any) -> float:
+    """How far `check_on_commit`'s peer statements reach for this write: a commit
+    in that radius can change the verdict (`pg_admission.absorb`)."""
+    threshold = cfg.threshold
+    if threshold is None:
+        threshold = await _resolve_threshold(org, namespace, memory_type=memory_type)
+    return _peer_query_distance(float(threshold))

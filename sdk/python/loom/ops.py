@@ -14587,6 +14587,7 @@ class MemoryRestoreOutput(TypedDict, total=False):
     memory_id: NotRequired[Optional[str]]
     version: NotRequired[Optional[int]]
     expired: NotRequired[bool]
+    redacted: NotRequired[bool]
     from_status: NotRequired[str]
 
 
@@ -14776,6 +14777,7 @@ class MemorySearchOutput(TypedDict, total=False):
     namespaces_searched: NotRequired[list[str]]
     namespaces_skipped: NotRequired[list[str]]
     candidates_total: NotRequired[int]
+    stale_dropped: NotRequired[int]
     next_page: NotRequired[str]
     page_offset: NotRequired[int]
     chunk_share: NotRequired[float]
@@ -15001,6 +15003,7 @@ class MemorySearchTraceOutput(TypedDict, total=False):
     entity_filter: Required[list[str]]
     query_spellings: NotRequired[dict[str, str]]
     query_spellings_skipped: NotRequired[bool]
+    stale_dropped: NotRequired[int]
 
 
 class SearchTraceHit(TypedDict, total=False):
@@ -15273,6 +15276,7 @@ class MemorySweepExpiredOutput(TypedDict, total=False):
     demoted: NotRequired[int]
     anonymized: NotRequired[int]
     locked_skipped: NotRequired[int]
+    moved_skipped: NotRequired[int]
     dry_run: NotRequired[bool]
     sample: NotRequired[list[dict[str, Any]]]
     failures: NotRequired[list[str]]
@@ -16509,7 +16513,11 @@ class SnapshotMemoryRow(TypedDict, total=False):
     created_at: NotRequired[Optional[str]]
     updated_at: NotRequired[Optional[str]]
     value_json: NotRequired[str]
-    status: NotRequired[str]
+    status: NotRequired[
+        Literal[
+            "active", "conflicted", "tombstoned", "duplicate", "superseded", "rejected", "proposed"
+        ]
+    ]
     conflict_with: NotRequired[list[str]]
     duplicate_of: NotRequired[str]
     evidence_count: NotRequired[int]
@@ -16572,6 +16580,7 @@ class NamespaceRestoreBody(TypedDict, total=False):
 
 class NamespaceRestoreOutput(TypedDict, total=False):
     restored: Required[bool]
+    publication_pending: NotRequired[bool]
     target_namespace: Required[str]
     snapshot_id: Required[str]
     counts: Required[dict[str, int]]

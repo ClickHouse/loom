@@ -522,7 +522,7 @@ def test_substring_patterns_are_not_regex_validated(repo: _Repo) -> None:
     assert out.pattern_id and repo.inserted[0]["pattern_type"] == "substring"
 
 
-async def _loaded() -> None:
+async def _loaded(policy: Any = None) -> None:
     return None
 
 
@@ -996,3 +996,55 @@ def test_a_long_substring_scan_runs_on_the_matcher_threads(monkeypatch, over_bud
         short = asyncio.run(bl.find_match(org=ORG, namespace=NS, value="<needle3>"))
         assert short is not None and short.pattern_id == "s3"
         assert ran_on == [threading.main_thread().name]
+
+
+@pytest.mark.parametrize("op", ["set", "bulk_set"])
+def test_a_pass_that_starts_over_is_not_charged_the_regex_budget_again(monkeypatch, op) -> None:
+    """Under the Postgres authority a write whose head moved runs its guards again on
+    the same values: the request is charged for them once, so a value that fits the
+    budget is never refused as too long on a later pass."""
+    import server.memory.app.blacklist_guard as bl
+    import server.memory.app.bulk_set as bulk
+    import server.memory.app.write as write
+    from server.core import pg
+    from server.memory.store.pg_memory import HeadMoved
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    regex = _pattern("r", "namespace", "x+", "regex")
+    monkeypatch.setattr(bl, "_cache", [regex])
+    # One pass spends 60% of the budget.
+    monkeypatch.setattr(bl, "REGEX_WORK_BUDGET", 1_000 * regex.compiled.programsize * 10 // 6)
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(bulk, "get_embedder", _Embedder)
+    monkeypatch.setattr(write, "get_embedder", _Embedder)
+    hits: list[Any] = []
+
+    async def _pass(*_args: Any, **_kwargs: Any) -> str:
+        hits.append(await bl.find_match(org=ORG, namespace=NS, value="y" * 1_000))
+        if len(hits) < 3:
+            raise HeadMoved()
+        return "committed"
+
+    async def _request() -> Any:
+        bl.begin_request_budget()
+        if op == "set":
+            monkeypatch.setattr(write, "_memory_set_once", _pass)
+            return await write._memory_set_phases(_Input())
+        monkeypatch.setattr(bulk, "_bulk_set_once", _pass)
+        return await bulk.handle_memory_bulk_set(_Input())
+
+    assert asyncio.run(_request()) == "committed"
+    assert hits == [None, None, None]
+
+
+class _Embedder:
+    model_name = "fake"
+    dim = 4
+
+
+class _Input:
+    namespace = NS
+    memory_key = "k"
+
+    def model_copy(self) -> _Input:
+        return self

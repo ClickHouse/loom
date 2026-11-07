@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
+from server.core.error_summary import error_summary
 from server.llm import customer
 from server.memory.app.observe_replay import _extract_replay, replay_messages
 from server.memory.domain.observation_tags import (
@@ -26,8 +28,8 @@ from server.memory.domain.observation_tags import (
 )
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.domain.trust import subject_of
-from server.memory.store.rows import next_version
-from server.memory.store.sql import _identity_key
+from server.memory.store.pg_memory import AdmissionContendedError
+from server.memory.store.rows import MemoryRow, identity_key, next_version, version_over
 from server.settings import settings
 from server.workers.status import record_pass
 
@@ -210,7 +212,24 @@ async def _load_session_observations(
             "buffer_trigger": 1 if session.get("trigger") == "buffer" else 0,
         },
     )
-    return [memory_repo._hydrate(r) for r in rows]
+    # ClickHouse's copies, swapped for the authority's heads; a head deleted or marked
+    # DONE since is left out.
+    return await memory_repo.current_heads(
+        [memory_repo._hydrate(r) for r in rows], lambda _, h: _still_pending(h)
+    )
+
+
+def _still_pending(head: MemoryRow) -> bool:
+    """Whether a head is still a live observation not marked DONE, as the session's
+    listing selects it (only the DONE mark removes the READY tag). One relabelled to
+    another type since is no observation any more and is left alone."""
+    tags = head.tags or []
+    return (
+        head.tombstoned_at is None
+        and head.memory_type == "episodic"
+        and OBSERVATION_TAG in tags
+        and CRYSTALLIZE_DONE_TAG not in tags
+    )
 
 
 def _writer(observations: list[Any]) -> str:
@@ -262,23 +281,32 @@ async def _distill_session(
 
     ch = get_client()
     version = next_version()
-    keys = [_identity_key(vars(o)) for o in observations]
-    heads = await memory_repo.memory_rows_by_identity_keys(keys, ch=ch, sequential=True)
-    version_rows = []
-    for key, existing in zip(keys, observations, strict=True):
-        head = heads.get(key)
-        if head is None or head.content_sha256 != existing.content_sha256:
+    keys = [identity_key(o) for o in observations]
+    for _ in range(settings.pg_admission_rounds):
+        heads = await memory_repo.memory_rows_by_identity_keys(keys, ch=ch, sequential=True)
+        version_rows = []
+        read = []
+        for key, existing in zip(keys, observations, strict=True):
+            head = heads.get(key)
+            if head is None or head.content_sha256 != existing.content_sha256:
+                continue
+            new_tags = [t for t in (head.tags or []) if t != CRYSTALLIZE_READY_TAG]
+            if CRYSTALLIZE_DONE_TAG not in new_tags:
+                new_tags.append(CRYSTALLIZE_DONE_TAG)
+            row_version = version_over(head, version)
+            version_rows.append(
+                memory_repo.build_memory_version_row(head, version=row_version, tags=new_tags)
+            )
+            read.append(head)
+        try:
+            # Over the heads just read: under Postgres a head written since answers 503,
+            # and the marks are read and written again, not the replay.
+            await memory_repo.insert_versions_over_heads(version_rows, read, ch=ch)
+            break
+        except AdmissionContendedError:
             continue
-        new_tags = [t for t in (head.tags or []) if t != CRYSTALLIZE_READY_TAG]
-        if CRYSTALLIZE_DONE_TAG not in new_tags:
-            new_tags.append(CRYSTALLIZE_DONE_TAG)
-        # a head written after the stamp is the one this row copies, so outrank it
-        row_version = max(version, int(head.version) + 1)
-        version_rows.append(
-            memory_repo.build_memory_version_row(head, version=row_version, tags=new_tags)
-        )
-    # One committed insert for the session's observations.
-    await memory_repo.insert_memory_versions(version_rows, ch=ch)
+    else:
+        raise AdmissionContendedError("the observations' heads kept changing")
 
     return DistilledSession(
         org=str(session["org"]),
@@ -301,17 +329,19 @@ def get_client_for_context() -> Any:
 async def _load_session_context(session: dict[str, Any], *, ch: Any) -> list[Any]:
     """Every observation of the session so far — the ones earlier passes
     already distilled and the ones this pass is about to — as
-    `trajectory_notes.Observation`s, oldest first, bounded.
-    Content-less rows (`skipped:*`) are left out. [] when the read fails;
-    the caller then falls back to this pass's rows."""
-    from types import SimpleNamespace
-
+    `trajectory_notes.Observation`s, oldest first, bounded, with no skipped, redacted or
+    high row; under Postgres only those the authority still serves (`served_rows`,
+    keeping ClickHouse's row under a newer head `_same_observation` accepts). [] when the
+    read fails; the caller then falls back to this pass's rows."""
+    import server.memory.store as memory_repo
     from server.memory.app import trajectory_notes as tn
 
     try:
         rows = await ch.query_all(
             """
-            SELECT memory_key, value, created_at, valid_at
+            SELECT toString(memory_id) AS memory_id, org, namespace, agent, user_id,
+                   session_id, memory_key, value, created_at, valid_at, version, redacted_at,
+                   toString(content_sha256) AS content_sha256
             FROM loom.memory FINAL
             WHERE org = {org:String} AND namespace = {ns:String}
               AND agent = {agent:String} AND user_id = {uid:String}
@@ -319,7 +349,7 @@ async def _load_session_context(session: dict[str, Any], *, ch: Any) -> list[Any
               AND memory_type = 'episodic' AND has(tags, {obs_tag:String})
               AND NOT arrayExists(t -> startsWith(t, 'skipped:'), tags)
               AND sensitivity != 'high'
-              AND tombstoned_at IS NULL
+              AND tombstoned_at IS NULL AND redacted_at IS NULL
             ORDER BY created_at ASC
             LIMIT {lim:UInt32}
             """,
@@ -333,14 +363,31 @@ async def _load_session_context(session: dict[str, Any], *, ch: Any) -> list[Any
                 "lim": int(settings.memory_observe_extract_session_context_limit),
             },
         )
+        rows = await memory_repo.served_rows(rows, _same_observation)
     except Exception as e:  # noqa: BLE001 — the session distills without context
-        log.debug("session context read skipped: %s", e)
+        log.debug("session context read skipped: %s", error_summary(e))
         return []
     return [
-        tn.observation_from_row(SimpleNamespace(**dict(r)))
-        for r in rows or []
-        if _sendable("", r.get("value"))  # the statement already left out labelled rows
+        tn.observation_from_row(SimpleNamespace(**r))  # it reads attributes, not keys
+        for r in rows
+        if not value_reads_high(r.get("value"))
     ]
+
+
+def _same_observation(row: dict[str, Any], head: dict[str, Any]) -> bool:
+    """Whether a newer head is still the observation `_load_session_context` read: the
+    same memory and text (by hash, so ClickHouse's value is the head's), not labelled
+    high, and still one its statement selects (an earlier pass's DONE mark changes only
+    the tags)."""
+    tags = head.get("tags") or []
+    return (
+        str(head.get("memory_id")) == row["memory_id"]
+        and str(head.get("content_sha256")) == row["content_sha256"]
+        and head.get("sensitivity") != "high"
+        and head.get("memory_type") == "episodic"
+        and OBSERVATION_TAG in tags
+        and not any(str(t).startswith("skipped:") for t in tags)
+    )
 
 
 def _sendable(sensitivity: str, value: Any) -> bool:

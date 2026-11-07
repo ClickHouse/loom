@@ -1586,14 +1586,17 @@ def test_a_failed_saga_keeps_its_table_counts_when_the_bucket_cannot_be_listed(
     async def bucket_down(*args: Any, **kw: Any) -> int:
         raise object_store.ObjectStoreError("object store list failed (SlowDown)", operation="list")
 
-    monkeypatch.setattr(saga.erasure_census, "residue_census", tables)
+    monkeypatch.setattr(saga.erasure_census, "table_residue", tables)
     monkeypatch.setattr(saga.erasure_census, "object_residue", bucket_down)
     verify: dict[str, Any] = {}
     asyncio.run(saga._census_tail("o", "namespace", "a", verify, purge=False))
     assert verify["per_table"] == {"loom.chunks": 2} and verify["count"] == 2
+    assert "verified_at" not in verify  # the bucket went uncounted
+    # The failed checkpoint keeps those counts.
+    assert saga._verify_columns(verify)["residue_count"] == 2
 
 
-def test_an_evidence_census_keeps_the_table_counts_when_the_bucket_cannot_be_listed(
+def test_an_evidence_census_keeps_the_table_counts_when_postgres_or_the_bucket_is_down(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """What the census tail and `loom erasure-re-verify` print for a failed saga."""
@@ -1606,15 +1609,20 @@ def test_an_evidence_census_keeps_the_table_counts_when_the_bucket_cannot_be_lis
     async def bucket_down(*args: Any, **kw: Any) -> int:
         raise down
 
-    monkeypatch.setattr(erasure_census, "residue_census", tables)
+    async def pg_down(*args: Any, **kw: Any) -> dict[str, int]:
+        raise pg_error
+
+    pg_error = ConnectionError("the authority is unreachable")
+    monkeypatch.setattr(erasure_census, "table_residue", tables)
+    monkeypatch.setattr(erasure_census, "pg_residue", pg_down)
     monkeypatch.setattr(erasure_census, "object_residue", bucket_down)
     assert asyncio.run(erasure_census.evidence_census("o", "namespace", "a")) == (
         {"loom.chunks": 2},
-        down,
+        {"postgres": pg_error, "bucket": down},
     )
     assert asyncio.run(erasure_census.evidence_census("o", "user_id", "u")) == (
         {"loom.chunks": 2},
-        None,
+        {"postgres": pg_error},
     ), "a user scope lists no bucket"
 
 

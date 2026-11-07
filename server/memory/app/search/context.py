@@ -21,6 +21,10 @@ if TYPE_CHECKING:
     from server.memory.domain.query_planner import MemorySearchPlan
 
 
+# A hit's version by (namespace, agent, user_id, session_id, memory_key).
+StaleVersions = dict[tuple[str, str, str, str, str], int]
+
+
 @dataclass
 class SearchContext:
     """Carrier for the state the search pipeline stages share.
@@ -100,6 +104,10 @@ class SearchContext:
     # assemble stage.
     page_tail: list[_MemorySearchHit] = field(default_factory=list)
     candidates_total: int = 0
+    # Under the Postgres authority: the hits validation dropped (`pg_validation`).
+    stale_dropped: int = 0
+    # The versions it dropped, so a tier does not count them again.
+    stale_versions: StaleVersions = field(default_factory=dict)
 
     # The recall-credit verdict for this read (`credited` | `not_credited (<reason>)`), None
     # when auto_touch was off or nothing was served; rides the response as `reinforcement`.

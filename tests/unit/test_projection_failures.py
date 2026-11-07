@@ -1002,6 +1002,139 @@ async def test_a_drop_payload_without_its_versions_is_malformed(payload) -> None
     assert out.abandoned and out.reason == "malformed_payload"
 
 
+_OWED_KEY = ["o", "n", "a", "-", "-", "k1"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"memory_id": _ROW_ID, "version": 5},
+        {"key": _OWED_KEY[:5], "memory_id": _ROW_ID, "version": 5},
+        {"key": _OWED_KEY, "memory_id": _ROW_ID, "version": "5"},
+        {"key": _OWED_KEY, "version": 5},
+    ],
+    ids=["no-key", "a-short-key", "a-version-not-a-number", "no-memory-id"],
+)
+async def test_an_owed_facts_payload_without_its_key_or_version_is_malformed(payload) -> None:
+    """The sweep's owed close names the key, the row and the relabel's version: a payload
+    missing one is abandoned, not replayed."""
+    failure = dataclasses.replace(_graph_failure("sensitivity_facts_owed"), payload=payload)
+    (out,) = await retry_failures([failure], ch=_GraphCH())
+    assert out.abandoned and out.reason == "malformed_payload"
+
+
+@pytest.mark.parametrize(
+    ("age_s", "settled", "fails", "outcome"),
+    [
+        (3600, True, False, "resolved"),
+        (3600, False, False, "pending"),
+        (60, True, False, "pending"),
+        (3600, True, True, "active"),  # a failed close: the debt stays for the next pass
+    ],
+)
+async def test_owed_facts_are_closed_once_the_relabel_is_in_clickhouse(
+    monkeypatch, age_s, settled, fails, outcome
+) -> None:
+    """The replay resolves the owed close once `close_owed_facts` settles it; until then,
+    and while the record is younger than its grace (its relabel may still be written), it
+    stays active as pending, with no error."""
+    from datetime import timedelta
+
+    from server.core.datetimes import naive_utc_now
+    from server.memory.app import sensitivity_sweep
+
+    calls: list[Any] = []
+
+    async def _close(key, memory_id, version, *, ch):
+        calls.append((key, memory_id, version))
+        if fails:
+            raise RuntimeError("triples unreachable")
+        return settled
+
+    monkeypatch.setattr(sensitivity_sweep, "close_owed_facts", _close)
+    payload = {"key": _OWED_KEY, "memory_id": _ROW_ID, "version": 5}
+    failure = dataclasses.replace(
+        _graph_failure("sensitivity_facts_owed"),
+        payload=payload,
+        created_at=naive_utc_now() - timedelta(seconds=age_s),
+    )
+    (out,) = await retry_failures([failure], ch=_GraphCH())
+    assert (out.resolved, out.reason == "pending", out.abandoned) == (
+        outcome == "resolved",
+        outcome == "pending",
+        False,
+    )
+    assert bool(out.error) == (outcome == "active")
+    assert calls == ([] if age_s < 600 else [(tuple(_OWED_KEY), _ROW_ID, 5)])
+
+
+async def test_a_restate_the_sweep_owed_is_finished_by_the_reconcile_replay(monkeypatch) -> None:
+    """The triples_reconcile the sweep records for a failed fallback restate carries what
+    the replay finishes it with: the restore id, when the markers were stated, and the
+    closes made."""
+    from datetime import datetime
+
+    from server.memory import store as memory_repo
+    from server.memory.app import (
+        edge_links,
+        graph_undo,
+        projection_failures,
+        sensitivity_sweep,
+        triple_projections,
+    )
+    from server.memory.app.projection_errors import TriplesRepairFailed
+    from server.memory.domain.graph_quality import IntervalRepair
+
+    key = ("o", "n", "a", "-", "-", "k1")
+    repair = IntervalRepair(
+        subject="alice",
+        relation="lives_in",
+        old_object="oslo",
+        new_object="bergen",
+        valid_to=datetime(2026, 1, 1, 12),
+    )
+    recorded: list[dict[str, Any]] = []
+    finished: list[Any] = []
+    closes: list[int] = []
+
+    async def _versions(keys, **_k):
+        return {key: 5}
+
+    async def _quiet(*_a, **_k):
+        return None
+
+    async def _close(*_a, **_k):
+        closes.append(1)
+        if len(closes) == 1:  # the sweep's close; the replay's lands
+            raise TriplesRepairFailed(
+                datetime(2026, 1, 1), RuntimeError("timed out"), [repair], restore_id="r1"
+            )
+
+    async def _record(**kw):
+        recorded.append(kw)
+        return "f2"
+
+    async def _finish(scope, restore_id, *, restored_at, repaired, ch):
+        finished.append((restore_id, restored_at, repaired))
+
+    monkeypatch.setattr(memory_repo, "clickhouse_head_versions", _versions)
+    monkeypatch.setattr(edge_links, "drop_undeclared_links", _quiet)
+    monkeypatch.setattr(triple_projections, "close_dropped_facts", _close)
+    monkeypatch.setattr(projection_failures, "record_projection_failure", _record)
+    monkeypatch.setattr(graph_undo, "finish_restated_repair", _finish)
+    with pytest.raises(TriplesRepairFailed):
+        await sensitivity_sweep.close_owed_facts(key, _ROW_ID, 5, ch=_GraphCH())
+    (kw,) = recorded
+    failure = dataclasses.replace(
+        _graph_failure(kw["projection"]),
+        payload=kw["payload"],
+        source_operation="sensitivity_sweep",
+    )
+    (out,) = await retry_failures([failure], ch=_GraphCH())
+    assert out.resolved and finished == [("r1", datetime(2026, 1, 1), [repair])]
+    assert closes == [1, 1]  # the sweep's close, then the replay's after the repair
+
+
 @pytest.mark.parametrize(
     "payload",
     [

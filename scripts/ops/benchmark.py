@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Concurrent load against one op: memory.set, memory.search or knowledge.add.
+"""Concurrent load against one op: memory.set, memory.bulk_set, memory.get,
+memory.search or knowledge.add.
 
 Drives N workers for D seconds and reports p50 / p95 / p99 latency and RPS of
 the successful calls, the error codes, and the deployment it measured (base
@@ -7,11 +8,13 @@ URL, build commit, schema version, the traffic class the server assigned).
 It answers "at concurrency N, what is the steady-state p99 of one op?", not
 how a real agent mix behaves.
 
-memory.set and knowledge.add WRITE rows into `--org` / `--namespace` on the
-target and leave them there; the default namespace is a fresh `bench-…` one,
-which the server classes as bench traffic (its own rate buckets, lower
-ClickHouse priority). memory.search against a fresh namespace searches
-nothing: point it at a namespace a memory.set run filled.
+memory.set, memory.bulk_set and knowledge.add WRITE rows into `--org` /
+`--namespace` on the target and leave them there; the default namespace is a
+fresh `bench-…` one, which the server classes as bench traffic (its own rate
+buckets, lower ClickHouse priority). memory.search against a fresh namespace
+searches nothing: point it at a namespace a memory.set or memory.bulk_set run
+filled. memory.get first writes `--get-keys` keys into the namespace, then reads
+them at random.
 
     scripts/ops/benchmark.py --op memory.set --concurrency 10 --duration 30
     scripts/ops/benchmark.py --op memory.search --concurrency 5 --duration 60 \\
@@ -43,8 +46,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-OPS = ("memory.set", "memory.search", "knowledge.add")
-WRITES = frozenset({"memory.set", "knowledge.add"})
+OPS = ("memory.set", "memory.bulk_set", "memory.get", "memory.search", "knowledge.add")
+WRITES = frozenset({"memory.set", "memory.bulk_set", "memory.get", "knowledge.add"})
+BULK_ENTRIES = 20
 
 
 def percentile(values: list[float], p: float) -> float:
@@ -97,8 +101,33 @@ def health(base_url: str, timeout: float = 10.0) -> dict[str, Any]:
         return dict(json.loads(r.read() or b"{}"))
 
 
-def _make_body(op: str, org: str, namespace: str) -> tuple[str, dict[str, Any]]:
+def _get_key(i: int) -> str:
+    return f"bench_get_{i}"
+
+
+def _make_body(op: str, org: str, namespace: str, get_keys: int = 0) -> tuple[str, dict[str, Any]]:
     """(path, body) for one call of `op`."""
+    if op == "memory.get":
+        return "/v1/memory.get", {
+            "org": org,
+            "namespace": namespace,
+            "agent": "bench",
+            "memory_key": _get_key(random.randrange(max(1, get_keys))),
+        }
+    if op == "memory.bulk_set":
+        return "/v1/memory.bulk_set", {
+            "org": org,
+            "namespace": namespace,
+            "agent": "bench",
+            "entries": [
+                {
+                    "memory_key": f"bench_{uuid.uuid4().hex[:12]}",
+                    "memory_type": "semantic",
+                    "value": _rand_text(128),
+                }
+                for _ in range(BULK_ENTRIES)
+            ],
+        }
     if op == "memory.set":
         return "/v1/memory.set", {
             "org": org,
@@ -156,6 +185,7 @@ async def run(
     namespace: str,
     token: str,
     call_timeout_s: float = 30.0,
+    get_keys: int = 0,
 ) -> dict[str, Any]:
     """`concurrency` workers POSTing `op` until `duration` has passed. Each
     worker has its own thread, so the default executor's size never caps the
@@ -166,7 +196,7 @@ async def run(
 
     async def worker(pool: ThreadPoolExecutor) -> None:
         while time.monotonic() < end_time:
-            path, body = _make_body(op, org, namespace)
+            path, body = _make_body(op, org, namespace, get_keys)
             calls.append(
                 await loop.run_in_executor(pool, _post, base_url, path, body, token, call_timeout_s)
             )
@@ -175,6 +205,27 @@ async def run(
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
         await asyncio.gather(*(worker(pool) for _ in range(concurrency)))
     return {"op": op, "concurrency": concurrency, **summarize(calls, time.monotonic() - started)}
+
+
+def seed(base_url: str, org: str, namespace: str, token: str, keys: int) -> None:
+    """Write the keys memory.get reads; refuses to measure reads of missing rows."""
+    for i in range(keys):
+        call = _post(
+            base_url,
+            "/v1/memory.set",
+            {
+                "org": org,
+                "namespace": namespace,
+                "agent": "bench",
+                "memory_key": _get_key(i),
+                "memory_type": "semantic",
+                "value": _rand_text(128),
+            },
+            token,
+            30.0,
+        )
+        if call.status != 200:
+            raise SystemExit(f"seeding {_get_key(i)} answered {call.status or call.error}")
 
 
 def environment(args: argparse.Namespace, server: dict[str, Any]) -> dict[str, Any]:
@@ -236,6 +287,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--namespace", default=f"bench-{uuid.uuid4().hex[:8]}", help="Fresh per run by default."
     )
+    p.add_argument("--get-keys", type=int, default=50, help="Keys memory.get seeds and then reads.")
     p.add_argument(
         "--json", action="store_true", help="Emit one-line JSON to stdout (cron-friendly)."
     )
@@ -264,6 +316,8 @@ def main(argv: list[str] | None = None) -> int:
         file=sys.stderr,
     )
     env = environment(args, server)
+    if args.op == "memory.get":
+        seed(args.base_url, args.org, args.namespace, token, args.get_keys)
     result = asyncio.run(
         run(
             args.base_url,
@@ -273,6 +327,7 @@ def main(argv: list[str] | None = None) -> int:
             args.org,
             args.namespace,
             token,
+            get_keys=args.get_keys,
         )
     )
     result["env"] = env

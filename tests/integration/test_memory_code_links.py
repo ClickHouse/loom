@@ -242,7 +242,10 @@ async def _row(memory_id: str) -> Any:
     import server.memory.store as memory_repo
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
 
-    return await memory_repo.get_by_id(memory_id, scope=WHOLE_NAMESPACE, org=ORG, strong=True)
+    (namespace,) = await memory_repo.namespaces_of_id(ORG, memory_id, strong=False)
+    return await memory_repo.get_by_id(
+        memory_id, scope=WHOLE_NAMESPACE, org=ORG, namespace=namespace, strong=True
+    )
 
 
 async def _lessons(ns: str, name: str) -> list[dict[str, Any]]:
@@ -3568,7 +3571,16 @@ async def test_redaction_blanks_suggestions_not_made_from_the_live_value(env, ch
     # written as they are, without the insert's check for a memory behind them
     await get_client().insert(store.TABLE, [old, live])
     scrubs = await key_derivative_scrubs(
-        ORG, MEM, "a", "u", "s", "k", head_live=True, live_link_inputs="live-value"
+        ORG,
+        MEM,
+        "a",
+        "u",
+        "s",
+        "k",
+        head_live=True,
+        live_link_inputs="live-value",
+        through=2**63,
+        set_chunks_kept=None,
     )
     await run_scrubs(scrubs, apply=True)
     rows = ch_client.query(

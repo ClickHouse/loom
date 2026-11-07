@@ -536,14 +536,14 @@ async def _clickgap_carry_forward(
     from server.memory.store import (
         build_first_version_row,
         build_memory_version_row,
+        identity_key,
         memory_rows_by_identity_keys,
     )
-    from server.memory.store.sql import _identity_key
 
-    existing = await memory_rows_by_identity_keys([_identity_key(r) for r in mem_batch], ch=w.ch)
+    existing = await memory_rows_by_identity_keys([identity_key(r) for r in mem_batch], ch=w.ch)
     out: list[dict[str, Any]] = []
     for r in mem_batch:
-        prior = existing.get(_identity_key(r))
+        prior = existing.get(identity_key(r))
         if prior is None:
             out.append(build_first_version_row(r, now=w.now))
             continue
@@ -716,12 +716,13 @@ async def _clickgap_write_category_links(w: _ClickgapWrite) -> None:
 async def _clickgap_enroll(stack: Any) -> Any:
     """Connect and enroll before selecting the importer's effective embedder."""
     from server import boot
+    from server.cli._ch import connect_checked
     from server.core.background import register_buffer_drainer
     from server.core.ch import get_client
     from server.embedding import get_embedder
     from server.insights.app.provider_command import model_command
 
-    await get_client().connect()
+    await connect_checked(get_client())
     register_buffer_drainer("boot-writes", boot.drain_writes)
     await stack.enter_async_context(model_command())
     return get_embedder()
@@ -775,6 +776,7 @@ def _cmd_import_clickgap(args: argparse.Namespace) -> int:
     import time
     from datetime import UTC, datetime
 
+    from server.cli._ch import disconnect
     from server.core.ch import get_client
     from server.embedding import get_embedder
     from server.memory.app.provenance import writer_actor
@@ -898,7 +900,7 @@ def _cmd_import_clickgap(args: argparse.Namespace) -> int:
             async with command_stack:
                 return await _run()
         finally:
-            await get_client().disconnect()
+            await disconnect(get_client())
 
     from contextlib import AsyncExitStack
 

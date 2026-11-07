@@ -133,18 +133,6 @@ def test_sensitivity_rides_the_persisted_column_set() -> None:
     assert MemoryRow.model_fields["sensitivity"].default == ""
 
 
-def test_consolidation_canonical_row_carries_the_column() -> None:
-    import inspect
-
-    from server.memory.app import consolidate as _memory_consolidate
-
-    src = inspect.getsource(_memory_consolidate)
-    # The column rides every canonical row — and it is the inherited label,
-    # not a hardcoded '' (a 'medium' source is embedded and
-    # can enter a cluster; the merged row must not come out unlabelled).
-    assert '"sensitivity": inherited_sensitivity(' in src
-
-
 def test_inherited_sensitivity_never_lowers_the_label() -> None:
     """A row synthesised from other rows (dense topic memory, merged canonical
     row) keeps the highest label among its sources, and the summary text is

@@ -1281,7 +1281,7 @@ async def test_reliance_split_statements_pass_the_analyzer(ch_client) -> None:
     from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
     from server.memory.app.search import payload as mod
     from server.memory.store.usage import AGENT_LABEL_EVENT_TYPES
-    from server.memory.workers.usage_fold import IDENTITY_STATEMENT
+    from server.memory.workers.usage_fold import IDENTITY_STATEMENT, _scope_params
     from server.observability.otel_probes import (
         _AGENT_LABELS_SQL,
         _RETENTION_SQL,
@@ -1290,7 +1290,7 @@ async def test_reliance_split_statements_pass_the_analyzer(ch_client) -> None:
 
     ids = ["6b47c9b7-0000-0000-0000-000000000001"]
     statements: list[tuple[str, dict[str, Any]]] = [
-        (IDENTITY_STATEMENT, {"orgs": ["o"], "nss": ["n"], "ids": ids}),
+        (IDENTITY_STATEMENT, _scope_params([("o", "n", ids[0])])),
         (_AGENT_LABELS_SQL, {"kinds": list(AGENT_LABEL_EVENT_TYPES)}),
         (_RETENTION_SQL, {"stale": RETENTION_STALE_DAYS}),
     ]

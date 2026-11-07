@@ -298,13 +298,13 @@ async def _stubs_still_served(
         return rows, []
     sequential = read_your_writes_enabled()
     heads = await memory_repo.head_sensitivities(
-        sorted({memory_repo.embedding_key(r) for r in own}), sequential=sequential
+        sorted({memory_repo.identity_key(r) for r in own}), sequential=sequential
     )
 
     def served(r: dict[str, Any]) -> bool:
         if str(r.get("scope") or "") == "shared":
             return True
-        head = heads.get(memory_repo.embedding_key(r))
+        head = heads.get(memory_repo.identity_key(r))
         return head != "high" and (head is not None or not sequential)
 
     keep = [r for r in rows if served(r)]

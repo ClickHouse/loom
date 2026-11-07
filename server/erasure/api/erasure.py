@@ -125,10 +125,13 @@ class ErasureRequestOutput(BaseModel):
     # Verified forgetting: live rows and bucket objects the post-erasure
     # census still found in scope, per substrate; 0 / {} on a completed saga.
     residue_count: int = 0
-    # Rows still live per table after the saga, only tables with a non-zero count, and the
-    # bucket objects left, under the key `objects.document_originals`; `{}` on success.
+    # Rows still live per table after the saga, only tables with a non-zero count (the
+    # Postgres authority's under `pg:<table>`), and the bucket objects left, under the key
+    # `objects.document_originals`; `{}` on success.
     residue: dict[str, int] = Field(default_factory=dict)
-    # When the residue census ran (UTC); `None` if it never ran.
+    # When the residue census ran (UTC); `None` if it never ran or left a store uncounted
+    # (the Postgres authority or the bucket, which the server log names); `residue` then
+    # holds what it did count.
     verified_at: datetime | None = None
     # A failed saga names the step that failed, and the steps
     # it did complete, so the recovery worker's terminal row and an operator
@@ -172,10 +175,13 @@ class ErasureStatusOutput(BaseModel):
     failure_reason: str | None = None
     # Verified forgetting.
     residue_count: int = 0
-    # Rows still live per table at the last census, and the bucket objects left, under the
-    # key `objects.document_originals`; `{}` when none.
+    # Rows still live per table at the last census (the Postgres authority's under
+    # `pg:<table>`), and the bucket objects left, under the key
+    # `objects.document_originals`; `{}` when none.
     residue: dict[str, int] = Field(default_factory=dict)
-    # When the last residue census ran (UTC); `None` if it has not run.
+    # When the last residue census ran (UTC); `None` if it has not run or left a store
+    # uncounted (the Postgres authority or the bucket, which the server log names);
+    # `residue` then holds what it did count.
     verified_at: datetime | None = None
 
 
@@ -227,7 +233,8 @@ class ErasureExportOutput(BaseModel):
     # `conversation_threads`, `agent_events`, `audit_log`): at most `section_limit`, and
     # the section's `truncated` says more exist.
     counts: dict[str, int]
-    # `loom.memory` rows in scope; tombstoned rows too when `include_tombstoned`.
+    # `loom.memory` rows in scope (under the Postgres authority, its heads); tombstoned rows
+    # too when `include_tombstoned`.
     memory: ErasureExportSection
     # Knowledge chunk rows of the namespace, or every one the user wrote for a `user_id` scope.
     knowledge: ErasureExportSection

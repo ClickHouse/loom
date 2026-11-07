@@ -587,6 +587,8 @@ class MemoryRestoreOutput(BaseModel):
     version: int | None = None
     # Surfaces "you missed the window" cleanly rather than 404-ing.
     expired: bool = False
+    # True when the deleted row's text was redacted: there is nothing to bring back.
+    redacted: bool = False
     # What the row was restored FROM: "tombstoned" (a delete undone) or
     # "superseded" (an automatic retirement reversed). Empty on a no-op.
     from_status: str = ""
@@ -952,8 +954,9 @@ class MemoryGetByIdInput(BaseModel):
 
 
 class MemoryGetByIdOutput(BaseModel):
-    # False when no live row carries this id in the org, or the caller cannot read
-    # its namespace.
+    # False when no live row carries this id in the org (with `as_of`, one that was also
+    # valid then), the caller cannot read its namespace, or it can read more than one
+    # holding it (a restored namespace keeps the ids; use memory.get by key).
     found: bool
     # The id asked for; '' when not found.
     memory_id: str = ""
@@ -1041,7 +1044,10 @@ class MemoryUpdateByIdInput(BaseModel):
 
 
 class MemoryUpdateByIdOutput(BaseModel):
-    updated: bool  # False if memory_id not found
+    # False when memory_id has no live row in a namespace the caller can write, or when
+    # the caller can write more than one namespace holding a live row of it (a restored
+    # namespace keeps the ids; use memory.update by key there).
+    updated: bool
     # Nanosecond version of the written row; 0 when nothing was written.
     new_version: int = 0
     content_sha256: str = ""  # SHA-256 of the just-written value
@@ -1148,7 +1154,10 @@ class MemoryRedactInput(BaseModel):
     Addressed by (memory_id, version): every version of a memory shares one
     memory_id, so the version is what identifies the specific historical row.
     For secret-leak / PII scrubbing. Orthogonal to memory.delete: delete
-    tombstones the memory; redact scrubs one historical row.
+    tombstones the memory; redact scrubs one historical row, and the later versions of
+    its key that copy its text (a touch, a lock, the delete's tombstone; the live head
+    left alone), so a restore of the deleted key brings no text back (it answers
+    `redacted: true`).
 
     Best-effort: loom.memory is ReplacingMergeTree(version) keyed by
     identity+memory_key (version is NOT in the sort key), so a background merge
@@ -1208,6 +1217,9 @@ class MemorySweepExpiredOutput(BaseModel):
     # Rows left as they are because a lock refuses their post-action; reads still
     # hide them.
     locked_skipped: int = 0
+    # Rows left for the next pass because their head moved on since the read (renewed,
+    # rewritten or deleted); 0 under the ClickHouse authority.
+    moved_skipped: int = 0
     # Echo of the request's `dry_run`.
     dry_run: bool = False
     # Up to 20 handled rows: memory_key, namespace, agent, action, expired_at.
@@ -1259,7 +1271,9 @@ class MemoryVerifyInput(BaseModel):
 
 
 class MemoryVerifyOutput(BaseModel):
-    # False when the row does not exist or the caller cannot write its namespace.
+    # False when the row does not exist or the caller cannot write its namespace; by
+    # memory_id, also when the caller can write more than one live namespace holding it
+    # (a restored namespace keeps the ids; pass namespace + memory_key there).
     found: bool
     # False when the call was a no-op (already attested by this actor and
     # unchanged, or revoking a row with no attestation).

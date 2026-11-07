@@ -209,6 +209,8 @@ class SearchQuery:
 
 
 RowIdentity = tuple[str, str, str]
+# A memory.set chunk: its writer's (agent, user_id), its index and its content_sha256.
+ChunkRef = tuple[str, str, int, str]
 
 
 @dataclass(frozen=True)
@@ -295,6 +297,10 @@ class SearchHit:
     identity: RowIdentity | None = None
     # A chunk row's own `content_sha256`: with its index, which value cut it. Not on the wire.
     chunk_sha256: str = ""
+    # The set chunk whose passage the hit shows, set by the fold on a chunk made into its
+    # row's hit or a row lifting its excerpt: what the Postgres authority checks it by.
+    # Not on the wire.
+    chunk: ChunkRef | None = None
 
 
 def row_identity(row: Mapping[str, Any]) -> RowIdentity | None:

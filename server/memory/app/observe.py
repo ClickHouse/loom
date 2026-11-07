@@ -44,7 +44,7 @@ from server.memory.domain.observation_tags import (
     is_self_referential,
 )
 from server.memory.store.inserts import insert_memory_versions
-from server.memory.store.rows import next_version
+from server.memory.store.rows import version_over
 
 # Episodic rows are replay fodder for the extractor, not durable facts;
 # truncate hard so a long tool_output can't bloat the extraction prompt.
@@ -439,10 +439,10 @@ async def handle_observe_crystallize(
             new_tags.append(CRYSTALLIZE_READY_TAG)
         version_row = memory_repo.build_memory_version_row(
             existing,
-            version=next_version(),
+            version=version_over(existing),
             tags=new_tags,
         )
-        await insert_memory_versions([version_row], ch=ch)
+        await memory_repo.insert_versions_over_heads([version_row], [existing], ch=ch)
         enqueued += 1
 
     return ObserveCrystallizeOutput(enqueued=enqueued, session_id=input.session_id)

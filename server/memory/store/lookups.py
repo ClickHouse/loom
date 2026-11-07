@@ -39,9 +39,9 @@ def _fact_identifier_one_trip_sql(where_sql: str, order: str) -> str:
     breaks the prefix and the primary index cannot prune); skip indexes are
     off because this is a primary-key read."""
     return f"""
-        SELECT memory_key, memory_type, content_excerpt,
+        SELECT agent, user_id, session_id, memory_key, memory_type, content_excerpt,
                toString(created_at) AS created_at,
-               toString(valid_at) AS valid_at
+               toString(valid_at) AS valid_at, version
         FROM loom.memory_embeddings FINAL
         WHERE {where_sql}
           AND (org, namespace, agent, user_id, session_id, scope, embedding_model, memory_key)
@@ -156,9 +156,9 @@ async def find_by_identifier(
         return await ch.query_all(_fact_identifier_one_trip_sql(where_sql, order), params=params)
     return await ch.query_all(
         f"""
-        SELECT memory_key, memory_type, content_excerpt,
+        SELECT agent, user_id, session_id, memory_key, memory_type, content_excerpt,
                toString(created_at) AS created_at,
-               toString(valid_at) AS valid_at
+               toString(valid_at) AS valid_at, version
         FROM loom.memory_embeddings FINAL
         WHERE {where_sql}
         ORDER BY {order}
@@ -441,8 +441,8 @@ async def find_by_key_facet(
     where.append(f"({conds})")
     return await ch.query_all(
         f"""
-        SELECT memory_key, memory_type, content_excerpt,
-               toString(created_at) AS created_at
+        SELECT agent, user_id, session_id, memory_key, memory_type, content_excerpt,
+               toString(created_at) AS created_at, version
         FROM loom.memory_embeddings FINAL
         WHERE {" AND ".join(where)}
         ORDER BY memory_key ASC
@@ -554,10 +554,10 @@ async def find_by_key_prefix(
     # the live one, so only that row is read, with its write stamp.
     return await ch.query_all(
         f"""
-        SELECT memory_key, memory_type, content_excerpt, created_at, valid_at,
-               version, status
+        SELECT agent, user_id, session_id, memory_key, memory_type, content_excerpt,
+               created_at, valid_at, version, status
         FROM (
-            SELECT memory_key, memory_type, content_excerpt,
+            SELECT agent, user_id, session_id, memory_key, memory_type, content_excerpt,
                    toString(created_at) AS created_at,
                    toString(valid_at) AS valid_at,
                    version, toString(status) AS status
@@ -655,9 +655,9 @@ async def find_by_content_terms(
         )
     return await ch.query_all(
         f"""
-        SELECT memory_key, memory_type, content_excerpt,
+        SELECT agent, user_id, session_id, memory_key, memory_type, content_excerpt,
                toString(created_at) AS created_at,
-               toString(valid_at) AS valid_at
+               toString(valid_at) AS valid_at, version
         FROM loom.memory_embeddings FINAL
         WHERE {" AND ".join(where)}
         ORDER BY {order}

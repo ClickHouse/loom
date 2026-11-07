@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import struct
 from typing import Any
 
 
@@ -34,3 +35,12 @@ def parse_budget_value(raw: Any) -> int | float | None:
             return None
         return number if text.endswith("x") else int(number)
     return None
+
+
+FLOAT32_MAX = 3.4028234663852886e38  # not a setting: the largest finite Float32
+
+
+def float32(value: float) -> float:
+    """`value` rounded as a Float32 column stores it, for a comparison that must agree
+    with ClickHouse's."""
+    return float(struct.unpack("f", struct.pack("f", float(value)))[0])

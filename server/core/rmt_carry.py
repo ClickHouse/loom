@@ -29,7 +29,7 @@ import os
 import socket
 import time
 from collections import Counter
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -112,14 +112,16 @@ class _Pin:
 _carried: contextvars.ContextVar[_Write | None] = contextvars.ContextVar(
     "rmt_carry_write", default=None
 )
+# When (monotonic) the lease this task's sends are made under ends (`under_lease`).
+_lease_end: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "rmt_carry_lease_end", default=None
+)
 _pinned: list[_Pin] = []
 # How long a send may take to reach the server and start: a request still
 # queued past this is refused by its guard.
 _TRANSIT_S = 15.0
 # Past the server bound: the clock reading's own error and a commit's tail.
 _RELEASE_MARGIN_S = 5.0
-# The server's clock minus this host's (epoch seconds), measured on admission
-# and refreshed by the watcher; None before the first measure.
 # (server clock in epoch seconds, time.monotonic()) at the last measure: the
 # server's clock advances with the monotonic one, so a host clock step moves nothing.
 _server_anchor: tuple[float, float] | None = None
@@ -153,10 +155,15 @@ def _boot_wait_s() -> float:
 def _writer_bound_s() -> float:
     """How long after its last acknowledgement a process can still have a carried
     insert on the server: one last send's start deadline and its limit."""
-    from server.core.ch import _FENCE_MAX_S, class_timeout_s
+    return _ACK_LIVE_S + send_bound_s()
 
-    limit = class_timeout_s("write")
-    return _ACK_LIVE_S + _TRANSIT_S + (limit if limit > 0 else _FENCE_MAX_S) + _RELEASE_MARGIN_S
+
+def send_bound_s() -> float:
+    """How long a send can still run on the server once its start deadline is drawn:
+    the transit allowance, its write limit and the clock reading's error."""
+    from server.core.ch import write_limit_s
+
+    return _TRANSIT_S + write_limit_s() + _RELEASE_MARGIN_S
 
 
 def fingerprint(columns: Iterable[str]) -> str:
@@ -355,12 +362,51 @@ def server_now() -> float | None:
     return server_s + (time.monotonic() - mono)
 
 
+@contextlib.contextmanager
+def under_lease(ends_at: float) -> Iterator[None]:
+    """Every insert in this block starts by `ends_at` (monotonic: the publisher's
+    deadline, at or before its lease's end) plus the transit allowance, however long it
+    waits to be sent; one not carried is sent guarded all the same."""
+    token = _lease_end.set(ends_at)
+    try:
+        yield
+    finally:
+        _lease_end.reset(token)
+
+
+def sent_under_lease() -> bool:
+    return _lease_end.get() is not None
+
+
+async def _refresh_skew(ch: Any) -> None:
+    if time.monotonic() - _skew_at > _SKEW_REFRESH_S:
+        with contextlib.suppress(Exception):  # the last measure stays
+            await _measure_skew(ch)
+
+
+async def measure_server_clock(ch: Any) -> None:
+    """Measure the server's clock when this process has not measured it lately (the
+    watcher that keeps it fresh starts with a carried insert)."""
+    if _server_anchor is None:
+        await _measure_skew(ch)
+    await _refresh_skew(ch)
+
+
+async def measured_send_deadline(ch: Any) -> float:
+    """`send_deadline`, the server's clock measured first (`measure_server_clock`)."""
+    await measure_server_clock(ch)
+    return send_deadline()
+
+
 def send_deadline() -> float:
-    """The latest server time a batch sent now may start at."""
+    """The latest server time a batch sent now may start at: the transit allowance
+    past now, or past the end of the lease it is sent under if that is earlier."""
     now = server_now()
     if now is None:
         raise BackendUnavailableError("rmt carry: the server's clock is not measured yet; retry")
-    return now + _TRANSIT_S
+    lease = _lease_end.get()
+    start = now if lease is None else min(now, now + lease - time.monotonic())
+    return start + _TRANSIT_S
 
 
 def _processes_sql(source: str) -> str:
@@ -623,9 +669,7 @@ async def _watch(ch: Any) -> None:
         if stamp is not None and (stamp != seen or not _read_ok):
             if await _read_columns(ch):
                 seen = stamp
-        if time.monotonic() - _skew_at > _SKEW_REFRESH_S:
-            with contextlib.suppress(Exception):  # the last measure stays
-                await _measure_skew(ch)
+        await _refresh_skew(ch)
         if _pinned:
             await _settle(ch)
         await _publish(ch)

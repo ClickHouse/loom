@@ -32,21 +32,15 @@ async def _ch_connected():
 
 
 async def _tag_entities(ns: str, key: str, entities: list[str]) -> None:
-    from server.memory.store.entities import apply_entities_batch
+    """A copy of the key's head with other entities: a re-emit, as a copy writer leaves."""
+    from server.memory.store.lifecycle import insert_versions_over_heads
+    from server.memory.store.reads import memory_rows_by_identity_keys
+    from server.memory.store.rows import build_memory_version_row, next_version
 
-    await apply_entities_batch(
-        [
-            {
-                "org": ORG,
-                "namespace": ns,
-                "agent": "t",
-                "user_id": "-",
-                "session_id": "-",
-                "memory_key": key,
-                "entities": entities,
-            }
-        ]
-    )
+    identity = (ORG, ns, "t", "-", "-", key)
+    head = (await memory_rows_by_identity_keys([identity], sequential=True))[identity]
+    row = build_memory_version_row(head, entities=entities, version=next_version())
+    await insert_versions_over_heads([row], [head])
 
 
 async def _history(a: Any, key: str, n: int, *, limit: int = 50) -> list[dict[str, Any]]:

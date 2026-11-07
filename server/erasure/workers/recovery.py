@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, TypedDict
 
-from server.erasure.store.rows import LedgerRow, ResumeRow, VerifyColumns
+from server.erasure.store.rows import LedgerRow, ResumeRow, VerifyColumns, census_kept
 from server.observability import audit
 from server.workers import pass_context
 from server.workers.status import record_pass
@@ -216,16 +216,16 @@ async def _recover_one(
 
 
 def _ledger_verify(row: LedgerRow) -> VerifyColumns:
-    """The last census on an exhausted saga's ledger row, for its terminal row;
-    empty when no census ran."""
+    """The last census on an exhausted saga's ledger row, for its terminal row; empty
+    when no census ran, or it found nothing and left a store uncounted (`census_kept`)."""
     out = VerifyColumns()
-    if row.get("verified_at") is None:
+    if not census_kept(row.get("verified_at"), row.get("residue_count")):
         return out
     if "residue_count" in row:
         out["residue_count"] = row["residue_count"]
     if "residue" in row:
         out["residue"] = row["residue"]
-    out["verified_at"] = row["verified_at"]
+    out["verified_at"] = row.get("verified_at")
     return out
 
 

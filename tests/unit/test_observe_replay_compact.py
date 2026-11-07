@@ -10,7 +10,7 @@ import pytest
 
 from server.memory.app import chunk_projection as chunk_projection
 from server.memory.app import observe_replay as replay
-from server.memory.store.sql import _identity_key
+from server.memory.store.rows import identity_key
 from server.memory.workers import observe_extract as ox
 
 NARRATIVE = (
@@ -108,8 +108,11 @@ _SESSION = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session
 
 def _obs(
     key: str, value: Any, *, sensitivity: str = "", version: int = 10, tags: list[str] | None = None
-) -> SimpleNamespace:
-    return SimpleNamespace(
+) -> Any:
+    """An observation head as the store hydrates one (only the columns read here)."""
+    from server.memory.store.rows import MemoryRow
+
+    return MemoryRow.model_construct(
         **_SESSION,
         memory_key=key,
         value=value,
@@ -129,8 +132,8 @@ def _heads(monkeypatch: pytest.MonkeyPatch, heads: list[Any], order: list[str]) 
         # a plain read can miss a tombstone another replica wrote a moment ago
         assert kwargs.get("sequential") is True
         order.append("re-read")
-        # keyed by `_identity_key`, as the store keys its answer
-        live = {_identity_key(vars(h)): h for h in heads}
+        # keyed by `identity_key`, as the store keys its answer
+        live = {identity_key(vars(h)): h for h in heads}
         return {k: live[k] for k in keys if k in live}
 
     monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", _read)
@@ -170,7 +173,7 @@ async def test_done_is_built_from_the_head_as_it_is_after_the_replay(
     async def _context(*_a: Any, **_k: Any) -> list[Any]:
         return []
 
-    async def _insert(rows: list[Any], **_k: Any) -> None:
+    async def _insert(rows: list[Any], *_a: Any, **_k: Any) -> None:
         done.extend(rows)
 
     def _build(o: Any, **k: Any) -> Any:
@@ -188,16 +191,63 @@ async def test_done_is_built_from_the_head_as_it_is_after_the_replay(
     monkeypatch.setattr(ox, "next_version", _stamp)
     monkeypatch.setattr("server.core.ch.get_client", lambda: None)
     monkeypatch.setattr(memory_repo, "build_memory_version_row", _build)
-    monkeypatch.setattr(memory_repo, "insert_memory_versions", _insert)
+    monkeypatch.setattr(memory_repo, "insert_versions_over_heads", _insert)
     distilled = await ox._distill_session(_SESSION, observations)
     assert done == [kept, now_high, now_ready]
     # the READY head landed after the stamp (150 > 99): its DONE copy outranks it
     done_tags = ["crystallize:done"]
-    assert [k["version"] for _, k in built] == [99, 99, 151]
+    assert [k["version"] for _, k in built] == [99, 99, 152]
     assert all(k["tags"] == done_tags for _, k in built)
     # the stamp is drawn before the re-read, so a write drawn after the re-read wins
     assert order == ["stamp", "re-read"]
     assert distilled.observations == 3
+
+
+async def test_a_head_moved_before_the_done_mark_marks_again_without_a_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under Postgres a head written between the re-read and the DONE commit refuses it:
+    the marks are read and written again over the heads they copy, the replay is not."""
+    import server.memory.store as memory_repo
+    from server.memory.store.pg_memory import AdmissionContendedError
+
+    first, second = _obs("first", {"narrative": "a"}), _obs("second", {"narrative": "b"})
+    order: list[str] = []
+    _heads(monkeypatch, [first, second], order)
+    replays: list[int] = []
+    commits: list[list[tuple[Any, Any]]] = []
+
+    async def _replay(*_a: Any, **_k: Any) -> int:
+        replays.append(1)
+        return 0
+
+    async def _extras(*_a: Any, **_k: Any) -> Any:
+        return SimpleNamespace(events_written=0, procedure_written=0, hint_written=0, failures=[])
+
+    async def _context(*_a: Any, **_k: Any) -> list[Any]:
+        return []
+
+    async def _insert(rows: list[Any], read: list[Any], **_k: Any) -> None:
+        commits.append(
+            [
+                (identity_key(vars(r)), identity_key(vars(h)))
+                for r, h in zip(rows, read, strict=True)
+            ]
+        )
+        if len(commits) == 1:
+            raise AdmissionContendedError("moved")
+
+    monkeypatch.setattr(ox, "_extract_replay", _replay)
+    monkeypatch.setattr(ox, "_distill_extras", _extras)
+    monkeypatch.setattr(ox, "_load_session_context", _context)
+    monkeypatch.setattr(ox, "get_client_for_context", lambda: None)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: None)
+    monkeypatch.setattr(memory_repo, "build_memory_version_row", lambda o, **_k: o)
+    monkeypatch.setattr(memory_repo, "insert_versions_over_heads", _insert)
+    distilled = await ox._distill_session(_SESSION, [first, second])
+    assert replays == [1] and order == ["re-read", "re-read"]
+    assert len(commits) == 2 and all(row == head for row, head in commits[-1])
+    assert distilled.observations == 2
 
 
 async def test_a_high_observation_is_never_sent_to_the_model(
@@ -224,7 +274,7 @@ async def test_a_high_observation_is_never_sent_to_the_model(
     async def _context(*_a: Any, **_k: Any) -> list[Any]:
         return []
 
-    async def _insert(rows: list[Any], **_k: Any) -> None:
+    async def _insert(rows: list[Any], *_a: Any, **_k: Any) -> None:
         seen["done"] = rows
 
     monkeypatch.setattr(ox, "replay_messages", _replay)
@@ -233,7 +283,7 @@ async def test_a_high_observation_is_never_sent_to_the_model(
     monkeypatch.setattr(ox, "get_client_for_context", lambda: None)
     monkeypatch.setattr("server.core.ch.get_client", lambda: None)
     monkeypatch.setattr(memory_repo, "build_memory_version_row", lambda o, **_k: o)
-    monkeypatch.setattr(memory_repo, "insert_memory_versions", _insert)
+    monkeypatch.setattr(memory_repo, "insert_versions_over_heads", _insert)
     # a token on its own line, and a quoted password: JSON-escaped, neither reads as one
     own_line = _obs("own_line", {"narrative": "[command_run] tool=Bash\noutput:\nghp_" + "b" * 36})
     quoted = _obs("quoted", {"narrative": 'config: password: "hunter2secret"'})
@@ -242,3 +292,38 @@ async def test_a_high_observation_is_never_sent_to_the_model(
     await ox._distill_session(_SESSION, observations)
     assert seen["replayed"] == [plain] and seen["summarised"] == [plain]
     assert seen["done"] == [plain, high, unlabelled, own_line, quoted]
+
+
+async def test_a_session_replays_only_the_heads_still_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The listing's copies are swapped for the authority's heads: one marked DONE,
+    deleted or relabelled since is left out; one rewritten but still pending is replayed
+    at its new version."""
+    import server.memory.store as memory_repo
+    from server.memory.store import lifecycle
+
+    def obs(key: str, version: int, **kw: Any) -> Any:
+        row = _obs(key, key, version=version, tags=[ox.OBSERVATION_TAG])
+        return row.model_copy(update={"memory_type": "episodic", "tombstoned_at": None, **kw})
+
+    listed = [obs(k, 1) for k in ("same", "rewritten", "done", "deleted", "relabelled", "gone")]
+    heads = {
+        "same": obs("same", 1),
+        "rewritten": obs("rewritten", 4),
+        "done": obs("done", 4, tags=[ox.OBSERVATION_TAG, ox.CRYSTALLIZE_DONE_TAG]),
+        "deleted": obs("deleted", 4, tombstoned_at="now"),
+        "relabelled": obs("relabelled", 4, memory_type="semantic"),
+    }
+
+    async def _authority(rows: list[Any]) -> list[Any]:
+        return [heads.get(r.memory_key) for r in rows]
+
+    class _CH:
+        async def query_all(self, *_: Any, **__: Any) -> list[Any]:
+            return listed
+
+    monkeypatch.setattr(memory_repo, "_hydrate", lambda r: r)
+    monkeypatch.setattr(lifecycle, "authority_heads", _authority)
+    got = await ox._load_session_observations(_SESSION, ox.ObserveExtractConfig(), _CH())
+    assert [(o.memory_key, o.version) for o in got] == [("same", 1), ("rewritten", 4)]

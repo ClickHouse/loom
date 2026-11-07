@@ -760,7 +760,7 @@ async def test_the_bulk_set_handler_hands_contextualize_the_stored_policy(
     settings_override(memory_bulk_contextualize_allowed=True)
     policies_read_now({("acme", "docs"): _POLICY})
     request = SimpleNamespace(contextualize=True, org="acme", namespace="docs")
-    await bulk_rows._bulk_contextualize(request, [(0, "text", "text", "k")], _Clock())  # type: ignore[arg-type]
+    await bulk_rows._bulk_contextualize(request, [(0, "text", "text", "k")], _Clock(), {})  # type: ignore[arg-type]
     assert seen["operator_policy"] == _POLICY
 
 
@@ -845,7 +845,7 @@ async def test_unreadable_bulk_set_contextualize_makes_no_call_and_keeps_the_row
 
     pending = [(0, "text", "text", "k")]
     request = SimpleNamespace(contextualize=True, org="acme", namespace="docs")
-    assert await bulk_rows._bulk_contextualize(request, pending, _Clock()) == pending  # type: ignore[arg-type]
+    assert await bulk_rows._bulk_contextualize(request, pending, _Clock(), {}) == pending  # type: ignore[arg-type]
     assert llm.systems == []
 
 

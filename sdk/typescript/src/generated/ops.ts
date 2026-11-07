@@ -6452,6 +6452,7 @@ export interface MemoryRestoreOutput {
   memory_id?: string | null;
   version?: number | null;
   expired?: boolean;
+  redacted?: boolean;
   from_status?: string;
 }
 
@@ -6547,6 +6548,7 @@ export interface MemorySearchOutput {
   namespaces_searched?: string[];
   namespaces_skipped?: string[];
   candidates_total?: number;
+  stale_dropped?: number;
   next_page?: string;
   page_offset?: number;
   chunk_share?: number;
@@ -6682,6 +6684,7 @@ export interface MemorySearchTraceOutput {
   entity_filter: string[];
   query_spellings?: Record<string, string>;
   query_spellings_skipped?: boolean;
+  stale_dropped?: number;
 }
 
 export interface MemorySearchTraceLogInput {
@@ -6854,6 +6857,7 @@ export interface MemorySweepExpiredOutput {
   demoted?: number;
   anonymized?: number;
   locked_skipped?: number;
+  moved_skipped?: number;
   dry_run?: boolean;
   sample?: Array<Record<string, unknown>>;
   failures?: string[];
@@ -7709,7 +7713,7 @@ export interface SnapshotMemoryRow {
   created_at?: string | null;
   updated_at?: string | null;
   value_json?: string;
-  status?: string;
+  status?: "active" | "conflicted" | "tombstoned" | "duplicate" | "superseded" | "rejected" | "proposed";
   conflict_with?: string[];
   duplicate_of?: string;
   evidence_count?: number;
@@ -7770,6 +7774,7 @@ export interface NamespaceRestoreInput {
 
 export interface NamespaceRestoreOutput {
   restored: boolean;
+  publication_pending?: boolean;
   target_namespace: string;
   snapshot_id: string;
   counts: Record<string, number>;

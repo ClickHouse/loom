@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -474,6 +475,8 @@ def ee_env(monkeypatch: pytest.MonkeyPatch):
             "memory_key": f"k{i}",
             "memory_type": "semantic",
             "value": f"Alice {i}",
+            "version": 1,
+            "content_sha256": "",
         }
         for i in range(6)
     ]
@@ -618,7 +621,9 @@ def _emb_row(key: str, scope: str = "private") -> dict[str, Any]:
     }
 
 
-def _item(key: str, entities: list[str]) -> dict[str, Any]:
+def _item(
+    key: str, entities: list[str], version: int = 1, content_sha256: str = ""
+) -> dict[str, Any]:
     return {
         "org": "o",
         "namespace": "n",
@@ -626,6 +631,8 @@ def _item(key: str, entities: list[str]) -> dict[str, Any]:
         "user_id": "-",
         "session_id": "-",
         "memory_key": key,
+        "version": version,
+        "content_sha256": content_sha256,
         "entities": entities,
     }
 
@@ -708,6 +715,285 @@ def test_apply_entities_batch_is_five_statements_for_n_rows_and_emits_the_same_r
         "every persisted column mirrored"
     )
     assert all(r["embedding"] == [0.1, 0.2, 0.3] and r["content_excerpt"] == "x" for r in emb)
+
+
+def test_apply_entities_batch_writes_only_onto_the_head_the_entities_came_from() -> None:
+    """A value revised or redacted since the extractor read it keeps its own entities."""
+    from datetime import UTC, datetime
+
+    from server.memory import store as mr
+
+    redacted = _mem_row("k3") | {"redacted_at": datetime.now(UTC).replace(tzinfo=None)}
+    ch = _CH(answers=[[_mem_row("k1"), _mem_row("k2") | {"version": 2}, redacted]])
+    items = [_item("k1", ["alice"]), _item("k2", ["bob"]), _item("k3", ["eve"])]
+    written = asyncio.run(mr.apply_entities_batch(items, ch=ch))
+    assert written["memory"] == 1
+    assert [(r["memory_key"], r["entities"]) for r in ch.inserts[0][1]] == [("k1", ["alice"])]
+
+
+def _sibling(key: str) -> dict[str, Any]:
+    return {
+        "org": "o",
+        "namespace": "n",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "memory_key": key,
+        "scope": "private",
+        "embedding_model": "m",
+    }
+
+
+def test_apply_entities_batch_keeps_its_work_over_a_copy_of_the_same_text() -> None:
+    """A head copied since the read (a lock, a touch) still holds the text extracted and
+    takes the entities; one whose text changed does not."""
+    from server.memory import store as mr
+
+    read = "a" * 64
+    ch = _CH(
+        answers=[
+            [
+                _mem_row("k1") | {"version": 3, "content_sha256": read},
+                _mem_row("k2") | {"version": 3, "content_sha256": "b" * 64},
+            ]
+        ]
+    )
+    items = [_item("k1", ["alice"], content_sha256=read), _item("k2", ["bob"], content_sha256=read)]
+    written = asyncio.run(mr.apply_entities_batch(items, ch=ch))
+    assert written["memory"] == 1
+    assert [(r["memory_key"], r["entities"]) for r in ch.inserts[0][1]] == [("k1", ["alice"])]
+
+
+@pytest.mark.parametrize(
+    "since",
+    [{"redacted_at": datetime(2026, 1, 1)}, {"sensitivity": "high"}],
+    ids=["redacted", "high"],
+)
+def test_a_copy_of_the_same_text_redacted_or_made_high_since_keeps_no_entities(
+    since: dict[str, Any],
+) -> None:
+    from server.memory import store as mr
+
+    read = "a" * 64
+    ch = _CH(answers=[[_mem_row("k1") | {"version": 3, "content_sha256": read} | since]])
+    written = asyncio.run(
+        mr.apply_entities_batch([_item("k1", ["alice"], content_sha256=read)], ch=ch)
+    )
+    assert written["memory"] == 0 and ch.inserts == []
+
+
+def test_apply_entities_batch_copies_every_search_document_of_a_head_written() -> None:
+    """A document above the head's version (an embedding worker's fill, a conflict stamp)
+    takes the entities as the head's own does."""
+    from server.memory import store as mr
+
+    ch = _CH(
+        answers=[
+            [_mem_row("k1")],
+            [_sibling("k1"), _sibling("k1") | {"scope": "shared"}],
+            [_emb_row("k1"), _emb_row("k1", "shared") | {"version": 2}],
+        ]
+    )
+    written = asyncio.run(mr.apply_entities_batch([_item("k1", ["alice"])], ch=ch))
+    assert written == {"memory": 1, "memory_embeddings": 2}
+    assert [(r["scope"], r["version"]) for r in ch.inserts[1][1]] == [("private", 2), ("shared", 3)]
+
+
+def test_apply_entities_batch_leaves_a_newer_writes_search_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A document showing other content than the head written (a newer write's) keeps its
+    own entities, without a retry for it."""
+    from server.memory import store as mr
+    from server.memory.store import entities
+
+    slept: list[float] = []
+
+    async def sleep(s: float) -> None:
+        slept.append(s)
+
+    monkeypatch.setattr(entities.asyncio, "sleep", sleep)
+    head, newer = "a" * 64, "b" * 64
+    ch = _CH(
+        answers=[
+            [_mem_row("k1") | {"content_sha256": head}],
+            [_sibling("k1"), _sibling("k1") | {"scope": "shared"}],
+            [
+                _emb_row("k1") | {"content_sha256": head},
+                _emb_row("k1", "shared") | {"version": 3, "content_sha256": newer},
+            ],
+        ]
+    )
+    written = asyncio.run(mr.apply_entities_batch([_item("k1", ["alice"])], ch=ch))
+    assert written == {"memory": 1, "memory_embeddings": 1}
+    assert [r["scope"] for r in ch.inserts[1][1]] == ["private"]
+    assert slept == []
+
+
+def test_a_failed_mirror_copy_fails_the_pass_on_clickhouse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The memory rows are in; the search documents' copy failing is the pass's failure,
+    for the worker's status, and a later pass's heal closes the mirror."""
+    from server.memory import store as mr
+    from server.memory.store import entities
+
+    async def refused(*_: Any, **__: Any) -> None:
+        raise RuntimeError("memory_embeddings is read-only")
+
+    monkeypatch.setattr(entities, "insert_embedding_rows", refused)
+    ch = _CH(answers=[[_mem_row("k1")], [_sibling("k1")], [_emb_row("k1")]])
+    with pytest.raises(RuntimeError, match="read-only"):
+        asyncio.run(mr.apply_entities_batch([_item("k1", ["alice"])], ch=ch))
+    assert [t for t, _ in ch.inserts] == ["loom.memory"]
+
+
+def test_a_restatement_with_its_own_entities_keeps_them() -> None:
+    """The same text written again with the caller's entities since the read is not the
+    pass's to tag."""
+    from server.memory import store as mr
+
+    read = "a" * 64
+    restated = _mem_row("k1") | {"version": 3, "content_sha256": read, "entities": ["acme"]}
+    ch = _CH(answers=[[restated]])
+    written = asyncio.run(
+        mr.apply_entities_batch([_item("k1", ["alice"], content_sha256=read)], ch=ch)
+    )
+    assert written["memory"] == 0 and ch.inserts == []
+
+
+def test_apply_entities_batch_writes_above_a_copy_newer_than_its_draw() -> None:
+    """A copy of the same text written after the version was drawn (a lock on a replica
+    whose clock is ahead) is the head the entities land over, so they go above it."""
+    from server.memory import store as mr
+    from server.memory.store.rows import next_version
+
+    read = "a" * 64
+    far = next_version() + 10**9  # a lock from a replica whose clock is a second ahead
+    ch = _CH(answers=[[_mem_row("k1") | {"version": far, "content_sha256": read}]])
+    asyncio.run(mr.apply_entities_batch([_item("k1", ["alice"], content_sha256=read)], ch=ch))
+    assert [r["version"] for r in ch.inserts[0][1]] == [far + 2]
+
+
+def test_apply_entities_batch_draws_its_version_before_reading_the_heads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On ClickHouse the copy is a plain insert: drawn before the read, a write drawn after
+    it outranks the copy. One drawn earlier that lands after the read is overwritten;
+    Postgres refuses it."""
+    from server.memory import store as mr
+    from server.memory.store import entities
+
+    ch = _CH(answers=[[_mem_row("k1")]])
+    reads_before_draw: list[int] = []
+    real = entities.next_version
+
+    def next_version() -> int:
+        reads_before_draw.append(len(ch.queries))
+        return real()
+
+    monkeypatch.setattr(entities, "next_version", next_version)
+    monkeypatch.setattr(entities, "ENTITY_MIRROR_RETRY_DELAY_S", 0)
+    asyncio.run(mr.apply_entities_batch([_item("k1", ["alice"])], ch=ch))
+    assert reads_before_draw == [0]
+
+
+def test_apply_entities_batch_reads_again_without_a_key_erased_since_its_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An erasure between the read and the commit refuses the commit; the next read no
+    longer holds the erased key, and the rest land."""
+    from server.memory import store as mr
+    from server.memory.store import entities, pg_memory
+
+    reads = iter([[_mem_row("k1"), _mem_row("k2")], [_mem_row("k1")]])
+
+    async def heads(keys: Any, *, ch: Any, sequential: bool) -> dict[Any, Any]:
+        return {mr.identity_key(r): mr.MemoryRow.from_snapshot(r) for r in next(reads)}
+
+    committed: list[list[str]] = []
+
+    async def commit(rows: list[dict[str, Any]], read: Any, *, ch: Any, then: Any) -> None:
+        committed.append([r["memory_key"] for r in rows])
+        if len(committed) == 1:
+            raise pg_memory.MemoryErased()
+
+    monkeypatch.setattr(entities, "memory_rows_by_identity_keys", heads)
+    monkeypatch.setattr(entities, "insert_versions_over_heads", commit)
+    monkeypatch.setattr(entities, "ENTITY_MIRROR_RETRY_DELAY_S", 0)
+    written = asyncio.run(
+        mr.apply_entities_batch([_item("k1", ["alice"]), _item("k2", ["bob"])], ch=_CH([]))
+    )
+    assert committed == [["k1", "k2"], ["k1"]]
+    assert written["memory"] == 1
+
+
+def test_apply_entities_batch_answers_contended_when_every_round_moves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory import store as mr
+    from server.memory.store import entities, pg_memory
+
+    async def heads(keys: Any, *, ch: Any, sequential: bool) -> dict[Any, Any]:
+        return {mr.identity_key(r): mr.MemoryRow.from_snapshot(r) for r in [_mem_row("k1")]}
+
+    commits: list[int] = []
+
+    async def commit(rows: list[dict[str, Any]], read: Any, *, ch: Any, then: Any) -> None:
+        commits.append(len(rows))
+        raise pg_memory.AdmissionContendedError("moved")
+
+    monkeypatch.setattr(entities, "memory_rows_by_identity_keys", heads)
+    monkeypatch.setattr(entities, "insert_versions_over_heads", commit)
+    with pytest.raises(pg_memory.AdmissionContendedError):
+        asyncio.run(mr.apply_entities_batch([_item("k1", ["alice"])], ch=_CH([])))
+    assert len(commits) == settings.pg_admission_rounds
+
+
+def test_a_redacted_head_is_no_entity_candidate() -> None:
+    from server.memory import store as mr
+
+    ch = _CH(answers=[[{**_item("k1", []), "memory_type": "semantic", "value": "x"}]])
+    asyncio.run(mr.find_unentitied_memories(batch_size=5, ch=ch))
+    keys, rows = ch.queries
+    assert "argMax(m.redacted_at IS NULL, version) = 1" in keys
+    assert "AND redacted_at IS NULL" in rows
+
+
+def test_apply_entities_batch_reads_again_without_the_heads_that_moved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under Postgres one head written between the read and the commit refuses the whole
+    commit; the batch reads again and lands the keys that did not move."""
+    from server.memory import store as mr
+    from server.memory.store import entities, pg_memory
+
+    reads = iter(
+        [
+            [_mem_row("k1"), _mem_row("k2")],
+            [_mem_row("k1"), _mem_row("k2") | {"version": 2}],
+        ]
+    )
+
+    async def heads(keys: Any, *, ch: Any, sequential: bool) -> dict[Any, Any]:
+        assert sequential, "a replica that has not seen a write would copy over it"
+        return {mr.identity_key(r): mr.MemoryRow.from_snapshot(r) for r in next(reads)}
+
+    committed: list[list[str]] = []
+
+    async def commit(rows: list[dict[str, Any]], read: Any, *, ch: Any, then: Any) -> None:
+        committed.append([r["memory_key"] for r in rows])
+        if len(committed) == 1:
+            raise pg_memory.AdmissionContendedError("moved")
+
+    monkeypatch.setattr(entities, "memory_rows_by_identity_keys", heads)
+    monkeypatch.setattr(entities, "insert_versions_over_heads", commit)
+    monkeypatch.setattr(entities, "ENTITY_MIRROR_RETRY_DELAY_S", 0)
+    written = asyncio.run(
+        mr.apply_entities_batch([_item("k1", ["alice"]), _item("k2", ["bob"])], ch=_CH([]))
+    )
+    assert committed == [["k1", "k2"], ["k1"]]
+    assert written["memory"] == 1
 
 
 def test_apply_entities_batch_retries_the_mirror_once_for_the_keys_whose_memory_exists_but_mirror_is_not_visible(

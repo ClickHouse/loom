@@ -67,6 +67,7 @@ def _existing(status: str = "active") -> Any:
         status=status,
         conflict_with=[],
         invalid_at=None,
+        version=1,
     )
 
 
@@ -75,6 +76,7 @@ def _wire(monkeypatch: pytest.MonkeyPatch, ch: _CH, existing: Any) -> None:
         memory_id: str,
         *,
         org: str | None = None,
+        namespace: str | None = None,
         ch: Any = None,
         scope: Any = None,
         strong: bool = False,
@@ -111,6 +113,7 @@ async def test_status_flip_is_mirrored_onto_embeddings(monkeypatch: pytest.Monke
         ["m1"],
         lambda r: {"status": "superseded", "superseded_by": "m2"},
         ch=ch,
+        namespace="n",
     )
     assert n == 1
     tables = [t for t, _ in ch.inserts]
@@ -129,6 +132,7 @@ async def test_conflict_mark_reaches_the_embeddings_row(monkeypatch: pytest.Monk
         ["m1"],
         lambda r: {"status": "conflicted", "conflict_with": ["m9"]},
         ch=ch,
+        namespace="n",
     )
     assert ch.inserts[1][0] == "loom.memory_embeddings"
     assert ch.inserts[1][1][0]["status"] == "conflicted"
@@ -138,7 +142,9 @@ async def test_conflict_mark_reaches_the_embeddings_row(monkeypatch: pytest.Monk
 async def test_no_status_change_means_no_embeddings_write(monkeypatch: pytest.MonkeyPatch) -> None:
     ch = _CH()
     _wire(monkeypatch, ch, _existing())
-    await memory_repo.write_versions_by_ids("o", ["m1"], lambda r: {"confidence": 0.5}, ch=ch)
+    await memory_repo.write_versions_by_ids(
+        "o", ["m1"], lambda r: {"confidence": 0.5}, ch=ch, namespace="n"
+    )
     assert [t for t, _ in ch.inserts] == ["loom.memory"]
 
 
@@ -146,8 +152,78 @@ async def test_no_status_change_means_no_embeddings_write(monkeypatch: pytest.Mo
 async def test_already_mirrored_row_is_not_rewritten(monkeypatch: pytest.MonkeyPatch) -> None:
     ch = _CH(emb_status="superseded")
     _wire(monkeypatch, ch, _existing())
-    await memory_repo.write_versions_by_ids("o", ["m1"], lambda r: {"status": "superseded"}, ch=ch)
+    await memory_repo.write_versions_by_ids(
+        "o", ["m1"], lambda r: {"status": "superseded"}, ch=ch, namespace="n"
+    )
     assert [t for t, _ in ch.inserts] == ["loom.memory"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_holds_back_a_key_the_authority_has_moved_past(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under Postgres a key whose head is newer than loom.memory's row (a reject whose
+    vectors landed before its publish, a delete not yet published) or gone (erased) keeps
+    its vectors as they are; a key at or behind the head's version mirrors."""
+    from server.core import pg
+    from server.memory.store import pg_memory
+
+    ident = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "session_id": "s"}
+
+    def _row(key: str, status: str) -> dict[str, Any]:
+        return {
+            **ident,
+            "memory_key": key,
+            "status": status,
+            "invalid_at": None,
+            "embeddings_status": "active",
+            "memory_version": 5,
+        }
+
+    class _RCH(_CH):
+        async def query_all(
+            self, sql: str, params: dict[str, Any] | None = None
+        ) -> list[dict[str, Any]]:
+            if "WHERE m.ms != e.es" in sql:
+                keys = ("rejected", "deleted", "erased", "current", "behind")
+                return [_row(k, "superseded") for k in keys]
+            return await super().query_all(sql, params)
+
+    async def _versions(keys: Any) -> dict[Any, int]:
+        version = {"rejected": 6, "deleted": 7, "current": 5, "behind": 4}
+        return {k: version[k[5]] for k in keys if k[5] in version}
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "head_versions", _versions)
+    ch = _RCH()
+    out = await memory_repo.reconcile_embedding_status("o", "n", dry_run=False, ch=ch)
+    assert out["divergent_rows"] == 2 and out["held_back"] == 3
+    assert {r["memory_key"] for _, rows in ch.inserts for r in rows} == {"current", "behind"}
+
+
+def test_reconcile_status_reports_the_held_back_keys_apart_from_the_statuses(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import argparse
+
+    import server.memory.store as store
+    from server.cli import maintenance
+
+    async def _reconcile(*_: Any, **__: Any) -> dict[str, int]:
+        return {"held_back": 2, "superseded": 1, "divergent_rows": 1, "mirrored": 1}
+
+    monkeypatch.setattr(store, "reconcile_embedding_status", _reconcile)
+    monkeypatch.setattr(maintenance, "run_connected", lambda go: asyncio.run(go(object())))
+    args = argparse.Namespace(
+        org="o", namespace="n", all_namespaces=False, dry_run=False, limit=5000, exclude=None
+    )
+    maintenance._cmd_reconcile_status(args)
+    out = capsys.readouterr().out
+    assert "memory status superseded: 1" in out and "memory status held_back" not in out
+    assert "held back (newer or erased in Postgres): 2" in out and "rerun" not in out
+    args.limit = 2
+    maintenance._cmd_reconcile_status(args)
+    assert "all 2 rows read were held back: raise --limit" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
@@ -353,7 +429,7 @@ async def test_rows_are_read_at_once_but_written_once_each_in_order(
         # The later ids finish first: the order kept is the order given, not the finish.
         await asyncio.sleep(delay.get(mid, 0))
         in_flight -= 1
-        return None if mid == "gone" else SimpleNamespace(memory_id=mid)
+        return None if mid == "gone" else SimpleNamespace(memory_id=mid, version=1)
 
     updated: list[str] = []
 
@@ -369,7 +445,7 @@ async def test_rows_are_read_at_once_but_written_once_each_in_order(
     monkeypatch.setattr(lifecycle, "insert_memory_versions", insert)
     ids = [f"m{i}" for i in range(40)]
     delay = {mid: (len(ids) - i) / 2000 for i, mid in enumerate(ids)}
-    n = await lifecycle.write_versions_by_ids("o", [*ids, "m3", "", "gone"], update)
+    n = await lifecycle.write_versions_by_ids("o", [*ids, "m3", "", "gone"], update, namespace="n")
     assert updated == ids and n == len(ids)
     assert 1 < peak <= lifecycle._READ_AT_ONCE
 
@@ -389,11 +465,11 @@ async def test_a_failed_read_stops_the_others_and_raises_as_itself(
         except asyncio.CancelledError:
             cancelled.append(mid)
             raise
-        return SimpleNamespace(memory_id=mid)
+        return SimpleNamespace(memory_id=mid, version=1)
 
     monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
     with pytest.raises(type(failure)):
-        await lifecycle.write_versions_by_ids("o", ["a", "bad", "b"], lambda row: {})
+        await lifecycle.write_versions_by_ids("o", ["a", "bad", "b"], lambda row: {}, namespace="n")
     # Stopped by the time the caller sees the failure.
     assert sorted(cancelled) == ["a", "b"]
 
@@ -414,7 +490,9 @@ async def test_a_cancelled_caller_lets_its_reads_clean_up(monkeypatch: pytest.Mo
     monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
     # The queued reads stop first, so gather raises while the started ones clean up.
     ids = [f"m{i}" for i in range(lifecycle._READ_AT_ONCE + 4)]
-    call = asyncio.ensure_future(lifecycle.write_versions_by_ids("o", ids, lambda row: {}))
+    call = asyncio.ensure_future(
+        lifecycle.write_versions_by_ids("o", ids, lambda row: {}, namespace="n")
+    )
     await asyncio.sleep(0.05)
     call.cancel()
     with pytest.raises(asyncio.CancelledError):

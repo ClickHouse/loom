@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and
+from server.memory.store.lifecycle import served_rows
 
 # The identity column each subject is matched on.
 SUBJECT_COLUMN: dict[str, str] = {"user": "user_id", "agent": "agent", "session": "session_id"}
@@ -124,20 +125,23 @@ async def view_newest(
     for a high-sensitivity row. The order is not the sort key, so under FINAL one
     statement would read every row's value before the limit; the rows are located without
     it, and their previews read by (memory_id, version), as `memory.list` does. The id is
-    selected as `id`: an alias named memory_id would shadow the column."""
+    selected as `id`: an alias named memory_id would shadow the column. Under Postgres a
+    row the authority no longer serves is left out after the limit, so the sample can be
+    short of `limit` while older rows are live."""
     client = ch or _default_client()
     params = _params(org, namespace, subject_id, lim=int(limit))
     located = await client.query_all(
         f"""
         SELECT memory_key, toString(memory_id) AS id, version, memory_type,
                toString(status) AS status, source_class, agent, user_id, session_id, actor,
-               updated_at, sensitivity
+               updated_at, sensitivity, org, namespace, redacted_at
         {_LIVE} AND {_view(subject, view, scope, params)}
         ORDER BY updated_at DESC, memory_key, agent, user_id, session_id
         LIMIT {{lim:UInt32}}
         """,
         params=params,
     )
+    located = await served_rows(located)
     pairs = [(r["id"], int(r["version"])) for r in located if r["sensitivity"] != "high"]
     previews: dict[tuple[str, int], str] = {}
     if pairs:

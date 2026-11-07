@@ -6,6 +6,7 @@ Most clients are stubs; the sweep's paging runs its real SQL on clickhouse-local
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import time
 from types import SimpleNamespace
@@ -20,9 +21,11 @@ from server.memory.app import sensitivity_sweep as sweep
 from server.memory.app.extraction_queue import ENQUEUED_BY_KEY, enqueued_actor, payload_for
 from server.memory.app.provenance import writer_actor
 from server.memory.domain import provenance as prov
+from server.memory.store import MemoryRow
 from server.memory.store.sensitivity_sweep_sql import SORT_KEY
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 from tests.unit.clock_fake import ManualClock
+from tests.unit.memory_rows import memory_head
 
 # ------------------------------------------------------------- (a) principal
 
@@ -43,11 +46,99 @@ def test_writer_actor_falls_back_to_the_pipeline_actor_only_without_a_token() ->
     assert prov.cli_actor("") == "process:cli:unknown"
 
 
+class _Heads:
+    """The heads `apply` reads by key and the versions it writes over them: each candidate's
+    key holds its id at `version`, and a write becomes the head, or, with `replaced`, a
+    newer write replaces it at once. ClickHouse holds the heads, or with `published`
+    False only the ones read first (a publication pending). The facts a relabel owes are
+    recorded in `owed` and their resolution in `resolved`."""
+
+    def __init__(
+        self,
+        monkeypatch: Any,
+        cands: list[Any],
+        version: int = 1,
+        *,
+        tags: Any = (),
+        replaced: bool = False,
+        on_insert: Any = None,
+        published: bool = True,
+    ) -> None:
+        from server.memory import store as memory_repo
+
+        self.rows: list[dict[str, Any]] = []
+        self.reads: list[dict[str, Any]] = []
+        self._replaced, self._on_insert = replaced, on_insert
+        self._heads = {
+            (c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key): memory_head(
+                org=c.org,
+                namespace=c.namespace,
+                agent=c.agent,
+                user_id=c.user_id,
+                session_id=c.session_id,
+                memory_key=c.memory_key,
+                memory_id=c.memory_id,
+                version=version,
+                tags=list(tags),
+            )
+            for c in cands
+        }
+        monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", self._read)
+        monkeypatch.setattr(memory_repo, "insert_versions_over_heads", self._insert)
+        self._first = {k: h.version for k, h in self._heads.items()}
+        self._published = published
+        monkeypatch.setattr(memory_repo, "clickhouse_head_versions", self._clickhouse)
+        from server.memory.store import pg_memory
+
+        monkeypatch.setattr(pg_memory, "settled_head_versions", self._authority)
+        from server.memory.app import intent_marks
+
+        self.owed: list[dict[str, Any]] = []
+        self.resolved: list[str] = []
+        # The owed record (`_owe_facts`).
+        monkeypatch.setattr(sweep, "record_projection_failure", self._owe)
+        monkeypatch.setattr(intent_marks, "resolve_soon", self._resolve)
+
+    async def _read(self, keys: Any, **kw: Any) -> dict[Any, MemoryRow]:
+        self.reads.append(kw)
+        return {k: self._heads[k] for k in keys if k in self._heads}
+
+    async def _owe(self, **kw: Any) -> str:
+        self.owed.append(kw["payload"])
+        return f"owed-{len(self.owed)}"
+
+    def _resolve(self, org: str, intents: list[str]) -> None:
+        self.resolved.extend(intents)
+
+    async def _authority(self, keys: Any) -> dict[Any, int]:
+        return {k: self._heads[k].version for k in keys if k in self._heads}
+
+    async def _clickhouse(self, keys: Any, **_k: Any) -> dict[Any, int]:
+        held = {k: h.version for k, h in self._heads.items()} if self._published else self._first
+        return {k: held[k] for k in keys if k in held}
+
+    async def _insert(
+        self, rows: list[dict[str, Any]], read: Any, *, on_commit: Any = None, **_k: Any
+    ) -> int:
+        if self._on_insert is not None:
+            self._on_insert(rows)
+        self.rows.extend(rows)
+        if on_commit is not None:
+            on_commit()
+        for row in rows:
+            key = tuple(row[c] for c in SORT_KEY)
+            if self._replaced:
+                self._heads.pop(key, None)
+            else:
+                self._heads[key] = self._heads[key].model_copy(update={"version": row["version"]})
+        return len(rows)
+
+
 def _candidate(memory_id: str, org: str, key: str, level: str, shape: str) -> sweep.SweepCandidate:
     """A sweep candidate in namespace `n`, agent `a`, with its sort key as `scan` reads it."""
     ident = (org, "n", "a", "-", "-", key)
     return sweep.SweepCandidate(
-        memory_id, *ident, level, (shape,), dict(zip(SORT_KEY, ident, strict=True))
+        memory_id, *ident, level, (shape,), dict(zip(SORT_KEY, ident, strict=True)), 1
     )
 
 
@@ -169,6 +260,7 @@ def _mem(memory_id: str, value: str, ns: str = "demo-full") -> dict[str, Any]:
         "user_id": "-",
         "session_id": "-",
         "memory_key": f"k{memory_id}",
+        "version": 1,
         "value": value,
     }
 
@@ -229,15 +321,9 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
     from server.memory import store as memory_repo
 
     ch = _CH()
-    written: list[tuple[str, dict[str, Any]]] = []
     tombstoned: list[str] = []
-    existing = SimpleNamespace(tags=["t"])
 
-    async def _write(org, ids, update, *, ch=None):
-        written.append((ids[0], update(existing)))
-        return 1
-
-    async def _retire(items, *, ch=None):
+    async def _retire(items, *, ch=None, bare=False):
         tombstoned.extend((key[5], version) for key, version in items)
         return 2
 
@@ -256,7 +342,6 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
     async def _ins(rows, *, ch=None):
         inserted.append(rows)
 
-    monkeypatch.setattr(memory_repo, "write_versions_by_ids", _write)
     monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
     monkeypatch.setattr(memory_repo, "live_embedding_rows_for_key", _live)
     monkeypatch.setattr(memory_repo, "insert_embedding_rows", _ins)
@@ -268,10 +353,6 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
 
     monkeypatch.setattr(memory_repo, "fence_vectors", _fence)
 
-    async def _no_heads(keys, **_k):
-        return {}  # a newer write replaced the relabel: no post-relabel retire
-
-    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", _no_heads)
     ch.rows = [
         {
             "org": "clickhouse",
@@ -286,25 +367,30 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
         _candidate("1", "clickhouse", "khigh", "high", "credential"),
         _candidate("2", "clickhouse", "kmed", "medium", "email"),
     ]
+    # A newer write replaces the relabel at once: no post-relabel retire.
+    heads = _Heads(monkeypatch, cands, tags=["t"], replaced=True)
     res = await sweep.apply(cands, ch=ch)
+    written = heads.rows
+    assert heads.reads and all(r.get("sequential") for r in heads.reads)
     assert res.as_dict() == {
         "relabelled": 2,
         "high": 1,
         "medium": 1,
         "embeddings_tombstoned": 2,
         "embeddings_tagged": 1,
+        "left": 0,
         "errors": 0,
     }
-    assert written[0][1]["sensitivity"] == "high" and written[0][1]["tags"] == [
+    assert written[0]["sensitivity"] == "high" and written[0]["tags"] == [
         "t",
         "sensitivity:high",
     ]
-    assert written[1][1]["tags"] == ["t", "sensitivity:medium"]
+    assert written[1]["tags"] == ["t", "sensitivity:medium"]
     # One retire of both vector tables at the relabelled memory row's version, so a
     # late metadata copy loses and a newer write's entity vectors stay.
-    assert tombstoned == [("khigh", written[0][1]["version"])]
+    assert tombstoned == [("khigh", written[0]["version"])]
     # and fences the key there: a plain write still embedding lands below it
-    assert fenced == [("khigh", written[0][1]["version"])]
+    assert fenced == [("khigh", written[0]["version"])]
     assert inserted[0][0]["tags"] == ["t", "sensitivity:medium"] and inserted[0][0]["version"]
 
 
@@ -839,6 +925,7 @@ async def test_candidates_cut_to_the_limit_resume_after_the_last_kept_one() -> N
     ch = _local_memory(rows)
     first = await sweep.scan(since_days=2, limit=2, page_size=2, pages=3, ch=ch)  # type: ignore[arg-type]
     assert [c.memory_key for c in first.candidates] == ["k1_pin", "k2_pin"] and first.truncated
+    assert {(c.user_id, c.session_id) for c in first.candidates} == {("", "-")}
     assert first.resume_after == {
         "org": "o",
         "namespace": "n",
@@ -1344,20 +1431,14 @@ async def test_a_failed_high_retire_leaves_the_row_unlabelled_for_the_next_pass(
     rows, so a relabel written ahead of a failed retire would never be retried."""
     from server.memory import store as memory_repo
 
-    written: list[str] = []
-
-    async def _write(org, ids, update, *, ch=None):
-        written.extend(ids)
-        return 1
-
-    async def _retire(items, *, ch=None):
+    async def _retire(items, *, ch=None, bare=False):
         raise RuntimeError("insert timed out")
 
-    monkeypatch.setattr(memory_repo, "write_versions_by_ids", _write)
     monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
     cand = _candidate("1", "o", "k", "high", "credential")
+    heads = _Heads(monkeypatch, [cand])
     res = await sweep.apply([cand], ch=_CH())
-    assert written == [] and res.relabelled == 0
+    assert heads.rows == [] and res.relabelled == 0
     assert len(res.errors) == 1 and "insert timed out" in res.errors[0]
 
 
@@ -1373,11 +1454,8 @@ async def test_a_high_relabel_retires_the_keys_chunks_again_after_the_label(
 
     order: list[str] = []
 
-    async def _write(org, ids, update, *, ch=None):
-        order.append("relabel")
-        return 1
-
-    async def _retire(items, *, ch=None):
+    async def _retire(items, *, ch=None, bare=False):
+        assert bare  # a high row's tombstones hold none of its text
         order.append("retire")
         return 1
 
@@ -1389,28 +1467,14 @@ async def test_a_high_relabel_retires_the_keys_chunks_again_after_the_label(
         order.append("chunks")
         return 0
 
-    monkeypatch.setattr(memory_repo, "write_versions_by_ids", _write)
     monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
     monkeypatch.setattr(memory_repo, "fence_vectors", _fence)
     monkeypatch.setattr(high_fence, "tombstone_set_chunks", _chunks)
-    relabel_version: list[int] = []
-    real_next = memory_repo.next_version
-
-    def _next() -> int:
-        v = real_next()
-        relabel_version.append(v)
-        return v
-
-    async def _heads(keys, **_k):
-        from types import SimpleNamespace
-
-        return {keys[0]: SimpleNamespace(version=relabel_version[0])}  # the relabel is head
-
-    monkeypatch.setattr(memory_repo, "next_version", _next)
-    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", _heads)
     cand = _candidate("1", "o", "k", "high", "credential")
+    _Heads(monkeypatch, [cand], on_insert=lambda _rows: order.append("relabel"))
     res = await sweep.apply([cand], ch=_CH())
     assert not res.errors
+    assert res.embeddings_tombstoned == 1  # the second retire is not counted
     assert order == ["retire", "fence", "chunks", "relabel", "chunks", "retire"]
 
 
@@ -1438,3 +1502,486 @@ async def test_the_medium_tag_copy_rechecks_its_head(monkeypatch) -> None:
     cand = _candidate("2", "o", "k", "medium", "email")
     assert await sweep._tag_embeddings(cand, ch=_CH()) == 1
     assert len(checked) == 1 and checked[0][0]["memory_key"] == "k"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("level", ["high", "medium"])
+@pytest.mark.parametrize("moved", ["version", "memory_id"])
+async def test_a_head_written_since_the_scan_is_left_for_the_next_pass(
+    monkeypatch, level, moved
+) -> None:
+    """The key's head is no longer the one the scan read: a newer version, or another id
+    under the key. It holds text the detector did not read, or its writer's own label: the
+    sweep neither relabels it nor retires its vectors."""
+    from server.memory import store as memory_repo
+
+    touched: list[str] = []
+
+    async def _retire(items, *, ch=None, bare=False):
+        touched.append("retire")
+        return 1
+
+    async def _fence(items, *, model, ch=None):
+        touched.append("fence")
+        return len(items)
+
+    monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
+    monkeypatch.setattr(memory_repo, "fence_vectors", _fence)
+    shape = "credential" if level == "high" else "email"
+    cand = _candidate("1", "o", "k", level, shape)
+    head = dataclasses.replace(cand, memory_id="9") if moved == "memory_id" else cand
+    heads = _Heads(monkeypatch, [head], version=2 if moved == "version" else 1)
+    res = await sweep.apply([cand], ch=_CH())
+    assert res.as_dict()["errors"] == 0 and (res.relabelled, len(res.left)) == (0, 1)
+    assert touched == [] and heads.rows == []
+
+
+@pytest.mark.asyncio
+async def test_a_high_candidate_whose_head_is_gone_retires_nothing(monkeypatch) -> None:
+    from server.memory import store as memory_repo
+
+    async def _retire(items, *, ch=None, bare=False):
+        raise AssertionError("a gone head's vectors are not the sweep's to retire")
+
+    _Heads(monkeypatch, [])
+    monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
+    res = await sweep.apply([_candidate("1", "o", "k", "high", "credential")], ch=_CH())
+    assert (res.relabelled, len(res.left), res.errors) == (0, 1, [])
+
+
+def test_a_candidate_left_for_a_moved_head_keeps_the_cursor_at_its_agent() -> None:
+    # The next pass reads that agent again and the newer head with it. A pass whose
+    # candidates in the agent all failed still moves past it.
+    from server.memory.workers.sensitivity_sweep import _resume_past_agent
+
+    cands = [_candidate(str(i), "o", f"k{i}", "high", "credential") for i in range(2)]
+    report = sweep.SweepReport(candidates=cands, resume_after=cands[-1].sort_key)
+    assert not _resume_past_agent(report, sweep.ApplyResult(left=list(cands)))
+    mixed = sweep.ApplyResult(failed=[(cands[0], "x")], left=cands[1:])
+    assert not _resume_past_agent(report, mixed)
+    failed = sweep.ApplyResult(failed=[(c, "x") for c in cands])
+    assert _resume_past_agent(report, failed)
+    # One left in an earlier agent is read again only when the sweep comes back round to it.
+    earlier = dataclasses.replace(cands[0], agent="0", sort_key=cands[0].sort_key | {"agent": "0"})
+    assert _resume_past_agent(report, dataclasses.replace(failed, left=[earlier]))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("level", ["high", "medium"])
+async def test_a_commit_refused_for_a_moved_head_leaves_the_candidate(monkeypatch, level) -> None:
+    # Under Postgres the relabel commits only over the head it read: one that moved after
+    # the read refuses it. The candidate is left, not failed, announces nothing, and puts
+    # no vector retire or fence above the moved head.
+    from server.core import pg
+    from server.memory.app import high_fence, webhooks
+    from server.memory.store.pg_memory import AdmissionContendedError
+
+    announced: list[Any] = []
+    fenced: list[Any] = []
+
+    def _refused(_rows: Any) -> None:
+        raise AdmissionContendedError("the head moved")
+
+    async def _fence(items, **_k):
+        fenced.append(items)
+
+    async def _announce(events: Any) -> None:
+        announced.extend(events)
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(high_fence, "fence_committed", _fence)
+    monkeypatch.setattr(sweep, "fence_high", _fence)
+    monkeypatch.setattr(webhooks, "announce", _announce)
+    shape = "credential" if level == "high" else "email"
+    cand = _candidate("1", "o", "k", level, shape)
+    _Heads(monkeypatch, [cand], on_insert=_refused)
+    res = await sweep.apply([cand], ch=_CH())
+    assert (res.relabelled, len(res.left), res.errors, announced) == (0, 1, [], [])
+    assert (res.embeddings_tombstoned, fenced) == (0, [])
+
+
+def _lost_answer() -> BaseException:
+    from server.core import pg
+
+    return pg.PostgresUnavailableError("lost", outcome_unknown=True)
+
+
+def _cancelled() -> BaseException:
+    import asyncio
+
+    return asyncio.CancelledError()
+
+
+def _insert_timed_out() -> BaseException:
+    return RuntimeError("insert timed out")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("postgres", "published", "error", "closed", "resolved"),
+    [
+        (False, True, None, True, True),  # in ClickHouse: closed and resolved at once
+        (True, True, None, True, True),  # published under Postgres: the same
+        (True, False, None, False, False),  # publication pending: left to the repair
+        (True, False, _lost_answer, False, False),  # may be in: left to the repair
+        (True, False, _cancelled, False, False),
+        (False, False, _insert_timed_out, False, False),  # may have landed on ClickHouse too
+    ],
+)
+async def test_a_high_relabel_owes_its_facts_before_its_commit(
+    monkeypatch, postgres, published, error, closed, resolved
+) -> None:
+    """The facts a 'high' relabel's text gave the graph are owed before it commits, so
+    whatever fails after, the projection repair closes them; they are closed and the debt
+    resolved at once when ClickHouse, which the graph is judged from, holds the relabel."""
+    import asyncio
+
+    from server.core import pg
+    from server.memory import store as memory_repo
+    from server.memory.app import high_fence
+
+    closed_facts: list[Any] = []
+    order: list[str] = []
+
+    async def _close(key, memory_id, version, *, ch):
+        closed_facts.append((key, memory_id, version))
+
+    async def _quiet(*_a, **_k):
+        return 0
+
+    async def _fence_committed(items, **_k):
+        return True
+
+    owed_at_commit: list[int] = []
+
+    def _fail(rows: Any) -> None:
+        owed_at_commit.append(len(heads.owed))
+        order.append("relabel")
+        if error is not None:
+            raise error()
+
+    async def _fenced(*_a, **_k):
+        order.append("fence")
+
+    monkeypatch.setattr(pg, "enabled", lambda: postgres)
+    monkeypatch.setattr(sweep, "_close_mined_facts", _close)
+    monkeypatch.setattr(sweep, "fence_high", _fenced)
+    monkeypatch.setattr(high_fence, "fence_committed", _fence_committed)
+    monkeypatch.setattr(high_fence, "tombstone_set_chunks", _quiet)
+    monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _quiet)
+    cand = _candidate("1", "o", "k", "high", "credential")
+    key = tuple(cand.sort_key[c] for c in SORT_KEY)
+    heads = _Heads(monkeypatch, [cand], published=published, on_insert=_fail)
+    if error is _cancelled:
+        with pytest.raises(asyncio.CancelledError):
+            await sweep.apply([cand], ch=_CH())
+    else:
+        await sweep.apply([cand], ch=_CH())
+    (owed,) = heads.owed
+    assert owed["key"] == list(key) and owed["memory_id"] == cand.memory_id
+    assert owed_at_commit == [1]  # owed right before the commit
+    # On ClickHouse the fence goes first, so one that fails owes nothing.
+    assert order == (["relabel"] if postgres else ["fence", "relabel"])
+    assert closed_facts == ([(key, cand.memory_id, owed["version"])] if closed else [])
+    assert heads.resolved == (["owed-1"] if resolved else [])
+
+
+@pytest.mark.asyncio
+async def test_a_relabel_refused_resolves_what_it_owed_and_one_unowed_is_not_written(
+    monkeypatch,
+) -> None:
+    """A commit refused for a moved head resolves the facts it owed, as nothing landed; a
+    relabel whose debt cannot be recorded fails unlabelled, so the next pass retries it."""
+    from server.core import pg
+    from server.memory.store.pg_memory import AdmissionContendedError
+
+    def _refused(_rows: Any) -> None:
+        raise AdmissionContendedError("the head moved")
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    cand = _candidate("1", "o", "k", "high", "credential")
+    heads = _Heads(monkeypatch, [cand], on_insert=_refused)
+    res = await sweep.apply([cand], ch=_CH())
+    assert (len(res.left), heads.resolved) == (1, ["owed-1"])
+
+    async def _unrecorded(**_kw: Any) -> str:
+        raise RuntimeError("insert refused")
+
+    heads = _Heads(monkeypatch, [cand])
+    monkeypatch.setattr(sweep, "record_projection_failure", _unrecorded)
+    res = await sweep.apply([cand], ch=_CH())
+    assert (res.relabelled, len(res.errors), heads.rows) == (0, 1, [])
+
+
+@pytest.mark.asyncio
+async def test_a_relabel_in_that_then_fails_is_announced_and_its_facts_close(
+    monkeypatch,
+) -> None:
+    """Its facts close first once the relabel is in, so a step after it that fails, here
+    the chunk tombstone, leaves none open; the relabel is announced as it landed."""
+    from server.memory import store as memory_repo
+    from server.memory.app import high_fence, webhooks
+
+    closed: list[Any] = []
+    announced: list[Any] = []
+
+    async def _close(key, memory_id, version, *, ch):
+        closed.append(key)
+
+    async def _chunks(**_k):
+        if heads.rows:  # the tombstone after the relabel is in
+            raise RuntimeError("chunk read timed out")
+        return 0
+
+    async def _quiet(*_a, **_k):
+        return 0
+
+    async def _announce(events: Any) -> None:
+        announced.extend(events)
+
+    monkeypatch.setattr(sweep, "_close_mined_facts", _close)
+    monkeypatch.setattr(high_fence, "tombstone_set_chunks", _chunks)
+    monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _quiet)
+    monkeypatch.setattr(memory_repo, "fence_vectors", _quiet)
+    monkeypatch.setattr(webhooks, "announce", _announce)
+    cand = _candidate("1", "o", "k", "high", "credential")
+    heads = _Heads(monkeypatch, [cand])
+    res = await sweep.apply([cand], ch=_CH())
+    assert len(res.errors) == 1 and "chunk read timed out" in res.errors[0]
+    assert (len(closed), heads.resolved, len(announced)) == (1, ["owed-1"], 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("postgres", "authority", "clickhouse", "outcome"),
+    [
+        (True, 5, 5, "closed"),  # in ClickHouse: closed
+        (True, 7, 7, "closed"),  # a later write or delete: closed once ClickHouse holds it
+        (True, 5, 1, "pending"),  # in the authority only: the repair waits
+        (True, 5, None, "pending"),  # ClickHouse holds no row of the key yet
+        (True, 1, 1, "nothing"),  # settled below the relabel: it did not land
+        (True, None, None, "nothing"),  # the key holds no row (erased)
+        (True, "timeout", 1, "raised"),  # a COMMIT still holds the head: left active
+        (False, 5, 5, "closed"),  # ClickHouse is the authority
+        (False, 1, 1, "nothing"),
+    ],
+)
+async def test_owed_facts_close_once_clickhouse_holds_the_relabel(
+    monkeypatch, postgres, authority, clickhouse, outcome
+) -> None:
+    """The repair's close of owed facts: nothing owed when the authority's head settled
+    below the relabel's version or the key holds no row, a wait while ClickHouse lacks
+    it, a close once it holds it. Under Postgres the head is the settled one, so a commit
+    still waiting on the standby is waited for, and a wait past the lock timeout raises."""
+    from server.core import pg
+    from server.memory import store as memory_repo
+    from server.memory.store import pg_memory
+
+    key = ("o", "n", "a", "-", "-", "k")
+    closed: list[Any] = []
+
+    async def _settled(keys):
+        assert postgres  # on ClickHouse its own head is the authority's
+        if authority == "timeout":
+            raise pg.PostgresUnavailableError("lock wait timed out")
+        return {} if authority is None else {key: authority}
+
+    async def _clickhouse(keys, **_k):
+        return {} if clickhouse is None else {key: clickhouse}
+
+    async def _closed(*a, **_k):
+        closed.append(a)
+
+    monkeypatch.setattr(pg, "enabled", lambda: postgres)
+    monkeypatch.setattr(pg_memory, "settled_head_versions", _settled)
+    monkeypatch.setattr(memory_repo, "clickhouse_head_versions", _clickhouse)
+    monkeypatch.setattr(sweep, "_close_mined_facts", _closed)
+    if outcome == "raised":
+        with pytest.raises(pg.PostgresUnavailableError):
+            await sweep.close_owed_facts(key, "mid", 5, ch=_CH())
+    else:
+        done = await sweep.close_owed_facts(key, "mid", 5, ch=_CH())
+        assert done == (outcome != "pending")
+    assert closed == ([(key, "mid", 5)] if outcome == "closed" else [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("edges", "triples", "raised"),
+    [
+        ("fails", "closes", "edges unreachable"),
+        ("drops", "fails", "triples unreachable"),
+        ("fails", "fails", "triples unreachable"),  # both: the triples' error is raised
+        ("drops", "restate", "repair timed out"),
+        ("fails", "restate", "repair timed out"),
+    ],
+)
+async def test_a_failed_close_of_owed_facts_raises_so_the_debt_stays(
+    monkeypatch, caplog, edges, triples, raised
+) -> None:
+    """The owed close calls the raising forms, so a failure leaves the owed record active.
+    The triples close whatever the edge drop did, and a fallback restate whose interval
+    repair failed is owed on its own with the closes it made, as a reconcile owes it."""
+    from datetime import datetime
+
+    from server.memory import store as memory_repo
+    from server.memory.app import edge_links, projection_failures, triple_projections
+    from server.memory.app.projection_errors import (
+        TRIPLES_INSERTED_AT,
+        TRIPLES_RESTORE_ID,
+        TriplesRepairFailed,
+    )
+
+    key = ("o", "n", "a", "u1", "-", "k")  # the user the record is erased with
+    closed: list[str] = []
+    recorded: list[dict[str, Any]] = []
+
+    async def _versions(keys, **_k):
+        return {key: 5}
+
+    async def _drop(*_a, **_k):
+        if edges == "fails":
+            raise RuntimeError("edges unreachable")
+
+    async def _close(*_a, **_k):
+        closed.append("triples")
+        if triples == "fails":
+            raise RuntimeError("triples unreachable")
+        if triples == "restate":
+            raise TriplesRepairFailed(
+                datetime(2026, 1, 1), RuntimeError("repair timed out"), restore_id="r1"
+            )
+
+    async def _record(**kw):
+        recorded.append(kw)
+        return "f2"
+
+    monkeypatch.setattr(memory_repo, "clickhouse_head_versions", _versions)
+    monkeypatch.setattr(edge_links, "drop_undeclared_links", _drop)
+    monkeypatch.setattr(triple_projections, "close_dropped_facts", _close)
+    monkeypatch.setattr(projection_failures, "record_projection_failure", _record)
+    expected = TriplesRepairFailed if triples == "restate" else RuntimeError
+    with caplog.at_level("WARNING"), pytest.raises(expected, match=raised):
+        await sweep.close_owed_facts(key, "mid", 5, ch=_CH())
+    assert closed == ["triples"]  # closed whatever the edge drop did
+    # The edge drop's error is logged only when the triples' is raised in its place.
+    lost = edges == "fails" and triples != "closes"
+    assert ("edge drop of mid failed: RuntimeError" in caplog.text) == lost
+    assert "edges unreachable" not in caplog.text  # the summary names the type, not the text
+    if triples == "restate":
+        (owed,) = recorded
+        assert owed["projection"] == projection_failures.TRIPLES_RECONCILE
+        assert (owed["payload"]["memory_ids"], owed["payload"][TRIPLES_RESTORE_ID]) == (
+            ["mid"],
+            "r1",
+        )
+        assert owed["payload"][TRIPLES_INSERTED_AT] == "2026-01-01T00:00:00"
+        assert owed["user_id"] == "u1"
+    else:
+        assert recorded == []
+
+
+@pytest.mark.asyncio
+async def test_a_restate_whose_record_fails_logs_and_raises_the_restate(
+    monkeypatch, caplog
+) -> None:
+    """A fallback restate's repair the sweep cannot record is lost, as a reconcile's is:
+    the record's failure is logged by its type, never its text (the payload may hold the
+    row's facts), and the restate's error is raised."""
+    from datetime import datetime
+
+    from server.memory import store as memory_repo
+    from server.memory.app import edge_links, projection_failures, triple_projections
+    from server.memory.app.projection_errors import TriplesRepairFailed
+
+    key = ("o", "n", "a", "-", "-", "k")
+
+    async def _versions(keys, **_k):
+        return {key: 5}
+
+    async def _quiet(*_a, **_k):
+        return None
+
+    async def _close(*_a, **_k):
+        raise TriplesRepairFailed(
+            datetime(2026, 1, 1), RuntimeError("repair timed out"), restore_id="r1"
+        )
+
+    async def _record(**_kw):
+        raise RuntimeError("record refused")
+
+    monkeypatch.setattr(memory_repo, "clickhouse_head_versions", _versions)
+    monkeypatch.setattr(edge_links, "drop_undeclared_links", _quiet)
+    monkeypatch.setattr(triple_projections, "close_dropped_facts", _close)
+    monkeypatch.setattr(projection_failures, "record_projection_failure", _record)
+    with caplog.at_level("WARNING"), pytest.raises(TriplesRepairFailed, match="repair timed out"):
+        await sweep.close_owed_facts(key, "mid", 5, ch=_CH())
+    assert "projection failure log failed for triples_reconcile" in caplog.text
+    assert "record refused" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_committed_relabel_whose_close_fails_keeps_its_debt(monkeypatch) -> None:
+    """In the sweep, a relabel that is in but whose facts close fails is counted and
+    announced, and leaves its owed record for the repair."""
+    from server.memory import store as memory_repo
+    from server.memory.app import webhooks
+
+    announced: list[Any] = []
+
+    async def _close(*_a, **_k):
+        raise RuntimeError("triples unreachable")
+
+    async def _quiet(*_a, **_k):
+        return 0
+
+    async def _announce(events: Any) -> None:
+        announced.extend(events)
+
+    monkeypatch.setattr(sweep, "_close_mined_facts", _close)
+    monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _quiet)
+    monkeypatch.setattr(memory_repo, "fence_vectors", _quiet)
+    monkeypatch.setattr(webhooks, "announce", _announce)
+    cand = _candidate("1", "o", "k", "high", "credential")
+    heads = _Heads(monkeypatch, [cand])
+    res = await sweep.apply([cand], ch=_CH())
+    assert (res.relabelled, res.high, res.errors) == (1, 1, [])
+    assert (len(heads.owed), heads.resolved, len(announced)) == (1, [], 1)
+
+
+@pytest.mark.asyncio
+async def test_under_postgres_a_high_relabel_is_fenced_once_committed(monkeypatch) -> None:
+    """Under Postgres the fence follows the relabel's commit, at its version (the commit's
+    delivery retires the head's vectors: tests/integration/test_pg_authority.py)."""
+    from server.core import pg
+    from server.memory import store as memory_repo
+    from server.memory.app import high_fence
+
+    order: list[str] = []
+    fenced: list[Any] = []
+
+    async def _retire(items, *, ch=None, bare=False):
+        order.append("retire")
+        return 1
+
+    async def _fence_committed(items, **_k):
+        order.append("fence")
+        fenced.extend(items)
+        return True
+
+    async def _chunks(**_k):
+        order.append("chunks")
+        return 0
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
+    monkeypatch.setattr(high_fence, "fence_committed", _fence_committed)
+    monkeypatch.setattr(high_fence, "tombstone_set_chunks", _chunks)
+    cand = _candidate("1", "o", "k", "high", "credential")
+    heads = _Heads(monkeypatch, [cand], on_insert=lambda _rows: order.append("relabel"))
+    res = await sweep.apply([cand], ch=_CH())
+    assert not res.errors and (res.high, res.embeddings_tombstoned) == (1, 0)
+    # The chunks and vectors go again after the label: the read is the authority's, so
+    # this holds while the publish is pending.
+    assert order == ["relabel", "fence", "chunks", "retire"]
+    assert fenced == [(tuple(cand.sort_key[c] for c in SORT_KEY), heads.rows[0]["version"])]

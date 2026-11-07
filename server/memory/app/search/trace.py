@@ -3,9 +3,11 @@ memory.search_trace_log (the recorded per-query telemetry)."""
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Any
 
-from server.core.ch import get_client
+from server.core import pg
+from server.core.ch import get_client, sequential_reads
 from server.core.naming import named
 from server.embedding import get_embedder
 from server.memory.api.models_search import (
@@ -13,13 +15,15 @@ from server.memory.api.models_search import (
     MemorySearchTraceOutput,
     SearchTraceLogInput,
     SearchTraceLogOutput,
+    _MemorySearchHit,
     _SearchTraceHit,
     _SearchTraceLogRow,
 )
+from server.memory.app.search import pg_validation
 from server.memory.app.search.embed import _bounded_query_embed
 from server.memory.app.search.filters import read_filters
 from server.memory.app.search.query_spelling import embed_query
-from server.memory.app.search.vector_legs import _plane_fields
+from server.memory.app.search.vector_legs import _plane_fields, _stamp_row_fields
 
 
 async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
@@ -45,7 +49,12 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
 
     entity_filter_lower = [t.lower() for t in (input.entity_filter or [])]
 
-    with traced("ch.query.memory_embeddings", op="search_trace"):
+    # At the barrier a search waits at, read sequentially after a wait, as a search does.
+    sequential = await pg_validation.admit(input.org, [input.namespace])
+    with (
+        traced("ch.query.memory_embeddings", op="search_trace"),
+        sequential_reads() if sequential else nullcontext(),
+    ):
         hits = await vector_search_trace(
             SearchQuery(
                 org=input.org,
@@ -58,8 +67,9 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
             )
         )
 
+    served = await _served(input, hits)
     results: list[_SearchTraceHit] = []
-    for i, h in enumerate(hits, start=1):
+    for i, h in enumerate(served, start=1):
         results.append(
             _SearchTraceHit(
                 memory_key=h.memory_key,
@@ -79,7 +89,33 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
         entity_filter=entity_filter_lower,
         query_spellings=spellings or {},
         query_spellings_skipped=spellings is None,
+        stale_dropped=len(hits) - len(served),
     )
+
+
+async def _served(input: MemorySearchTraceInput, hits: list[Any]) -> list[Any]:
+    """The hits the Postgres authority still serves, checked as memory.search checks its
+    own (`pg_validation`); all of them under the ClickHouse authority. The probes carry
+    only what the check reads: source, namespace, key, type, version and identity. A
+    replay (`as_of`) is served as it read, as memory.search serves one."""
+    if not pg.enabled() or input.as_of is not None:
+        return hits
+    probes = [
+        _stamp_row_fields(
+            h,
+            _MemorySearchHit(
+                memory_key=h.memory_key,
+                memory_type=h.memory_type,
+                content_excerpt="",
+                distance=h.distance,
+                similarity=1.0 - h.distance,
+                version=h.version,
+            ),
+        )
+        for h in hits
+    ]
+    stale = await pg_validation.stale_flags(input.org, input.namespace, probes)
+    return [h for h, s in zip(hits, stale, strict=True) if not s]
 
 
 async def _reader_actors(org: str, me: str) -> list[str]:

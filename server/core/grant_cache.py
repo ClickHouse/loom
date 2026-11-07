@@ -222,6 +222,10 @@ async def changed(org: str, subjects: Iterable[str] | None = None, *, kind: str 
         )
     except Exception as e:  # noqa: BLE001 — the grant write landed; the TTL bounds it elsewhere
         log.warning("grant cache: watermark for org %s not written: %s", org, e)
+    from server.core import pg
+
+    # Who may read which peer changed: a write admitted before it starts over.
+    await pg.bump_policy(org)
 
 
 def watermark_row(org: str, kind: str = GRANTS) -> dict[str, Any]:

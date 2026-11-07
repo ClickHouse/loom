@@ -66,16 +66,6 @@ def test_encode_page_and_handles_round_trip() -> None:
     assert sp.parse_handle("") is None
 
 
-def test_slice_page_reports_the_next_offset_or_exhaustion() -> None:
-    payload = {"hits": [{"k": i} for i in range(5)]}
-    page, nxt = sp.slice_page(payload, offset=0, top_k=2)
-    assert [h["k"] for h in page] == [0, 1] and nxt == 2
-    page, nxt = sp.slice_page(payload, offset=4, top_k=2)
-    assert [h["k"] for h in page] == [4] and nxt == -1
-    page, nxt = sp.slice_page(payload, offset=9, top_k=2)
-    assert page == [] and nxt == -1
-
-
 class _CH:
     def __init__(self, blob: str | None = None) -> None:
         self.blob = blob

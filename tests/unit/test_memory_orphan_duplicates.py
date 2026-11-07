@@ -104,7 +104,9 @@ class FakeMemoryTable:
         ]
         return [OrphanDuplicate.from_row(x) for x in out[:batch_size]]
 
-    async def mark_active_by_ids(self, org: str, memory_ids: list[str], *, ch: Any = None) -> None:
+    async def mark_active_by_ids(
+        self, org: str, memory_ids: list[str], *, namespace: str, ch: Any = None
+    ) -> None:
         self.mark_active_calls.append((org, list(memory_ids)))
         if not memory_ids:
             return

@@ -301,3 +301,125 @@ async def test_the_same_key_in_two_sessions_picks_one_keeper_every_time() -> Non
     )
     got = await _bulk_set_mod._bulk_identity_dupes(ch, _input())
     assert list(got.values()) == [("user_task_branch", first)]
+
+
+@pytest.mark.asyncio
+async def test_under_postgres_a_keeper_is_one_the_authority_still_holds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ClickHouse may not hold a rewrite or a delete yet: a keeper whose head on the
+    authority holds other bytes, or none, is not one, and its entry is written."""
+    from server.memory.app import bulk_set
+    from server.memory.store import pg_memory
+
+    sha = sha256_value(VALUE)
+    found = [
+        {"head_sha": sha, "session_id": "s1", "memory_key": "kept", "memory_id": "m1"},
+        {"head_sha": sha, "session_id": "s1", "memory_key": "rewritten", "memory_id": "m2"},
+        {"head_sha": sha, "session_id": "s1", "memory_key": "deleted", "memory_id": "m3"},
+    ]
+
+    async def _heads(keys: Any) -> dict[Any, Any]:
+        held = {"kept": {"content_sha256": sha}, "rewritten": {"content_sha256": "b" * 64}}
+        # the authority's id: a key re-set since keeps its bytes under a new one
+        return {
+            k: {"status": "active", "memory_id": f"auth-{k[5]}", **held[k[5]]}
+            for k in keys
+            if k[5] in held
+        }
+
+    monkeypatch.setattr(pg_memory, "heads_by_keys", _heads)
+    kept = await bulk_set._keepers_on_the_authority(_input(), found)
+    assert [(r["memory_key"], r["memory_id"]) for r in kept] == [("kept", "auth-kept")]
+
+
+class _StubCHWithAheadHead(_StubCHWithLiveKey):
+    """The live row holds other bytes, at a version from a replica whose clock is ahead."""
+
+    def __init__(self, version: int) -> None:
+        super().__init__("user_clickhouse_task_branch", "mid-live")
+        self.version = version
+
+    async def query_all(
+        self, sql: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        rows = await super().query_all(sql, params)
+        if "IN {keys:Array(Tuple(" in sql:
+            return [r | {"version": self.version, "content_sha256": "c" * 64} for r in rows]
+        return rows
+
+
+@pytest.mark.asyncio
+async def test_a_bulk_write_goes_above_a_head_written_ahead_of_this_clock(harness) -> None:
+    from server.memory.store.rows import next_version
+
+    ahead = next_version() + 15 * 60 * 10**9
+    ch = _StubCHWithAheadHead(ahead)
+    harness(ch)
+    out = await mem_extract.handle_memory_bulk_set(_input())
+    assert [r["version"] for r in _memory_rows(ch)] == [ahead + 2]
+    assert out.written[0].version == ahead + 2
+
+
+@pytest.mark.asyncio
+async def test_two_entries_of_a_key_over_a_head_ahead_never_tie(harness) -> None:
+    from server.memory.store.rows import next_version
+
+    ahead = next_version() + 15 * 60 * 10**9
+    ch = _StubCHWithAheadHead(ahead)
+    harness(ch)
+    inp = _input()
+    inp.entries.append(
+        _BulkSetEntry(memory_key=inp.entries[0].memory_key, memory_type="semantic", value="later")
+    )
+    await mem_extract.handle_memory_bulk_set(inp)
+    versions = [r["version"] for r in _memory_rows(ch)]
+    assert versions[0] >= ahead + 2 and versions == sorted(set(versions))  # strictly rising
+
+
+@pytest.mark.asyncio
+async def test_under_postgres_the_lookup_holds_a_deleted_head_apart_from_the_live_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One read, deleted heads included: a write over a deleted key goes above it, while
+    the skip, pin and id state is built from the live rows alone."""
+    from datetime import datetime
+
+    from server.memory.app import bulk_rows, bulk_set
+    from server.memory.store import MemoryRow
+
+    asked: dict[str, Any] = {}
+
+    def _head(key: str, **over: Any) -> MemoryRow:
+        return MemoryRow(
+            memory_id=f"m-{key}",
+            org="test",
+            namespace="personal",
+            agent="cursor",
+            user_id="u",
+            session_id="s-new",
+            memory_key=key,
+            memory_type="semantic",
+            value="v",
+            confidence=1.0,
+            version=7,
+            pinned=False,
+            created_at=datetime(2026, 1, 1),
+            expires_at=None,
+            **over,
+        )
+
+    async def _heads(keys: Any, **kw: Any) -> dict[Any, MemoryRow]:
+        asked.update(kw)
+        rows = [_head("live"), _head("gone", tombstoned_at=datetime(2026, 1, 2))]
+        return {k: r for k in keys for r in rows if r.memory_key == k[5]}
+
+    monkeypatch.setattr("server.core.pg.enabled", lambda: True)
+    monkeypatch.setattr("server.memory.store.memory_rows_by_identity_keys", _heads)
+    inp = _input("live")
+    inp.entries.append(_BulkSetEntry(memory_key="gone", memory_type="semantic", value="back"))
+    state = bulk_rows._BulkWriteState()
+    await bulk_set._bulk_existing_lookup(object(), inp, state)
+    assert asked["include_tombstoned"] is True and state.existing_lookup_ok
+    assert set(state.existing_rows) == {"live"} == set(state.existing_ids)
+    assert set(state.deleted_heads) == {"gone"}

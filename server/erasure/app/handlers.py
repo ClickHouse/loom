@@ -17,6 +17,7 @@ from typing import Any, cast
 from server.auth import authz, sharing
 from server.auth import context as auth_context
 from server.auth.jwt import AuthInfo
+from server.core import pg
 from server.core.errors import AuthInsufficientError
 from server.core.principals import personal_name
 from server.erasure.api.erasure import (
@@ -122,7 +123,9 @@ async def _export_memory(
     limit: int,
     shown: erasure_exports.Shown,
 ) -> tuple[list[dict[str, object]], int, bool]:
-    rows = await erasure_exports.export_memory(
+    # Under Postgres the authority's heads: ClickHouse may trail it.
+    read = erasure_exports.export_memory_heads if pg.enabled() else erasure_exports.export_memory
+    rows = await read(
         org,
         scope_type,
         scope_value,

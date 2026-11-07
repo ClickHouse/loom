@@ -414,6 +414,7 @@ async def link_value_updates(
                     org,
                     [older_id],
                     _supersession_update(ln.newer_id, inv),
+                    namespace=namespace,
                     ch=ch,
                     skip=tracker.skip,
                     # Read-your-writes: a lagging replica's row would be rebuilt over a

@@ -417,10 +417,13 @@ async def idempotency_check(
     key scoped to the verified caller (an anonymous call to the target's org)
     and the op, the validated input's hash — `unset` names fields the
     transport filled for the caller — and what the replay cache holds for
-    them. The cache fails open (a failed read is a miss)."""
+    them. Under the ClickHouse authority the cache fails open (a failed read is a
+    miss); under Postgres, `loom.idempotency` fails closed (503)."""
+    from server.core import idempotency, pg
+
+    idempotency.unbind()
     if not op.idempotent or op.read_only or not client_key:
         return Replay()
-    from server.core import idempotency
 
     scope = idempotency.scope(
         client_key,
@@ -429,7 +432,10 @@ async def idempotency_check(
         operation=op.name,
     )
     body_hash = idempotency.request_hash(input_obj, unset=unset)
-    cached = await idempotency.check(scope.key, body_hash)
+    if pg.enabled():
+        cached = await idempotency.check_owned(scope, op.name, body_hash)
+    else:
+        cached = await idempotency.check(scope.key, body_hash)
     return Replay(
         scope=scope,
         body_hash=body_hash,

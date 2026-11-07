@@ -166,12 +166,26 @@ class MemoryStore:
         return self._hydrate(max(rows, key=lambda r: int(r["version"])))
 
     async def get_by_id(
-        self, memory_id: str, *, org: str | None = None, **_: Any
+        self, memory_id: str, *, org: str, namespace: str, **_: Any
     ) -> mr.MemoryRow | None:
         for r in self.final().values():
-            if str(r["memory_id"]) == str(memory_id) and org in (None, r["org"]):
+            if str(r["memory_id"]) == str(memory_id) and (r["org"], r["namespace"]) == (
+                org,
+                namespace,
+            ):
                 return self._hydrate(r) if r["tombstoned_at"] is None else None
         return None
+
+    async def namespaces_of_id(self, org: str, memory_id: str, **_: Any) -> list[str]:
+        return sorted(
+            {
+                str(r["namespace"])
+                for r in self.final().values()
+                if str(r["memory_id"]) == str(memory_id)
+                and r["org"] == org
+                and r["tombstoned_at"] is None
+            }
+        )
 
     async def live_rows_for_key(self, input: Any, _ch: Any) -> list[dict[str, Any]]:
         """memory.update's namespace-wide key resolution."""
@@ -278,6 +292,7 @@ def wire_memory_store(monkeypatch: pytest.MonkeyPatch, store: MemoryStore) -> Re
         monkeypatch.setattr(target, lambda: FixedEmbedder(), raising=False)
     monkeypatch.setattr(mr, "get_by_key", store.get_by_key)
     monkeypatch.setattr(mr, "get_by_id", store.get_by_id)
+    monkeypatch.setattr(mr, "namespaces_of_id", store.namespaces_of_id)
     monkeypatch.setattr(update_mod, "_live_rows_for_key", store.live_rows_for_key)
 
     async def _check(**kw: Any) -> ConflictResult:
@@ -311,3 +326,21 @@ def wire_memory_store(monkeypatch: pytest.MonkeyPatch, store: MemoryStore) -> Re
         monkeypatch.setattr(bl, name, value)
     monkeypatch.setattr(bl, "_pending_hits", {})
     return recorded
+
+
+async def one_holder(*_: Any, **__: Any) -> list[str]:
+    """`namespaces_of_id` for a test whose stubbed `get_by_id` answers from one namespace."""
+    return ["ns"]
+
+
+def stub_status_before(monkeypatch: pytest.MonkeyPatch, status: str = "") -> list[mr.MemoryRow]:
+    """Replaces the status-before read an Undo makes: each row it asks about is recorded and
+    answered `status`."""
+    asked: list[mr.MemoryRow] = []
+
+    async def before(row: mr.MemoryRow, *, ch: Any = None) -> str:
+        asked.append(row)
+        return status
+
+    monkeypatch.setattr(mr, "status_before", before)
+    return asked

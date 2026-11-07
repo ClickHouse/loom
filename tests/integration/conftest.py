@@ -25,6 +25,7 @@ Without LOOM_CH_HOST there is no store to purge from, and the run warns.
 
 from __future__ import annotations
 
+import asyncio
 import collections
 import os
 import time
@@ -43,6 +44,7 @@ from tests.integration._resources import (
     ch_target_configured,
     minted_orgs,
     purge,
+    purge_pg,
 )
 
 _TIERS = {
@@ -247,8 +249,15 @@ def _purge_minted_orgs() -> Iterator[None]:
         client = ch_client_from_env()
     except Exception as e:  # noqa: BLE001 — no store reachable means nothing this run can purge
         pytest.fail(f"cannot reach ClickHouse to purge {len(orgs)} test orgs: {e!r}")
+    # The authority first, as an erasure runs: a delivery nobody has claimed cannot then
+    # republish into ClickHouse after ClickHouse's purge (one already claimed can).
+    left = (
+        asyncio.run(purge_pg(os.environ["LOOM_PG_DSN"], orgs))
+        if os.environ.get("LOOM_PG_DSN")
+        else {}
+    )
     try:
-        left = purge(client, os.environ.get("LOOM_CH_DATABASE", "loom"), orgs)
+        left.update(purge(client, os.environ.get("LOOM_CH_DATABASE", "loom"), orgs))
     finally:
         client.close()
     assert not left, f"rows of test orgs survived the purge: {left}"

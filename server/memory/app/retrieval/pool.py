@@ -17,6 +17,7 @@ from server.memory.app.set_chunks import set_chunk_identities
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_sql import _build_where
 from server.memory.domain.search_types import (
+    ChunkRef,
     RowIdentity,
     RowKey,
     SearchHit,
@@ -138,6 +139,8 @@ def _folded_fields(row: SearchHit, chunk: SearchHit) -> dict[str, Any]:
         "rank_score": float(chunk.rank_score),
         "distance": min(float(row.distance), float(chunk.distance)),
         "content_excerpt": chunk.content_excerpt or row.content_excerpt,
+        # The passage is the chunk's: so is what the Postgres authority checks it by.
+        "chunk": _chunk_of(chunk),
     }
 
 
@@ -220,6 +223,7 @@ def _fold(
             session_id=session,
             version=row.version,
             tags=list(row.tags),
+            chunk=_chunk_of(h),
             score_components={
                 **dict(h.score_components or {}),
                 "folded_chunks": 1.0,
@@ -239,6 +243,11 @@ def _chunk_index(h: SearchHit) -> int | None:
     # `chunk:memory.set:<key>:<index>`
     index = str(h.memory_key).rpartition(":")[2]
     return int(index) if index.isdigit() else None
+
+
+def _chunk_of(h: SearchHit) -> ChunkRef | None:
+    cid = _chunk_id(h)
+    return None if cid is None else (cid.agent, cid.user_id, cid.chunk_index, cid.sha)
 
 
 def _chunk_id(h: SearchHit) -> ChunkId | None:

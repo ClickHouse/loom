@@ -62,9 +62,11 @@ def test_graded_counts_statement_counts_graded_runs_by_relied_on_key() -> None:
 class _Row:
     def __init__(self, key: str, status: str, conflict_with: list[str] | None = None) -> None:
         self.memory_key, self.status = key, status
+        self.namespace = "n"
         self.memory_id = f"id-{key}"
         self.conflict_with = conflict_with or []
         self.content_sha256 = "sha"
+        self.version = 1
 
 
 class _CH:
@@ -109,7 +111,9 @@ def repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         seen["subjects"].append(kw["subject"])
         return ""
 
-    async def _flag(org: str, ids: list[str], update: Any, *, ch: Any = None) -> int:
+    async def _flag(
+        org: str, ids: list[str], update: Any, *, ch: Any = None, namespace: str | None = None
+    ) -> int:
         seen["flagged"].append((ids, update(_Row("fact", "active"))))
         return len(ids)
 
@@ -261,7 +265,11 @@ def test_mark_peers_keeps_a_proposal_on_trial(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", _write)
     monkeypatch.setattr(memory_repo, "get_by_id", _get)
-    asyncio.run(conflicts.mark_peers_conflicted(org="o", new_memory_id="new", peer_ids=["peer"]))
+    asyncio.run(
+        conflicts.mark_peers_conflicted(
+            org="o", namespace="ns", new_memory_id="new", peer_ids=["peer"]
+        )
+    )
     assert writes == [
         (["new"], {"status": "proposed", "conflict_with": ["peer"]})
     ]  # peers untouched

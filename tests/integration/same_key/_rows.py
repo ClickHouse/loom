@@ -74,7 +74,7 @@ async def _retire(ch: Any, org: str, value: str, valid_at: datetime, session: st
         params={"org": org, "ns": NS, "k": KEY, "id": str(new["memory_id"])},
     )
     victims = [{**r, "superseded_by": str(new["memory_id"])} for r in live]
-    await M.supersede_duplicates(org, victims, ch=ch, strong=True)
+    await M.supersede_duplicates(org, victims, ch=ch, strong=True, namespace=NS)
     return str(new["memory_id"])
 
 
@@ -1082,7 +1082,7 @@ async def _replay_owed(ch: Any, org: str, monkeypatch: Any) -> None:
     from server.memory.app import projection_failures
     from server.memory.app.projection_failures import retry_projection_failures
 
-    monkeypatch.setattr(projection_failures, "FOLLOW_OWED_GRACE_S", 0)
+    monkeypatch.setattr(projection_failures, "OWED_GRACE_S", 0)
     await retry_projection_failures(org=org, projection="triples_follow_owed", ch=ch)
 
 

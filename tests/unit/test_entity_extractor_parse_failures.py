@@ -52,6 +52,8 @@ def _row(key: str = "k1") -> dict[str, Any]:
         "memory_key": key,
         "memory_type": "semantic",
         "value": "User works with Alice at ClickHouse on the staging cluster.",
+        "version": 1,
+        "content_sha256": "",
     }
 
 
@@ -220,3 +222,37 @@ async def test_an_unlabelled_credential_row_never_reaches_the_model(
     assert sent == [] and result.skipped_sensitive == 2
     # the sentinel keeps the next pass from picking the row up again
     assert [a["entities"] for a in wired.applied] == [[ee._NONE_SENTINEL]] * 2
+
+
+@pytest.mark.asyncio
+async def test_a_value_the_authority_no_longer_serves_never_reaches_the_model(
+    monkeypatch: pytest.MonkeyPatch, wired: _Repo
+) -> None:
+    """Under Postgres a candidate ClickHouse still shows, whose head was revised, deleted
+    or redacted in the authority, is left out before the model call."""
+    from datetime import UTC, datetime
+
+    from server.core import pg
+    from server.memory.store import pg_memory
+
+    wired.rows = [_row("k1") | {"redacted_at": None}, _row("k2") | {"redacted_at": None}]
+    heads = {
+        ("dev", "ns", "a", "u", "-", "k1"): {"version": 1, "redacted_at": None},
+        ("dev", "ns", "a", "u", "-", "k2"): {"version": 1, "redacted_at": datetime.now(UTC)},
+    }
+
+    async def heads_by_keys(keys: Any) -> dict[Any, Any]:
+        return {k: heads[k] for k in keys if k in heads}
+
+    sent: list[str] = []
+
+    async def _extract(value_str: str):
+        sent.append(value_str)
+        return ["alice"]
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", heads_by_keys)
+    monkeypatch.setattr(ee, "_extract", _extract)
+    await ee.run_pass(ee.EntityExtractorConfig())
+    assert len(sent) == 1
+    assert [it["memory_key"] for it in wired.applied] == ["k1"]

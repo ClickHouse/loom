@@ -16,7 +16,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,6 +25,33 @@ from server.core.hashing import hash_text
 from server.core.rmt_carry import register
 from server.memory.domain.delete_marks import carried_trace
 from server.memory.domain.expire_reasons import carried_reason
+
+# A memory's key: (org, namespace, agent, user_id, session_id, memory_key).
+IdentityKey = tuple[str, str, str, str, str, str]
+# (agent, user_id, session_id, memory_key): an IdentityKey within one namespace.
+KeyInNamespace = tuple[str, str, str, str]
+
+
+IDENTITY_COLUMNS = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
+
+
+def row_field(row: Any, name: str) -> Any:
+    """A column of a MemoryRow, or of anything indexed by column name (a dict, a driver
+    record)."""
+    return getattr(row, name) if isinstance(row, BaseModel) else row[name]
+
+
+def identity_key(row: Any) -> IdentityKey:
+    """The (org, namespace, agent, user_id, session_id, memory_key) of a MemoryRow, a dict
+    or a driver record."""
+    org, ns, agent, uid, sid, key = (str(row_field(row, c)) for c in IDENTITY_COLUMNS)
+    return org, ns, agent, uid, sid, key
+
+
+def key_in_namespace(row: Any) -> KeyInNamespace:
+    """The (agent, user_id, session_id, memory_key) of a row, as `identity_key` reads it."""
+    agent, uid, sid, key = (str(row_field(row, c)) for c in IDENTITY_COLUMNS[2:])
+    return agent, uid, sid, key
 
 
 class Identity(BaseModel):
@@ -599,6 +626,70 @@ def build_embedding_row(**overrides: Any) -> dict[str, Any]:
     return row
 
 
+def search_document_row(
+    memory_row: Mapping[str, Any],
+    *,
+    embedding_model: str,
+    embedding: list[float],
+    key_embedding: list[float],
+    key_text: str,
+    excerpt: str,
+    conflict_checked_at: datetime | None = None,
+) -> dict[str, Any]:
+    """The loom.memory_embeddings row of one loom.memory version row: its search
+    document. Every persisted column is filled, so a later version cannot resurrect a
+    default over a real value, and its version is the memory row's, so a newer write's
+    retire or fence outranks it even when it lands late."""
+    from server.memory.domain.trust import attests
+
+    dim = len(embedding)
+    return build_embedding_row(
+        org=memory_row["org"],
+        namespace=memory_row["namespace"],
+        agent=memory_row["agent"],
+        user_id=memory_row["user_id"],
+        session_id=memory_row["session_id"],
+        run_id=memory_row["run_id"],
+        memory_key=memory_row["memory_key"],
+        memory_type=memory_row["memory_type"],
+        scope="private",
+        content_excerpt=excerpt,
+        source_class=memory_row["source_class"],
+        embedding_model=embedding_model,
+        embedding_dim=dim,
+        embedding=embedding,
+        memory_key_embedding=key_embedding,
+        memory_key_embedding_dim=dim if key_text else 0,
+        confidence=float(memory_row["confidence"]),
+        tombstoned_at=None,
+        created_at=naive_utc_now(),
+        tags=list(memory_row.get("tags") or []),
+        files=memory_row["files"],
+        entities=memory_row["entities"],
+        source_resource_id=memory_row["source_resource_id"],
+        valid_at=memory_row.get("valid_at"),
+        valid_to=memory_row.get("valid_to"),
+        invalid_at=memory_row.get("invalid_at"),
+        expires_at=memory_row.get("expires_at"),
+        reinforcement_count=memory_row["reinforcement_count"],
+        last_reinforced_at=memory_row["last_reinforced_at"],
+        # The lifecycle status from the first version: a `duplicate` verdict the
+        # memory row holds must not be served as `active` by the search pool.
+        status=str(memory_row.get("status") or "active"),
+        conflict_checked_at=conflict_checked_at,
+        content_sha256=str(memory_row.get("content_sha256") or ""),
+        version=int(memory_row["version"]),
+        # A revision of unchanged content keeps its attestation; the mirror says so.
+        verified=int(
+            attests(
+                memory_row.get("verified_by"),
+                memory_row.get("verified_sha256"),
+                memory_row.get("content_sha256"),
+            )
+        ),
+    )
+
+
 # Canonical column list for loom.session_summaries. Same RMT(version) mirror
 # discipline as loom.memory_embeddings; defaults mirror the DDL.
 SESSION_SUMMARY_PERSISTED_COLS: dict[str, Any] = {
@@ -806,6 +897,19 @@ def next_version() -> int:
     return time.time_ns()
 
 
+class Versioned(Protocol):
+    version: int
+
+
+def version_over(head: Versioned, drawn: int | None = None) -> int:
+    """The version of a copy of `head`: `drawn` (by default the next one), or two above
+    the head's when the head's writer's clock runs ahead, so the copy becomes the head
+    and its vector retire reaches a vector-only copy of the head (`reemit_version`'s
+    read + 1). With a version drawn before the read, the copy outranks every head the
+    read found, and a write drawing a version above the copy's outranks it."""
+    return max(next_version() if drawn is None else drawn, head.version + 2)
+
+
 def version_time(version: int) -> datetime:
     """When `version` (`next_version`'s epoch ns) was taken, naive UTC, to the
     microsecond: integer arithmetic, where a float of ns rounds."""
@@ -823,7 +927,8 @@ def reemit_version(row: dict[str, Any]) -> int:
       or entity_vectors row) writes the version of the loom.memory (or loom.shared)
       row that caused it and skips vector rows at or above it. Two copies of one read
       row would tie at read + 1 and the later insert would win, so a retire must sit
-      above any earlier read + 1.
+      above any earlier read + 1. A copy lifted over a head (`version_over`) goes two
+      above it, so a writer of vector-only copies writes at most one above a head.
     - a retire with no causing row (a reconcile or a sweep) uses one next_version()
       drawn before its scan."""
     return int(row.get("version") or 0) + 1
@@ -831,20 +936,20 @@ def reemit_version(row: dict[str, Any]) -> int:
 
 # A version row carries any column of the live table these builders do not
 # write (server/core/rmt_carry.py). Keys are the tables' ORDER BY.
-_IDENTITY = ("org", "namespace", "agent", "user_id")
-register("loom.memory", key=(*_IDENTITY, "session_id", "memory_key"), columns=MEMORY_PERSISTED_COLS)
+_KEY_PREFIX = ("org", "namespace", "agent", "user_id")
+register("loom.memory", key=IDENTITY_COLUMNS, columns=MEMORY_PERSISTED_COLS)
 register(
     "loom.memory_embeddings",
-    key=(*_IDENTITY, "session_id", "scope", "embedding_model", "memory_key"),
+    key=(*_KEY_PREFIX, "session_id", "scope", "embedding_model", "memory_key"),
     columns=EMBEDDING_PERSISTED_COLS,
 )
 register(
     "loom.session_summaries",
-    key=(*_IDENTITY, "session_id", "embedding_model"),
+    key=(*_KEY_PREFIX, "session_id", "embedding_model"),
     columns=SESSION_SUMMARY_PERSISTED_COLS,
 )
 register(
     "loom.entity_summaries",
-    key=(*_IDENTITY, "entity", "embedding_model"),
+    key=(*_KEY_PREFIX, "entity", "embedding_model"),
     columns=ENTITY_SUMMARY_PERSISTED_COLS,
 )

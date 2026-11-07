@@ -72,7 +72,8 @@ def test_the_embedding_row_copies_the_memory_rows_entities() -> None:
     """One canonical form in both rows, or `has(entities, 'x')` matches one table and
     not the other: the memory row canonicalises the input, the embedding row copies it."""
     assert '"entities": canonical_entities(input.entities or [])' in HANDLER.read_text()
-    assert 'entities=memory_row["entities"]' in COMMIT.read_text()
+    assert "memory_repo.search_document_row(" in COMMIT.read_text()
+    assert 'entities=memory_row["entities"]' in _search_document_row()
 
 
 def test_sentinel_is_only_written_for_genuinely_empty_extraction() -> None:
@@ -91,11 +92,51 @@ def test_embedding_row_carries_the_memory_rows_lifecycle_status() -> None:
     default `active`, and the pool memory.search reads would serve the
     duplicate as current. The first version of the mirror row must carry the
     same status as the memory row."""
-    src = COMMIT.read_text()
-    start = src.index("embedding_row = memory_repo.build_embedding_row(")
-    call = src[start : src.index("\n    )\n", start)]
-    assert 'status=str(memory_row.get("status") or "active")' in call, (
+    assert "memory_repo.search_document_row(" in COMMIT.read_text()
+    assert 'status=str(memory_row.get("status") or "active")' in _search_document_row(), (
         "memory.set builds its loom.memory_embeddings row without the lifecycle "
         "status of the loom.memory row; a duplicate verdict is then invisible to "
         "the search pool until a reconcile runs."
     )
+
+
+def _search_document_row() -> str:
+    """The source of `rows.search_document_row`, the builder memory.set's embedding row
+    and the delivery worker's both come from."""
+    src = (ROOT / "server" / "memory" / "store" / "rows.py").read_text()
+    start = src.index("def search_document_row(")
+    return src[start : src.index("\n\n\n", start)]
+
+
+def test_a_search_document_carries_its_rows_invalid_at() -> None:
+    """A document the delivery worker builds for an invalidated head is not served as
+    valid under `as_of`: it carries the row's `invalid_at`, as the status mirror does."""
+    from datetime import datetime
+
+    from server.memory.store.rows import (
+        MemoryRow,
+        build_memory_version_row,
+        search_document_row,
+    )
+
+    head = MemoryRow(
+        memory_id="m1",
+        org="o",
+        namespace="ns",
+        agent="a",
+        user_id="-",
+        session_id="-",
+        memory_key="k",
+        memory_type="semantic",
+        value="v",
+        confidence=1.0,
+        version=1,
+        pinned=False,
+        created_at=datetime(2026, 1, 1),
+        expires_at=None,
+    )
+    row = build_memory_version_row(head, invalid_at=datetime(2026, 2, 1), version=2)
+    doc = search_document_row(
+        row, embedding_model="m", embedding=[0.1], key_embedding=[], key_text="", excerpt="v"
+    )
+    assert doc["invalid_at"] == datetime(2026, 2, 1) and doc["version"] == 2

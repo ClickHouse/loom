@@ -36,11 +36,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.core.hashing import sha256_value as _sha
 from server.memory.app import webhooks
 from server.memory.domain import lock as _lock
-from server.memory.store.inserts import insert_memory_versions
+from server.memory.store.rows import IdentityKey, MemoryRow, identity_key
 
 log = logging.getLogger(__name__)
 
@@ -74,9 +74,15 @@ class ExpiryResult:
     demoted: int = 0
     anonymized: int = 0
     locked_skipped: int = 0
+    moved_skipped: int = 0  # candidates whose head moved on since ClickHouse's copy
     dry_run: bool = False
-    sample: list[dict[str, Any]] = field(default_factory=list)
+    # Up to 20 handled rows: (identity key, the entry as_dict reports).
+    sampled: list[tuple[IdentityKey, dict[str, Any]]] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
+
+    @property
+    def sample(self) -> list[dict[str, Any]]:
+        return [entry for _, entry in self.sampled]
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -85,10 +91,19 @@ class ExpiryResult:
             "demoted": self.demoted,
             "anonymized": self.anonymized,
             "locked_skipped": self.locked_skipped,
+            "moved_skipped": self.moved_skipped,
             "dry_run": self.dry_run,
             "sample": self.sample,
             "failures": self.failures,
         }
+
+
+def _still_expired(head: MemoryRow, now: datetime) -> bool:
+    """Whether a head newer than the candidate read is still a live row past its expiry
+    (only its copy in ClickHouse lags), so the pass expires it now."""
+    if head.tombstoned_at is not None or head.expires_at is None:
+        return False
+    return to_naive_utc(head.expires_at) <= now
 
 
 def plan(row: Any, *, now: datetime, cfg: ExpiryConfig) -> dict[str, Any]:
@@ -140,6 +155,7 @@ def emit_sweep_event(res: ExpiryResult, *, latency_ms: int, source: str = "worke
             "demoted": str(res.demoted),
             "anonymized": str(res.anonymized),
             "locked_skipped": str(res.locked_skipped),
+            "moved_skipped": str(res.moved_skipped),
             "failed": str(len(res.failures)),
             "dry_run": "true" if res.dry_run else "false",
             "source": source,
@@ -181,6 +197,13 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             org_filter=cfg.org_filter,
             namespace_filter=cfg.namespace_filter,
         )
+        # The candidates are ClickHouse's: each is expired from the head the authority
+        # holds, never from a stale copy; a head renewed or deleted since is left alone.
+        now = naive_utc_now()
+        current = await memory_repo.current_heads(rows, lambda _, h: _still_expired(h, now))
+        res.moved_skipped = len(rows) - len(current)
+        res.scanned += res.moved_skipped
+        rows = current
     except Exception as e:  # the pass records a failure; the next pass rescans
         log.exception("memory_expiry_sweep: scan failed")
         get_registry().record_failure(
@@ -191,7 +214,6 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
         res.failures.append(f"scan: {type(e).__name__}: {e}")
         return res
 
-    now = naive_utc_now()
     version_rows: list[dict[str, Any]] = []
     mirrors: list[tuple[str, Any, int]] = []  # (action, row, version) for the embeddings side
     for row in rows:
@@ -202,15 +224,18 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             res.locked_skipped += 1
             continue
         overrides = plan(row, now=now, cfg=cfg)
-        if len(res.sample) < 20:
-            res.sample.append(
-                {
-                    "memory_key": row.memory_key,
-                    "namespace": row.namespace,
-                    "agent": row.agent,
-                    "action": action,
-                    "expired_at": row.expires_at,
-                }
+        if len(res.sampled) < 20:
+            res.sampled.append(
+                (
+                    identity_key(row),
+                    {
+                        "memory_key": row.memory_key,
+                        "namespace": row.namespace,
+                        "agent": row.agent,
+                        "action": action,
+                        "expired_at": row.expires_at,
+                    },
+                )
             )
         if action == "tombstone":
             res.tombstoned += 1
@@ -222,14 +247,14 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             continue
         # One version for the memory row and its vector retire, so a late copy of an
         # older read (read + 1) stays below the retire.
-        version = memory_repo.next_version()
+        version = memory_repo.version_over(row)
         version_rows.append(memory_repo.build_memory_version_row(row, version=version, **overrides))
         mirrors.append((action, row, version))
 
     if version_rows:
         ch = get_client()
         try:
-            await insert_memory_versions(version_rows, ch=ch)
+            version_rows, mirrors = await _over_unmoved_heads(version_rows, mirrors, res, ch=ch)
         except Exception as e:  # the pass records a failure; the rows expire next pass
             log.exception("memory_expiry_sweep: version insert failed")
             res.failures.append(f"insert: {type(e).__name__}: {e}")
@@ -272,6 +297,62 @@ def _demote_overrides(row: Any, cfg: ExpiryConfig) -> dict[str, Any]:
     Tombstone and anonymize retire through `retire_vectors_for_keys` instead."""
     conf = max(cfg.demote_floor, min(1.0, float(row.confidence or 0.0) * cfg.demote_factor))
     return {"expires_at": None, "confidence": round(conf, 4)}
+
+
+async def _over_unmoved_heads(
+    version_rows: list[dict[str, Any]],
+    mirrors: list[tuple[str, Any, int]],
+    res: ExpiryResult,
+    *,
+    ch: Any,
+) -> tuple[list[dict[str, Any]], list[tuple[str, Any, int]]]:
+    """The rows written over the heads the pass read, and those that landed. Under the
+    Postgres authority a head that moved since refuses the batch: the heads are read
+    again and the batch goes once more without the moved ones; refused again (a head
+    moved meanwhile, or redacted in place), it is left whole. What is left the next pass
+    sees (`moved_skipped`)."""
+    import server.memory.store as memory_repo
+    from server.memory.store import pg_memory
+
+    reads = [row for _, row, _ in mirrors]
+    try:
+        await memory_repo.insert_versions_over_heads(version_rows, reads, ch=ch)
+        return version_rows, mirrors
+    except pg_memory.AdmissionContendedError:
+        heads = await memory_repo.authority_heads(reads)
+    kept = {
+        i
+        for i, (read, head) in enumerate(zip(reads, heads, strict=True))
+        if head is not None and pg_memory.unchanged(read, head)
+    }
+    _leave(res, [m for i, m in enumerate(mirrors) if i not in kept])
+    version_rows = [r for i, r in enumerate(version_rows) if i in kept]
+    mirrors = [m for i, m in enumerate(mirrors) if i in kept]
+    if not version_rows:
+        return [], []
+    try:
+        await memory_repo.insert_versions_over_heads(
+            version_rows, [row for _, row, _ in mirrors], ch=ch
+        )
+    except pg_memory.AdmissionContendedError:
+        _leave(res, mirrors)
+        return [], []
+    return version_rows, mirrors
+
+
+def _leave(res: ExpiryResult, mirrors: list[tuple[str, Any, int]]) -> None:
+    """Count these rows as left for the next pass, not as done, and list none of them."""
+    left = set()
+    for action, row, _ in mirrors:
+        res.moved_skipped += 1
+        if action == "tombstone":
+            res.tombstoned -= 1
+        elif action == "demote":
+            res.demoted -= 1
+        else:
+            res.anonymized -= 1
+        left.add(identity_key(row))
+    res.sampled = [(key, entry) for key, entry in res.sampled if key not in left]
 
 
 async def _mirror_embeddings_batch(

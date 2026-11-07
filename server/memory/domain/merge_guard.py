@@ -97,12 +97,13 @@ class MergeVerdict:
     # per source index: the values the merged text lost, by kind
     lost: dict[int, dict[str, list[str]]] = field(default_factory=dict)
 
-    def reason(self) -> str:
-        parts = []
-        for i, kinds in sorted(self.lost.items()):
-            for kind, vals in sorted(kinds.items()):
-                parts.append(f"source[{i}] {kind}: {', '.join(sorted(vals))[:120]}")
-        return "; ".join(parts)[:500]
+    def counts(self) -> str:
+        """The kinds of value each source lost, as counts: the values never leave it."""
+        return "; ".join(
+            f"source[{i}] {kind}: {len(vals)}"
+            for i, kinds in sorted(self.lost.items())
+            for kind, vals in sorted(kinds.items())
+        )
 
 
 def merge_preserves(sources: list[str], merged: str) -> MergeVerdict:

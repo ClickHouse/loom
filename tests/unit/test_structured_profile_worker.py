@@ -409,6 +409,138 @@ async def test_a_fact_edited_while_the_model_ran_stops_the_write(
 
 
 @pytest.mark.asyncio
+async def test_a_build_reads_only_the_facts_the_authority_serves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The digest counts m1 and m2 but the authority serves only m1 (m2 changed under
+    Postgres, ClickHouse not yet holding it): the profile is built from m1 and tagged
+    SHORT, which no digest takes, so it reads as behind."""
+    written = _one_user(monkeypatch)
+    asked: list[Any] = []
+
+    async def user_facts(**kw: Any) -> list[dict[str, Any]]:
+        return [{"memory_id": "m1", "value": '"My tz is UTC."', "since": "2026-01-01"}]
+
+    async def ask(*a: Any) -> dict[str, Any]:
+        asked.append(a)
+        return {"tz": "UTC"}
+
+    monkeypatch.setattr(profile_sources, "user_facts", user_facts)
+    monkeypatch.setattr(w, "_ask", ask)
+    assert await w.build_profile(_ONE, "u1") == 0
+    assert "I speak en" not in str(asked) and written[0]["memory_ids"] == ["m1"]
+    assert written[0]["sources_digest"] == profile_sources.SHORT
+
+
+@pytest.mark.parametrize(
+    ("served", "digest_after", "writes"),
+    [
+        pytest.param(False, "d1", False, id="none-served"),
+        pytest.param(True, "d1", True, id="profile-served"),
+        pytest.param(True, "d2", False, id="profile-served-sources-moved"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_build_with_none_of_its_counted_facts_served(
+    monkeypatch: pytest.MonkeyPatch, served: bool, digest_after: str, writes: bool
+) -> None:
+    """Every fact counted has a change ClickHouse has not published. With no profile
+    served nothing is written; a served profile is replaced by the all-null one, never
+    kept, since it may carry a source that has left since; sources that moved meanwhile
+    stop that write as any other. No model call either way."""
+    stale = {
+        "version": 1,
+        "tags": profile_sources.profile_tags(_ONE.sha256, "d0", 2),
+        "pinned": 0,
+        "lock_mode": "",
+        "lock_until": None,
+        "sensitivity": "",
+    }
+    written = _one_user(monkeypatch, digest_after=digest_after, existing=stale if served else None)
+    asked: list[Any] = []
+
+    async def user_facts(**kw: Any) -> list[dict[str, Any]]:
+        return []
+
+    async def ask(*a: Any) -> dict[str, Any]:
+        asked.append(a)
+        return {}
+
+    monkeypatch.setattr(profile_sources, "user_facts", user_facts)
+    monkeypatch.setattr(w, "_ask", ask)
+    dropped = await w.build_profile(_ONE, "u1")
+    assert asked == []
+    if writes:
+        assert dropped == 0
+        (row,) = written
+        assert row["value"] == {"tz": None}
+        assert row["memory_ids"] == [] and row["source_count"] == 2
+        assert row["sources_digest"] == profile_sources.SHORT
+    else:
+        assert dropped is None and written == []
+
+
+@pytest.mark.parametrize(("count", "limit"), [(2, 10), (5, 2)])
+@pytest.mark.asyncio
+async def test_a_build_that_read_every_fact_it_could_carries_the_digest(
+    monkeypatch: pytest.MonkeyPatch, count: int, limit: int
+) -> None:
+    """Two facts read: all of them, or as many as the limit lets a build read."""
+    written = _one_user(monkeypatch)
+
+    async def sources_digest(**kw: Any) -> tuple[str, int]:
+        return ("d1", count)
+
+    monkeypatch.setattr(profile_sources, "sources_digest", sources_digest)
+    monkeypatch.setattr(settings, "structured_profile_memory_limit", limit)
+    assert await w.build_profile(_ONE, "u1") == 0
+    assert written[0]["sources_digest"] == "d1"
+
+
+@pytest.mark.asyncio
+async def test_the_user_facts_are_those_the_authority_serves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core import pg
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import pg_memory
+
+    def _fact(mid: str, key: str) -> dict[str, Any]:
+        return {
+            "memory_id": mid,
+            "org": "o",
+            "namespace": "n",
+            "agent": "a",
+            "user_id": "u1",
+            "session_id": "-",
+            "memory_key": key,
+            "value": "v",
+            "version": 1,
+            "redacted_at": None,
+        }
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return [_fact("m1", "user_tz"), _fact("m2", "user_lang")]
+
+    async def heads(keys: list[Any], **_k: Any) -> dict[Any, Any]:
+        return {k: {"version": 1, "redacted_at": None} for k in keys if k[5] == "user_tz"}
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", heads)
+    rows = await profile_sources.user_facts(
+        org="o",
+        namespace="n",
+        user_id="u1",
+        types=profile_sources.STRUCTURED_TYPES,
+        limit=10,
+        scope=WHOLE_NAMESPACE,
+        ch=_CH(),
+    )
+    assert [r["memory_id"] for r in rows] == ["m1"]
+
+
+@pytest.mark.asyncio
 async def test_a_build_writes_its_label_tags_and_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.settings import settings
 

@@ -18,6 +18,13 @@ from server.settings import settings
 # What a process that skipped the boot step is serving without — the pending migration files
 # named at boot, carried by /v1/health.
 SKIPPED_PENDING_MIGRATIONS: tuple[str, ...] = ()
+# The Postgres files a process with boot migrations off skipped, as `pg:<file>`.
+SKIPPED_PG_MIGRATIONS: tuple[str, ...] = ()
+
+
+def skipped_migrations() -> tuple[str, ...]:
+    """Every migration file this process skipped, of either store."""
+    return SKIPPED_PENDING_MIGRATIONS + SKIPPED_PG_MIGRATIONS
 
 
 def run_boot_migrations_if_enabled(
@@ -280,6 +287,33 @@ async def require_keeper(ch: Any) -> None:
     row = await ch.query_one(ENGINE_SQL, {"table": "_migration_lock"})
     if row is None or row.get("engine") != "KeeperMap":
         raise KeeperRequired("loom._migration_lock is not a KeeperMap table")
+
+
+async def require_storage_authority(ch: Any) -> None:
+    """The memory authority this replica is configured for, checked against the
+    deployment's record (`server.core.pg_profile`); the Postgres profile first opens
+    Postgres, applies its migrations and checks its commit durability. Raises to
+    refuse the boot."""
+    from server.core import pg, pg_profile
+
+    global SKIPPED_PG_MIGRATIONS
+    if pg.enabled():
+        SKIPPED_PG_MIGRATIONS = tuple(f"pg:{name}" for name in await pg_profile.start())
+    await pg_profile.require_authority(ch)
+
+
+async def open_storage_authority() -> None:
+    """A worker process's Postgres pool; the server process checked the rest."""
+    from server.core import pg
+
+    if pg.enabled():
+        await pg.open_pool()
+
+
+async def close_storage_authority() -> None:
+    from server.core import pg
+
+    await pg.close_pool()
 
 
 async def run_fenced_boot_migrations(
@@ -618,11 +652,12 @@ async def drain_writes() -> None:
     the service-side tasks, then the drop ledger (last of the services: the
     side effects before it record their drops too), the events stream and
     the buffered write marks."""
-    # A request cancelled by the shutdown left its Keeper release or its
-    # credential put-back running: they land first.
-    from server.auth import shielded
+    # A request cancelled by the shutdown left its Keeper release, its credential
+    # put-back or a 'high' row's fence running: they land first, the fence's drop too.
+    from server.core import shielded
 
-    await shielded.drain(timeout_s=5.0)
+    if left := await shielded.drain(timeout_s=5.0):
+        logging.getLogger(__name__).warning("shutdown: writes left running: %s", ", ".join(left))
     # Restricted-access audit rows and policy decision rows (an enforced
     # denial among them) still being written land first.
     from server.identity.app import policy_gate as _policy_gate
@@ -708,7 +743,7 @@ def register_readiness_checks(ch: Any) -> None:
     the ledger are cached."""
     from server.auth import keyring, revocation
     from server.code.app.index import mirrors, sandbox
-    from server.core import deployment_config, grant_cache, model_work_gate, readiness
+    from server.core import deployment_config, grant_cache, model_work_gate, pg_profile, readiness
     from server.memory.app import embedder_calibration
     from server.tracker.app import registry_sources
 
@@ -719,7 +754,13 @@ def register_readiness_checks(ch: Any) -> None:
     async def _migrations() -> readiness.CheckResult:
         from server.core.schema.status import schema_status
 
-        pending = SKIPPED_PENDING_MIGRATIONS or (await schema_status()).get("pending") or ()
+        global SKIPPED_PG_MIGRATIONS
+        if f"pg:{pg_profile.LEDGER_UNREADABLE}" in SKIPPED_PG_MIGRATIONS:
+            # The boot could not read the ledger: read it again on each probe, as the
+            # ClickHouse ledger is.
+            SKIPPED_PG_MIGRATIONS = tuple(f"pg:{n}" for n in await pg_profile.pending_files())
+        pending = SKIPPED_PENDING_MIGRATIONS or tuple((await schema_status()).get("pending") or ())
+        pending += SKIPPED_PG_MIGRATIONS
         return readiness.result(not pending, "pending: " + ", ".join(map(str, pending)))
 
     readiness.register("clickhouse", _clickhouse, ttl_s=2.0)

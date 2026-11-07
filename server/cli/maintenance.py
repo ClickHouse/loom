@@ -33,7 +33,8 @@ def _cmd_period_digest(args: argparse.Namespace) -> int:
         print(
             f"  identities: {res.identities_scanned}; periods {verb}: "
             f"{res.periods_planned if args.dry_run else res.periods_written} "
-            f"(already present: {res.periods_existing}; digests covered: {res.digests_covered}; "
+            f"(skipped as written or taken out: {res.periods_skipped}; "
+            f"digests covered: {res.digests_covered}; "
             f"tokens in/out {res.tokens_in}/{res.tokens_out})"
         )
         for f in res.failures[:10]:
@@ -56,8 +57,16 @@ def _cmd_reconcile_status(args: argparse.Namespace) -> int:
     def _report(ns: str, counts: dict[str, int]) -> None:
         print(f"  {ns}: divergent identity rows: {counts.get('divergent_rows', 0)}")
         for k, v in sorted(counts.items()):
-            if k not in ("divergent_rows", "mirrored"):
+            if k not in ("divergent_rows", "mirrored", "held_back"):
                 print(f"    memory status {k}: {v}")
+        if counts.get("held_back"):
+            print(f"    held back (newer or erased in Postgres): {counts['held_back']}")
+            if counts["held_back"] == int(args.limit):
+                print(
+                    f"    all {args.limit} rows read were held back: raise --limit, or rerun"
+                    " once Postgres's changes reach ClickHouse (parked deliveries:"
+                    " /v1/health?include=postgres)"
+                )
         print(f"    {verb} {counts.get('mirrored', 0)} embeddings rows")
 
     async def _go(ch: Any) -> int:
@@ -364,7 +373,7 @@ def _add_memory_repair_parsers(sub: Any) -> None:
 
     p_pd = sub.add_parser(
         "period-digest",
-        help="Write period digests — one derived episodic memory over K consecutive "
+        help="Write period digests — one derived semantic memory over K consecutive "
         "session digests of each identity in one namespace. Additive and "
         "idempotent. Dry run by default (plans only); --apply writes.",
     )
@@ -377,6 +386,7 @@ def _add_memory_repair_parsers(sub: Any) -> None:
     p_pd.add_argument(
         "--rewrite",
         action="store_true",
-        help="rewrite windows already written (new version replaces the row under FINAL)",
+        help="rewrite live windows already written; one deleted, redacted or no longer active "
+        "stays out",
     )
     p_pd.set_defaults(func=_cmd_period_digest)

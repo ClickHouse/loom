@@ -274,9 +274,9 @@ def _nearest_sql() -> str:
 # within the row's subject like every read of the cluster. A pinned row is no peer: no
 # verdict may change it, so judging it is a paid call for nothing.
 _PEER_ROWS_SQL = """
-        SELECT toString(memory_id) AS memory_id, agent, user_id, session_id, memory_key,
-               toString(value) AS value, pinned, valid_at, created_at, updated_at, version,
-               toString(content_sha256) AS content_sha256, status,
+        SELECT toString(memory_id) AS memory_id, org, namespace, agent, user_id, session_id,
+               memory_key, toString(value) AS value, pinned, valid_at, created_at, updated_at,
+               version, redacted_at, toString(content_sha256) AS content_sha256, status,
                arrayMap(x -> toString(x), conflict_with) AS conflict_with
         FROM loom.memory FINAL
         PREWHERE org = {org:String} AND namespace = {ns:String}

@@ -191,3 +191,41 @@ def _delete(client: Any, database: str, tables: list[str], orgs: frozenset[str])
         if failed or time.monotonic() > deadline:
             raise AssertionError(f"purge mutations did not finish: {failed or pending}")
         time.sleep(0.1)
+
+
+# The Postgres authority's tables that hold rows by org, children before parents.
+_PG_TABLES = (
+    "loom.memory_deliveries",
+    "loom.memory_revisions",
+    "loom.memory_current",
+    "loom.idempotency",
+    "loom.scope_generations",
+    "loom.erased_memories",
+    "loom.audit_outbox",
+    "loom.idempotency_fences",
+)
+
+
+async def purge_pg(dsn: str, orgs: frozenset[str]) -> dict[str, int]:
+    """Delete every Postgres row of `orgs` (a server of the Postgres authority); return
+    what is left."""
+    import asyncpg
+
+    foreign = sorted(o for o in orgs if not _ORG_SHAPE.match(o))
+    if foreign:
+        raise ValueError(f"refusing to purge orgs the suite did not mint: {foreign}")
+    conn = await asyncpg.connect(dsn)
+    try:
+        if not await conn.fetchval("SELECT to_regclass('loom.memory_current') IS NOT NULL"):
+            return {}
+        left: dict[str, int] = {}
+        for table in _PG_TABLES:
+            await conn.execute(f"DELETE FROM {table} WHERE org = ANY($1::text[])", sorted(orgs))
+            n = await conn.fetchval(
+                f"SELECT count(*) FROM {table} WHERE org = ANY($1::text[])", sorted(orgs)
+            )
+            if n:
+                left["pg:" + table] = int(n)
+        return left
+    finally:
+        await conn.close()

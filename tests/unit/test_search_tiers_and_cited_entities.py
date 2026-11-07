@@ -100,7 +100,7 @@ async def test_anchor_first_places_the_oldest_run_memory_first(
         run_id="r1",
         top_k=3,
     )
-    out = await h._prepend_anchor([sim], inp)
+    out, _ = await h._prepend_anchor([sim], inp, {})
     assert [x.memory_key for x in out] == ["base", "sim"]
     assert out[0].score_components == {"anchor_first": 1.0}
     assert calls[0]["order_by"] == "created_at_asc" and calls[0]["limit"] == 4

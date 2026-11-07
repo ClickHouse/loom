@@ -81,11 +81,11 @@ def store(monkeypatch):
         )
         return _V_ROW if ok else None
 
-    async def get_by_id(memory_id, *, scope, **kw):
+    async def get_by_id(memory_id, *, scope, namespace=None, **kw):
         ok = memory_id == _V_ROW.memory_id and row_in_read_scope(
             scope, _V_ROW.user_id, _V_ROW.session_id
         )
-        return _V_ROW if ok else None
+        return _V_ROW if ok and namespace in (None, _V_ROW.namespace) else None
 
     async def get_many_by_keys(identity, keys, *, scope, **kw):
         row = await get_by_key(identity, _V_ROW.memory_key, scope=scope)
@@ -94,7 +94,7 @@ def store(monkeypatch):
     async def record_usage_event(**kw):
         calls["usage"].append(kw)
 
-    async def insert_versions(rows, **kw):
+    async def insert_versions(rows, *_, **kw):
         calls["writes"].extend(rows)
 
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
@@ -102,7 +102,7 @@ def store(monkeypatch):
     monkeypatch.setattr(memory_repo, "get_many_by_keys", get_many_by_keys)
     monkeypatch.setattr(memory_repo, "record_usage_event", record_usage_event)
     monkeypatch.setattr("server.memory.app.handlers.insert_memory_versions", insert_versions)
-    monkeypatch.setattr("server.memory.app.lock.insert_memory_versions", insert_versions)
+    monkeypatch.setattr(memory_repo, "insert_versions_over_heads", insert_versions)
     return calls
 
 

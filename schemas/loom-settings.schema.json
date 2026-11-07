@@ -3478,7 +3478,7 @@
         "memory_ask_precedents_fast_max_age_hours": {
           "default": 1,
           "type": "integer",
-          "description": "With precedents on, an eligible precedent is served before retrieval when no plane its namespaces read was written since (loom.namespace_write_marks), the blacklist is unchanged and every cited row is live with the same hash. Hours a precedent stays servable on that fast path (a bound on rank drift, not staleness); 0 = no bound."
+          "description": "With precedents on, an eligible precedent is served before retrieval when no plane its namespaces read was written since (loom.namespace_write_marks), the blacklist is unchanged and every cited row is live with the same hash; never under the Postgres authority, whose heads ClickHouse's marks can trail. Hours a precedent stays servable on that fast path (a bound on rank drift, not staleness); 0 = no bound."
         },
         "memory_ask_precedents_max_age_hours": {
           "default": 0,
@@ -3628,7 +3628,7 @@
           "default": 5000,
           "minimum": 1,
           "type": "integer",
-          "description": "Most memories one blacklist sweep checks against the patterns."
+          "description": "Most memories one blacklist sweep takes from ClickHouse's match (under the Postgres authority it also reads the heads ClickHouse keeps refusing, this many at a time)."
         },
         "memory_bm25_cache_ttl_s": {
           "default": 300.0,
@@ -5215,6 +5215,132 @@
           "type": "integer",
           "description": "Seconds a password set-up link stays valid, at most a week (it sets a password once)."
         },
+        "pg_admission_deadline_ms": {
+          "default": 3000,
+          "minimum": 100,
+          "type": "integer",
+          "description": "Milliseconds a memory.set or memory.bulk_set keeps re-reaching its verdict while writes commit in its namespace (each round adds only those writes) before answering 503 ADMISSION_CONTENDED: the bound on how far a namespace's admissions may queue."
+        },
+        "pg_admission_gap_rows": {
+          "default": 200,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Revisions committed in a write's namespace during its check that its commit reads to clear them; a longer gap sends the write back to its check."
+        },
+        "pg_admission_help_rows": {
+          "default": 20,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Revisions a waiting admission publishes itself for a writer that stopped before publishing them; the delivery worker publishes the rest."
+        },
+        "pg_admission_recent_vectors": {
+          "default": 4096,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Vectors of this process's recent writes kept to rule out a commit landing in another write's check without reading ClickHouse."
+        },
+        "pg_admission_rounds": {
+          "default": 3,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Passes a writer that reads its heads again makes when a key's head keeps changing between its read and its commit. Past them a write request answers 503 ADMISSION_CONTENDED; memory.consolidate and a background writer leave the keys for their next pass."
+        },
+        "pg_commit_lock_timeout_ms": {
+          "default": 2000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Milliseconds a memory commit or a `memory.redact` waits for a lock (its namespace's generation, which an erasure of the scope holds while it runs) before answering a retryable 503, so a long erasure does not hold every pooled connection it blocks; also how long a read that judges a head once it settles (a write whose commit answer was lost, a sensitivity relabel's close of its owed facts, by the sweep or the projection repair) waits on each head's lock."
+        },
+        "pg_delivery_batch_rows": {
+          "default": 500,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Revisions one delivery pass publishes."
+        },
+        "pg_delivery_enabled": {
+          "default": true,
+          "type": "boolean",
+          "description": "Background delivery of committed revisions a request did not publish."
+        },
+        "pg_delivery_idle_interval_seconds": {
+          "default": 10,
+          "type": "integer",
+          "description": "Seconds between delivery passes that found nothing."
+        },
+        "pg_delivery_interval_seconds": {
+          "default": 2,
+          "type": "integer",
+          "description": "Seconds between delivery passes while there is work."
+        },
+        "pg_delivery_lease_seconds": {
+          "default": 30,
+          "minimum": 5,
+          "type": "integer",
+          "description": "Seconds the delivery worker holds a revision's delivery before another may take it; also how long the conflict resolver sets aside a row whose flagged peer is not yet in ClickHouse."
+        },
+        "pg_delivery_max_attempts": {
+          "default": 10,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Times a delivery is tried before it is parked: a search document it cannot build is published as a stub for the embedding worker; a memory row ClickHouse keeps refusing is left out of claims and of its namespace's watermark, and counted in /v1/health?include=postgres (`postgres.parked_deliveries`). An audit row waiting in the outbox (a row an erasure moved there, or one a claim deferred because the holder it replaced may still insert it) is parked the same way (`postgres.parked_audits`). An unavailable ClickHouse counts no attempt."
+        },
+        "pg_durability": {
+          "default": "synchronous",
+          "enum": [
+            "synchronous",
+            "local"
+          ],
+          "type": "string",
+          "description": "What an acknowledged write must survive: synchronous = a standby in another failure domain has flushed it (boot refuses a server with no synchronous standby); local = the primary's disk only (boot warns)."
+        },
+        "pg_erasure_evidence_hours": {
+          "default": 24,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Hours an erased memory's id is kept as deletion evidence, refusing a write built from a head read before the erasure (longer than any request holds a head); a `namespace.restore` into its namespace leaves the memory out meanwhile."
+        },
+        "pg_lease_margin_seconds": {
+          "default": 1.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "Seconds before its lease ends that a publisher stops sending, for clock drift and the time a send takes to leave the process; under Postgres, shorter than both leases (`LOOM_PG_REQUEST_LEASE_SECONDS`, `LOOM_PG_DELIVERY_LEASE_SECONDS`)."
+        },
+        "pg_pool_max_size": {
+          "default": 20,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most connections the Postgres pool opens per process; a request waits for one."
+        },
+        "pg_pool_min_size": {
+          "default": 2,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Connections the Postgres pool keeps open per process."
+        },
+        "pg_projection_wait_ms": {
+          "default": 2000,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Milliseconds an admission waits for earlier commits in its scope to reach search before answering 503 PROJECTION_BEHIND."
+        },
+        "pg_request_lease_seconds": {
+          "default": 5,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Seconds the writing request holds its revisions' delivery; past it, the delivery worker or a waiting admission in the namespace publishes them instead."
+        },
+        "pg_restore_batch_rows": {
+          "default": 500,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Memories one Postgres commit of a `namespace.restore` writes; each batch commits within a request's lease (`pg_request_lease_seconds`)."
+        },
+        "pg_statement_timeout_ms": {
+          "default": 5000,
+          "minimum": 100,
+          "type": "integer",
+          "description": "Milliseconds a Postgres statement may run, and a request may wait for a pooled connection, before it fails."
+        },
         "platform_admins": {
           "default": "",
           "type": "string",
@@ -5584,6 +5710,15 @@
           "minimum": 0,
           "type": "number",
           "description": "Seconds a process keeps serving after SIGTERM while /v1/health/ready answers 503, so the load balancer stops routing to it before its port closes. Size it to the LB's probe interval × failure threshold. 0 = stop at once."
+        },
+        "storage_authority": {
+          "default": "clickhouse",
+          "enum": [
+            "clickhouse",
+            "postgres"
+          ],
+          "type": "string",
+          "description": "Which store is the authority for live memory: clickhouse = ClickHouse alone; postgres = Postgres holds current content, revisions and delivery jobs, and ClickHouse serves search and history. Recorded at first boot; a replica configured for the other authority refuses to start."
         },
         "storage_frontend_assets_retry_max_s": {
           "default": 60.0,

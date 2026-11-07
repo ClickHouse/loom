@@ -227,7 +227,7 @@ async def test_an_entry_the_blacklist_could_not_check_says_so(
 
     wire(_StubCH([]))
 
-    async def _find(*, org: str, namespace: str, value: str) -> Any:
+    async def _find(*, org: str, namespace: str, value: str, policy: Any = None) -> Any:
         if "Friday" in value:
             return bl._over_budget(org, namespace, "namespace", len(value), 300, alone=False)
         if "Monday" in value:
@@ -259,7 +259,7 @@ async def test_every_later_entry_of_an_unchecked_key_is_unchecked_too(
     same = sha256_value("user_deploy_day is Thursday")
     wire(_StubCH([_live(content_sha256=same)]))
 
-    async def _find(*, org: str, namespace: str, value: str) -> Any:
+    async def _find(*, org: str, namespace: str, value: str, policy: Any = None) -> Any:
         if "Friday" in value:
             return bl._over_budget(org, namespace, "namespace", len(value), 300, alone=False)
         return None

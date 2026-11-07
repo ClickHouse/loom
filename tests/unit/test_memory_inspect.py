@@ -389,6 +389,39 @@ async def test_a_high_sensitivity_row_lists_no_excerpt_and_no_hash(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "head",
+    [
+        {"version": 8, "redacted_at": None},  # revised
+        {"version": 7, "redacted_at": T1},  # redacted in place
+        None,  # deleted
+    ],
+)
+async def test_a_row_the_authority_no_longer_serves_is_not_listed(
+    monkeypatch: pytest.MonkeyPatch, head: dict[str, Any] | None
+) -> None:
+    """Under Postgres a row ClickHouse still shows, deleted, revised or redacted in the
+    authority, is left out, and its preview is not read."""
+    from server.core import pg
+    from server.memory.store import pg_memory
+
+    def located(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        return [{**_newest(sql, params)[0], "org": "o", "namespace": "ns", "redacted_at": None}]
+
+    async def heads_by_keys(keys: Any) -> dict[Any, Any]:
+        return {k: head for k in keys if head is not None}
+
+    fake = _ch(newest=located)
+    fake.strict = False
+    fake.install(monkeypatch, "server.identity.app.namespace_catalog")
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", heads_by_keys)
+    out = await mi.handle_memory_inspect(_inp(sample_limit=1))
+    assert out.own.newest == []
+    assert not fake.statements("value_preview")
+
+
+@pytest.mark.asyncio
 async def test_the_listed_rows_are_recorded_in_the_exposure_ledger(
     ch: RecordingCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:

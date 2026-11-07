@@ -293,6 +293,7 @@ async def test_the_cli_resume_reopens_from_the_fresh_census_and_reports_what_ran
 
     monkeypatch.setattr(erasure_ledger, "list_failed_requests", fake_list)
     monkeypatch.setattr(erasure_census, "residue_census", fake_census)
+    monkeypatch.setattr(erasure_census, "table_residue", fake_census)
     monkeypatch.setattr(erasure_health, "integrity_counts", fake_counts)
     monkeypatch.setattr(h, "run_saga", fake_run_saga)
     args = argparse.Namespace(

@@ -295,13 +295,13 @@ def test_recent_first_places_the_runs_latest_memories_ahead_of_similarity(monkey
         user_id=None,
         session_id=None,
     )
-    out = asyncio.run(ms._prepend_recent(hits, inp))
+    out, _ = asyncio.run(ms._prepend_recent(hits, inp, {}))
     assert [h.memory_key for h in out] == ["s3", "s2", "a"], (
         "run's latest first, dedup, other run skipped, k kept"
     )
     assert out[0].score_components == {"recent_first": 1.0} and out[0].rank_score == 0.0
     assert out[1].score_components == {}, "an existing similarity hit keeps its own scores"
-    assert asyncio.run(ms._prepend_recent(hits, SimpleNamespace(recent_first=0))) is hits
+    assert asyncio.run(ms._prepend_recent(hits, SimpleNamespace(recent_first=0), {}))[0] is hits
 
 
 def test_min_body_chars_drops_near_empty_bodies_and_is_off_by_default():
@@ -349,6 +349,6 @@ def test_a_tier_hit_carries_its_row_tags_so_a_constraint_keeps_its_excerpt(monke
         session_id=None,
         bodies="excerpt",
     )
-    (hit,) = asyncio.run(ms._prepend_recent([], inp))
+    (hit,), _stale = asyncio.run(ms._prepend_recent([], inp, {}))
     _apply_bodies([hit], inp)
     assert hit.content_excerpt == rows[0].value

@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
+from server.memory.domain.webhook_events import memory_change
 from server.memory.store.dedup import CanonicalRef, DuplicateCluster
 from server.memory.store.rows import MemoryRow
 
@@ -108,16 +109,27 @@ def _fake_store(
     tombstoned: list[str] = []
     cleared: list[str] = []
 
-    async def fake_get_by_id(memory_id: str, *, org: str, **_k: Any) -> MemoryRow | None:
+    async def fake_get_by_id(
+        memory_id: str, *, org: str, namespace: str, **_k: Any
+    ) -> MemoryRow | None:
         row = rows.get(memory_id)
-        return row if row is not None and row.org == org else None  # the read's org filter
+        # the read's org and namespace filters
+        return row if row is not None and (row.org, row.namespace) == (org, namespace) else None
 
-    async def fake_tombstone(org: str, mid: str, *, ch: Any = None) -> list[Any]:
+    async def fake_tombstone(
+        org: str, mid: str, *, namespace: str, ch: Any = None, skip: Any = None
+    ) -> list[Any]:
+        row = rows[mid]
+        if skip is not None and skip(row):
+            return []
         tombstoned.append(mid)
-        return []
+        return [memory_change(row, row.version + 1)]
 
-    async def fake_clear(org: str, mid: str, *, ch: Any = None) -> None:
+    async def fake_clear(
+        org: str, mid: str, *, namespace: str, duplicate_of: str, ch: Any = None
+    ) -> bool:
         cleared.append(mid)
+        return True
 
     monkeypatch.setattr(memory_repo, "get_by_id", fake_get_by_id)
     monkeypatch.setattr(memory_repo, "tombstone_by_id", fake_tombstone)
@@ -529,8 +541,8 @@ async def test_clear_duplicate_tag_writes_a_full_version_and_mirrors_it(monkeypa
         update={"status": "duplicate", "duplicate_of": "canon-id"}
     )
 
-    async def _get_by_id(mid, *, org=None, ch=None, fresh=False, **_):
-        assert (mid, org, fresh) == (existing.memory_id, "src-org", True)
+    async def _get_by_id(mid, *, org=None, ch=None, strong=False, **_):
+        assert (mid, org, strong) == (existing.memory_id, "src-org", True)
         return existing
 
     class _CH:
@@ -558,7 +570,12 @@ async def test_clear_duplicate_tag_writes_a_full_version_and_mirrors_it(monkeypa
 
     monkeypatch.setattr(dedup, "get_by_id", _get_by_id)
     ch = _CH()
-    assert await dedup.clear_duplicate_tag("src-org", existing.memory_id, ch=ch) is True
+    assert (
+        await dedup.clear_duplicate_tag(
+            "src-org", existing.memory_id, namespace="n", duplicate_of="canon-id", ch=ch
+        )
+        is True
+    )
     assert ch.executed == []  # no mutation
     (table, rows), (emb_table, emb_rows) = ch.inserts
     assert table == "loom.memory" and set(rows[0]) == set(mr.MEMORY_PERSISTED_COLS)
@@ -582,4 +599,165 @@ async def test_clear_duplicate_tag_on_a_missing_row_writes_nothing(monkeypatch) 
             raise AssertionError("no write")
 
     monkeypatch.setattr(dedup, "get_by_id", _none)
-    assert await dedup.clear_duplicate_tag("o", "x", ch=_CH()) is False
+    assert (
+        await dedup.clear_duplicate_tag("o", "x", namespace="n", duplicate_of="c", ch=_CH())
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_clear_duplicate_tag_leaves_a_duplicate_of_another_canonical(monkeypatch) -> None:
+    from server.memory.store import dedup
+    from tests.unit.test_rmt_write_is_typed import _every_column_row
+
+    flagged = _every_column_row().model_copy(
+        update={"status": "duplicate", "duplicate_of": "other-canon"}
+    )
+
+    async def _get_by_id(*_a, **_k):
+        return flagged
+
+    class _CH:
+        async def insert(self, *a, **k):
+            raise AssertionError("no write")
+
+    monkeypatch.setattr(dedup, "get_by_id", _get_by_id)
+    assert (
+        await dedup.clear_duplicate_tag("o", "x", namespace="n", duplicate_of="canon-id", ch=_CH())
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_keep_duplicate_clears_the_flag_before_it_tombstones_the_canonical(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure between the two writes leaves both live and the pair out of the queue,
+    never a duplicate pointing at a deleted canonical."""
+    from server.memory import store as memory_repo
+    from server.memory.app.dedup import handle_memory_dedup_resolve
+
+    _fake_store(monkeypatch, _pair())
+    order: list[str] = []
+
+    async def clear(org: str, mid: str, **_: Any) -> bool:
+        order.append("clear")
+        return True
+
+    async def tombstone(org: str, mid: str, **_: Any) -> list[Any]:
+        order.append("tombstone")
+        return []
+
+    monkeypatch.setattr(memory_repo, "clear_duplicate_tag", clear)
+    monkeypatch.setattr(memory_repo, "tombstone_by_id", tombstone)
+    await handle_memory_dedup_resolve(_resolve_input("keep_duplicate"))
+    assert order == ["clear", "tombstone"]
+
+
+@pytest.mark.asyncio
+async def test_a_decision_over_a_duplicate_gone_since_answers_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A duplicate resolved, deleted or flagged anew since the pair was read (a racing
+    keep_canonical) clears nothing, and the canonical is not tombstoned: keep_duplicate
+    and keep_both answer alike."""
+    from fastapi import HTTPException
+
+    from server.memory import store as memory_repo
+    from server.memory.app.dedup import handle_memory_dedup_resolve
+
+    tombstoned, _ = _fake_store(monkeypatch, _pair())
+
+    async def gone(org: str, mid: str, **_: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(memory_repo, "clear_duplicate_tag", gone)
+    for decision in ("keep_duplicate", "keep_both"):
+        with pytest.raises(HTTPException) as e:
+            await handle_memory_dedup_resolve(_resolve_input(decision))
+        assert e.value.status_code == 404 and tombstoned == []
+
+
+@pytest.mark.asyncio
+async def test_keep_canonical_leaves_a_duplicate_cleared_since_it_was_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A keep_both racing it cleared the flag: the row is an ordinary memory now, and
+    keep_canonical deletes nothing."""
+    from server.memory import store as memory_repo
+    from server.memory.app.dedup import handle_memory_dedup_resolve
+
+    pair = _pair()
+    _fake_store(monkeypatch, pair)
+    seen: list[bool] = []
+
+    async def tombstone(org: str, mid: str, *, skip: Any = None, **_: Any) -> list[Any]:
+        cleared = pair[mid].model_copy(update={"status": "active", "duplicate_of": ""})
+        seen.append(skip(cleared))
+        return []
+
+    monkeypatch.setattr(memory_repo, "tombstone_by_id", tombstone)
+    with pytest.raises(HTTPException) as e:
+        await handle_memory_dedup_resolve(_resolve_input("keep_canonical"))
+    assert e.value.status_code == 404 and seen == [True]
+
+
+@pytest.mark.asyncio
+async def test_keep_canonical_refuses_a_duplicate_locked_since_it_was_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory import store as memory_repo
+    from server.memory.app.dedup import handle_memory_dedup_resolve
+
+    pair = _pair()
+    _fake_store(monkeypatch, pair)
+
+    async def tombstone(org: str, mid: str, *, skip: Any = None, **_: Any) -> list[Any]:
+        skip(pair[mid].model_copy(update={"lock_mode": "no_delete"}))
+        return []
+
+    monkeypatch.setattr(memory_repo, "tombstone_by_id", tombstone)
+    with pytest.raises(HTTPException) as e:
+        await handle_memory_dedup_resolve(_resolve_input("keep_canonical"))
+    assert e.value.status_code == 423
+
+
+@pytest.mark.asyncio
+async def test_keep_duplicate_refuses_a_canonical_locked_since_it_was_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory import store as memory_repo
+    from server.memory.app.dedup import handle_memory_dedup_resolve
+
+    pair = _pair()
+    _fake_store(monkeypatch, pair)
+
+    async def tombstone(org: str, mid: str, *, skip: Any = None, **_: Any) -> list[Any]:
+        skip(pair[mid].model_copy(update={"lock_mode": "no_delete"}))
+        return []
+
+    monkeypatch.setattr(memory_repo, "tombstone_by_id", tombstone)
+    with pytest.raises(HTTPException) as e:
+        await handle_memory_dedup_resolve(_resolve_input("keep_duplicate"))
+    assert e.value.status_code == 423
+
+
+@pytest.mark.asyncio
+async def test_a_pair_resolved_since_answers_not_found_whatever_its_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory import store as memory_repo
+    from server.memory.app.dedup import handle_memory_dedup_resolve
+
+    pair = _pair()
+    _fake_store(monkeypatch, pair)
+
+    async def tombstone(org: str, mid: str, *, skip: Any = None, **_: Any) -> list[Any]:
+        resolved = {"status": "active", "duplicate_of": "", "lock_mode": "no_delete"}
+        assert skip(pair[mid].model_copy(update=resolved)) is True
+        return []
+
+    monkeypatch.setattr(memory_repo, "tombstone_by_id", tombstone)
+    with pytest.raises(HTTPException) as e:
+        await handle_memory_dedup_resolve(_resolve_input("keep_canonical"))
+    assert e.value.status_code == 404

@@ -65,7 +65,7 @@ async def test_list_conflicted_filters_and_paginates() -> None:
 async def test_lookup_target_returns_none_when_missing() -> None:
     ch = StubCH()
     ch.query_one_returns.append(None)
-    out = await lookup_target("clickhouse", "11111111-2222-3333-4444-555555555555", ch=ch)
+    out = await lookup_target("clickhouse", "ns", "11111111-2222-3333-4444-555555555555", ch=ch)
     assert out is None
     sql, _ = ch.query_one_calls[0]
     assert "tombstoned_at IS NULL" in sql
@@ -76,7 +76,9 @@ async def test_tombstone_ids_empty_input_short_circuits() -> None:
     """Defensive: an empty IN list would tombstone every row in the
     table. Empty input must NOT touch CH."""
     ch = StubCH()
-    await tombstone_ids("clickhouse", [], "note", datetime(2026, 5, 17, tzinfo=UTC), ch=ch)
+    await tombstone_ids(
+        "clickhouse", [], "note", datetime(2026, 5, 17, tzinfo=UTC), namespace="ns", ch=ch
+    )
     assert ch.execute_calls == []
 
 
@@ -99,7 +101,7 @@ async def test_tombstone_ids_writes_rmt_versions(
     ch = StubCH()
     captured: dict[str, Any] = {}
 
-    async def fake_get_by_id(mid, *, org=None, ch=None, scope=None):
+    async def fake_get_by_id(mid, *, org=None, namespace=None, ch=None, scope=None):
         return memory_repo.MemoryRow(
             memory_id=str(mid),
             org=org or "o",
@@ -121,7 +123,9 @@ async def test_tombstone_ids_writes_rmt_versions(
 
     monkeypatch.setattr(lifecycle, "get_by_id", fake_get_by_id)
 
-    async def fake_write_versions_by_ids(org, memory_ids, update, *, ch=None):
+    async def fake_write_versions_by_ids(
+        org, memory_ids, update, *, ch=None, namespace=None, skip=None, strong=False
+    ):
         row = memory_repo.MemoryRow(
             memory_id="11111111-2222-3333-4444-555555555555",
             org=org,
@@ -151,6 +155,7 @@ async def test_tombstone_ids_writes_rmt_versions(
         ["id-1", "id-2"],
         "resolve:revise:reason:by",
         datetime(2026, 5, 17, tzinfo=UTC),
+        namespace="ns",
         ch=ch,
     )
     assert captured["org"] == "clickhouse"
@@ -162,7 +167,7 @@ async def test_tombstone_ids_writes_rmt_versions(
 @pytest.mark.asyncio
 async def test_mark_active_by_ids_empty_input_skips_ch() -> None:
     ch = StubCH()
-    await mark_active_by_ids("clickhouse", [], ch=ch)
+    await mark_active_by_ids("clickhouse", [], namespace="ns", ch=ch)
     assert ch.execute_calls == []
 
 
@@ -175,14 +180,14 @@ async def test_lookup_keys_for_ids_returns_dict() -> None:
             {"memory_id": "id-2", "memory_key": "beta"},
         ]
     )
-    out = await lookup_keys_for_ids("clickhouse", ["id-1", "id-2"], ch=ch)
+    out = await lookup_keys_for_ids("clickhouse", ["id-1", "id-2"], namespace="ns", ch=ch)
     assert out == {"id-1": "alpha", "id-2": "beta"}
 
 
 @pytest.mark.asyncio
 async def test_lookup_keys_for_ids_empty_skips_ch() -> None:
     ch = StubCH()
-    out = await lookup_keys_for_ids("clickhouse", [], ch=ch)
+    out = await lookup_keys_for_ids("clickhouse", [], namespace="ns", ch=ch)
     assert out == {}
     assert ch.query_all_calls == []
 

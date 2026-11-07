@@ -1760,6 +1760,7 @@ async def _retire_memories_behind_repairs(
         n = await supersede_duplicates(
             input.org,
             victims,
+            namespace=input.namespace,
             ch=ch,
             skip=tracker.skip,
             strong=True,

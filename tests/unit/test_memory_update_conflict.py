@@ -109,6 +109,12 @@ def wired(monkeypatch: pytest.MonkeyPatch):
 
         monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
 
+        async def _namespaces_of_id(_org: str, memory_id: str, *, strong: bool) -> list[str]:
+            assert strong  # the update acts on the holder it finds
+            return [row.namespace] if memory_id == row.memory_id else []
+
+        monkeypatch.setattr("server.memory.store.namespaces_of_id", _namespaces_of_id)
+
         async def _enforce(**_: Any) -> None:
             return None
 
@@ -202,7 +208,9 @@ async def test_conflict_verdict_flags_both_sides_after_the_write(wired) -> None:
     out = await update_mod.handle_memory_update(_input())
     assert out.updated and out.conflict_verdict == "conflict" and out.conflict_peers == 1
     assert ch.inserts, "the version is written before the marks"
-    assert calls.marked == [{"org": "test", "new_memory_id": _ID_A, "peer_ids": [_ID_P]}]
+    assert calls.marked == [
+        {"org": "test", "new_memory_id": _ID_A, "peer_ids": [_ID_P], "namespace": "personal"}
+    ]
 
 
 @pytest.mark.asyncio

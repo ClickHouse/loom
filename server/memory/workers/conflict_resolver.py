@@ -58,6 +58,7 @@ class _State:
 
 
 _state = _State()
+# Rows whose model calls are held, and rows waiting for a flagged peer's delivery.
 _HELD: Held[tuple[str, ...]] = Held()
 
 
@@ -164,15 +165,13 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             if await namespace_over_cap(org, namespace, **_cap_share()):
                 counts.skipped_budget += 1
                 return
-            key = _attempt_key(r)
-            shown = _state.attempts.get(key, (0, frozenset()))[1]
-            judged = await resolver.resolve_row(r, policy=policy, counts=counts, shown=shown)
-            _after_row(p, (org, namespace), key, counts, judged)
-            if judged is not None and await _out_of_attempts(r, judged):
-                counts.errored += 1
-                p.errors.append(f"{namespace}/{r.get('memory_key')}: a flagged peer never judged")
+            await _judge_row(p, r, org, namespace, policy, counts)
         except customer.GROUP_HOLDS as e:
             _HELD.hold([_identity(r)], hold_seconds(e))
+        except resolver.PeerBehind:
+            # Read again once a delivery attempt has had its lease to land the change.
+            counts.skipped_behind += 1
+            _HELD.hold([_identity(r)], settings.pg_delivery_lease_seconds)
         except customer.HOLDS as e:
             p.unavailable = p.unavailable or e
         except (resolver.ModelUnavailable, LeaseUnavailable) as e:
@@ -193,7 +192,7 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {type(e).__name__}: {e}")
             if isinstance(e, resolver.JudgedThenFailed):
-                _after_row(p, (org, namespace), _attempt_key(r), counts, frozenset())
+                _after_row(p, org, namespace, _attempt_key(r), counts, frozenset())
                 # Counted only once the judge answered: an error before it paid for nothing.
                 if await _out_of_attempts(r):
                     p.errors.append(
@@ -204,6 +203,24 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             emit_worker_cost_event_for(
                 org=org, namespace=namespace, operation=f"worker.{NAME}", started=started
             )
+
+
+async def _judge_row(
+    p: _Pass,
+    r: dict[str, Any],
+    org: str,
+    namespace: str,
+    policy: str,
+    counts: resolver.Counts,
+) -> None:
+    """Judge one row; a row it leaves owed after a call counts an attempt."""
+    key = _attempt_key(r)
+    shown = _state.attempts.get(key, (0, frozenset()))[1]
+    judged = await resolver.resolve_row(r, policy=policy, counts=counts, shown=shown)
+    _after_row(p, org, namespace, key, counts, judged)
+    if judged is not None and await _out_of_attempts(r, judged):
+        counts.errored += 1
+        p.errors.append(f"{namespace}/{r.get('memory_key')}: a flagged peer never judged")
 
 
 async def _refused(p: _Pass, r: dict[str, Any], e: Exception) -> None:
@@ -227,7 +244,8 @@ async def _refused(p: _Pass, r: dict[str, Any], e: Exception) -> None:
 
 def _after_row(
     p: _Pass,
-    namespace: tuple[str, str],
+    org: str,
+    namespace: str,
     key: tuple[str, ...],
     counts: resolver.Counts,
     judged: frozenset[str] | None,
@@ -235,7 +253,7 @@ def _after_row(
     """After a row returns: if it got an answer, end its namespace's refusal streak and
     the outage count; if it was stamped judged, forget its attempts."""
     if counts.judged:
-        p.refusals.pop(namespace, None)
+        p.refusals.pop((org, namespace), None)
         p.outage = 0
     if judged is None and not counts.skipped_changed:
         _state.attempts.pop(key, None)

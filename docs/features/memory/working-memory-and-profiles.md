@@ -149,7 +149,7 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
 | `status`    | Means                                                                                                                                                                                                 |
 | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ready`     | Built from the user's current memories under the current schema; all `null` for a user with no facts.                                                                                                 |
-| `stale`     | A memory or the schema changed since it was built; served as built until a pass rebuilds it.                                                                                                          |
+| `stale`     | A memory or the schema changed since it was built, or one of its facts was not served when it was built; served as built until a pass rebuilds it.                                                    |
 | `pending`   | No live profile: not built yet, or the built row expired, was redacted (until the worker rebuilds it) or is labelled `high` (held until the key moves to a new version); every property reads `null`. |
 | `no_schema` | The namespace has no schema, or its stored one no longer parses; `profile` is `{}`.                                                                                                                   |
 
@@ -171,29 +171,35 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   the properties' order changes none), a digest of its sources (each one's id, content
   hash, confidence, and the date a build reads and orders by: `valid_at`, else the last
   change) and their count. A new or edited fact, a revert, a restore, a deleted fact, a
-  changed confidence or date, and a change that moves a row into or out of the sources
-  (it turns `high`, changes type, gains or loses an `about:other`, `attribute:` or
-  `forget` tag, expires or passes its `valid_to`) changes the digest. A restatement or a
+  changed confidence or date, and a change that moves a row into or out of the sources (it
+  turns `high`, changes type, gains or loses an `about:other`, `attribute:` or `forget`
+  tag, expires or passes its `valid_to`) changes the digest. A restatement or a
   reinforcement does too, since it moves the fact to the newest place in what the model
   reads: it costs one rebuild after the cooldown. So does a `memory.lock` or
   `memory.unlock` of a source fact: it writes a new version with the same content, which
-  dates the fact at the lock and moves it to the newest place in what the model reads
-  and into the newest of the facts a build reads. Of two facts that disagree under
-  different keys, the one locked or unlocked last then reads as the most recent. A recall
-  or a backfill, which keeps the row's last change, does not. The digest covers every source,
+  dates the fact at the lock and moves it to the newest place in what the model reads and
+  into the newest of the facts a build reads. Of two facts that disagree under different
+  keys, the one locked or unlocked last then reads as the most recent. A recall or a
+  backfill, which keeps the row's last change, does not. The digest covers every source,
   while a build reads only the `LOOM_STRUCTURED_PROFILE_MEMORY_LIMIT` (100) most confident
   and newest: for a user with more facts than that, a change to one outside that set still
   costs a model call that cannot change the answer. A schema change is rebuilt from the
   next pass on, at most `LOOM_STRUCTURED_PROFILE_MAX_USERS_PER_PASS` profiles a pass. A
-  deletion (fewer sources than the profile was built from) skips the cooldown and is
-  rebuilt once the namespace is next scanned, at most
-  `LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` (600) later while passes have budget
-  left; `profile.structured` reports it `stale` at once. Other changes are rebuilt after
-  `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` (600). A user
-  whose facts are all gone gets an all-`null` profile without a model call. An expired
-  or redacted profile row reads as no profile (`pending`) and is rebuilt. A `high`
-  profile row also reads as no profile, but the worker leaves it as it is: it holds
-  like a pin until the key moves to a new version.
+  deletion (fewer sources than the profile counted) skips the cooldown and is rebuilt once
+  the namespace is next scanned, at most `LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS`
+  (600) later while passes have budget left; `profile.structured` reports it `stale` at
+  once. Other changes are rebuilt after `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` (600).
+  A build short of a fact it should have read (one of the facts it counted, up to the
+  memory limit, was not served: a ClickHouse replica behind the one its sources were
+  counted on, or, under Postgres, a change the authority holds to that fact had not
+  reached ClickHouse) reads as `stale` and is built again after the cooldown, a model call
+  each time, while such a change is still missing. A build that was served none of the
+  facts it counted makes no model call: it replaces a served profile with the all-`null`
+  one, written again after each cooldown, and writes nothing for a user with no profile
+  served (`pending`). A user whose facts are all gone gets an all-`null` profile without
+  a model call. An expired or redacted profile row reads as no profile (`pending`) and is
+  rebuilt. A `high` profile row also reads as no profile, but the worker leaves it as it
+  is: it holds like a pin until the key moves to a new version.
 - **Output cap.** The model may write the `structured_profile` entry of `LLM_MAX_TOKENS`
   (32, changed through `LOOM_LLM_MAX_TOKENS_OVERRIDES`) plus the schema's estimate of a
   full answer: each key with its punctuation, and each value (one per property, `maxItems`

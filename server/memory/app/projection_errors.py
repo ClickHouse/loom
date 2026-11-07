@@ -11,6 +11,7 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Any, NamedTuple
 
+from server.core.error_summary import error_summary
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import (
@@ -113,6 +114,7 @@ async def record_input_projection_failure(
     payload: dict[str, Any] | None = None,
     source_operation: str = "memory.set_from_messages",
     source_resource_id: str | None = None,
+    ch: Any | None = None,
 ) -> None:
     try:
         from server.memory.app.projection_failures import record_projection_failure
@@ -128,12 +130,14 @@ async def record_input_projection_failure(
             error=error,
             payload=payload or {},
             user_id=str(getattr(input, "user_id", "") or ""),
+            ch=ch,
         )
     except Exception as log_error:  # noqa: BLE001 — must not fail the write it describes
+        # The summary, not the text: the payload it carried may hold the row's facts.
         log.warning(
             "projection failure log failed for %s (non-fatal): %s",
             projection,
-            log_error,
+            error_summary(log_error),
         )
 
 

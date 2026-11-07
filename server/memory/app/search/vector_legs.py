@@ -257,7 +257,7 @@ def _wire_hit(
     later stages read (`created_at` for the fresh-hit reread, `derived_from`, the provenance
     pair), the row's tags kept privately for the belt, and on the wire only when asked."""
     tags = getattr(h, "tags", None)
-    return _stamp_leg_tags(
+    return _stamp_row_fields(
         h,
         _MemorySearchHit(
             memory_key=h.memory_key,
@@ -289,13 +289,17 @@ def _wire_hit(
     )
 
 
-def _stamp_leg_tags[HitT](leg_hit: Any, wire_hit: HitT) -> HitT:
-    """A service-layer hit from a fact-table leg (fact, lexical union, unmatched, query
-    neighbour) read the row's `tags`; keep them on the wire hit privately. Chunk / summary /
-    record hits read none and stay unstamped (the belt does not judge them). The row's
-    stored identity rides along the same way."""
+def _stamp_row_fields[HitT](leg_hit: Any, wire_hit: HitT) -> HitT:
+    """What a service-layer hit read of its stored row, kept on the wire hit privately:
+    a fact-table leg's `tags` (chunk / summary / record hits read none and stay unstamped;
+    the belt does not judge them), a fact row's identity, a chunk's identity, and whether
+    the hit is a chunk made into its row's hit."""
     if _tagged_row_hit(wire_hit):
         _stamp_row_tags(wire_hit, getattr(leg_hit, "tags", None))
     if (identity := getattr(leg_hit, "identity", None)) is not None:
         wire_hit._row_identity = identity  # type: ignore[attr-defined]
+    if (chunk := getattr(leg_hit, "chunk", None)) is not None:
+        wire_hit._row_chunk = chunk  # type: ignore[attr-defined]
+    if "folded_from_chunk" in (getattr(leg_hit, "score_components", None) or {}):
+        wire_hit._chunk_typed = True  # type: ignore[attr-defined]
     return wire_hit

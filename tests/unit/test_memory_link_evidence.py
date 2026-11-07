@@ -124,7 +124,7 @@ def test_contradicts_between_two_memories_opens_a_conflict() -> None:
             evidence=["8123 vs 9000"],
         )
     assert out.relation == "contradicts" and out.conflict_opened is True
-    assert calls == [{"org": "o", "new_memory_id": "id-a", "peer_ids": ["id-b"]}]
+    assert calls == [{"org": "o", "new_memory_id": "id-a", "peer_ids": ["id-b"], "namespace": "n"}]
     assert fake.rows[0]["relation"] == "contradicts"  # the edge is written regardless
 
 

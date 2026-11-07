@@ -363,10 +363,15 @@ def _driver_read_timeout_s() -> int:
     return math.ceil(max(t, statement_timeout_var.get()))
 
 
+def _setting_seconds(t: float) -> float:
+    """Seconds as a ClickHouse setting: whole ones as an int."""
+    return int(t) if t.is_integer() else t
+
+
 def _apply_class_timeout(out: dict[str, Any], cls: str) -> dict[str, Any]:
     t = class_timeout_s(cls)
     if t > 0 and "max_execution_time" not in out:
-        out["max_execution_time"] = int(t) if float(t).is_integer() else t
+        out["max_execution_time"] = _setting_seconds(t)
     return out
 
 
@@ -565,30 +570,59 @@ DEADLINE_MESSAGE = "rmt carry deadline"
 _FENCE_MAX_S = 60
 
 
+def write_limit_s() -> float:
+    """The longest a leased write runs on the server, and a carried one sent with no
+    longer limit of its own: the configured write timeout, or `_FENCE_MAX_S` when it sets
+    none."""
+    limit = float(settings.ch_timeout_write_s)
+    return _setting_seconds(limit) if limit > 0 else _FENCE_MAX_S
+
+
+def start_guard(deadline_ms_sql: str) -> str:
+    """A condition refusing a statement that starts after `deadline_ms_sql` (server
+    clock, epoch milliseconds: a literal or a query parameter) with `DEADLINE_MESSAGE`."""
+    return (
+        f"throwIf(toUnixTimestamp64Milli(now64(3)) > {deadline_ms_sql}, "
+        f"{_sql_string(DEADLINE_MESSAGE)}) = 0"
+    )
+
+
+def late_send(e: BaseException, what: str) -> Exception | None:
+    """The answer to `what` refused for starting after its deadline (`start_guard`), or
+    None for any other error."""
+    from server.core.errors import BackendUnavailableError
+
+    if DEADLINE_MESSAGE not in str(e):
+        return None
+    return BackendUnavailableError(f"{what} reached the server too late; retry")
+
+
 def _fenced_statement(
     table: str,
     columns: list[str],
     type_names: list[str],
-    stored: frozenset[str],
+    stored: frozenset[str] | None,
     deadline: float,
 ) -> str:
-    """The INSERT a carried batch is sent as. ClickHouse judges the guard when the
-    query starts, against the receiving server's metadata: one that starts after
-    an ALTER added a column the rows lack (held by a proxy, a retry) is refused
-    (`FENCE_MESSAGE`) instead of resetting it, and so is one that starts after
-    `deadline` (server clock, epoch seconds: `DEADLINE_MESSAGE`). One that started
-    in time is bounded by its `max_execution_time` (`_FENCE_MAX_S` when the write
-    class has none)."""
+    """The INSERT a carried batch, or one sent under a lease, is sent as. ClickHouse
+    judges the guard when the query starts, against the receiving server's metadata:
+    a carried one that starts after an ALTER added a column the rows lack (held by a
+    proxy, a retry) is refused (`FENCE_MESSAGE`) instead of resetting it, and any that
+    starts after `deadline` (server clock, epoch seconds: `DEADLINE_MESSAGE`). One that
+    started in time is bounded by its `max_execution_time` (`write_limit_s`)."""
     cols = ", ".join(quote_identifier(c) for c in columns)
     structure = ", ".join(
         f"{quote_identifier(c)} {t}" for c, t in zip(columns, type_names, strict=True)
     )
+    fence = (
+        ""
+        if stored is None
+        else f"throwIf(({_stray_columns_sql(table, stored)}) != 0, "
+        f"{_sql_string(FENCE_MESSAGE)}) = 0 AND "
+    )
     return (
         f"INSERT INTO {qualify(table)} ({cols}) SELECT {cols} FROM input({_sql_string(structure)}) "
-        f"WHERE throwIf(({_stray_columns_sql(table, stored)}) != 0, "
-        f"{_sql_string(FENCE_MESSAGE)}) = 0 "
-        f"AND throwIf(toUnixTimestamp64Milli(now64(3)) > {round(deadline * 1000)}, "
-        f"{_sql_string(DEADLINE_MESSAGE)}) = 0 FORMAT Native\n"
+        f"WHERE {fence}{start_guard(str(round(deadline * 1000)))} FORMAT Native\n"
     )
 
 
@@ -1160,12 +1194,12 @@ class CHClient:
         data: list[list[Any]],
         columns: list[str],
         type_names: list[str] | None,
-        stored: frozenset[str],
+        stored: frozenset[str] | None,
         settings: dict[str, Any],
         deadline: float,
     ) -> Any:
-        """A carried batch, sent as `_fenced_statement` in place of the driver's
-        plain INSERT (the first block carries the statement)."""
+        """A carried or leased batch, sent as `_fenced_statement` in place of the
+        driver's plain INSERT (the first block carries the statement)."""
         ctx = await self.client.create_insert_context(
             table, columns, column_type_names=type_names, settings=settings
         )
@@ -1227,15 +1261,22 @@ class CHClient:
             table, list(rows[0].keys()), rows, uuid.uuid4().hex
         )
         settings = dedup_settings(token, settings)
+        from server.core import rmt_carry
+
+        if rmt_carry.sent_under_lease() and not rmt_carry.carries(table):
+            # Its start deadline is on the server's clock, which a carried insert's
+            # admission measures: measured here, before the send holds a slot.
+            await rmt_carry.measure_server_clock(self)
 
         async def _q() -> None:
-            from server.core import rmt_carry
-
             attempt = query_settings(settings)
             # A carried batch is guarded by the lists it was built against: one
             # that arrives after an ALTER added a column it lacks lands nothing.
             stored = rmt_carry.fence_columns(table) if rmt_carry.carries(table) else None
-            if stored is None:
+            # One sent under a lease starts by the lease's end and runs no longer than an
+            # erasure waits for it (`pg.insert_bound_s`), carried or not.
+            leased = rmt_carry.sent_under_lease()
+            if stored is None and not leased:
                 res = await self.client.insert(
                     table,
                     data,
@@ -1245,7 +1286,8 @@ class CHClient:
                 )
             else:
                 fenced = _apply_class_timeout({**attempt, "async_insert": 0}, "write")
-                fenced.setdefault("max_execution_time", _FENCE_MAX_S)
+                if leased or "max_execution_time" not in fenced:
+                    fenced["max_execution_time"] = write_limit_s()
                 fenced = _with_request_query_id(fenced)
                 # A known id per send, naming this process: a cut-off write is held
                 # until the server says this query ended (`rmt_carry.writing`), and a
@@ -1269,11 +1311,9 @@ class CHClient:
                         # The server's own error for this query: it is over.
                         rmt_carry.note_ended(str(fenced["query_id"]))
 
-                    if DEADLINE_MESSAGE in str(e):
-                        # Queued past its start deadline: a fresh send gets a new one.
-                        raise BackendUnavailableError(
-                            f"rmt carry: a write to {table} reached the server too late; retry"
-                        ) from None
+                    late = late_send(e, f"rmt carry: a write to {table}")
+                    if late is not None:
+                        raise late from None  # a fresh send gets a new deadline
                     if FENCE_MESSAGE not in str(e):
                         raise
                     rmt_carry.invalidate(table)

@@ -26,6 +26,7 @@ from server.memory.domain.memory_types import is_searchable_type
 from server.memory.store import EMBEDDING_PERSISTED_COLS, MemoryRow
 from server.observability.budget_shape import current_budget_shape, note_budget_shape
 from tests.unit.claims_fake import fake_key_locks
+from tests.unit.memory_store import stub_status_before
 
 _NOW = datetime.now(UTC).replace(tzinfo=None)
 _TYPES = ("episodic", "profile", "semantic")
@@ -35,6 +36,12 @@ _TYPES = ("episodic", "profile", "semantic")
 def _key_locks(monkeypatch: pytest.MonkeyPatch) -> None:
     # The Undo holds the key's write lock, a Keeper lease: here over a fake lease table.
     fake_key_locks(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def _no_earlier_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The key held no other status before its retirement.
+    stub_status_before(monkeypatch)
 
 
 def _row(memory_type: str, **over: Any) -> MemoryRow:
@@ -372,3 +379,61 @@ async def test_a_restore_inside_an_erasure_records_who_restored_it(
         set_current_auth(None)
     (reversal,) = ch.rows_for("loom.erasure_reversals")
     assert reversal["restored_by"] == "human:alice"
+
+
+@pytest.mark.parametrize("authority", [True, False])
+async def test_a_retry_finishing_a_late_undo_re_emits_only_on_clickhouse(
+    monkeypatch: pytest.MonkeyPatch, authority: bool
+) -> None:
+    # under Postgres the commit owes an embedded row's search document to the delivery
+    # worker; a copy made outside any lease could land after a redaction's purge
+    existing = _row("semantic", status="active")
+    _wire(monkeypatch, existing, _CH([]))
+    calls: list[str] = []
+
+    async def _unsupersede(*_: Any, **__: Any) -> int:
+        calls.append("unsupersede")
+        return 1
+
+    async def _late(*_: Any, **__: Any) -> bool:
+        return True
+
+    async def _reopen(*_: Any, **__: Any) -> None:
+        return None
+
+    monkeypatch.setattr("server.core.pg.enabled", lambda: authority)
+    monkeypatch.setattr(memory_repo, "unsupersede_embeddings", _unsupersede)
+    monkeypatch.setattr(restore_mod, "_landed_late", _late)
+    monkeypatch.setattr(restore_mod, "_reopen_facts", _reopen)
+    out = await restore_mod._restore_superseded(_restore_input(), _CH([]))
+    assert out.restored is True
+    assert calls == ([] if authority else ["unsupersede"])
+
+
+@pytest.mark.parametrize(
+    "authority, redacted, mirrored",
+    [(False, False, True), (False, True, False), (True, False, False)],
+)
+async def test_a_live_rows_search_repair_runs_on_clickhouse_for_an_unredacted_head(
+    monkeypatch: pytest.MonkeyPatch, authority: bool, redacted: bool, mirrored: bool
+) -> None:
+    # a redacted head has no search row to bring back; under Postgres the undelete's
+    # commit owes it
+    existing = _row("semantic", redacted_at=_NOW if redacted else None)
+    ch = _CH([])
+    _wire(monkeypatch, existing, ch)
+    calls: list[int] = []
+
+    async def _unmirrored(*_: Any, **__: Any) -> bool:
+        return True
+
+    async def _mirror(*_: Any, version: int) -> None:
+        calls.append(version)
+
+    monkeypatch.setattr("server.core.pg.enabled", lambda: authority)
+    monkeypatch.setattr(restore_mod, "_undelete_left_unmirrored", _unmirrored)
+    monkeypatch.setattr(restore_mod, "_restore_embedding_mirror", _mirror)
+    row = {"memory_id": str(existing.memory_id), "version": 100, "memory_type": "semantic"}
+    out = await restore_mod._restore_live(_restore_input(), row, ch=ch)
+    assert out.restored is mirrored
+    assert calls == ([100] if mirrored else [])

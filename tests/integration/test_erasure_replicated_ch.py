@@ -30,6 +30,7 @@ _TABLES = (
     "entity_edge_rows",
     "entity_communities",
     "documents",
+    "memory_code_links",
 )
 _VECTOR = "arrayWithConstant(3072, 0.)"
 
@@ -171,6 +172,54 @@ async def test_the_user_steps_and_a_clear_mutate_replicated_tables(
         {"o": org},
     ).result_rows
     assert superseded == [("u2", True)]
+
+
+async def test_the_consolidated_step_binds_its_pairs_on_replicated_tables(
+    raw: Any, db: str, ch: Any
+) -> None:
+    """The step binds the user's (namespace, tag) pairs and the summaries' (namespace, id),
+    so replicated tables take its mutations; a summary another namespace built from a key
+    of the same name keeps its rows and its code link."""
+    from server.erasure.store import steps_graph
+
+    org = unique_org("erasure-repl")
+    mine, theirs = str(uuid.uuid4()), str(uuid.uuid4())
+    raw.command(
+        f"INSERT INTO {db}.memory (org, namespace, agent, user_id, session_id, memory_key,"
+        f" version, memory_id) SELECT '{org}', '{NS}', 'a', '{USER}', 's1', 'prefs', 1,"
+        " generateUUIDv4()"
+    )
+    for ns, mid in ((NS, mine), ("elsewhere", theirs)):
+        tags = "['consolidated', 'src:prefs']"
+        raw.command(
+            f"INSERT INTO {db}.memory (org, namespace, agent, user_id, session_id, memory_key,"
+            f" version, memory_id, tags) SELECT '{org}', '{ns}', 'a', '-', '-', 'profile', 1,"
+            f" toUUID('{mid}'), {tags}"
+        )
+        raw.command(
+            f"INSERT INTO {db}.memory_embeddings (org, namespace, agent, user_id, session_id,"
+            " memory_key, version, embedding, memory_key_embedding, tags)"
+            f" SELECT '{org}', '{ns}', 'a', '-', '-', 'profile', 1, {_VECTOR}, {_VECTOR}, {tags}"
+        )
+        raw.command(
+            f"INSERT INTO {db}.memory_code_links (org, code_namespace, path, qualified_name,"
+            f" namespace, memory_id, memory_key, state) VALUES ('{org}', 'code', 'p', 'q',"
+            f" '{ns}', '{mid}', 'profile', 'fresh')"
+        )
+    assert await steps_graph.tombstone_consolidated_dependents_by_user(org, USER, ch=ch) == 3
+    live = {
+        table: raw.query(
+            f"SELECT namespace FROM {db}.{table} FINAL WHERE org = %(o)s"
+            " AND memory_key = 'profile' AND tombstoned_at IS NULL",
+            {"o": org},
+        ).result_rows
+        for table in ("memory", "memory_embeddings")
+    }
+    assert live == {"memory": [("elsewhere",)], "memory_embeddings": [("elsewhere",)]}
+    links = raw.query(
+        f"SELECT namespace FROM {db}.memory_code_links WHERE org = %(o)s", {"o": org}
+    ).result_rows
+    assert links == [("elsewhere",)]
 
 
 async def test_a_user_with_chunks_and_no_memory_keys_binds_an_empty_slice(

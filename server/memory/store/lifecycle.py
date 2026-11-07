@@ -7,32 +7,52 @@ tombstone cascades.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import math
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
+from server.core import pg
+from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now, naive_utc_now_seconds
+from server.core.error_summary import error_summary
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.domain.lock import assert_unlocked
+from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.domain.webhook_events import memory_change
+from server.memory.store import pg_memory, pg_publish
 from server.memory.store.embeddings import (
     mirror_status_to_embeddings,
     reemit_embedding_rows_for_keys,
+    reject_embedding_rows,
+    retire_vectors_for_keys,
 )
-from server.memory.store.inserts import insert_memory_versions
-from server.memory.store.reads import get_by_id
+from server.memory.store.inserts import (
+    check_memory_rows,
+    insert_embedding_rows,
+    insert_memory_versions,
+)
+from server.memory.store.reads import get_by_id, memory_rows_by_identity_keys
 from server.memory.store.records import tombstone_decision_records
 from server.memory.store.redaction import delete_by_key
 from server.memory.store.rows import (
+    IdentityKey,
     MemoryRow,
+    _hydrate,
     build_memory_version_row,
+    identity_key,
+    key_in_namespace,
     next_version,
+    row_field,
+    version_over,
 )
+from server.memory.store.sql import _SEQUENTIAL
 from server.observability import degradations
+from server.settings import settings
 
 _log = logging.getLogger(__name__)
 
@@ -45,6 +65,7 @@ async def write_versions_by_ids(
     memory_ids: list[str],
     update: Callable[[MemoryRow], dict[str, Any]],
     *,
+    namespace: str,
     ch: _CHClient | None = None,
     skip: Callable[[MemoryRow], bool] | None = None,
     strong: bool = False,
@@ -56,8 +77,9 @@ async def write_versions_by_ids(
     """Write a new version of each live row in `memory_ids`: `update(existing)`'s
     overrides on every persisted column carried forward, a fresh `version` unless it
     sets one; an `update` that raises writes nothing, since every row is built before
-    any is written. `skip` leaves a row as it is; `strong` reads read-your-writes, the
-    status mirror's vector rows included.
+    any is written; `skip` and `update` run once every row is read. `namespace`: the
+    rows of that namespace (`reads.get_by_id`). `skip` leaves a row as it is; `strong`
+    reads read-your-writes, the status mirror's vector rows included.
     `on_written` / `on_unconfirmed` hear what the re-read confirmed or could not (see
     Lifecycle in memory-architecture.md). `judged`: the rows land a verdict reached
     after the write (the conflict resolver's) on the write it judged
@@ -69,42 +91,37 @@ async def write_versions_by_ids(
     if not memory_ids:
         return 0
     ch = ch or _default_client()
-    # Each row once, in the order given, at most `_READ_AT_ONCE` reads in flight.
-    ids = list(dict.fromkeys(mid for mid in map(str, memory_ids) if mid))
-    gate = asyncio.Semaphore(_READ_AT_ONCE)
-
-    async def read(mid: str) -> MemoryRow | None:
-        async with gate:
-            return await get_by_id(mid, org=org, ch=ch, scope=WHOLE_NAMESPACE, strong=strong)
-
-    reads = [asyncio.ensure_future(read(mid)) for mid in ids]
-    try:
-        found = await asyncio.gather(*reads)
-    except BaseException:
-        # Stop the other reads, letting any already cancelled finish their cleanup.
-        for r in reads:
-            if not r.cancelling():
-                r.cancel()
-        await asyncio.gather(*reads, return_exceptions=True)
-        raise
+    found = await _heads_by_ids(org, namespace, memory_ids, ch=ch, strong=strong)
     rows: list[dict[str, Any]] = []
+    sources: list[MemoryRow] = []
     for existing in found:
         if existing is None or (skip is not None and skip(existing)):
             continue
         overrides = dict(update(existing))
-        overrides.setdefault("version", next_version())
+        if "version" not in overrides:
+            overrides["version"] = version_over(existing)
         rows.append(build_memory_version_row(existing, **overrides))
+        sources.append(existing)
 
     if not rows:
         return 0
-    await insert_memory_versions(rows, ch=ch)
+    await insert_versions_over_heads(rows, sources, ch=ch)
     confirmed = rows
     if on_written is not None:
-        heads = await _head_versions(org, rows, ch=ch)
-        confirmed = [r for r in rows if heads.get(_key(r)) == int(r["version"])]
+        # Under Postgres the commit is over each head read (`heads_unchanged(exact=True)`)
+        # and keeps the newer version: a row is the head unless it is older than its read.
+        heads = (
+            {
+                _key_in_org(r): max(int(r["version"]), s.version)
+                for r, s in zip(rows, sources, strict=True)
+            }
+            if pg.enabled()
+            else await _head_versions(org, rows, ch=ch)
+        )
+        confirmed = [r for r in rows if heads.get(_key_in_org(r)) == int(r["version"])]
         on_written(confirmed)
         # Not seen at the head yet (no key, or an older version): it may or may not land.
-        unconfirmed = [r for r in rows if heads.get(_key(r), -1) < int(r["version"])]
+        unconfirmed = [r for r in rows if heads.get(_key_in_org(r), -1) < int(r["version"])]
         if unconfirmed and on_unconfirmed is not None:
             await on_unconfirmed(unconfirmed)
         # Mirrored: what was confirmed, or, with no one to reconcile the rest, all but
@@ -112,21 +129,303 @@ async def write_versions_by_ids(
         rows = (
             confirmed
             if on_unconfirmed is not None
-            else [r for r in rows if heads.get(_key(r), -1) <= int(r["version"])]
+            else [r for r in rows if heads.get(_key_in_org(r), -1) <= int(r["version"])]
         )
-    # A status change on loom.memory is mirrored onto the row
-    # memory.search actually reads: the pool filters and penalises on
-    # memory_embeddings.status, so without the mirror it would keep
-    # admitting superseded and unpenalised conflicted rows.
-    status_changes = [r for r in rows if r.get("status") and r.get("status") != "active"]
-    if status_changes:
-        await mirror_status_to_embeddings(
-            status_changes, ch=ch, judged=judged, strict=strict, sequential=strong
-        )
+    await _mirror_statuses(rows, ch=ch, judged=judged, strict=strict, sequential=strong)
     return len(confirmed)
 
 
-_IDENTITY_KEY = ("namespace", "agent", "user_id", "session_id", "memory_key")
+async def _heads_by_ids(
+    org: str, namespace: str, memory_ids: list[str], *, ch: _CHClient, strong: bool
+) -> list[MemoryRow | None]:
+    """Each id's head in `namespace`, once each in the order given, at most
+    `_READ_AT_ONCE` reads in flight."""
+    ids = list(dict.fromkeys(mid for mid in map(str, memory_ids) if mid))
+    gate = asyncio.Semaphore(_READ_AT_ONCE)
+
+    async def read(mid: str) -> MemoryRow | None:
+        async with gate:
+            return await get_by_id(
+                mid, org=org, namespace=namespace, ch=ch, scope=WHOLE_NAMESPACE, strong=strong
+            )
+
+    reads = [asyncio.ensure_future(read(mid)) for mid in ids]
+    try:
+        return list(await asyncio.gather(*reads))
+    except BaseException:
+        # Stop the other reads, letting any already cancelled finish their cleanup.
+        for r in reads:
+            if not r.cancelling():
+                r.cancel()
+        await asyncio.gather(*reads, return_exceptions=True)
+        raise
+
+
+async def _mirror_statuses(
+    rows: list[dict[str, Any]], *, ch: Any, judged: bool, strict: bool, sequential: bool
+) -> None:
+    """A status change on loom.memory mirrored onto the row memory.search reads: the pool
+    filters and penalises on memory_embeddings.status, so without it search would keep
+    admitting superseded and unpenalised conflicted rows."""
+    status_changes = [r for r in rows if r.get("status") and r.get("status") != "active"]
+    if status_changes:
+        await mirror_status_to_embeddings(
+            status_changes, ch=ch, judged=judged, strict=strict, sequential=sequential
+        )
+
+
+async def authority_heads(rows: list[MemoryRow]) -> list[MemoryRow | None]:
+    """Each row's live head as the Postgres authority holds it now (None when there is
+    none): a row read from ClickHouse may trail it by its delivery. On ClickHouse, the
+    rows as they are."""
+    if not pg.enabled() or not rows:
+        return list(rows)
+    keys = [identity_key(r) for r in rows]
+    heads = await pg_memory.heads_by_keys(keys)
+    return [_hydrate(heads[k]) if k in heads else None for k in keys]
+
+
+async def served_rows[R](
+    rows: list[R], still: Callable[[R, dict[str, Any]], bool] | None = None
+) -> list[R]:
+    """The live rows read from ClickHouse (MemoryRows or row dicts) that the Postgres
+    authority still serves: each its key's live head at the version read, or at another
+    version `still(row, head)` keeps, with the same redaction state either way, so a
+    delete, a rewrite or a redaction ClickHouse has not published is not read back. On
+    ClickHouse, the rows."""
+    if not pg.enabled() or not rows:
+        return rows
+    keys = [identity_key(r) for r in rows]
+    heads = await pg_memory.heads_by_keys(keys)
+    return [
+        r
+        for r, k in zip(rows, keys, strict=True)
+        if (h := heads.get(k)) is not None
+        and (h.get("redacted_at") is None) == (row_field(r, "redacted_at") is None)
+        and (
+            int(h["version"]) == int(row_field(r, "version")) or (still is not None and still(r, h))
+        )
+    ]
+
+
+# The columns a recovery listing reads and filters on, besides the delete itself and the
+# trace (a delete rewrites it; `recovered_rows` checks a trace filter on its own): a deleted
+# head that moved on in any of them since ClickHouse's row was read is not what the
+# listing selected.
+_LISTED_AS_READ = (
+    "memory_id",
+    "memory_type",
+    "content_sha256",
+    "tags",
+    "valid_at",
+    "created_at",
+    "sensitivity",
+    "pinned",
+    "run_id",
+)
+
+
+async def recovered_rows(
+    rows: list[MemoryRow],
+    *,
+    source_trace: str | None = None,
+    hidden_statuses: frozenset[str] = frozenset(),
+    as_of: datetime | None = None,
+) -> list[MemoryRow]:
+    """A recovery listing's rows (deleted ones included) as the Postgres authority holds
+    them: a row at its head's version stands; one the authority has since only deleted is
+    listed as that deleted head with ClickHouse's preview of the text; any other
+    (rewritten, relabelled, redacted, restored, gone) leaves the page until ClickHouse
+    holds it, so no text ClickHouse has not published is read back and the listing's
+    filters hold (`source_trace`, `hidden_statuses`; under `as_of`, which reads
+    `temporal_anchor`, a column the listing does not select, no head is swapped in). On
+    ClickHouse, the rows."""
+    if not pg.enabled() or not rows:
+        return rows
+    keys = [identity_key(r) for r in rows]
+    heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True)
+    listed: list[MemoryRow] = []
+    for r, k in zip(rows, keys, strict=True):
+        stored = heads.get(k)
+        if stored is None:
+            continue
+        head = _hydrate(stored)
+        if (head.redacted_at is None) != (r.redacted_at is None):
+            continue
+        if head.version == r.version:
+            listed.append(r)
+        elif (
+            head.tombstoned_at is not None
+            and r.tombstoned_at is None
+            and all(getattr(head, c) == getattr(r, c) for c in _LISTED_AS_READ)
+            and source_trace in (None, head.source_trace)
+            and head.status not in hidden_statuses
+            and as_of is None
+        ):
+            preview = {
+                "value": r.value,
+                "value_text": r.value_text,
+                "value_truncated": r.value_truncated,
+            }
+            listed.append(head.model_copy(update=preview))
+    return listed
+
+
+async def current_heads(
+    rows: list[MemoryRow], still: Callable[[MemoryRow, MemoryRow], bool] | None = None
+) -> list[MemoryRow]:
+    """The authority's head of each of ClickHouse's `rows` a copy may be built from: the
+    version read, or a newer one that `still(row, head)` keeps because it still
+    qualifies, so a key whose delivery is parked is not left behind on every pass. On
+    ClickHouse, the rows."""
+    heads = await authority_heads(rows)
+    return [
+        h
+        for r, h in zip(rows, heads, strict=True)
+        if h is not None and (h.version == r.version or (still is not None and still(r, h)))
+    ]
+
+
+async def insert_versions_over_heads(
+    rows: list[dict[str, Any]],
+    read: Sequence[MemoryRow | None],
+    *,
+    ch: _CHClient | None = None,
+    then: Callable[[], Awaitable[int | None]] | None = None,
+    landed: Callable[[], Awaitable[None]] | None = None,
+    documented: Sequence[bool] | None = None,
+    settle_held: bool = False,
+    sources: Sequence[tuple[str, int]] = (),
+    live_sources: bool = False,
+    on_commit: Callable[[], None] | None = None,
+) -> int:
+    """Write `rows`, each a copy of the authority's head beside it in `read`, drawn above
+    it (`rows.version_over`) or, to yield to a write since, before the read: a copy below
+    the head is overtaken by it. Under Postgres only over that very version, else 503
+    (`heads_unchanged(exact=True)`): a copy never overwrites a write, a relabel or a
+    redaction it did not see; a key with no head read (None) is held to having no live
+    head. On ClickHouse, the plain insert.
+
+    `then` runs once the rows are in and its count is returned; under Postgres within the
+    commit's lease, so a redaction waits out the ClickHouse writes it makes, and a failure
+    of it is raised once the commit is published. `landed` runs once the rows are in,
+    outside the lease: on ClickHouse right after the insert, before `then`; under Postgres
+    after the publish, whatever `then` did. `documented`: the rows that owe a live search
+    document, which `then` writes; under Postgres they are settled once `then` returns
+    (with `settle_held`, only those ClickHouse holds at their row's version, for a `then`
+    that copies what it finds), and the delivery worker builds one it did not.
+    `sources`: the revisions the rows copy (`Admission.sources`), with `live_sources`
+    each still its key's live head. `on_commit` is called once the rows are in: under
+    Postgres as the commit returns, before anything else can fail. A commit whose
+    publication is pending is done."""
+    if not pg.enabled() or not rows:
+        if rows:
+            await insert_memory_versions(rows, ch=ch)
+            if on_commit is not None:
+                on_commit()
+            if landed is not None:
+                await landed()
+        return 0 if then is None else (await then() or 0)
+    check_memory_rows(rows)
+    heads = {identity_key(r): e for r, e in zip(rows, read, strict=True)}
+    admission = pg_memory.Admission(
+        recheck=pg_memory.heads_unchanged(heads, exact=True),
+        sources=sources,
+        live_sources=live_sources,
+    )
+    plain = pg_memory.MEMORY_ROW | pg_memory.AUDIT_ROW
+    owed = [plain | (pg_memory.SEARCH_DOC if d else 0) for d in documented or [False] * len(rows)]
+    try:
+        committed = await pg_publish.commit(rows, targets=owed, admission=admission)
+    except pg_memory.HeadMoved:
+        raise pg_memory.AdmissionContendedError("the memory changed while it was read") from None
+    if on_commit is not None:
+        on_commit()
+    answer, failed = 0, None
+    if then is not None:
+        try:
+            with pg_memory.leased(committed.deadline), sequential_reads():
+                answer = await then() or 0
+            if documented:
+                await _settle_documents(committed, documented, held=settle_held, ch=ch)
+        except pg_memory.PublicationPending:
+            _log.warning("a copy's follow-up was left: its commit's lease ended first")
+        except Exception as e:  # noqa: BLE001 — raised once the commit is published
+            failed = e
+    try:
+        await pg_publish.publish(committed, ch=ch)
+    except pg_memory.PublicationPending:
+        _log.info("committed %d version row(s) left for the delivery worker", len(rows))
+    if landed is not None:
+        await landed()
+    if failed is not None:
+        raise failed
+    return answer
+
+
+async def insert_documented_versions(
+    rows: list[dict[str, Any]], documents: list[dict[str, Any]], *, ch: _CHClient | None = None
+) -> bool:
+    """Write `rows` with their search documents (`documents`, one embedding row for each),
+    rechecking no head. Whether the rows reached ClickHouse: False when their publication
+    is pending, which is done. A failed document is logged, not raised; under Postgres the
+    commit owes it and it is written within the commit's lease, so an erasure waits it out
+    and the delivery worker builds one a failure left. On ClickHouse the rows, then their
+    documents."""
+    if len(documents) != len(rows):
+        raise ValueError("one search document per row")
+    if not pg.enabled():
+        await insert_memory_versions(rows, ch=ch)
+        try:
+            await insert_embedding_rows(documents, ch=ch)
+        except Exception as e:  # noqa: BLE001 — the rows stand; the embedding worker stubs one
+            _log.warning("search documents not written: %s", error_summary(e))
+        return True
+    check_memory_rows(rows)
+    owed = pg_memory.MEMORY_ROW | pg_memory.SEARCH_DOC | pg_memory.AUDIT_ROW
+    committed = await pg_publish.commit(rows, targets=owed)
+    try:
+        with pg_memory.leased(committed.deadline):
+            await insert_embedding_rows(documents, ch=ch)
+        await _settle_documents(committed, [True] * len(rows))
+    except Exception as e:  # noqa: BLE001 — the commit stands; the delivery worker builds them
+        _log.warning("search documents not written, owed: %s", error_summary(e))
+    try:
+        await pg_publish.publish(committed, ch=ch)
+    except pg_memory.PublicationPending:
+        _log.info("committed %d version row(s) left for the delivery worker", len(rows))
+        return False
+    return True
+
+
+async def _settle_documents(
+    committed: Any, documented: Sequence[bool], *, held: bool = False, ch: _CHClient | None = None
+) -> None:
+    """Clear the search documents written under the commit's lease; with `held`, only
+    those that ClickHouse holds at their row's version (`held_documents`). Failing that,
+    the delivery worker settles one it finds there and builds again one written below it
+    (an Undo's rows, re-emitted at their own)."""
+    owed = [(r, q) for r, q, d in zip(committed.rows, committed.seqs, documented, strict=True) if d]
+    try:
+        if held:
+            client = ch or _default_client()
+            by_scope: dict[tuple[str, str], list[tuple[Any, ...]]] = {}
+            for r, _ in owed:
+                by_scope.setdefault((r["org"], r["namespace"]), []).append(
+                    pg_publish.document_id(r)
+                )
+            held_ids: set[tuple[Any, ...]] = set()
+            for (org, ns), ids in by_scope.items():
+                docs = await pg_publish.held_documents(org, ns, ids, ch=client)
+                held_ids |= {(org, ns, *d) for d in docs}
+            owed = [
+                (r, q)
+                for r, q in owed
+                if (r["org"], r["namespace"], *pg_publish.document_id(r)) in held_ids
+            ]
+        await pg_memory.complete([q for _, q in owed], pg_memory.SEARCH_DOC)
+    except Exception as e:  # noqa: BLE001 — the commit stands; the worker settles or builds them
+        _log.warning("documents left owed for the delivery worker: %s", error_summary(e))
 
 
 async def _head_versions(
@@ -134,7 +433,7 @@ async def _head_versions(
 ) -> dict[tuple[str, ...], int]:
     """The head version at each of `rows`' keys under FINAL, read up to twice;
     empty when both reads fail, so nothing is confirmed."""
-    keys = sorted({_key(r) for r in rows})
+    keys = sorted({_key_in_org(r) for r in rows})
     for attempt in (1, 2):
         try:
             heads = await ch.query_all(
@@ -148,7 +447,7 @@ async def _head_versions(
                 """,
                 params={"org": org, "keys": keys},
             )
-            return {_key(h): int(h["version"]) for h in heads}
+            return {_key_in_org(h): int(h["version"]) for h in heads}
         except Exception as e:  # noqa: BLE001 — the mirror must still run for what was written
             _log.warning("write_versions_by_ids: head re-read %d failed: %s", attempt, e)
             if attempt == 1:
@@ -156,14 +455,15 @@ async def _head_versions(
     return {}
 
 
-def _key(row: Mapping[str, Any]) -> tuple[str, ...]:
-    return tuple(str(row[c]) for c in _IDENTITY_KEY)
+def _key_in_org(row: Mapping[str, Any]) -> tuple[str, ...]:
+    return (str(row["namespace"]), *key_in_namespace(row))
 
 
 async def supersede_duplicates(
     org: str,
     victims: list[dict[str, Any]],
     *,
+    namespace: str,
     ch: _CHClient | None = None,
     skip: Callable[[MemoryRow], bool] | None = None,
     strong: bool = False,
@@ -212,6 +512,7 @@ async def supersede_duplicates(
             "invalid_at": retired_at,
             "version": int(row.version) + 1 if judged else version,
         },
+        namespace=namespace,
         ch=ch,
         skip=skip,
         strong=strong,
@@ -231,18 +532,24 @@ async def reject_by_identity(
     *,
     skip: Callable[[MemoryRow], bool] | None = None,
     ch: _CHClient | None = None,
-) -> int:
+) -> list[str]:
     """Mark the live rows of `memory_key` in every session of the identity
     `rejected`. A locked row raises 423 LOCKED before any row is written, unless
     `skip` leaves it. Rows are marked by version re-emit on loom.memory and its
     vector rows. Never a lightweight UPDATE: on loom.memory_embeddings it leaves a
     patch part, and the fact leg's codes-first read stays off while one exists
-    (`server.core.vectors.patch_parts`). The rows land at one version drawn
-    before the read: a write drawn after it stays the head, and it sits above
-    any vector row an earlier metadata copy left at read + 1 (`reemit_version`).
-    A failed vector write raises: recall reads the vector row. Returns the rows
-    written."""
+    (`server.core.vectors.patch_parts`). Each row lands at a version drawn before
+    the read, lifted above its head when that is newer (`version_over`): every head
+    the read found is rejected, a write drawing a version above a row's outranks it, and
+    the rows sit above any vector row an earlier metadata copy left at read + 1
+    (`reemit_version`).
+    A failed vector write raises: recall reads the vector row. Returns the ids of the
+    rows written. Under Postgres, `_reject_heads`."""
     ch = ch or _default_client()
+    if pg.enabled():
+        return await _reject_heads(
+            org, namespace, agent, user_id, memory_key, reason, skip=skip, ch=ch
+        )
     version = next_version()
     rows = await ch.query_all(
         """
@@ -256,80 +563,133 @@ async def reject_by_identity(
         params={"org": org, "ns": namespace, "agent": agent, "uid": user_id, "key": memory_key},
     )
 
+    written: list[str] = []
+
     def reject(row: MemoryRow) -> dict[str, Any]:
         assert_unlocked(row, "delete", op="memory.reject")
-        return {"status": "rejected", "rejection_reason": reason, "version": version}
+        written.append(str(row.memory_id))  # every row built is written, or none is
+        return {
+            "status": "rejected",
+            "rejection_reason": reason,
+            "version": version_over(row, version),
+        }
 
-    return await write_versions_by_ids(
+    await write_versions_by_ids(
         org,
         [str(r["memory_id"]) for r in rows],
         reject,
         ch=ch,
         skip=skip,
+        namespace=namespace,
         strong=True,
         strict=True,
     )
+    return written
+
+
+async def _reject_heads(
+    org: str,
+    namespace: str,
+    agent: str,
+    user_id: str,
+    memory_key: str,
+    reason: str,
+    *,
+    skip: Callable[[MemoryRow], bool] | None = None,
+    ch: Any,
+) -> list[str]:
+    """`reject_by_identity` under the Postgres authority: each head takes the status as a
+    revision committed only over the version read, and its vectors move to that version
+    under the commit's lease (`_reject_vectors`), so an older search document still owed
+    lands under them; a head written since is read again, and `skip` and the lock judge
+    it again."""
+    for _ in range(settings.pg_admission_rounds):
+        heads = [
+            h
+            for h in map(
+                _hydrate, await pg_memory.live_heads_of(org, namespace, agent, user_id, memory_key)
+            )
+            if skip is None or not skip(h)
+        ]
+        for h in heads:
+            assert_unlocked(h, "delete", op="memory.reject")
+        rows = [
+            build_memory_version_row(
+                h, status="rejected", rejection_reason=reason, version=version_over(h)
+            )
+            for h in heads
+        ]
+        if not rows:
+            return []
+        try:
+            await insert_versions_over_heads(
+                rows, heads, ch=ch, then=functools.partial(_reject_vectors, rows, ch=ch)
+            )
+            return [str(h.memory_id) for h in heads]  # the pass that committed
+        except pg_memory.AdmissionContendedError:
+            continue  # a head moved since the read: read them again
+    raise pg_memory.AdmissionContendedError("the key's heads kept changing")
+
+
+async def _reject_vectors(rows: list[dict[str, Any]], *, ch: Any) -> int:
+    """Copy each rejected head's own vectors at its version as 'rejected' and retire every
+    other vector below that version with no text (`reject_embedding_rows`); a redacted,
+    unhashed or unembedded head keeps none."""
+    items = []
+    for r in rows:
+        sha = str(r.get("content_sha256") or "")
+        keeps_vectors = is_content_hash(sha) and pg_memory.embedded(r)
+        items.append((identity_key(r), int(r["version"]), sha if keeps_vectors else None))
+    return await reject_embedding_rows(items, ch=ch)
 
 
 async def consolidated_dependents_of(
     org: str, namespace: str, source_key: str, *, ch: _CHClient | None = None
-) -> list[dict[str, Any]]:
-    """Live rows synthesised FROM `source_key`: consolidated topic memories
-    (and merged canonical rows) tag every source as `src:<key>`. Returns
-    identity + tags per dependent."""
+) -> dict[IdentityKey, frozenset[str]]:
+    """The live summaries built FROM `source_key`, rows tagged `consolidated` and
+    `src:<key>` by their writer, as the authority holds them: each key with the sources
+    its tags name."""
+    if pg.enabled():
+        heads = await pg_memory.consolidated_heads(org, namespace, source_key)
+        return {identity_key(h): _sources(h["tags"]) for h in heads}
     ch = ch or _default_client()
     rows = await ch.query_all(
-        """
-        SELECT toString(memory_id) AS mid, namespace, agent, user_id, session_id,
-               memory_key, tags
+        f"""
+        SELECT org, namespace, agent, user_id, session_id, memory_key, tags
         FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND has(tags, 'consolidated') AND has(tags, {srctag:String})
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND has(tags, 'consolidated') AND has(tags, {{srctag:String}})
           AND tombstoned_at IS NULL
+        {_SEQUENTIAL}
         """,
         params={"org": org, "ns": namespace, "srctag": f"src:{source_key}"},
     )
-    return [dict(r) for r in rows]
+    return {identity_key(r): _sources(r["tags"]) for r in rows}
 
 
-async def live_source_count(
+async def live_source_keys(
     org: str, namespace: str, keys: list[str], *, ch: _CHClient | None = None
-) -> int:
+) -> set[str]:
+    """Which of `keys` have a live head in `namespace`, read from the authority."""
     if not keys:
-        return 0
+        return set()
+    if pg.enabled():
+        return await pg_memory.live_keys(org, namespace, keys)
     ch = ch or _default_client()
-    row = await ch.query_one(
-        """
-        SELECT uniqExact(memory_key) AS n FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND memory_key IN {keys:Array(String)} AND tombstoned_at IS NULL
+    rows = await ch.query_all(
+        f"""
+        SELECT DISTINCT memory_key FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND memory_key IN {{keys:Array(String)}} AND tombstoned_at IS NULL
+        {_SEQUENTIAL}
         """,
         params={"org": org, "ns": namespace, "keys": keys},
     )
-    return int((row or {}).get("n") or 0)
+    return {str(r["memory_key"]) for r in rows}
 
 
-async def _reemit_embedding_rows(
-    org: str, victims: list[dict[str, Any]], delta: dict[str, Any], *, ch: _CHClient
-) -> None:
-    """Re-emit each victim's embedding rows with `delta`, at their version + 1 or at
-    the `version` in `delta` (a retire's; rows at or above it are kept). Recall reads
-    this table."""
-    items = [
-        (
-            (
-                org,
-                str(v["namespace"]),
-                str(v["agent"]),
-                str(v["user_id"]),
-                str(v["session_id"]),
-                str(v["memory_key"]),
-            ),
-            dict(delta),
-        )
-        for v in victims
-    ]
-    await reemit_embedding_rows_for_keys(items, ch=ch)
+def _sources(tags: Sequence[Any] | None) -> frozenset[str]:
+    return frozenset(str(t)[4:] for t in (tags or []) if str(t).startswith("src:"))
 
 
 async def downgrade_consolidated_dependents(
@@ -338,53 +698,145 @@ async def downgrade_consolidated_dependents(
     """A source memory was deleted. Every live summary built from it either
     goes with it (none of its sources survive) or is downgraded to
     `conflicted` with a `stale-source:<key>` tag so the review queue sees
-    that it now says something its evidence no longer supports. Returns
-    (tombstoned, downgraded). Best effort; the caller never fails on it."""
+    that it now says something its evidence no longer supports. Each is judged on its
+    head as the authority holds it and written over a head that still cites the sources
+    judged: a copy since (a lock, a touch) is written over, above it; a summary rebuilt
+    from other sources is left. Under Postgres a batch whose head moved since its read (a
+    delete of another of its sources, judging it at once) is read and judged again.
+    Returns (tombstoned, downgraded), the rows written. Best effort; the caller never
+    fails on it."""
     ch = ch or _default_client()
-    deps = await consolidated_dependents_of(org, namespace, source_key, ch=ch)
-    if not deps:
-        return 0, 0
+    written: set[IdentityKey] = set()
+    tombstoned = downgraded = 0
+    for _ in range(settings.pg_admission_rounds):
+        gone, flagged, moved = await _judge_dependents(org, namespace, source_key, written, ch=ch)
+        written |= gone | flagged
+        tombstoned, downgraded = tombstoned + len(gone), downgraded + len(flagged)
+        if not moved:
+            break
+    else:
+        _log.warning("summaries of %s kept changing; some are left as they were", source_key)
+    return tombstoned, downgraded
+
+
+async def _judge_dependents(
+    org: str, namespace: str, source_key: str, done: set[IdentityKey], *, ch: _CHClient
+) -> tuple[set[IdentityKey], set[IdentityKey], bool]:
+    """One round of `downgrade_consolidated_dependents` over the summaries not `done`:
+    the keys tombstoned, the keys downgraded, and whether a moved head refused a batch.
+    A summary is judged by its key: a namespace restored into itself holds one memory id
+    under two keys."""
+    found = await consolidated_dependents_of(org, namespace, source_key, ch=ch)
+    judged = {k: srcs for k, srcs in found.items() if k not in done}
+    if not judged:
+        return set(), set(), False
+    live = await live_source_keys(org, namespace, sorted(set().union(*judged.values())), ch=ch)
+    orphaned = [k for k, srcs in judged.items() if not srcs & live]
+    stale = [k for k, srcs in judged.items() if srcs & live]
+
+    def rebuilt(row: MemoryRow) -> bool:
+        return _sources(row.tags) != judged[identity_key(row)]
+
     now = naive_utc_now()
-    to_tomb: list[dict[str, Any]] = []
-    to_down: list[dict[str, Any]] = []
-    for d in deps:
-        srcs = [str(t)[4:] for t in (d.get("tags") or []) if str(t).startswith("src:")]
-        live = await live_source_count(org, namespace, srcs, ch=ch)
-        (to_tomb if live == 0 else to_down).append(d)
-    if to_tomb:
-        version = next_version()  # the tombstones', which the vector retire carries
-        await write_versions_by_ids(
-            org,
-            [str(d["mid"]) for d in to_tomb],
-            lambda row: {"tombstoned_at": now, "invalid_at": now, "version": version},
-            ch=ch,
-        )
-        await _reemit_embedding_rows(
-            org,
-            to_tomb,
-            {"tombstoned_at": now, "invalid_at": now, "version": version},
-            ch=ch,
-        )
-    if to_down:
-        stale_tag = f"stale-source:{source_key}"
-        await write_versions_by_ids(
-            org,
-            [str(d["mid"]) for d in to_down],
-            lambda row: {
-                "status": "conflicted",
-                "tags": [*[t for t in (row.tags or []) if t != stale_tag], stale_tag],
-            },
-            ch=ch,
-        )
-        for d in to_down:
-            d_tags = [t for t in (d.get("tags") or []) if t != stale_tag] + [stale_tag]
-            await _reemit_embedding_rows(
-                org,
-                [d],
-                {"status": "conflicted", "tags": d_tags},
-                ch=ch,
+    stale_tag = f"stale-source:{source_key}"
+    gone, moved = await _write_dependents(
+        orphaned,
+        lambda row: {"tombstoned_at": now, "invalid_at": now},
+        skip=rebuilt,
+        ch=ch,
+    )
+    flagged, moved_too = await _write_dependents(
+        stale,
+        lambda row: {
+            "status": "conflicted",
+            "tags": [*[t for t in (row.tags or []) if t != stale_tag], stale_tag],
+        },
+        skip=rebuilt,
+        ch=ch,
+    )
+    return gone, flagged, moved or moved_too
+
+
+async def _write_dependents(
+    keys: list[IdentityKey],
+    change: Callable[[MemoryRow], dict[str, Any]],
+    *,
+    skip: Callable[[MemoryRow], bool],
+    ch: _CHClient,
+) -> tuple[set[IdentityKey], bool]:
+    """Write `change` over each summary's head, read by its key, and onto its vectors at
+    the same version, under Postgres within the commit's lease (none for a redacted head,
+    whose purge is their only writer). A tombstone retires the vectors with no text and a
+    downgrade copies only those of its head's own hash (none for a head written before
+    hashes), so neither carries text a redaction of another version may be purging.
+    Under Postgres an embedded downgrade owes its search document until ClickHouse holds
+    it, else the delivery worker builds it. Best effort: the keys written, and whether the
+    batch was refused because a head moved since its read (Postgres)."""
+    if not keys:
+        return set(), False
+    written: set[IdentityKey] = set()
+    vectors: dict[IdentityKey, dict[str, Any]] = {}
+    retired: list[tuple[IdentityKey, int]] = []
+    of_content: dict[IdentityKey, str] = {}
+    documented: list[bool] = []
+    rows: list[dict[str, Any]] = []
+    read: list[MemoryRow] = []
+    committed = False
+
+    async def copy_vectors() -> None:
+        # Under Postgres `then` reads sequentially already; on ClickHouse nothing does.
+        with sequential_reads():
+            await reemit_embedding_rows_for_keys(
+                list(vectors.items()), ch=ch, of_content=of_content
             )
-    return len(to_tomb), len(to_down)
+            await retire_vectors_for_keys(retired, ch=ch, bare=True)
+
+    def on_commit() -> None:
+        nonlocal committed
+        committed = True
+
+    try:
+        found = await memory_rows_by_identity_keys(keys, ch=ch, sequential=True)
+        for k in keys:
+            head = found.get(k)
+            if head is None or skip(head):
+                continue
+            delta = {**change(head), "version": version_over(head)}
+            row = build_memory_version_row(head, **delta)
+            rows.append(row)
+            read.append(head)
+            written.add(k)
+            sha = str(head.content_sha256 or "")
+            if row["redacted_at"] is not None:
+                pass  # its purge is the only writer of a redacted head's vectors
+            elif row["tombstoned_at"] is not None:
+                retired.append((k, int(row["version"])))
+            elif is_content_hash(sha):
+                # the head's own invalid_at, as a document built from it carries
+                vectors[k] = {"invalid_at": head.invalid_at, **delta}
+                of_content[k] = sha
+            documented.append(row["tombstoned_at"] is None and pg_memory.embedded(row))
+        if rows:
+            await insert_versions_over_heads(
+                rows,
+                read,
+                ch=ch,
+                then=copy_vectors,
+                documented=documented,
+                settle_held=True,
+                on_commit=on_commit,
+            )
+    except pg_memory.AdmissionContendedError:
+        return set(), True
+    except Exception as e:  # noqa: BLE001 — a source's delete never fails on its summaries
+        if not committed:
+            _log.warning("summaries of a deleted source not written: %s", error_summary(e))
+            return set(), False
+        # Under Postgres a downgrade's document stays owed; a tombstone's vectors are
+        # retired by orphan_vector_reconcile, and on ClickHouse a downgrade's status waits
+        # for `loom reconcile-status`.
+        _log.warning("summaries written; their vectors were not copied: %s", error_summary(e))
+    return written, False
 
 
 # Tombstoned rows one page of `bulk_tombstone_scope`'s callback carries.
@@ -417,6 +869,17 @@ async def bulk_tombstone_scope(
     Returns {table_name: rows_tombstoned}.
     """
     ch = ch or _default_client()
+    if pg.enabled():
+        # The authority's heads take the clear as tombstone revisions and their vectors
+        # are retired by version: nothing is mutated in place.
+        memory_n, vectors_n, locked_n = await _tombstone_heads(
+            org, namespace, user_id, agent, naive_utc_now_seconds(), on_tombstoned, ch=ch
+        )
+        return {
+            "loom.memory": memory_n,
+            "loom.memory_embeddings": vectors_n,
+            "locked_skipped": locked_n,
+        }
 
     scope = ["org = {org:String}", "namespace = {ns:String}"]
     params: dict[str, Any] = {"org": org, "ns": namespace}
@@ -455,7 +918,7 @@ async def bulk_tombstone_scope(
         try:
             await _page_tombstoned(" AND ".join(scope), params, on_tombstoned, ch=ch)
         except Exception as e:  # noqa: BLE001 — the rows are tombstoned; the clear must not fail
-            degradations.note("memory.webhook", "not_announced", e)
+            degradations.note("memory.webhook", "not_announced", error_summary(e), health=False)
     parts = (
         await _unlocked_parts(scope_sql, locked, params, ch=ch) if locked_n else [(scope_sql, {})]
     )
@@ -521,6 +984,89 @@ async def _unlocked_parts(
     return parts
 
 
+async def _tombstone_heads(
+    org: str,
+    namespace: str,
+    user_id: str | None,
+    agent: str | None,
+    at: datetime,
+    on_tombstoned: Callable[[list[dict[str, Any]]], Awaitable[None]] | None,
+    *,
+    ch: _CHClient,
+) -> tuple[int, int, int]:
+    """`bulk_tombstone_scope` under the Postgres authority: a tombstone version of every
+    unlocked live head in scope, a page at a time in key order, each page committed
+    with its heads rechecked (a lock since leaves its key alone; any other change reads the
+    page again) and announced.
+    Each tombstone retires its key's vectors at its own version, so a search document
+    a writer still owes, at an older version, lands under it. Returns (memory rows,
+    vector rows) tombstoned and the locked heads left."""
+    from server.memory.domain.lock import effective_mode
+
+    total = vectors = locked = 0
+    after: IdentityKey | None = None
+    rereads = 0
+    while True:
+        page = await pg_memory.live_heads_in(
+            org, namespace, user_id=user_id, agent=agent, after=after, limit=CLEAR_PAGE_ROWS
+        )
+        if not page:
+            return total, vectors, locked
+        heads = {identity_key(h): _hydrate(h) for h in page}
+        rows = [
+            build_memory_version_row(h, tombstoned_at=at, version=version_over(h))
+            for h in heads.values()
+            if not effective_mode(h)
+        ]
+        if rows:
+            try:
+                committed = await pg_publish.commit(
+                    rows,
+                    admission=pg_memory.Admission(
+                        recheck=pg_memory.heads_unchanged(heads, exact=True)
+                    ),
+                )
+            except pg_memory.HeadMoved:
+                rereads += 1
+                if rereads >= settings.pg_admission_rounds:
+                    raise pg_memory.AdmissionContendedError(
+                        "the memories in scope kept changing"
+                    ) from None
+                continue  # a head of the page changed since it was read: read it again
+            try:
+                await pg_publish.publish(committed, ch=ch)
+            except pg_memory.PublicationPending:
+                # Committed, so done: search serves no hit of a tombstoned head meanwhile.
+                _log.info("a cleared page is left for the delivery worker")
+            total += len(rows)
+        locked += len(heads) - len(rows)
+        after, rereads = identity_key(page[-1]), 0
+        if not rows:
+            continue
+        # Announced before its vectors retire, so a failure there cannot lose the events:
+        # a retry finds no live head in the page.
+        if on_tombstoned is not None:
+            try:
+                await on_tombstoned([{c: r[c] for c in _ANNOUNCED} for r in committed.rows])
+            except Exception as e:  # noqa: BLE001 — the rows are tombstoned; the clear must not fail
+                degradations.note("memory.webhook", "not_announced", error_summary(e), health=False)
+        vectors += await retire_vectors_for_keys(
+            [(identity_key(r), int(r["version"])) for r in committed.rows], ch=ch
+        )
+
+
+_ANNOUNCED = (
+    "org",
+    "namespace",
+    "agent",
+    "user_id",
+    "session_id",
+    "memory_key",
+    "memory_id",
+    "version",
+)
+
+
 async def _page_tombstoned(
     scope_sql: str,
     params: dict[str, Any],
@@ -565,9 +1111,13 @@ async def tombstone_cascade_by_ids(
     when: datetime,
     update: Callable[[MemoryRow], dict[str, Any]] | None = None,
     ch: _CHClient | None = None,
+    namespace: str,
+    skip: Callable[[MemoryRow], bool] | None = None,
+    strong: bool = False,
 ) -> list[dict[str, Any]]:
     """Tombstone rows by memory_id AND mirror the tombstone onto every tier
-    search reads.
+    search reads (`strong`: the rows read current, for a `skip` that must see a write
+    just made).
 
     A tombstone that reaches only `loom.memory` is not a tombstone: search
     reads `loom.memory_embeddings` on its own predicates and never joins the
@@ -581,36 +1131,35 @@ async def tombstone_cascade_by_ids(
       2. the status mirror `write_versions_by_ids` runs, at that version, so
          the embeddings table collapses onto a tombstoned version too.
 
-    `update(existing)` may add overrides (an audit note on source_trace).
+    `update(existing)` may add overrides (an audit note on source_trace); `skip(existing)`
+    leaves a head as it is (the one the authority holds, which a caller may judge again).
     The embeddings mirror is best-effort: the memory tombstone is
     durable and the orphan_vector_reconcile worker heals a missed mirror.
     Returns each tombstoned row's identity tuple, memory_key, memory_id and
     tombstone version (`memory_change`), for the caller's webhook events."""
     ch = ch or _default_client()
-    rows: list[MemoryRow] = []
-    seen: set[str] = set()
-    for memory_id in memory_ids:
-        mid = str(memory_id)
-        if not mid or mid in seen:
-            continue
-        seen.add(mid)
-        existing = await get_by_id(mid, org=org, ch=ch, scope=WHOLE_NAMESPACE)
-        if existing is not None:
-            rows.append(existing)
-    if not rows:
-        return []
-
-    # Drawn after the rows are read, so a write that landed before the read sorts below it.
-    version = next_version()  # the tombstones', which the vector retire carries
     tombstoned: list[dict[str, Any]] = []
+    decisions: set[str] = set()
+    # The tombstones' version, which the vector retire carries: drawn on first use, once
+    # every row is read, so a write that landed before the read sorts below it, and above
+    # a head written on a replica whose clock is ahead.
+    drawn: int | None = None
+    decision_version = 0  # the highest of the decision rows' tombstones
 
     def _tombstone(existing: MemoryRow) -> dict[str, Any]:
-        tombstoned.append(memory_change(existing, version))
+        nonlocal drawn, decision_version
+        if drawn is None:
+            drawn = next_version()
+        v = version_over(existing, drawn)
+        tombstoned.append(memory_change(existing, v))
+        if existing.memory_type == "decision":
+            decisions.add(existing.memory_key)
+            decision_version = max(decision_version, v)
         overrides: dict[str, Any] = {
             "status": "tombstoned",
             "tombstoned_at": when,
             "expires_at": None,
-            "version": version,
+            "version": v,
         }
         if update is not None:
             overrides.update(update(existing))
@@ -618,23 +1167,21 @@ async def tombstone_cascade_by_ids(
 
     # `write_versions_by_ids` mirrors the tombstone onto memory_embeddings at its version.
     await write_versions_by_ids(
-        org,
-        [r.memory_id for r in rows],
-        _tombstone,
-        ch=ch,
+        org, memory_ids, _tombstone, ch=ch, namespace=namespace, skip=skip, strong=strong
     )
-    # A decision's record goes with its writer's row, as on memory.delete: one statement
-    # per namespace.
-    decision_keys: dict[str, set[str]] = {}
-    for r in rows:
-        if r.memory_type == "decision":
-            decision_keys.setdefault(r.namespace, set()).add(r.memory_key)
-    for namespace, keys in decision_keys.items():
+    # A decision's record goes with its writer's row, as on memory.delete; under Postgres
+    # the tombstone's publication retires it (`pg_publish.retire_decision_records`).
+    keys = sorted(decisions)
+    if keys and not pg.enabled():
         try:
-            await tombstone_decision_records(org, namespace, sorted(keys), version=version, ch=ch)
+            await tombstone_decision_records(org, namespace, keys, version=decision_version, ch=ch)
         except Exception as e:  # noqa: BLE001 — the row tombstones stand
             _log.warning(
-                "decision records not retired in %s/%s for %s: %s", org, namespace, sorted(keys), e
+                "decision records not retired in %s/%s for %d key(s): %s",
+                org,
+                namespace,
+                len(keys),
+                error_summary(e),
             )
     return tombstoned
 
@@ -643,10 +1190,13 @@ async def tombstone_by_id(
     org: str,
     memory_id: str,
     *,
+    namespace: str,
     ch: _CHClient | None = None,
+    skip: Callable[[MemoryRow], bool] | None = None,
 ) -> list[dict[str, Any]]:
-    """Tombstone one row by memory_id (UUID), cascading to the embeddings
-    tier (see tombstone_cascade_by_ids), and return what that returns.
+    """Tombstone `namespace`'s row of memory_id (UUID), cascading to the embeddings
+    tier (see tombstone_cascade_by_ids), and return what that returns; `skip(head)`
+    leaves the head, read current, as it is.
 
     Used by `memory.dedup_resolve` when the decision is to kill one
     side of the duplicate pair, keyed on the surrogate UUID rather
@@ -656,6 +1206,9 @@ async def tombstone_by_id(
         [memory_id],
         when=naive_utc_now(),
         ch=ch,
+        namespace=namespace,
+        skip=skip,
+        strong=True,
     )
 
 

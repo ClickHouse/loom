@@ -2782,7 +2782,8 @@ class MemorySettings(BaseModel):
     # Seconds the BM25 corpus statistics (document count, mean length) of a namespace
     # are cached.
     memory_bm25_cache_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
-    # Most memories one blacklist sweep checks against the patterns.
+    # Most memories one blacklist sweep takes from ClickHouse's match (under the Postgres
+    # authority it also reads the heads ClickHouse keeps refusing, this many at a time).
     memory_blacklist_sweep_limit: Annotated[int, LIVE] = Field(default=5000, ge=1)
     # Most memories one usage-fold pass folds.
     memory_usage_fold_max_memories_per_pass: int = Field(default=1000, ge=1)
@@ -3135,7 +3136,8 @@ class MemoryAskSettings(BaseModel):
     memory_ask_precedents_namespaces: Annotated[str, LIVE] = ""
     # With precedents on, an eligible precedent is served before retrieval when no plane its
     # namespaces read was written since (loom.namespace_write_marks), the blacklist is
-    # unchanged and every cited row is live with the same hash. Hours a precedent stays
+    # unchanged and every cited row is live with the same hash; never under the Postgres
+    # authority, whose heads ClickHouse's marks can trail. Hours a precedent stays
     # servable on that fast path (a bound on rank drift, not staleness); 0 = no bound.
     memory_ask_precedents_fast_max_age_hours: Annotated[int, LIVE] = 1
 
@@ -5032,6 +5034,89 @@ class StorageSettings(BaseModel):
     # cluster's storage_policies.
     tiering_warm_volume_name: str = "warm"
 
+    # ---- memory authority ----
+    # Which store is the authority for live memory: clickhouse = ClickHouse alone;
+    # postgres = Postgres holds current content, revisions and delivery jobs, and
+    # ClickHouse serves search and history. Recorded at first boot; a replica
+    # configured for the other authority refuses to start.
+    storage_authority: Literal["clickhouse", "postgres"] = "clickhouse"
+    # Postgres connection string (libpq DSN or postgres:// URL) for the postgres
+    # authority. "" = none; required when storage_authority is postgres.
+    pg_dsn: str = ""
+    # Connections the Postgres pool keeps open per process.
+    pg_pool_min_size: int = Field(default=2, ge=0)
+    # Most connections the Postgres pool opens per process; a request waits for one.
+    pg_pool_max_size: int = Field(default=20, ge=1)
+    # Milliseconds a Postgres statement may run, and a request may wait for a pooled
+    # connection, before it fails.
+    pg_statement_timeout_ms: int = Field(default=5000, ge=100)
+    # What an acknowledged write must survive: synchronous = a standby in another
+    # failure domain has flushed it (boot refuses a server with no synchronous
+    # standby); local = the primary's disk only (boot warns).
+    pg_durability: Literal["synchronous", "local"] = "synchronous"
+    # Passes a writer that reads its heads again makes when a key's head keeps changing
+    # between its read and its commit. Past them a write request answers 503
+    # ADMISSION_CONTENDED; memory.consolidate and a background writer leave the keys for
+    # their next pass.
+    pg_admission_rounds: int = Field(default=3, ge=1)
+    # Milliseconds a memory commit or a `memory.redact` waits for a lock (its namespace's
+    # generation, which an erasure of the scope holds while it runs) before answering a
+    # retryable 503, so a long erasure does not hold every pooled connection it blocks; also
+    # how long a read that judges a head once it settles (a write whose commit answer was
+    # lost, a sensitivity relabel's close of its owed facts, by the sweep or the projection
+    # repair) waits on each head's lock.
+    pg_commit_lock_timeout_ms: int = Field(default=2000, ge=1)
+    # Milliseconds a memory.set or memory.bulk_set keeps re-reaching its verdict while
+    # writes commit in its namespace (each round adds only those writes) before answering
+    # 503 ADMISSION_CONTENDED: the bound on how far a namespace's admissions may queue.
+    pg_admission_deadline_ms: int = Field(default=3000, ge=100)
+    # Revisions committed in a write's namespace during its check that its commit
+    # reads to clear them; a longer gap sends the write back to its check.
+    pg_admission_gap_rows: int = Field(default=200, ge=1)
+    # Vectors of this process's recent writes kept to rule out a commit landing
+    # in another write's check without reading ClickHouse.
+    pg_admission_recent_vectors: int = Field(default=4096, ge=0)
+    # Seconds before its lease ends that a publisher stops sending, for clock drift
+    # and the time a send takes to leave the process; under Postgres, shorter than both
+    # leases (`LOOM_PG_REQUEST_LEASE_SECONDS`, `LOOM_PG_DELIVERY_LEASE_SECONDS`).
+    pg_lease_margin_seconds: float = Field(default=1.0, ge=0)
+    # Revisions a waiting admission publishes itself for a writer that stopped before
+    # publishing them; the delivery worker publishes the rest.
+    pg_admission_help_rows: int = Field(default=20, ge=1)
+    # Milliseconds an admission waits for earlier commits in its scope to reach
+    # search before answering 503 PROJECTION_BEHIND.
+    pg_projection_wait_ms: int = Field(default=2000, ge=0)
+    # Seconds the writing request holds its revisions' delivery; past it, the delivery
+    # worker or a waiting admission in the namespace publishes them instead.
+    pg_request_lease_seconds: int = Field(default=5, ge=1)
+    # Seconds the delivery worker holds a revision's delivery before another may take it;
+    # also how long the conflict resolver sets aside a row whose flagged peer is not yet
+    # in ClickHouse.
+    pg_delivery_lease_seconds: int = Field(default=30, ge=5)
+    # Background delivery of committed revisions a request did not publish.
+    pg_delivery_enabled: bool = True
+    # Seconds between delivery passes while there is work.
+    pg_delivery_interval_seconds: int = 2
+    # Seconds between delivery passes that found nothing.
+    pg_delivery_idle_interval_seconds: int = 10
+    # Revisions one delivery pass publishes.
+    pg_delivery_batch_rows: int = Field(default=500, ge=1)
+    # Memories one Postgres commit of a `namespace.restore` writes; each batch commits
+    # within a request's lease (`pg_request_lease_seconds`).
+    pg_restore_batch_rows: int = Field(default=500, ge=1)
+    # Times a delivery is tried before it is parked: a search document it cannot build
+    # is published as a stub for the embedding worker; a memory row ClickHouse keeps
+    # refusing is left out of claims and of its namespace's watermark, and counted in
+    # /v1/health?include=postgres (`postgres.parked_deliveries`). An audit row waiting
+    # in the outbox (a row an erasure moved there, or one a claim deferred because the
+    # holder it replaced may still insert it) is parked the same way
+    # (`postgres.parked_audits`). An unavailable ClickHouse counts no attempt.
+    pg_delivery_max_attempts: int = Field(default=10, ge=1)
+    # Hours an erased memory's id is kept as deletion evidence, refusing a write built
+    # from a head read before the erasure (longer than any request holds a head); a
+    # `namespace.restore` into its namespace leaves the memory out meanwhile.
+    pg_erasure_evidence_hours: int = Field(default=24, ge=1)
+
     # ---- timeouts, budgets and caches ----
     # Longest wait, in seconds, between retries of a failed dashboard-asset publish (the
     # wait doubles from storage_frontend_assets_retry_s).
@@ -5053,6 +5138,19 @@ class StorageSettings(BaseModel):
         ):
             raise ValueError(
                 "LOOM_DOCUMENT_S3_PREFIX must be non-empty, with no leading or trailing '/'"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_pg_lease_margin(self) -> StorageSettings:
+        """A margin as long as a lease ends every lease before its first send: each write
+        would answer PUBLICATION_PENDING and leave all publication to the worker."""
+        if self.storage_authority == "postgres" and self.pg_lease_margin_seconds >= min(
+            self.pg_request_lease_seconds, self.pg_delivery_lease_seconds
+        ):
+            raise ValueError(
+                "LOOM_PG_LEASE_MARGIN_SECONDS must be smaller than LOOM_PG_REQUEST_LEASE_SECONDS "
+                "and LOOM_PG_DELIVERY_LEASE_SECONDS"
             )
         return self
 

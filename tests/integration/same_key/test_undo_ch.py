@@ -13,6 +13,7 @@ import pytest
 
 from server.core.datetimes import naive_utc_now
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from tests.integration._resources import unique_org
 from tests.integration.same_key._rows import (
     KEY,
     NS,
@@ -1284,26 +1285,126 @@ async def test_a_recovered_value_starts_at_the_revision_and_walks_on_both_planes
     assert await _walked(org, ["london"], labeled=False, as_of=between) == ["london"]
 
 
+def _with_conflicted_peer(
+    org: str, status: str = "conflicted"
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Paris and its `conflicted` peer, each listing the other; Paris has `status`."""
+    paris = _row(org, "s1", "User lives in Paris", datetime(2023, 5, 30))
+    peer = _row(org, "s9", "User lives in Rome", datetime(2023, 5, 30), memory_key="city")
+    peer |= {"status": "conflicted", "conflict_with": [str(paris["memory_id"])]}
+    paris |= {"status": status, "conflict_with": [str(peer["memory_id"])]}
+    return paris, peer
+
+
 async def test_an_undo_gives_a_conflicted_row_back_its_conflict(ch, org) -> None:
     # Retired while under review: its peer still lists it, so it returns to the queue.
     from server.memory import store as M
     from server.memory.app.restore import handle_memory_restore
 
-    paris = _row(org, "s1", "User lives in Paris", datetime(2023, 5, 30))
-    peer = _row(org, "s9", "User lives in Rome", datetime(2023, 5, 30), memory_key="city")
-    peer |= {"status": "conflicted", "conflict_with": [str(paris["memory_id"])]}
+    paris, peer = _with_conflicted_peer(org)
     await M.insert_memory_versions([peer], ch=ch)
-    paris |= {"status": "conflicted", "conflict_with": [str(peer["memory_id"])]}
     london = _row(org, "s2", "User lives in London", datetime(2023, 6, 30))
     retired = {**paris, "version": M.next_version(), "status": "superseded"}
     retired["superseded_by"] = str(london["memory_id"])
     await M.insert_memory_versions([paris, london, retired], ch=ch)
     await _retired_embedding(ch, paris)
     assert (await handle_memory_restore(_undo_of(london))).restored
-    head = await M.get_by_id(str(paris["memory_id"]), org=org, ch=ch, scope=WHOLE_NAMESPACE)
+    head = await M.get_by_id(
+        str(paris["memory_id"]), org=org, ch=ch, scope=WHOLE_NAMESPACE, namespace=NS
+    )
     assert (head.status, head.conflict_with) == ("conflicted", [str(peer["memory_id"])])
     # Search ranks on the embedding row's status: it carries the conflict too.
     assert await _embedding_status(ch, paris) == "conflicted"
+
+
+async def _status_of(ch: Any, row: dict[str, Any]) -> str:
+    """The status of `row`'s key's head, read by key: an id held under two keys could read
+    as either."""
+    from server.memory import store as M
+
+    identity = M.Identity.model_validate(row)
+    head = await M.get_by_key(
+        identity, row["memory_key"], scope=WHOLE_NAMESPACE, ch=ch, strong=True
+    )
+    assert head is not None
+    return head.status
+
+
+@pytest.mark.parametrize(
+    "column", ["org", "namespace", "agent", "user_id", "session_id", "memory_key", "memory_id"]
+)
+async def test_an_undo_reads_its_earlier_status_by_its_own_key(ch, org, column) -> None:
+    # A conflicted version below the retirement under another key part (a namespace restored
+    # into itself or from another one holds the id there), or of another id under the key,
+    # is not this row's to bring back; nor is one in another org.
+    from server.memory import store as M
+    from server.memory.app.restore import handle_memory_restore
+
+    # Only a leaked copy could make the Undo answer `conflicted`.
+    paris, peer = _with_conflicted_peer(org, status="active")
+    if column == "org":
+        other = unique_org("same-key-other")
+    elif column == "memory_id":
+        other = str(uuid.uuid4())
+    else:
+        other = "other"
+    leaked = {**paris, column: other, "version": M.next_version(), "status": "conflicted"}
+    london = _row(org, "s2", "User lives in London", datetime(2023, 6, 30))
+    retired = {**paris, "version": M.next_version(), "status": "superseded"}
+    retired["superseded_by"] = str(london["memory_id"])
+    await M.insert_memory_versions([peer, paris, leaked, london, retired], ch=ch)
+    await _retired_embedding(ch, paris)
+    assert (await handle_memory_restore(_undo_of(london))).restored
+    assert await _status_of(ch, paris) == "active"
+    # Search ranks on the embedding row's status: it is active too.
+    assert await _embedding_status(ch, paris) == "active"
+
+
+async def test_the_status_before_a_retirement_skips_versions_above_it(ch, org) -> None:
+    # A plain write takes no key lock, so one can land above the head an Undo read: the
+    # status is read below the retirement, not from that write.
+    from server.memory import store as M
+
+    paris = _row(org, "s1", "User lives in Paris", datetime(2023, 5, 30), status="conflicted")
+    retired = {**paris, "version": M.next_version(), "status": "superseded"}
+    rewritten = {**paris, "version": M.next_version(), "status": "active"}
+    await M.insert_memory_versions([paris, retired, rewritten], ch=ch)
+    assert await M.status_before(M._hydrate(retired), ch=ch) == "conflicted"
+
+
+async def test_an_undo_brings_back_the_newest_earlier_status(ch, org) -> None:
+    # Reviewed, then rewritten active, then retired: the Undo returns the row to active, not
+    # to the review it left before the rewrite. The peer is left listing the row on purpose,
+    # so the older `conflicted` version would come back if it were the one read.
+    from server.memory import store as M
+    from server.memory.app.restore import handle_memory_restore
+
+    paris, peer = _with_conflicted_peer(org)
+    rewritten = {**paris, "version": M.next_version(), "status": "active"}
+    london = _row(org, "s2", "User lives in London", datetime(2023, 6, 30))
+    retired = {**rewritten, "version": M.next_version(), "status": "superseded"}
+    retired["superseded_by"] = str(london["memory_id"])
+    await M.insert_memory_versions([peer, paris, rewritten, london, retired], ch=ch)
+    await _retired_embedding(ch, paris)
+    assert (await handle_memory_restore(_undo_of(london))).restored
+    assert await _status_of(ch, paris) == "active"
+
+
+async def test_an_undo_reads_past_an_earlier_retirement(ch, org) -> None:
+    # Reviewed, retired, then retired again: the Undo of the last retirement skips the first
+    # and returns the row to its review, which its peer still holds.
+    from server.memory import store as M
+    from server.memory.app.restore import handle_memory_restore
+
+    paris, peer = _with_conflicted_peer(org)
+    first = {**paris, "version": M.next_version(), "status": "superseded"}
+    london = _row(org, "s2", "User lives in London", datetime(2023, 6, 30))
+    retired = {**paris, "version": M.next_version(), "status": "superseded"}
+    retired["superseded_by"] = str(london["memory_id"])
+    await M.insert_memory_versions([peer, paris, first, london, retired], ch=ch)
+    await _retired_embedding(ch, paris)
+    assert (await handle_memory_restore(_undo_of(london))).restored
+    assert await _status_of(ch, paris) == "conflicted"
 
 
 @pytest.mark.parametrize("peer_end", ["deleted", "resolved"])
@@ -1313,10 +1414,7 @@ async def test_an_undo_after_its_peer_left_review_restores_active(ch, org, peer_
     from server.memory import store as M
     from server.memory.app.restore import handle_memory_restore
 
-    paris = _row(org, "s1", "User lives in Paris", datetime(2023, 5, 30))
-    peer = _row(org, "s9", "User lives in Rome", datetime(2023, 5, 30), memory_key="city")
-    peer |= {"status": "conflicted", "conflict_with": [str(paris["memory_id"])]}
-    paris |= {"status": "conflicted", "conflict_with": [str(peer["memory_id"])]}
+    paris, peer = _with_conflicted_peer(org)
     london = _row(org, "s2", "User lives in London", datetime(2023, 6, 30))
     retired = {**paris, "version": M.next_version(), "status": "superseded"}
     retired["superseded_by"] = str(london["memory_id"])
@@ -1328,7 +1426,9 @@ async def test_an_undo_after_its_peer_left_review_restores_active(ch, org, peer_
     await M.insert_memory_versions([paris, peer, london, retired, peer_ended], ch=ch)
     await _retired_embedding(ch, paris)
     assert (await handle_memory_restore(_undo_of(london))).restored
-    head = await M.get_by_id(str(paris["memory_id"]), org=org, ch=ch, scope=WHOLE_NAMESPACE)
+    head = await M.get_by_id(
+        str(paris["memory_id"]), org=org, ch=ch, scope=WHOLE_NAMESPACE, namespace=NS
+    )
     assert head.status == "active"
     assert await _embedding_status(ch, paris) == "active"
 

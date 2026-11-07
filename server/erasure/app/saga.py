@@ -20,8 +20,11 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
+from server.core import pg
 from server.core.background import register_deferred_task
+from server.core.error_summary import error_summary
 from server.core.errors import BackendUnavailableError
+from server.core.pg import PostgresUnavailableError
 from server.erasure.api.erasure import (
     ErasureRequestInput,
     ErasureRequestOutput,
@@ -36,17 +39,21 @@ from server.erasure.app.saga_steps import (
     USER_STEPS,
     ErasureStepError,
     _step_verify_residue,
+    authority_steps,
 )
 from server.erasure.domain.scopes import parse_namespace_list
 from server.erasure.store import census as erasure_census
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store import mutations as erasure_mutations
-from server.erasure.store.rows import CheckpointRow, RequestRow, VerifyColumns
+from server.erasure.store.rows import CheckpointRow, RequestRow, VerifyColumns, census_kept
 from server.memory.app import webhooks
 from server.memory.app.provenance import writer_actor
 from server.observability import audit
 
 log = logging.getLogger(__name__)
+
+# A store that refused or timed out: the recovery worker retries the saga.
+_BACKEND_FAILURES = (ErasureBackendError, BackendUnavailableError, PostgresUnavailableError)
 
 
 def audit_namespace(scope_type: str, scope_value: str) -> str:
@@ -143,6 +150,9 @@ async def begin_erasure(
     `run_saga` needs. Authorization is the caller's — `erasure.request`
     checks admin on the target first; `code.repo.remove` has
     already passed the transport's ADMIN gate on the namespace it retires."""
+    # A CLI process configured for another deployment's Postgres is refused here,
+    # before the ledger row a recovery worker would later run.
+    await pg.verify_deployment()
     erasure_id = str(uuid.uuid4())
     now = datetime.now(UTC).replace(tzinfo=None)
     if input.scope_type == "namespace_list":
@@ -254,7 +264,7 @@ async def run_saga(
     were checkpointed before it switched to purging would fail `verify.residue` on every
     resume.
     """
-
+    await pg.verify_deployment()  # a resumed saga too: refused before any step writes
     steps: list[_ErasureStepResult] = []
     completed = set(previously_completed)
     # What the census tail counts if a step fails before `verify.residue`:
@@ -319,13 +329,12 @@ async def run_saga(
             else:  # pragma: no cover — Pydantic enforces ScopeType
                 raise ValueError(f"unsupported scope_type: {input.scope_type}")
         except Exception as e:
-            # A backend that refused or timed out (ClickHouse, or the document
-            # bucket) is the fail-closed path working: the recovery worker retries
-            # it, so one line names the step and the cause; a traceback is for the
-            # unexpected case.
+            # A backend that refused, timed out or dropped its connection is the
+            # fail-closed path working: the recovery worker retries it, so log one line;
+            # a traceback is for the unexpected case.
             cause = getattr(e, "cause", None)
-            if isinstance(e, ErasureStepError) and isinstance(
-                cause, (ErasureBackendError, BackendUnavailableError)
+            if isinstance(e, ErasureStepError) and (
+                isinstance(cause, _BACKEND_FAILURES) or (cause is not None and pg.is_outage(cause))
             ):
                 log.warning(
                     "erasure %s failed at step %s (backend, will retry): %s",
@@ -435,31 +444,30 @@ async def _census_tail(
     *,
     purge: bool,
 ) -> None:
-    """Run the residue census after a step failure. Fills
-    `verify` like the step does but never raises — residue here is evidence
-    on the failed row, not a second failure — and is a no-op when the verify
-    step itself already ran (its holder is full)."""
+    """Run the residue census after a step failure, filling `verify` as the step does
+    (`verified_at` only when every store was counted), never raising: residue here is
+    evidence on the failed row, not a second failure. A no-op once the verify step ran."""
     if verify:
         return
     try:
         with erasure_mutations.purge_scope(purge):
-            per_table, bucket_error = await erasure_census.evidence_census(
-                org, scope_type, scope_value
-            )
+            per_table, unread = await erasure_census.evidence_census(org, scope_type, scope_value)
     except Exception as e:  # noqa: BLE001 — the step's error is the reason; this is a footnote
-        log.warning("erasure: census tail failed after a step failure: %s", e)
+        log.warning("erasure: census tail failed after a step failure: %s", error_summary(e))
         return
-    if bucket_error is not None:
-        log.warning("erasure: census tail could not list the bucket: %s", bucket_error)
+    for store, error in unread.items():
+        log.warning("erasure: census tail could not read %s: %s", store, error_summary(error))
     verify["per_table"] = per_table
     verify["count"] = sum(per_table.values())
-    verify["verified_at"] = datetime.now(UTC).replace(tzinfo=None)
+    if not unread:
+        verify["verified_at"] = datetime.now(UTC).replace(tzinfo=None)
 
 
 def verify_columns_from_output(out: ErasureRequestOutput | None) -> VerifyColumns:
     """The verify columns of a saga's returned output, for a checkpoint written
-    by someone other than the saga (the recovery worker's terminal row)."""
-    if out is None or out.verified_at is None:
+    by someone other than the saga (the recovery worker's terminal row): a census that
+    found residue is kept even when it could not count every store (`census_kept`)."""
+    if out is None or not census_kept(out.verified_at, out.residue_count):
         return {}
     return {
         "residue_count": out.residue_count,
@@ -469,9 +477,10 @@ def verify_columns_from_output(out: ErasureRequestOutput | None) -> VerifyColumn
 
 
 def _verify_columns(verify: dict[str, Any]) -> VerifyColumns:
-    """erasure_requests columns from the verify holder; empty
-    when the saga failed before the verify step ran."""
-    if not verify:
+    """erasure_requests columns from the verify holder; empty when no census ran (the
+    census tail raised), or when it found nothing and left a store uncounted
+    (`census_kept`)."""
+    if not census_kept(verify.get("verified_at"), verify.get("count")):
         return {}
     return {
         "residue_count": int(verify.get("count") or 0),
@@ -550,7 +559,7 @@ async def _saga_user_id(
 
     await _marks.bump(org, _marks.ORG_WIDE, "erasure")
 
-    for name, fn in USER_STEPS:
+    for name, fn in authority_steps(USER_STEPS):
         await _step(name, fn, org, user_id)
 
     # External backends fail closed: they raise ErasureBackendError on a
@@ -590,7 +599,7 @@ async def _saga_namespace(
             )
         )
 
-    for name, fn in NAMESPACE_STEPS:
+    for name, fn in authority_steps(NAMESPACE_STEPS):
         await _step(name, fn, org, namespace)
 
     # External backends fail closed — see _saga_user_id. A namespace_list erasure may

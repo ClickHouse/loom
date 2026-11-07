@@ -200,11 +200,13 @@ class ConflictTarget:
 
 async def lookup_target(
     org: str,
+    namespace: str,
     memory_id: str,
     *,
     ch: _CHClient | None = None,
 ) -> ConflictTarget | None:
-    """Fetch one target row's id + conflict_with set + status.
+    """Fetch one target row's id + conflict_with set + status, in `namespace` (a
+    namespace restored from another's snapshot keeps its memory ids).
 
     Used by resolve as the precheck: if None, the target is already
     tombstoned and we return resolved=False.
@@ -214,11 +216,11 @@ async def lookup_target(
         """
         SELECT memory_id, conflict_with, status
         FROM loom.memory FINAL
-        WHERE org = {org:String} AND memory_id = {mid:UUID}
+        WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {mid:UUID}
           AND tombstoned_at IS NULL
         LIMIT 1
         """,
-        params={"org": org, "mid": memory_id},
+        params={"org": org, "ns": namespace, "mid": memory_id},
     )
     return None if r is None else ConflictTarget.from_row(r)
 
@@ -229,9 +231,10 @@ async def tombstone_ids(
     audit_note: str,
     when: datetime,
     *,
+    namespace: str,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Tombstone N rows by memory_id. `audit_note` is appended to
+    """Tombstone N rows of `namespace` by memory_id. `audit_note` is appended to
     source_trace so the resolution-audit trail is queryable.
     Empty list short-circuits (an empty IN would mutate every row).
 
@@ -253,6 +256,7 @@ async def tombstone_ids(
         when=when,
         update=_note,
         ch=ch,
+        namespace=namespace,
     )
 
 
@@ -260,9 +264,10 @@ async def mark_active_by_ids(
     org: str,
     memory_ids: list[str],
     *,
+    namespace: str,
     ch: _CHClient | None = None,
 ) -> None:
-    """Flip status='active' for the listed rows. Empty short-circuits."""
+    """Flip status='active' for the listed rows of `namespace`. Empty short-circuits."""
     if not memory_ids:
         return
     import server.memory.store as memory_repo
@@ -272,6 +277,7 @@ async def mark_active_by_ids(
         memory_ids,
         lambda _row: {"status": "active"},
         ch=ch,
+        namespace=namespace,
     )
 
 
@@ -279,9 +285,10 @@ async def lookup_keys_for_ids(
     org: str,
     memory_ids: list[str],
     *,
+    namespace: str,
     ch: _CHClient | None = None,
 ) -> dict[str, str]:
-    """Resolve memory_id → memory_key for the listed rows. Used by
+    """Resolve memory_id → memory_key for the listed rows of `namespace`. Used by
     the resolve(allow) path to canonicalize allowlist pairs."""
     if not memory_ids:
         return {}
@@ -289,11 +296,11 @@ async def lookup_keys_for_ids(
     rows = await ch.query_all(
         """
         SELECT memory_id, memory_key FROM loom.memory FINAL
-        WHERE org = {org:String}
+        WHERE org = {org:String} AND namespace = {ns:String}
           AND memory_id IN {ids:Array(UUID)}
           AND tombstoned_at IS NULL
         """,
-        params={"org": org, "ids": memory_ids},
+        params={"org": org, "ns": namespace, "ids": memory_ids},
     )
     return {str(r["memory_id"]): r["memory_key"] for r in rows}
 

@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import logging
 from contextlib import nullcontext
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
 from server.core.ch import get_client, sequential_reads
 from server.embedding import get_embedder
 from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput, _MemorySearchHit
+from server.memory.app.search import pg_validation
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.evidence import _decorate_hits
 from server.memory.app.search.knobs import _ground_relative_excerpts_enabled
@@ -83,33 +84,108 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
     if payload is None:
         return empty
     readable = await _readable_namespaces(input.org, input.namespace, payload)
-    hits, nxt = _readable_slice(payload, offset, int(input.top_k), readable)
+    hits, nxt, stale_dropped = await _parked_slice(input, payload, offset, readable)
     # Hits from a namespace the caller lost are neither served nor counted; the
     # count is over the whole parked list, the same on every page while the
     # caller's readable namespaces do not change.
     withheld = sum(1 for h in payload.get("hits") or [] if h.get("namespace", "") not in readable)
+    # Rows the authority no longer serves stay in it, counted per page in `stale_dropped`.
     total = max(0, int(payload.get("candidates_total") or 0) - withheld)
     # A parked page was serialised without tags unless the first call asked; fill on this
     # call's own switch.
     await _fill_hit_tags(hits, input)
     apply_explain_default(hits, input)
+    verdict = _page_verdict(hits, nxt, offset)
     out = MemorySearchOutput(
         results=hits,
         embedding_model=embedder_name,
         candidates_total=total,
+        stale_dropped=stale_dropped,
         namespaces_searched=[
             ns for ns in payload.get("namespaces_searched") or [input.namespace] if ns in readable
         ],
         namespaces_skipped=[ns for ns in payload.get("namespaces_skipped") or [] if ns in readable],
         page_offset=int(offset),
         next_page=_pages.make_handle(blob_key, nxt) if nxt >= 0 else "",
-        abstain=not hits,
-        abstain_code="" if hits else "no_match",
-        abstain_reason="" if hits else "the parked list is exhausted",
-        retrieval_risk="low" if hits else "abstain",
-        score_explanation=(f"parked page served at offset {offset}; no retrieval ran"),
+        abstain=verdict.abstain,
+        abstain_code=verdict.abstain_code,
+        abstain_reason=verdict.abstain_reason,
+        retrieval_risk=verdict.retrieval_risk,
+        score_explanation=verdict.score_explanation,
     )
     return out
+
+
+class _PageVerdict(NamedTuple):
+    retrieval_risk: Literal["low", "high", "abstain"]
+    score_explanation: str
+    abstain: bool = False
+    abstain_code: Literal["", "no_match"] = ""
+    abstain_reason: str = ""
+
+
+def _page_verdict(hits: list[_MemorySearchHit], nxt: int, offset: int) -> _PageVerdict:
+    """A page whose every row is no longer served is not the end while more follow."""
+    served = f"parked page served at offset {offset}; no retrieval ran"
+    if hits:
+        return _PageVerdict(retrieval_risk="low", score_explanation=served)
+    if nxt >= 0:
+        return _PageVerdict(
+            retrieval_risk="high",
+            score_explanation=f"{served}; no row of it is served now, pass next_page for the rest",
+        )
+    return _PageVerdict(
+        retrieval_risk="abstain",
+        score_explanation=served,
+        abstain=True,
+        abstain_code="no_match",
+        abstain_reason="the parked list is exhausted",
+    )
+
+
+# Fixed, not tuned: a short page's second window checks four rows per missing hit, so
+# one parked page is checked in at most two bounded windows.
+_REFILL_PER_MISSING_HIT = 4
+
+
+async def _parked_slice(
+    input: MemorySearchInput, payload: dict[str, Any], offset: int, readable: set[str]
+) -> tuple[list[_MemorySearchHit], int, int]:
+    """Up to `top_k` readable, still-served hits from `offset`; the next offset (-1 at the
+    end) and how many were stale. Checked in two windows at most: `top_k` readable rows,
+    then, when the page is still short, `_REFILL_PER_MISSING_HIT` for each hit missing.
+    A replay page is not checked."""
+    from server.memory.app import search_pages as _pages
+
+    rows = list(payload.get("hits") or [])
+    top_k = int(input.top_k)
+    hits: list[_MemorySearchHit] = []
+    dropped = 0
+    j = offset
+    for refill in (False, True):
+        if len(hits) == top_k or j >= len(rows):
+            break
+        size = _REFILL_PER_MISSING_HIT * (top_k - len(hits)) if refill else top_k
+        window: list[tuple[int, _MemorySearchHit]] = []
+        while j < len(rows) and len(window) < size:
+            hit = _pages.unparked(rows[j]) if rows[j].get("namespace", "") in readable else None
+            if hit is not None:
+                window.append((j, hit))
+            j += 1
+        stale = [False] * len(window)
+        if not payload.get("replay"):
+            stale = await pg_validation.stale_flags(
+                input.org, input.namespace, [h for _, h in window]
+            )
+        for (at, hit), is_stale in zip(window, stale, strict=True):
+            if len(hits) == top_k:
+                j = at  # the first row of the next page
+                break
+            if is_stale:
+                dropped += 1
+            else:
+                hits.append(hit)
+    return hits, (j if j < len(rows) else -1), dropped
 
 
 async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]) -> set[str]:
@@ -136,30 +212,6 @@ async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]
     return (named & set(mine)) | authorized
 
 
-def _readable_slice(
-    payload: dict[str, Any], offset: int, top_k: int, readable: set[str]
-) -> tuple[list[_MemorySearchHit], int]:
-    """Up to `top_k` readable hits from `offset` on, and the offset after the
-    last row read (-1 at the end). Slices on past withheld rows, so a page is
-    short only when the list is."""
-    from server.memory.app import search_pages as _pages
-
-    hits: list[_MemorySearchHit] = []
-    nxt = offset
-    while len(hits) < top_k and nxt >= 0:
-        rows, nxt = _pages.slice_page(payload, offset=nxt, top_k=top_k - len(hits))
-        for r in rows:
-            if r.get("namespace", "") not in readable:
-                continue
-            try:
-                hits.append(_MemorySearchHit.model_validate(r))
-            except Exception:  # noqa: BLE001 — a row this build cannot read is skipped
-                continue
-        if not rows:
-            break
-    return hits, nxt
-
-
 async def _shape_final_hits(
     ctx: SearchContext, final_hits: list[_MemorySearchHit]
 ) -> tuple[list[_MemorySearchHit], tuple[int, int, int], list[str]]:
@@ -172,9 +224,10 @@ async def _shape_final_hits(
     actual_work = ctx.actual_work
     _clock = ctx.clock
     _decorate_hits(final_hits, input=input)
-    final_hits = _apply_min_body_chars(
-        await _prepend_anchor(await _prepend_recent(final_hits, input), input), input
-    )
+    recent, stale_recent = await _prepend_recent(final_hits, input, ctx.stale_versions)
+    anchored, stale_anchor = await _prepend_anchor(recent, input, ctx.stale_versions)
+    ctx.stale_dropped += stale_recent + stale_anchor
+    final_hits = _apply_min_body_chars(anchored, input)
     _unit_bodies = await _expand_unit_bodies(
         final_hits, input, prefer_entities=list(ctx.effective_entity_filter)
     )
@@ -236,6 +289,7 @@ def _build_search_output(
     abstain, abstain_code, abstain_reason = abstain_verdict
     _output = MemorySearchOutput(
         top_k_ceiling=run.top_k_ceiling,
+        stale_dropped=ctx.stale_dropped,
         namespaces_searched=_namespaces_searched,
         namespaces_skipped=run.namespaces_skipped,
         results=final_hits,
@@ -318,6 +372,7 @@ async def _finish_search_output(
                 tail=ctx.page_tail,
                 namespaces_searched=_output.namespaces_searched,
                 namespaces_skipped=_output.namespaces_skipped,
+                replay=input.as_of is not None,
             )
             _blob_key = await _pages.store_page(
                 get_client(),

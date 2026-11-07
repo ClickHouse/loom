@@ -108,7 +108,7 @@ async def bridge_rows_by_key(search_input: Any, bridge: str, *, top_k: int = 6) 
                 session_id=str(r.get("session_id") or ""),
                 explanation=f"bridge:{bridge}",
             )
-            hit._row_identity = row_identity(r)  # so the pool knows the row it already holds
+            hit._row_identity = row_identity(r)  # the row read, for the pool and the authority
             stamp_row_tags(hit, r.get("tags"))  # so the hard tag belt judges this row
             out.append(hit)
         return out
@@ -397,24 +397,24 @@ def _completion_hits(rows: list[dict[str, Any]], ranked: list[Any], explanation:
             continue
         have.add(k)
         try:
-            out.append(
-                _MemorySearchHit(
-                    memory_key=k,
-                    memory_type=str(r.get("memory_type") or "semantic"),
-                    content_excerpt=str(r.get("content_excerpt") or ""),
-                    distance=0.0,
-                    similarity=0.0,
-                    rank_score=0.0,
-                    valid_at=str(r.get("created_at") or "")[:19],
-                    created_at=str(r.get("created_at") or "")[:10],
-                    version=int(r.get("version") or 0),
-                    status=str(r.get("status") or "active"),
-                    source="fact",
-                    explanation=explanation,
-                )
+            hit = _MemorySearchHit(
+                memory_key=k,
+                memory_type=str(r.get("memory_type") or "semantic"),
+                content_excerpt=str(r.get("content_excerpt") or ""),
+                distance=0.0,
+                similarity=0.0,
+                rank_score=0.0,
+                valid_at=str(r.get("created_at") or "")[:19],
+                created_at=str(r.get("created_at") or "")[:10],
+                version=int(r.get("version") or 0),
+                status=str(r.get("status") or "active"),
+                source="fact",
+                explanation=explanation,
             )
         except Exception:  # noqa: BLE001 — skip a row that won't validate
             continue
+        hit._row_identity = row_identity(r)  # the row read, for the pool and the authority
+        out.append(hit)
     return out
 
 

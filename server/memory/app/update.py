@@ -5,6 +5,7 @@ re-emits."""
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -12,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException
 
 from server.code.app.member_writes import assert_own_row
+from server.core import pg
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import served_content_sha256
@@ -36,7 +38,7 @@ from server.memory.app.edge_links import (
     owes_undeclared_drop,
     project_revised_edges,
 )
-from server.memory.app.high_fence import fence_high
+from server.memory.app.high_fence import fence_high, fenced_once_committed
 from server.memory.app.projection_errors import ProjectionScope
 from server.memory.app.set_entities import declared_entities
 from server.memory.app.triple_projections import project_stated_relations
@@ -44,12 +46,15 @@ from server.memory.domain import lock as _lock
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
 from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.memory_types import is_embedded
-from server.memory.store import key_write_lock
+from server.memory.store import key_write_lock, pg_memory
 from server.memory.store.inserts import insert_memory_versions
-from server.memory.store.rows import next_version
+from server.memory.store.pg_memory import AdmissionContendedError
+from server.memory.store.rows import identity_key, version_over
 from server.observability.budget_shape import note_budget_shape
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from server.memory.store import MemoryRow
 
 
@@ -143,24 +148,25 @@ async def handle_memory_update_by_id(input: MemoryUpdateByIdInput) -> MemoryUpda
     when memory_id doesn't resolve to a live row.
     """
     import server.memory.store as memory_repo
+    from server.memory.app.id_namespace import namespace_for_id
+    from server.operations.base import Role
 
     ch = get_client()
+    # A write by org-wide id: WRITER on the row's namespace, which the transport had no
+    # namespace to bind; a namespace the caller cannot write reads as not found.
+    namespace = await namespace_for_id(input.org, input.memory_id, Role.WRITER, strong=True)
+    if namespace is None:
+        return MemoryUpdateByIdOutput(updated=False)
     existing = await memory_repo.get_by_id(
         input.memory_id,
         org=input.org,
+        namespace=namespace,
         fresh=True,
         # With a hash precondition the read must be of the latest version.
         strong=True,  # always — the head feeds a write
         scope=WHOLE_NAMESPACE,
     )
     if existing is None:
-        return MemoryUpdateByIdOutput(updated=False)
-    # A write by org-wide id: WRITER on the row's namespace, checked here
-    # because the transport had no namespace to bind.
-    from server.auth.authz import row_in_scope
-    from server.operations.base import Role as _Role
-
-    if not await row_in_scope(input.org, existing.namespace, _Role.WRITER):
         return MemoryUpdateByIdOutput(updated=False)
     return await _update_live_row(input, existing, ch, op="memory.update_by_id")
 
@@ -212,6 +218,7 @@ async def handle_memory_update(input: MemoryUpdateInput) -> MemoryUpdateOutput:
     existing = await memory_repo.get_by_id(
         memory_id,
         org=input.org,
+        namespace=input.namespace,
         fresh=True,
         strong=True,  # always — the head feeds a write
         scope=WHOLE_NAMESPACE,
@@ -433,7 +440,7 @@ async def _update_sensitivity(
 
     level = max_sensitivity(
         [
-            getattr(existing, "sensitivity", ""),
+            existing.sensitivity,
             await resolve_level("", await decoded_text(serialized_value)),
         ]
     )
@@ -562,6 +569,7 @@ async def _update_post_write(
                 org=input.org,
                 new_memory_id=str(existing.memory_id),
                 peer_ids=[p.memory_id for p in conflict_result.peers],
+                namespace=existing.namespace,
             )
         if landed != "conflict":
             # Every peer, or the new row itself, retired before the mark:
@@ -604,7 +612,12 @@ async def _update_live_row(
         existing.memory_key,
     ):
         head = await memory_repo.get_by_id(
-            str(existing.memory_id), org=input.org, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+            str(existing.memory_id),
+            org=input.org,
+            namespace=existing.namespace,
+            fresh=True,
+            strong=True,
+            scope=WHOLE_NAMESPACE,
         )
         if head is None:
             return MemoryUpdateByIdOutput(updated=False)
@@ -647,6 +660,206 @@ async def _record_revision(
         note_budget_shape("webhook")
 
 
+async def _land_revision(
+    existing: MemoryRow,
+    memory_row: dict[str, Any],
+    emb_rows: list[dict[str, Any]],
+    policy: dict[tuple[str, str], int] | None,
+    ch: Any,
+    *,
+    searchable: bool,
+    high: bool,
+    record: Callable[[], Awaitable[None]],
+    exact: bool,
+    op: str,
+) -> pg_memory.PublicationPending | None:
+    """Write the revision, record it (`record`: its audit row and announcement) and fence
+    a 'high' one. Under Postgres a committed revision whose publication failed returns its
+    PublicationPending, so the caller's follow-ups still run; any other failure raises.
+    `exact`: committed only over the very head read (`if_match_sha256`)."""
+    if pg.enabled():
+        return await _land_committed(
+            existing,
+            memory_row,
+            emb_rows,
+            policy,
+            ch,
+            high=high,
+            record=record,
+            exact=exact,
+            op=op,
+        )
+    await _land_inserted(
+        existing,
+        memory_row,
+        emb_rows,
+        ch,
+        retire_vectors=not searchable,
+        high=high,
+        record=record,
+    )
+    return None
+
+
+async def _land_inserted(
+    existing: MemoryRow,
+    memory_row: dict[str, Any],
+    emb_rows: list[dict[str, Any]],
+    ch: Any,
+    *,
+    retire_vectors: bool,
+    high: bool,
+    record: Callable[[], Awaitable[None]],
+) -> None:
+    """On ClickHouse: recorded once the version row is in, the first failure raised."""
+    try:
+        # Every insert runs to its end, so the fence below comes after the retire.
+        done = await _insert_revision(
+            existing, memory_row, emb_rows, ch, retire_vectors=retire_vectors
+        )
+        if not isinstance(done[0], BaseException):
+            # The row is in: audit and announce it even when the rest of the write fails;
+            # a retry writes, audits and announces a new version.
+            await record()
+        for d in done:
+            if isinstance(d, BaseException):
+                raise d
+    finally:
+        if high:
+            # After the request's own retire, at the same version: the later insert wins the
+            # tie. Even when an insert failed or the write was cancelled: the row may be in.
+            await fence_high([(identity_key(existing), int(memory_row["version"]))], ch=ch)
+
+
+async def _land_committed(
+    existing: MemoryRow,
+    memory_row: dict[str, Any],
+    emb_rows: list[dict[str, Any]],
+    policy: dict[tuple[str, str], int] | None,
+    ch: Any,
+    *,
+    high: bool,
+    record: Callable[[], Awaitable[None]],
+    exact: bool,
+    op: str,
+) -> pg_memory.PublicationPending | None:
+    """Under Postgres: a commit refused before it ran raises with nothing in; a committed
+    revision is recorded, and the first failure after it is returned as pending. A fence
+    that fails once the revision may be in is recorded, never the answer: the revision
+    stands."""
+
+    def _fence() -> list[tuple[Any, int]]:
+        return [(identity_key(existing), int(memory_row["version"]))] if high else []
+
+    async with fenced_once_committed(_fence, op=op, ch=ch) as answer:
+        committed = await _commit_revision(existing, memory_row, emb_rows, policy, exact=exact)
+        answer.mark_committed()
+        try:
+            return await _publish_revision(committed, emb_rows, ch)
+        finally:
+            await record()  # the revision is in, whatever its publication did
+
+
+async def _insert_revision(
+    existing: MemoryRow,
+    memory_row: dict[str, Any],
+    emb_rows: list[dict[str, Any]],
+    ch: Any,
+    *,
+    retire_vectors: bool,
+) -> list[Any]:
+    """On ClickHouse: the version row, its search document and, for a row no longer
+    searchable (`retire_vectors`), its vectors retired at its version: each one's
+    outcome, gathered."""
+    import server.memory.store as memory_repo
+
+    writes: list[Awaitable[Any]] = [insert_memory_versions([memory_row], ch=ch)]
+    if emb_rows:
+        writes.append(memory_repo.insert_embedding_rows(emb_rows, ch=ch))
+    if retire_vectors:
+        version = int(memory_row["version"])
+        writes.append(memory_repo.tombstone_vectors_of(existing, version=version, ch=ch))
+    return list(await asyncio.gather(*writes, return_exceptions=True))
+
+
+async def _commit_revision(
+    existing: MemoryRow,
+    memory_row: dict[str, Any],
+    emb_rows: list[dict[str, Any]],
+    policy: dict[tuple[str, str], int] | None,
+    *,
+    exact: bool,
+) -> pg_memory.Committed:
+    """Under Postgres: the version row committed over the head the write read and the
+    policy its guard ran at, owing its document (the commit decides the old vectors'
+    retirement from the head it replaces). Nothing reaches ClickHouse unless it commits."""
+    from server.memory.app import pg_admission
+    from server.memory.store import pg_publish
+
+    owed = pg_memory.SEARCH_DOC if emb_rows else 0
+    try:
+        committed = await pg_publish.commit(
+            [memory_row],
+            targets=pg_memory.MEMORY_ROW | pg_memory.AUDIT_ROW | owed,
+            admission=pg_memory.Admission(
+                generations=dict(policy or {}),
+                recheck=pg_memory.heads_unchanged(
+                    {identity_key(memory_row): existing}, exact=exact
+                ),
+            ),
+        )
+    except (pg_memory.AdmissionMoved, pg_memory.HeadMoved):
+        raise AdmissionContendedError(
+            "the memory or its policy changed during this write"
+        ) from None
+    for r in emb_rows:
+        pg_admission.remember(identity_key(memory_row), int(r["version"]), list(r["embedding"]))
+    return committed
+
+
+async def _publish_revision(
+    committed: pg_memory.Committed, emb_rows: list[dict[str, Any]], ch: Any
+) -> pg_memory.PublicationPending | None:
+    """A committed revision's publication and search document: the first of those that
+    failed, as pending."""
+    import server.memory.store as memory_repo
+    from server.memory.store import pg_publish
+
+    async def _document() -> None:
+        try:
+            with pg_memory.leased(committed.deadline):
+                await memory_repo.insert_embedding_rows(emb_rows, ch=ch)
+            await pg_memory.complete(committed.seqs, pg_memory.SEARCH_DOC)
+        except pg_memory.PublicationPending:
+            raise  # the lease ran out before the insert (`leased`)
+        except Exception as e:
+            raise pg_memory.PublicationPending.after(e) from e
+
+    done = await asyncio.gather(
+        pg_publish.publish(committed, ch=ch),
+        *([_document()] if emb_rows else []),
+        return_exceptions=True,
+    )
+    # publish and _document turn every failure into PublicationPending; anything else (a
+    # child's cancellation) is raised as itself, whichever child it came from
+    for d in done:
+        if isinstance(d, BaseException) and not isinstance(d, pg_memory.PublicationPending):
+            raise d
+    return next((d for d in done if isinstance(d, pg_memory.PublicationPending)), None)
+
+
+async def _refuse_blacklisted(
+    org: str, namespace: str, value: str
+) -> dict[tuple[str, str], int] | None:
+    """The blacklist guard, and under the Postgres authority the policy generations it
+    ran at, captured before it: a blacklist change after the guard refuses the commit."""
+    policy = await pg_memory.policy_generations(org) if pg.enabled() else None
+    from server.memory.app.blacklist_guard import enforce_on_insert
+
+    await enforce_on_insert(org=org, namespace=namespace, value=value, policy=policy)
+    return policy
+
+
 async def _write_revision(
     input: Any, existing: MemoryRow, ch: Any, *, op: str
 ) -> MemoryUpdateByIdOutput:
@@ -660,7 +873,8 @@ async def _write_revision(
     _refuse_blind_revival(input, existing)
     _check_update_precondition(input, existing)
 
-    new_version = next_version()
+    # Above the head it revises: one written on a replica whose clock is ahead included.
+    new_version = version_over(existing)
     new_confidence = getattr(input, "confidence", None)
     new_value, serialized_value, new_sha, new_tags, new_concepts = _revised_fields(input, existing)
     effective_char_limit = input.char_limit
@@ -668,13 +882,7 @@ async def _write_revision(
 
     # Blacklist enforcement ("Refuse") — parity with memory.set, else an
     # edit could smuggle a blacklisted value past the write-time gate.
-    from server.memory.app.blacklist_guard import enforce_on_insert
-
-    await enforce_on_insert(
-        org=input.org,
-        namespace=existing.namespace,
-        value=serialized_value,
-    )
+    policy = await _refuse_blacklisted(input.org, existing.namespace, serialized_value)
 
     # The new value meets the namespace the way a memory.set value does — same semantic
     # conflict check, same verdicts — and it runs BEFORE the version is written so a pinned
@@ -739,6 +947,8 @@ async def _write_revision(
         sensitivity=sensitivity,
         **({"expires_at": None} if input.revive else {}),
         **({"confidence": float(new_confidence)} if new_confidence is not None else {}),
+        # A new value is not the redacted one.
+        **({"redacted_at": None, "redaction_reason": ""} if input.value is not None else {}),
         **status_cols,
     )
     mark = await same_key_mark(
@@ -765,58 +975,57 @@ async def _write_revision(
         if embedder is not None
         else []
     )
-    try:
-        # Every insert runs to its end, so the fence below comes after the retire.
-        memory_done, *others_done = await asyncio.gather(
-            insert_memory_versions([memory_row], ch=ch),
-            *([memory_repo.insert_embedding_rows(emb_rows, ch=ch)] if emb_rows else []),
-            *(
-                []
-                if searchable
-                else [memory_repo.tombstone_vectors_of(existing, version=new_version, ch=ch)]
-            ),
-            return_exceptions=True,
-        )
-        if not isinstance(memory_done, BaseException):
-            # The row is in: audit and announce it even when the rest of the write fails;
-            # a retry writes, audits and announces a new version.
-            await _record_revision(
-                memory_row,
-                op=op,
-                conflict_result=conflict_result,
-                duplicate_of_id=duplicate_of_id,
-            )
-        for done in [memory_done, *others_done]:
-            if isinstance(done, BaseException):
-                raise done
-    finally:
-        if sensitivity == "high":
-            # After the retire (at the same version, the later insert wins the tie),
-            # and even when an insert failed or the write was cancelled: the version
-            # row may be in.
-            await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
-    # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
-    after_write.index_late_rows(emb_rows, ch=ch)
-    cfg = await cfg_task
-
-    follows: list[Follow] = []
-    conflict_result = await _update_post_write(input, existing, conflict_result, ch, follows)
-
-    # Same-key supersession, exactly as memory.set runs it after its insert.
-    await _revision_supersession(input.org, existing, serialized_value, ch, cfg.policy, follows)
-    await _revised_edges(existing, memory_row, new_value, new_sha, sensitivity, op=op, ch=ch)
-    await project_stated_relations(
-        memory_row, new_value, input.relations, revised=True, op=op, ch=ch
-    )
-    # After the revision's own relations, so the follow sees the successor they state.
-    follow_beside_response(
-        org=input.org,
-        namespace=existing.namespace,
-        pairs=follows,
+    pending = await _land_revision(
+        existing,
+        memory_row,
+        emb_rows,
+        policy,
+        ch,
+        searchable=searchable,
+        high=sensitivity == "high",
+        record=functools.partial(
+            _record_revision,
+            memory_row,
+            op=op,
+            conflict_result=conflict_result,
+            duplicate_of_id=duplicate_of_id,
+        ),
+        exact=bool(input.if_match_sha256),
         op=op,
-        agent=str(existing.agent),
-        user_id=str(existing.user_id),
     )
+    follows: list[Follow] = []
+
+    def follow() -> None:
+        # After the revision's own relations, so the follow sees the successor they state.
+        follow_beside_response(
+            org=input.org,
+            namespace=existing.namespace,
+            pairs=follows,
+            op=op,
+            agent=str(existing.agent),
+            user_id=str(existing.user_id),
+        )
+
+    try:
+        # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
+        after_write.index_late_rows(emb_rows, ch=ch)
+        cfg = await cfg_task
+        conflict_result = await _update_post_write(input, existing, conflict_result, ch, follows)
+
+        # Same-key supersession, exactly as memory.set runs it after its insert.
+        await _revision_supersession(input.org, existing, serialized_value, ch, cfg.policy, follows)
+        await _revised_edges(existing, memory_row, new_value, new_sha, sensitivity, op=op, ch=ch)
+        await project_stated_relations(
+            memory_row, new_value, input.relations, revised=True, op=op, ch=ch
+        )
+    except Exception as e:
+        if pending is not None:  # committed: what it retired is followed, and the 503 stands
+            follow()
+            raise pending from e
+        raise
+    follow()
+    if pending is not None:
+        raise pending
     return MemoryUpdateByIdOutput(
         updated=True,
         new_version=new_version,

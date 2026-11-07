@@ -235,9 +235,9 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
     # embedding is the window in which the resolver can act on the old row.
     embed, slow = write._set_embed, random.Random(seed * 31)
 
-    async def slow_embed(w: Any) -> Any:
+    async def slow_embed(w: Any, embedder: Any = None) -> Any:
         await asyncio.sleep(slow.uniform(0.0, 0.5))
-        return await embed(w)
+        return await embed(w, embedder)
 
     monkeypatch.setattr(write, "_set_embed", slow_embed)
     for old, new, axis in _PAIRS:

@@ -290,6 +290,7 @@ IDENTIFIER_KEYS: frozenset[str] = frozenset(
         "demoted",
         "anonymized",
         "locked_skipped",
+        "moved_skipped",
         "failed",
         "timeline_rows",
         "count_recomputed",

@@ -101,11 +101,15 @@ async def test_get_by_key_without_filters_has_no_empty_where() -> None:
 
 @pytest.mark.asyncio
 async def test_get_by_id_second_phase_prewheres_only_the_key_columns_it_found() -> None:
-    key = {"org": "o", "namespace": "n", "created_at": datetime(2026, 9, 13), "memory_key": "k"}
+    key = {"created_at": datetime(2026, 9, 13), "memory_key": "k"}
     ch = _CH(rows=[key, None])  # phase 1 finds the key; phase 2 reads nothing
     assert (
         await memory_repo.get_by_id(
-            "00000000-0000-0000-0000-000000000001", org="o", ch=ch, scope=WHOLE_NAMESPACE
+            "00000000-0000-0000-0000-000000000001",
+            org="o",
+            namespace="n",
+            ch=ch,
+            scope=WHOLE_NAMESPACE,
         )
         is None
     )

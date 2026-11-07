@@ -10,8 +10,9 @@ This module makes the fallback visible on the response. A provider that
 falls back calls `note(provider, effect, reason)`; the handler reads
 `current()` into the output's `degraded` list. The transport binds a fresh
 list per op next to the cost accumulator, so notes never leak across
-requests. Bounded, never raises, and every note also feeds
-`provider_health` so the /v1/health flag agrees with the responses.
+requests. Bounded, never raises, and a note also feeds `provider_health`
+(unless it passes `health=False`: a fallback that is no provider's) so the
+/v1/health flag agrees with the responses.
 
     degraded: ["classify: caller_type_kept (HTTPStatusError: 502 Bad Gateway)",
                "rerank: input_order_kept (ReadTimeout)"]
@@ -37,11 +38,12 @@ def begin() -> None:
     _notes.set([])
 
 
-def note(provider: str, effect: str, reason: object = "") -> None:
+def note(provider: str, effect: str, reason: object = "", *, health: bool = True) -> None:
     """Record that `provider` fell back to `effect` because of `reason`.
 
     `effect` is the short bounded label of what the response did instead
-    (`caller_type_kept`, `input_order_kept`, `unannotated`). Never raises.
+    (`caller_type_kept`, `input_order_kept`, `unannotated`). `health=False` keeps
+    a fallback that is no provider's out of `provider_health`. Never raises.
     """
     try:
         text = str(reason) if reason is not None else ""
@@ -57,6 +59,8 @@ def note(provider: str, effect: str, reason: object = "") -> None:
             _notes.set(lst)
         if len(lst) < _MAX_NOTES:
             lst.append(entry)
+        if not health:
+            return
         try:
             from server.observability import provider_health
 

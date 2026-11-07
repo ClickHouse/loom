@@ -1172,7 +1172,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_BM25_CACHE_TTL_S` | `float` | `300.0` | live | Seconds the BM25 corpus statistics (document count, mean length) of a namespace are cached. |
-| `LOOM_MEMORY_BLACKLIST_SWEEP_LIMIT` | `int` | `5000` | live | Most memories one blacklist sweep checks against the patterns. |
+| `LOOM_MEMORY_BLACKLIST_SWEEP_LIMIT` | `int` | `5000` | live | Most memories one blacklist sweep takes from ClickHouse's match (under the Postgres authority it also reads the heads ClickHouse keeps refusing, this many at a time). |
 | `LOOM_MEMORY_USAGE_FOLD_MAX_MEMORIES_PER_PASS` | `int` | `1000` |  | Most memories one usage-fold pass folds. |
 | `LOOM_MEMORY_USAGE_FOLD_PASS_TIME_BUDGET_S` | `float` | `120.0` |  | Seconds one usage-fold pass may run before it stops and leaves the rest to the next. |
 | `LOOM_MEMORY_CONFLICTS_COUNT_TTL_S` | `float` | `60.0` | live | Seconds a namespace's open-conflict count is cached between reads. |
@@ -1269,7 +1269,7 @@ memory.ask: evidence assembly and answer synthesis.
 | `LOOM_MEMORY_ASK_PRECEDENTS` | `bool` | `False` | live | Serve the earlier synthesized answer to the same question and shape, with no LLM call, when the synthesis window is byte-identical (same keys, same content_sha256 per key); otherwise synthesize and store. A per-request precedents field overrides. |
 | `LOOM_MEMORY_ASK_PRECEDENTS_MAX_AGE_HOURS` | `int` | `0` | live | Hours a stored precedent stays servable; 0 = no age bound, the evidence alone decides. |
 | `LOOM_MEMORY_ASK_PRECEDENTS_NAMESPACES` | `str` | `''` | live | Comma-separated fnmatch globs the precedent flag applies to; '' = every namespace. Scope it to namespaces whose traffic is real repeats (e.g. "support-*"): on a shared server a paired A/B would answer its second arm from the first. |
-| `LOOM_MEMORY_ASK_PRECEDENTS_FAST_MAX_AGE_HOURS` | `int` | `1` | live | With precedents on, an eligible precedent is served before retrieval when no plane its namespaces read was written since (loom.namespace_write_marks), the blacklist is unchanged and every cited row is live with the same hash. Hours a precedent stays servable on that fast path (a bound on rank drift, not staleness); 0 = no bound. |
+| `LOOM_MEMORY_ASK_PRECEDENTS_FAST_MAX_AGE_HOURS` | `int` | `1` | live | With precedents on, an eligible precedent is served before retrieval when no plane its namespaces read was written since (loom.namespace_write_marks), the blacklist is unchanged and every cited row is live with the same hash; never under the Postgres authority, whose heads ClickHouse's marks can trail. Hours a precedent stays servable on that fast path (a bound on rank drift, not staleness); 0 = no bound. |
 | `LOOM_MEMORY_ASK_LLM_CACHE_DEFAULT` | `bool` | `True` | live | Exact-prompt LLM response cache for every memory.ask synthesis-path call, keyed by sha256(org, system, user, max_tokens, response_format) per model in loom.llm_response_cache; a miss writes fire-and-forget. The evidence is in the key, so a changed memory misses. `memory_ask_llm_cache_namespaces` scopes the default; a per-request llm_cache wins (benches measuring synthesis send false). |
 | `LOOM_MEMORY_ASK_LLM_CACHE_NAMESPACES` | `str` | `''` | live | Comma-separated fnmatch namespace globs the LLM cache default applies to; '' = all. |
 | `LOOM_MEMORY_ASK_PENDING_EVIDENCE_TURNS` | `int` | `5` | live | memory.ask pending evidence: the turns of in-flight deferred batches that share words with the question join the synthesis window as raw rows (source="pending"). Most pending turns read into the synthesis window per ask. |
@@ -1719,6 +1719,34 @@ Opt-in tiering, applied as idempotent ALTER TABLE MODIFY TTL by server/storage/r
 | `LOOM_TIERING_CHUNKS_WARM_DAYS` | `int` | `0` |  | Days before `loom.chunks` rows move to the warm volume; 0 = never. |
 | `LOOM_TIERING_DOCUMENTS_WARM_DAYS` | `int` | `0` |  | Days before `loom.documents` rows move to the warm volume; 0 = never. |
 | `LOOM_TIERING_WARM_VOLUME_NAME` | `str` | `'warm'` |  | Volume named in tiering TTL clauses; must match a volume in the cluster's storage_policies. |
+
+### Memory authority
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_STORAGE_AUTHORITY` | `'clickhouse' \| 'postgres'` | `'clickhouse'` |  | Which store is the authority for live memory: clickhouse = ClickHouse alone; postgres = Postgres holds current content, revisions and delivery jobs, and ClickHouse serves search and history. Recorded at first boot; a replica configured for the other authority refuses to start. |
+| `LOOM_PG_DSN` | `str` | *(unset)* |  | Postgres connection string (libpq DSN or postgres:// URL) for the postgres authority. "" = none; required when storage_authority is postgres. |
+| `LOOM_PG_POOL_MIN_SIZE` | `int` | `2` |  | Connections the Postgres pool keeps open per process. |
+| `LOOM_PG_POOL_MAX_SIZE` | `int` | `20` |  | Most connections the Postgres pool opens per process; a request waits for one. |
+| `LOOM_PG_STATEMENT_TIMEOUT_MS` | `int` | `5000` |  | Milliseconds a Postgres statement may run, and a request may wait for a pooled connection, before it fails. |
+| `LOOM_PG_DURABILITY` | `'synchronous' \| 'local'` | `'synchronous'` |  | What an acknowledged write must survive: synchronous = a standby in another failure domain has flushed it (boot refuses a server with no synchronous standby); local = the primary's disk only (boot warns). |
+| `LOOM_PG_ADMISSION_ROUNDS` | `int` | `3` |  | Passes a writer that reads its heads again makes when a key's head keeps changing between its read and its commit. Past them a write request answers 503 ADMISSION_CONTENDED; memory.consolidate and a background writer leave the keys for their next pass. |
+| `LOOM_PG_COMMIT_LOCK_TIMEOUT_MS` | `int` | `2000` |  | Milliseconds a memory commit or a `memory.redact` waits for a lock (its namespace's generation, which an erasure of the scope holds while it runs) before answering a retryable 503, so a long erasure does not hold every pooled connection it blocks; also how long a read that judges a head once it settles (a write whose commit answer was lost, a sensitivity relabel's close of its owed facts, by the sweep or the projection repair) waits on each head's lock. |
+| `LOOM_PG_ADMISSION_DEADLINE_MS` | `int` | `3000` |  | Milliseconds a memory.set or memory.bulk_set keeps re-reaching its verdict while writes commit in its namespace (each round adds only those writes) before answering 503 ADMISSION_CONTENDED: the bound on how far a namespace's admissions may queue. |
+| `LOOM_PG_ADMISSION_GAP_ROWS` | `int` | `200` |  | Revisions committed in a write's namespace during its check that its commit reads to clear them; a longer gap sends the write back to its check. |
+| `LOOM_PG_ADMISSION_RECENT_VECTORS` | `int` | `4096` |  | Vectors of this process's recent writes kept to rule out a commit landing in another write's check without reading ClickHouse. |
+| `LOOM_PG_LEASE_MARGIN_SECONDS` | `float` | `1.0` |  | Seconds before its lease ends that a publisher stops sending, for clock drift and the time a send takes to leave the process; under Postgres, shorter than both leases (`LOOM_PG_REQUEST_LEASE_SECONDS`, `LOOM_PG_DELIVERY_LEASE_SECONDS`). |
+| `LOOM_PG_ADMISSION_HELP_ROWS` | `int` | `20` |  | Revisions a waiting admission publishes itself for a writer that stopped before publishing them; the delivery worker publishes the rest. |
+| `LOOM_PG_PROJECTION_WAIT_MS` | `int` | `2000` |  | Milliseconds an admission waits for earlier commits in its scope to reach search before answering 503 PROJECTION_BEHIND. |
+| `LOOM_PG_REQUEST_LEASE_SECONDS` | `int` | `5` |  | Seconds the writing request holds its revisions' delivery; past it, the delivery worker or a waiting admission in the namespace publishes them instead. |
+| `LOOM_PG_DELIVERY_LEASE_SECONDS` | `int` | `30` |  | Seconds the delivery worker holds a revision's delivery before another may take it; also how long the conflict resolver sets aside a row whose flagged peer is not yet in ClickHouse. |
+| `LOOM_PG_DELIVERY_ENABLED` | `bool` | `True` |  | Background delivery of committed revisions a request did not publish. |
+| `LOOM_PG_DELIVERY_INTERVAL_SECONDS` | `int` | `2` |  | Seconds between delivery passes while there is work. |
+| `LOOM_PG_DELIVERY_IDLE_INTERVAL_SECONDS` | `int` | `10` |  | Seconds between delivery passes that found nothing. |
+| `LOOM_PG_DELIVERY_BATCH_ROWS` | `int` | `500` |  | Revisions one delivery pass publishes. |
+| `LOOM_PG_RESTORE_BATCH_ROWS` | `int` | `500` |  | Memories one Postgres commit of a `namespace.restore` writes; each batch commits within a request's lease (`pg_request_lease_seconds`). |
+| `LOOM_PG_DELIVERY_MAX_ATTEMPTS` | `int` | `10` |  | Times a delivery is tried before it is parked: a search document it cannot build is published as a stub for the embedding worker; a memory row ClickHouse keeps refusing is left out of claims and of its namespace's watermark, and counted in /v1/health?include=postgres (`postgres.parked_deliveries`). An audit row waiting in the outbox (a row an erasure moved there, or one a claim deferred because the holder it replaced may still insert it) is parked the same way (`postgres.parked_audits`). An unavailable ClickHouse counts no attempt. |
+| `LOOM_PG_ERASURE_EVIDENCE_HOURS` | `int` | `24` |  | Hours an erased memory's id is kept as deletion evidence, refusing a write built from a head read before the erasure (longer than any request holds a head); a `namespace.restore` into its namespace leaves the memory out meanwhile. |
 
 ### Timeouts, budgets and caches
 

@@ -28,6 +28,7 @@ from server.memory.app.ask.pool import (
     _order_pool,
     _read_time,
     _retrieve,
+    _served_pool,
     _settle_window,
     _tag_belt,
     _widen_by_question,
@@ -267,8 +268,9 @@ async def _fill_pool(
 
     await _complete_facets(run)
 
-    # The hard tag belt, after the last leg that adds a row.
+    # The hard tag belt and the authority's check, after the last leg that adds a row.
     run.ranked = await _tag_belt(run.ranked, run.search_input)
+    run.ranked = await _served_pool(run.ranked, run.search_input)
     run.results = run.ranked[: run.target_k]
     run.synth_pool = run.ranked[: run.window]
     return notes

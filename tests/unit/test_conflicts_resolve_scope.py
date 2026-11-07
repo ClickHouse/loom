@@ -1,10 +1,10 @@
-"""conflicts.resolve acts only on rows the caller holds ADMIN on.
+"""conflicts.resolve acts only on rows of the body's namespace.
 
-The transport authorizes ADMIN on the body's `namespace`, but the rows are
-addressed by org-wide memory_id. The target must live in the body's namespace,
-and the caller needs ADMIN on the target and on every peer the resolve would
-write, tombstone, re-activate or pair in the allowlist. Anything else reads
-like an unknown id: resolved=False, nothing written.
+The transport authorizes ADMIN on the body's `namespace`, and a conflict is
+surfaced within one namespace, so every row the resolve reads, tombstones,
+re-activates or pairs in the allowlist is read and written there. A target
+elsewhere reads like an unknown id: resolved=False, nothing written; a peer
+elsewhere is left as it is.
 
 `peer_id` narrows a resolve to one peer. A peer_id outside the target's
 conflict_with answers resolved=False rather than widening to every peer.
@@ -40,6 +40,8 @@ class _Table:
     activated: list[str] = field(default_factory=list)
     allowlisted: list[dict[str, Any]] = field(default_factory=list)
     count_reads_consistent: list[bool] = field(default_factory=list)
+    # Deleted in the authority, while ClickHouse's copy still reads live.
+    deleted: set[str] = field(default_factory=set)
 
 
 @pytest.fixture
@@ -58,9 +60,9 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
         }
     )
 
-    async def _lookup(org: str, memory_id: str, **kw: Any) -> ConflictTarget | None:
+    async def _lookup(org: str, namespace: str, memory_id: str, **_: Any) -> ConflictTarget | None:
         row = t.rows.get(memory_id)
-        if row is None or ("namespace" in kw and kw["namespace"] != row["namespace"]):
+        if row is None or namespace != row["namespace"]:
             return None
         return ConflictTarget.from_row(
             {
@@ -71,15 +73,20 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
             }
         )
 
-    async def _tombstone(org: str, ids: list[str], *_: Any, **__: Any) -> list[dict[str, Any]]:
-        t.tombstoned.extend(ids)
+    def _in(namespace: str, ids: list[str]) -> list[str]:
+        return [i for i in ids if i in t.rows and t.rows[i]["namespace"] == namespace]
+
+    async def _tombstone(
+        org: str, ids: list[str], *_: Any, namespace: str, **__: Any
+    ) -> list[dict[str, Any]]:
+        t.tombstoned.extend(_in(namespace, ids))
         return []
 
-    async def _activate(org: str, ids: list[str], **_: Any) -> None:
-        t.activated.extend(ids)
+    async def _activate(org: str, ids: list[str], *, namespace: str, **_: Any) -> None:
+        t.activated.extend(_in(namespace, ids))
 
-    async def _keys(org: str, ids: list[str], **_: Any) -> dict[str, str]:
-        return {i: t.rows[i]["key"] for i in ids if i in t.rows}
+    async def _keys(org: str, ids: list[str], *, namespace: str, **_: Any) -> dict[str, str]:
+        return {i: t.rows[i]["key"] for i in _in(namespace, ids)}
 
     async def _count(org: str, namespace: str, **_: Any) -> int:
         t.count_reads_consistent.append(sequential_reads_active())
@@ -89,9 +96,11 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
     async def _allow(rows: list[dict[str, Any]], **_: Any) -> None:
         t.allowlisted.extend(rows)
 
-    async def _get_by_id(memory_id: str, **_: Any) -> Any:
+    async def _get_by_id(memory_id: str, *, namespace: str | None = None, **_: Any) -> Any:
         row = t.rows.get(memory_id)
-        return None if row is None else SimpleNamespace(namespace=row["namespace"])
+        if row is None or namespace not in (None, row["namespace"]) or memory_id in t.deleted:
+            return None
+        return SimpleNamespace(namespace=row["namespace"])
 
     monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
     monkeypatch.setattr(repo, "lookup_target", _lookup)
@@ -194,33 +203,29 @@ async def test_a_peer_id_outside_the_conflict_set_resolves_nothing(
 
 
 @pytest.mark.parametrize("decision", ["revise", "contract", "allow"])
-async def test_a_peer_outside_the_callers_reach_blocks_the_whole_resolve(
+async def test_a_peer_outside_the_body_namespace_is_never_written(
     table: _Table, admin_of_a: None, decision: str
 ) -> None:
+    """A conflict is surfaced within one namespace: a peer id another namespace holds
+    (a restored copy keeps the ids) is not the resolve's to write."""
     out = await _resolve(T_MIXED, decision)
-    assert out.resolved is False and out.affected_memory_ids == []
-    assert table.tombstoned == table.activated == [] and table.allowlisted == []
+    assert out.resolved is True and P_FOREIGN not in out.affected_memory_ids
+    assert P_FOREIGN not in {*table.tombstoned, *table.activated}
 
 
 async def test_a_target_outside_the_body_namespace_resolves_nothing(
-    table: _Table, admin_of_a: None, monkeypatch: pytest.MonkeyPatch
+    table: _Table, admin_of_a: None
 ) -> None:
-    # ADMIN everywhere, but the body names namespace a and the row lives in b.
-    monkeypatch.setattr("server.auth.authz.row_in_scope", _always_in_scope)
+    # The body names namespace a and the row lives in b.
     out = await _resolve(T_FOREIGN, "contract")
     assert out.resolved is False and table.tombstoned == []
 
 
-async def test_an_admin_of_both_namespaces_resolves_across_them(
-    table: _Table, monkeypatch: pytest.MonkeyPatch
+async def test_a_mixed_conflict_writes_only_the_body_namespace(
+    table: _Table, admin_of_a: None
 ) -> None:
-    monkeypatch.setattr("server.auth.authz.row_in_scope", _always_in_scope)
     out = await _resolve(T_MIXED, "revise")
-    assert out.resolved is True and table.tombstoned == [P_OWN, P_FOREIGN]
-
-
-async def _always_in_scope(*_: Any, **__: Any) -> bool:
-    return True
+    assert out.resolved is True and table.tombstoned == [P_OWN]
 
 
 async def test_a_resolve_answers_the_namespaces_conflicted_count_after_its_writes(
@@ -253,3 +258,12 @@ async def test_a_count_that_fails_after_the_writes_still_answers_the_applied_res
     out = await _resolve(T_OWN, "revise")
     assert out.resolved is True and out.total is None
     assert table.tombstoned == [P_OWN, P_OWN2] and table.activated == [T_OWN]
+
+
+async def test_a_target_the_authority_deleted_resolves_nothing(
+    table: _Table, admin_of_a: None
+) -> None:
+    """ClickHouse's copy may not hold the authority's delete of the target yet."""
+    table.deleted.add(T_OWN)
+    out = await _resolve(T_OWN, "revise")
+    assert out.resolved is False and table.tombstoned == [] and table.activated == []

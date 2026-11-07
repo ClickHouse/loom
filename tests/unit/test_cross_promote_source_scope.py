@@ -75,8 +75,11 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
 
 
 def _source(monkeypatch: pytest.MonkeyPatch, row: MemoryRow) -> None:
-    async def _by_id(memory_id: str, *, org: str | None = None, **kw: Any) -> MemoryRow | None:
-        return row if memory_id == row.memory_id and org == row.org else None
+    async def _by_id(
+        memory_id: str, *, org: str, namespace: str | None = None, **kw: Any
+    ) -> MemoryRow | None:
+        found = memory_id == row.memory_id and org == row.org
+        return row if found and namespace in (None, row.namespace) else None
 
     monkeypatch.setattr(memory_repo, "get_by_id", _by_id)
 

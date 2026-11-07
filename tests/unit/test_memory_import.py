@@ -190,7 +190,7 @@ def harness(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(ch_mod, "get_client", stubs[-1])
         monkeypatch.setattr(memory_repo, "key_heads_across_sessions", ch.key_heads)
 
-        async def _find_match(*, org: str, namespace: str, value: str) -> Any:
+        async def _find_match(*, org: str, namespace: str, value: str, policy: Any = None) -> Any:
             if blacklist and blacklist in value:
                 return SimpleNamespace(pattern_id="p-1", scope="namespace", reason="test")
             return None
@@ -746,7 +746,7 @@ async def test_the_conflict_verdicts_that_write_or_hold_are_named(harness, monke
 
     marks: list[tuple[str, list[str]]] = []
 
-    async def _mark(*, org: str, new_memory_id: str, peer_ids: list[str]) -> str:
+    async def _mark(*, org: str, namespace: str, new_memory_id: str, peer_ids: list[str]) -> str:
         marks.append((new_memory_id, peer_ids))  # the mark lands and flags the new row
         return "conflict"
 
@@ -1277,7 +1277,7 @@ async def test_an_entry_the_blacklist_could_not_check_names_that_reason(
     harness(ch)
     long_text = "A note too long to check in what is left of this request's budget."
 
-    async def _find(*, org: str, namespace: str, value: str) -> Any:
+    async def _find(*, org: str, namespace: str, value: str, policy: Any = None) -> Any:
         if "too long" in value:
             return bl._over_budget(org, namespace, "namespace", len(value), 300, alone=False)
         return None

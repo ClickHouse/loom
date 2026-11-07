@@ -16,6 +16,7 @@ from server.memory.app.ask.question_shapes import (
     is_mention_time_question,
 )
 from server.memory.app.ask.result import _is_chunk_hit
+from server.memory.domain.search_types import row_identity
 from server.memory.domain.sensitivity import HELD_MARGIN, without_high
 
 logger = logging.getLogger(__name__)
@@ -625,25 +626,26 @@ async def _inject_identifier_memories(
             continue
         have.add(k)
         try:
-            out.append(
-                _MemorySearchHit(
-                    memory_key=k,
-                    memory_type=str(r.get("memory_type") or "semantic"),
-                    content_excerpt=str(r.get("content_excerpt") or ""),
-                    distance=0.0 if not k.startswith("chunk:") else 0.05,
-                    similarity=1.0 if not k.startswith("chunk:") else 0.95,
-                    # Injected chunks rank just under the injected facts.
-                    rank_score=1.0 if not k.startswith("chunk:") else 0.95,
-                    source="chunk" if k.startswith("chunk:") else "fact",
-                    # The fact's own clock (valid_at), not the ingest wall-clock:
-                    # the latest-statement verifier compares this against the
-                    # `[user @ ...]` turn stamps in chunks, and created_at is
-                    # always later than every turn.
-                    valid_at=str(r.get("valid_at") or r.get("created_at") or "")[:19],
-                )
+            hit = _MemorySearchHit(
+                memory_key=k,
+                memory_type=str(r.get("memory_type") or "semantic"),
+                content_excerpt=str(r.get("content_excerpt") or ""),
+                distance=0.0 if not k.startswith("chunk:") else 0.05,
+                similarity=1.0 if not k.startswith("chunk:") else 0.95,
+                # Injected chunks rank just under the injected facts.
+                rank_score=1.0 if not k.startswith("chunk:") else 0.95,
+                source="chunk" if k.startswith("chunk:") else "fact",
+                # The fact's own clock (valid_at), not the ingest wall-clock:
+                # the latest-statement verifier compares this against the
+                # `[user @ ...]` turn stamps in chunks, and created_at is
+                # always later than every turn.
+                valid_at=str(r.get("valid_at") or r.get("created_at") or "")[:19],
+                version=int(r.get("version") or 0),
             )
         except Exception:  # noqa: BLE001 — skip a row that won't validate
             continue
+        hit._row_identity = row_identity(r)  # the row read (none for a chunk), for the authority
+        out.append(hit)
     try:
         from server.core import request_work as _rw
 

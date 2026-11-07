@@ -185,6 +185,7 @@ async def apply(
             org,
             [str(r["memory_id"]) for r in act],
             _update,
+            namespace=namespace,
             ch=ch,
         )
         await webhooks.announce([("memory.revised", change) for change in revised])

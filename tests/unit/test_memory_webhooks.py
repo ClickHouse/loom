@@ -714,32 +714,34 @@ async def test_a_rollback_announces_revisions_revivals_and_tombstones(
     async def fetch(*a: Any, **k: Any) -> list[MemoryRow]:
         return historical
 
-    async def head(ident: Any, key: str, **k: Any) -> MemoryRow:
-        return _memory_row(key, 30)
-
     async def noop(*a: Any, **k: Any) -> int:
         return 0
 
+    async def heads_now(keys: list[Any], **k: Any) -> dict[Any, MemoryRow]:
+        # the key read when the rollback applies: "revived" is deleted now
+        gone = {"revived": {"tombstoned_at": NOW}}
+        return {k: _memory_row(k[-1], 30, **gone.get(k[-1], {})) for k in keys}
+
     monkeypatch.setattr(memory_repo, "fetch_version_rows", fetch)
-    monkeypatch.setattr(memory_repo, "get_by_key", head)
+    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", heads_now)
     monkeypatch.setattr(memory_repo, "insert_embedding_rows", noop)
     monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", noop)
     monkeypatch.setattr(memory_repo, "fence_vectors", noop)
-    monkeypatch.setattr(rb, "insert_memory_versions", noop)
+    monkeypatch.setattr("server.memory.store.lifecycle.insert_memory_versions", noop)
 
-    def act(key: str, action: str, to: int, dead_head: bool = False) -> RollbackAction:
-        return RollbackAction("bot", "u1", "-", key, action, 20, to, dead_head)
+    def act(key: str, action: str, to: int) -> RollbackAction:
+        return RollbackAction("bot", "u1", "-", key, action, 20, to)
 
     plan = RollbackPlan(
         reinstate=[
             act("changed", "reinstate", 10),
-            act("revived", "reinstate", 11, dead_head=True),
+            act("revived", "reinstate", 11),
             act("was_gone", "reinstate", 12),
         ],
         remove=[act("born_later", "remove", 0)],
     )
-    await rb.apply_rollback("acme", "chat", plan, applied_at=NOW, ch=object())
-    assert len(announced) == 1  # one insert for the rollback
+    await rb.apply_rollback("acme", "chat", plan, applied_at=NOW, ch=object(), applied=rb.Applied())
+    assert len(announced) == 2  # one insert a batch: the reinstated, then the removed
     assert _events(announced) == {
         ("memory.revised", "changed"),
         ("memory.restored", "revived"),
@@ -761,25 +763,25 @@ async def test_a_rollback_names_its_caller_not_the_historical_writer(
     async def fetch(*a: Any, **k: Any) -> list[MemoryRow]:
         return historical
 
-    async def head(ident: Any, key: str, **k: Any) -> MemoryRow:
-        return _memory_row(key, 30, actor="user:alice")
-
     async def noop(*a: Any, **k: Any) -> int:
         return 0
 
+    async def live_heads(keys: list[Any], **k: Any) -> dict[Any, MemoryRow]:
+        return {k: _memory_row(k[-1], 30, actor="user:alice") for k in keys}
+
     monkeypatch.setattr(memory_repo, "fetch_version_rows", fetch)
-    monkeypatch.setattr(memory_repo, "get_by_key", head)
+    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", live_heads)
     monkeypatch.setattr(memory_repo, "insert_embedding_rows", noop)
     monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", noop)
     monkeypatch.setattr(memory_repo, "fence_vectors", noop)
-    monkeypatch.setattr(rb, "insert_memory_versions", noop)
+    monkeypatch.setattr("server.memory.store.lifecycle.insert_memory_versions", noop)
     monkeypatch.setattr(app.provenance, "writer_actor", lambda *_: "user:bob")
     ch = RecordingCH().install(monkeypatch)
     plan = RollbackPlan(
-        reinstate=[RollbackAction("bot", "u1", "-", "changed", "reinstate", 20, 10, False)],
+        reinstate=[RollbackAction("bot", "u1", "-", "changed", "reinstate", 20, 10)],
         remove=[],
     )
-    await rb.apply_rollback("acme", "chat", plan, applied_at=NOW, ch=object())
+    await rb.apply_rollback("acme", "chat", plan, applied_at=NOW, ch=object(), applied=rb.Applied())
     (row,) = ch.inserted("memory_webhook_outbox")
     assert (row["event_type"], row["actor"]) == ("memory.revised", "user:bob")
 
@@ -792,8 +794,8 @@ async def test_a_blacklist_sweep_announces_the_rows_it_tombstones(
     from server.memory.store import lifecycle
 
     rows = {
-        "m-a": _memory_row("user/phone", memory_id="m-a"),
-        "m-b": _memory_row("user/contact", memory_id="m-b"),
+        "m-a": _memory_row("user/phone", memory_id="m-a", value="call 555-0100"),
+        "m-b": _memory_row("user/contact", memory_id="m-b", value="555-0100 after six"),
     }
     written: list[dict[str, Any]] = []
 
@@ -831,6 +833,23 @@ async def test_a_blacklist_sweep_announces_the_rows_it_tombstones(
     assert {r["memory_key"] for r in written} == {"user/phone", "user/contact"}
 
 
+def _scanned_head(key: tuple[str, ...], memory_id: str) -> Any:
+    """The head of `key` the sweep's scan read, at version 1."""
+    from tests.unit.memory_rows import memory_head
+
+    org, namespace, agent, user_id, session_id, memory_key = key
+    return memory_head(
+        org=org,
+        namespace=namespace,
+        agent=agent,
+        user_id=user_id,
+        session_id=session_id,
+        memory_key=memory_key,
+        memory_id=memory_id,
+        version=1,
+    )
+
+
 @pytest.mark.asyncio
 async def test_a_sweep_cut_short_announces_the_rows_it_relabelled_in_one_insert(
     monkeypatch: pytest.MonkeyPatch, announced: list[Any]
@@ -846,17 +865,23 @@ async def test_a_sweep_cut_short_announces_the_rows_it_relabelled_in_one_insert(
             level="medium",
             shapes=("email",),
             sort_key=dict(zip(SORT_KEY, ident, strict=True)),
+            version=1,
         )
 
-    async def write(org: str, ids: list[str], update: Any, **k: Any) -> int:
-        if ids == ["m-second"]:
+    async def heads(keys: list[Any], **k: Any) -> dict[Any, Any]:
+        return {key: _scanned_head(key, f"m-{key[5]}") for key in keys}
+
+    async def write(rows: list[dict[str, Any]], read: Any, *, on_commit: Any, **k: Any) -> int:
+        if rows[0]["memory_key"] == "second":
             raise asyncio.CancelledError  # the pass deadline
+        on_commit()
         return 1
 
     async def tag(c: Any, **k: Any) -> int:
         return 0
 
-    monkeypatch.setattr(memory_repo, "write_versions_by_ids", write)
+    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", heads)
+    monkeypatch.setattr(memory_repo, "insert_versions_over_heads", write)
     monkeypatch.setattr(sensitivity_sweep, "_tag_embeddings", tag)
     with pytest.raises(asyncio.CancelledError):
         await sensitivity_sweep.apply(
@@ -981,6 +1006,7 @@ async def test_a_move_that_keeps_a_redirect_announces_the_source_revised(
         return []
 
     monkeypatch.setattr(memory_repo, "insert_memory_versions", noop)
+    monkeypatch.setattr(memory_repo, "insert_versions_over_heads", noop)
     monkeypatch.setattr(memory_repo, "embedding_mirror_for_keys", noop)
     monkeypatch.setattr(memory_repo, "restamp_embedding_rows", noop)
     await move._redirect_source(_memory_row("old/key"), "dest-id", ch=None)
@@ -1006,7 +1032,7 @@ async def test_the_expiry_sweep_announces_its_tombstones_and_demotions(
         return None
 
     monkeypatch.setattr(memory_repo, "find_expired_candidates", find)
-    monkeypatch.setattr(expiry, "insert_memory_versions", noop)
+    monkeypatch.setattr(memory_repo, "insert_versions_over_heads", noop)
     monkeypatch.setattr(expiry, "_mirror_embeddings_batch", noop)
     await expiry.run_pass()
     assert len(announced) == 1  # one insert for the sweep's batch

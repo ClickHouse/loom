@@ -177,7 +177,15 @@ class RecordingCH:
         rows = self._answer(sql, p)
         return rows[0] if rows else None
 
-    async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
+    async def execute(
+        self,
+        sql: str,
+        params: dict[str, Any] | None = None,
+        *,
+        settings: dict[str, Any] | None = None,
+        external_data: Any = None,
+    ) -> None:
+        # The real client's keywords: its settings and external data change no statement.
         self.calls.append(("execute", sql, dict(params or {})))
 
     async def command(self, sql: str, params: dict[str, Any] | None = None) -> None:

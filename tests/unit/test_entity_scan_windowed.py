@@ -165,6 +165,27 @@ async def test_clock_off_reads_every_key_without_a_window(monkeypatch: pytest.Mo
     assert [r["memory_key"] for r in rows] == ["k1"]
 
 
+@pytest.mark.asyncio
+async def test_fresh_rows_the_authority_no_longer_serves_leave_their_slots_to_the_backlog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under Postgres a fresh row ClickHouse still shows but the authority does not (a
+    parked delivery) takes no slot: the backlog fills the batch."""
+    import server.memory.store as memory_repo
+
+    _reset_queue(monkeypatch)
+    stale = [_key(i, "stale") for i in range(3)]
+    repo = _Repo(fresh=stale, backlog=[_key(i) for i in range(3, 6)])
+    _patch(monkeypatch, repo)
+
+    async def served_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [r for r in rows if r["namespace"] != "stale"]
+
+    monkeypatch.setattr(memory_repo, "served_rows", served_rows)
+    rows = await w._next_candidates(w.EntityExtractorConfig(batch_size=3))
+    assert [r["memory_key"] for r in rows] == ["k3", "k4", "k5"]
+
+
 def test_run_pass_draws_its_rows_from_the_queue() -> None:
     src = open(w.__file__).read()
     assert "rows = await _next_candidates(cfg)" in src

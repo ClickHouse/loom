@@ -5,13 +5,17 @@ the insert, and the projections and audit that follow it."""
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from collections import Counter
+from contextlib import nullcontext
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
-from server.core.ch import get_client
+from server.core import pg
+from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now
+from server.core.error_summary import error_summary
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.vectors import codes_state
@@ -23,9 +27,10 @@ from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
     MemoryBulkSetOutput,
 )
-from server.memory.app import after_write, webhooks
+from server.memory.app import after_write, blacklist_guard, pg_admission, webhooks
 from server.memory.app.bulk_rows import (
     _BULK_CARRIED_COLS,
+    BatchRetry,
     StepOutcome,
     _bulk_build_rows,
     _bulk_embed_rows,
@@ -40,7 +45,7 @@ from server.memory.app.bulk_verdicts import (
 from server.memory.app.edge_links import drop_undeclared_edges_beside, owes_undeclared_drop
 from server.memory.app.edge_repair import EdgeClose, end_overtaken_edges, record_edges_closes
 from server.memory.app.graph_holders import edge_holders
-from server.memory.app.high_fence import fence_high
+from server.memory.app.high_fence import fence_high, fenced_once_committed
 from server.memory.app.projection_errors import (
     bulk_projection_payload,
     bulk_source_resource_id,
@@ -57,6 +62,7 @@ from server.memory.app.projections import (
     write_entity_vectors,
 )
 from server.memory.app.provenance import writer_actor
+from server.memory.app.reused_vectors import ReusedVectors
 from server.memory.app.set_commit import set_next
 from server.memory.app.set_entities import declared_entities
 from server.memory.app.triple_projections import reconcile_row_facts, write_derived_facts
@@ -65,6 +71,15 @@ from server.memory.domain.conflicts import kept_versions
 from server.memory.domain.memory_types import is_embedded
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 from server.memory.domain.webhook_events import EventType
+from server.memory.store import identity_key, pg_memory, pg_publish
+from server.memory.store.pg_memory import (
+    Admission,
+    AdmissionContendedError,
+    AdmissionMoved,
+    HeadMoved,
+    PeerErased,
+    heads_unchanged,
+)
 from server.observability.budget_shape import note_budget_shape
 
 if TYPE_CHECKING:
@@ -105,17 +120,22 @@ async def _bulk_existing_lookup(ch: Any, input: MemoryBulkSetInput, state: _Bulk
             import server.memory.store as memory_repo
 
             # Full rows (a revision carries every column forward), with sequential
-            # consistency: the answer decides skip, pin and version per entry.
-            live = await memory_repo.memory_rows_by_identity_keys(
+            # consistency: the answer decides skip, pin and version per entry. Under
+            # Postgres a deleted head comes in the same read: a write goes above it too.
+            held = await memory_repo.memory_rows_by_identity_keys(
                 [
                     (input.org, input.namespace, input.agent, input.user_id, input.session_id, k)
                     for k in keys
                 ],
                 ch=ch,
                 sequential=True,
+                include_tombstoned=pg.enabled(),
             )
-            rows = {ident[5]: r for ident, r in live.items()}
+            rows = {key[5]: r for key, r in held.items() if r.tombstoned_at is None}
             state.existing_rows = rows
+            state.deleted_heads = {
+                key[5]: r for key, r in held.items() if r.tombstoned_at is not None
+            }
             state.existing_ids = {k: str(r.memory_id) for k, r in rows.items() if r.memory_id}
             state.existing_sha = {
                 k: hash_text(r.content_sha256) for k, r in rows.items() if r.content_sha256
@@ -127,7 +147,7 @@ async def _bulk_existing_lookup(ch: Any, input: MemoryBulkSetInput, state: _Bulk
             }
             state.existing_lookup_ok = True
     except Exception as e:  # noqa: BLE001 — writes without prior state
-        log.warning("bulk_set existing-id lookup failed (non-fatal): %s", e)
+        log.warning("bulk_set existing-id lookup failed (non-fatal): %s", error_summary(e))
 
 
 async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, tuple[str, str]]:
@@ -170,7 +190,7 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
             )
             _rows = await ch.query_all(
                 f"""
-                SELECT argMax(content_sha256, version) AS head_sha, memory_key,
+                SELECT argMax(content_sha256, version) AS head_sha, session_id, memory_key,
                        toString(argMax(memory_id, version)) AS memory_id
                 FROM loom.memory
                 WHERE {identity}
@@ -187,13 +207,42 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
                 """,
                 params=params,
             )
+            if pg.enabled():
+                _rows = await _keepers_on_the_authority(input, _rows)
             for _r in _rows:
                 identity_dupes.setdefault(
                     hash_text(_r["head_sha"]), (str(_r["memory_key"]), str(_r["memory_id"]))
                 )
         except Exception as e:  # noqa: BLE001 — a dedup read never blocks an ingest
-            log.warning("bulk_set identity-dedup lookup failed (non-fatal): %s", e)
+            log.warning("bulk_set identity-dedup lookup failed (non-fatal): %s", error_summary(e))
     return identity_dupes
+
+
+async def _keepers_on_the_authority(
+    input: MemoryBulkSetInput, rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The keepers ClickHouse found whose head on the authority is still live and holds
+    those bytes: an entry is never dropped as a copy of a value rewritten or deleted
+    since, which ClickHouse may not hold yet."""
+    keys = [
+        (
+            input.org,
+            input.namespace,
+            input.agent,
+            input.user_id,
+            str(r["session_id"]),
+            str(r["memory_key"]),
+        )
+        for r in rows
+    ]
+    heads = await pg_memory.heads_by_keys(keys)
+    return [
+        r | {"memory_id": str(h["memory_id"])}  # the authority's id
+        for k, r in zip(keys, rows, strict=True)
+        if (h := heads.get(k)) is not None
+        and str(h.get("status") or "active") in LIVE_STATUSES
+        and str(h.get("content_sha256") or "") == hash_text(r["head_sha"])
+    ]
 
 
 async def _bulk_resolve_entities(ch: Any, input: MemoryBulkSetInput) -> dict[str, str]:
@@ -262,12 +311,17 @@ async def _bulk_verdicts(
     # Conflict surfacing, the same four verdicts memory.set produces. Runs before the insert
     # so a merge or a pinned rejection never lands a row; duplicate / conflicted are stamped
     # on the rows.
+    if pg.enabled() and state.pending:
+        state.generations = await pg_admission.catch_up(
+            input.org, input.namespace, state.generations
+        )
     verdicts = await _bulk_conflict_verdicts(
         input,
         state.memory_rows,
         state.entry_metas,
         state.pending,
         value_vectors,
+        state.floors,
         cap=state.conflict_check_cap,
     )
     clock.mark("verdicts")
@@ -429,7 +483,6 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     rows — gathered, each a committed insert. Once the memory rows are in, the
     batch is announced even when the embedding insert or the tail after it fails:
     a retry of the same values writes nothing and would announce nothing."""
-    import server.memory.store as memory_repo
 
     if state.memory_rows:
         first = state.memory_rows[0]
@@ -439,26 +492,50 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         for res in state.results:
             res.version = lifted.get((res.memory_key, res.version), res.version)
 
-    # The two core writes are independent rows of two tables and each is a ~260 ms committed
-    # insert on ClickHouse Cloud, so they are gathered, as on the point path (`memory.set`).
-    async def _insert_memory_rows() -> None:
-        # Full version rows (revision or first version), so the typed insert checks them.
-        await memory_repo.insert_memory_versions(state.memory_rows, ch=ch)
-
     retire = _vectors_to_retire(state)
     # A key whose winning row is unembedded keeps no vector, not even one of this batch.
     state.embedding_rows = [
         r for r in state.embedding_rows if str(r.get("memory_key")) not in retire
     ]
-    memory_done, embedding_done = await asyncio.gather(
-        _insert_memory_rows(),
-        memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
-        return_exceptions=True,
-    )
-    if isinstance(memory_done, BaseException):
-        raise memory_done
+    async with fenced_once_committed(
+        lambda: _high_winners(state), op="memory.bulk_set", ch=ch
+    ) as answer:
+        committed = (
+            await _commit_batch(state, retire) if pg.enabled() and state.memory_rows else None
+        )
+        if committed is not None:
+            answer.mark_committed()
+        await _land_batch(ch, state, committed, retire)
+
+
+async def _land_batch(
+    ch: Any,
+    state: _BulkWriteState,
+    committed: pg_memory.Committed | None,
+    retire: dict[str, tuple[Any, int]],
+) -> None:
+    """The batch's rows published (or, on ClickHouse, inserted), lifted above a delete
+    that landed meanwhile, their old vectors retired, and the batch announced."""
+    import server.memory.store as memory_repo
+
+    first = state.memory_rows[0] if state.memory_rows else {}
+    memory_done, embedding_done = await _publish_batch(state, committed, ch)
+    if committed is None:
+        if isinstance(memory_done, BaseException):
+            raise memory_done
+    else:
+        # Committed: a failure here leaves the publication to the delivery worker. The
+        # batch's follow-ups still run, and the caller is told last (`_bulk_set_once`).
+        failed = [d for d in (memory_done, embedding_done) if isinstance(d, BaseException)]
+        if failed:
+            cause = failed[0]
+            state.unpublished = (
+                cause
+                if isinstance(cause, pg_memory.PublicationPending)
+                else pg_memory.PublicationPending.after(cause)
+            )
     try:
-        if isinstance(embedding_done, BaseException):
+        if committed is None and isinstance(embedding_done, BaseException):
             raise embedding_done
         if state.memory_rows:
             # A memory.delete_version that landed after the fence read: the rows go above it.
@@ -472,12 +549,145 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         # The entries' versions were drawn before the batch embedded: a slow batch indexes
         # its own BM25 stats.
         after_write.index_late_rows(state.embedding_rows, ch=ch)
-        await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
-        fences = _high_winners(state)
-        if fences:
+        if committed is None:  # under Postgres the publish retired them (`OLD_VECTORS`)
+            await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
+    except Exception as e:
+        _raise_unpublished(state, e)
+        raise
+    finally:  # the rows are in: a failed lift or retire must not also skip the fence
+        await _fence_and_announce(state, ch=ch)
+
+
+async def _publish_batch(
+    state: _BulkWriteState, committed: pg_memory.Committed | None, ch: Any
+) -> tuple[BaseException | None, BaseException | None]:
+    """The batch's memory rows and embedding rows, written beside each other: each insert's
+    error, or None. A committed batch cancelled meanwhile is still announced, and fenced
+    by the caller."""
+    import server.memory.store as memory_repo
+
+    # The two core writes are independent rows of two tables and each is a ~260 ms committed
+    # insert on ClickHouse Cloud, so they are gathered, as on the point path (`memory.set`).
+    async def _insert_memory_rows() -> None:
+        if committed is not None:
+            await pg_publish.publish(committed, ch=ch)
+        else:
+            # Full version rows (revision or first version), so the typed insert checks them.
+            await memory_repo.insert_memory_versions(state.memory_rows, ch=ch)
+
+    async def _insert_embedding_rows() -> None:
+        with pg_memory.leased(committed.deadline if committed is not None else None):
+            await memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch)
+        if committed is not None:
+            embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
+            await pg_memory.complete(
+                [
+                    q
+                    for q, r in zip(committed.seqs, committed.rows, strict=True)
+                    if str(r["memory_key"]) in embedded
+                ],
+                pg_memory.SEARCH_DOC,
+            )
+
+    try:
+        done = await asyncio.gather(
+            _insert_memory_rows(), _insert_embedding_rows(), return_exceptions=True
+        )
+    except asyncio.CancelledError:
+        if committed is not None:
+            await _bulk_announce(state)
+        raise
+    return done[0], done[1]
+
+
+async def _fence_and_announce(state: _BulkWriteState, *, ch: Any) -> None:
+    """The batch announced, whatever failed before; on ClickHouse its 'high' rows fenced
+    first (under Postgres `fenced_once_committed` fences them)."""
+    try:
+        if not pg.enabled() and (fences := _high_winners(state)):
             await fence_high(fences, ch=ch)
     finally:
-        await _bulk_announce(state)  # the rows are in, whatever failed after them
+        await _bulk_announce(state)
+
+
+def _raise_unpublished(state: _BulkWriteState, cause: BaseException) -> None:
+    """A committed batch's PublicationPending, raised over a follow-up that failed after
+    the commit: the caller is told the batch committed."""
+    if state.unpublished is not None:
+        raise state.unpublished from cause
+
+
+async def _commit_batch(
+    state: _BulkWriteState, retire: dict[str, tuple[Any, int]]
+) -> pg_memory.Committed:
+    """The batch's commit to the Postgres authority: its verdicts' generations and every
+    key's protection as the batch read it are checked again inside (AdmissionMoved,
+    HeadMoved); a row with a vector owes ClickHouse its search document too. `retire`:
+    keys whose replaced vectors the locked head cannot show (a winner left without its
+    type's vector, a key the batch embedded earlier, a failed lookup); they owe
+    OLD_VECTORS. The commit adds any row over an embedded head itself."""
+
+    embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
+    read = {identity_key(r): state.existing_rows.get(r["memory_key"]) for r in state.memory_rows}
+    targets = [
+        pg_memory.MEMORY_ROW
+        | pg_memory.AUDIT_ROW
+        | (pg_memory.SEARCH_DOC if str(r["memory_key"]) in embedded else 0)
+        | (pg_memory.OLD_VECTORS if _owes_retirement(r, retire) else 0)
+        for r in state.memory_rows
+    ]
+    entries = await _reach_of(state)
+    if not entries:
+        # No verdict to keep: only the heads and the policy the guards ran under, so a
+        # batch of unsearchable rows never waits on search.
+        generations = pg_memory.policy_part(state.generations, state.memory_rows[0]["org"])
+        admission = Admission(generations=generations, recheck=heads_unchanged(read))
+    else:
+        admission = Admission(
+            generations=dict(state.generations),
+            recheck=heads_unchanged(read),
+            gap_check=pg_admission.batch_gap_check(entries),
+        )
+    state.retry.start()
+    while True:
+        try:
+            committed = await pg_publish.commit(
+                state.memory_rows, targets=targets, admission=admission, idempotent=True
+            )
+            break
+        except AdmissionMoved as moved:
+            if state.retry.passed() or isinstance(moved, PeerErased):
+                raise  # out of rounds, or a linked peer erased: back to the verdicts
+            pg_admission.restart_on_policy(moved.generations)
+            # Not cleared on this process's vectors: measure the gap on ClickHouse's.
+            first = state.memory_rows[0]
+            clear = await pg_admission.gap_is_clear(
+                captured=admission.generations,
+                moved=moved.generations,
+                org=first["org"],
+                namespace=first["namespace"],
+                entries=entries,
+            )
+            if clear is None:
+                raise
+            admission.generations = clear
+    for r in state.embedding_rows:
+        pg_admission.remember(identity_key(r), int(r["version"]), list(r["embedding"]))
+    return committed
+
+
+async def _reach_of(state: _BulkWriteState) -> list[tuple[str, str, list[float], float]]:
+    """Each embedded entry's (type, key, vector, how far its conflict check reaches),
+    the reach the verdict phase resolved for its type when it did."""
+    from server.memory.app.conflicts import resolve_conflict_floor
+
+    out = []
+    for r in state.embedding_rows:
+        mt = str(r["memory_type"])
+        if mt not in state.floors:
+            state.floors[mt] = await resolve_conflict_floor(str(r["org"]), str(r["namespace"]), mt)
+        out.append((mt, str(r["memory_key"]), list(r["embedding"]), state.floors[mt][1]))
+    return out
 
 
 async def _drop_undeclared_of_rows_made_high(
@@ -500,13 +710,16 @@ async def _drop_undeclared_of_rows_made_high(
 def _high_winners(state: _BulkWriteState) -> list[tuple[Any, int]]:
     """(identity key, version) of each key whose winning row is 'high': the fence an
     older write's late vector lands under."""
-    import server.memory.store as memory_repo
-
     return [
-        (memory_repo.embedding_key(r), int(r["version"]))
+        (identity_key(r), int(r["version"]))
         for r in kept_versions(state.memory_rows).values()
         if str(r.get("sensitivity") or "") == "high"
     ]
+
+
+def _owes_retirement(r: dict[str, Any], retire: dict[str, tuple[Any, int]]) -> bool:
+    """Whether row `r` is the winner `_vectors_to_retire` retires its key's vectors under."""
+    return retire.get(str(r["memory_key"])) == (identity_key(r), int(r["version"]))
 
 
 def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
@@ -527,12 +740,9 @@ def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
         ):
             continue
         prev = state.existing_rows.get(key)
-        prev_embedded = prev is not None and is_embedded(
-            prev.memory_type, getattr(prev, "sensitivity", "")
-        )
+        prev_embedded = prev is not None and is_embedded(prev.memory_type, prev.sensitivity)
         if key in batch_embedded or not state.existing_lookup_ok or prev_embedded:
-            ident = (r["org"], r["namespace"], r["agent"], r["user_id"], r["session_id"], key)
-            out[key] = (ident, int(r["version"]))
+            out[key] = (identity_key(r), int(r["version"]))
     return out
 
 
@@ -641,7 +851,10 @@ async def _bulk_settle_verdicts(
         for new_id, peer_ids in plan.conflict_marks:
             try:
                 landed = await mark_peers_conflicted(
-                    org=input.org, new_memory_id=new_id, peer_ids=peer_ids
+                    org=input.org,
+                    new_memory_id=new_id,
+                    peer_ids=peer_ids,
+                    namespace=input.namespace,
                 )
             except Exception as e:  # noqa: BLE001 — the rows are in; the link is best-effort
                 log.warning("bulk_set: mark_peers_conflicted failed for %s: %s", new_id, e)
@@ -995,15 +1208,63 @@ async def handle_memory_bulk_set(
 
     - `dry_run`: return after the verdicts; no row is inserted.
     - `conflict_check_cap`: overrides `bulk_conflict_check_max_entries`.
-    - `reinforce=False`: no `evidence` event for a restatement, merge or identity duplicate."""
+    - `reinforce=False`: no `evidence` event for a restatement, merge or identity duplicate.
+
+    Under the Postgres authority the batch's verdicts are checked again at its
+    commit; a batch whose scope or keys changed meanwhile starts over, reusing its
+    vectors and contexts: until LOOM_PG_ADMISSION_DEADLINE_MS for a moved namespace, at
+    most LOOM_PG_ADMISSION_ROUNDS passes for a head or policy that keeps changing."""
+    once = functools.partial(
+        _bulk_set_once, dry_run=dry_run, conflict_check_cap=conflict_check_cap, reinforce=reinforce
+    )
+    if not pg.enabled():
+        return await once(input, get_embedder(), BatchRetry())
+    from server.settings import settings
+
+    embedder = ReusedVectors(get_embedder())
+    retry = BatchRetry()
+    head_moves = 0
+    spent = blacklist_guard.regex_work_spent()
+    while True:
+        blacklist_guard.rewind_regex_work(spent)
+        try:
+            return await once(input, embedder, retry)
+        except HeadMoved:
+            head_moves += 1
+            if head_moves >= settings.pg_admission_rounds:
+                break
+        except AdmissionMoved:
+            if retry.passed():
+                break
+    raise AdmissionContendedError(
+        f"writes to {input.namespace!r} kept changing this batch's verdicts"
+    )
+
+
+async def _bulk_set_once(
+    input: MemoryBulkSetInput,
+    embedder: Any,
+    retry: BatchRetry,
+    *,
+    dry_run: bool,
+    conflict_check_cap: int | None,
+    reinforce: bool,
+) -> MemoryBulkSetOutput:
     ch = get_client()
-    embedder = get_embedder()
     # The write names its phases on the response.
     from server.memory.app.search.clock import StageClock
 
     _bulk_work: dict[str, Any] = {}
     _bulk_clock = StageClock(_bulk_work)
-    state = _BulkWriteState(conflict_check_cap=conflict_check_cap, reinforce=reinforce)
+    state = _BulkWriteState(
+        retry=retry,
+        conflict_check_cap=conflict_check_cap,
+        reinforce=reinforce,
+    )
+    if pg.enabled():
+        # The verdicts below must see every commit through these generations; only a
+        # batch with a verdict to reach waits for search (`catch_up`, below).
+        state.generations = await pg_memory.capture(input.org, input.namespace)
     await _bulk_existing_lookup(ch, input, state)
 
     identity_dupes = await _bulk_identity_dupes(ch, input)
@@ -1021,7 +1282,10 @@ async def handle_memory_bulk_set(
         input, state, embedder, entity_resolution, _bulk_clock
     )
 
-    plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)
+    # Under Postgres, the peers of every row the captured watermark counts as published,
+    # on any replica.
+    with sequential_reads() if pg.enabled() else nullcontext():
+        plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)
     if dry_run:
         _bulk_clock.finish()
         return _bulk_output(state, plan, _bulk_work)
@@ -1033,29 +1297,23 @@ async def handle_memory_bulk_set(
 
     await _bulk_insert(ch, state)
     _bulk_clock.mark("insert")
-    await _record_intra_batch_retirements(input, state, _intra_pairs)
-
-    # A bulk write's retirement intents are left to the repair, which resolves them.
-    _same_key_follows: list[Follow] = []
-    _value_links = await _bulk_post_insert_links(ch, input, state, _same_key_follows)
-    _same_key_pairs = [(f.loser, f.winner) for f in _same_key_follows]
-
-    _bulk_clock.mark("value_updates")
-
-    _bulk_record_write_metrics(input, state)
-
-    await _bulk_run_projections(
-        ch, input, state, plan, embedder, entity_resolution, entity_embeddings
-    )
-    _bulk_clock.mark("projections")
-    await _bulk_follow_row_supersessions(
-        ch,
-        input,
-        plan,
-        _value_links,
-        _intra_pairs + _same_key_pairs,
-        _bulk_clock,
-    )
+    try:
+        await _bulk_follow_ups(
+            ch,
+            input,
+            state,
+            plan,
+            embedder,
+            entity_resolution,
+            entity_embeddings,
+            _intra_pairs,
+            _bulk_clock,
+        )
+    except Exception as e:
+        _raise_unpublished(state, e)
+        raise
+    if state.unpublished is not None:
+        raise state.unpublished
     _bulk_clock.finish()
     return _bulk_output(state, plan, _bulk_work)
 
@@ -1080,6 +1338,44 @@ def _bulk_output(
         identity_duplicates=state.identity_duplicates,
         skipped_blacklisted=state.skipped_blacklisted,
         stage_ms=dict(work.get("stage_ms", {})),
+    )
+
+
+async def _bulk_follow_ups(
+    ch: Any,
+    input: MemoryBulkSetInput,
+    state: _BulkWriteState,
+    plan: BulkVerdictPlan,
+    embedder: Any,
+    entity_resolution: dict[str, str],
+    entity_embeddings: dict[str, list[float]],
+    intra_pairs: list[tuple[str, str]],
+    clock: StageClock,
+) -> None:
+    """What a batch does once its rows are in: retirements, conflict marks and same-key
+    supersession, projections, row supersessions."""
+    await _record_intra_batch_retirements(input, state, intra_pairs)
+
+    # A bulk write's retirement intents are left to the repair, which resolves them.
+    same_key_follows: list[Follow] = []
+    value_links = await _bulk_post_insert_links(ch, input, state, same_key_follows)
+    same_key_pairs = [(f.loser, f.winner) for f in same_key_follows]
+
+    clock.mark("value_updates")
+
+    _bulk_record_write_metrics(input, state)
+
+    await _bulk_run_projections(
+        ch, input, state, plan, embedder, entity_resolution, entity_embeddings
+    )
+    clock.mark("projections")
+    await _bulk_follow_row_supersessions(
+        ch,
+        input,
+        plan,
+        value_links,
+        intra_pairs + same_key_pairs,
+        clock,
     )
 
 
@@ -1116,6 +1412,7 @@ async def _bulk_conflict_verdicts(
     entry_metas: list[tuple[Any, ...]],
     pending: list[tuple[Any, ...]],
     value_vectors: list[list[float]],
+    floors: dict[str, tuple[float, float]],
     *,
     cap: int | None = None,
 ) -> dict[int, Any]:
@@ -1173,7 +1470,6 @@ async def _bulk_conflict_verdicts(
     # failed leaves its facts without an entry and they fall back to the per-fact statement.
     batch = int(_settings.memory_write_candidate_batch)
     prefetched: dict[int, list[dict[str, Any]]] = {}
-    floors: dict[str, tuple[float, float]] = {}
     if batch > 0 and len(pairs) > 1:
         from server.memory.app import conflicts as _conflicts
 

@@ -20,6 +20,7 @@ from server.memory.app import restore as _restore_mod
 from server.memory.app import stack as _stack_mod
 from server.memory.app import update as update_mod
 from server.memory.store import MemoryRow
+from tests.unit.memory_store import one_holder
 
 _NOW = datetime.now(UTC).replace(tzinfo=None)
 _ID_A = "22222222-2222-2222-2222-222222222222"
@@ -93,6 +94,8 @@ def wired(monkeypatch: pytest.MonkeyPatch):
 
         monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
 
+        monkeypatch.setattr("server.memory.store.namespaces_of_id", one_holder)
+
         # The conditional write's key lock, held in process memory.
         from tests.unit.claims_fake import memory_claims
 
@@ -148,6 +151,53 @@ async def test_one_live_row_is_updated_through_the_shared_write_path(wired) -> N
     assert "memory_key = {key:String}" in sql and "agent =" not in sql
     assert params == {"org": "test", "ns": "personal", "key": "deploy_day"}
     assert "status IN ('active', 'duplicate', 'conflicted')" in sql
+
+
+@pytest.mark.asyncio
+async def test_an_update_goes_above_a_head_written_ahead_of_this_clock(wired) -> None:
+    from server.memory.store.rows import next_version
+
+    ahead = next_version() + 15 * 60 * 10**9  # a replica whose clock runs 15 min ahead
+    ch = wired([_cand(_ID_A, version=ahead)], _row(version=ahead))
+    out = await update_mod.handle_memory_update(
+        MemoryUpdateInput(
+            org="test", namespace="personal", memory_key="deploy_day", value="Thursday"
+        )
+    )
+    _, rows = ch.inserts[0]
+    assert out.new_version == rows[0]["version"] == ahead + 2
+    # Its search document takes the same version.
+    docs = [r for table, rs in ch.inserts if table == "loom.memory_embeddings" for r in rs]
+    assert docs and {r["version"] for r in docs} == {ahead + 2}
+
+
+@pytest.mark.asyncio
+async def test_an_update_left_pending_still_follows_what_it_retired(
+    wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # committed under Postgres with its publication pending: the follow runs, then the 503
+    from server.memory.app.auto_resolution import Follow
+    from server.memory.store import pg_memory
+
+    wired([_cand(_ID_A)], _row())
+    followed: list[Any] = []
+
+    async def _pending(*_: Any, **__: Any) -> Any:
+        return pg_memory.PublicationPending()
+
+    async def _retires(org: str, existing: Any, value: str, ch: Any, policy: Any, follows: Any):
+        follows.append(Follow("loser-id", _ID_A))
+
+    monkeypatch.setattr(update_mod, "_land_revision", _pending)
+    monkeypatch.setattr(update_mod, "_revision_supersession", _retires)
+    monkeypatch.setattr(update_mod, "follow_beside_response", lambda **kw: followed.append(kw))
+    with pytest.raises(pg_memory.PublicationPending):
+        await update_mod.handle_memory_update(
+            MemoryUpdateInput(
+                org="test", namespace="personal", memory_key="deploy_day", value="Thursday"
+            )
+        )
+    assert [f["pairs"] for f in followed] == [[Follow("loser-id", _ID_A)]]
 
 
 @pytest.mark.asyncio

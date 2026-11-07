@@ -229,6 +229,70 @@ async def _profile_fold(ch: RecordingCH, c: dict[str, Any]) -> None:
         holds._reset_for_tests()
 
 
+async def _observe_extract(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """A session's READY observations and the whole-session context the notes are
+    written from (a buffer trigger only binds a parameter)."""
+    from server.memory.workers import observe_extract as ox
+
+    session = {
+        "org": ORG,
+        "namespace": NS,
+        "agent": "bot",
+        "user_id": "alice",
+        "session_id": "s1",
+    }
+    await ox._load_session_observations(session, ox.ObserveExtractConfig(), ch)
+    await ox._load_session_context(session, ch=ch)
+
+
+async def _resolver_cluster(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """A queue row's cluster: its nearest rows, its key's other sessions, their rows."""
+    from server.memory.store import conflict_resolver as queue
+
+    row = {
+        "org": ORG,
+        "namespace": NS,
+        "agent": "bot",
+        "user_id": "alice",
+        "session_id": "s1",
+        "memory_key": "office_city",
+        "memory_type": "semantic",
+        "embedding": [0.1, 0.2, 0.3],
+        "embedding_model": "fake",
+    }
+    await queue.cluster_peers(row, floor=0.5, limit=4, ch=ch)
+
+
+# A candidate row for each of the cluster's reads, so the peer-row read runs.
+_CLUSTER_ROWS = rows_by_substring(
+    {
+        "dist": [
+            {"agent": "bot", "user_id": "alice", "session_id": "s2", "memory_key": "k", "dist": 0.1}
+        ]
+    }
+)
+
+
+async def _period_sources(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The facts a period's digests compressed: their ids and entities."""
+    from types import SimpleNamespace
+
+    from server.memory.app import period_digest
+
+    period = SimpleNamespace(
+        org=ORG, namespace=NS, agent="bot", user_id="alice", digests=[{"derived_from": ["k"]}]
+    )
+    await period_digest._source_memories(ch, period)
+
+
+async def _period_keys(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The period keys a pass skips, a deleted one included."""
+    from server.memory.app import period_digest
+
+    ident = {"org": ORG, "namespace": NS, "agent": "bot", "user_id": "alice"}
+    await period_digest._skipped_period_keys(ch, ident, rewrite=False)
+
+
 async def _conflict_resolver(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory.store import conflict_resolver as queue
 
@@ -237,8 +301,81 @@ async def _conflict_resolver(ch: RecordingCH, c: dict[str, Any]) -> None:
     await queue.unjudged_conflicted_rows(limit=10, held=held, ch=ch)
 
 
+async def _audit_publish(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The delivery pass's retried audit insert: the read of what already landed."""
+    from server.memory.store import pg_publish
+
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+    row = {"org": ORG, "namespace": NS, "ts": ts, "row_hash": "a" * 64}
+    await pg_publish.insert_audit_rows([row], ch=ch, retried=True)
+
+
+async def _authority_record(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The boot's read of the recorded authority, and of whether ClickHouse holds memory."""
+    from server.core import pg_profile
+
+    await pg_profile._ch_record(ch)
+    await pg_profile._ch_holds_memory(ch)
+
+
+async def _held_documents(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The delivery pass's read of the search documents ClickHouse already holds."""
+    from server.memory.store import pg_publish
+
+    await pg_publish.held_documents(ORG, NS, [("a", "-", "-", "k1", 7)], ch=ch)
+
+
+async def _vector_retirement(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The keyed reads of a key's live vectors before an unembedded row retires them: the
+    whole rows a copy needs, or only the sort key a bare tombstone keeps."""
+    from server.memory.store.embeddings import retire_vectors_for_keys
+
+    await retire_vectors_for_keys([((ORG, NS, "a", "-", "-", "k1"), 7)], ch=ch, bare=c["bare"])
+
+
+async def _decision_records(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """A decision's record retired with its writer's row, and the record a live writer
+    holds; under Postgres, against the live writers the authority holds (one, and none:
+    an empty typed array) and by the server's send deadline."""
+    from server.core import rmt_carry
+    from server.memory.store import pg_memory, records
+
+    async def _deadline(*_: Any) -> float:
+        return 1_700_000_000.0
+
+    real, deadline = pg_memory.live_decision_writers, rmt_carry.measured_send_deadline
+    rmt_carry.measured_send_deadline = _deadline  # type: ignore[assignment]
+    try:
+        for live in ([("k1", "a", "-", "-")], []):
+
+            async def _writers(*_: Any, live: list[Any] = live) -> list[Any]:
+                return live
+
+            pg_memory.live_decision_writers = _writers  # type: ignore[assignment]
+            await records.tombstone_decision_records(ORG, NS, ["k1"], version=7, ch=ch)
+            await records.live_writer_record(ORG, NS, "k1", ch=ch)
+    finally:
+        pg_memory.live_decision_writers = real  # type: ignore[assignment]
+        rmt_carry.measured_send_deadline = deadline  # type: ignore[assignment]
+
+
 def cases() -> list[Case]:
     return [
+        Case(
+            "workers.decision_records",
+            "server.memory.store.records",
+            _decision_records,
+            {"storage_authority": ("clickhouse", "postgres")},
+        ),
+        Case("workers.audit_publish", "server.memory.store.pg_publish", _audit_publish, {}),
+        Case("workers.held_documents", "server.memory.store.pg_publish", _held_documents, {}),
+        Case(
+            "workers.vector_retirement",
+            "server.memory.store.embeddings",
+            _vector_retirement,
+            {"bare": (False, True)},
+        ),
+        Case("boot.authority_record", "server.core.pg_profile", _authority_record, {}),
         Case(
             "workers.conflict_resolver",
             "server.memory.store.conflict_resolver",
@@ -246,6 +383,21 @@ def cases() -> list[Case]:
             {"held": (False, True)},
         ),
         Case("workers.first_pass", "server.workers.first_pass", _first_pass, {}),
+        Case(
+            "workers.resolver_cluster",
+            "server.memory.store.conflict_resolver",
+            _resolver_cluster,
+            {},
+            rows=_CLUSTER_ROWS,
+        ),
+        Case("workers.period_sources", "server.memory.app.period_digest", _period_sources, {}),
+        Case("workers.period_keys", "server.memory.app.period_digest", _period_keys, {}),
+        Case(
+            "workers.observe_extract",
+            "server.memory.workers.observe_extract",
+            _observe_extract,
+            {},
+        ),
         Case(
             "workers.profile_fold",
             "server.memory.workers.profile_consolidation",

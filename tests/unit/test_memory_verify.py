@@ -101,12 +101,19 @@ def _wire(monkeypatch: pytest.MonkeyPatch, row: MemoryRow | None) -> _CH:
     from server.memory import store as memory_repo
 
     async def _by_id(memory_id: str, *, org: str | None = None, **kw: Any) -> MemoryRow | None:
+        assert kw.get("strong")  # the attestation is built from this row
         return row if row is not None and memory_id == row.memory_id else None
 
     async def _by_key(identity: Any, key: str, **kw: Any) -> MemoryRow | None:
+        assert kw.get("strong")
         return row if row is not None and key == row.memory_key else None
 
+    async def _holders(org: str, memory_id: str, *, strong: bool) -> list[str]:
+        assert strong  # an attestation acts on the holder it finds
+        return [row.namespace] if row is not None and memory_id == row.memory_id else []
+
     monkeypatch.setattr(memory_repo, "get_by_id", _by_id)
+    monkeypatch.setattr(memory_repo, "namespaces_of_id", _holders)
     monkeypatch.setattr(memory_repo, "get_by_key", _by_key)
     ch = _CH()
     monkeypatch.setattr(mv, "get_client", lambda: ch)

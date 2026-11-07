@@ -28,7 +28,6 @@ from typing import Any, Literal
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.app import webhooks
 from server.memory.domain.proposal_policy import ProposalPolicy, parse_policy
-from server.memory.store.inserts import insert_memory_versions
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -188,7 +187,7 @@ async def decide(
         contradicted = bool(getattr(row, "conflict_with", None))
         accepted_status = "conflicted" if contradicted else "active"
         overrides: dict[str, Any] = {
-            "version": memory_repo.next_version(),
+            "version": memory_repo.version_over(row),
             "status": accepted_status if decision == "accept" else "rejected",
         }
         if decision == "reject":
@@ -198,7 +197,7 @@ async def decide(
         out.append(DecideResult(key, True, str(overrides["status"])))
     if not to_write:
         return out
-    await insert_memory_versions(to_write, ch=ch)
+    await memory_repo.insert_versions_over_heads(to_write, decided, ch=ch)
     if decision == "accept":
         # The accepted row is the key's first served one: a proposal may not land on a
         # key that holds a fact. A rejected proposal was never served or announced.
@@ -272,7 +271,9 @@ async def _surface_conflicts(org: str, rows: list[Any]) -> None:
         if not peers:
             continue
         try:
-            await memory_repo.write_versions_by_ids(org, peers, _flag(str(row.memory_id)))
+            await memory_repo.write_versions_by_ids(
+                org, peers, _flag(str(row.memory_id)), namespace=row.namespace
+            )
         except Exception as e:  # noqa: BLE001 — the decision already landed
             log.warning("proposals: conflict surfacing failed for %s: %s", row.memory_key, e)
 

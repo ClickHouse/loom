@@ -304,7 +304,7 @@ async def test_each_write_path_leaves_its_event_and_version(
     a = {"agent": "assistant"}
     first = await ops("memory.set", memory_key="k/one", value="first value", **a)
     # The same value again is a restatement: no event.
-    await ops("memory.set", memory_key="k/one", value="first value", **a)
+    restated = await ops("memory.set", memory_key="k/one", value="first value", **a)
     revised = await ops("memory.set", memory_key="k/one", value="second value", **a)
     bulk = await ops(
         "memory.bulk_set",
@@ -341,6 +341,8 @@ async def test_each_write_path_leaves_its_event_and_version(
         ("memory.restored", "k/one", restored["version"]),
         ("memory.tombstoned", "k/two", dv["version"]),
         ("memory.redacted", "k/one", first["version"]),
+        # The restatement copies the redacted text, so the redaction scrubs it too.
+        ("memory.redacted", "k/one", restated["version"]),
     ]
     for _ in range(20):
         if len(_outbox(ch_client, ops.ns)) >= len(expected):

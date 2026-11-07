@@ -40,20 +40,20 @@ them.
 
 Two shapes matter for correctness and cost:
 
-  - The identity lookup selects `toString(memory_id) AS mid`, never
-    `AS memory_id`. A same-named alias shadows the column in WHERE, so
-    `memory_id IN {ids:Array(UUID)}` would compare a String alias to UUIDs
-    and match nothing, with green tests. `tests/unit/test_sql_alias_shadow.py`
-    fails the build on that pattern anywhere under server/.
-  - Writes are batched: one UPDATE per chunk of targets for `loom.memory`
-    carrying its per-row targets as parallel arrays through `transform()`,
-    and one INSERT per chunk into `loom.memory_reinforcement` (not a
-    lightweight UPDATE on `loom.memory_embeddings`, whose patch parts would
-    switch the codec's lazy read off for every fact leg). A pass of 1,000
-    memories is
-    a handful of statements instead of 2,000; on ClickHouse Cloud each
-    lightweight UPDATE is a patch part and the cost is per statement, not
-    per row.
+  - A statement that filters on memory_id reads the string id `AS mid`,
+    never `AS memory_id`: a same-named alias shadows the column in a WHERE
+    at its level, so `memory_id IN {ids:Array(UUID)}` would compare a String
+    alias to UUIDs and match nothing, with green tests.
+    `tests/unit/test_sql_alias_shadow.py` fails the build on that pattern
+    anywhere under server/.
+  - Writes are batched: one UPDATE per chunk of memories for `loom.memory`
+    (cut again by the keys' rendered size), carrying the per-row targets as
+    parallel arrays through `transform()`, and one INSERT per chunk into
+    `loom.memory_reinforcement` (not a lightweight UPDATE on
+    `loom.memory_embeddings`, whose patch parts would switch the codec's lazy
+    read off for every fact leg). A pass of 1,000 memories is a handful of
+    statements instead of 2,000; on ClickHouse Cloud each lightweight UPDATE
+    is a patch part and the cost is per statement, not per row.
 
 The watermark is process-local. On a cold start it is derived from the
 destination tables (the earliest `bumped_at` whose totals exceed what
@@ -74,6 +74,7 @@ from typing import Any, Protocol
 
 from clickhouse_connect.driver.external import ExternalData
 
+from server.core import ch_params, pg
 from server.core.ch_names import split_table
 from server.core.datetimes import UNIX_EPOCH
 from server.settings import settings
@@ -266,116 +267,155 @@ class _Target:
     last_activity: datetime
 
 
-def _targets(rows: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> list[_Target]:
+# A row's _fold_key in SQL.
+_FOLD_KEY_SQL = "(org, namespace, toString(memory_id))"
+# The rows of a set of fold keys: the pairs and ids prune (by the sort key, or by
+# loom.memory's memory_id skip index); the keys pick each memory's own rows.
+_FOLD_SCOPE = (
+    "(org, namespace) IN {pairs:Array(Tuple(String, String))} "
+    "AND memory_id IN {ids:Array(UUID)} "
+    f"AND {_FOLD_KEY_SQL} IN {{keys:Array(Tuple(String, String, String))}}"
+)
+
+
+def _fold_key(org: Any, namespace: Any, memory_id: Any) -> tuple[str, str, str]:
+    """A memory's identity in the fold: a namespace restored from another's snapshot
+    holds the same memory ids."""
+    return str(org), str(namespace), str(memory_id)
+
+
+def _scope_params(keys: list[tuple[str, str, str]]) -> dict[str, Any]:
+    """`_FOLD_SCOPE`'s parameters. `keys` stays in the caller's order: the UPDATE's
+    transform() pairs it with the targets by position."""
+    return {
+        "pairs": sorted({(org, ns) for org, ns, _ in keys}),
+        "ids": sorted({mid for _, _, mid in keys}),
+        "keys": keys,
+    }
+
+
+def _targets(
+    rows: list[dict[str, Any]], by_id: dict[tuple[str, str, str], list[dict[str, Any]]]
+) -> list[_Target]:
     out: list[_Target] = []
     used_w = _used_weight()
     used_cited_w = _used_cited_weight()
     harm_w = _harm_weight()
     for row in rows:
-        ident = by_id.get(row["memory_id"])
-        if ident is None:
-            continue
         recall_total = int(row.get("recall_total") or 0)
         evidence_total = int(row.get("evidence_total") or 0)
         used_total = int(row.get("used_total") or 0)
-        # memory.ask's cited-key credit rides the identity row
-        # (the totals view maps only `used` into used_count; `used_cited` is
-        # summed from the events beside the identity read, one statement).
-        used_cited_total = int(ident.get("used_cited_total") or 0)
         harm_total = int(row.get("harm_total") or 0)
         last_recalled = _utc(row.get("last_recalled"))
-        # Harm counts as activity so the floor below is applied, not skipped.
-        reinforcing = (
-            recall_total > 0
-            or evidence_total > 0
-            or used_total > 0
-            or used_cited_total > 0
-            or harm_total > 0
-        )
-        base_rc = int(ident.get("reinforcement_count") or 1)
-        out.append(
-            _Target(
-                memory_id=str(row["memory_id"]),
-                org=str(ident["org"]),
-                namespace=str(ident["namespace"]),
-                agent=str(ident["agent"]),
-                user_id=str(ident["user_id"]),
-                memory_key=str(ident["memory_key"]),
-                evidence=_u32(1 + evidence_total),
-                recall=_u32(recall_total),
-                last_recalled=last_recalled,
-                # Harm subtracts, floored at the write-time base: a memory the
-                # agent relied on in failed runs loses the reinforcement it
-                # earned, never its cosine rank, and is never deleted here.
-                reinforcement=(
-                    _u32(
-                        max(
-                            base_rc,
-                            base_rc
-                            + recall_total
-                            + evidence_total
-                            + used_w * used_total
-                            + used_cited_w * used_cited_total
-                            - harm_w * harm_total,
-                        )
-                    )
-                    if reinforcing
-                    else None
-                ),
-                # Both recall AND positive-outcome (evidence) feed the
-                # search-side reinforcement signal; last_reinforced_at tracks
-                # the most recent reinforcing activity of either kind, which
-                # the rank's efficacy-decay term reads.
-                last_activity=max(last_recalled, _utc(row.get("bumped"))),
+        # Every key holding the id in that namespace (one restored into itself under
+        # another agent holds two): the totals cannot tell them apart.
+        for ident in by_id.get(_fold_key(row["org"], row["namespace"], row["memory_id"]), []):
+            # memory.ask's cited-key credit rides the identity row
+            # (the totals view maps only `used` into used_count; `used_cited` is
+            # summed from the events beside the identity read, one statement).
+            used_cited_total = int(ident.get("used_cited_total") or 0)
+            # Harm counts as activity so the floor below is applied, not skipped.
+            reinforcing = (
+                recall_total > 0
+                or evidence_total > 0
+                or used_total > 0
+                or used_cited_total > 0
+                or harm_total > 0
             )
-        )
+            base_rc = int(ident.get("reinforcement_count") or 1)
+            out.append(
+                _Target(
+                    memory_id=str(row["memory_id"]),
+                    org=str(ident["org"]),
+                    namespace=str(ident["namespace"]),
+                    agent=str(ident["agent"]),
+                    user_id=str(ident["user_id"]),
+                    memory_key=str(ident["memory_key"]),
+                    evidence=_u32(1 + evidence_total),
+                    recall=_u32(recall_total),
+                    last_recalled=last_recalled,
+                    # Harm subtracts, floored at the write-time base: a memory the
+                    # agent relied on in failed runs loses the reinforcement it
+                    # earned, never its cosine rank, and is never deleted here.
+                    reinforcement=(
+                        _u32(
+                            max(
+                                base_rc,
+                                base_rc
+                                + recall_total
+                                + evidence_total
+                                + used_w * used_total
+                                + used_cited_w * used_cited_total
+                                - harm_w * harm_total,
+                            )
+                        )
+                        if reinforcing
+                        else None
+                    ),
+                    # Both recall AND positive-outcome (evidence) feed the
+                    # search-side reinforcement signal; last_reinforced_at tracks
+                    # the most recent reinforcing activity of either kind, which
+                    # the rank's efficacy-decay term reads.
+                    last_activity=max(last_recalled, _utc(row.get("bumped"))),
+                )
+            )
     return out
 
 
 async def _fold_memory_rows(ch: _CHClient, targets: list[_Target], chunk: int) -> int:
-    """loom.memory: ONE UPDATE per chunk of targets across every (org,
-    namespace) — the WHERE carries the identity pairs, transform() picks each
-    row's own value by memory_id, so a pass touching 60 namespaces issues one
-    mutation, not 60."""
+    """loom.memory: one UPDATE per chunk of memories, across every (org, namespace)."""
+    # A memory two keys hold is one entry: its counters come from its totals alone.
+    memories = {_fold_key(t.org, t.namespace, t.memory_id): t for t in targets}
     statements = 0
-    for part in _chunks(targets, chunk):
-        ids = [t.memory_id for t in part]
-        # last_recalled_at is Nullable: never-recalled rows must stay NULL,
-        # so the sentinel epoch means "leave the column alone".
-        lras = [t.last_recalled for t in part]
-        set_clause = (
-            "evidence_count = greatest(evidence_count, "
-            "transform(toString(memory_id), {ids:Array(String)}, {evs:Array(UInt32)}, "
-            "toUInt32(0))), "
-            "recall_count = greatest(recall_count, "
-            "transform(toString(memory_id), {ids:Array(String)}, {rcls:Array(UInt32)}, "
-            "toUInt32(0))), "
-            "last_recalled_at = multiIf("
-            "transform(toString(memory_id), {ids:Array(String)}, {lras:Array(DateTime)}, "
-            "toDateTime(0)) = toDateTime(0), last_recalled_at, "
-            "last_recalled_at IS NULL, "
-            "transform(toString(memory_id), {ids:Array(String)}, {lras:Array(DateTime)}, "
-            "toDateTime(0)), "
-            "greatest(last_recalled_at, "
-            "transform(toString(memory_id), {ids:Array(String)}, {lras:Array(DateTime)}, "
-            "toDateTime(0))))"
-        )
-        await _apply_update(
-            ch,
-            "loom.memory",
-            set_clause,
-            "(org, namespace) IN {pairs:Array(Tuple(String, String))} "
-            "AND toString(memory_id) IN {ids:Array(String)} AND tombstoned_at IS NULL",
-            {
-                "pairs": sorted({(t.org, t.namespace) for t in part}),
-                "ids": ids,
-                "evs": [t.evidence for t in part],
-                "rcls": [t.recall for t in part],
-                "lras": lras,
-            },
-        )
-        statements += 1
+    for batch in _chunks(list(memories), chunk):
+        # Cut again by the keys' rendered size: org and namespace names have no fixed width.
+        for keys in ch_params.chunks(batch):
+            await _update_memory_counters(ch, [memories[k] for k in keys])
+            statements += 1
     return statements
+
+
+async def _update_memory_counters(ch: _CHClient, part: list[_Target]) -> None:
+    """One UPDATE of `part`'s counters, then the same onto the Postgres heads."""
+    keys = [_fold_key(t.org, t.namespace, t.memory_id) for t in part]
+    pick = f"transform({_FOLD_KEY_SQL}, {{keys:Array(Tuple(String, String, String))}}, "
+    # last_recalled_at is Nullable: never-recalled rows must stay NULL,
+    # so the sentinel epoch means "leave the column alone".
+    lra = f"{pick}{{lras:Array(DateTime)}}, toDateTime(0))"
+    set_clause = (
+        f"evidence_count = greatest(evidence_count, {pick}{{evs:Array(UInt32)}}, toUInt32(0))), "
+        f"recall_count = greatest(recall_count, {pick}{{rcls:Array(UInt32)}}, toUInt32(0))), "
+        f"last_recalled_at = multiIf({lra} = toDateTime(0), last_recalled_at, "
+        f"last_recalled_at IS NULL, {lra}, greatest(last_recalled_at, {lra}))"
+    )
+    await _apply_update(
+        ch,
+        "loom.memory",
+        set_clause,
+        f"{_FOLD_SCOPE} AND tombstoned_at IS NULL",
+        {
+            **_scope_params(keys),
+            "evs": [t.evidence for t in part],
+            "rcls": [t.recall for t in part],
+            "lras": [t.last_recalled for t in part],
+        },
+    )
+    if pg.enabled():
+        from server.memory.store import pg_memory
+
+        await pg_memory.fold_usage(
+            [
+                (
+                    t.org,
+                    t.namespace,
+                    t.memory_id,
+                    t.evidence,
+                    t.recall,
+                    None if t.last_recalled == UNIX_EPOCH else t.last_recalled,
+                )
+                for t in part
+            ]
+        )
 
 
 async def _fold_reinforcement_rows(ch: _CHClient, targets: list[_Target], chunk: int) -> int:
@@ -425,18 +465,18 @@ async def _derive_cold_start_watermark(ch: _CHClient, hwm: datetime) -> datetime
         """
         SELECT min(t.bumped) AS first_unfolded
         FROM (
-            SELECT memory_id,
+            SELECT org, namespace, memory_id,
                    sum(recall_count)   AS recall_total,
                    sum(evidence_count) AS evidence_total,
                    max(bumped_at)      AS bumped
             FROM loom.memory_usage_totals
-            GROUP BY memory_id
+            GROUP BY org, namespace, memory_id
         ) AS t
         INNER JOIN (
-            SELECT memory_id, recall_count, evidence_count
+            SELECT org, namespace, memory_id, recall_count, evidence_count
             FROM loom.memory FINAL
             WHERE tombstoned_at IS NULL
-        ) AS m ON m.memory_id = t.memory_id
+        ) AS m ON m.org = t.org AND m.namespace = t.namespace AND m.memory_id = t.memory_id
         WHERE t.recall_total > m.recall_count
            OR (1 + t.evidence_total) > m.evidence_count
         """
@@ -447,13 +487,10 @@ async def _derive_cold_start_watermark(ch: _CHClient, hwm: datetime) -> datetime
     return first - timedelta(seconds=1)
 
 
-# The identity read of a batch: memory_id → fold identity + write-time base,
-# with memory.ask's `used_cited` credit summed from the events
-# table beside it. The totals view (memory_usage_totals_mv) maps only `used`
-# into used_count, so the self-credit is read here,
-# keyed on the same ids in one statement. `AS mid`, never
-# `AS memory_id`.
-IDENTITY_STATEMENT = """
+# The identity read of a batch: each (org, namespace, memory_id)'s keys, fold identity
+# and write-time base. The totals view (memory_usage_totals_mv) maps only `used` into
+# used_count, so memory.ask's `used_cited` credit is summed here from the events table.
+IDENTITY_STATEMENT = f"""
         SELECT toString(m.memory_id) AS mid, m.org AS org, m.namespace AS namespace,
                m.agent AS agent, m.user_id AS user_id, m.memory_key AS memory_key,
                m.reinforcement_count AS reinforcement_count,
@@ -461,18 +498,12 @@ IDENTITY_STATEMENT = """
         FROM (
             SELECT memory_id, org, namespace, agent, user_id, memory_key, reinforcement_count
             FROM loom.memory FINAL
-            WHERE org IN {orgs:Array(String)}
-              AND namespace IN {nss:Array(String)}
-              AND memory_id IN {ids:Array(UUID)}
-              AND tombstoned_at IS NULL
+            WHERE {_FOLD_SCOPE} AND tombstoned_at IS NULL
         ) AS m
         LEFT JOIN (
             SELECT org, namespace, memory_id, sum(event_count) AS used_cited_total
             FROM loom.memory_usage_events
-            WHERE org IN {orgs:Array(String)}
-              AND namespace IN {nss:Array(String)}
-              AND memory_id IN {ids:Array(UUID)}
-              AND event_type = 'used_cited'
+            WHERE {_FOLD_SCOPE} AND event_type = 'used_cited'
             GROUP BY org, namespace, memory_id
         ) AS c ON c.org = m.org AND c.namespace = m.namespace AND c.memory_id = m.memory_id
 """
@@ -522,27 +553,23 @@ async def _fold_batch(ch: _CHClient, cfg: UsageFoldConfig, result: UsageFoldResu
         return False
     result.batches += 1
 
-    # Resolve memory_id → identity tuple + write-time reinforcement base
-    # via loom.memory FINAL (loom.memory_reinforcement is keyed by the
-    # identity tuple, not memory_id). `AS mid`, never `AS memory_id`:
-    # a same-named alias shadows the column in WHERE and the IN matches
-    # nothing.
-    idents = await ch.query_all(
-        IDENTITY_STATEMENT,
-        params={
-            "orgs": sorted({r["org"] for r in rows}),
-            "nss": sorted({r["namespace"] for r in rows}),
-            "ids": [r["memory_id"] for r in rows],
-        },
-    )
-    by_id = {str(r["mid"]): r for r in idents}
+    # Resolve each (org, namespace, memory_id) to the keys holding it, with their
+    # write-time reinforcement base, via loom.memory FINAL (loom.memory_reinforcement is
+    # keyed by the identity tuple, not memory_id).
+    by_id: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for keys in ch_params.chunks(
+        [_fold_key(r["org"], r["namespace"], r["memory_id"]) for r in rows]
+    ):
+        for r in await ch.query_all(IDENTITY_STATEMENT, params=_scope_params(keys)):
+            by_id.setdefault(_fold_key(r["org"], r["namespace"], r["mid"]), []).append(r)
     targets = _targets(rows, by_id)
-    result.skipped_no_memory += len(rows) - len(targets)
+    skipped = sum(_fold_key(r["org"], r["namespace"], r["memory_id"]) not in by_id for r in rows)
+    result.skipped_no_memory += skipped
 
     if targets:
         result.statements += await _fold_memory_rows(ch, targets, cfg.update_chunk_rows)
         result.statements += await _fold_reinforcement_rows(ch, targets, cfg.update_chunk_rows)
-        result.folded += len(targets)
+        result.folded += len(rows) - skipped
 
     # Advance the watermark only after every fold in the batch landed — a
     # partial batch re-folds from the old watermark, which is safe because

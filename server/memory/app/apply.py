@@ -37,12 +37,14 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now, to_naive_utc_second
 from server.core.datetimes import to_naive_utc as _naive
+from server.core.numbers import float32
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_apply import (
     ApplyDemote,
     ApplyExpire,
+    ApplyFilter,
     ApplyLabel,
     ApplyLock,
     ApplyRow,
@@ -53,7 +55,6 @@ from server.memory.api.models_lock import MemoryLockInput
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.domain import lock as _lock
 from server.memory.domain.search_types import hit_row_key, names_row
-from server.memory.store.inserts import insert_memory_versions
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +83,35 @@ def _ttl_from(ttl_seconds: int | None, until: datetime | None) -> int:
 
 
 # ---------------------------------------------------------------- resolve
+
+
+def _in_window(f: ApplyFilter, created_at: datetime | None) -> bool:
+    if f.created_before is None and f.created_after is None:
+        return True
+    if created_at is None:
+        return False
+    created = to_naive_utc_second(created_at)
+    return (f.created_before is None or created < to_naive_utc_second(f.created_before)) and (
+        f.created_after is None or created >= to_naive_utc_second(f.created_after)
+    )
+
+
+def _matches(f: ApplyFilter, row: Any) -> bool:
+    """Whether a row matches the filter, as the ClickHouse read selects it: times to the
+    second (a DateTime) and `confidence` as a Float32."""
+    tags = set(row.tags or [])
+    return (
+        row.tombstoned_at is None
+        and (not f.memory_type or row.memory_type == f.memory_type)
+        and (not f.tags_any or bool(tags & set(f.tags_any)))
+        and set(f.tags_all) <= tags
+        and (not f.key_prefix or row.memory_key.startswith(f.key_prefix))
+        and _in_window(f, row.created_at)
+        and (
+            f.confidence_lte is None or float32(row.confidence or 0.0) <= float32(f.confidence_lte)
+        )
+        and (not f.source_trace or row.source_trace == f.source_trace)
+    )
 
 
 async def resolve(input: Any) -> tuple[list[Any], bool]:
@@ -159,8 +189,13 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             + "\n        ORDER BY created_at DESC\n        LIMIT {lim:UInt32}",
             params=params,
         )
-        rows = [memory_repo._hydrate(r) for r in raw]
-        truncated = len(rows) > limit
+        # ClickHouse's copies, swapped for the authority's heads: a newer head is applied
+        # to while it still matches the filter, so a key whose delivery is parked is not
+        # passed over on every call.
+        truncated = len(raw) > limit
+        rows = await memory_repo.current_heads(
+            [memory_repo._hydrate(r) for r in raw], lambda _, h: _matches(f, h)
+        )
         return rows[:limit], truncated
     # search
     from server.memory.app.search import handle_memory_search
@@ -232,11 +267,11 @@ async def _label(row: Any, spec: ApplyLabel, *, reason: str) -> int:
         new = list(dict.fromkeys(current + [t for t in spec.tags if t not in current]))
     if new == current:
         return 0
-    version = memory_repo.next_version()
+    version = memory_repo.version_over(row)
     vrow = memory_repo.build_memory_version_row(
         row, version=version, tags=new, updated_at=memory_repo.written_now()
     )
-    await insert_memory_versions([vrow], ch=get_client())
+    await memory_repo.insert_versions_over_heads([vrow], [row], ch=get_client())
     await _mirror(row, tags=new)
     return version
 
@@ -252,11 +287,11 @@ async def _demote(row: Any, spec: ApplyDemote, *, reason: str) -> int:
         new_conf = _clamp(conf * float(spec.confidence_factor or 1.0), spec.floor)
     if abs(new_conf - conf) < 1e-6:
         return 0
-    version = memory_repo.next_version()
+    version = memory_repo.version_over(row)
     vrow = memory_repo.build_memory_version_row(
         row, version=version, confidence=new_conf, updated_at=memory_repo.written_now()
     )
-    await insert_memory_versions([vrow], ch=get_client())
+    await memory_repo.insert_versions_over_heads([vrow], [row], ch=get_client())
     await _mirror(row, confidence=new_conf)
     return version
 

@@ -16,6 +16,7 @@ Wire ops:
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from typing import Any, Literal
 
 from server.identity.app.request_scope import request_scope
@@ -316,12 +317,27 @@ async def handle_memory_dedup_list(input: MemoryDedupListInput) -> MemoryDedupLi
     return MemoryDedupListOutput(clusters=clusters)
 
 
+def _pair_not_found() -> Exception:
+    from fastapi import HTTPException
+
+    return HTTPException(
+        status_code=404,
+        detail={
+            "code": "DEDUP_PAIR_NOT_FOUND",
+            "message": (
+                "No live row in this namespace is `duplicate_id` marked as a "
+                "duplicate of `canonical_id`. Take both ids from memory.dedup_list."
+            ),
+        },
+    )
+
+
 async def handle_memory_dedup_resolve(input: MemoryDedupResolveInput) -> MemoryDedupResolveOutput:
     """Resolve one duplicate pair, addressed by the two memory ids.
 
     Three decisions dispatch to:
       keep_canonical → tombstone the duplicate row
-      keep_duplicate → tombstone canonical + clear duplicate's tag
+      keep_duplicate → clear the duplicate's tag, then tombstone the canonical
       keep_both      → clear duplicate's tag only (both stay live)
 
     A key alone does not name a row: several identities can hold the same
@@ -339,10 +355,14 @@ async def handle_memory_dedup_resolve(input: MemoryDedupResolveInput) -> MemoryD
             memory_id = str(uuid.UUID(memory_id))
         except ValueError:
             return None  # not a UUID: no such row
-        row = await memory_repo.get_by_id(
-            memory_id, org=input.org, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+        return await memory_repo.get_by_id(
+            memory_id,
+            org=input.org,
+            namespace=input.namespace,
+            fresh=True,
+            strong=True,
+            scope=WHOLE_NAMESPACE,
         )
-        return row if row is not None and row.namespace == input.namespace else None
 
     dup_row = await _live_row(input.duplicate_id)
     canon_row = await _live_row(input.canonical_id)
@@ -352,16 +372,7 @@ async def handle_memory_dedup_resolve(input: MemoryDedupResolveInput) -> MemoryD
         or dup_row.status != "duplicate"
         or dup_row.duplicate_of != canon_row.memory_id
     ):
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "DEDUP_PAIR_NOT_FOUND",
-                "message": (
-                    "No live row in this namespace is `duplicate_id` marked as a "
-                    "duplicate of `canonical_id`. Take both ids from memory.dedup_list."
-                ),
-            },
-        )
+        raise _pair_not_found()
     if input.confirm_canonical_key != canon_row.memory_key:
         raise HTTPException(
             status_code=400,
@@ -378,21 +389,49 @@ async def handle_memory_dedup_resolve(input: MemoryDedupResolveInput) -> MemoryD
     canonical_tombstoned = False
     duplicate_tombstoned = False
 
-    async def _tombstone(row: MemoryRow) -> None:
-        # A locked side of the pair cannot be the one tombstoned.
-        _lock.assert_unlocked(row, "delete", op="memory.dedup_resolve")
-        tombstoned = await memory_repo.tombstone_by_id(input.org, row.memory_id)
+    async def _tombstone(
+        row: MemoryRow, *, still: Callable[[MemoryRow], bool] | None = None
+    ) -> bool:
+        """Tombstone `row`'s head, read current, unless `still(head)` no longer holds.
+        A locked side of the pair, locked since the pair was read included, is refused."""
+
+        def _leave(head: MemoryRow) -> bool:
+            if still is not None and not still(head):
+                return True  # no longer the pair: a 404, whatever its lock
+            _lock.assert_unlocked(head, "delete", op="memory.dedup_resolve")
+            return False
+
+        tombstoned = await memory_repo.tombstone_by_id(
+            input.org, row.memory_id, namespace=input.namespace, skip=_leave
+        )
         await webhooks.announce([("memory.tombstoned", change) for change in tombstoned])
+        return bool(tombstoned)
+
+    def _this_pair(head: MemoryRow) -> bool:
+        return head.status == "duplicate" and head.duplicate_of == canon_row.memory_id
+
+    async def _clear_flag() -> None:
+        if not await memory_repo.clear_duplicate_tag(
+            input.org,
+            dup_row.memory_id,
+            namespace=input.namespace,
+            duplicate_of=canon_row.memory_id,
+        ):
+            raise _pair_not_found()  # resolved, deleted or flagged anew since it was read
 
     if input.decision == "keep_canonical":
-        await _tombstone(dup_row)
+        if not await _tombstone(dup_row, still=_this_pair):
+            raise _pair_not_found()  # resolved, deleted or flagged anew since it was read
         duplicate_tombstoned = True
     elif input.decision == "keep_duplicate":
-        await _tombstone(canon_row)
-        await memory_repo.clear_duplicate_tag(input.org, dup_row.memory_id)
-        canonical_tombstoned = True
+        # The canonical's lock, then the duplicate's flag: a failure before the
+        # canonical's delete (a lock taken on it since this check, 423) leaves both live
+        # and the pair out of the queue, never a duplicate pointing at a deleted canonical.
+        _lock.assert_unlocked(canon_row, "delete", op="memory.dedup_resolve")
+        await _clear_flag()
+        canonical_tombstoned = await _tombstone(canon_row)  # False: deleted since
     elif input.decision == "keep_both":
-        await memory_repo.clear_duplicate_tag(input.org, dup_row.memory_id)
+        await _clear_flag()
 
     return MemoryDedupResolveOutput(
         canonical_key=canon_row.memory_key,

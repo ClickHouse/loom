@@ -56,16 +56,22 @@ _REPO = Path(__file__).resolve().parents[2]
 def stub_model_command(monkeypatch):
     """Isolate native CLI business/connection tests from provider policy/CH.
 
-    The real admission lifecycle is tested separately in test_provider_command.
-    These tests deliberately supply clients without configuration tables.
+    The real admission lifecycle is tested separately in test_provider_command, the
+    authority check in test_cli_run_connected. These tests deliberately supply clients
+    without configuration tables.
     """
+    from server.core import pg_profile
     from server.insights.app import provider_command
 
     @asynccontextmanager
     async def command():
         yield
 
+    async def checked(_ch):
+        return None
+
     monkeypatch.setattr(provider_command, "model_command", command)
+    monkeypatch.setattr(pg_profile, "check_configured", checked)
 
 
 class FakeAuthAttempts:

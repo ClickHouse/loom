@@ -131,10 +131,11 @@ class IdempotentConflict(LoomError):
 
 
 class PreconditionFailed(LoomError):
-    """An if_match_sha256 precondition didn't match the live row's hash.
+    """An if_match_sha256 precondition didn't match the live row's hash, or an
+    erasure landed while a namespace.restore ran (retry the restore; no hash).
 
-    Carries the server's current hash in `.current_sha256` so a caller can
-    re-read and retry without an extra get round-trip.
+    A mismatch carries the server's current hash in `.current_sha256` so a caller
+    can re-read and retry without an extra get round-trip.
     """
 
     code = "PRECONDITION_FAILED"

@@ -102,6 +102,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         return int(args.func(args))
 
     from server.core.ch import query_tag_var
+    from server.core.pg import AuthorityMismatch
     from server.llm import customer
     from server.memory.domain.provenance import cli_actor, pipeline_actor
     from server.observability.traffic_class import (
@@ -130,7 +131,11 @@ def _dispatch(args: argparse.Namespace) -> int:
             customer.cli_command(),
             customer.for_org(str(org), namespace=namespace),
         ):
-            rc = int(args.func(args))
+            try:
+                rc = int(args.func(args))
+            except AuthorityMismatch as e:
+                print(f"  ✗ {e}", file=sys.stderr)
+                return 2
         if hint := dry_run_hint(args, rc):
             # stderr: a command's --json output stays the only thing on stdout
             print(hint, file=sys.stderr)

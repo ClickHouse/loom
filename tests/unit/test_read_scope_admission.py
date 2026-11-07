@@ -402,7 +402,12 @@ async def test_point_and_bulk_reads_carry_the_scope() -> None:
     _bound_to_u1(ch)
     ch = _CH()
     # Another user's id is not found: the bound is on the locating statement.
-    assert await reads.get_by_id("00000000-0000-0000-0000-000000000001", scope=U1, ch=ch) is None
+    assert (
+        await reads.get_by_id(
+            "00000000-0000-0000-0000-000000000001", org="o", namespace="n", scope=U1, ch=ch
+        )
+        is None
+    )
     _bound_to_u1(ch)
     ch = _CH()
     assert await reads.get_many_by_keys(_WILD, ["k"], scope=U1, ch=ch) == []

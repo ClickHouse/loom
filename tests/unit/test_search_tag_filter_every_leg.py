@@ -33,7 +33,7 @@ from server.memory.app.search.sql import (
     key_match_sql,
 )
 from server.memory.app.search.tiers import _prepend_anchor, _prepend_recent
-from server.memory.app.search.vector_legs import _stamp_leg_tags
+from server.memory.app.search.vector_legs import _stamp_row_fields
 from server.memory.app.search_tag_filter import stamp_row_tags, tagged_row_hit
 from server.memory.domain.search_sql import _build_where, hard_tag_filter
 from server.memory.domain.search_types import SearchHit, SearchQuery
@@ -288,12 +288,12 @@ async def test_belt_fails_open_on_the_read_and_counts_the_unverified(
 
 def test_leg_hits_are_stamped_with_the_rows_tags() -> None:
     leg = SimpleNamespace(tags=["a", "b"])
-    wire = _stamp_leg_tags(leg, _hit("k", "fact"))
+    wire = _stamp_row_fields(leg, _hit("k", "fact"))
     assert wire._row_tags == ("a", "b")
     # a chunk hit reads no tags and stays unstamped
-    assert _stamp_leg_tags(leg, _hit("chunk:s:1", "chunk"))._row_tags is None
+    assert _stamp_row_fields(leg, _hit("chunk:s:1", "chunk"))._row_tags is None
     # a leg that read an untagged row stamps the empty tuple (known, empty)
-    assert _stamp_leg_tags(SimpleNamespace(tags=[]), _hit("k", "anchor"))._row_tags == ()
+    assert _stamp_row_fields(SimpleNamespace(tags=[]), _hit("k", "anchor"))._row_tags == ()
 
 
 @pytest.mark.asyncio
@@ -321,12 +321,16 @@ async def test_tiers_pass_the_hard_filter_only_when_set(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(repo, "list_by_namespace", fake_list)
     base = dict(org="o", namespace="ns", agent="*", user_id="-", session_id="-", run_id="", top_k=3)
-    await _prepend_recent([], SimpleNamespace(recent_first=1, **base))
+    await _prepend_recent([], SimpleNamespace(recent_first=1, **base), {})
     assert calls[-1]["tag_filter"] is None
-    await _prepend_recent([], SimpleNamespace(recent_first=1, tags=["x"], tags_soft=False, **base))
+    await _prepend_recent(
+        [], SimpleNamespace(recent_first=1, tags=["x"], tags_soft=False, **base), {}
+    )
     # memory.search's exact match, not memory.list's any-case one.
     assert calls[-1]["tag_filter"] == TagFilter(("x",), "exact_any")
-    await _prepend_anchor([], SimpleNamespace(anchor_first=1, tags=["x"], tags_soft=True, **base))
+    await _prepend_anchor(
+        [], SimpleNamespace(anchor_first=1, tags=["x"], tags_soft=True, **base), {}
+    )
     assert calls[-1]["tag_filter"] is None
 
 
@@ -471,7 +475,7 @@ def _made_from_set_chunk(row_tags: tuple[str, ...]) -> _MemorySearchHit:
     )
     rows = {ChunkId("a", "u", "k", 0, "sha"): SetChunkRow(("a", "u", "s1"), 3, row_tags)}
     (made,) = fold_set_chunks([chunk], rows)
-    return _stamp_leg_tags(made, _hit("k"))
+    return _stamp_row_fields(made, _hit("k"))
 
 
 @pytest.mark.asyncio

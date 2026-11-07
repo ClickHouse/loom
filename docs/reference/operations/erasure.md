@@ -31,7 +31,7 @@ GDPR Article 20 portability.
 | `scope_value` | `str` | Echo of the requested user id or namespace. |
 | `requester` | `str` | Echo of who asked for the export. |
 | `counts` | `dict[str, int]` | Rows returned per section (`memory`, `knowledge`, `conversations`, `conversation_threads`, `agent_events`, `audit_log`): at most `section_limit`, and the section's `truncated` says more exist. |
-| `memory` | `ErasureExportSection` | `loom.memory` rows in scope; tombstoned rows too when `include_tombstoned`. |
+| `memory` | `ErasureExportSection` | `loom.memory` rows in scope (under the Postgres authority, its heads); tombstoned rows too when `include_tombstoned`. |
 | `knowledge` | `ErasureExportSection` | Knowledge chunk rows of the namespace, or every one the user wrote for a `user_id` scope. |
 | `conversations` | `ErasureExportSection` | Turns and saved messages in scope with their `sensitivity`, up to `erasure_export_conversation_max_bytes` of text plus the turn that crosses it. |
 | `conversation_threads` | `ErasureExportSection` | Threads in scope with their title, metadata and `sensitivity`, capped by `section_limit` rows only (no byte budget). |
@@ -78,8 +78,8 @@ GDPR Article 17 forgetting.
 | `requested_at` | `datetime` | When the saga was registered (UTC). |
 | `completed_at` | `datetime \| None` | When the saga reached its terminal state (UTC); `None` while it runs. |
 | `residue_count` | `int` | Verified forgetting: live rows and bucket objects the post-erasure census still found in scope, per substrate; 0 / {} on a completed saga. |
-| `residue` | `dict[str, int]` | Rows still live per table after the saga, only tables with a non-zero count, and the bucket objects left, under the key `objects.document_originals`; `{}` on success. |
-| `verified_at` | `datetime \| None` | When the residue census ran (UTC); `None` if it never ran. |
+| `residue` | `dict[str, int]` | Rows still live per table after the saga, only tables with a non-zero count (the Postgres authority's under `pg:<table>`), and the bucket objects left, under the key `objects.document_originals`; `{}` on success. |
+| `verified_at` | `datetime \| None` | When the residue census ran (UTC); `None` if it never ran or left a store uncounted (the Postgres authority or the bucket, which the server log names); `residue` then holds what it did count. |
 | `failure_reason` | `str` | A failed saga names the step that failed, and the steps it did complete, so the recovery worker's terminal row and an operator re-verify keep both instead of the attempts count alone. |
 | `steps_completed` | `list[str]` | Names of the steps finished so far, sorted. |
 
@@ -107,7 +107,7 @@ Check the status of an in-flight erasure request (queued, running, completed, fa
 | `completed_at` | `datetime \| None` | When the saga reached its terminal state (UTC); `None` while in progress. |
 | `failure_reason` | `str \| None` | The failing step and its error for a failed saga; `None` otherwise. |
 | `residue_count` | `int` | Verified forgetting. |
-| `residue` | `dict[str, int]` | Rows still live per table at the last census, and the bucket objects left, under the key `objects.document_originals`; `{}` when none. |
-| `verified_at` | `datetime \| None` | When the last residue census ran (UTC); `None` if it has not run. |
+| `residue` | `dict[str, int]` | Rows still live per table at the last census (the Postgres authority's under `pg:<table>`), and the bucket objects left, under the key `objects.document_originals`; `{}` when none. |
+| `verified_at` | `datetime \| None` | When the last residue census ran (UTC); `None` if it has not run or left a store uncounted (the Postgres authority or the bucket, which the server log names); `residue` then holds what it did count. |
 
 <!-- prettier-ignore-end -->

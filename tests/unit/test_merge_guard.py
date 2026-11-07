@@ -31,7 +31,7 @@ def test_merge_that_drops_a_date_or_number_is_refused() -> None:
     b = "Caroline's dog Max weighs 30 kg."
     v = merge_preserves([a, b], "Caroline has a dog named Max who weighs 30 kg.")
     assert not v.ok and v.lost[0]["dates"] == ["3 march 2023"]
-    assert "source[0] dates: 3 march 2023" in v.reason()
+    assert "source[0] dates: 1" in v.counts()
     v2 = merge_preserves([a, b], "Caroline adopted Max on 3 March 2023.")
     assert not v2.ok and v2.lost[1]["quantities"] == ["30 kg"]
 
@@ -55,3 +55,8 @@ def test_later_entry_wins_is_still_a_loss_the_guard_reports() -> None:
     conservative default the setting can lift."""
     v = merge_preserves(["Jon lives in Boston.", "Jon lives in Austin."], "Jon lives in Austin.")
     assert not v.ok and v.lost[0]["names"] == ["boston"]
+
+
+def test_counts_name_the_kinds_lost_and_never_the_values() -> None:
+    v = merge_preserves(["We met on 3 March 2023."], "We met.")
+    assert v.counts() == "source[0] dates: 1" and "march" not in v.counts()

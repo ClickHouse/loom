@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, NamedTuple
 
-from server.core.ch_params import chunks
+from server.core.ch_params import FIELD_BYTES, chunks
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.mutations import (
     delete_scoped,
@@ -367,9 +367,20 @@ async def tombstone_summaries_by_user(
 # memory (or merged canonical row) lives under the identity that ran the
 # consolidation — often `user_id='-'` — and carries its sources' content
 # verbatim by design, tagged `src:<key>`. The per-user tombstone above never
-# reaches it. Any overlap with the erased user's keys retires the summary;
-# the next dense pass rebuilds one from the surviving sources.
-_CONSOLIDATED = "has(tags, 'consolidated') AND hasAny(tags, {src:Array(String)})"
+# reaches it. A `src:` tag names a key of the summary's own namespace, as consolidation
+# writes it (a copy into another namespace keeps the tags, and is not the user's there);
+# the next dense pass rebuilds a retired summary from the surviving sources. The user's
+# tags let the skip index prune; their (namespace, tag) pairs decide.
+_CONSOLIDATED = (
+    "has(tags, 'consolidated') AND hasAny(tags, {src:Array(String)}) "
+    "AND hasAny(arrayMap(t -> (namespace, t), tags), {pairs:Array(Tuple(String, String))})"
+)
+
+
+def _consolidated_params(pairs: list[tuple[str, str]]) -> dict[str, Any]:
+    """The bound values of `_CONSOLIDATED` for a slice of the user's (namespace, key)."""
+    tagged = [(ns, "src:" + key) for ns, key in pairs]
+    return {"src": sorted({tag for _, tag in tagged}), "pairs": tagged}
 
 
 async def tombstone_consolidated_dependents_by_user(
@@ -379,29 +390,31 @@ async def tombstone_consolidated_dependents_by_user(
     links go too: a link's `suggestion` holds a rewrite of the row's text, and this
     tombstone is a mutation, so the link queue never sees it."""
     ch = ch or _default_client()
-    src = list(chunks(["src:" + k for k in await user_keys(org, user_id, ch=ch)]))
+    # Pairs are measured without the `src:` prefix they are bound with: half a field
+    # leaves room for it.
+    parts = list(chunks(await user_key_pairs(org, user_id, ch=ch), limit=FIELD_BYTES // 2))
     total = 0
     for t in ("loom.memory", "loom.memory_embeddings"):
-        for part in src:
+        for part in parts:
             total += await tombstone_scoped(
-                t, org=org, scope_where=_CONSOLIDATED, params={"src": part}, ch=ch
+                t, org=org, scope_where=_CONSOLIDATED, params=_consolidated_params(part), ch=ch
             )
     # after the tombstones, as every link delete: a link written meanwhile for a row read
     # as live goes too
-    ids: set[str] = set()
-    for part in src:
-        rows = await ch.query_all(
-            "SELECT DISTINCT toString(memory_id) AS id FROM loom.memory "
+    rows: set[tuple[str, str]] = set()
+    for part in parts:
+        found = await ch.query_all(
+            "SELECT DISTINCT namespace, toString(memory_id) AS id FROM loom.memory "
             f"WHERE org = {{org:String}} AND {_CONSOLIDATED}",
-            params={"org": org, "src": part},
+            params={"org": org, **_consolidated_params(part)},
         )
-        ids.update(str(r["id"]) for r in rows)
-    for part in chunks(sorted(ids)):
+        rows.update((str(r["namespace"]), str(r["id"])) for r in found)
+    for part in chunks(sorted(rows)):
         total += await delete_scoped(
             "loom.memory_code_links",
             org=org,
-            scope_where="memory_id IN {ids:Array(UUID)}",
-            params={"ids": part},
+            scope_where="(namespace, memory_id) IN {rows:Array(Tuple(String, UUID))}",
+            params={"rows": part},
             ch=ch,
         )
     return total

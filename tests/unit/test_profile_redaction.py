@@ -101,6 +101,7 @@ _TARGET_KW: dict[str, Any] = {
     "memory_key": "user_timezone",
     "version": 1,
     "tombstoned_at": None,
+    "content_sha256": "b" * 64,
 }
 
 
@@ -117,6 +118,8 @@ class _Head:
     version = 4
     lock_mode = ""
     lock_until = None
+    redacted_at = None
+    content_sha256 = "d" * 64
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
@@ -249,7 +252,6 @@ def _redact_setup(monkeypatch: pytest.MonkeyPatch) -> _StatefulLocalCH:
     import server.memory.store as memory_repo
     from server.memory.app import curation
     from server.memory.store import history, redaction
-    from server.memory.store.history import HistoryTarget
 
     ch = _StatefulLocalCH(
         *_PROFILE_TABLES,
@@ -267,9 +269,6 @@ def _redact_setup(monkeypatch: pytest.MonkeyPatch) -> _StatefulLocalCH:
     monkeypatch.setattr(redaction, "_default_client", lambda: ch)
     monkeypatch.setattr(history, "_default_client", lambda: ch)
 
-    async def target(*_a: Any) -> HistoryTarget:
-        return HistoryTarget(**_TARGET_KW)
-
     async def in_scope(*_a: Any) -> bool:
         return True
 
@@ -279,7 +278,6 @@ def _redact_setup(monkeypatch: pytest.MonkeyPatch) -> _StatefulLocalCH:
     async def no_links(*_a: Any) -> str:
         return ""
 
-    monkeypatch.setattr(memory_repo, "find_history_target", target)
     monkeypatch.setattr(authz, "row_in_scope", in_scope)
     monkeypatch.setattr(memory_repo, "get_by_key", head)
     monkeypatch.setattr(curation, "_live_link_inputs", no_links)
@@ -328,7 +326,7 @@ async def test_a_retried_redact_scrubs_the_profile_rows_a_failed_one_left(monkey
     )
     scrub_profiles = curation._scrub_profile_derivatives
 
-    async def fails(*_a: Any) -> None:
+    async def fails(*_a: Any, **_k: Any) -> None:
         raise TimeoutError("DELETE on memory_embeddings timed out")
 
     monkeypatch.setattr(curation, "_scrub_profile_derivatives", fails)
@@ -451,17 +449,459 @@ async def test_a_redacted_profile_head_leaves_render_and_profile_search(
     target = HistoryTarget(**_TARGET_KW)
     profiles = await curation._profiles_built_from("o", target, _SECRET)
     await memory_repo.redact_versions(
-        "o",
-        "n",
-        "u1",
+        ("o", "n", "a", "u1", "-", "user_timezone"),
         _SECRET,
         1,
         when=datetime(2026, 1, 1),
         reason_blob="r|admin",
+        head=None,
     )
-    await curation._scrub_profile_derivatives("o", target, profiles)
+    await curation._scrub_profile_derivatives("o", target, profiles, through=2**63)
 
     rendered = await handle_profile_render(render_input)
     assert rendered.labels == [] and rendered.section_count == 0
     assert "REDACTED" not in rendered.rendered
     assert await ch.query_all(PROFILE_FETCH_SQL, search_params) == []
+
+
+def _version(
+    table: str, version: int, value: str, *, deleted: bool = False, ns: str = "n", agent: str = "a"
+) -> str:
+    return (
+        f"INSERT INTO loom.{table} (org, namespace, agent, user_id, session_id, memory_key, "
+        "memory_type, value, memory_id, content_sha256, version, tombstoned_at) VALUES "
+        f"('o', '{ns}', '{agent}', 'u1', '-', 'k', 'fact', '\"{value}\"', '{_SECRET}', "
+        f"'{value.lower()[0] * 64}', {version}, {'now()' if deleted else 'NULL'})"
+    )
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("history", "copies"),
+    [
+        # The delete right after the version copied its text: scrubbed with it.
+        ([("A", False), ("A", True)], [2]),
+        # A copy writer (an entity pass, a lock) before the delete carries it too.
+        ([("A", False), ("A", False), ("A", True)], [2, 3]),
+        # The same text written again and then deleted is not the redacted version.
+        ([("A", False), ("B", False), ("A", False), ("A", True)], []),
+    ],
+)
+async def test_the_later_copies_of_a_redacted_version_are_scrubbed(
+    history: list[tuple[str, bool]], copies: list[int]
+) -> None:
+    """The later versions of the key that carry the redacted one's text are scrubbed with
+    it; another key holding the same id is left alone."""
+    from server.memory.store import redaction
+
+    ch = _StatefulLocalCH(
+        ddl("memory"),
+        ddl("memory_versions"),
+        *(
+            _version(table, v, value, deleted=deleted)
+            for table in ("memory", "memory_versions")
+            for v, (value, deleted) in enumerate(history, start=1)
+        ),
+        # A namespace restored from this one, and this one restored into itself under
+        # another agent: each keeps the id, and neither is the redacted key.
+        _version("memory_versions", 8, "A", deleted=True, ns="restored"),
+        _version("memory_versions", 9, "A", deleted=True, agent="b"),
+    )
+    scrubbed = await redaction.redact_versions(
+        ("o", "n", "a", "u1", "-", "k"),
+        _SECRET,
+        1,
+        when=datetime(2026, 1, 2),
+        reason_blob="pii|t",
+        head=None,
+        ch=ch,
+    )
+    assert scrubbed == copies
+    for table in ("memory", "memory_versions"):
+        rows = await ch.query_all(
+            f"SELECT namespace, agent, version FROM loom.{table} "
+            "WHERE value = '\"[REDACTED]\"' ORDER BY version"
+        )
+        assert [(r["namespace"], r["agent"], int(r["version"])) for r in rows] == [
+            ("n", "a", v) for v in [1, *copies]
+        ], table
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_the_redacted_version_names_its_own_key() -> None:
+    """A namespace restored into itself under another agent holds the memory's id under a
+    second key, at newer versions: the redaction of a version acts on the key that wrote
+    it."""
+    from server.memory.store import history
+
+    ch = _StatefulLocalCH(
+        ddl("memory"),
+        ddl("memory_versions"),
+        _version("memory_versions", 1, "A"),
+        _version("memory_versions", 5, "A", agent="b"),
+    )
+    target = await history.find_history_target("o", _SECRET, 1, ch=ch)
+    assert target is not None and (target.agent, target.version) == ("a", 1)
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("head", "scrubbed"),
+    [
+        # The key's live head is this memory's v2; a touch wrote v3 since it was read.
+        ((_SECRET, 2), [1]),
+        # The key's live head is another memory's: every copy of this one goes.
+        (("00000000-0000-0000-0000-0000000000cc", 9), [1, 2, 3]),
+        # Deleted at the read (v2), then restored during the redaction (v3): the text the
+        # restore brought back is scrubbed too.
+        (None, [1, 2, 3]),
+    ],
+)
+async def test_a_redaction_leaves_the_live_head_and_what_was_copied_from_it(
+    head: tuple[str, int] | None, scrubbed: list[int]
+) -> None:
+    """On the ClickHouse authority no lock holds the head: nothing from the head the
+    caller read on is scrubbed, a copy written from it since included."""
+    from server.memory.store import redaction
+
+    ch = _StatefulLocalCH(
+        ddl("memory"),
+        ddl("memory_versions"),
+        *(_version("memory_versions", v, "A") for v in (1, 2, 3)),
+    )
+    await redaction.redact_versions(
+        ("o", "n", "a", "u1", "-", "k"),
+        _SECRET,
+        1,
+        when=datetime(2026, 1, 2),
+        reason_blob="pii|t",
+        head=head,
+        ch=ch,
+    )
+    rows = await ch.query_all(
+        "SELECT version FROM loom.memory_versions WHERE value = '\"[REDACTED]\"' ORDER BY version"
+    )
+    assert [int(r["version"]) for r in rows] == scrubbed
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("head_live", "kept"), [(True, [22]), (False, [22])])
+async def test_a_newer_write_stays_unless_it_carries_the_redacted_text(
+    head_live: bool, kept: list[int]
+) -> None:
+    """An embedding row stamped after the redaction began is a newer write's and stays,
+    with a live head or none, unless it carries the redacted text (a restore's mirror of
+    the old excerpt). A chunk of the secret goes whatever second it was written."""
+    from server.memory.store import redaction
+
+    def _embedding(version: int, text: str, sha: str = "") -> str:
+        return (
+            "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
+            "memory_key, memory_type, scope, content_excerpt, embedding_model, version, "
+            "content_sha256, embedding, memory_key_embedding) VALUES "
+            f"('o', 'n', 'a', 'u1', '-', 'k', 'fact', 'private', '{text}', 'm', {version}, "
+            f"'{sha}', arrayWithConstant(3072, toBFloat16(0)), "
+            "arrayWithConstant(3072, toBFloat16(0)))"
+        )
+
+    ch = _StatefulLocalCH(
+        *_PROFILE_TABLES,
+        _embedding(5, "the secret"),
+        _embedding(21, "the secret", sha="f" * 64),
+        _embedding(22, "a newer write", sha="c" * 64),  # stamped after the redaction began
+        # The deleted version's chunk: not the live head's, whatever second it was written.
+        "INSERT INTO loom.memory_chunks (org, namespace, agent, user_id, session_id, "
+        "chunk_index, content_sha256, content, embedding, embedding_model, parent_memory_key, "
+        f"tombstoned_at) VALUES ('o', 'n', 'a', 'u1', '-', 0, '{'e' * 64}', 'the secret', "
+        "arrayWithConstant(3072, toBFloat16(0)), 'm', 'k', now())",
+    )
+    scrubs = await redaction.key_derivative_scrubs(
+        "o",
+        "n",
+        "a",
+        "u1",
+        "-",
+        "k",
+        head_live=head_live,
+        through=10,
+        redacted_sha="f" * 64,
+        ch=ch,
+        set_chunks_kept=None,
+    )
+    await redaction.run_scrubs(scrubs, apply=True, ch=ch)
+    rows = await ch.query_all("SELECT version FROM loom.memory_embeddings ORDER BY version")
+    assert [int(r["version"]) for r in rows] == kept
+    assert await ch.query_all("SELECT content FROM loom.memory_chunks") == []
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("live_sha", "kept"), [("a" * 64, []), ("f" * 64, [1])])
+async def test_a_row_of_the_redacted_text_goes_though_clickhouse_still_reads_it_live(
+    live_sha: str, kept: list[int]
+) -> None:
+    """Under Postgres the live head's own search row may not be in ClickHouse yet, so the
+    redacted version's row still reads as the key's live one: it goes by its hash, unless
+    the live head carries that very text."""
+    from server.memory.store import redaction
+
+    ch = _StatefulLocalCH(
+        *_PROFILE_TABLES,
+        "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
+        "memory_key, memory_type, scope, content_excerpt, embedding_model, version, "
+        "content_sha256, embedding, memory_key_embedding) VALUES "
+        f"('o', 'n', 'a', 'u1', '-', 'k', 'fact', 'private', 'the secret', 'm', 1, "
+        f"'{'f' * 64}', arrayWithConstant(3072, toBFloat16(0)), "
+        "arrayWithConstant(3072, toBFloat16(0)))",
+    )
+    scrubs = await redaction.key_derivative_scrubs(
+        "o",
+        "n",
+        "a",
+        "u1",
+        "-",
+        "k",
+        head_live=True,
+        through=10,
+        redacted_sha="f" * 64,
+        live_sha=live_sha,
+        ch=ch,
+        set_chunks_kept=None,
+    )
+    await redaction.run_scrubs(scrubs, apply=True, ch=ch)
+    rows = await ch.query_all("SELECT version FROM loom.memory_embeddings")
+    assert [int(r["version"]) for r in rows] == kept
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_a_row_of_other_text_goes_though_it_still_reads_live_in_clickhouse() -> None:
+    """Under Postgres a profile key's newer fold may not be in ClickHouse yet, so the old
+    fold built from the redacted memory still reads live there: it goes, as its hash is
+    not the live head's. A row of the live head's hash, and one a newer write stamped
+    since, stay."""
+    from server.memory.store import redaction
+
+    def _row(version: int, text: str, sha: str) -> str:
+        return (
+            "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
+            "memory_key, memory_type, scope, content_excerpt, embedding_model, version, "
+            "content_sha256, embedding, memory_key_embedding) VALUES "
+            f"('o', 'n', '-', 'u1', '-', 'profile', 'profile', 'private', '{text}', 'm', "
+            f"{version}, '{sha}', arrayWithConstant(3072, toBFloat16(0)), "
+            "arrayWithConstant(3072, toBFloat16(0)))"
+        )
+
+    ch = _StatefulLocalCH(
+        *_PROFILE_TABLES,
+        _row(3, "the live fold", "a" * 64),
+        _row(4, "a fold of the secret", "b" * 64),
+        _row(20, "a newer fold", "c" * 64),
+    )
+    scrubs = await redaction.key_derivative_scrubs(
+        "o",
+        "n",
+        "-",
+        "u1",
+        "-",
+        "profile",
+        head_live=True,
+        through=10,
+        live_sha="a" * 64,
+        ch=ch,
+        set_chunks_kept=None,
+    )
+    await redaction.run_scrubs(scrubs, apply=True, ch=ch)
+    rows = await ch.query_all("SELECT version FROM loom.memory_embeddings ORDER BY version")
+    assert [int(r["version"]) for r in rows] == [3, 20]
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("through", [10, None])
+async def test_an_unhashed_late_row_is_judged_by_its_excerpt(through: int | None) -> None:
+    """A row with no content hash cannot be matched to a write: stamped after the
+    redaction began, it is judged by its excerpt, not taken for a newer write. With no
+    live head it goes, and a dropped profile head takes no bound at all."""
+    from server.memory.store import redaction
+
+    def _row(version: int, text: str) -> str:
+        return (
+            "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
+            "memory_key, memory_type, scope, content_excerpt, embedding_model, version, "
+            "content_sha256, embedding, memory_key_embedding) VALUES "
+            f"('o', 'n', '-', 'u1', '-', 'profile', 'profile', 'private', '{text}', 'm', "
+            f"{version}, '', arrayWithConstant(3072, toBFloat16(0)), "
+            "arrayWithConstant(3072, toBFloat16(0)))"
+        )
+
+    ch = _StatefulLocalCH(*_PROFILE_TABLES, _row(5, "an old fold"), _row(20, "the secret fold"))
+    scrubs = await redaction.key_derivative_scrubs(
+        "o",
+        "n",
+        "-",
+        "u1",
+        "-",
+        "profile",
+        head_live=False,
+        through=through,
+        ch=ch,
+        set_chunks_kept=None,
+    )
+    await redaction.run_scrubs(scrubs, apply=True, ch=ch)
+    assert await ch.query_all("SELECT version FROM loom.memory_embeddings") == []
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("postgres", "heads_write", "kept"),
+    [
+        (True, ["d", "e"], ["d", "e", "x"]),
+        (True, ["d"], ["d", "x"]),
+        # ClickHouse is the authority: what it holds as live stays, as the heads' own.
+        (False, ["d"], ["d", "e", "x"]),
+    ],
+)
+async def test_a_set_chunk_no_live_head_writes_goes_though_clickhouse_holds_it_live(
+    postgres: bool, heads_write: list[str], kept: list[str]
+) -> None:
+    """Under Postgres the live head's chunks may not have replaced the redacted value's in
+    ClickHouse yet: a `memory.set` chunk goes unless a live head writes it. A conversation
+    chunk of the key is judged by what ClickHouse holds as live, and stays."""
+    from server.memory.store import redaction
+
+    def _chunk(session: str, index: int, sha: str) -> str:
+        return (
+            "INSERT INTO loom.memory_chunks (org, namespace, agent, user_id, session_id, "
+            "chunk_index, content_sha256, content, embedding, embedding_model, "
+            f"parent_memory_key) VALUES ('o', 'n', 'a', 'u1', '{session}', {index}, "
+            f"'{sha * 64}', '{sha}', arrayWithConstant(3072, toBFloat16(0)), 'm', 'k')"
+        )
+
+    ch = _StatefulLocalCH(
+        *_PROFILE_TABLES,
+        _chunk("memory.set:k", 0, "d"),
+        _chunk("memory.set:k", 1, "e"),
+        _chunk("conversation", 0, "x"),
+    )
+    scrubs = await redaction.key_derivative_scrubs(
+        "o",
+        "n",
+        "a",
+        "u1",
+        "-",
+        "k",
+        head_live=True,
+        through=10,
+        set_chunks_kept=[sha * 64 for sha in heads_write] if postgres else None,
+        ch=ch,
+    )
+    await redaction.run_scrubs(scrubs, apply=True, ch=ch)
+    rows = await ch.query_all("SELECT content FROM loom.memory_chunks ORDER BY content")
+    assert [r["content"] for r in rows] == kept
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("head_live", "through"), [(False, None), (True, 5)])
+async def test_a_fence_row_stays(head_live: bool, through: int | None) -> None:
+    """A fence (no excerpt, terms or vector, as `fence_vectors` writes it) holds no text:
+    it stays, keeping an older vector still in flight hidden under the 'high' head it was
+    written for, with a live head or none, above the redaction's bound or not. A drop
+    tombstone that kept the redacted value's terms goes."""
+    from server.memory.store import redaction
+
+    ch = _StatefulLocalCH(
+        *_PROFILE_TABLES,
+        "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
+        "memory_key, memory_type, scope, content_excerpt, embedding_model, version, "
+        "embedding_dim, embedding, memory_key_embedding, tombstoned_at) VALUES "
+        # The placeholder vector the insert puts in an empty one's place.
+        "('o', 'n', 'a', 'u1', '-', 'k', 'fact', 'private', '', 'm', 7, 0, "
+        "arrayWithConstant(3072, toBFloat16(0)), arrayWithConstant(3072, toBFloat16(0)), now())",
+        # A worker's drop tombstone of a stub: no excerpt or vector, the stub's terms kept.
+        "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
+        "memory_key, memory_type, scope, content_excerpt, embedding_model, version, "
+        "embedding_dim, entities, content_sha256, embedding, memory_key_embedding, "
+        "tombstoned_at) VALUES ('o', 'n', 'a', 'u1', '-', 'k', 'fact', 'private', '', 'm', 3, "
+        f"0, ['the secret'], '{'a' * 64}', arrayWithConstant(3072, toBFloat16(0)), "
+        "arrayWithConstant(3072, toBFloat16(0)), now())",
+    )
+    scrubs = await redaction.key_derivative_scrubs(
+        "o",
+        "n",
+        "a",
+        "u1",
+        "-",
+        "k",
+        head_live=head_live,
+        through=through,
+        redacted_sha="a" * 64,
+        set_chunks_kept=None,
+        ch=ch,
+    )
+    await redaction.run_scrubs(scrubs, apply=True, ch=ch)
+    rows = await ch.query_all("SELECT version FROM loom.memory_embeddings")
+    assert [int(r["version"]) for r in rows] == [7]
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_the_set_chunk_count_reaches_retired_rows_and_no_other_session() -> None:
+    from server.memory.store import redaction
+
+    def _chunk(session: str, index: int, retired: bool = False) -> str:
+        return (
+            "INSERT INTO loom.memory_chunks (org, namespace, agent, user_id, session_id, "
+            "chunk_index, content_sha256, content, embedding, embedding_model, "
+            f"parent_memory_key, tombstoned_at) VALUES ('o', 'n', 'a', 'u1', '{session}', "
+            f"{index}, '{'d' * 64}', 'x', arrayWithConstant(3072, toBFloat16(0)), 'm', 'k', "
+            f"{'now()' if retired else 'NULL'})"
+        )
+
+    ch = _StatefulLocalCH(
+        *_PROFILE_TABLES,
+        _chunk("memory.set:k", 3),
+        _chunk("memory.set:k", 40, retired=True),
+        _chunk("conversation", 90),
+    )
+    assert await redaction.set_chunk_count("o", "n", "a", "u1", "k", ch=ch) == 41
+    assert await redaction.set_chunk_count("o", "n", "a", "u1", "other", ch=ch) == 0
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_redact_announces_each_later_copy_it_scrubs(monkeypatch) -> None:
+    """A restatement and a delete's tombstone copy the redacted text: each is scrubbed
+    and announced, up to the version that holds other text."""
+    from server.memory.api.models_crud import MemoryRedactInput
+    from server.memory.app import curation, webhooks
+
+    ch = _redact_setup(monkeypatch)
+    for version, sha in ((2, "b" * 64), (3, "b" * 64), (5, "e" * 64)):
+        ch.setup.append(_SECRET_VERSION.replace(f"'{'b' * 64}', 1)", f"'{sha}', {version})"))
+    heard: list[tuple[str, str, int]] = []
+
+    async def announce(events: list[tuple[str, Any]]) -> None:
+        heard.extend(
+            (kind, change["memory_key"], int(change["version"])) for kind, change in events
+        )
+
+    monkeypatch.setattr(webhooks, "announce", announce)
+    out = await curation.handle_memory_redact(
+        MemoryRedactInput(org="o", memory_id=_SECRET, version=1, reason="pii")
+    )
+    assert out.redacted
+    # Versions 1-3 of the key hold the text; 5 holds other text. The profile key's
+    # newest version built from the memory is 3.
+    assert sorted(heard) == [
+        ("memory.redacted", "structured_profile", 3),
+        ("memory.redacted", "user_timezone", 1),
+        ("memory.redacted", "user_timezone", 2),
+        ("memory.redacted", "user_timezone", 3),
+    ]

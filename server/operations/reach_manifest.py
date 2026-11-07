@@ -315,7 +315,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "memory.bulk_set": ("sdk_method",),
+    "memory.bulk_set": (
+        "sdk_method",
+        "sdk_example",
+    ),
     "memory.clear": (
         "sdk_method",
         "dashboard",

@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from server.core import object_store
+from server.core import object_store, pg
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.mutations import namespaces_of, purge_mode
 from server.erasure.store.predicates import (
@@ -36,6 +36,7 @@ from server.erasure.store.predicates import (
 )
 from server.erasure.store.provider_copies import copy_residue
 from server.erasure.store.steps_memory import SESSION_OUTCOME_TABLES, TERM_AGGREGATE_TABLES
+from server.erasure.store.steps_pg import PG_CENSUS, pg_residue
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 from server.settings import settings
 
@@ -641,6 +642,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.auth_attempts": "keyed hashes of sign-in identifiers and client addresses; 1-day TTL.",
     "loom.keyring_readers": "each process's host, pid and keyring refresh interval; 1-day TTL.",
     "loom.carry_acks": "each process's host, pid and column-list fingerprints; 1-day TTL.",
+    "loom.storage_authority": "the deployment's memory authority, epoch and id; no tenant data.",
     "loom.instances": "one heartbeat row per Loom process: build, fingerprints, host; no content.",
     "loom.frontend_assets": "the dashboard's built JS, CSS and fonts; no tenant data; 30-day TTL.",
     "loom.embedder_calibration": "similarity thresholds per embedder model; no content.",
@@ -703,9 +705,15 @@ def classified_tables() -> dict[str, str]:
     return out
 
 
+def _pg_census() -> dict[str, str]:
+    """The Postgres authority's substrates, counted only under that authority."""
+    return PG_CENSUS if pg.enabled() else {}
+
+
 def census_tables(scope_type: str) -> list[str]:
-    """The substrates the census covers for a scope (exposed for tests/docs)."""
-    return [s.table for s in _CENSUS if s.counted_in(scope_type)]
+    """The substrates the census covers for a scope (exposed for tests/docs): the
+    ClickHouse tables, then the Postgres authority's (`pg:`), counted in both scopes."""
+    return [*(s.table for s in _CENSUS if s.counted_in(scope_type)), *_pg_census()]
 
 
 def step_owners(scope_type: str) -> dict[str, tuple[str, ...]]:
@@ -717,6 +725,8 @@ def step_owners(scope_type: str) -> dict[str, tuple[str, ...]]:
         step = s.owner(scope_type)
         if step is not None:
             out.setdefault(step, []).append(s.table)
+    for table, step in _pg_census().items():
+        out.setdefault(step, []).append(table)
     return {k: tuple(v) for k, v in out.items()}
 
 
@@ -743,7 +753,7 @@ def steps_to_reopen(residue: Mapping[str, Any] | str | None, scope_type: str) ->
     if not hot:
         return set()
     reopen = {_OBJECT_OWNER} if OBJECT_RESIDUE in hot else set()
-    hot |= {"loom." + t for t in hot if not t.startswith("loom.")}
+    hot |= {"loom." + t for t in hot if not t.startswith(("loom.", "pg:"))}
     return reopen | {
         step for step, tables in step_owners(scope_type).items() if any(t in hot for t in tables)
     }
@@ -756,10 +766,24 @@ async def residue_census(
     *,
     ch: _CHClient | None = None,
 ) -> dict[str, int]:
-    """Live rows still in scope, per substrate. One count() per table; FINAL
+    """Live rows still in scope, per substrate: ClickHouse's tables (`table_residue`)
+    and the Postgres authority's. Bucket objects are not counted here: see
+    `object_residue`, which a namespace scope's verify and `evidence_census` add."""
+    out = await table_residue(org, scope_type, scope_value, ch=ch)
+    out.update(await pg_residue(org, scope_type, scope_value))
+    return out
+
+
+async def table_residue(
+    org: str,
+    scope_type: str,
+    scope_value: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> dict[str, int]:
+    """Live rows still in scope per ClickHouse table. One count() per table; FINAL
     on the ReplacingMergeTree tables so an un-merged tombstone row does not
-    read as live. Bucket objects are not counted here: see `object_residue`, which a
-    namespace scope's verify and `evidence_census` add."""
+    read as live."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"org": org}
     ns_list = isinstance(scope_value, (list, tuple))
@@ -798,18 +822,24 @@ async def evidence_census(
     scope_value: str | Sequence[str],
     *,
     ch: _CHClient | None = None,
-) -> tuple[dict[str, int], Exception | None]:
-    """`residue_census` for evidence, not a verdict: the tables, then the bucket on
-    its own, so a bucket that cannot be listed (often why a step failed) costs only
-    the object count. Returns the counts and the bucket's error, if any."""
-    out = await residue_census(org, scope_type, scope_value, ch=ch)
-    if scope_type != "namespace":
-        return out, None
+) -> tuple[dict[str, int], dict[str, Exception]]:
+    """`residue_census` for evidence, not a verdict: ClickHouse's tables, then Postgres
+    and the bucket each on its own, so a store that cannot be read (often why a step
+    failed) costs only its own counts. Returns the counts and each such store's error."""
+    out = await table_residue(org, scope_type, scope_value, ch=ch)
+    errors: dict[str, Exception] = {}
     try:
-        out[OBJECT_RESIDUE] = await object_residue(org, scope_value)
+        out.update(await pg_residue(org, scope_type, scope_value))
+    except pg.AuthorityMismatch:
+        raise  # another deployment's database: a refusal, not a store that failed
     except Exception as e:  # noqa: BLE001 — the counts above stand; the caller reports the error
-        return out, e
-    return out, None
+        errors["postgres"] = e
+    if scope_type == "namespace":
+        try:
+            out[OBJECT_RESIDUE] = await object_residue(org, scope_value)
+        except Exception as e:  # noqa: BLE001 — as above
+            errors["bucket"] = e
+    return out, errors
 
 
 async def object_residue(org: str, scope_value: str | Sequence[str]) -> int:

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import TYPE_CHECKING
 
 from server.core.datetimes import naive_utc_now_seconds
+from server.core.error_summary import error_summary
 from server.memory.api.models_blacklist import (
     BlacklistAddInput,
     BlacklistAddOutput,
@@ -28,6 +30,8 @@ from server.memory.store import blacklist as blacklist_repo
 
 if TYPE_CHECKING:
     from server.operations.base import Role
+
+log = logging.getLogger(__name__)
 
 
 def _scope_args(scope: str, org: str, namespace: str) -> tuple[str, str]:
@@ -150,20 +154,25 @@ async def handle_blacklist_add(input: BlacklistAddInput) -> BlacklistAddOutput:
         }
     )
     invalidate_cache()
-    await _bump_version(updated_by=f"add:{created_by or 'unknown'}")
+    await _bump_version(updated_by=f"add:{created_by or 'unknown'}", org=stored_org)
     if not input.sweep:
         return BlacklistAddOutput(pattern_id=pattern_id, created_at=now)
     # The pattern reaches the rows written before it.
-    from server.memory.app.blacklist_sweep import sweep_pattern
+    from server.memory.app.blacklist_sweep import SweepResult, sweep_error_text, sweep_pattern
 
-    res = await sweep_pattern(
-        org=input.org,
-        namespace=input.namespace,
-        pattern_id=pattern_id,
-        pattern=input.pattern,
-        pattern_type=input.pattern_type,
-        scope=input.scope,
-    )
+    try:
+        res = await sweep_pattern(
+            org=input.org,
+            namespace=input.namespace,
+            pattern_id=pattern_id,
+            pattern=input.pattern,
+            pattern_type=input.pattern_type,
+            scope=input.scope,
+        )
+    except Exception as e:  # noqa: BLE001 — the pattern is stored: the add answers its id
+        # Raised before the sweep wrote anything; the caller reruns it with blacklist.sweep.
+        log.warning("blacklist.add %s: sweep not finished: %s", pattern_id, error_summary(e))
+        res = SweepResult(pattern_id, 0, 0, False, error=sweep_error_text(e))
     return BlacklistAddOutput(
         pattern_id=pattern_id,
         created_at=now,
@@ -291,5 +300,5 @@ async def handle_blacklist_remove(
         _require_scope_authority(scope, "remove", row_org=row_org)
     await blacklist_repo.tombstone_pattern(input.pattern_id, now)
     invalidate_cache()
-    await _bump_version(updated_by=f"remove:{input.removed_by or 'unknown'}")
+    await _bump_version(updated_by=f"remove:{input.removed_by or 'unknown'}", org=row_org)
     return BlacklistRemoveOutput(removed=True, removed_at=now)

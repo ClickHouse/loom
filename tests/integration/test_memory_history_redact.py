@@ -184,3 +184,42 @@ async def test_redact_scrubs_historical_row(
         # The other two rows are unaffected
         assert by_v[r3["version"]]["value"] == {"v": 3}
         assert by_v[r3["version"]]["redacted_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_restore_after_delete_and_redact_brings_back_no_redacted_text(
+    control_plane_url,
+    mint_test_token,
+) -> None:
+    """Touch, delete, then redact the value: the touch and the delete's tombstone carry
+    it, so the redaction scrubs them too, and a restore answers that there is nothing to
+    bring back."""
+    from loom import Agent
+
+    ns = f"redact-deleted-{uuid.uuid4().hex[:6]}"
+    tok = mint_test_token(org=ORG, namespaces=[ns], roles=["admin"])
+    async with Agent(
+        org=ORG, namespace=ns, agent="t", base_url=control_plane_url, api_key=tok
+    ) as a:
+        written = await a.memory.set("k", {"secret": "leak"}, memory_type="semantic")
+        # A copy writer before the delete (a touch, as an entity pass or a lock would)
+        # carries the text forward too.
+        await a.memory.touch("k", ttl_seconds=86400)
+        assert await a.memory.delete("k") is True
+
+        async def _deleted():
+            rows = await a.memory.history("k")
+            return rows if len(rows) >= 2 else None
+
+        await eventually(_deleted, description="the tombstone visible before redact")
+        result = await a.memory.redact(written["memory_id"], written["version"], reason="pii")
+        assert result["redacted"] is True
+
+        async def _scrubbed():
+            rows = await a.memory.history("k")
+            return rows if all(r["value"] == "[REDACTED]" for r in rows) else None
+
+        await eventually(_scrubbed, description="the version and its tombstone scrubbed")
+        restored = await a.memory.restore("k")
+        assert restored["restored"] is False and restored["redacted"] is True
+        assert await a.memory.get("k") is None

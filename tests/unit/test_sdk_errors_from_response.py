@@ -136,6 +136,15 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "MODEL_CALLS_DISABLED": AuthInsufficient,  # a 403 with no SDK class: mapped by status
     "MODEL_CALL_REFUSED": AuthInsufficient,  # a 403 with no SDK class, never retried
     "MODEL_CALL_DEFERRED": BackendUnavailable,  # a 503 with no SDK class: mapped by status
+    # The Postgres memory authority's 503s, retryable, with no SDK class of their own.
+    "POSTGRES_UNAVAILABLE": BackendUnavailable,
+    "ADMISSION_CONTENDED": BackendUnavailable,
+    "PROJECTION_BEHIND": BackendUnavailable,
+    "PUBLICATION_PENDING": BackendUnavailable,
+    # A retry took over the request's key: a 503 with no SDK class, mapped by status.
+    "IDEMPOTENT_TAKEN_OVER": BackendUnavailable,
+    # Postgres refused a statement: a 500 with no SDK class, mapped by status.
+    "POSTGRES_REFUSED": BackendUnavailable,
 }
 
 
@@ -143,7 +152,8 @@ def test_every_server_error_maps_to_its_documented_sdk_class() -> None:
     import server.auth.keyring  # defines NO_SIGNING_KEY
     import server.code.app.ingest  # defines ENTRY_LEASE_NOT_HELD
     import server.core.runtime_overrides  # defines OVERRIDE_NOT_STORED
-    import server.identity.app.policy_gate  # noqa: F401 — defines POLICY_FORBIDDEN
+    import server.identity.app.policy_gate  # defines POLICY_FORBIDDEN
+    import server.memory.app.pg_admission  # noqa: F401 — defines ADMISSION_CONTENDED
 
     def subclasses(cls: type[LoomServerError]) -> list[type[LoomServerError]]:
         return [s for c in cls.__subclasses__() for s in (c, *subclasses(c))]

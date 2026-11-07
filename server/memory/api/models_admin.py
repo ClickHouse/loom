@@ -42,6 +42,9 @@ class MemoryConsolidateInput(_Identity):
 
 
 class MemoryConsolidateResult(BaseModel):
+    # The summary's key. Under `dry_run` the merge model's choice; a write takes the
+    # cluster's own key instead when that one is taken, or when the summary is 'high'
+    # and a merged row sits there.
     canonical_key: str
     canonical_value: str
     merged_keys: list[str]
@@ -57,9 +60,11 @@ class MemoryConsolidateOutput(BaseModel):
     examined: int = 0
     # Clusters of two or more rows found.
     clusters_found: int = 0
-    # Clusters whose merge LLM call failed or returned an unparseable /
-    # incomplete JSON object. Each is logged and recorded in
-    # loom.consolidation_runs with status='failed' (never silently skipped).
+    # Clusters not merged: the merge LLM call failed or returned an unparseable or
+    # incomplete JSON object, the merge guard refused it, a merged row changed since
+    # the read, the summary's keys were taken, or the summary could not be embedded.
+    # Each is logged and recorded in loom.consolidation_runs with status='failed' or
+    # 'refused_lossy' (never silently skipped).
     clusters_failed: int = 0
     # Of the failed clusters, those the merge guard refused because the merged
     # text lost a date, quantity, identifier, name or negation one source

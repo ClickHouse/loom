@@ -7908,7 +7908,7 @@
        "nargs": 0,
        "type": null,
        "required": false,
-       "help": "rewrite windows already written (new version replaces the row under FINAL)",
+       "help": "rewrite live windows already written; one deleted, redacted or no longer active stays out",
        "metavar": null
       }
      ]
@@ -13586,7 +13586,7 @@
     },
     {
      "dest": "period-digest",
-     "help": "Write period digests — one derived episodic memory over K consecutive session digests of each identity in one namespace. Additive and idempotent. Dry run by default (plans only); --apply writes.",
+     "help": "Write period digests — one derived semantic memory over K consecutive session digests of each identity in one namespace. Additive and idempotent. Dry run by default (plans only); --apply writes.",
      "metavar": "period-digest"
     },
     {

@@ -1,17 +1,22 @@
 """memory.restore: bring a tombstoned or superseded row back as a new live
-version, mirrored onto its embedding row."""
+version, with its search document."""
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from server.core import pg
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
-from server.core.errors import BackendUnavailableError
+from server.core.error_summary import error_summary
+from server.core.errors import BackendUnavailableError, LoomServerError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
     MemoryRestoreInput,
@@ -21,9 +26,8 @@ from server.memory.app import webhooks
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.temporal_sql import SERVED_STATUSES
-from server.memory.store import key_write_lock
-from server.memory.store.inserts import insert_memory_versions
-from server.memory.store.rows import next_version, version_time
+from server.memory.store import key_write_lock, pg_memory
+from server.memory.store.rows import identity_key, next_version, version_over, version_time
 from server.observability.budget_shape import note_budget_shape
 
 if TYPE_CHECKING:
@@ -33,6 +37,9 @@ log = logging.getLogger(__name__)
 
 
 async def _read_restorable(input: MemoryRestoreInput) -> MemoryRow | None:
+    """The key's head, deleted or not, every persisted column of it (the restore copies
+    them all), read strong: it follows the delete or retirement it undoes, so it must not
+    miss it."""
     import server.memory.store as memory_repo
 
     identity = memory_repo.Identity(
@@ -50,6 +57,135 @@ async def _read_restorable(input: MemoryRestoreInput) -> MemoryRow | None:
         strong=True,
         scope=WHOLE_NAMESPACE,
     )
+
+
+class _DocumentFailed(Exception):
+    """A committed restore's search document failed: the commit owes it only for an
+    embedded row, which the delivery worker then builds."""
+
+
+async def _mirror_landed(what: str, memory_key: str, mirror: Callable[[], Awaitable[None]]) -> None:
+    """A landed restore's search document, mirrored once its row is in."""
+    try:
+        await mirror()
+    except Exception as e:  # the row is in: raised to its commit under Postgres, else logged
+        if pg.enabled():
+            raise _DocumentFailed(error_summary(e)) from e
+        log.warning(
+            "memory.restore: %s's search document failed for %s: %s",
+            what,
+            memory_key,
+            error_summary(e),
+        )
+
+
+async def _insert_restore(
+    input: MemoryRestoreInput,
+    row: dict[str, Any],
+    existing: MemoryRow,
+    *,
+    ch: Any,
+    what: str,
+    mirror: Callable[[], Awaitable[None]],
+    landed: Callable[[], Awaitable[None]] | None = None,
+    on_commit: Callable[[], None] | None = None,
+) -> None:
+    """Write the restore's row over the head it was built from (`existing`), then its
+    search document (`mirror`), under Postgres within the commit's lease; `landed` runs
+    once the row is in. Under Postgres an embedded row owes its document until the
+    mirror lands it, so the delivery worker builds one the mirror did not. A refusal, a
+    contended head or Postgres down before the commit is final; any other failure may
+    have landed, so the key is read again."""
+    import server.memory.store as memory_repo
+
+    key = str(row["memory_key"])
+    owes_document = pg_memory.embedded(row)
+    mirrored = functools.partial(_mirror_landed, what, key, mirror)
+    try:
+        await memory_repo.insert_versions_over_heads(
+            [row],
+            [existing],
+            ch=ch,
+            then=mirrored,
+            landed=landed,
+            documented=[owes_document],
+            on_commit=on_commit,
+        )
+    except _DocumentFailed as failed:  # it carries its cause's summary
+        outcome = "is left owed" if owes_document else "failed"
+        log.warning(
+            "memory.restore: %s's search document %s for %s: %s", what, outcome, key, failed
+        )
+    except Exception as e:  # a lost answer is checked, not assumed
+        refused = isinstance(e, LoomServerError) and (
+            e.status_code < 500
+            or isinstance(e, pg_memory.AdmissionContendedError | pg.PostgresRefusedError)
+            or (isinstance(e, pg.PostgresUnavailableError) and not pg.may_have_committed(e))
+        )
+        if refused:
+            raise
+        try:
+            landed_now = await _restore_landed(input, row)
+        except asyncio.CancelledError as cancelled:
+            # Its commit may have landed: `fenced_once_committed` reads the mark.
+            pg.mark_commit_in_flight(cancelled)
+            raise
+        if landed_now is None:
+            raise BackendUnavailableError(
+                f"{what} may not have landed; retry {what}",
+                operation="memory.restore",
+                outcome_unknown=True,
+            ) from e
+        if not landed_now:  # settled: the authority's head never took it
+            raise BackendUnavailableError(
+                f"{what} did not land; retry {what}", operation="memory.restore"
+            ) from e
+        # Landed with the answer of its insert, commit or publish lost: `landed` has not
+        # run, and under Postgres an embedded row's commit owes the document.
+        log.warning(
+            "memory.restore: %s of %s landed with its answer lost: %s",
+            what,
+            key,
+            error_summary(e),
+        )
+        if on_commit is not None:
+            on_commit()
+        if landed is not None:
+            await landed()
+        if not pg.enabled():
+            await mirrored()
+
+
+async def _key_head(input: MemoryRestoreInput, ch: Any) -> dict[str, Any] | None:
+    """The key's head, deleted or not, that routes a restore, from the authority: under
+    Postgres a delete not yet delivered to ClickHouse is restored."""
+    if pg.enabled():
+        head = await _read_restorable(input)
+        return None if head is None else head.model_dump()
+    row: dict[str, Any] | None = await ch.query_one(
+        """
+        SELECT memory_key, memory_type, value, confidence, source_trace,
+               memory_id, entities, tags, valid_at, char_limit, pinned,
+               tombstoned_at, version, status, superseded_by
+        FROM loom.memory FINAL
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND agent = {agent:String}
+          AND user_id = {uid:String}
+          AND session_id = {sid:String}
+          AND memory_key = {k:String}
+        LIMIT 1
+        """,
+        params={
+            "org": input.org,
+            "ns": input.namespace,
+            "agent": input.agent,
+            "uid": input.user_id,
+            "sid": input.session_id,
+            "k": input.memory_key,
+        },
+    )
+    return row
 
 
 def _key_lock(input: MemoryRestoreInput, what: str) -> AbstractAsyncContextManager[None]:
@@ -77,6 +213,12 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
         if await _landed_late(input, existing):
             # A retry of an Undo whose restore landed after its 503: finish that one.
             version, status = int(existing.version), str(existing.status)
+            if not pg.enabled():  # under Postgres the commit owes an embedded row's document
+                await _mirror_landed(
+                    "the Undo",
+                    input.memory_key,
+                    functools.partial(_unsupersede, input, status, ch=ch),
+                )
         elif (
             existing.tombstoned_at is not None
             or str(existing.status) != "superseded"
@@ -87,7 +229,6 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
             )
         else:
             version, status = await _write_restore(input, existing, ch=ch)
-        await _unsupersede_embeddings(input, status, ch=ch)
     # The facts the retirement closed and the restored value still holds come back.
     await _reopen_facts(input, existing, version, ch=ch)
     return MemoryRestoreOutput(
@@ -132,8 +273,10 @@ async def _plain_restore_finishes_an_undo(
     record that cannot be read leaves it a plain no-op."""
     try:
         return await _an_undos_restore(input, memory_id, version)
-    except Exception:  # an unread record is no restore to finish
-        log.warning("memory.restore: Undo record read failed for %s", memory_id, exc_info=True)
+    except Exception as e:  # noqa: BLE001 — an unread record is no restore to finish
+        log.warning(
+            "memory.restore: Undo record read failed for %s: %s", memory_id, error_summary(e)
+        )
         return False
 
 
@@ -142,17 +285,22 @@ async def _restore_live(
 ) -> MemoryRestoreOutput:
     """A restore of a live row with no Undo to finish: a no-op, unless an undelete whose
     answer and re-read were both lost left its search row deleted, which comes back now
-    as the undelete would have brought it (the mirror is idempotent)."""
+    as the undelete would have brought it (the mirror is idempotent). Under Postgres the
+    commit of an embedded row's undelete owes its search document, so the delivery worker
+    brings it back instead."""
     memory_id, version = str(row.get("memory_id") or ""), int(row.get("version") or 0)
-    if await _undelete_left_unmirrored(input, ch=ch):
+    if not pg.enabled() and await _undelete_left_unmirrored(input, ch=ch):
         existing = await _read_restorable(input)
-        # A high row has no search row to bring back: the mirror writes none.
+        # A high or redacted row has no search row to bring back.
         if (
             existing is not None
             and existing.tombstoned_at is None
             and existing.sensitivity != "high"
+            and existing.redacted_at is None
         ):
-            await _restore_embedding_mirror(ch, input, existing, row["memory_type"])
+            await _restore_embedding_mirror(
+                ch, input, existing, row["memory_type"], version=existing.version
+            )
             return MemoryRestoreOutput(
                 restored=True,
                 memory_id=memory_id,
@@ -201,7 +349,7 @@ async def _write_restore(
     import server.memory.store as memory_repo
     from server.observability import audit
 
-    new_version = next_version()
+    new_version = version_over(existing)
     # The search row takes the same status: ranking reads its own copy.
     status = await _status_before_retirement(existing, ch=ch)
     restore_row = memory_repo.build_memory_version_row(
@@ -237,50 +385,48 @@ async def _write_restore(
             "the Undo could not be recorded; nothing was restored, retry the Undo",
             operation="memory.restore",
         ) from e
-    try:
-        await insert_memory_versions([restore_row], ch=ch)
-    except Exception as e:  # an insert whose answer was lost may have landed
-        if not await _restore_landed(input, new_version):
-            raise BackendUnavailableError(
-                "the Undo may not have landed; retry the Undo",
-                operation="memory.restore",
-                outcome_unknown=True,
-            ) from e
+    mirror = functools.partial(_unsupersede, input, status, ch=ch)
+    await _insert_restore(input, restore_row, existing, ch=ch, what="the Undo", mirror=mirror)
     return new_version, status
 
 
-async def _unsupersede_embeddings(input: MemoryRestoreInput, status: str, *, ch: Any) -> None:
-    """Serve the key's search rows again, as `status`; a failure is logged, not raised."""
+async def _unsupersede(input: MemoryRestoreInput, status: str, *, ch: Any) -> None:
+    """Serve the key's search rows again, as `status`."""
     import server.memory.store as memory_repo
 
-    try:
-        await memory_repo.unsupersede_embeddings(
-            input.org,
-            input.namespace,
-            input.agent,
-            input.user_id,
-            input.session_id,
-            input.memory_key,
-            status=status,
-            ch=ch,
-        )
-    except Exception:  # the restore landed; the search row is best effort
-        log.warning(
-            "memory.restore: embeddings re-emit failed for %s",
-            input.memory_key,
-            exc_info=True,
-        )
+    await memory_repo.unsupersede_embeddings(
+        input.org,
+        input.namespace,
+        input.agent,
+        input.user_id,
+        input.session_id,
+        input.memory_key,
+        status=status,
+        ch=ch,
+    )
 
 
-async def _restore_landed(input: MemoryRestoreInput, version: int) -> bool:
-    """Whether the key's head is the restore's version, read again after its insert
-    failed: the insert may have landed with its answer lost. False when unreadable."""
+async def _restore_landed(input: MemoryRestoreInput, row: dict[str, Any]) -> bool | None:
+    """Whether the key's head is the restore's `row`, read again after its insert failed:
+    the insert may have landed with its answer lost. None when that is unknown. Under
+    Postgres the read waits for a commit still holding the head (`settled_head_versions`),
+    and a head below the row settles that it did not land: heads only move up. One above
+    it may be a later write over a restore that landed. ClickHouse never settles a miss."""
+    version = int(row["version"])
     try:
-        head = await _read_restorable(input)
-    except Exception:  # best effort: an unknown outcome answers the 503
-        log.warning("memory.restore: re-read after a failed insert failed", exc_info=True)
-        return False
-    return head is not None and int(head.version) == version
+        if pg.enabled():
+            key = identity_key(row)
+            head = (await pg_memory.settled_head_versions([key])).get(key)
+            if head is None or head > version:
+                return None
+            return head == version
+        found = await _read_restorable(input)
+    except Exception as e:  # noqa: BLE001 — best effort: an unknown outcome answers the 503
+        log.warning("memory.restore: re-read after a failed insert failed: %s", error_summary(e))
+        return None
+    if found is not None and int(found.version) == version:
+        return True
+    return None
 
 
 async def _reopen_facts(
@@ -305,8 +451,8 @@ async def _reopen_facts(
         op="memory.restore",
         ch=ch,
         hashes=hashes,
-        # Versions are time_ns: the restore's version is when it was made, the same on
-        # its first write and on every retry that finishes it.
+        # Versions are time_ns: the restore's version is when it was made (or just above a
+        # head from a clock ahead), the same on its first write and every retry.
         restored_at=version_time(version),
         restore_id=uuid.uuid5(uuid.NAMESPACE_OID, restore).hex,
     )
@@ -326,25 +472,17 @@ async def _status_before_retirement(row: MemoryRow, *, ch: Any) -> str:
     original is still served; `active` otherwise."""
     import server.memory.store as memory_repo
 
-    found = await ch.query_all(
-        """
-        SELECT argMax(status, version) AS was FROM loom.memory_versions
-        WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID}
-          AND version < {version:UInt64} AND status != 'superseded'
-        SETTINGS select_sequential_consistency = 1
-        """,
-        params={
-            "org": row.org,
-            "ns": row.namespace,
-            "id": str(row.memory_id),
-            "version": int(row.version),
-        },
-    )
-    was = str(found[0]["was"]) if found else ""
+    was = await memory_repo.status_before(row, ch=ch)
     if was == "duplicate" and row.duplicate_of:
         # Still hidden behind the row it repeats, unless that one is gone.
         original = await memory_repo.get_by_id(
-            row.duplicate_of, org=row.org, ch=ch, scope=WHOLE_NAMESPACE, fresh=True, strong=True
+            row.duplicate_of,
+            org=row.org,
+            namespace=row.namespace,
+            ch=ch,
+            scope=WHOLE_NAMESPACE,
+            fresh=True,
+            strong=True,
         )
         # Reads only stand the original in for it while it is served and not ended.
         return "duplicate" if original is not None and _served_now(original) else "active"
@@ -353,7 +491,13 @@ async def _status_before_retirement(row: MemoryRow, *, ch: Any) -> str:
     # A peer deleted or resolved while this row was retired leaves nothing to review.
     for peer_id in row.conflict_with:
         peer = await memory_repo.get_by_id(
-            peer_id, org=row.org, ch=ch, scope=WHOLE_NAMESPACE, fresh=True, strong=True
+            peer_id,
+            org=row.org,
+            namespace=row.namespace,
+            ch=ch,
+            scope=WHOLE_NAMESPACE,
+            fresh=True,
+            strong=True,
         )
         if peer is None or peer.status != "conflicted":
             continue
@@ -381,9 +525,10 @@ def _invalid_at_after_restore(existing: MemoryRow) -> datetime | None:
 
 
 async def _restore_embedding_mirror(
-    ch: Any, input: Any, existing: MemoryRow, memory_type: str
+    ch: Any, input: Any, existing: MemoryRow, memory_type: str, *, version: int
 ) -> None:
-    """Propagate a restore to memory_embeddings, for every memory type (delete's mirror).
+    """Propagate a restore to memory_embeddings, for every memory type (delete's mirror),
+    at the restore's `version`, which is above the delete's search tombstone.
     A 'high' row gets none: its key's last rows are a retired vector or a fence, and
     reviving either would serve it."""
     import server.memory.store as memory_repo
@@ -454,6 +599,7 @@ async def _restore_embedding_mirror(
             confidence=float(existing.confidence),
             tombstoned_at=None,
             created_at=naive_utc_now(),
+            version=version,
             tags=list(existing.tags or []),
             entities=list(existing.entities or []),
             # Carried forward so restore doesn't zero them under FINAL.
@@ -503,29 +649,7 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
     import server.memory.store as memory_repo
 
     ch = get_client()
-    row = await ch.query_one(
-        """
-        SELECT memory_key, memory_type, value, confidence, source_trace,
-               memory_id, entities, tags, valid_at, char_limit, pinned,
-               tombstoned_at, version, status, superseded_by
-        FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND user_id = {uid:String}
-          AND session_id = {sid:String}
-          AND memory_key = {k:String}
-        LIMIT 1
-        """,
-        params={
-            "org": input.org,
-            "ns": input.namespace,
-            "agent": input.agent,
-            "uid": input.user_id,
-            "sid": input.session_id,
-            "k": input.memory_key,
-        },
-    )
+    row = await _key_head(input, ch)
     if row is None:
         return MemoryRestoreOutput(restored=False)
     live = row.get("tombstoned_at") is None
@@ -556,23 +680,10 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
     # The key's write lock, as the Undo of a retirement takes it: a conditional revision
     # holds it from its read to its insert, and this must not write over that revision.
     async with _key_lock(input, "the restore"):
-        new_version = next_version()
-        # Full-column get_by_key so the restore mirrors every persisted column.
-        restore_identity = memory_repo.Identity(
-            org=input.org,
-            namespace=input.namespace,
-            agent=input.agent,
-            user_id=input.user_id,
-            session_id=input.session_id,
-        )
-        existing = await memory_repo.get_by_key(
-            restore_identity,
-            input.memory_key,
-            include_tombstoned=True,
-            fresh=True,
-            strong=True,  # restore follows delete; read the latest head (no miss)
-            scope=WHOLE_NAMESPACE,
-        )
+        # Drawn before the read and lifted above the head read below (`version_over`): a
+        # write drawing a version above the restore's outranks it.
+        drawn = next_version()
+        existing = await _read_restorable(input)
         if existing is None or existing.tombstoned_at is None:
             # Race: tombstone vanished between the SELECT above and here.
             return MemoryRestoreOutput(
@@ -580,6 +691,15 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
                 memory_id=str(row.get("memory_id") or ""),
                 version=int(row.get("version") or 0),
             )
+        if existing.redacted_at is not None:
+            # Deleted, then redacted: a restore would bring back only the placeholder.
+            return MemoryRestoreOutput(
+                restored=False,
+                memory_id=str(existing.memory_id),
+                version=int(existing.version),
+                redacted=True,
+            )
+        new_version = version_over(existing, drawn)
         restore_row = memory_repo.build_memory_version_row(
             existing,
             version=new_version,
@@ -588,33 +708,34 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
             invalid_at=_invalid_at_after_restore(existing),
             expires_at=None,
         )
-        try:
-            await insert_memory_versions([restore_row], ch=ch)
-        except Exception as e:  # an insert whose answer was lost may have landed
-            if not await _restore_landed(input, new_version):
-                raise BackendUnavailableError(
-                    "the restore may not have landed; retry it",
-                    operation="memory.restore",
-                    outcome_unknown=True,
-                ) from e
-        # The row is live: announce it before anything below can fail, since a retry finds
+        # Its search document mirrors the delete's logic, for every memory type.
+        mirror = functools.partial(
+            _restore_embedding_mirror, ch, input, existing, row["memory_type"], version=new_version
+        )
+
+        # Announced once the row is live, before anything else can fail: a retry finds
         # the key live and restores (and announces) nothing.
-        if await webhooks.announce([("memory.restored", restore_row)]):
-            note_budget_shape("webhook")
-        if existing.sensitivity == "high":
-            # The key is high again: a plain write still embedding lands below the fence.
-            from server.memory.app.high_fence import fence_high
+        async def _announce() -> None:
+            if await webhooks.announce([("memory.restored", restore_row)]):
+                note_budget_shape("webhook")
 
-            await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
+        from server.memory.app.high_fence import fence_high, fenced_once_committed
 
-        # Propagate restore to memory_embeddings — mirror delete's logic, for every memory type.
-        try:
-            await _restore_embedding_mirror(ch, input, existing, row["memory_type"])
-        except Exception as e:  # noqa: BLE001 — the memory row restore already landed; mirror is best-effort
-            logging.getLogger(__name__).warning(
-                "memory_embeddings restore failed (non-fatal): %s",
-                e,
+        # The key is high again: a plain write still embedding lands below the fence.
+        fence = [(identity_key(existing), new_version)] if existing.sensitivity == "high" else []
+        async with fenced_once_committed(lambda: fence, op="memory.restore", ch=ch) as answer:
+            await _insert_restore(
+                input,
+                restore_row,
+                existing,
+                ch=ch,
+                what="the restore",
+                mirror=mirror,
+                landed=_announce,
+                on_commit=answer.mark_committed,
             )
+        if fence and not pg.enabled():
+            await fence_high(fence, ch=ch)
 
     # A fact the row states may have closed while it was deleted.
     await _reopen_facts(input, existing, new_version, ch=ch)
@@ -664,10 +785,7 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
                 ],
             )
     except Exception as e:  # noqa: BLE001 — audit insert failure must not undo the restore
-        logging.getLogger(__name__).warning(
-            "erasure-reversal audit insert failed (non-fatal): %s",
-            e,
-        )
+        log.warning("erasure-reversal audit insert failed (non-fatal): %s", error_summary(e))
 
     return MemoryRestoreOutput(
         restored=True,

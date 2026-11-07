@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import Counter
 from typing import Any
 
 from server.memory.api.models_search import _MemorySearchHit
@@ -16,8 +15,8 @@ from server.memory.app.search.digest_descent import (
     digest_descent_enabled,
 )
 from server.memory.app.search.scoring import rows_per_key
-from server.memory.app.search.telemetry import _staged
-from server.memory.app.search.vector_legs import _plane_fields, _stamp_leg_tags
+from server.memory.app.search.telemetry import _staged, record_page
+from server.memory.app.search.vector_legs import _plane_fields, _stamp_row_fields
 from server.memory.app.search_tag_filter import enforce_hard_tag_filter as _enforce_hard_tag_filter
 from server.memory.app.search_tag_filter import stamp_row_tags
 from server.memory.app.served_duplicates import hide_pool_duplicates
@@ -142,7 +141,7 @@ async def _assemble_final_hits(
     input = ctx.input
 
     def _summary_hit_to_wire(ns: str, h: Any) -> _MemorySearchHit:
-        return _stamp_leg_tags(
+        return _stamp_row_fields(
             h,
             _MemorySearchHit(
                 memory_key=h.memory_key,
@@ -252,17 +251,13 @@ async def _assemble_final_hits(
     except Exception:  # noqa: BLE001 — ledger only
         pass
     ctx.actual_work["summary_cap"] = summary_cap
-    ctx.actual_work["block_tokens"] = sum(len(h.content_excerpt) // 4 for h in final_hits)
-    ctx.actual_work["items_by_source"] = dict(
-        Counter(getattr(h, "source", "fact") or "fact" for h in final_hits)
-    )
     ctx.final_hits = final_hits
     # What the block did not show. Distinct pool keys are the "of 124"; the ranked remainder
     # is what a `next_page` handle serves.
     from server.memory.app.search_pages import split_tail as _split_tail
 
     ctx.candidates_total, ctx.page_tail = _split_tail(ctx.all_hits, final_hits)
-    ctx.actual_work["candidates_total"] = int(ctx.candidates_total)
+    record_page(ctx)
 
 
 def _diversify_session_cap(input: Any, query_shape: str) -> int:

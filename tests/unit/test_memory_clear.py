@@ -626,7 +626,9 @@ async def test_clear_with_a_failed_read_back_still_clears(monkeypatch: pytest.Mo
     ch = _clear_ch(monkeypatch, [])
     ch.on("ORDER BY agent, user_id, session_id, memory_key", fail)
     noted: list[tuple[str, str]] = []
-    monkeypatch.setattr(degradations, "note", lambda area, what, e=None: noted.append((area, what)))
+    monkeypatch.setattr(
+        degradations, "note", lambda area, what, e=None, **_: noted.append((area, what))
+    )
     out = await handle_memory_clear(
         MemoryClearInput(org="acme", namespace="chat", user_id="u1", confirm_subject="u1")
     )

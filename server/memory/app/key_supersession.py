@@ -220,6 +220,7 @@ async def supersede_same_key_rows(
             n = await memory_repo.supersede_duplicates(
                 org,
                 victims,
+                namespace=namespace,
                 ch=ch,
                 skip=tracker.skip,
                 strong=True,

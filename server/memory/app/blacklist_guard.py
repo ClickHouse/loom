@@ -11,9 +11,11 @@ scope first, so a namespace pattern beats an org pattern beats a global one.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 import threading
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -76,6 +78,20 @@ def begin_request_budget() -> None:
     _request_work.set([0])
 
 
+def regex_work_spent() -> int:
+    """This request's regex work so far (0 outside a request)."""
+    box = _request_work.get()
+    return box[0] if box is not None else 0
+
+
+def rewind_regex_work(spent: int) -> None:
+    """Set this request's regex work back to `spent`. A write's pass that starts over
+    checks the same values again, so they are charged once."""
+    box = _request_work.get()
+    if box is not None:
+        box[0] = spent
+
+
 def compile_regex(pattern: str) -> Any:
     """The RE2 pattern a regex row runs as, or ValidationError naming why it is
     refused: over `REGEX_MAX_LENGTH`, not a regex RE2 can run (no backreferences
@@ -131,6 +147,11 @@ _cached_version: tuple[int, int] = (-1, -1)
 _last_version_check: float = 0.0  # monotonic; throttles the version-watermark query
 _loaded_at: float = 0.0  # monotonic; when the rows were last read (the TTL backstop)
 _lock = threading.Lock()
+# Refreshes in the order they started: one that read earlier never replaces one that
+# read later (the watermark is no order: a merge lowers it).
+_tickets = itertools.count()
+_installed = -1
+_invalidated = -1  # the ticket of the last invalidation
 
 
 async def _current_version() -> tuple[int, int]:
@@ -138,17 +159,26 @@ async def _current_version() -> tuple[int, int]:
         return await _repo.version_watermark(ch=get_client())
 
 
-async def _bump_version(updated_by: str = "") -> None:
+async def _bump_version(updated_by: str = "", *, org: str = "*") -> None:
     """Move the watermark for every replica: one insert, no read, so two
-    concurrent add/remove calls cannot write the same version."""
+    concurrent add/remove calls cannot write the same version. Under the Postgres
+    authority the pattern's policy generation moves too (its org's, or the
+    deployment's for a global one, `org` '*'), so a write admitted against the old
+    patterns starts over and is checked against the new ones."""
     await _repo.insert_version(time.time_ns(), updated_by=updated_by, ch=get_client())
+    from server.core import pg
+
+    await pg.bump_policy("" if org == "*" else org)
 
 
 def invalidate_cache() -> None:
     """Mark the local cache dirty. Callers must also _bump_version() so
-    other replicas refresh on their next staleness check."""
-    global _dirty
+    other replicas refresh on their next staleness check. A refresh that started before
+    this read the rows from before it: it still installs them, but leaves the cache
+    dirty, so the next check reads again."""
+    global _dirty, _invalidated
     with _lock:
+        _invalidated = next(_tickets)
         _dirty = True
 
 
@@ -174,7 +204,8 @@ async def _is_stale() -> bool:
 
 async def _refresh_cache() -> None:
     """Load every non-tombstoned blacklist row into the in-process cache."""
-    global _cache, _dirty, _cached_version, _last_version_check, _loaded_at
+    global _cache, _dirty, _cached_version, _last_version_check, _loaded_at, _installed
+    ticket = next(_tickets)
     # The watermark is read BEFORE the rows: add/remove writes its pattern row
     # and then bumps, so a bump this read missed moves the watermark past the
     # cached one and the next check refreshes; one it saw was preceded by a
@@ -224,15 +255,29 @@ async def _refresh_cache() -> None:
         )
     new_cache.sort(key=lambda p: _SCOPE_PRECEDENCE.get(p.scope, len(_SCOPE_PRECEDENCE)))
     with _lock:
+        if ticket < _installed:
+            return  # a refresh that started later, and read later, already installed
+        _installed = ticket
         _cache = new_cache
-        _dirty = False
+        _dirty = ticket < _invalidated
         _cached_version = new_version
         _last_version_check = _loaded_at = time.monotonic()
 
 
-async def _ensure_loaded() -> None:
-    if await _is_stale():
+# Under the Postgres authority: the policy generations the cache is known to cover. A
+# write's guard runs at the generations it captured just before it (`policy`): one newer
+# than the cache covers is a change another replica made, read before the check.
+_covered: dict[tuple[str, str], int] = {}
+
+
+async def _ensure_loaded(policy: Mapping[tuple[str, str], int] | None = None) -> None:
+    behind = policy is not None and any(g > _covered.get(s, -1) for s, g in policy.items())
+    if behind or await _is_stale():
         await _refresh_cache()
+    if policy is not None:
+        # Loaded after the write captured `policy`: every change through it is in.
+        for s, g in policy.items():
+            _covered[s] = max(_covered.get(s, -1), g)
 
 
 def _applies_to(p: BlacklistPattern, org: str, namespace: str) -> bool:
@@ -248,9 +293,11 @@ async def find_match(
     org: str,
     namespace: str,
     value: str,
+    policy: Mapping[tuple[str, str], int] | None = None,
 ) -> BlacklistPattern | None:
-    """Return the first applicable + matching pattern, or None."""
-    await _ensure_loaded()
+    """Return the first applicable + matching pattern, or None. `policy`: the policy
+    generations the write captured before this check (the Postgres authority)."""
+    await _ensure_loaded(policy)
     applicable = [p for p in _cache if _applies_to(p, org, namespace)]
     regexes = [p for p in applicable if p.compiled is not None]
     if not regexes:
@@ -425,9 +472,12 @@ async def enforce_on_insert(
     org: str,
     namespace: str,
     value: str,
+    policy: Mapping[tuple[str, str], int] | None = None,
 ) -> None:
-    """Raise 422 BLACKLISTED if `value` matches any applicable pattern."""
-    hit = await find_match(org=org, namespace=namespace, value=value)
+    """Raise 422 BLACKLISTED if `value` matches any applicable pattern. `policy`: the
+    policy generations the write captured before this check (the Postgres authority):
+    a cache that does not cover them is read again first."""
+    hit = await find_match(org=org, namespace=namespace, value=value, policy=policy)
     if hit is None:
         return
     await note_hit(hit.pattern_id)

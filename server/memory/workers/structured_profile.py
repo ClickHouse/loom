@@ -11,7 +11,8 @@ no model call. An org whose model calls are switched off is passed over.
 
 Like the free-text fold, the facts come from `profile_sources`: never a
 `high` row, never a fact about someone else. A user whose facts are all gone
-gets an all-null profile without a model call.
+gets an all-null profile without a model call, and so does a user with a
+profile served but none of their facts served yet.
 
 A pass reaches namespaces in (org, namespace) order from where the last one
 stopped (the pass cursor), and each gets an equal share of the pass's budget.
@@ -179,7 +180,9 @@ class StructuredProfileConfig:
 class StructuredProfileResult:
     namespaces_reached: int = 0
     profiles_written: int = 0
-    # Builds that wrote nothing: already current, or the sources changed while the model ran.
+    # Builds that wrote nothing: no facts and no profile, already current, no profile
+    # served with none of the facts counted served, or the sources changed while the
+    # model ran.
     skipped: int = 0
     # Builds the profile row refused; the user waits for their memories to change.
     refused: int = 0
@@ -524,8 +527,9 @@ def _refuses_a_write(row: dict[str, Any] | None) -> bool:
 
 async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
     """Build and write one user's profile; returns how many of the model's values
-    broke the schema and were stored as null, or None when nothing was written: the
-    profile was already current, or the user's sources changed while the model ran.
+    broke the schema and were stored as null, or None when nothing was written: no facts
+    and no profile, the profile already current, no profile served with none of the
+    facts counted served, or the sources changed while the model ran.
     Raises `Refused` when the profile row will not take the write."""
     org, ns = schema.org, schema.namespace
     # The digest and its time first: the write is checked against this digest once
@@ -560,14 +564,22 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
     profile_version = int(hold["version"]) if hold else 0
     if _refuses_a_write(hold):
         raise Refused(digest, profile_version, 0)
+    limit = settings.structured_profile_memory_limit
     rows = await profile_sources.user_facts(
         org=org,
         namespace=ns,
         user_id=user_id,
         types=profile_sources.STRUCTURED_TYPES,
-        limit=settings.structured_profile_memory_limit,
+        limit=limit,
         scope=WHOLE_NAMESPACE,
     )
+    if not rows and existing is None:
+        # Nothing served and no profile to replace: the user stays pending. A served profile
+        # is never kept here: it may carry a source that has left since.
+        return None
+    # Short of a counted fact (not served at the version read, or a replica behind the
+    # digest's): tagged SHORT, so it reads as behind and rebuilds after the cooldown.
+    tagged_digest = digest if len(rows) >= min(count, limit) else profile_sources.SHORT
     # A row whose value reads as high, whatever its label, is never sent to the model either.
     rows = [r for r in rows if not value_reads_high(r.get("value"))]
     used = [r["memory_id"] for r in rows]
@@ -602,7 +614,7 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
                 label=settings.structured_profile_label,
                 value=profile,
                 schema_sha256=schema.sha256,
-                sources_digest=digest,
+                sources_digest=tagged_digest,
                 source_count=count,
                 sources_read_at=read_at,
                 memory_ids=used,

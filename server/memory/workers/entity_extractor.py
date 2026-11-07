@@ -25,6 +25,7 @@ from server.memory.domain.entity_sentinels import NONE_SENTINEL, PARSE_FAILED_SE
 from server.memory.domain.graph_quality import canonical_entity_text
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.domain.trust import subject_of
+from server.memory.store.rows import IDENTITY_COLUMNS, identity_key
 from server.observability.budget import namespaces_over_cap
 from server.observability.genai import staged
 from server.settings import settings
@@ -81,6 +82,7 @@ class EntityExtractorConfig:
 
 @dataclass
 class EntityExtractorResult:
+    # The model's answers; `rows_written` says what landed (a head moved since is left).
     extracted: list[dict[str, Any]] = field(default_factory=list)
     skipped_no_value: int = 0
     healed_divergent: int = 0  # mirror rows re-emitted with memory's entities
@@ -187,17 +189,6 @@ _backlog_keys: deque[dict[str, Any]] = deque()
 _backlog_filled_at: float = 0.0
 
 
-def _key_of(r: dict[str, Any]) -> tuple[str, ...]:
-    return (
-        str(r["org"]),
-        str(r["namespace"]),
-        str(r["agent"]),
-        str(r["user_id"]),
-        str(r["session_id"]),
-        str(r["memory_key"]),
-    )
-
-
 def _scan_settings() -> tuple[int, int, int]:
     from server.settings import settings
 
@@ -245,14 +236,19 @@ def _backlog_due(*, now: float | None = None) -> bool:
 
 
 def _entity_update(r: dict[str, Any], entities: list[str]) -> dict[str, Any]:
-    """One row of the pass's batch write: the row's identity and key, and its entities."""
-    keys = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
-    return {**{k: r[k] for k in keys}, "entities": entities}
+    """One row of the pass's batch write: the row's identity, the version and content hash
+    read, and its entities."""
+    read = {c: r[c] for c in (*IDENTITY_COLUMNS, "version", "content_sha256")}
+    return read | {"entities": entities}
 
 
 async def _next_candidates(cfg: EntityExtractorConfig) -> list[dict[str, Any]]:
     """The rows this pass works on: fresh rows first (the windowed one-shot
-    read), then backlog keys from the queue, read in one phase-two call."""
+    read), then backlog keys from the queue, read in one phase-two call. Under Postgres
+    only the rows the authority still serves at the version read (`served_rows`), so a
+    value deleted, revised or redacted there but not yet in ClickHouse never goes to the
+    model. Fresh rows it no longer serves free their slots for backlog keys; a backlog
+    key it no longer serves is dropped and its slot goes unused this pass."""
     global _backlog_filled_at
     import server.memory.store as memory_repo
 
@@ -260,11 +256,13 @@ async def _next_candidates(cfg: EntityExtractorConfig) -> list[dict[str, Any]]:
     # An org whose model calls are switched off keeps its rows for later.
     off = await customer.switched_off_orgs()
     if full_every <= 0 or recent <= 0:
-        return await memory_repo.find_unentitied_memories(
-            batch_size=cfg.batch_size,
-            org_filter=cfg.org_filter,
-            namespace_filter=cfg.namespace_filter,
-            exclude_orgs=off,
+        return await memory_repo.served_rows(
+            await memory_repo.find_unentitied_memories(
+                batch_size=cfg.batch_size,
+                org_filter=cfg.org_filter,
+                namespace_filter=cfg.namespace_filter,
+                exclude_orgs=off,
+            )
         )
     rows = await memory_repo.find_unentitied_memories(
         batch_size=cfg.batch_size,
@@ -273,9 +271,10 @@ async def _next_candidates(cfg: EntityExtractorConfig) -> list[dict[str, Any]]:
         since_seconds=recent,
         exclude_orgs=off,
     )
+    rows = await memory_repo.served_rows(rows)
     if len(rows) >= cfg.batch_size:
         return rows
-    taken = {_key_of(r) for r in rows}
+    taken = {identity_key(r) for r in rows}
     try:
         if _backlog_due():
             scanned = await memory_repo.find_unentitied_keys(
@@ -291,12 +290,13 @@ async def _next_candidates(cfg: EntityExtractorConfig) -> list[dict[str, Any]]:
         keys: list[dict[str, Any]] = []
         while len(rows) + len(keys) < cfg.batch_size and _backlog_keys:
             k = _backlog_keys.popleft()
-            if _key_of(k) in taken:
+            key = identity_key(k)
+            if key in taken:
                 continue
-            taken.add(_key_of(k))
+            taken.add(key)
             keys.append(k)
         if keys:
-            rows = rows + await memory_repo.read_unentitied_rows(keys)
+            rows += await memory_repo.served_rows(await memory_repo.read_unentitied_rows(keys))
     except Exception as e:  # noqa: BLE001 — the backlog never costs the fresh rows their pass
         log.warning("entity_extractor: backlog scan skipped this pass: %s", e)
         pass_context.note_failure(e, "backlog_scan")
@@ -381,14 +381,7 @@ async def run_pass(
                 # the distinct `_parse_failed_` sentinel so it stops costing
                 # an LLM call per pass.
                 result.parse_failures += 1
-                row_key = (
-                    r["org"],
-                    r["namespace"],
-                    r["agent"],
-                    r["user_id"],
-                    r["session_id"],
-                    r["memory_key"],
-                )
+                row_key = identity_key(r)
                 streak = _note_parse_failure(row_key)
                 emit_worker_cost_event_for(
                     org=r["org"],

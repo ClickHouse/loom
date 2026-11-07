@@ -29,7 +29,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from server.auth import agents, claims, machines, scim, shielded, sso_links
+from server.auth import agents, claims, machines, scim, sso_links
 from server.auth.attempts import Attempts, Busy, address_key, admit, client_address, slot
 from server.auth.jwt import AuthInfo, mint_token, new_jti
 from server.auth.oauth_store import (
@@ -43,6 +43,7 @@ from server.auth.oauth_store import (
     SessionRetired,
     token_id,
 )
+from server.core import shielded
 from server.core.errors import BackendUnavailableError, GrantBusyError
 from server.core.secrets_at_rest import open_sealed, seal, unseal
 from server.observability import audit
