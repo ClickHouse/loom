@@ -747,3 +747,21 @@ def test_a_query_credential_is_redacted_by_its_name_ending(param: str) -> None:
     assert tier_health.redact(f"GET https://h/x?{param}=s3cr3t&v=2") == (
         f"GET https://h/x?{param}=***&v=2"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("step", ["reconcile", "rechunk"])
+async def test_a_walk_step_that_fails_in_its_own_handler_records_the_ingest_tier(
+    step: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.app.index import ingest_pass
+    from server.code.app.index.pass_budget import CodeIngestResult
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_extractor_rechunk_enabled", True)
+    repo = AsyncMock()  # its reads answer what the step cannot use: the step fails
+    result = CodeIngestResult()
+    run = ingest_pass._maybe_reconcile if step == "reconcile" else ingest_pass._maybe_rechunk
+    await run(repo, _Cfg(), "a" * 40, result)  # logged, never raised
+    ingest_pass._ingest_served(_Cfg(), result)
+    assert result.tier_outcomes[("o", "code-x", "ingest")].startswith(f"{step}: ")

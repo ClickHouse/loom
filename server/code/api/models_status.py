@@ -106,9 +106,9 @@ class CodeCompilerTier(BaseModel):
 class CodeTierHealth(BaseModel):
     """One tier's last recorded outcome on the entry.
 
-    A tier with no record has not failed since records began. `state` is `failing` from
-    the first failed pass until the next pass that succeeds; `kind` classifies the error
-    and `fix` is the one action that clears it."""
+    A tier with no record has not failed since records began, or no longer runs on the
+    entry. `state` is `failing` from the first failed pass until the next pass that
+    succeeds; `kind` classifies the error and `fix` is the one action that clears it."""
 
     # fetch | ingest | clang | typescript | go | python | clang_full (the weekly C++ full run)
     tier: str

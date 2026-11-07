@@ -670,6 +670,7 @@ async def _maybe_reconcile(
     except Exception as e:
         result.errors.append(f"reconcile: {type(e).__name__}: {e}")
         logger.exception("code_ingest: reconcile failed for %s", cfg.label)
+        result.tier_failed(cfg, "ingest", f"reconcile: {type(e).__name__}: {e}")
 
 
 def _stage_plan(
@@ -982,3 +983,4 @@ async def _maybe_rechunk(
     except Exception as e:
         result.errors.append(f"rechunk: {type(e).__name__}: {e}")
         logger.exception("code_ingest: extractor re-chunk failed for %s", cfg.label)
+        result.tier_failed(cfg, "ingest", f"rechunk: {type(e).__name__}: {e}")
