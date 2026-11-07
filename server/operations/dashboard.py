@@ -186,7 +186,7 @@ NOT_IN_DASHBOARD: dict[str, str] = {
     "memory.apply": (
         "the Memories page's bulk actions call the per-row ops (memory.pin, memory.delete)"
     ),
-    "memory.search_trace": "the Recall lab explains each ranking with memory.search explain=true",
+    "memory.search_trace": "Recall Lab explains each ranking with memory.search explain=true",
     "memory.update": "the memory drawer saves an edit with memory.set",
     "memory.update_by_id": "the memory drawer saves an edit with memory.set",
     "namespace.list": (

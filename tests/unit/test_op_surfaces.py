@@ -8,12 +8,14 @@ here it is tested case by case."""
 
 from __future__ import annotations
 
+import ast
 import re
 from types import SimpleNamespace
 
 import pytest
 
 from scripts.codegen import op_reach_census as census
+from server.core.paths import REPO_ROOT
 from server.operations.base import Role
 from server.operations.dashboard import (
     AGENT_STEP,
@@ -198,9 +200,9 @@ def test_an_agent_only_op_is_one_an_agent_token_may_call():
             assert OPERATIONS_BY_NAME[name].required_role <= Role.WRITER, name
 
 
-def test_an_op_kept_off_mcp_is_never_an_agent_step():
-    """An op MCP keeps for people and operators is never classed as an agent's
-    own step: an agent cannot call it, so that reason would leave it with no
+def test_an_op_kept_off_mcp_is_never_agent_only():
+    """An op MCP keeps for people and operators is never given an agent-only
+    reason: an agent cannot call it, so that reason would leave it with no
     caller."""
     for name in _MCP_HIDDEN_OPS:
         assert NOT_IN_DASHBOARD.get(name) not in AGENT_ONLY, name
@@ -232,3 +234,26 @@ def test_the_pending_set_is_pinned():
     assert not joined, f"{joined}: a new op a person needs ships with its dashboard control"
     left = sorted(PENDING_PINNED - DASHBOARD_PENDING)
     assert not left, f"{left} left DASHBOARD_PENDING: drop them from PENDING_PINNED too"
+
+
+def test_no_op_is_named_twice():
+    """`NOT_IN_DASHBOARD` merges its groups with `**`, where a second entry for an
+    op would silently replace the first."""
+    source = (REPO_ROOT / "server" / "operations" / "dashboard.py").read_text()
+    table = next(
+        node.value
+        for node in ast.parse(source).body
+        if isinstance(node, ast.AnnAssign) and node.target.id == "NOT_IN_DASHBOARD"
+    )
+    names = [key.value for key in table.keys if key is not None]
+    for spread in (v for k, v in zip(table.keys, table.values, strict=True) if k is None):
+        names += [elt.value for elt in spread.args[0].elts]
+    assert len(names) == len(NOT_IN_DASHBOARD)
+
+
+def test_an_op_a_refusal_sends_the_agent_to_is_on_mcp():
+    """Every op a refusal names is one the agent can call."""
+    for name, instead in mcp_op._INSTEAD.items():
+        for other in re.findall(r"[a-z_]+(?:\.[a-z_]+)+", instead):
+            if other in OPERATIONS_BY_NAME:
+                assert other not in _MCP_HIDDEN_OPS, (name, other)
