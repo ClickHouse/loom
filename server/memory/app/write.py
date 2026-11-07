@@ -211,9 +211,11 @@ async def _set_resolve_type(input: MemorySetInput) -> tuple[MemorySetInput, str,
                 with traced("classify.type_configs"):
                     registered = await list_type_configs(input.org, input.namespace)
                 valid_types = [r["memory_type"] for r in registered]
-                # An outbound HTTP call to an operator-supplied endpoint, on the write path.
+                # An outbound HTTP call to a namespace admin's endpoint, on the write path.
                 with traced("classify.call", endpoint_configured=True):
                     classified = await _classify(
+                        org=input.org,
+                        namespace=input.namespace,
                         endpoint=endpoint,
                         prompt_template=prompt_template,
                         value=json.dumps(input.value),
@@ -391,12 +393,12 @@ async def _set_prepare_value(w: _SetWrite) -> None:
 
     # Sensitivity tier: the caller's level, else detected from the value. 'high' rows take
     # the non-embedded path below.
-    from server.memory.domain.sensitivity import detector_text, resolve_sensitivity
+    from server.memory.app.sensitivity_level import decoded_text, resolve_level
 
     # Detected on the decoded value: in the stored JSON a token after a newline loses its
     # word boundary.
-    decoded_value = detector_text(serialized_value)
-    effective_sensitivity = resolve_sensitivity(getattr(input, "sensitivity", ""), decoded_value)
+    decoded_value = await decoded_text(serialized_value)
+    effective_sensitivity = await resolve_level(getattr(input, "sensitivity", ""), decoded_value)
     # A sensitive row carries its retention window: the caller's or the type's expiry stays
     # when shorter; on_expire defaults to the sensitive post-action when the caller set none.
     from server.memory.domain.sensitive_retention import sensitive_retention

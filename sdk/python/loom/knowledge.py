@@ -30,6 +30,8 @@ class SearchHit:
     namespace: str = ""
     section_path: tuple[str, ...] = ()
     section: str = ""
+    # The section is noise: unanswered questions alone, or dated notes with no decision.
+    noise: bool = False
 
 
 def _hit(payload: dict[str, Any]) -> SearchHit:
@@ -43,6 +45,7 @@ def _hit(payload: dict[str, Any]) -> SearchHit:
         namespace=str(payload.get("namespace") or ""),
         section_path=tuple(str(x) for x in (payload.get("section_path") or ())),
         section=str(payload.get("section") or ""),
+        noise=bool(payload.get("noise")),
     )
 
 

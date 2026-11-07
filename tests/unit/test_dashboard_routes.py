@@ -144,6 +144,43 @@ def test_page_paths_serve_the_dashboard(client, path: str) -> None:
     assert r.headers["cache-control"] == "no-store"
     [csp] = r.headers.get_list("content-security-policy")
     assert "nonce-" in csp
+    # No window of another origin keeps a handle on the dashboard to navigate it.
+    assert r.headers["cross-origin-opener-policy"] == "same-origin"
+
+
+_NAV = {"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
+
+
+@pytest.mark.parametrize(
+    ("headers", "own"),
+    [
+        ({**_NAV, "Sec-Fetch-Site": "same-origin"}, True),
+        ({**_NAV, "Sec-Fetch-Site": "cross-site"}, False),
+        ({**_NAV, "Sec-Fetch-Site": "same-site"}, False),
+        ({**_NAV, "Sec-Fetch-Site": "none"}, False),  # typed or bookmarked
+        # Sec-Fetch-Site wins over a Referer that claims this origin.
+        ({**_NAV, "Sec-Fetch-Site": "cross-site", "Referer": "http://localhost:7777/x"}, False),
+        # A browser that sends no Sec-Fetch-Site: the Referer's origin decides.
+        ({"Referer": "http://localhost:7777/settings"}, True),
+        ({"Referer": "https://evil.example/localhost:7777"}, False),
+        ({"Referer": "http://localhost:7777.evil.example/"}, False),
+        ({}, False),
+    ],
+)
+def test_the_page_says_whether_loom_itself_asked_for_it(client, headers, own: bool) -> None:
+    """The gate starts SSO on `?sign_in=sso` only for a load a Loom page asked for."""
+    r = client.get("/me?sign_in=sso", headers=headers, follow_redirects=False)
+    assert r.status_code == 200
+    flag = "true" if own else "false"
+    assert f"window.__LOOM_OWN_ORIGIN = {flag};" in r.text
+
+
+def test_a_referer_on_the_default_port_is_the_public_origin(client, monkeypatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "public_base_url", "https://loom.example:443")
+    r = client.get("/me?sign_in=sso", headers={"Referer": "https://loom.example/settings"})
+    assert "window.__LOOM_OWN_ORIGIN = true;" in r.text
 
 
 def test_the_sign_in_landing_never_follows_the_aggregator_redirect(client, monkeypatch) -> None:

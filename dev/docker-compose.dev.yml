@@ -17,11 +17,12 @@ services:
     # later), so a cached image does not hold an older one.
     pull_policy: daily
     container_name: loom-ch
-    # Host-side ports for `make server` and ad-hoc queries; remap in .env when
-    # 8123/9000 are taken. Containers always use clickhouse:8123.
+    # Host-side ports for `make server` and ad-hoc queries, on loopback whatever
+    # LOOM_BIND_HOST publishes Loom on: the password is the dev default. Remap in
+    # .env when 8123/9000 are taken. Containers always use clickhouse:8123.
     ports:
-      - "${LOOM_BIND_HOST:-127.0.0.1}:${LOOM_CH_HOST_PORT:-8123}:8123"
-      - "${LOOM_BIND_HOST:-127.0.0.1}:${LOOM_CH_NATIVE_HOST_PORT:-9000}:9000"
+      - "127.0.0.1:${LOOM_CH_HOST_PORT:-8123}:8123"
+      - "127.0.0.1:${LOOM_CH_NATIVE_HOST_PORT:-9000}:9000"
 
   loom:
     image: loom:dev

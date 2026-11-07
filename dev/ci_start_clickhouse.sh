@@ -34,7 +34,7 @@ for port in "$HTTP_PORT" "$NATIVE_PORT"; do
 done
 
 docker run -d --pull "$PULL" --name "$NAME" \
-  -p "$HTTP_PORT:8123" -p "$NATIVE_PORT:9000" \
+  -p "127.0.0.1:$HTTP_PORT:8123" -p "127.0.0.1:$NATIVE_PORT:9000" \
   -e CLICKHOUSE_DB=loom \
   -e CLICKHOUSE_USER=loom \
   -e CLICKHOUSE_PASSWORD=loomdev \

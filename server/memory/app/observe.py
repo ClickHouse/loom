@@ -249,6 +249,8 @@ async def _step_content(input: ObserveRecordInput, kind: str) -> tuple[str, list
         org=input.org, namespace=input.namespace, value=narrative
     )
     if hit is not None:
+        # A match: the narrative is at most _NARRATIVE_LIMIT characters, well inside one
+        # request's regex budget.
         await blacklist_guard.note_hit(hit.pattern_id)
         return step_only, [], BLACKLISTED_REASON
     return narrative, _extract_paths(input.tool_input, input.file_paths, narrative), ""

@@ -288,8 +288,26 @@ honour "never remember my home address" inside the conversation. A token bounded
 user (`read_scope` `own_user` / `own_session`) gets `AUTH_INSUFFICIENT` on every
 `blacklist.*` op: a pattern refuses every user's writes in the namespace.
 
-A regex is checked at add time: at most 256 characters, no nested quantifier such as
-`(a+)+`, and a probe that finishes inside 1 ms.
+A regex is at most 256 characters, is RE2 syntax (no backreferences or lookaround, `\z`
+rather than `\Z`) and compiles to at most 300 RE2 instructions (a long non-ASCII literal
+can exceed that: use a substring pattern for it), and a scope's regexes together compile
+to at most 3,000. It runs on RE2, in time linear in the value, on writes and in the sweep
+alike. On a write it runs on four threads per process of its own, off the event loop; one
+org holds at most two of them at once, so one busy org leaves half the threads to the
+others, and a write that waits more than 5 seconds for one is refused with 503
+`OVERLOADED`, never stored unchecked. Once the bytes one request writes (a bulk write's
+entries together) times the instructions of the regexes that apply pass 250 million, a
+further value is refused as `BLACKLISTED` with an empty `pattern_id` and a reason saying
+it is too long to check, unless a substring pattern matches it: send it in a smaller
+request, or, when the value alone is past the budget (the reason says so), shorten it. In
+a `memory.bulk_set`, every later entry of its key is refused the same way
+(`blacklist_unchecked`), even one that would fit, so sending them again in order leaves
+the key at its last value; a caller that does not send them again keeps the key's earlier
+value. The server sends none again itself, since the budget bounds one request's work:
+`memory.set_from_messages` lists such facts in `refused` and `memory.import` in its
+results, for the caller to send again. The Python SDK sends the coalesced sets refused
+this way again, in order, in batches the size of what the last request checked, and one
+still unchecked at the front of a request as a `memory.set` alone.
 
 | Operation          | Role   | Does                                                                              |
 | ------------------ | ------ | --------------------------------------------------------------------------------- |
@@ -301,8 +319,7 @@ A regex is checked at add time: at most 256 characters, no nested quantifier suc
 **Sweeping existing rows.** `sweep=true` tombstones matching live rows, up to 5,000 per
 call; `swept_truncated=true` means call `blacklist.sweep(pattern_id)` again. Each sweep
 leaves one `loom.memory_drops` row, so `loom drops` shows what it removed. The sweep runs
-in ClickHouse with RE2: a construct only Python supports (look-behind) matches nothing
-there and is reported.
+in ClickHouse with RE2, the engine the write path uses.
 
 ```bash
 curl -sX POST http://localhost:7777/v1/blacklist.add \

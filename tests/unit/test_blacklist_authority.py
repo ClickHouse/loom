@@ -10,6 +10,8 @@ matrix, the no-fall-through rule, and the regex bounds. CH-free.
 from __future__ import annotations
 
 import asyncio
+import time
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -18,9 +20,9 @@ import server.auth.authz as authz
 import server.memory.app.blacklist as h
 from server.auth.context import set_current_auth
 from server.auth.jwt import AuthInfo
-from server.core.errors import AuthInsufficientError
+from server.core.errors import AuthInsufficientError, ValidationError
 from server.memory.api.models_blacklist import BlacklistAddInput, BlacklistRemoveInput
-from server.memory.app.blacklist_guard import REGEX_MAX_LENGTH, validate_regex
+from server.memory.app.blacklist_guard import REGEX_MAX_LENGTH, compile_regex
 from server.operations.base import Role
 
 ORG = "acme"
@@ -100,6 +102,11 @@ def repo(monkeypatch) -> _Repo:
 
     monkeypatch.setattr(h, "_bump_version", _bump)
     monkeypatch.setattr(h, "invalidate_cache", lambda: None)
+
+    async def _none_stored(scope, org, namespace):
+        return 0
+
+    monkeypatch.setattr(h, "scope_program", _none_stored)
 
     async def _no_grant(org, namespace, subject):
         return None
@@ -417,6 +424,15 @@ def test_sweep_by_another_orgs_org_admin_is_refused(repo: _Repo, monkeypatch) ->
 # ----------------------------------------------------------- regex bounds
 
 
+def _refusal(pattern: str) -> str | None:
+    """Why `compile_regex` refuses the pattern, or None."""
+    try:
+        compile_regex(pattern)
+    except ValidationError as e:
+        return str(e)
+    return None
+
+
 @pytest.mark.parametrize(
     "pattern",
     [
@@ -433,34 +449,63 @@ def test_sweep_by_another_orgs_org_admin_is_refused(repo: _Repo, monkeypatch) ->
     ],
 )
 def test_ordinary_regexes_are_accepted(pattern: str) -> None:
-    assert validate_regex(pattern) is None
+    assert _refusal(pattern) is None
+
+
+def _search_seconds(compiled: Any, text: str) -> float:
+    """The fastest of three searches, so one stall on a busy runner does not count."""
+    times = []
+    for _ in range(3):
+        started = time.perf_counter()
+        compiled.search(text)
+        times.append(time.perf_counter() - started)
+    return min(times)
 
 
 @pytest.mark.parametrize(
-    "pattern", ["(a+)+$", "(a*)*b", "(.*)*x", "(a+){2,}", "(?:x+)*y", "(x+x+)+y"]
+    "pattern",
+    ["(a+)+$", "(a*)*b", "(.*)*x", "(?:x+)*y", "(a|aa)+$", "(a|a)*c", r"q?(\d|\d)*z"],
 )
-def test_nested_quantifiers_are_refused_by_shape(pattern: str) -> None:
-    reason = validate_regex(pattern)
-    assert reason is not None and "nests a quantifier" in reason
+def test_a_backtracking_shape_runs_in_linear_time(pattern: str) -> None:
+    """Every regex runs on RE2, so a shape that backtracks exponentially in
+    Python's engine searches a hostile value in time linear in it: no shape check
+    or probe to slip past (`q?(\\d|\\d)*z` passed both)."""
+    assert _refusal(pattern) is None
+    compiled = compile_regex(pattern)
+    for unit in ("a", "1", "x"):
+        n = 20_000
+        # From n to 4n a linear search takes about 4 times as long, an exponential one forever.
+        assert (
+            _search_seconds(compiled, unit * 4 * n + "!")
+            < 8 * _search_seconds(compiled, unit * n + "!") + 0.01
+        )
 
 
-@pytest.mark.parametrize("pattern", ["(a|aa)+$", "(a|a)*c", "(a+a)+$", "a*a*a*a*a*a*a*a*a*b"])
-def test_catastrophic_shapes_the_static_rule_misses_fail_the_probe(pattern: str) -> None:
-    reason = validate_regex(pattern)
-    assert reason is not None and "probe" in reason
+@pytest.mark.parametrize("pattern", [r"(a)\1", r"foo(?=bar)", r"(?<!x)y", r"end\Z"])
+def test_a_regex_re2_cannot_run_is_refused(pattern: str) -> None:
+    reason = _refusal(pattern)
+    assert reason is not None and "RE2" in reason
+
+
+def test_a_regex_whose_program_outgrows_the_cap_is_refused() -> None:
+    """A counted class keeps RE2's DFA from caching, so each character costs a step
+    per instruction: the program is capped."""
+    reason = _refusal("a[ab]{400}c")
+    assert reason is not None and "RE2 instructions" in reason
+    assert _refusal("x" * REGEX_MAX_LENGTH) is None  # a long literal stays under it
 
 
 def test_length_and_syntax_bounds() -> None:
-    assert validate_regex("a" * (REGEX_MAX_LENGTH + 1)) is not None
-    assert validate_regex("a" * REGEX_MAX_LENGTH) is None
-    assert "compile" in (validate_regex("(") or "")
+    assert _refusal("a" * (REGEX_MAX_LENGTH + 1)) is not None
+    assert _refusal("a" * REGEX_MAX_LENGTH) is None
+    assert "RE2" in (_refusal("(") or "")
 
 
 def test_add_refuses_a_bad_regex_with_422_before_it_is_stored(repo: _Repo) -> None:
     set_current_auth(_auth("WRITER"))
     with pytest.raises(HTTPException) as ei:
         asyncio.run(
-            h.handle_blacklist_add(_add("namespace", pattern_type="regex", pattern="(a+)+$"))
+            h.handle_blacklist_add(_add("namespace", pattern_type="regex", pattern="(?=a)b"))
         )
     assert ei.value.status_code == 422
     assert ei.value.detail["code"] == "BLACKLIST_PATTERN_INVALID"
@@ -477,7 +522,11 @@ def test_substring_patterns_are_not_regex_validated(repo: _Repo) -> None:
     assert out.pattern_id and repo.inserted[0]["pattern_type"] == "substring"
 
 
-def test_cache_refresh_drops_a_stored_catastrophic_regex(monkeypatch) -> None:
+async def _loaded() -> None:
+    return None
+
+
+def test_cache_refresh_drops_a_stored_regex_re2_cannot_run(monkeypatch) -> None:
     """A row with or without a `scope` column never reaches the hot path."""
     import server.memory.app.blacklist_guard as bl
 
@@ -488,7 +537,7 @@ def test_cache_refresh_drops_a_stored_catastrophic_regex(monkeypatch) -> None:
                     "pattern_id": "bad",
                     "org": "*",
                     "namespace": "*",
-                    "pattern": "(a+)+$",
+                    "pattern": "(?=a)b",
                     "pattern_type": "regex",
                     "scope": "global",
                     "reason": "",
@@ -510,3 +559,440 @@ def test_cache_refresh_drops_a_stored_catastrophic_regex(monkeypatch) -> None:
     monkeypatch.setattr(bl, "get_client", lambda: _CH())
     asyncio.run(bl._refresh_cache())
     assert [p.pattern_id for p in bl._cache] == ["ok"]
+    # the kept pattern refuses on RE2, through the write path's lookup
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    hit = asyncio.run(bl.find_match(org="o", namespace="n", value='"my ssn is 123"'))
+    assert hit is not None and hit.pattern_id == "ok"
+    assert asyncio.run(bl.find_match(org="o", namespace="n", value='"assn"')) is None
+
+
+def test_a_scopes_regexes_hold_a_bounded_program(repo: _Repo, monkeypatch) -> None:
+    """Every regex a write's scopes hold runs on that write: a scope's regexes together
+    compile to a bounded program."""
+    from server.memory.app.blacklist_guard import REGEX_PROGRAM_PER_SCOPE
+
+    async def _full(scope, org, namespace):
+        return REGEX_PROGRAM_PER_SCOPE - 2
+
+    monkeypatch.setattr(h, "scope_program", _full)
+    set_current_auth(_auth("WRITER"))
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(h.handle_blacklist_add(_add("namespace", pattern_type="regex", pattern="xyz+")))
+    assert ei.value.detail["code"] == "BLACKLIST_PATTERN_INVALID"
+    assert "RE2 instructions" in ei.value.detail["message"]
+    assert repo.inserted == []
+    # a substring pattern is not a regex and is not counted
+    asyncio.run(h.handle_blacklist_add(_add("namespace", pattern="plain")))
+
+
+def _pattern(pattern_id: str, scope: str, pattern: str, pattern_type: str) -> Any:
+    import server.memory.app.blacklist_guard as bl
+
+    compiled = compile_regex(pattern) if pattern_type == "regex" else None
+    org, ns = h._scope_args(scope, ORG, NS)
+    return bl.BlacklistPattern(pattern_id, org, ns, pattern, pattern_type, scope, "", compiled)
+
+
+def test_the_matcher_thread_keeps_scope_precedence_and_reads_a_lone_surrogate(
+    monkeypatch,
+) -> None:
+    """With a regex applicable the patterns run on the matcher threads, in the
+    cache's order: the namespace pattern wins over a global one that also matches.
+    A value with an unpaired surrogate is read, not refused with an error."""
+    import server.memory.app.blacklist_guard as bl
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(
+        bl,
+        "_cache",
+        [
+            _pattern("ns", "namespace", r"\bssn\b", "regex"),
+            _pattern("global", "global", "ssn", "substring"),
+        ],
+    )
+    hit = asyncio.run(bl.find_match(org=ORG, namespace=NS, value="my ssn \ud800"))
+    assert hit is not None and hit.pattern_id == "ns"
+    hit = asyncio.run(bl.find_match(org=ORG, namespace="other", value="assn"))
+    assert hit is not None and hit.pattern_id == "global"
+
+
+def test_scope_program_sums_the_regexes_stored_at_exactly_the_scope(monkeypatch) -> None:
+    """Read from ClickHouse at add; a stored regex RE2 refuses counts nothing, as at
+    cache load."""
+    import server.memory.app.blacklist_guard as bl
+
+    stored = {
+        ("namespace", ORG, NS): ["x+", "(?=a)b"],
+        ("global", *h._scope_args("global", ORG, NS)): ["z+", "w+"],
+    }
+
+    async def _scope_regexes(scope, org, namespace, *, ch=None):
+        return stored.get((scope, org, namespace), [])
+
+    monkeypatch.setattr(bl._repo, "scope_regexes", _scope_regexes)
+    monkeypatch.setattr(bl, "get_client", lambda: None)
+    size = compile_regex("x+").programsize
+    assert asyncio.run(bl.scope_program("namespace", ORG, NS)) == size
+    assert asyncio.run(bl.scope_program("global", *h._scope_args("global", ORG, NS))) == 2 * size
+    assert asyncio.run(bl.scope_program("namespace", ORG, "other")) == 0
+
+
+def test_the_cache_keeps_a_scopes_oldest_regexes_within_its_program(monkeypatch) -> None:
+    """Racing adds or an older build can store past a scope's program; every replica
+    keeps the oldest that fit, and a row RE2 refuses takes no room."""
+    import server.memory.app.blacklist_guard as bl
+
+    size = compile_regex("c+").programsize
+    monkeypatch.setattr(bl, "REGEX_PROGRAM_PER_SCOPE", 2 * size)
+    rows = [  # as `active_patterns` returns them: oldest first
+        {
+            "pattern_id": pid,
+            "org": ORG,
+            "namespace": NS,
+            "pattern": pattern,
+            "pattern_type": "regex",
+            "scope": "namespace",
+            "reason": "",
+        }
+        for pid, pattern in (("c", "c+"), ("bad", "(?=a)b"), ("a", "a+"), ("b", "b+"))
+    ]
+
+    class _CH:
+        async def query_all(self, *a, **k):
+            return rows
+
+        async def query_one(self, *a, **k):
+            return {"n": 1, "s": 1}
+
+    monkeypatch.setattr(bl, "get_client", lambda: _CH())
+    asyncio.run(bl._refresh_cache())
+    assert [p.pattern_id for p in bl._cache] == ["c", "a"]
+
+
+def test_a_value_past_the_regex_work_budget_is_refused(monkeypatch) -> None:
+    """Bytes x instructions bound what one write's regexes scan; a value past it
+    is refused, as a matched pattern is, without running them."""
+    import server.memory.app.blacklist_guard as bl
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "REGEX_WORK_BUDGET", 90_000)
+    pattern = _pattern("r", "namespace", r"\bssn\b", "regex")
+    monkeypatch.setattr(bl, "_cache", [pattern])
+    budget = bl.REGEX_WORK_BUDGET // pattern.compiled.programsize
+    assert asyncio.run(bl.find_match(org=ORG, namespace=NS, value="x" * budget)) is None
+    hit = asyncio.run(bl.find_match(org=ORG, namespace=NS, value="x" * (budget + 1)))
+    assert hit is not None and hit.pattern_id == "" and "too long" in hit.reason
+    assert hit.scope == "namespace"
+    asyncio.run(bl.note_hit(""))  # no stored pattern to count against
+    # the budget is in bytes: RE2 scans UTF-8
+    wide = "\u00e9" * (budget // 2 + 1)
+    assert asyncio.run(bl.find_match(org=ORG, namespace=NS, value=wide)) is not None
+
+
+def test_regexes_match_across_newlines_on_the_matcher_threads(monkeypatch) -> None:
+    """`.` matches a newline, as ClickHouse's `match()` does in the sweep, and the
+    search runs on the blacklist's threads, never the event loop."""
+    import threading
+
+    import server.memory.app.blacklist_guard as bl
+
+    ran_on: list[str] = []
+    first_match = bl._first_match
+
+    def _recording(*args: Any) -> Any:
+        ran_on.append(threading.current_thread().name)
+        return first_match(*args)
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "_first_match", _recording)
+    monkeypatch.setattr(bl, "_cache", [_pattern("r", "namespace", "secret.code", "regex")])
+    hit = asyncio.run(bl.find_match(org=ORG, namespace=NS, value="secret\ncode"))
+    assert hit is not None and hit.pattern_id == "r"
+    assert ran_on and all(name.startswith("loom-blacklist") for name in ran_on)
+
+
+def test_a_value_too_long_to_check_is_refused_saying_so(monkeypatch) -> None:
+    """The write path's 422 for a value over the regex budget says it is too long,
+    names no pattern, and says the same under a token narrowed to one user."""
+    import server.memory.app.blacklist_guard as bl
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "REGEX_WORK_BUDGET", 1_000)
+    monkeypatch.setattr(bl, "_cache", [_pattern("r", "namespace", "x+", "regex")])
+    for narrowed in (False, True):
+        monkeypatch.setattr(
+            "server.identity.app.request_scope.request_narrowed", lambda n=narrowed: n
+        )
+        with pytest.raises(HTTPException) as ei:
+            asyncio.run(bl.enforce_on_insert(org=ORG, namespace=NS, value="y" * 5_000))
+        detail = ei.value.detail
+        assert detail["code"] == "BLACKLISTED" and "too long" in detail["message"]
+        assert detail.get("pattern_id", "") == ""
+        # the value alone is past the budget: a smaller request would not check it
+        assert "shorten the value" in detail["message"]
+        # the instruction count sums other principals' patterns
+        assert ("RE2 instructions" in detail["message"]) is not narrowed
+
+
+def test_an_entry_that_fits_alone_is_told_to_go_in_a_smaller_request(monkeypatch) -> None:
+    import server.memory.app.blacklist_guard as bl
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "REGEX_WORK_BUDGET", 90_000)
+    pattern = _pattern("r", "namespace", r"\bssn\b", "regex")
+    monkeypatch.setattr(bl, "_cache", [pattern])
+    size = bl.REGEX_WORK_BUDGET // pattern.compiled.programsize * 3 // 5  # each fits alone
+
+    async def two() -> Any:
+        bl.begin_request_budget()
+        await bl.find_match(org=ORG, namespace=NS, value="x" * size)
+        return await bl.find_match(org=ORG, namespace=NS, value="x" * size)
+
+    hit = asyncio.run(two())
+    assert hit is not None and hit.pattern_id == ""
+    assert "send less in one request" in hit.reason
+
+
+def test_one_org_holds_at_most_its_share_of_the_matcher_threads(monkeypatch) -> None:
+    """A busy org's searches wait their turn, so another org's write finds a thread."""
+    import threading
+
+    import server.memory.app.blacklist_guard as bl
+
+    release = threading.Event()
+    running: dict[str, int] = {"a": 0, "b": 0}
+    most = {"a": 0}
+    lock = threading.Lock()
+
+    def _blocking(patterns: Any, value: str, data: Any) -> Any:
+        org = value[0]
+        with lock:
+            running[org] += 1
+            most["a"] = max(most["a"], running["a"])
+        if org == "a":
+            release.wait(10)
+        with lock:
+            running[org] -= 1
+        return None
+
+    def _applies(p: Any, org: str, namespace: str) -> bool:
+        return True
+
+    _fresh_slots(monkeypatch)
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "_first_match", _blocking)
+    monkeypatch.setattr(bl, "_applies_to", _applies)
+    monkeypatch.setattr(bl, "_cache", [_pattern("r", "namespace", "x+", "regex")])
+
+    async def scene() -> None:
+        busy = [
+            asyncio.create_task(bl.find_match(org="org-a", namespace=NS, value="a" * 10))
+            for _ in range(6)
+        ]
+        await asyncio.sleep(0.2)
+        # org-b's search finishes while org-a's hold their share
+        await asyncio.wait_for(bl.find_match(org="org-b", namespace=NS, value="b"), 5)
+        release.set()
+        await asyncio.gather(*busy)
+
+    asyncio.run(scene())
+    assert most["a"] == bl.MATCHERS_PER_ORG
+    # an org keeps its one semaphore, every turn back
+    assert set(bl._org_slots) == {"org-a", "org-b"}
+    assert all(not slots.locked() for slots in bl._org_slots.values())
+
+
+def _fresh_slots(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turns of this test's own: a semaphore a test waited on is bound to its loop."""
+    import server.memory.app.blacklist_guard as bl
+
+    monkeypatch.setattr(bl, "_org_slots", {})
+    monkeypatch.setattr(bl, "_thread_slots", asyncio.Semaphore(bl.MATCHER_THREADS))
+
+
+def _blocking_search(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, dict[str, int]]:
+    """`_first_match` replaced by a search that holds its thread until the returned
+    event is set, counting the searches running at once."""
+    import threading
+
+    import server.memory.app.blacklist_guard as bl
+
+    release = threading.Event()
+    counts = {"running": 0, "most": 0}
+    lock = threading.Lock()
+
+    def _blocking(patterns: Any, value: str, data: Any) -> Any:
+        with lock:
+            counts["running"] += 1
+            counts["most"] = max(counts["most"], counts["running"])
+        release.wait(10)
+        with lock:
+            counts["running"] -= 1
+        return None
+
+    _fresh_slots(monkeypatch)
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "_first_match", _blocking)
+    monkeypatch.setattr(bl, "_cache", [_pattern("r", "namespace", "x+", "regex")])
+    return release, counts
+
+
+def test_a_cancelled_search_keeps_its_turn_until_its_thread_is_done(monkeypatch) -> None:
+    """RE2 cannot be stopped: a cancelled request's search still runs, so its turn is
+    given back when the thread is done, and the org never runs more than its share."""
+    import server.memory.app.blacklist_guard as bl
+
+    release, counts = _blocking_search(monkeypatch)
+
+    async def scene() -> None:
+        first = [
+            asyncio.create_task(bl.find_match(org=ORG, namespace=NS, value="x"))
+            for _ in range(bl.MATCHERS_PER_ORG)
+        ]
+        await asyncio.sleep(0.2)
+        for task in first:
+            task.cancel()
+        later = [
+            asyncio.create_task(bl.find_match(org=ORG, namespace=NS, value="x"))
+            for _ in range(bl.MATCHERS_PER_ORG)
+        ]
+        await asyncio.sleep(0.2)
+        assert counts["running"] == bl.MATCHERS_PER_ORG  # the later ones still wait
+        release.set()
+        await asyncio.gather(*first, *later, return_exceptions=True)
+
+    asyncio.run(scene())
+    assert counts["most"] == bl.MATCHERS_PER_ORG
+
+
+def test_a_search_that_waits_too_long_for_its_turn_refuses_the_write(monkeypatch) -> None:
+    """A write never queues without end behind its org's searches, and never passes
+    unchecked: past MATCHER_WAIT_S it is refused 503 OVERLOADED."""
+    import server.memory.app.blacklist_guard as bl
+    from server.core.errors import OverloadedError
+
+    release, _counts = _blocking_search(monkeypatch)
+    monkeypatch.setattr(bl, "MATCHER_WAIT_S", 0.2)
+
+    async def scene() -> None:
+        busy = [
+            asyncio.create_task(bl.find_match(org=ORG, namespace=NS, value="x"))
+            for _ in range(bl.MATCHERS_PER_ORG)
+        ]
+        await asyncio.sleep(0.05)
+        try:
+            with pytest.raises(OverloadedError):
+                await bl.enforce_on_insert(org=ORG, namespace=NS, value="x")
+        finally:
+            release.set()
+            await asyncio.gather(*busy)
+        # every turn is back: the next search runs
+        assert await bl.find_match(org=ORG, namespace=NS, value="x") is None
+
+    asyncio.run(scene())
+
+
+def test_a_blacklist_regex_keeps_no_captures_and_a_small_memory() -> None:
+    """A yes/no search needs no capture groups, and each compiled pattern's memory
+    (RE2's DFA cache included, 8 MiB by default) is bounded, so a writer's patterns
+    hold little resident on every replica."""
+    from server.memory.app.blacklist_guard import REGEX_MAX_MEMORY
+
+    compiled = compile_regex("(a)(b)+c")
+    assert compiled.groups == 0 and compiled.options.never_capture
+    assert compiled.options.max_mem == REGEX_MAX_MEMORY
+    assert compiled.search(b"xabbc") is not None  # the write path searches UTF-8 bytes
+
+
+def test_a_bulk_writes_entries_share_one_regex_budget(monkeypatch) -> None:
+    """Each entry of a bulk write is checked in the same request: the budget is the
+    request's, so a thousand entries cannot each spend a write's worth. A substring
+    pattern that matches still names itself once the regexes are out of budget."""
+    import server.memory.app.blacklist_guard as bl
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    regex = _pattern("r", "namespace", "x+", "regex")
+    monkeypatch.setattr(bl, "_cache", [regex, _pattern("s", "namespace", "secret", "substring")])
+    monkeypatch.setattr(bl, "REGEX_WORK_BUDGET", 3 * 1_000 * regex.compiled.programsize)
+
+    async def _bulk() -> list[Any]:
+        bl.begin_request_budget()  # what the transports do at each op
+        return [
+            await bl.find_match(org=ORG, namespace=NS, value=value)
+            for value in (
+                "y" * 1_000,
+                "y" * 1_000,
+                "y" * 1_000,
+                "y" * 1_000,
+                "a secret" + "y" * 990,
+            )
+        ]
+
+    hits = asyncio.run(_bulk())
+    assert hits[:3] == [None, None, None]
+    assert hits[3] is not None and hits[3].pattern_id == "" and "too long" in hits[3].reason
+    assert hits[4] is not None and hits[4].pattern_id == "s"
+    # a new request has its own budget
+    assert asyncio.run(bl.find_match(org=ORG, namespace=NS, value="y" * 1_000)) is None
+
+    async def _worker_pass() -> list[Any]:
+        # a worker binds no request budget: one tenant's values never spend another's
+        return [await bl.find_match(org=ORG, namespace=NS, value="y" * 1_000) for _ in range(5)]
+
+    assert asyncio.run(_worker_pass()) == [None] * 5
+
+
+def test_each_op_the_transports_begin_starts_one_regex_budget(monkeypatch) -> None:
+    """The transports bind the budget at each op (`_common.begin_request`, which MCP's
+    `begin_call` runs per call): two checks after one begin share it, a new begin
+    starts again at zero."""
+    import server.memory.app.blacklist_guard as bl
+    from server.transport import _common
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    regex = _pattern("r", "namespace", "x+", "regex")
+    monkeypatch.setattr(bl, "_cache", [regex])
+    monkeypatch.setattr(bl, "REGEX_WORK_BUDGET", 1_500 * regex.compiled.programsize)
+
+    async def _op() -> list[Any]:
+        _common.begin_request()
+        return [await bl.find_match(org=ORG, namespace=NS, value="y" * 1_000) for _ in range(2)]
+
+    first, second = asyncio.run(_op())
+    assert first is None and second is not None and second.pattern_id == ""
+    assert asyncio.run(_op())[0] is None  # the next op starts at zero
+
+
+@pytest.mark.parametrize("over_budget", [False, True])
+def test_a_long_substring_scan_runs_on_the_matcher_threads(monkeypatch, over_budget: bool) -> None:
+    """A substring scan holds the GIL for the length of one `in`: a long one runs on the
+    matcher threads, where the event loop gets its turn between patterns, and a short
+    one stays on the loop. Past the regex budget, the substring check still names a hit."""
+    import threading
+
+    import server.memory.app.blacklist_guard as bl
+
+    ran_on: list[str] = []
+    first_match = bl._first_match
+
+    def _recording(*args: Any) -> Any:
+        ran_on.append(threading.current_thread().name)
+        return first_match(*args)
+
+    _fresh_slots(monkeypatch)
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "_first_match", _recording)
+    cache = [_pattern(f"s{i}", "namespace", f"<needle{i}>", "substring") for i in range(20)]
+    if over_budget:
+        cache.append(_pattern("r", "namespace", r"\bssn\b", "regex"))
+        monkeypatch.setattr(bl, "REGEX_WORK_BUDGET", 1_000)
+    monkeypatch.setattr(bl, "_cache", cache)
+    value = "x" * (bl.SUBSTRINGS_ON_LOOP_BYTES // 20 + 10) + "<needle19>"
+    hit = asyncio.run(bl.find_match(org=ORG, namespace=NS, value=value))
+    assert hit is not None and hit.pattern_id == "s19"
+    assert ran_on and all(name.startswith("loom-blacklist") for name in ran_on)
+    if not over_budget:  # with a regex applicable, a short value goes to the threads anyway
+        ran_on.clear()
+        short = asyncio.run(bl.find_match(org=ORG, namespace=NS, value="<needle3>"))
+        assert short is not None and short.pattern_id == "s3"
+        assert ran_on == [threading.main_thread().name]

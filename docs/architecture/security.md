@@ -265,6 +265,7 @@ foreign row and a missing row look the same.
 | `tests/integration/test_cross_principal_leakage.py`      | Seeds canary nonces into one tenant's memories, facts, knowledge, blacklist reasons, grants, erasure requests and session briefs, then calls every read op of the covered groups as another namespace's writer and viewer and as another org. Any nonce in a response, or a status outside `{200, 403, 404}`, fails. New read ops in a covered group are picked up automatically. |
 | `tests/integration/test_restricted_namespace_leakage.py` | The same for restricted code namespaces.                                                                                                                                                                                                                                                                                                                                          |
 | `tests/unit/test_op_inputs_after_gate.py`                | No input model answers 422 before the gate runs.                                                                                                                                                                                                                                                                                                                                  |
+| `tests/unit/test_op_scope_fields.py`                     | A declaration list it keeps complete: every input field naming another namespace, org or inbox (`namespaces`, `to_namespace`, `inbox`, ...) is listed with the function meant to check it, and that function exists; that the handler calls it is a review matter. The gate checks only `org` and `namespace`.                                                                    |
 
 ### Restricted namespaces
 
@@ -436,8 +437,26 @@ browser that started the sign-in, never stored on the server. The callback finis
 sign-in only with that cookie, once: its state is marked used in Keeper. The callback URL
 alone (from a log, browser history or a screenshot) finishes nothing. The cookie is scoped
 to `/oauth/callback`, not `__Host-`, so it is not sent on every request; a site on a
-sibling subdomain could therefore plant its own sign-in for the victim to finish (login
-CSRF), which serving Loom on a host of its own rules out.
+sibling subdomain can therefore plant its own sign-in for the victim to finish. The
+dashboard's tab nonce (below) makes such a sign-in ask before it takes effect; for the MCP
+connect and device sign-ins, which it does not cover, serving Loom on a host of its own
+rules it out.
+
+**The dashboard's hand-off is bound to its tab.** The sign-in gate starts SSO as
+`/oauth/sso?n=<nonce>`, with a random nonce it keeps in that tab's session storage. The
+server seals the nonce into the sign-in's cookie and lands the token at
+`/me?n=<nonce>#token=<jwt>`. The dashboard stores a token without asking only when its
+nonce is the one the tab kept (used once, for ten minutes), or when the server's answer
+for it names the account already signed in (the token's own claims are unverified and never
+decide); any other token, a planted sign-in's or a link's, waits for the person to confirm
+the account the server names, and is checked again after the confirmation. The page's
+Cross-Origin-Opener-Policy ([response headers](#response-headers)) keeps a page that
+opened it from navigating it while it is away at the identity provider. A page load at
+`/me?sign_in=sso`, which starts SSO without a click on the gate, is honoured only when a
+Loom page asked for it: the dashboard page tells the gate whether the load's
+`Sec-Fetch-Site` is `same-origin` (or, from a browser that sends none, whether its
+`Referer` has Loom's public origin), so another site cannot start a sign-in whose token
+the tab would store unasked.
 
 **A revocation that cannot be written is owed.** When ending a session cannot write
 `loom.revoked_tokens`, a `revocation_owed` row in `loom.oauth_state` stands in for it for
@@ -586,8 +605,16 @@ request's own scheme and `Host`, validated as `http(s)://hostname[:port]`.
 `X-Forwarded-Host` is never read. The OIDC callback comes from configuration only.
 
 **Exposure.** A non-loopback `LOOM_BIND_HOST` refuses to start without
-`LOOM_PUBLIC_BASE_URL`, and with auth off or the dev JWT secret unless
-`LOOM_ALLOW_INSECURE=1`. `LOOM_CORS_ORIGINS=*` refuses to start (CORS allows
+`LOOM_PUBLIC_BASE_URL`, and, unless `LOOM_ALLOW_INSECURE=1`, with auth off,
+`LOOM_MCP_AUTH_MODE=open`, the dev JWT secret, or a root, gateway
+(`LOOM_JWT_PUBLIC_KEYS_JSON`) or inline end-user issuer key below the minimum size of
+RFC 7518 (an HMAC secret under 32 bytes, or an RSA key under 2048 bits; only the length
+is checked, not the randomness). Keys fetched from a JWKS URL arrive at runtime and are
+not checked at start.
+`scripts/serve.sh` takes a non-loopback `LOOM_LISTEN_HOST` as `LOOM_BIND_HOST` when the
+environment does not set it (over an env-file or settings-file value), so the listen
+address alone cannot skip these checks. `loom doctor` and `/v1/health` report each of
+these refusals. `LOOM_CORS_ORIGINS=*` refuses to start (CORS allows
 credentials). With auth off, a request whose `Host` is not a loopback host or the
 public URL's host gets `421`, so a DNS-rebinding page cannot drive a local server. A
 request whose `Origin` is not the server's own (and is not in `LOOM_CORS_ORIGINS`), or
@@ -631,16 +658,18 @@ its value.
 
 **Route policies.** The dashboard page carries a Content-Security-Policy whose
 `script-src` admits the bundle's origin and the one boot snippet by a per-response nonce,
-never `unsafe-inline`, and whose `frame-src 'none'` allows no frame. An uploaded document
-is attacker-chosen bytes under an attacker-chosen type, so `knowledge.download` previews
-inline only plain text (text, Markdown, CSV and JSON, all served as `text/plain`) and PNG,
-JPEG, GIF and WebP whose bytes match their type; anything else (HTML, SVG, XML, PDF,
-unknown, mismatched) is an `application/octet-stream` attachment, and every download
-carries `Content-Security-Policy: sandbox; default-src 'none'; frame-ancestors 'none'`.
-The dashboard applies the same allowlist to the bytes it fetches: it decodes the first 1
-MB of text as UTF-8 into a text node in a `<pre>`, shows images with `<img>` from a
-re-typed `blob:` URL (which ignores the server's headers), and downloads everything else,
-PDF and SVG included.
+never `unsafe-inline`, and whose `frame-src 'none'` allows no frame. It also carries
+`Cross-Origin-Opener-Policy: same-origin`: a page of another origin that opened the
+dashboard keeps no handle on its window, so it cannot navigate it to a sign-in link of its
+own. An uploaded document is attacker-chosen bytes under an attacker-chosen type, so
+`knowledge.download` previews inline only plain text (text, Markdown, CSV and JSON, all
+served as `text/plain`) and PNG, JPEG, GIF and WebP whose bytes match their type; anything
+else (HTML, SVG, XML, PDF, unknown, mismatched) is an `application/octet-stream`
+attachment, and every download carries `Content-Security-Policy: sandbox; default-src
+'none'; frame-ancestors 'none'`. The dashboard applies the same allowlist to the bytes it
+fetches: it decodes the first 1 MB of text as UTF-8 into a text node in a `<pre>`, shows
+images with `<img>` from a re-typed `blob:` URL (which ignores the server's headers), and
+downloads everything else, PDF and SVG included.
 
 ## Rate limiting
 
@@ -668,11 +697,22 @@ limiter error admits the call and is counted. Sizing and the shared backend are 
 ## Refuse: the blacklist
 
 `blacklist.add` registers a `substring` or `regex` pattern at `global`, `org` or
-`namespace` scope (`server/memory/app/blacklist_guard.py`). A regex is length-capped, rejected if it nests
-quantifiers, and probed against a time budget, so it cannot stall writes. Matching writes
-get 422 `BLACKLISTED` on `memory.set` and the other write paths before anything is
-stored; `sweep=true` tombstones existing matches. Replicas invalidate their pattern
-caches from a one-row version watermark in `loom.blacklist_version`, checked every
+`namespace` scope (`server/memory/app/blacklist_guard.py`). A regex runs on RE2, in time
+linear in the value; its length, its compiled program and a scope's total program are
+capped, one request's regex work (bytes times instructions) is bounded, and it runs on the
+blacklist's own four threads per process, so no regex stalls the event loop. A substring
+check scans on the loop while the value's length times the substring patterns that apply
+stays within 1 MiB, and on those threads past it, where the loop gets its turn between
+patterns (one scan of 32 MB takes about 10 ms). One org holds at most two of those threads
+at once, so one busy org leaves half the threads to the others; a write that waits past 5
+seconds for one is refused with 503 `OVERLOADED` (fail closed). A value past the work
+budget is refused as `BLACKLISTED` with an empty `pattern_id`, and so is every later entry
+of its key in the same bulk write: a smaller request checks it, and a value past the
+budget alone must be shortened. The Python SDK sends the coalesced sets refused this way
+again, in order, in batches the size of what the last request checked. Matching writes get
+422 `BLACKLISTED` on `memory.set` and the other write paths before anything is stored;
+`sweep=true` tombstones existing matches. Replicas invalidate their pattern caches from a
+one-row version watermark in `loom.blacklist_version`, checked every
 `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS` (2 s).
 
 ## Prompt safety
@@ -727,8 +767,18 @@ the paths.
 ## Sensitivity
 
 `server/memory/domain/sensitivity.py` classifies a value with deterministic regexes. It is
-a lower bound: it recognises the label forms and shapes listed here, not every way a person
-can phrase a secret. The catch-all for extraction is an operator's extraction policy.
+a lower bound: it recognises the label forms and shapes listed here, not every way a
+person can phrase a secret. The catch-all for extraction is an operator's extraction
+policy. Once a request's values together pass 16 KiB, a write reads each in windows that
+overlap by at least 1,024 characters, with a turn for the event loop between them
+(`server/memory/app/sensitivity_level.py`), since the detector holds the GIL a worker
+thread would share. Every shape is found from its first 1,024 characters (a JWT in a
+window from its header and the start of its payload, since the edge may cut its signature
+off; a whole value needs all three parts) but three, which a window's edge can split: a
+stated PIN with about 1,000 characters of whitespace or qualifier words before its value,
+a `password=` assignment with about 1,000 characters of whitespace around its `=`, and a
+JWT whose header passes 1,000 characters. A cut with no whitespace near it can also make a
+shape at the edge read higher than the whole value.
 
 | Level    | Matches                                                                    |
 | -------- | -------------------------------------------------------------------------- |
@@ -1178,11 +1228,31 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   signed body.
 - **No request forgery inward.** Each delivery resolves the host, refuses loopback,
   private, link-local and multicast addresses (`server/core/hosts.py`), connects to the
-  address it vetted and follows no redirect. Memory webhooks also refuse plain `http`
+  address it vetted and follows no redirect. A host a caller names is looked up on the
+  event loop (A then AAAA, from `/etc/resolv.conf`, read again when it changes; not
+  `/etc/hosts` or nsswitch, and no search domains), so a deadline ends the lookup and
+  nothing of it outlives the call; a host an operator allowlisted is looked up by the
+  system resolver. Memory webhooks also refuse plain `http`
   and refuse an inward URL at registration; `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` and
   `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` are the operator's exceptions. A refusal does not
   name the address, a URL with a user name or password is refused, and logs name the
   host only.
+- **A namespace's classifier is held to the same rule.** Off the inference gateway, a
+  `classify_endpoint` must be https (`namespace.register` refuses another with 422), and
+  `memory.set(classify=true)` posts only to the public address its host was vetted to,
+  with no redirect and no gateway identity headers. On every path, `namespace.register`
+  also refuses a URL with a user name or password, a control or whitespace character, a
+  host httpx and `urlsplit` read apart, or a host that is not a bare name or address
+  literal (a zone id, a percent-encoded name). A URL at a listed gateway host is held to
+  the gateway's rule, https at the default port, also while the gateway is not required:
+  another port of that host is inward reach. A host `LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS`
+  names is the operator's exception, reachable on any port and path, so it lists only a
+  host that serves nothing else. A failed call is reported in `degraded` by its kind
+  alone, so the write's answer cannot map which addresses and ports answer. Its name
+  is looked up on the event loop, as a delivery's is, so the call's deadline ends the
+  lookup: however many namespaces aim at names that never answer, nothing of their
+  lookups outlives their calls, and no namespace holds a resource another one's
+  classifier needs.
 - **No slow receiver holds a worker.** One deadline per POST covers the name lookup, the
   connection and the status line (`LOOM_MEMORY_WEBHOOK_ACK_TIMEOUT_SECONDS` for memory
   webhooks, a fixed 10 s for task inbox notices), and the answer's body is never read.

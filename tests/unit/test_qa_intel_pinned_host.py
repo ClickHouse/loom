@@ -13,6 +13,7 @@ import pytest
 import server.tracker.domain.sources as qs
 import server.tracker.store.source.qa_intel as qi
 from server.settings import settings
+from tests.unit._hosts import resolves
 from tests.unit._tracker_config import tracker_credentials_json, tracker_sources_json
 
 HOST = "qa.example"
@@ -53,6 +54,7 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return [(socket.AF_INET, 1, 6, "", (ip, 0)) for ip in state["answer"]]
 
     monkeypatch.setattr(socket, "getaddrinfo", _gai)
+    resolves(monkeypatch, lambda host: [info[4][0] for info in _gai(host)])
 
     async def _client(**kw: Any) -> Any:
         state["built"].append(kw)

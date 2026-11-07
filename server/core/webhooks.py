@@ -30,12 +30,13 @@ import httpx
 
 from server.core.hosts import vet_host
 from server.core.webhook_secrets import webhook_secret_ref_ok
+from server.settings.catalog import ascii_host
 
 log = logging.getLogger(__name__)
 
 
 @functools.cache
-def _tls() -> ssl.SSLContext:
+def tls() -> ssl.SSLContext:
     """One TLS context for every delivery, built on the first: building one reads
     the CA bundle. Each delivery still has its own client and connections."""
     return httpx.create_ssl_context()
@@ -99,8 +100,10 @@ async def pinned_target(
 
     The scheme must be one of `schemes`. The host must resolve to public
     addresses only (`vet_host`), and the request goes to the address vetted
-    here. A host named in `private_hosts` (an operator's allowlist, lower case)
-    may resolve to a private or loopback address and is reached by its name."""
+    here. A host named in `private_hosts` (an operator's allowlist, spelled as
+    `ascii_host` spells it) may resolve to a private or loopback address and is
+    reached by its name. The name is resolved, matched and sent (Host, SNI) in its
+    ASCII form: a Unicode one as its UTS 46 IDNA form."""
     try:
         parts = urlsplit(url)
         host = parts.hostname or ""
@@ -112,9 +115,13 @@ async def pinned_target(
         port = parts.port
     except ValueError:
         return "the URL has an invalid port", "", "", ""
-    refusal, address = await vet_host(
-        host, allow_private=host.lower() in private_hosts, name_address=False
-    )
+    try:  # the Host header and the SNI are ASCII
+        host = ascii_host(host)
+    except ValueError:  # IDNA cannot encode it
+        host = ""
+    if not host:
+        return "the URL is not valid", "", "", ""
+    refusal, address = await vet_host(host, allow_private=host in private_hosts, name_address=False)
     if refusal:
         return refusal, "", "", ""
     suffix = f":{port}" if port else ""
@@ -153,11 +160,12 @@ async def post(
 
     One deadline, `ack_timeout_seconds` (each caller's own), covers the whole
     delivery: the DNS lookup, the connection and the response's status line.
-    The body of the answer is never read. A lookup cut by the deadline leaves
-    its resolver thread to finish on its own (Python cannot stop it); the
-    delivery does not wait for it. Each delivery has its own client: a pooled
-    connection is keyed by the pinned address, so a second registration on the
-    same address would reuse a TLS session verified for another name."""
+    The body of the answer is never read. A lookup cut by the deadline ends with
+    it (`vet_host` looks a host up on the event loop); only an allowlisted host's
+    lookup runs in a thread, which finishes on its own. Each delivery has its own
+    client: a pooled connection is keyed by the pinned address, so a second
+    registration on the same address would reuse a TLS session verified for
+    another name."""
     try:
         host = urlsplit(url).hostname or ""
     except ValueError:
@@ -174,7 +182,7 @@ async def post(
             extensions = {"sni_hostname": server_name} if server_name else {}
             async with (
                 httpx.AsyncClient(
-                    transport=transport, follow_redirects=False, verify=_tls()
+                    transport=transport, follow_redirects=False, verify=tls()
                 ) as client,
                 client.stream(
                     "POST",

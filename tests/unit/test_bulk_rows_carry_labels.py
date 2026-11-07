@@ -440,3 +440,22 @@ async def test_a_vectorless_winner_retires_the_vector_an_earlier_entry_embedded(
     assert winner["value"] == f'"{b}"' and winner["sensitivity"] != "high"
     assert [e["memory_key"] for e in plan.embedding_rows] == ["k"]
     assert "k" in _vectors_to_retire(state)
+
+
+async def test_a_bulk_writes_entries_count_together_for_detection_off_the_loop(
+    monkeypatch,
+) -> None:
+    # Each entry is labelled knowing what the entries before it read, so many short values
+    # in one request move detection off the event loop as one long value does.
+    from server.memory.app import bulk_rows
+
+    seen: list[int] = []
+
+    async def level(requested: Any, text: str, *, read_before: int = 0) -> str:
+        seen.append(read_before)
+        return ""
+
+    monkeypatch.setattr(bulk_rows, "resolve_level", level)
+    entries = [{"memory_key": k, "value": "x" * 10} for k in "abc"]
+    await _build(monkeypatch, None, *entries)
+    assert seen == [0, 10, 20]

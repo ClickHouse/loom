@@ -783,6 +783,67 @@ set.
   `PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> --base-url <server> --arms 0,1,2,3,4,6 --reader-model gpt-6-luna --judge-model gpt-6-luna --code-index <url> --code-index-org <org> --code-index-namespace <code namespace> --extract-model gpt-6-luna --k 3 --judge-repeats 1 --max-usd 3`,
   then `... score <taskset> --out <dir> --summary bench/results/design_rationale.summary.json`.
 
+#### Noise sections next to the design documents
+
+The same task set with ten distractor documents added: for each of the five features, the
+notes of a team sync and a status report that name its components and discuss options the
+design rejected, written for the benchmark. Three of them record a decision no design
+document states, and three D tasks ask about those decisions. Arms 2 and 6 read the
+same namespaces, the same documents and the same extracted rows twice, with
+`LOOM_KNOWLEDGE_NOISE_FILTER` on and off; A, B and D tasks, answered 3 times per arm,
+each answer judged once.
+
+| Arm | Filter | A precision | A recall | A misleading | B avoids | D precision | D recall | D misleading | Notes decisions: D recall |
+| --- | ------ | ----------: | -------: | -----------: | -------: | ----------: | -------: | -----------: | ------------------------: |
+| 2   | off    |        75.7 |     81.1 |         41.7 |     35.6 |        66.8 |     51.6 |         74.4 |                      66.7 |
+| 2   | on     |        76.3 |     77.3 |         38.3 |     26.7 |        80.1 |     50.0 |         57.7 |                      66.7 |
+| 6   | off    |        89.8 |     86.8 |         26.7 |     57.1 |        80.9 |     59.0 |         52.6 |                      66.7 |
+| 6   | on     |        85.2 |     92.6 |         45.0 |     66.7 |        84.9 |     66.8 |         16.7 |                      66.7 |
+
+D columns are the 13 design-document tasks; the last column is the three tasks about
+decisions recorded in notes, with no misleading answer in any row. Filter on minus off,
+paired per task, bootstrap over documents, 95% interval:
+
+| Arm | Kind | Metric     | Delta | 95% interval   |
+| --- | ---- | ---------- | ----: | -------------- |
+| 2   | A    | precision  |  +0.7 | -9.5 .. +8.9   |
+| 2   | A    | recall     |  -3.8 | -8.1 .. +1.7   |
+| 2   | A    | misleading |  -3.3 | -16.7 .. +14.3 |
+| 2   | B    | avoids     |  -8.9 | -41.7 .. +19.0 |
+| 2   | D    | precision  | +13.3 | +5.3 .. +26.7  |
+| 2   | D    | recall     |  -1.6 | -7.2 .. +4.5   |
+| 2   | D    | misleading | -16.7 | -50.0 .. -0.8  |
+| 6   | A    | precision  |  -4.6 | -8.9 .. +4.0   |
+| 6   | A    | recall     |  +5.8 | -0.9 .. +21.8  |
+| 6   | A    | misleading | +18.3 | -11.9 .. +45.2 |
+| 6   | B    | avoids     |  +9.5 | +0.0 .. +23.1  |
+| 6   | D    | precision  |  +4.0 | -4.4 .. +17.5  |
+| 6   | D    | recall     |  +7.8 | -0.2 .. +18.1  |
+| 6   | D    | misleading | -35.9 | -70.8 .. -16.7 |
+
+With the filter on, 15 of the 65 knowledge hits an agent read came from the distractor
+documents (their decision sections, or noise no close design hit outranked), against 47
+of 90 with it off; every design-document hit served with the filter off was served with
+it on. A misleading rose for arm 6, inside its interval: a lean against the filter on
+why-questions that this task set cannot resolve.
+
+Reproduce: the run above with `--arms 2,6 --judge-orders 1 --keep-namespaces` against a
+server started with `LOOM_KNOWLEDGE_NOISE_FILTER=true`; then a copy of that run's
+`state.json` in a new `--out`, the server restarted with `LOOM_KNOWLEDGE_NOISE_FILTER=false`,
+and the same command on the new `--out`, which answers over the same namespaces without a
+second setup.
+
+The labeller's own check (`tests/unit/test_section_value.py`) is a synthetic set of 141
+labelled sections from design documents, meeting notes, status reports and templates,
+written by a writer who did not see the rules: on the half the rules were written from,
+noise precision 1.00 and recall 0.19 with all 10 decisions in notes kept; on the held-out
+half, which was checked after each rule fix and so no longer measures the rules blind,
+precision 1.00 and recall 0.17 with all 10 kept. The rules leave a section as
+content when unsure, since a missed noise section only ranks higher than it should while
+a design section labelled noise leaves a context pack: outside documents titled as
+dated meeting notes or status reports, a section is noise only as an open-questions
+list, so the set's templates, chatter, logistics and bookkeeping elsewhere are missed.
+
 ### Document parsing
 
 `bench/docparse/` scores the reference extractor on a committed corpus of the documents Loom

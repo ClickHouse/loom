@@ -360,7 +360,7 @@ Insert many memory entries in one batched CH insert.
 | `written` | `list[_BulkSetResult]` | One result per entry, in order: key, version (0 when not inserted) and verdict. |
 | `skipped_pinned` | `list[str]` | Keys whose live row is pinned: skipped (result version=0) rather than overwritten, since overwriting would also unpin (entries default pinned=False). |
 | `skipped_locked` | `list[str]` | Keys whose live row is locked read_only: skipped (result version=0), where memory.set would answer 423 LOCKED. |
-| `skipped_blacklisted` | `list[str]` | Keys whose entry the blacklist refused: not written (result version=0), where memory.set would answer 422 BLACKLISTED. |
+| `skipped_blacklisted` | `list[str]` | Keys whose entry the blacklist refused or could not check in the request's budget: not written (result version=0), where memory.set would answer 422 BLACKLISTED. |
 | `merged` | `list[str]` | Conflict verdicts, the same four memory.set produces: canonical restatement of an existing row → not inserted, existing row reinforced; close to a pinned peer → not inserted; same fact in other words → inserted as status=duplicate… |
 | `value_updates_linked` | `int` | Older rows marked superseded by a value update in this batch. |
 | `rejected_pinned` | `list[str]` | Keys not inserted because they are too close to a pinned row. |
@@ -842,7 +842,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `memory_key` | `str` | required | The key to read: tried under this identity, then the same user's row under any agent. |
 | `if_version` | `int \| None` | `None` | Version precondition: the version the caller already holds. |
-| `include_recall_breakdown` | `bool` | `False` | Opt-in per-agent recall breakdown; off by default to keep get cheap. |
+| `include_recall_breakdown` | `bool` | `False` | Opt-in: the per-agent read breakdown and served_count / last_served_at; off by default to keep get cheap. |
 | `as_of` | `datetime \| None` | `None` | As-of replay filter: restrict to rows with coalesce(valid_at, created_at) <= as_of. |
 | `fields` | `list[str]` | *(computed)* | A whitelist of output field names (`value`, `tags`, `status`, `memory_type`, `recall_count`, `created_at`, …). |
 | `follow` | `bool` | `False` | Serve the live canonical a `status='duplicate'` row points to (its `duplicate_of`, same org and namespace, up to three hops) instead of the exact row; the response then carries `resolved_from` = the key asked for and `canonical_key` = the… |
@@ -885,8 +885,10 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `entities` | `list[str]` | Entity names stored on the row (lowercased), internal sentinels left out. |
 | `content_sha256` | `str` | SHA-256 of the live value (canonical JSON); pass back as if_match_sha256 for a no-clobber update against the value THIS read saw. |
 | `char_limit` | `int \| None` | Server-enforced char cap on `value` (NULL = no cap). |
-| `recall_count` | `int` | Recall telemetry from loom.memory_usage_*, bumped by search's auto_touch path. |
-| `last_recalled_at` | `datetime \| None` | When a search last served the row; None = never recalled. |
+| `recall_count` | `int` | Recall credits: reads by a credited reader (memory.search with auto_touch, from a client that posts outcomes), folded from loom.memory_usage_* into the ranking signal. |
+| `last_recalled_at` | `datetime \| None` | When a credited read last returned the row; None = no credit yet. |
+| `served_count` | `int \| None` | Agent reads that recalled the key, credited or not, never below recall_count; only with include_recall_breakdown=True, else None. |
+| `last_served_at` | `datetime \| None` | When an agent read last returned the key; None = none recorded, or not asked for. |
 | `verified_by` | `str` | Attestation (memory.verify). |
 | `verified_at` | `datetime \| None` | When the attestation in `verified_by` was made; None = never attested, or revoked. |
 | `verification` | `str` | human \| process: attested and unchanged since; stale: the content changed after the attestation; none. |
@@ -894,7 +896,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `lock_reason` | `str` | Why the lock was set, as the locker gave it; '' when unlocked. |
 | `lock_until` | `datetime \| None` | When the lock lapses; None = open-ended, or no lock. |
 | `locked_by` | `str` | Who set the lock (`human:<subject>` / `process:<subject>` under auth); '' when unlocked. |
-| `recall_by_agent` | `list[_RecallByAgent]` | Per-agent recall breakdown (last 30 days); populated only when include_recall_breakdown=True. |
+| `recall_by_agent` | `list[_RecallByAgent]` | Agent reads of the key per named agent (last 30 days, credited or not); populated only when include_recall_breakdown=True. |
 | `sensitivity` | `str` | '' \| low \| medium \| high. |
 
 ## `memory.get_by_id`
@@ -956,21 +958,21 @@ Knowledge-base health for (org, namespace): how much of what is stored is ever r
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
-| `silent_after_days` | `int` | `30` | A live row older than this and never recalled is "silent". |
+| `silent_after_days` | `int` | `30` | A live row with no recall credit and no agent read in this many days is silent; `silent_older` also needs the row to be older than this. |
 | `top_k` | `int` | `10` | How many entries `top_recalled` lists. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `live` | `int` | Active, untombstoned rows in the namespace, across every agent and user. |
-| `recalled_ever` | `int` | Live rows recalled at least once. |
+| `recalled_ever` | `int` | Live rows with their own recall credit, or whose key an agent read recalled in the last `silent_after_days` days. |
 | `used_ever` | `int` | Live rows with at least one reported use. |
 | `harmed_ever` | `int` | live rows with at least one harm event |
-| `silent` | `int` | live and never recalled |
+| `silent` | `int` | live, no recall credit, and no agent read in the last silent_after_days |
 | `silent_older` | `int` | silent AND older than silent_after_days |
 | `silent_share` | `float` | `silent` / `live`, 0..1; 0 when the namespace holds no live row. |
 | `silent_after_days` | `int` | Echo of the request's `silent_after_days`. |
-| `by_type` | `list[MemoryHealthTypeRow]` | Per memory type: live rows and how many were ever recalled, largest first. |
-| `top_recalled` | `list[MemoryHealthTopRow]` | The most recalled live rows (by recall count, then use count), at most `top_k`. |
+| `by_type` | `list[MemoryHealthTypeRow]` | Per memory type: live rows and how many are recalled (as `recalled_ever` counts them), largest first. |
+| `top_recalled` | `list[MemoryHealthTopRow]` | The live rows with the most recall credits (then use count), at most `top_k`. |
 | `staleness` | `MemoryHealthStaleness` | Age buckets, validity-end, expiry and pin counts, and days since reinforced. |
 | `footprint` | `MemoryHealthFootprint` | Summed value length of the live rows and its chars/4 token estimate. |
 
@@ -1066,6 +1068,7 @@ Write exported evidence chunks and digests into a namespace, re-embedded here an
 | `embedding_dim` | `int` | Vector length of the written embeddings; 0 when nothing was embedded (every item read as high, or none was written). |
 | `edited` | `list[str]` | Chunks whose body did not hash to the content_sha256 they arrived with. |
 | `skipped` | `int` | Items not written: empty, unembeddable, or refused by a blacklist pattern (Refuse). |
+| `unchecked` | `int` | Of the skipped, those the blacklist could not check: the request's values are too long for its regexes; sent in a smaller request they are checked, unless one is too long alone, which must be shortened. |
 
 ## `memory.inspect`
 
@@ -2146,7 +2149,7 @@ Run LLM extraction on `messages` and write the extracted facts.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `written` | `list[_BulkSetResult]` | Key and version of each extracted fact written; empty on a deferred call. |
-| `refused` | `list[_RefusedFact]` | The extracted facts the write refused (a blacklisted, pinned or locked key, or a pinned row close by), with the verdict; not in `written` or the counts. |
+| `refused` | `list[_RefusedFact]` | The extracted facts the write refused (a blacklisted or unchecked value, a pinned or locked key, or a pinned row close by), with the verdict; not in `written` or the counts. |
 | `tokens_in` | `int` | Prompt tokens of the extraction LLM calls. |
 | `tokens_out` | `int` | Completion tokens of the extraction LLM calls. |
 | `llm_provider` | `str` | The LLM provider that ran the extraction; '' when deferred. |

@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import dns.asyncresolver
 import pytest
 
 # The unit suite runs as CI does: no dotenv, no LOOM_* or provider keys from
@@ -203,7 +204,7 @@ _KNOWN_PROCESS_STATE_LEAKS: frozenset[str] = frozenset()
 _PYTEST_ENV = frozenset({"PYTEST_CURRENT_TEST"})
 # The session loop's default executor threads, and the document bucket's own pool
 # (`server.core.object_store`), outlive every test by design.
-_SHARED_THREAD_PREFIXES = ("asyncio_", "loom-object-store")
+_SHARED_THREAD_PREFIXES = ("asyncio_", "loom-object-store", "loom-blacklist")
 _THREAD_JOIN_SECONDS = 2.0
 
 
@@ -252,15 +253,18 @@ def _leaked_threads(before: set[threading.Thread]) -> list[str]:
     return [t.name for t in leaked if t.is_alive()]
 
 
-# Unit tests never reach the network. A connect to a non-loopback address, or a
-# name lookup of anything but a local name, is refused and recorded, and the
-# test fails at teardown naming the host: the code under test may swallow the
-# refusal (as "tracker unavailable", say), so the raise alone proves nothing.
+# Unit tests never reach the network. A connect or a datagram to a non-loopback address,
+# a getaddrinfo lookup of anything but a local name, and any dnspython lookup at the
+# system's nameservers (which may be a loopback stub that forwards) are refused and
+# recorded, and the test fails at teardown naming the host: the code under test may
+# swallow the refusal (as "tracker unavailable", say), so the raise alone proves nothing.
 _LOCAL_NAMES = frozenset({"", "localhost", "localhost.localdomain", "testserver", "test"})
 _network_attempts: list[str] = []
 _real_connect = socket.socket.connect
 _real_connect_ex = socket.socket.connect_ex
+_real_sendto = socket.socket.sendto
 _real_getaddrinfo = socket.getaddrinfo
+_real_dns_resolve = dns.asyncresolver.Resolver.resolve
 
 
 def _is_local(host: object) -> bool:
@@ -292,6 +296,11 @@ def _guarded_connect_ex(self: socket.socket, address: Any) -> int:
     return _real_connect_ex(self, address)
 
 
+def _guarded_sendto(self: socket.socket, data: Any, *args: Any) -> int:
+    _refuse_remote(self, args[-1])  # (data, address) or (data, flags, address)
+    return _real_sendto(self, data, *args)
+
+
 def _guarded_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
     name = host.decode() if isinstance(host, bytes) else host
     if not _is_local(name):
@@ -300,9 +309,23 @@ def _guarded_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
     return _real_getaddrinfo(host, *args, **kwargs)
 
 
+async def _guarded_dns_resolve(
+    self: dns.asyncresolver.Resolver, qname: Any, *a: Any, **kw: Any
+) -> Any:
+    # Any name, `localhost` too: dnspython reads no /etc/hosts and would ask the system's
+    # nameserver. A test's own nameserver is on another port.
+    if self.port == 53:
+        name = str(qname).rstrip(".")
+        _network_attempts.append(f"resolve {name}")
+        raise OSError(f"unit tests may not resolve {name}")
+    return await _real_dns_resolve(self, qname, *a, **kw)
+
+
 socket.socket.connect = _guarded_connect  # type: ignore[method-assign]
 socket.socket.connect_ex = _guarded_connect_ex  # type: ignore[method-assign]
+socket.socket.sendto = _guarded_sendto  # type: ignore[method-assign,assignment]
 socket.getaddrinfo = _guarded_getaddrinfo
+dns.asyncresolver.Resolver.resolve = _guarded_dns_resolve  # type: ignore[method-assign]
 
 
 @pytest.fixture(autouse=True)

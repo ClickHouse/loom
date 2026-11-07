@@ -28,6 +28,7 @@ from server.memory.domain.context_layout import (
     _DEFAULT_SECTION_ORDER,
     _DEFAULT_SECTION_TOKENS,
     RECALLED_SECTIONS,
+    STACK_ROW_LAYERS,
     _ordered_section_names,
     _own_bookmark,
     _procedure_line,
@@ -40,11 +41,12 @@ from server.memory.domain.context_layout import (
     escape_data,
     label_part,
     one_item,
+    served_rows,
 )
 from server.memory.domain.decision_statement import states_reason
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
 from server.memory.domain.memory_types import excluded_from_unfiltered_search
-from server.memory.domain.search_types import hit_row_key, names_row
+from server.memory.domain.search_types import hit_row, hit_row_key, names_row
 from server.memory.store.shared import SHARED_AGENT
 
 log = logging.getLogger(__name__)
@@ -184,6 +186,10 @@ class _PackState:
     truncated: bool = False
     shown_procedures: list[str] = field(default_factory=list)
     withheld_procedures: list[str] = field(default_factory=list)
+    # Per section, the stored row (namespace, memory_key) behind each item line, in line
+    # order; None for an item that is no stored row. The rows whose line the rendered pack
+    # still holds are what the op records as served (`served_rows`).
+    item_rows: dict[str, list[tuple[str, str] | None]] = field(default_factory=dict)
 
     def put(
         self,
@@ -193,11 +199,13 @@ class _PackState:
         citations: list[str] | None = None,
         source_count: int = 0,
         extra_meta: dict[str, Any] | None = None,
+        rows: list[tuple[str, str] | None] | None = None,
     ) -> None:
         input = self.input
         default_section_tokens = self.default_section_tokens
         if not body:
             return
+        self.item_rows[name] = list(rows or [])
         if name in RECALLED_SECTIONS:
             body = escape_data(body)
         trimmed, was_truncated = _trim(
@@ -239,10 +247,6 @@ async def _pack_working_memory(st: _PackState) -> None:
         )
 
 
-# The stack layers that are stored memories with a writer; profile and knowledge are not.
-_STACK_MEMORY_LAYERS = frozenset({"pinned", "recent_recall", "procedure"})
-
-
 async def _pack_memory_stack(st: _PackState) -> None:
     input = st.input
     default_section_tokens = st.default_section_tokens
@@ -274,6 +278,7 @@ async def _pack_memory_stack(st: _PackState) -> None:
         return
     lines: list[str] = []
     citations: list[str] = []
+    rows: list[tuple[str, str] | None] = []
     layers: list[str] = []
     for entry in out.entries:
         layer = entry.section
@@ -281,13 +286,16 @@ async def _pack_memory_stack(st: _PackState) -> None:
             layers.append(layer)
         cite = f"stack:{layer}/{entry.memory_key or entry.memory_type}"
         citations.append(cite)
-        author = author_label([entry.actor]) if layer in _STACK_MEMORY_LAYERS else ""
+        stored = layer in STACK_ROW_LAYERS and entry.memory_key
+        rows.append((entry.namespace or input.namespace, entry.memory_key) if stored else None)
+        author = author_label([entry.actor]) if layer in STACK_ROW_LAYERS else ""
         label = label_part(f"{layer}/{entry.memory_key}")
         lines.append(one_item(f"- [{label}{author}] {entry.value}"))
     st.put(
         "memory_stack",
         "\n".join(lines),
         citations=citations,
+        rows=rows,
         source_count=len(out.entries),
         extra_meta={
             "stack_layers": layers,
@@ -416,10 +424,12 @@ async def _pack_startup_recall(st: _PackState) -> None:
             default_section_tokens.get("memories", 300),
         ),
     )
+    row_of = {f"memory:{input.namespace}/{r.memory_key}": r.memory_key for r in rows}
     st.put(
         "memories",
         packed.rendered,
         citations=packed.citations,
+        rows=[(input.namespace, row_of[c]) for c in packed.citations],
         source_count=packed.source_count,
         extra_meta={
             "recall_mode": "startup_pins_recency",
@@ -430,12 +440,6 @@ async def _pack_startup_recall(st: _PackState) -> None:
     )
 
 
-def _hit_ns_key(input: ContextPackInput, h: Any) -> tuple[str, str]:
-    """The (namespace, memory_key) of the stored row a hit came from: a chunk's parent."""
-    key = getattr(h, "parent_memory_key", "") or h.memory_key
-    return (getattr(h, "namespace", "") or input.namespace, str(key))
-
-
 _KeyWriters = dict[tuple[str, str], list[dict[str, str]]]
 
 
@@ -444,7 +448,7 @@ def _hit_author(actors: _KeyWriters, input: ContextPackInput, h: Any) -> str:
     identity the hit carries (user, session, agent, where the leg read them); when the rows
     left were written by more than one actor the label says `unknown`, never a writer whose
     row this may not be."""
-    rows = actors.get(_hit_ns_key(input, h)) or []
+    rows = actors.get(hit_row(h, input.namespace)) or []
     is_fact_row = names_row(h) and getattr(h, "source", "fact") != "chunk"
     row = hit_row_key(h, input.namespace) if is_fact_row else None
     # A fact hit names its memory row. A chunk's identity is its chunk row's, and a shared
@@ -474,7 +478,7 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
     try:
         return await memory_repo.actors_by_key(
             input.org,
-            [_hit_ns_key(input, h) for h in hits],
+            [hit_row(h, input.namespace) for h in hits],
             scope=request_scope(),
         )
     except Exception as e:  # noqa: BLE001 — authorship labels are best-effort; lines say by=unknown
@@ -483,7 +487,7 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
 
 
 async def _pack_decisions_from_hits(
-    st: _PackState, decision_hits: list[Any], actors: _KeyWriters
+    st: _PackState, decision_hits: list[Any], actors: _KeyWriters, *, abstained: bool
 ) -> None:
     """Decision-typed hits leave the memories block and render as their
     own tagged section with the structured record (scenario, outcome,
@@ -537,6 +541,9 @@ async def _pack_decisions_from_hits(
         "decisions",
         "\n".join(lines),
         citations=citations,
+        # An abstaining search's rows are no answer: the answer marks them so, and a
+        # client drops them (the prompt-recall hook does), so none counts as served.
+        rows=None if abstained else [hit_row(h, input.namespace) for h in decision_hits],
         source_count=len(decision_hits),
     )
 
@@ -598,9 +605,10 @@ async def _pack_memories(st: _PackState) -> None:
         if decision_hits:
             dec_ids = {id(h) for h in decision_hits}
             hits = [h for h in hits if id(h) not in dec_ids]
-            await _pack_decisions_from_hits(st, decision_hits, actors)
+            await _pack_decisions_from_hits(st, decision_hits, actors, abstained=out.abstain)
     if hits:
         evidence: list[EvidenceItem] = []
+        row_of: dict[str, tuple[str, str]] = {}
         for h in hits:
             ns = h.namespace or input.namespace
             source = getattr(h, "source", "fact") or "fact"
@@ -608,6 +616,7 @@ async def _pack_memories(st: _PackState) -> None:
             cite = f"memory:{ns}/{h.memory_key}"
             if resource:
                 cite = f"{cite}#{resource}"
+            row_of[cite] = hit_row(h, input.namespace)  # a chunk's parent
             group = resource or f"{source}:{ns}"
             evidence.append(
                 EvidenceItem(
@@ -643,6 +652,8 @@ async def _pack_memories(st: _PackState) -> None:
             "memories",
             packed.rendered,
             citations=packed.citations,
+            # see _pack_decisions_from_hits: an abstaining search shows no answer
+            rows=None if out.abstain else [row_of[c] for c in packed.citations],
             source_count=packed.source_count,
             extra_meta={
                 "evidence_groups": packed.groups,
@@ -713,6 +724,7 @@ async def _pack_procedures(st: _PackState) -> None:
             "procedures",
             "\n".join(lines),
             citations=citations,
+            rows=[(str(m.namespace or input.namespace), str(m.memory_key)) for m in matches],
             source_count=len(matches),
             extra_meta=explore_meta or None,
         )
@@ -726,7 +738,7 @@ async def _pack_knowledge(st: _PackState) -> None:
     if not input.include_knowledge or not input.query:
         return
     from server.knowledge.api.models_knowledge import KnowledgeSearchInput
-    from server.knowledge.app.knowledge_search import handle_knowledge_search
+    from server.knowledge.app.knowledge_search import handle_knowledge_search, not_noise
 
     agent = request_rule_agent(input.agent)
 
@@ -744,9 +756,16 @@ async def _pack_knowledge(st: _PackState) -> None:
         )
         return list(out.results)
 
-    # Another bot's promoted rule is not a rule about this agent.
+    # Another bot's promoted rule is not a rule about this agent, and a pack is handed to
+    # the agent unasked: a noise section stays out of it (knowledge.search still finds
+    # it), and a wider read fills the places either took.
     results = await served_hits(
-        await search(input.top_k), search, lambda h: h.tags, agent, input.top_k
+        await search(input.top_k),
+        search,
+        lambda h: h.tags,
+        agent,
+        input.top_k,
+        keep=not_noise(),
     )
     if results:
         evidence = [
@@ -949,7 +968,7 @@ async def handle_context_pack(input: ContextPackInput) -> ContextPackOutput:
         input, present, rendered_parts, rendered
     )
 
-    return ContextPackOutput(
+    out = ContextPackOutput(
         procedure_keys=list(dict.fromkeys(st.shown_procedures)),
         procedure_keys_withheld=list(dict.fromkeys(st.withheld_procedures)),
         rendered=rendered,
@@ -968,6 +987,8 @@ async def handle_context_pack(input: ContextPackInput) -> ContextPackOutput:
         stable_prefix_chars=prefix_len,
         stable_hash=stable_hash,
     )
+    out._served_rows = served_rows(rendered, [name for name, _ in present], st.item_rows)
+    return out
 
 
 async def _working_memory_layers(input: Any) -> tuple[list[Any], str]:

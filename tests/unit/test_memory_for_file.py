@@ -119,6 +119,10 @@ async def test_hits_carry_their_matched_files_and_render_within_budget(
     # The hit carries the stored value whole; only the rendered block is cut.
     assert out.hits[1].value == "x" * 900
     assert all(len(line) <= mff._LINE_CHARS + 80 for line in out.rendered.splitlines())
+    # What the op records as served is the rows `rendered` prints, not every hit
+    served = [k for _ns, k in out._served_rows]
+    assert served == ["never_allocate_here", "third"]
+    assert "- mergetree_data_history" not in out.rendered
 
 
 def test_render_block_folds_a_value_to_one_capped_line() -> None:

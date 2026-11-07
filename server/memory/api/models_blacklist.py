@@ -17,7 +17,7 @@ class BlacklistAddInput(BaseModel):
     # The text to refuse, matched case-sensitively against a stored value: as a
     # substring, or as a regex of at most 256 characters.
     pattern: str = Field(..., min_length=1, max_length=4096)
-    # `substring` (plain text) or `regex` (bounded at add; the sweep runs it as RE2).
+    # `substring` (plain text) or `regex` (RE2, on writes and in the sweep; bounded at add).
     pattern_type: PatternType = "substring"
     # Reach: `namespace` (this one), `org` (every namespace; needs org admin) or
     # `global` (every tenant; needs platform admin).

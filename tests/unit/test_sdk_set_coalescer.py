@@ -5,6 +5,7 @@ Server-free: a fake transport records what goes out."""
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import loom.memory
@@ -28,43 +29,94 @@ class _FakeTransport:
         self.row_extra: dict[str, dict[str, Any]] = {}
         # Values that get no result row at all, as N-1 answers a blacklisted entry.
         self.dropped_values: set[str] = set()
+        self.refused = {"blacklisted", "blacklist_unchecked"}
+        # Value bytes one bulk_set checks against the blacklist; past it, unchecked.
+        self.budget_bytes: int | None = None
+        # A bulk_set waits for this, when set, before it answers.
+        self.bulk_gate: asyncio.Event | None = None
+        # A memory.set of a value waits for its event before it answers.
+        self.set_gates: dict[str, asyncio.Event] = {}
+        # Which bulk_set calls (1 for the first) raise fail_bulk.
+        self.fail_bulk_calls: set[int] = set()
+        # (key, value) in the order the writes landed.
+        self.landed: list[tuple[str, str]] = []
+        self.closed = False
+        # What a memory.set alone of a value raises.
+        self.alone_errors: dict[str, BaseException] = {}
+
+    def _verdict(self, e: dict[str, Any], unchecked_keys: set[str], spent: list[int]) -> str:
+        # As the server answers: after an unchecked entry, every later one of its key, and
+        # past the budget, every entry it has no room for.
+        size = len(json.dumps(e["value"]))
+        if e["memory_key"] in unchecked_keys or (
+            self.budget_bytes is not None and spent[0] + size > self.budget_bytes
+        ):
+            verdict = "blacklist_unchecked"
+        else:
+            spent[0] += size
+            verdict = self.value_verdicts.get(
+                str(e["value"]), self.row_verdicts.get(e["memory_key"], "")
+            )
+        if verdict == "blacklist_unchecked":
+            unchecked_keys.add(e["memory_key"])
+        return verdict
 
     async def post(
         self, op_path: str, payload: dict[str, Any], idempotency_key=None, *, timeout_s=None
     ) -> dict[str, Any]:
         self.calls.append((op_path, payload))
         await asyncio.sleep(0)
+        if self.closed:
+            raise RuntimeError("transport closed")
         if op_path == "/v1/memory.set":
+            gate = self.set_gates.get(str(payload["value"]))
+            if gate is not None:
+                await gate.wait()
+            error = self.alone_errors.get(str(payload["value"]))
+            if error is not None:
+                raise error
+            self.landed.append((payload["memory_key"], str(payload["value"])))
             return {
                 "version": 7,
                 "memory_id": "id-" + payload["memory_key"],
                 "memory_key": payload["memory_key"],
             }
         if op_path == "/v1/memory.bulk_set":
-            if self.fail_bulk is not None:
+            if self.bulk_gate is not None:
+                await self.bulk_gate.wait()
+            calls = sum(1 for path, _ in self.calls if path == op_path)
+            if self.fail_bulk is not None and (
+                not self.fail_bulk_calls or calls in self.fail_bulk_calls
+            ):
                 raise self.fail_bulk
-            return {
-                "written": [
+            written = []
+            unchecked_keys: set[str] = set()
+            spent = [0]
+            for i, e in enumerate(payload["entries"]):
+                if str(e["value"]) in self.dropped_values:
+                    continue
+                verdict = self._verdict(e, unchecked_keys, spent)
+                unchanged = (
+                    e["memory_key"] in self.bulk_extra.get("merged", [])
+                    or str(e["value"]) in self.unchanged_values
+                    # a refused entry writes no row (version 0), as the server answers
+                    or verdict in self.refused
+                )
+                if not unchanged:
+                    self.landed.append((e["memory_key"], str(e["value"])))
+                written.append(
                     {
                         "memory_key": e["memory_key"],
-                        "version": 0
-                        if e["memory_key"] in self.bulk_extra.get("merged", [])
-                        or str(e["value"]) in self.unchanged_values
-                        else 100 + i,
-                        "conflict_verdict": self.value_verdicts.get(
-                            str(e["value"]), self.row_verdicts.get(e["memory_key"], "")
-                        ),
+                        "version": 0 if unchanged else 100 + i,
+                        "conflict_verdict": verdict,
                         **self.row_extra.get(e["memory_key"], {}),
                     }
-                    for i, e in enumerate(payload["entries"])
-                    if str(e["value"]) not in self.dropped_values
-                ],
-                **self.bulk_extra,
-            }
+                )
+            return {"written": written, **self.bulk_extra}
         return {}
 
     async def close(self) -> None:
-        pass
+        self.closed = True
 
     def paths(self) -> list[str]:
         return [p for p, _ in self.calls]
@@ -126,6 +178,83 @@ async def test_a_coalesced_set_of_a_blacklisted_value_raises_as_alone(agent: Age
     (refused,) = [r for r in results if isinstance(r, BaseException)]
     assert isinstance(refused, ValidationError) and refused.code == "BLACKLISTED"
     assert refused.status == 422
+
+
+async def test_a_coalesced_set_the_blacklist_could_not_check_is_sent_alone(agent: Agent) -> None:
+    # The batch's values together were past the blacklist's budget: that entry goes out
+    # as a memory.set of its own and its caller gets that answer, never a silent no-op.
+    t: Any = agent.transport
+    t.row_verdicts = {"d": "blacklist_unchecked"}
+    results = await asyncio.gather(*[agent.memory.set(k, {"v": k}) for k in "abcde"])
+    assert t.paths()[-1] == "/v1/memory.set" and t.calls[-1][1]["memory_key"] == "d"
+    alone = results["abcde".index("d")]
+    assert alone["version"] == 7 and "coalesced" not in alone
+
+
+async def _sets_of_one_key(agent: Agent, values: list[str]) -> list[Any]:
+    """Two point writes, then `values` as sets of key `k` in one batch."""
+    sets = [agent.memory.set("a", "a"), agent.memory.set("b", "b")]
+    sets += [agent.memory.set("k", v) for v in values]
+    return list(await asyncio.gather(*sets, return_exceptions=True))
+
+
+def _alone_values(t: Any) -> list[str]:
+    return [
+        p["value"] for path, p in t.calls if path == "/v1/memory.set" and p["memory_key"] == "k"
+    ]
+
+
+async def test_an_unchecked_set_and_the_later_sets_of_its_key_go_out_again_in_order(
+    agent: Agent,
+) -> None:
+    # The server answers the later set (a merge, say) unchecked too, so both go alone,
+    # the older first, and the key ends at the newer value.
+    t: Any = agent.transport
+    t.value_verdicts = {"old": "blacklist_unchecked", "new": "merge"}
+    *_, old, new = await _sets_of_one_key(agent, ["old", "new"])
+    assert t.paths().count("/v1/memory.bulk_set") == 1
+    assert _alone_values(t) == ["old", "new"]
+    assert old["version"] == 7 and new["version"] == 7
+
+
+async def test_an_unchecked_set_is_written_when_the_later_one_of_its_key_is_refused_alone(
+    agent: Agent,
+) -> None:
+    from loom.errors import ValidationError
+
+    t: Any = agent.transport
+    t.value_verdicts = {"old": "blacklist_unchecked"}
+    refusal = ValidationError("value is too long to check against the blacklist regexes")
+    t.alone_errors = {"new": refusal}
+    *_, old, new = await _sets_of_one_key(agent, ["old", "new"])
+    assert _alone_values(t) == ["old", "new"]
+    assert old["version"] == 7 and new is refusal
+
+
+async def test_unchecked_sets_go_out_again_in_batches_the_size_the_budget_checked(
+    agent: Agent,
+) -> None:
+    # 200 sets of 2 KB where a request checks about 80 KB: each further batch is the
+    # size the last one checked, so a handful of requests answer all, in order.
+    t: Any = agent.transport
+    t.budget_bytes = 80_000
+    values = [f"{i:04d}" + "v" * 2_000 for i in range(200)]
+    results = await asyncio.gather(*[agent.memory.set(f"k{i}", v) for i, v in enumerate(values)])
+    assert t.paths().count("/v1/memory.bulk_set") <= 6
+    assert t.paths().count("/v1/memory.set") == 2  # the first two of the window
+    sent = [e["value"] for path, p in t.calls if path.endswith("bulk_set") for e in p["entries"]]
+    first_sent = list(dict.fromkeys(sent))
+    assert first_sent == values[2:]  # in order
+    assert all(r["version"] for r in results)
+
+
+async def test_an_unchecked_set_too_long_even_first_in_a_request_goes_alone(agent: Agent) -> None:
+    t: Any = agent.transport
+    t.value_verdicts = {v: "blacklist_unchecked" for v in "cdef"}
+    await asyncio.gather(*[agent.memory.set(k, k) for k in "abcdefg"])
+    assert t.paths().count("/v1/memory.bulk_set") <= 2
+    sent_alone = [p["memory_key"] for path, p in t.calls if path == "/v1/memory.set"]
+    assert sent_alone == ["a", "b", "c", "d", "e", "f"]
 
 
 async def test_a_coalesced_set_against_a_pinned_row_raises_as_alone(agent: Agent) -> None:
@@ -369,3 +498,348 @@ def test_agent_and_datapack_default_to_coalescing() -> None:
     assert Agent(org="o", namespace="n", agent="a", api_key="x").coalesce_sets is True
     assert Datapack("o", "n", api_key="x").agent("a").coalesce_sets is True
     assert Datapack("o", "n", api_key="x", coalesce_sets=False).agent("a").coalesce_sets is False
+
+
+async def test_unchecked_sets_a_request_checked_none_of_go_one_at_a_time(agent: Agent) -> None:
+    # Every value is past the budget alone: the request checks nothing, so the rest go as
+    # sets alone, one request each, never the whole remainder again per round.
+    t: Any = agent.transport
+    t.budget_bytes = 100
+    await asyncio.gather(*[agent.memory.set(f"k{i}", "v" * 2_000) for i in range(12)])
+    assert t.paths().count("/v1/memory.bulk_set") == 1
+    assert t.paths().count("/v1/memory.set") == 12
+
+
+async def test_a_restatement_the_blacklist_never_read_leaves_no_room(agent: Agent) -> None:
+    # Only the bytes the blacklist read size the next batch: a long restatement the server
+    # skipped before its check does not, so each unchecked entry goes alone.
+    t: Any = agent.transport
+    restated = "r" * 40_000
+    t.unchanged_values = {restated}
+    unchecked = [f"u{i}" * 4 for i in range(3)]
+    t.value_verdicts = {v: "blacklist_unchecked" for v in unchecked}
+    sets = [agent.memory.set("a", "a"), agent.memory.set("b", "b"), agent.memory.set("w", "w")]
+    sets += [agent.memory.set("r", restated)]
+    sets += [agent.memory.set(f"k{i}", v) for i, v in enumerate(unchecked)]
+    await asyncio.gather(*sets)
+    assert t.paths().count("/v1/memory.bulk_set") == 1
+    assert _alone_values_of_keys(t, ["k0", "k1", "k2"]) == unchecked
+
+
+def _alone_values_of_keys(t: Any, keys: list[str]) -> list[str]:
+    return [
+        p["value"] for path, p in t.calls if path == "/v1/memory.set" and p["memory_key"] in keys
+    ]
+
+
+def _close_windows(agent: Agent) -> None:
+    """End every open window now, as its timer would."""
+    co: Any = agent.memory._coalescer
+    for key, window in list(co._windows.items()):
+        co._close(key, window)
+
+
+async def _settle() -> None:
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+
+def _landed(t: Any, key: str) -> list[str]:
+    return [v for k, v in t.landed if k == key]
+
+
+async def test_a_set_sent_again_lands_before_a_newer_windows_set_of_its_key(
+    agent: Agent,
+) -> None:
+    # The first window's unchecked set goes out again while the next window's first set
+    # of the same key is ready: that one waits for the flush, so the key ends at it.
+    t: Any = agent.transport
+    t.value_verdicts = {"old": "blacklist_unchecked"}
+    t.bulk_gate = asyncio.Event()
+    first = [asyncio.create_task(agent.memory.set(k, v)) for k, v in [("a", "a"), ("b", "b")]]
+    first += [asyncio.create_task(agent.memory.set(k, v)) for k, v in [("k", "old"), ("x", "x")]]
+    await _settle()
+    _close_windows(agent)
+    newer = asyncio.create_task(agent.memory.set("k", "new"))
+    await _settle()
+    t.bulk_gate.set()
+    await asyncio.gather(*first, newer)
+    assert _landed(t, "k") == ["old", "new"]
+
+
+async def test_a_windows_first_sets_land_before_its_own_flush(agent: Agent) -> None:
+    # While an earlier flush is out, a window's first sets and its flush all wait; once it
+    # ends, the window's first set of a key lands before its flushed set of that key.
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    earlier = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcd"]
+    await _settle()
+    _close_windows(agent)
+    t.set_gates = {"v1": asyncio.Event()}
+    sets = [asyncio.create_task(agent.memory.set("x", "x"))]
+    sets += [asyncio.create_task(agent.memory.set("k", v)) for v in ("v1", "v2", "v3")]
+    await _settle()
+    _close_windows(agent)
+    t.bulk_gate.set()
+    await _settle()  # the window's flush, if it did not wait, would land v2 and v3 now
+    t.set_gates["v1"].set()
+    await asyncio.gather(*earlier, *sets)
+    assert _landed(t, "k") == ["v1", "v2", "v3"]
+
+
+async def test_an_expired_window_is_flushed_before_the_next_windows_first_set(
+    agent: Agent,
+) -> None:
+    # A set after the window's time, before its timer runs, starts the next window: the
+    # old one is flushed first, so its set of the key lands first.
+    t: Any = agent.transport
+    sets = [
+        asyncio.create_task(agent.memory.set("a", "a")),
+        asyncio.create_task(agent.memory.set("b", "b")),
+    ]
+    sets.append(asyncio.create_task(agent.memory.set("k", "old")))
+    await _settle()
+    loop = asyncio.get_running_loop()
+    later = loop.time() + loom.memory.COALESCE_WINDOW_S + 1
+    real_time = loop.time
+    loop.time = lambda: later  # type: ignore[method-assign]
+    try:
+        await agent.memory.set("k", "new")
+    finally:
+        loop.time = real_time  # type: ignore[method-assign]
+    await asyncio.gather(*sets)
+    assert _landed(t, "k") == ["old", "new"]
+
+
+async def test_a_failed_request_fails_every_set_of_its_flush_still_waiting(agent: Agent) -> None:
+    # The second request of a flush fails: its sets and the ones not yet sent get that
+    # failure, and nothing more goes out.
+    t: Any = agent.transport
+    t.budget_bytes = 4_500
+    t.fail_bulk = RuntimeError("server down")
+    t.fail_bulk_calls = {2}
+    values = [f"{i}" + "v" * 2_000 for i in range(10)]
+    results = await asyncio.gather(
+        *[agent.memory.set(f"k{i}", v) for i, v in enumerate(values)], return_exceptions=True
+    )
+    assert t.paths().count("/v1/memory.bulk_set") == 2
+    assert t.paths().count("/v1/memory.set") == 2  # the window's first two
+    assert [r["version"] for r in results[2:4]] == [100, 101]
+    assert all(r is t.fail_bulk for r in results[4:])
+
+
+async def test_a_cancelled_flush_tells_its_callers_and_stays_cancelled(agent: Agent) -> None:
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    sets = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
+    await _settle()
+    _close_windows(agent)
+    await _settle()
+    (flush,) = agent.memory._coalescer._inflight  # type: ignore[union-attr]
+    flush.cancel()
+    results = await asyncio.gather(*sets, return_exceptions=True)
+    assert all(isinstance(r, asyncio.CancelledError) for r in results[2:])
+    assert flush.cancelled()
+
+
+async def test_a_flush_cancelled_while_it_waits_its_turn_tells_its_callers(agent: Agent) -> None:
+    # The second window's flush waits for the first, held on the server; cancelled while
+    # it waits, its callers get CancelledError rather than waiting for good.
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    first = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcd"]
+    await _settle()
+    _close_windows(agent)
+    second = [asyncio.create_task(agent.memory.set(k, k)) for k in "efgh"]
+    await _settle()
+    _close_windows(agent)
+    co: Any = agent.memory._coalescer
+    (queued,) = co._flushes.values()  # the identity's last flush: the second window's
+    queued.cancel()
+    coalesced = asyncio.gather(*second[2:], return_exceptions=True)
+    results = await asyncio.wait_for(coalesced, 1)
+    assert all(isinstance(r, asyncio.CancelledError) for r in results)
+    t.bulk_gate.set()
+    assert all(r["version"] for r in await asyncio.gather(*first, *second[:2]))
+
+
+async def test_a_windows_first_sets_go_out_side_by_side(agent: Agent) -> None:
+    # They wait only for the identity's last flush, not for each other.
+    t: Any = agent.transport
+    t.set_gates = {"held": asyncio.Event()}
+    held = asyncio.create_task(agent.memory.set("a", "held"))
+    other = asyncio.create_task(agent.memory.set("b", "free"))
+    await _settle()
+    assert t.landed == [("b", "free")]
+    t.set_gates["held"].set()
+    await asyncio.gather(held, other)
+
+
+async def test_close_waits_for_a_first_set_queued_behind_a_flush(agent: Agent) -> None:
+    # Agent.close() flushes before the transport closes: a window's first set waiting for
+    # the flush ahead of it is part of that wait.
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    earlier = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcd"]
+    await _settle()
+    _close_windows(agent)
+    queued = asyncio.create_task(agent.memory.set("e", "e"))
+    await _settle()
+    closing = asyncio.create_task(agent.close())
+    await _settle()
+    t.bulk_gate.set()
+    await closing
+    assert (await queued)["version"] == 7
+    await asyncio.gather(*earlier)
+
+
+async def test_a_first_set_its_caller_cancels_still_lands_before_the_windows_flush(
+    agent: Agent,
+) -> None:
+    t: Any = agent.transport
+    t.set_gates = {"v1": asyncio.Event()}
+    x = asyncio.create_task(agent.memory.set("x", "x"))
+    v1 = asyncio.create_task(agent.memory.set("k", "v1"))
+    v2 = asyncio.create_task(agent.memory.set("k", "v2"))
+    await _settle()
+    v1.cancel()
+    _close_windows(agent)
+    await _settle()
+    assert _landed(t, "k") == []  # the flush waits for the first set it follows
+    t.set_gates["v1"].set()
+    await asyncio.gather(x, v2)
+    await _settle()
+    assert _landed(t, "k") == ["v1", "v2"]
+
+
+async def test_cancelling_a_flush_sets_call_leaves_the_writes_going(agent: Agent) -> None:
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    sets = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
+    await _settle()
+    waiting = asyncio.create_task(agent.memory.flush_sets())
+    await _settle()
+    waiting.cancel()
+    await _settle()
+    t.bulk_gate.set()
+    assert all(r["version"] for r in await asyncio.gather(*sets))
+
+
+async def test_close_waits_for_sets_made_while_it_waits(agent: Agent) -> None:
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    earlier = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
+    await _settle()
+    closing = asyncio.create_task(agent.close())
+    await _settle()
+    late = [asyncio.create_task(agent.memory.set(k, k)) for k in "fghi"]
+    await _settle()
+    t.bulk_gate.set()
+    await closing
+    assert all(r["version"] for r in await asyncio.gather(*earlier, *late))
+
+
+async def test_a_cancelled_close_lets_the_writes_land_before_the_transport_closes(
+    agent: Agent,
+) -> None:
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    sets = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
+    await _settle()
+    closing = asyncio.create_task(agent.close())
+    await _settle()
+    closing.cancel()
+    await _settle()
+    assert not t.closed
+    t.bulk_gate.set()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    assert t.closed
+    assert all(r["version"] for r in await asyncio.gather(*sets))
+
+
+async def test_close_returns_while_a_writer_keeps_setting(agent: Agent) -> None:
+    # close() waits for the sets there when it starts and those made while they go out,
+    # not for a writer that never stops.
+    stop = asyncio.Event()
+
+    async def writer() -> None:
+        i = 0
+        while not stop.is_set():
+            try:
+                await agent.memory.set(f"k{i}", i)
+            except Exception:  # noqa: BLE001 — the transport closed under the writer
+                return
+            i += 1
+
+    writing = asyncio.create_task(writer())
+    t: Any = agent.transport
+    for _ in range(10_000):  # until the writer is well into a burst
+        if len(t.calls) >= 10:
+            break
+        await asyncio.sleep(0)
+    await asyncio.wait_for(agent.close(), 5)
+    stop.set()
+    await writing
+
+
+async def test_a_set_made_after_a_cancelled_close_began_is_written(agent: Agent) -> None:
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    earlier = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
+    await _settle()
+    closing = asyncio.create_task(agent.close())
+    await _settle()
+    closing.cancel()
+    await _settle()
+    late = [asyncio.create_task(agent.memory.set(k, k)) for k in "fghi"]
+    await _settle()
+    t.bulk_gate.set()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    assert all(r["version"] for r in await asyncio.gather(*earlier, *late))
+    assert t.closed
+
+
+async def test_the_transport_closes_when_a_cancelled_close_is_cancelled_again(
+    agent: Agent,
+) -> None:
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    sets = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
+    await _settle()
+    closing = asyncio.create_task(agent.close())
+    await _settle()
+    closing.cancel()
+    await _settle()
+    closing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    assert t.closed
+    t.bulk_gate.set()
+    await asyncio.gather(*sets, return_exceptions=True)
+
+
+async def test_windows_of_many_identities_do_not_pile_up(
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A window with only its first sets ends at its time like any other.
+    monkeypatch.setattr(loom.memory, "COALESCE_WINDOW_S", 0.01)
+    await asyncio.gather(*[agent.memory.set("k", i, session_id=f"s{i}") for i in range(200)])
+    co: Any = agent.memory._coalescer
+    assert co._windows
+    for _ in range(1_000):  # each window's timer, at its time
+        if not co._windows:
+            break
+        await asyncio.sleep(0.001)
+    assert co._windows == {}
+
+
+async def test_a_flush_that_raises_fails_its_callers(agent: Agent) -> None:
+    # A value the JSON encoder refuses fails inside the flush itself: every set of the
+    # flush gets that error instead of waiting for good.
+    import datetime as dt
+
+    sets = [agent.memory.set(k, k) for k in "abcd"] + [agent.memory.set("e", dt.datetime.now())]
+    results = await asyncio.wait_for(asyncio.gather(*sets, return_exceptions=True), 2)
+    assert all(isinstance(r, TypeError) for r in results[2:])

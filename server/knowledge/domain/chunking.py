@@ -33,7 +33,7 @@ _HTML_H = re.compile(r"^\s*<h([1-6])[^>]*>(.*?)</h\1>\s*$", re.IGNORECASE)
 _FENCE_RUN = re.compile(r"^\s*(`{3,}|~{3,})")
 
 
-def _fence_marker(line: str) -> str:
+def fence_marker(line: str) -> str:
     """The fence `line` opens (its run of backticks or tildes), or ''. A backtick
     fence's info string holds no backtick: "```js``` is inline" opens nothing.
     Checked after the match, not by a lookahead the run would backtrack into."""
@@ -207,7 +207,7 @@ def _markup_out(text: str) -> str:
     return _EMPHASIS.sub(r"\2", _EMPHASIS.sub(r"\2", text))
 
 
-def _closes_fence(line: str, opener: str) -> bool:
+def closes_fence(line: str, opener: str) -> bool:
     """Whether `line` closes the fence `opener` opened: a run of the same
     character at least as long, and nothing else on the line."""
     run = line.strip()
@@ -270,12 +270,12 @@ class _Opaque:
             if ends:
                 self.html = None
         else:
-            fence = _fence_marker(line)
+            fence = fence_marker(line)
             if not fence and self.fence is None:
                 return False
             if self.fence is None:
                 self.fence = fence
-            elif _closes_fence(line, self.fence):
+            elif closes_fence(line, self.fence):
                 self.fence = None
         self.after_text = False
         return True
@@ -443,5 +443,7 @@ __all__ = [
     "embedding_text",
     "window",
     "chunk_document",
+    "closes_fence",
+    "fence_marker",
     "outline",
 ]

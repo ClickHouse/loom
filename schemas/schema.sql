@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 179 tables + 19 materialized views.
+-- Counts: 180 tables + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (179)
+-- Tables (180)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -2843,6 +2843,22 @@ CREATE TABLE IF NOT EXISTS loom.memory_schemas
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, name)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
+
+-- loom.memory_served_daily
+CREATE TABLE IF NOT EXISTS loom.memory_served_daily
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `memory_id` UUID,
+    `agent` LowCardinality(String),
+    `day` Date,
+    `served` UInt64,
+    `last_at` SimpleAggregateFunction(max, DateTime)
+)
+ENGINE = SummingMergeTree
+PARTITION BY toYYYYMM(day)
+ORDER BY (org, namespace, memory_id, agent, day)
+SETTINGS allow_dimensions_outside_sorting_key = 1, non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.memory_term_freq
 CREATE TABLE IF NOT EXISTS loom.memory_term_freq

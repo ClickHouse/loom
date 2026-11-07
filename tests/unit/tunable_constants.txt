@@ -370,7 +370,6 @@ server/memory/app/ask/retrieval_legs.py::_TIME_CUE_MAX_DAYS
 server/memory/app/ask/supersession.py::_TEMPLATED_VALUE_MAX
 server/memory/app/ask_when_evidence.py::_CUE_WINDOW_MAX_DAYS
 server/memory/app/blacklist_guard.py::REGEX_MAX_LENGTH
-server/memory/app/blacklist_guard.py::REGEX_PROBE_BUDGET_MS
 server/memory/app/blacklist_guard.py::_HIT_FLUSH_INTERVAL_S
 server/memory/app/brief.py::_EXCERPT_CAP
 server/memory/app/bulk_verdicts.py::_FIRST_DATE_MAX_GAP_DAYS

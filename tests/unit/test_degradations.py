@@ -12,6 +12,7 @@ import pytest
 from server.clients import _http
 from server.observability import degradations as D
 from server.observability import provider_health
+from server.settings import settings
 
 
 def setup_function() -> None:
@@ -96,11 +97,20 @@ async def test_classify_fallbacks_note_the_degradation(monkeypatch):
         async def post(self, *a, **k):
             return self._resp
 
+    # a model call: the classifier is at a listed gateway host
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
     # 1. transport error → caller's type kept, noted
     monkeypatch.setattr(_http, "get_model_client", lambda: _Client(_Resp({}, 502)))
     D.begin()
     assert (
-        await C.classify(endpoint="http://x", prompt_template="", value="v", valid_types=["fact"])
+        await C.classify(
+            org="acme",
+            namespace="ns",
+            endpoint="https://gateway.example/c",
+            prompt_template="",
+            value="v",
+            valid_types=["fact"],
+        )
         == ""
     )
     assert D.current() and D.current()[0].startswith("classify: caller_type_kept (HTTPStatusError")
@@ -108,7 +118,14 @@ async def test_classify_fallbacks_note_the_degradation(monkeypatch):
     monkeypatch.setattr(_http, "get_model_client", lambda: _Client(_Resp({"memory_type": "weird"})))
     D.begin()
     assert (
-        await C.classify(endpoint="http://x", prompt_template="", value="v", valid_types=["fact"])
+        await C.classify(
+            org="acme",
+            namespace="ns",
+            endpoint="https://gateway.example/c",
+            prompt_template="",
+            value="v",
+            valid_types=["fact"],
+        )
         == ""
     )
     assert "'weird' not a registered type" in D.current()[0]
@@ -116,7 +133,14 @@ async def test_classify_fallbacks_note_the_degradation(monkeypatch):
     monkeypatch.setattr(_http, "get_model_client", lambda: _Client(_Resp({"memory_type": "fact"})))
     D.begin()
     assert (
-        await C.classify(endpoint="http://x", prompt_template="", value="v", valid_types=["fact"])
+        await C.classify(
+            org="acme",
+            namespace="ns",
+            endpoint="https://gateway.example/c",
+            prompt_template="",
+            value="v",
+            valid_types=["fact"],
+        )
         == "fact"
     )
     assert D.current() == []

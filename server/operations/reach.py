@@ -1,8 +1,9 @@
 """Reach of an operation: every path a caller can take to it.
 
 An op that is declared, described, tested and migrated but reachable from no
-listed tool, no SDK method, no example and no plugin hook is dark, and dark
-ops go uncalled. This module derives, per op, the set of reach kinds:
+listed tool, no SDK method, no example, no plugin hook and no dashboard call
+site is dark, and dark ops go uncalled. This module derives, per op, the set
+of reach kinds:
 
 ``mcp_core``     listed on the default ``core`` MCP toolset (or with the code
                  tools flag) — the chat loop sees it.
@@ -14,10 +15,12 @@ ops go uncalled. This module derives, per op, the set of reach kinds:
 ``sdk_example``  a shipped example (``examples/``) or operator script
                  (``dev/``, ``scripts/``) calls it, directly or through an
                  SDK method.
-``plugin_hook``  a first-party client that is neither the SDK nor an MCP
-                 listing names it: the Claude Code plugin hooks, the gateway
-                 and shim integrations (``integrations/``), the dashboard
-                 (``frontend/src``).
+``plugin_hook``  an integration names it: the Claude Code plugin hooks, the
+                 gateway and shim integrations (``integrations/``).
+``dashboard``    the dashboard posts it: a quoted ``"/v1/<op>"`` call site in
+                 ``frontend/src`` (tests and test helpers aside). An op without
+                 it is in ``server.operations.dashboard``: ``NOT_IN_DASHBOARD``
+                 with the reason, or ``DASHBOARD_PENDING``.
 ``http_only``    none of the above — a raw ``/v1/*`` POST is the only path.
 
 The MCP kinds derive live from ``server.operations.toolsets``. The file-scan
@@ -42,13 +45,14 @@ REACH_KINDS: frozenset[str] = frozenset(
         "sdk_method",
         "sdk_example",
         "plugin_hook",
+        "dashboard",
         "http_only",
     }
 )
 
 # Kinds the file scan produces (everything but the live MCP kinds and the
 # fallback), in the order the manifest and the census table print them.
-STATIC_KINDS: tuple[str, ...] = ("sdk_method", "sdk_example", "plugin_hook")
+STATIC_KINDS: tuple[str, ...] = ("sdk_method", "sdk_example", "plugin_hook", "dashboard")
 
 
 def mcp_reach(name: str) -> set[str]:
@@ -89,10 +93,9 @@ def has_reach(name: str) -> bool:
 
 
 def catalogue_facets(op: Operation) -> dict[str, Any]:
-    """The additive catalogue fields (``code.index_status``,
-    ``ops.capabilities``): ``maturity``, the sorted ``reach`` list, and
-    ``toolsets`` — every MCP toolset whose listing
-    carries the op (empty for a hidden op)."""
+    """The additive catalogue fields of ``code.index_status``: ``maturity``,
+    the sorted ``reach`` list, and ``toolsets`` — every MCP toolset whose
+    listing carries the op (empty for a hidden op)."""
     from server.operations.toolsets import op_toolsets
 
     return {

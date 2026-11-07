@@ -137,6 +137,7 @@ def test_the_journal_files() -> None:
         "081_erasure_request_actor.sql",
         "082_knowledge_ingestion.sql",
         "083_knowledge_datasets.sql",
+        "084_memory_served_daily.sql",
     ]
 
 

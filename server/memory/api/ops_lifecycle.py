@@ -24,6 +24,7 @@ from server.memory.app.copy_ops import handle_memory_copy_to, handle_memory_cros
 from server.memory.app.evidence_reads import handle_memory_evidence, handle_memory_provenance
 from server.memory.app.ops import handle_memory_reject
 from server.memory.app.promote import handle_memory_demote, handle_memory_promote
+from server.memory.app.served_reads import records_served, stack_keys
 from server.memory.app.stack import handle_memory_stack
 from server.operations.base import Operation, Role
 
@@ -117,7 +118,7 @@ memory_stack = Operation(
     maturity="experimental",
     input_model=MemoryStackInput,
     output_model=MemoryStackOutput,
-    handler=handle_memory_stack,
+    handler=records_served(stack_keys)(handle_memory_stack),
     idempotent=True,
     required_role=Role.VIEWER,
     audit=False,

@@ -730,6 +730,35 @@ describe("RepositoryCard — the tracker links", () => {
     cleanup();
   });
 
+  it("marks a tracker the caller holds no admin grant on, and says a new link needs its admin", async () => {
+    const a = mountAdmin("tracker-helpdesk");
+    expect(line()).not.toHaveTextContent("deployment's map");
+    await userEvent.click(within(line()).getByRole("button", { name: "Link another tracker" }));
+    expect(screen.getByText("A new link needs an admin of the tracker.")).toBeInTheDocument();
+    const select = screen.getByRole("button", { name: "Tracker" });
+    expect(select).toHaveTextContent("qa · public — no admin grant");
+    const hint = "You hold no admin grant on qa · public; Loom links it only if your token administers it.";
+    expect(screen.getByText(hint)).toBeInTheDocument();
+    await userEvent.click(select);
+    expect(screen.getByText("qa · private — no admin grant")).toBeInTheDocument();
+    await userEvent.click(screen.getByText("kj"));
+    expect(screen.queryByText(hint)).toBeNull();
+    expect(screen.getByText("A new link needs an admin of the tracker.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Link" }));
+    expect(a.code.onSetSource).toHaveBeenCalledWith(expect.anything(), ["tracker-helpdesk", "tracker-kj"]);
+    expect(await axeViolations(document.body)).toEqual([]);
+    cleanup();
+  });
+
+  it("says a change stores every link it sends, naming those the caller holds no admin grant on", () => {
+    mountAdmin(["tracker-clickhouse", "tracker-helpdesk", "tracker-example-private"]);
+    expect(line()).toHaveTextContent(
+      "If these links come from the deployment's map, any change here stores them, which needs an admin of each; " +
+        "you hold no admin grant on qa · public, qa · private.",
+    );
+    cleanup();
+  });
+
   it("several links: the primary is marked and said; Make primary reorders, Unlink removes", async () => {
     const a = mountAdmin(["tracker-clickhouse", "tracker-helpdesk"]);
     const items = within(screen.getByRole("list", { name: "Linked trackers" })).getAllByRole("listitem");

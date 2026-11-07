@@ -23,6 +23,7 @@ from server.memory.domain.sensitivity import (
     contact_intent,
     detect_sensitivity,
     detector_text,
+    has_email,
     high_spans,
     reads_high,
     resolve_sensitivity,
@@ -316,7 +317,7 @@ def test_detector_text_reads_plain_values_as_written_and_never_recurses() -> Non
     assert detector_text(deep) == "sk-" + "a" * 24
 
 
-def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatch) -> None:
     # The write path detects on the decoded value, not the stored JSON.
     from types import SimpleNamespace
 
@@ -324,7 +325,7 @@ def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatc
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_sensitivity_autodetect", True)
-    level, _tags = _update_sensitivity(
+    level, _tags = await _update_sensitivity(
         SimpleNamespace(sensitivity=""), json.dumps({"note": "token:\n" + _TOKEN}), []
     )
     assert level == "high"
@@ -748,6 +749,54 @@ def _read_long_runs(n: int) -> None:
     assert detect_sensitivity("PIN for" + " " * n + "x") == ""
     assert detect_sensitivity("PIN for the" + " " * n + "door") == ""
     assert detect_sensitivity("GB82WEST12345698765432 " * (n // 10)) == "medium"
+    # an email is read from its `@`, so a run of local-part characters is never rescanned;
+    # a JWT starts only where a run of its characters starts, so a run is read once
+    assert detect_sensitivity("a-" * (n // 2)) == ""
+    assert detect_sensitivity("a@" + "b." * (n // 2)) == ""
+    assert detect_sensitivity("eyJ-" * (n // 4)) == ""
+
+
+# The email shape as one regex: a local part of 1-64 characters from a word boundary.
+_EMAIL_AS_REGEX = re.compile(r"\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}\b")
+
+
+def test_has_email_finds_what_the_email_regex_finds() -> None:
+    import random
+
+    rng = random.Random(7)
+    alphabet = "aZ9.-_%+@ /\u00e9"
+    for _ in range(20_000):
+        text = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 90)))
+        if rng.random() < 0.3:
+            text = "a-" * rng.randint(20, 50) + text  # a local-part run past 64
+        if rng.random() < 0.5:
+            text += "@ab.cd"
+        assert has_email(text) == bool(_EMAIL_AS_REGEX.search(text)), text
+    assert has_email("a-" * 40 + "b@x.com")  # the last 64 characters before `@` count
+    assert not has_email("x" * 65 + "@x.com")
+
+
+def _fastest(read: Callable[[str], object], text: str) -> float:
+    times = []
+    for _ in range(3):
+        started = time.perf_counter()
+        read(text)
+        times.append(time.perf_counter() - started)
+    return min(times)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        ("a-" * 32 + "@" + "ab1." * 63) * 300,  # local-part runs, each with a long domain
+        ("@" + "a." * 126 + "a") * 400,  # domains with a dot at every other character
+    ],
+)
+def test_an_email_is_read_once_from_its_at(text: str) -> None:
+    # A regex starting at every word boundary rescans up to 64 characters, and the domain
+    # again, from each one: about a hundred times one pass over the text.
+    one_pass = _fastest(re.compile(r"[^\x00-\x7f]").search, text)
+    assert _fastest(has_email, text) < 20 * one_pass
 
 
 def _read_escaped_quotes(n: int) -> None:
@@ -1002,3 +1051,182 @@ def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -
         '{"ATMPIN": "4471"}',
         '{"password": "required"}',
     }
+
+
+def test_an_email_and_a_jwt_still_read_as_before() -> None:
+    assert detect_sensitivity("write to bob.smith+loom@mail.example.com today") == "medium"
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJib2IifQ.c2lnbmF0dXJlLXZhbHVl"
+    assert detect_sensitivity(f"token {jwt}") == "high"
+    assert detect_sensitivity(f"Authorization: Bearer {jwt}") == "high"
+
+
+async def _beside_another_task(work: Any, turns: list[int]) -> Any:
+    """Await `work` while another task adds one to `turns[0]` at each of its turns."""
+    import asyncio
+
+    done = asyncio.Event()
+
+    async def other_task() -> None:
+        while not done.is_set():
+            turns[0] += 1
+            await asyncio.sleep(0)
+
+    task = asyncio.create_task(other_task())
+    await asyncio.sleep(0)
+    try:
+        return await work
+    finally:
+        done.set()
+        await task
+
+
+async def test_a_long_value_is_labelled_a_window_at_a_time_with_turns_between(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Detection holds the GIL, so a long value is read a window at a time on the loop:
+    # no read is longer than ON_LOOP_CHARS, and another task runs between two reads.
+    from server.memory.app import sensitivity_level
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", True)
+    turns = [0]
+    reads: list[tuple[int, int]] = []
+
+    def _detect(text: str) -> str:
+        reads.append((len(text), turns[0]))
+        return detect_sensitivity(text)
+
+    monkeypatch.setattr(sensitivity_level, "detect_window_sensitivity", _detect)
+    value = "the quick brown fox 123 jumps over a lazy dog. " * 4_000 + "SSN 123-45-6789"
+    level = await _beside_another_task(sensitivity_level.resolve_level("", value), turns)
+    assert level == "high"
+    limit = sensitivity_level.ON_LOOP_CHARS
+    assert len(reads) >= len(value) // limit
+    assert all(n <= limit for n, _ in reads)
+    seen = [t for _, t in reads]
+    assert seen == sorted(set(seen))  # the other task ran before each read
+
+
+async def test_a_long_value_is_decoded_with_turns_between_its_lines() -> None:
+    from server.memory.app.sensitivity_level import decoded_text
+
+    value = json.dumps({"rows": [{"pin": str(1000 + i), "note": "x" * 20} for i in range(5_000)]})
+    turns = [0]
+    text = await _beside_another_task(decoded_text(value), turns)
+    assert text == detector_text(value)
+    assert turns[0] >= 5
+
+
+_SHAPES = (
+    "sk-" + "a1B2" * 6,
+    "AKIA" + "ABCDEFGHIJ123456",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N",
+    "john.doe@example.com",
+    "call 415-555-0123",
+    "4111 1111 1111 1111",
+    "SSN 123-45-6789",
+    "GB82 WEST 1234 5698 7654 32",
+    "PIN is 4471",
+    "-----BEGIN RSA " + "PRIVATE KEY-----\nMIIEow",
+    "password=hunter2xyz9",
+    # 3 KB with no whitespace: a window's edge can fall inside it
+    "eyJhbGciOiJIUzI1NiJ9.eyJ" + "a" * 3_000 + ".c2lnbmF0dXJl",
+)
+
+
+def _filler(rng: Any, n: int) -> str:
+    words = ["alpha", "beta", "x-ray", "42", "2024-01-15", "a.b", "Q3", "foo_bar", "--", "+1"]
+    out: list[str] = []
+    while sum(map(len, out)) < n:
+        out.append(rng.choice(words) + rng.choice([" ", " ", "\n", ", ", "-", ""]))
+    return "".join(out)
+
+
+def test_a_value_read_in_windows_reads_as_the_whole_value() -> None:
+    # Each shape is placed across a window's edge, at an offset that moves through it.
+    import random
+
+    from server.memory.domain.sensitivity import (
+        detect_window_sensitivity,
+        detection_windows,
+        max_sensitivity,
+    )
+
+    rng = random.Random(11)
+    size = 4 * 1024
+    straddled = 0
+    for i in range(240):
+        text = _filler(rng, rng.randint(6_000, 9_000))
+        first_edge = len(next(detection_windows(text, size)))
+        # side by side, so one never lands inside the other
+        shapes = " ".join(rng.sample(_SHAPES, rng.randint(0, 2)))
+        if shapes:
+            at = max(0, first_edge - rng.randint(0, len(shapes)))
+            text = text[:at] + " " + shapes + " " + text[at:]
+            straddled += at < first_edge < at + len(shapes) + 2
+        windowed = max_sensitivity(
+            detect_window_sensitivity(w) for w in detection_windows(text, size)
+        )
+        assert windowed == detect_sensitivity(text), (i, text)
+    assert straddled > 100  # most did cross an edge
+
+
+_EDGE = "x " * 1_000  # 2,000 characters before and after the shape
+
+
+@pytest.mark.parametrize(
+    ("text", "whole", "windowed"),
+    [
+        # found from its first characters, wherever the cut falls in it
+        (
+            _EDGE + "eyJhbGciOiJIUzI1NiJ9.eyJ" + "a" * 3_000 + ".c2lnbmF0dXJl " + _EDGE,
+            "high",
+            "high",
+        ),
+        # a whitespace-free run longer than the cut search: the cut falls where it is
+        ("q" * 6_000 + " john.doe@example.com " + _EDGE, "medium", "medium"),
+        # the shapes longer than SHAPE_SPAN: whitespace or a header past a window's edge
+        (_EDGE + "PIN is" + " " * 3_000 + "4471 " + _EDGE, "high", ""),
+        (_EDGE + "password" + " " * 3_000 + "= hunter2xyz9 " + _EDGE, "high", ""),
+        (_EDGE + "eyJ" + "h" * 5_000 + ".eyJ" + "p" * 20 + ".c2lnbmF0dXJl " + _EDGE, "high", ""),
+    ],
+    ids=["jwt-3kb", "no-whitespace-cut", "pin-gap", "assignment-gap", "jwt-long-header"],
+)
+def test_shapes_past_the_window_overlap(text: str, whole: str, windowed: str) -> None:
+    from server.memory.domain.sensitivity import (
+        detect_window_sensitivity,
+        detection_windows,
+        max_sensitivity,
+    )
+
+    windows = list(detection_windows(text, 4 * 1024))
+    assert len(windows) > 1
+    assert detect_sensitivity(text) == whole
+    assert max_sensitivity(detect_window_sensitivity(w) for w in windows) == windowed
+
+
+def test_a_jwt_reads_whole_with_its_signature_and_in_a_window_from_its_start() -> None:
+    # A whole value needs all three parts; a window, whose edge may cut the signature off,
+    # needs the header and the start of the payload.
+    from server.memory.domain.sensitivity import detect_window_sensitivity, detection_windows
+
+    two_parts = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0"
+    assert detect_sensitivity(two_parts) == ""
+    assert detect_sensitivity(two_parts + ".c2lnbmF0dXJl") == "high"
+    assert detect_window_sensitivity(two_parts) == "high"
+    with pytest.raises(ValueError):
+        next(detection_windows("x" * 10_000, 1024))
+
+
+@pytest.mark.parametrize("read_before", [0, 20_000])
+async def test_a_short_value_reads_the_same_wherever_it_is_in_a_bulk_write(
+    monkeypatch: pytest.MonkeyPatch, read_before: int
+) -> None:
+    # Only a value longer than a window is read in windows: a short one past 16 KiB of
+    # earlier entries reads as a whole value does.
+    from server.memory.app.sensitivity_level import resolve_level
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", True)
+    two_parts = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0"
+    assert await resolve_level("", two_parts, read_before=read_before) == ""

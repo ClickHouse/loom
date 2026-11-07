@@ -163,6 +163,8 @@ class _SearchHit(BaseModel):
     # The query's identifier-shaped terms this chunk defines or reads (a table, a TOML
     # key path), from the exact-key leg of a hybrid search; empty otherwise.
     keys_matched: list[str] = Field(default_factory=list)
+    # True when the section is unanswered questions alone, or dated notes with no decision.
+    noise: bool = False
 
 
 class KnowledgeSearchInput(BaseModel):
@@ -263,7 +265,8 @@ class KnowledgeSearchInput(BaseModel):
 class KnowledgeSearchOutput(BaseModel):
     # Hits best first (empty when nothing matched): when `reranked_by` is set, the
     # reranked head in the reranker's order, then the rest by `score`; else by `score`
-    # (then similarity).
+    # (then similarity). With `knowledge_noise_filter` on, noise sections then move
+    # below the hits close to the query.
     results: list[_SearchHit]
     # The reranker that ordered `results`; empty when no reranker ran, it failed, it ran
     # past its time limit, or it kept the fused order.

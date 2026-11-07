@@ -10930,6 +10930,7 @@ class SearchHit(TypedDict, total=False):
     block_type: NotRequired[str]
     locator: NotRequired[Optional[dict[str, Any]]]
     keys_matched: NotRequired[list[str]]
+    noise: NotRequired[bool]
 
 
 class KnowledgeSourceAddInput(TypedDict, total=False):
@@ -12077,6 +12078,8 @@ class MemoryGetOutput(TypedDict, total=False):
     char_limit: NotRequired[Optional[int]]
     recall_count: NotRequired[int]
     last_recalled_at: NotRequired[Optional[str]]
+    served_count: NotRequired[Optional[int]]
+    last_served_at: NotRequired[Optional[str]]
     verified_by: NotRequired[str]
     verified_at: NotRequired[Optional[str]]
     verification: NotRequired[str]
@@ -13186,6 +13189,7 @@ class MemoryImportResult(TypedDict, total=False):
         Literal[
             "",
             "blacklist",
+            "blacklist_unchecked",
             "pinned",
             "locked",
             "pinned_peer",
@@ -13280,6 +13284,7 @@ class MemoryImportEvidenceOutput(TypedDict, total=False):
     embedding_dim: NotRequired[int]
     edited: NotRequired[list[str]]
     skipped: NotRequired[int]
+    unchecked: NotRequired[int]
 
 
 class MemoryInspectInput(TypedDict, total=False):
@@ -15198,6 +15203,7 @@ class StackEntry(TypedDict, total=False):
     recall_count: NotRequired[int]
     last_recalled_at: NotRequired[Optional[str]]
     actor: NotRequired[str]
+    namespace: NotRequired[str]
 
 
 class MemoryStatusesInput(TypedDict, total=False):

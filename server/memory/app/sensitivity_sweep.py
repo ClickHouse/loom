@@ -155,11 +155,6 @@ def coarse_shape_re(shapes: set[str]) -> str:
     return "|".join(rx for shape, rx in _COARSE_BY_SHAPE.items() if not shapes or shape in shapes)
 
 
-# A probe shape reported beside the detector's levels, so a dry run says how many
-# e-mail-shaped rows it found.
-_PROBE_EMAIL = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
-
-
 @dataclass
 class SweepCandidate:
     memory_id: str
@@ -210,19 +205,17 @@ class SweepReport:
 
 
 def _shapes(text: str, level: str) -> tuple[str, ...]:
-    import re
-
     shapes: list[str] = []
     # The `credential` shape names every row the detector reads as high, whatever it holds
     # (a key, a card number, an SSN, a stated PIN): the scheduled pass applies `credential`
     # and `email` rows by default. An IBAN-only row is `other`, applied by the operator's run.
     if level == HIGH:
         shapes.append("credential")
-    if re.search(_PROBE_EMAIL, text):
-        shapes.append("email")
-    from server.memory.domain.sensitivity import _MEDIUM_PATTERNS
+    from server.memory.domain.sensitivity import PHONE, has_email
 
-    if _MEDIUM_PATTERNS[1].search(text):
+    if has_email(text):  # the detector's own shapes
+        shapes.append("email")
+    if PHONE.search(text):
         shapes.append("phone")
     return tuple(shapes) or ("other",)
 

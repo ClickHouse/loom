@@ -180,8 +180,11 @@ export interface WhoAmI {
   iat?: number;
 }
 
-export async function whoami(): Promise<WhoAmI> {
-  const r = await fetch("/v1/whoami", { headers: authHeader(), signal: boundedSignal() });
+/** Who the stored token signs in as; with `asToken`, who that token would, asked before
+ *  anything is stored. */
+export async function whoami(asToken?: string): Promise<WhoAmI> {
+  const headers = asToken ? { Authorization: `Bearer ${asToken}` } : authHeader();
+  const r = await fetch("/v1/whoami", { headers, signal: boundedSignal() });
   // A refused token answers 200 with authenticated=false. Anything else not ok (a replica
   // whose keys are still loading answers 503) says nothing about the token: it is kept.
   // Behind a proxy a refusal is the proxy's own 401 or 403: signed out, as before.
@@ -517,8 +520,14 @@ export interface MemoryDetail {
   /** When the fact became true, and the closing bound of its validity; null when unset. */
   valid_at?: string | null;
   valid_to?: string | null;
+  /** Recall credits: reads from a reader that posts outcomes, the ranking signal. */
   recall_count?: number;
   last_recalled_at?: string | null;
+  /** Agent reads that returned the key, credited or not (searches, context packs, asks);
+   *  only with include_recall_breakdown. */
+  served_count?: number | null;
+  last_served_at?: string | null;
+  /** Agent reads of the key per named agent, last 30 days. */
   recall_by_agent?: Array<{ agent: string; count: number; last_at: string | null }>;
   tags?: string[];
   /** Entity names on the row (memory.get returns them; the drill-down into the Graph

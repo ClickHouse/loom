@@ -123,17 +123,33 @@ async def tombstone_pattern(
 
 
 async def active_patterns(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:
-    """Every non-tombstoned pattern, oldest first (the cache orders them by
-    scope precedence)."""
+    """Every non-tombstoned pattern, oldest first, ties by id, so every replica reads
+    them in one order (the cache orders them by scope precedence)."""
     ch = ch or _default_client()
     return await ch.query_all(
         """
         SELECT pattern_id, org, namespace, pattern, pattern_type, scope, reason
         FROM loom.blacklist FINAL
         WHERE tombstoned_at IS NULL
-        ORDER BY created_at ASC
+        ORDER BY created_at ASC, pattern_id ASC
         """,
     )
+
+
+async def scope_regexes(
+    scope: str, org: str, namespace: str, *, ch: _CHClient | None = None
+) -> list[str]:
+    """The live regex patterns stored at exactly this scope."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT pattern FROM loom.blacklist FINAL
+        WHERE tombstoned_at IS NULL AND pattern_type = 'regex'
+          AND scope = {scope:String} AND org = {org:String} AND namespace = {ns:String}
+        """,
+        params={"scope": scope, "org": org, "ns": namespace},
+    )
+    return [str(r["pattern"]) for r in rows]
 
 
 async def version_watermark(*, ch: _CHClient | None = None) -> tuple[int, int]:

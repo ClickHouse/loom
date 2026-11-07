@@ -733,8 +733,9 @@ settings:
   # names, or `prefix*`); its keys come from `jwks_url` (fetched every
   # `jwt_end_user_jwks_refresh_seconds`) and/or `keys`. A key here verifies only its own
   # issuer's tokens, and only as an end user (`sub: user:<id>`, one listed `org`, an
-  # optional `agent: agent:<id>`), never any other token. Empty: no end-user tokens.
-  # [restart]
+  # optional `agent: agent:<id>`), never any other token. Empty: no end-user tokens. A
+  # non-loopback bind refuses an inline RSA key under 2048 bits (a key fetched from
+  # `jwks_url` is not checked). [restart]
   # jwt_end_user_issuers_json: ""
 
   # The longest an end-user token may live, from its `iat` to its `exp`. [restart]
@@ -2423,6 +2424,10 @@ settings:
   # loom.namespaces.kind): the memory fan-out's, and the caller's collections. [live]
   # knowledge_search_fanout_kinds: "memory,collection,personal"
 
+  # True: noise sections rank below the knowledge hits close to the query and stay out
+  # of context.pack and memory.stack. False: they are served like any section. [live]
+  # knowledge_noise_filter: true
+
   # Reranker knowledge.search uses when the request names none (same values as the
   # per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON;
   # rerank="none" turns it off for a call). Empty = no default rerank. [live]
@@ -2586,9 +2591,9 @@ settings:
   # MCP transport auth mode (the endpoint exposes one tool per wire op, so an anonymous
   # prober could otherwise enumerate every tool): "required"        — every JSON-RPC
   # method requires a bearer. "discovery_only"  — initialize/tools/list/ping open;
-  # tools/call needs auth. "open"            — no auth on any method. Trusted-network
-  # only. Any other value fails at load: a mistyped mode must not boot as some mode.
-  # [restart]
+  # tools/call needs auth. "open"            — no auth on any method; a non-loopback
+  # bind refuses it. Any other value fails at load: a mistyped mode must not boot as
+  # some mode. [restart]
   # mcp_auth_mode: "required"
 
   # Which tools `tools/list` shows when a connection names no `?toolset=` (a request
@@ -3066,6 +3071,11 @@ settings:
   # Seconds a namespace's classify_endpoint may take to answer a write's classification;
   # past it the write keeps the caller's memory_type. [live]
   # memory_classify_timeout_s: 8.0
+
+  # Comma-separated hostnames or IP literals, no port, a classify_endpoint may reach on
+  # a private address and over http, on any port: list only a host that serves nothing
+  # else. [restart]
+  # memory_classify_private_hosts: ""
 
   # --- delete-version checks ---
 
@@ -4163,9 +4173,9 @@ settings:
   # https only. [restart]
   # memory_webhook_allow_http: false
 
-  # Comma-separated hostnames or IP literals (exact, any case) a memory webhook may
-  # reach although they resolve to a private, loopback or link-local address; "" = none.
-  # [restart]
+  # Comma-separated hostnames or IP literals, no port (exact, any case; an IDN in either
+  # spelling) a memory webhook may reach although they resolve to a private, loopback or
+  # link-local address; "" = none. [restart]
   # memory_webhook_private_hosts: ""
 
   # ===== Namespace registration, write marks and bench-namespace GC =====
@@ -4594,8 +4604,9 @@ settings:
 
   # The address Loom is reachable on: `loom serve` and `make server` bind it; in a
   # container (which listens on all its interfaces) it is the address the port is
-  # published on. Anything but loopback turns on the startup checks for the dev secret,
-  # auth-off and public_base_url. [restart]
+  # published on. Anything but loopback turns on the startup checks: public_base_url
+  # set, and no auth-off, MCP open mode, dev secret or weak root, gateway or end-user
+  # key. [restart]
   # bind_host: "127.0.0.1"
 
   # Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto headers uvicorn
@@ -4604,8 +4615,9 @@ settings:
   # sign-in and sign-up limits. [restart]
   # trusted_proxies: "127.0.0.1"
 
-  # True lets a non-loopback bind start with the dev signing secret or with auth off.
-  # Only for a port that is not actually reachable by others. [restart]
+  # True lets a non-loopback bind start with auth off, MCP open mode, the dev signing
+  # secret or a weak root, gateway or end-user key. Only for a port others cannot reach.
+  # [restart]
   # allow_insecure: false
 
   # --- outbound HTTP ---

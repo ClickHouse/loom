@@ -25,6 +25,7 @@ from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
+import idna
 from pydantic import AfterValidator, BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from server.core.document_formats import route_key
@@ -278,7 +279,8 @@ class AuthSettings(BaseModel):
     # in loom.signing_keys (`loom signing-key rotate` adds those). Required when
     # auth is on. The default is the checked-in DEV secret anyone can mint
     # with: a deployment with auth on refuses to start with it, except the
-    # `make dev` stack (`loom doctor` warns everywhere else).
+    # `make dev` stack (`loom doctor` warns everywhere else). A non-loopback bind
+    # refuses an HMAC secret under 32 bytes or an RSA key under 2048 bits.
     jwt_secret: str = DEV_JWT_SECRET
     # The root secret LOOM_JWT_SECRET replaced, while a rotation is under way:
     # credentials and signing keys sealed under it still open (tokens it signed
@@ -312,7 +314,8 @@ class AuthSettings(BaseModel):
         return {self.jwt_issuer, *(i for i in extra if i)}
 
     # JSON (or base64 JSON) map kid → PEM public key of a gateway whose RS256
-    # tokens this deployment accepts. Loom's own keys live in loom.signing_keys.
+    # tokens this deployment accepts (a non-loopback bind refuses an RSA key under 2048
+    # bits). Loom's own keys live in loom.signing_keys.
     jwt_public_keys_json: str = ""
     # Clock-skew tolerance on iat/exp, seconds; small enough to give replay no
     # useful post-exp window.
@@ -380,7 +383,8 @@ class AuthSettings(BaseModel):
     # (fetched every `jwt_end_user_jwks_refresh_seconds`) and/or `keys`. A key
     # here verifies only its own issuer's tokens, and only as an end user
     # (`sub: user:<id>`, one listed `org`, an optional `agent: agent:<id>`),
-    # never any other token. Empty: no end-user tokens.
+    # never any other token. Empty: no end-user tokens. A non-loopback bind refuses
+    # an inline RSA key under 2048 bits (a key fetched from `jwks_url` is not checked).
     jwt_end_user_issuers_json: str = ""
     # The longest an end-user token may live, from its `iat` to its `exp`.
     jwt_end_user_max_ttl_seconds: int = Field(default=300, ge=60, le=3600)
@@ -1990,6 +1994,9 @@ class KnowledgeSettings(BaseModel):
     # Namespace kinds an all_mine knowledge.search spans (comma list over
     # loom.namespaces.kind): the memory fan-out's, and the caller's collections.
     knowledge_search_fanout_kinds: Annotated[str, LIVE] = "memory,collection,personal"
+    # True: noise sections rank below the knowledge hits close to the query and stay
+    # out of context.pack and memory.stack. False: they are served like any section.
+    knowledge_noise_filter: Annotated[bool, LIVE] = True
     # Reranker knowledge.search uses when the request names none (same values as the
     # per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON;
     # rerank="none" turns it off for a call). Empty = no default rerank.
@@ -2200,7 +2207,7 @@ class McpSettings(BaseModel):
     # anonymous prober could otherwise enumerate every tool):
     #   "required"        — every JSON-RPC method requires a bearer.
     #   "discovery_only"  — initialize/tools/list/ping open; tools/call needs auth.
-    #   "open"            — no auth on any method. Trusted-network only.
+    #   "open"            — no auth on any method; a non-loopback bind refuses it.
     # Any other value fails at load: a mistyped mode must not boot as some mode.
     mcp_auth_mode: Literal["required", "discovery_only", "open"] = "required"
 
@@ -2599,6 +2606,21 @@ class MemorySettings(BaseModel):
     # Seconds a namespace's classify_endpoint may take to answer a write's
     # classification; past it the write keeps the caller's memory_type.
     memory_classify_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
+    # Comma-separated hostnames or IP literals, no port, a classify_endpoint may reach on a
+    # private address and over http, on any port: list only a host that serves nothing else.
+    memory_classify_private_hosts: str = ""
+
+    def memory_classify_private_host_set(self) -> frozenset[str]:
+        return ascii_host_set(self.memory_classify_private_hosts)
+
+    @model_validator(mode="after")
+    def _check_classify_private_hosts(self) -> MemorySettings:
+        refusal = host_list_refusal(
+            "LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS", self.memory_classify_private_hosts
+        )
+        if refusal:
+            raise ValueError(refusal)
+        return self
 
     # ---- delete-version checks ----
     # Run the delete_version_check worker, which finishes the memory.delete_version checks a
@@ -3541,8 +3563,9 @@ class MemoryWebhookSettings(BaseModel):
     # True lets a memory webhook use plain http (a local receiver in development);
     # false: https only.
     memory_webhook_allow_http: bool = False
-    # Comma-separated hostnames or IP literals (exact, any case) a memory webhook may
-    # reach although they resolve to a private, loopback or link-local address; "" = none.
+    # Comma-separated hostnames or IP literals, no port (exact, any case; an IDN in either
+    # spelling) a memory webhook may reach although they resolve to a private, loopback or
+    # link-local address; "" = none.
     memory_webhook_private_hosts: str = ""
 
     @model_validator(mode="after")
@@ -3559,9 +3582,16 @@ class MemoryWebhookSettings(BaseModel):
         return self
 
     def memory_webhook_private_host_set(self) -> frozenset[str]:
-        return frozenset(
-            h.strip().lower() for h in self.memory_webhook_private_hosts.split(",") if h.strip()
+        return ascii_host_set(self.memory_webhook_private_hosts)
+
+    @model_validator(mode="after")
+    def _check_webhook_private_hosts(self) -> MemoryWebhookSettings:
+        refusal = host_list_refusal(
+            "LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS", self.memory_webhook_private_hosts
         )
+        if refusal:
+            raise ValueError(refusal)
+        return self
 
 
 # ===== Model ==================================================================
@@ -3947,6 +3977,31 @@ class ObservabilitySettings(BaseModel):
 # ===== Provider ===============================================================
 
 
+def ascii_host(host: str) -> str:
+    """`host` as a host list names it: lower-case, no trailing dot, a non-ASCII name as
+    its UTS 46 IDNA form (`faß.example` is `xn--fa-hia.example`, a fullwidth name its
+    ASCII one). An ASCII name or an address literal is kept as it is. ValueError when
+    IDNA cannot encode it."""
+    host = host.strip().lower().rstrip(".")
+    if host.isascii():
+        return host
+    return idna.encode(host, uts46=True).decode("ascii").lower().rstrip(".")
+
+
+def ascii_host_set(hosts: str) -> frozenset[str]:
+    """The comma-separated `hosts`, each as `ascii_host` spells it. One IDNA cannot
+    encode is refused at load (`host_list_refusal`), and dropped here: no URL's host
+    can equal it."""
+    out = set()
+    for h in hosts.split(","):
+        try:
+            out.add(ascii_host(h))
+        except ValueError:
+            continue
+    out.discard("")
+    return frozenset(out)
+
+
 def url_host(url: str) -> str:
     """The host httpx sends `url` to, as LOOM_INFERENCE_GATEWAY_HOSTS names it:
     ASCII (an IDN as punycode), lower-case, no trailing dot; "" when httpx
@@ -3976,17 +4031,41 @@ def _is_http_url(url: str) -> bool:
 
 
 # A DNS name LOOM_INFERENCE_GATEWAY_HOSTS may name: no scheme, port, path or wildcard.
-_GATEWAY_HOST_RE = re.compile(r"[a-z0-9][a-z0-9.-]*")
+# `_` too: a Compose service name has one, and httpx and urlsplit read it alike.
+_GATEWAY_HOST_RE = re.compile(r"[a-z0-9_][a-z0-9_.-]*")
 
 
-def _is_gateway_host(host: str) -> bool:
-    """A bare DNS name, or an IPv6 address (its colons are not a port)."""
+def is_bare_host(host: str) -> bool:
+    """A bare DNS name or IPv4 address, or an IPv6 address (its colons are not a port)
+    with no zone: no `%`, so no percent-encoding either."""
+    if "%" in host:
+        return False
     if ":" not in host:
         return bool(_GATEWAY_HOST_RE.fullmatch(host))
     try:
         return ipaddress.ip_address(host).version == 6
     except ValueError:
         return False
+
+
+def host_list_refusal(setting: str, hosts: str) -> str:
+    """Why an entry of the comma-separated `hosts` is not a bare hostname or IP literal
+    as `ascii_host` spells it (a scheme, port, brackets, path, wildcard, or a name IDNA
+    cannot encode); "" when every entry is one."""
+    for entry in hosts.split(","):
+        if not entry.strip():
+            continue
+        try:
+            host = ascii_host(entry)
+        except ValueError:
+            host = ""
+        if not is_bare_host(host):
+            return (
+                f"{setting}: {entry.strip()[:64]!r} is not a hostname or IP literal (no "
+                "scheme, port, brackets, path, wildcard, zone, percent-encoding or a name "
+                "IDNA cannot encode)"
+            )
+    return ""
 
 
 # The settings the gateway check reads; a dashboard configuration overrides the embedding ones.
@@ -4553,11 +4632,7 @@ class ProviderSettings(ModelSettings):
 
     def gateway_hosts(self) -> frozenset[str]:
         """The hosts of inference_gateway_hosts, as `url_host` spells them."""
-        return frozenset(
-            h.strip().lower().rstrip(".")
-            for h in self.inference_gateway_hosts.split(",")
-            if h.strip()
-        )
+        return ascii_host_set(self.inference_gateway_hosts)
 
     def off_gateway(self, url: str) -> str:
         """While the gateway is required, the host of a `url` it does not list
@@ -4630,12 +4705,9 @@ class ProviderSettings(ModelSettings):
         """Every gateway host is a bare hostname, and with the gateway required
         every address Loom sends model calls to is one of them (the senders
         refuse any other too, on every redirect hop)."""
-        for host in self.gateway_hosts():
-            if not _is_gateway_host(host):
-                raise ValueError(
-                    f"LOOM_INFERENCE_GATEWAY_HOSTS: {host[:64]!r} is not a hostname "
-                    "(no scheme, port, path or wildcard)"
-                )
+        refusal = host_list_refusal("LOOM_INFERENCE_GATEWAY_HOSTS", self.inference_gateway_hosts)
+        if refusal:
+            raise ValueError(refusal)
         refusal = self.gateway_refusal()
         if refusal:
             raise ValueError(refusal)
@@ -4813,15 +4885,17 @@ class RuntimeSettings(BaseModel):
     # The address Loom is reachable on: `loom serve` and `make server` bind
     # it; in a container (which listens on all its interfaces) it is the
     # address the port is published on. Anything but loopback turns on the
-    # startup checks for the dev secret, auth-off and public_base_url.
+    # startup checks: public_base_url set, and no auth-off, MCP open mode, dev
+    # secret or weak root, gateway or end-user key.
     bind_host: str = "127.0.0.1"
     # Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto
     # headers uvicorn applies; any other peer's are ignored. "*" trusts all.
     # Required behind a load balancer: at the default every client counts as the
     # balancer's address for the sign-in and sign-up limits.
     trusted_proxies: str = "127.0.0.1"
-    # True lets a non-loopback bind start with the dev signing secret or
-    # with auth off. Only for a port that is not actually reachable by others.
+    # True lets a non-loopback bind start with auth off, MCP open mode, the dev
+    # signing secret or a weak root, gateway or end-user key. Only for a port others
+    # cannot reach.
     allow_insecure: bool = False
 
     def workers_mode(self) -> str:

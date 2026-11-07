@@ -123,7 +123,6 @@ export const OP_MIN_ROLE = {
   "task.list": { min: "viewer", by: "namespace" },
   "task.counts": { min: "viewer", by: "namespace" },
   "task.history": { min: "viewer", by: "namespace" },
-  "task.updates": { min: "viewer", by: "namespace" },
   "inbox.list": { min: "viewer", by: "namespace" },
   "inbox.policy_list": { min: "viewer", by: "namespace" },
   "task.create": { min: "writer", by: "namespace" },

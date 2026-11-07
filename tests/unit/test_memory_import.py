@@ -1264,3 +1264,25 @@ def test_repeats_with_one_time_in_two_zone_spellings_are_the_same_entry() -> Non
     ]
     parsed = MemoryImportInput(**_IDENT, entries=entries)
     assert parsed.entries[0].valid_at == parsed.entries[1].valid_at == datetime(2024, 1, 1)
+
+
+@pytest.mark.asyncio
+async def test_an_entry_the_blacklist_could_not_check_names_that_reason(
+    harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Told apart from a match: sent in a smaller import it is checked."""
+    from server.memory.app import blacklist_guard as bl
+
+    ch = _StoreCH()
+    harness(ch)
+    long_text = "A note too long to check in what is left of this request's budget."
+
+    async def _find(*, org: str, namespace: str, value: str) -> Any:
+        if "too long" in value:
+            return bl._over_budget(org, namespace, "namespace", len(value), 300, alone=False)
+        return None
+
+    monkeypatch.setattr("server.memory.app.blacklist_guard.find_match", _find)
+    out = await handle_memory_import(_input({"value": long_text}, {"value": "Dog is Biscuit."}))
+    assert _outcomes(out) == [("refused", "blacklist_unchecked"), ("written", "")]
+    assert out.totals.refused == 1

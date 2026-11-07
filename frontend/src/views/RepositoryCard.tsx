@@ -1000,6 +1000,11 @@ function TrackerLinkRow({
   const set = (next: string[]) => actions.onSetSource?.(facet, next);
   const many = linked.length > 1;
   const primaryLabel = records.find((r) => r.namespace === linked[0])?.label ?? linked[0];
+  // Every change sends the whole list, and a link only the deployment's map holds counts as new
+  const ungranted = linked.flatMap((ns) => {
+    const r = records.find((x) => x.namespace === ns);
+    return r && !r.admin ? [r.label] : [];
+  });
 
   return (
     // biome-ignore lint/a11y/useSemanticElements: a named group of read-only details of the card, not form controls and their link actions
@@ -1025,6 +1030,12 @@ function TrackerLinkRow({
             />
           ))}
         </ul>
+      )}
+      {ungranted.length > 0 && (
+        <p className="text-xs text-warn">
+          If these links come from the deployment&apos;s map, any change here stores them, which needs an admin of each;
+          you hold no admin grant on {ungranted.join(", ")}.
+        </p>
       )}
       {many && (
         <p className="text-xs text-text-muted">
@@ -1074,7 +1085,7 @@ function TrackerLinkRow({
                   <Select.Group heading={`Trackers listing ${card.repo}`}>
                     {covering.map((r) => (
                       <Select.Item key={r.namespace} value={r.namespace}>
-                        {r.label}
+                        {trackerChoice(r)}
                       </Select.Item>
                     ))}
                   </Select.Group>
@@ -1083,7 +1094,7 @@ function TrackerLinkRow({
                   <Select.Group heading={`Other trackers — they answer nothing for ${card.repo}`}>
                     {others.map((r) => (
                       <Select.Item key={r.namespace} value={r.namespace}>
-                        {r.label}
+                        {trackerChoice(r)}
                       </Select.Item>
                     ))}
                   </Select.Group>
@@ -1105,6 +1116,12 @@ function TrackerLinkRow({
               Link
             </Button>
           </div>
+          <p className="text-xs text-text-muted">A new link needs an admin of the tracker.</p>
+          {picked && !picked.admin && (
+            <p className="text-xs text-warn">
+              You hold no admin grant on {picked.label}; Loom links it only if your token administers it.
+            </p>
+          )}
           {picked && !picked.covers && (
             <p className="text-xs text-warn">
               {picked.label} lists {picked.repos.join(", ") || "no repository"}, not {card.repo}: it would answer
@@ -1120,6 +1137,12 @@ function TrackerLinkRow({
       )}
     </div>
   );
+}
+
+/** A tracker in the Link picker; one the caller holds no admin grant on is marked, not
+ *  hidden, since a token that administers it another way may still link it. */
+function trackerChoice(r: BindableRecord): string {
+  return r.admin ? r.label : `${r.label} — no admin grant`;
 }
 
 /** One linked tracker: what agents get from it, and its verbs. */

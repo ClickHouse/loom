@@ -39,7 +39,7 @@
         "allow_insecure": {
           "default": false,
           "type": "boolean",
-          "description": "True lets a non-loopback bind start with the dev signing secret or with auth off. Only for a port that is not actually reachable by others."
+          "description": "True lets a non-loopback bind start with auth off, MCP open mode, the dev signing secret or a weak root, gateway or end-user key. Only for a port others cannot reach."
         },
         "anthropic_base_url": {
           "default": "https://api.anthropic.com",
@@ -119,7 +119,7 @@
         "bind_host": {
           "default": "127.0.0.1",
           "type": "string",
-          "description": "The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks for the dev secret, auth-off and public_base_url."
+          "description": "The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks: public_base_url set, and no auth-off, MCP open mode, dev secret or weak root, gateway or end-user key."
         },
         "blacklist_cache_ttl_seconds": {
           "default": 300,
@@ -2705,7 +2705,7 @@
         "jwt_end_user_issuers_json": {
           "default": "",
           "type": "string",
-          "description": "The services that sign a short-lived token per end user (a chat app in front of Loom): JSON (or base64 JSON) {issuer: {\"orgs\": [...], \"jwks_url\": \"https://…\", \"keys\": {kid: RS256 public PEM}}}. `orgs` lists the orgs its tokens may name (exact names, or `prefix*`); its keys come from `jwks_url` (fetched every `jwt_end_user_jwks_refresh_seconds`) and/or `keys`. A key here verifies only its own issuer's tokens, and only as an end user (`sub: user:<id>`, one listed `org`, an optional `agent: agent:<id>`), never any other token. Empty: no end-user tokens."
+          "description": "The services that sign a short-lived token per end user (a chat app in front of Loom): JSON (or base64 JSON) {issuer: {\"orgs\": [...], \"jwks_url\": \"https://…\", \"keys\": {kid: RS256 public PEM}}}. `orgs` lists the orgs its tokens may name (exact names, or `prefix*`); its keys come from `jwks_url` (fetched every `jwt_end_user_jwks_refresh_seconds`) and/or `keys`. A key here verifies only its own issuer's tokens, and only as an end user (`sub: user:<id>`, one listed `org`, an optional `agent: agent:<id>`), never any other token. Empty: no end-user tokens. A non-loopback bind refuses an inline RSA key under 2048 bits (a key fetched from `jwks_url` is not checked)."
         },
         "jwt_end_user_jwks_refresh_seconds": {
           "default": 300.0,
@@ -2805,6 +2805,11 @@
           "minimum": 60,
           "type": "integer",
           "description": "Seconds one pass, which runs one job, may take before it is cancelled: the extractor's timeout plus embedding the largest source. A job cut off runs again from its start and counts toward its attempts."
+        },
+        "knowledge_noise_filter": {
+          "default": true,
+          "type": "boolean",
+          "description": "True: noise sections rank below the knowledge hits close to the query and stay out of context.pack and memory.stack. False: they are served like any section."
         },
         "knowledge_repo_docs_list_ttl_s": {
           "default": 60.0,
@@ -3097,7 +3102,7 @@
             "open"
           ],
           "type": "string",
-          "description": "MCP transport auth mode (the endpoint exposes one tool per wire op, so an anonymous prober could otherwise enumerate every tool): \"required\"        — every JSON-RPC method requires a bearer. \"discovery_only\"  — initialize/tools/list/ping open; tools/call needs auth. \"open\"            — no auth on any method. Trusted-network only. Any other value fails at load: a mistyped mode must not boot as some mode."
+          "description": "MCP transport auth mode (the endpoint exposes one tool per wire op, so an anonymous prober could otherwise enumerate every tool): \"required\"        — every JSON-RPC method requires a bearer. \"discovery_only\"  — initialize/tools/list/ping open; tools/call needs auth. \"open\"            — no auth on any method; a non-loopback bind refuses it. Any other value fails at load: a mistyped mode must not boot as some mode."
         },
         "mcp_code_tools": {
           "default": false,
@@ -3684,6 +3689,11 @@
           "default": 512,
           "type": "integer",
           "description": "Max ~800-char verbatim chunks one set_from_messages call writes (512 ≈ 400K chars; agent transcripts run ~190K chars a session at the median). Text past the cap is recorded in loom.memory_drops as chunk.split/truncated."
+        },
+        "memory_classify_private_hosts": {
+          "default": "",
+          "type": "string",
+          "description": "Comma-separated hostnames or IP literals, no port, a classify_endpoint may reach on a private address and over http, on any port: list only a host that serves nothing else."
         },
         "memory_classify_timeout_s": {
           "default": 8.0,
@@ -4800,7 +4810,7 @@
         "memory_webhook_private_hosts": {
           "default": "",
           "type": "string",
-          "description": "Comma-separated hostnames or IP literals (exact, any case) a memory webhook may reach although they resolve to a private, loopback or link-local address; \"\" = none."
+          "description": "Comma-separated hostnames or IP literals, no port (exact, any case; an IDN in either spelling) a memory webhook may reach although they resolve to a private, loopback or link-local address; \"\" = none."
         },
         "memory_webhook_refresh_seconds": {
           "default": 10.0,

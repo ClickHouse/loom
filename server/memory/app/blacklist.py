@@ -17,7 +17,13 @@ from server.memory.api.models_blacklist import (
     BlacklistSweepOutput,
     _BlacklistRow,
 )
-from server.memory.app.blacklist_guard import _bump_version, invalidate_cache, validate_regex
+from server.memory.app.blacklist_guard import (
+    REGEX_PROGRAM_PER_SCOPE,
+    _bump_version,
+    compile_regex,
+    invalidate_cache,
+    scope_program,
+)
 from server.memory.store import blacklist as blacklist_repo
 
 if TYPE_CHECKING:
@@ -90,12 +96,25 @@ def _stamped_author(body_value: str) -> str:
     return writer_actor(fallback=body_value)
 
 
-def _reject_bad_regex(pattern: str) -> None:
-    reason = validate_regex(pattern)
-    if reason is None:
-        return
+async def _reject_bad_regex(pattern: str, scope: str, org: str, namespace: str) -> None:
+    """422 for a regex `compile_regex` refuses, or one past the scope's program budget:
+    every regex a write's scopes hold runs on that write."""
     from fastapi import HTTPException
 
+    from server.core.errors import ValidationError
+
+    try:
+        size = compile_regex(pattern).programsize
+    except ValidationError as e:
+        reason = str(e)
+    else:
+        held = await scope_program(scope, org, namespace)
+        if held + size <= REGEX_PROGRAM_PER_SCOPE:
+            return
+        reason = (
+            f"this {scope}'s regexes would pass {REGEX_PROGRAM_PER_SCOPE} RE2 instructions "
+            f"({held} held, {size} more)"
+        )
     raise HTTPException(
         status_code=422,
         detail={"code": "BLACKLIST_PATTERN_INVALID", "message": reason},
@@ -107,12 +126,13 @@ async def handle_blacklist_add(input: BlacklistAddInput) -> BlacklistAddOutput:
     # reads and blocks writes for other namespaces or other tenants, so it needs the role
     # whose reach matches.
     _require_scope_authority(input.scope, "add", row_org=input.org)
+    stored = _scope_args(input.scope, input.org, input.namespace)
     if input.pattern_type == "regex":
-        _reject_bad_regex(input.pattern)
+        await _reject_bad_regex(input.pattern, input.scope, *stored)
 
     pattern_id = str(uuid.uuid4())
     now = naive_utc_now_seconds()
-    stored_org, stored_ns = _scope_args(input.scope, input.org, input.namespace)
+    stored_org, stored_ns = stored
     created_by = _stamped_author(input.created_by)
     await blacklist_repo.insert_row(
         {

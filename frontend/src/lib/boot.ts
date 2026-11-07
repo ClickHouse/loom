@@ -7,7 +7,7 @@
 // at once, and paints a deep link's shell as soon as whoami confirms, on the namespace
 // the claims settle. list_mine still decides the final namespace (a joined namespace is
 // not in the claims) and the kinds; its answer corrects the shell only when it differs.
-import type { Identity, MyNamespaceEntry } from "../api";
+import type { Identity, MyNamespaceEntry, WhoAmI } from "../api";
 import { deepLinkNamespace, isReferenceKind, needsMemoryNamespace } from "./namespace";
 import type { View } from "./state";
 import { isRecord } from "./guards";
@@ -57,14 +57,83 @@ export function claimsFromToken(jwt: string | null | undefined): TokenClaims | n
  *  writes it, and the return to it (`lib/linkToken.ts`) reads it. */
 export const SIGN_IN_FROM = "loom_sign_in_from_v1";
 
+/** The session key for the mark of the single sign-on this tab started, `{ nonce, at }`: the
+ *  sign-in gate writes it beside {@link SIGN_IN_FROM} and sends the nonce to `/oauth/sso?n=`,
+ *  and the server hands it back with the token (`/me?n=…#token=…`). A link token without this
+ *  tab's nonce is one it never asked for, even one that arrives while the tab is away at the
+ *  identity provider. */
+export const SIGN_IN_PENDING = "loom_sign_in_pending_v1";
+
+/** The address the session-expired card opens in a new tab: the sign-in gate there starts
+ *  SSO itself (`?sign_in=sso`), so that tab marks the sign-in as its own and the token it
+ *  brings back is stored without asking. */
+export const SSO_REQUEST_PATH = "/me?sign_in=sso";
+
+/** Take the ask (`SSO_REQUEST_PATH`) from the address, signed in or not, so neither a reload
+ *  nor the way back after the sign-in repeats it. True only when a page of Loom's own origin
+ *  asked for this load (`__LOOM_OWN_ORIGIN`: `Sec-Fetch-Site`, else the `Referer`): another
+ *  site could send the browser here to start a sign-in whose token the tab stores unasked. */
+export function takeSsoAsk(): boolean {
+  const query = new URLSearchParams(window.location.search);
+  if (query.get("sign_in") !== "sso") return false;
+  query.delete("sign_in");
+  const qs = query.toString();
+  history.replaceState(history.state, "", window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash);
+  return window.__LOOM_OWN_ORIGIN === true;
+}
+
+/** How long a sign-in this tab started stays its own. */
+const SIGN_IN_PENDING_TTL_MS = 10 * 60 * 1000;
+
+/** Mark that this tab starts a sign-in now; the nonce goes to `/oauth/sso?n=`. */
+export function markSignInStarted(now: number = Date.now()): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  const nonce = btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  try {
+    sessionStorage.setItem(SIGN_IN_PENDING, JSON.stringify({ nonce, at: now }));
+  } catch {
+    /* no session storage: the returning token asks to be confirmed */
+  }
+  return nonce;
+}
+
+/** Whether `nonce`, from the landing's query, is the mark of a sign-in this tab started in the
+ *  last ten minutes; the mark is used up either way. */
+export function takeSignInStarted(nonce: string | null, now: number = Date.now()): boolean {
+  try {
+    const raw = sessionStorage.getItem(SIGN_IN_PENDING);
+    sessionStorage.removeItem(SIGN_IN_PENDING);
+    const mark: unknown = raw ? JSON.parse(raw) : null;
+    if (!nonce || !isRecord(mark) || typeof mark.nonce !== "string" || typeof mark.at !== "number") return false;
+    return mark.nonce === nonce && now - mark.at >= 0 && now - mark.at <= SIGN_IN_PENDING_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether the server's answer for a link token names the subject and org of the held
+ *  token: that link token is stored without asking. Any other would sign this browser in as
+ *  whoever sent the link; the link's own claims are unverified and never decide. */
+export function sameAccount(answer: Pick<WhoAmI, "subject" | "org">, held: string | null): boolean {
+  const b = claimsFromToken(held);
+  return !!answer.subject && !!answer.org && answer.subject === b?.subject && answer.org === b?.org;
+}
+
 /** Accept fragment tokens only; scrub both token forms before boot can fail.
- * Query tokens reach server logs and are never accepted. */
-export function takeLinkToken(): { token: string | null; atRoot: boolean } | null {
+ * Query tokens reach server logs and are never accepted. A sign-in's landing carries its
+ * tab's nonce in the query, `/me?n=<nonce>#token=<jwt>`, scrubbed with the token. */
+export function takeLinkToken(): { token: string | null; atRoot: boolean; nonce: string | null } | null {
   const { hash, search, pathname } = window.location;
   const fromHash = hash.startsWith("#token=");
   const query = new URLSearchParams(search);
   if (!fromHash && !query.has("token")) return null;
+  const n = (fromHash && query.get("n")) || "";
+  const nonce = /^[A-Za-z0-9_-]{16,64}$/.test(n) ? n : null;
   query.delete("token");
+  if (fromHash) query.delete("n");
   const qs = query.toString();
   history.replaceState(history.state, "", pathname + (qs ? `?${qs}` : "") + (fromHash ? "" : hash));
   let token: string | null = null;
@@ -73,7 +142,7 @@ export function takeLinkToken(): { token: string | null; atRoot: boolean } | nul
   } catch {
     /* a fragment that does not decode carries no token */
   }
-  return { token, atRoot: fromHash && !qs && (pathname === "/" || pathname === "/me") };
+  return { token, atRoot: fromHash && !qs && (pathname === "/" || pathname === "/me"), nonce };
 }
 
 /** Namespace kinds from the last membership answer this browser saw, so a

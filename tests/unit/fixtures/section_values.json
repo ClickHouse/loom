@@ -1,0 +1,1520 @@
+{
+ "dev": [
+  {
+   "id": "dev-001",
+   "title": "RFC-112: Ledger write path",
+   "section_path": [
+    "Design",
+    "Write path"
+   ],
+   "text": "Every balance change is appended to `ledger_entries` as an immutable row; balances are never updated in place. The API handler computes the entry, then inserts it inside a transaction together with a row in `idempotency_keys` keyed by `(account_id, client_request_id)`. A retry with the same key hits the unique constraint and the handler returns the original entry instead of writing a second one.\n\nBalances are materialised by the `balance-projector` worker, which tails the entries table in commit order and keeps `account_balances` at most a few seconds behind. Reads that must be exact (withdrawals) sum the entries since the last projected offset instead of trusting the projection.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "explains append-only ledger, idempotency mechanism and read consistency"
+  },
+  {
+   "id": "dev-002",
+   "title": "Platform Architecture Review - Q3 deck",
+   "section_path": [
+    "Slide 7: Caching layer"
+   ],
+   "text": "- Read-through cache in front of catalog-svc\n- Redis cluster, 6 shards, keyed by `sku:{id}:v{schema}`\n- TTL 10 min; invalidation via `catalog.updated` events\n- Cache miss storm guard: single-flight per key\n- Not cached: price (changes too often), inventory",
+   "label": "design",
+   "kind": "design_bullets",
+   "note": "terse slide bullets describing the cache architecture and what is excluded"
+  },
+  {
+   "id": "dev-003",
+   "title": "Gatekeeper rate limiter - design",
+   "section_path": [
+    "Configuration"
+   ],
+   "text": "| Setting | Default | Meaning |\n|---|---|---|\n| `rl.bucket_size` | 100 | Max burst per API key |\n| `rl.refill_per_sec` | 20 | Tokens added per second |\n| `rl.scope` | `api_key` | One of `api_key`, `ip`, `tenant` |\n| `rl.fail_open` | `false` | If Redis is unreachable, reject (false) or allow (true) |\n\n`rl.fail_open` is per route group; the login routes must stay `false`.",
+   "label": "design",
+   "kind": "design_table",
+   "note": "configuration table with defaults and a constraint"
+  },
+  {
+   "id": "dev-004",
+   "title": "Outbound HTTP client guidelines",
+   "section_path": [
+    "Retries"
+   ],
+   "text": "All outbound calls go through `httpx_client.build(service=...)`, which wraps requests in `RetryPolicy`:\n\n```python\nRetryPolicy(\n    max_attempts=4,\n    backoff=ExponentialJitter(base=0.2, cap=5.0),\n    retry_on=(502, 503, 504, ConnectTimeout),\n)\n```\n\nPOST is retried only when the request carries an `Idempotency-Key` header; otherwise `RetryPolicy.should_retry` returns False for non-idempotent methods. Do not wrap the client in a second retry loop - attempts multiply (4 x 4 = 16) and we saw this take down the tax provider in the spring.",
+   "label": "design",
+   "kind": "design_code",
+   "note": "code-heavy section with retry semantics and a pitfall"
+  },
+  {
+   "id": "dev-005",
+   "title": "Media upload service",
+   "section_path": [
+    "Limits"
+   ],
+   "text": "Max single-request payload is 4 MiB; larger files must use the multipart endpoint `/v2/uploads/{id}/parts`.",
+   "label": "design",
+   "kind": "design_short",
+   "note": "one-line limit an engineer needs"
+  },
+  {
+   "id": "dev-006",
+   "title": "Driftwood mobile app - offline sync",
+   "section_path": [
+    "Known issues"
+   ],
+   "text": "- On iOS 16 background fetch is throttled by the OS; sync can lag up to 15 minutes after the app is backgrounded.\n- Android: if the user force-stops the app, WorkManager jobs are dropped until next launch.\n- Conflict resolution is last-writer-wins on `updated_at` (device clock). Devices with skewed clocks can overwrite newer edits; tracked as DRIFT-431.",
+   "label": "design",
+   "kind": "design_bullets",
+   "note": "known issues and limitations of offline sync"
+  },
+  {
+   "id": "dev-007",
+   "title": "RFC-087: Orders API v3",
+   "section_path": [
+    "Compatibility and rollout"
+   ],
+   "text": "v2 and v3 are served side by side for two releases. v3 drops the `shipping_addr` string field in favour of the structured `shipping_address` object; the v2 handler keeps synthesising the string from the object so old clients keep working.\n\nRollout:\n1. Ship v3 behind `orders_v3_enabled` (default off).\n2. Enable for internal tenants, then 10% of traffic.\n3. Once v2 traffic is under 1% for 30 days, return 410 from v2 routes.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "compatibility guarantees and rollout plan"
+  },
+  {
+   "id": "dev-008",
+   "title": "Event bus selection",
+   "section_path": [
+    "Alternatives considered"
+   ],
+   "text": "**Managed pub/sub topic per service.** Simple, but ordering is per-topic only and we need per-customer ordering across event types.\n\n**Database outbox + poller.** Gives transactional publish but the poller adds 1-2s latency and every service would own one.\n\n**Partitioned log (chosen).** Partition by `customer_id` gives per-customer ordering; consumers track offsets themselves. Cost: we operate the brokers.",
+   "label": "design",
+   "kind": "design_alternatives",
+   "note": "alternatives considered with reasons and the chosen option"
+  },
+  {
+   "id": "dev-009",
+   "title": "ADR-014: Replication for analytics",
+   "section_path": [
+    "Decision"
+   ],
+   "text": "Decision: use Postgres logical replication into the warehouse staging schema rather than nightly dumps. Dumps were taking 3h and blocking vacuum on the primary.",
+   "label": "design",
+   "kind": "design_decision",
+   "note": "explicit recorded decision with reason"
+  },
+  {
+   "id": "dev-010",
+   "title": "Feature store - backfill design",
+   "section_path": [
+    "How backfill works"
+   ],
+   "text": "Backfills run as a separate Spark job (`fs_backfill`) that reads raw events from the lake for a date range and writes feature rows with `source='backfill'`. The online store is never written by backfills; only the offline parquet tables are. Point-in-time correctness is kept by joining on `event_ts <= label_ts` per entity, so a backfill cannot leak future values into training sets.\n\nA backfill of more than 90 days must be split into monthly chunks, because the shuffle for the `user_sessions_7d` aggregation exceeds executor memory above that.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "ML backfill mechanism, correctness guarantee and limit"
+  },
+  {
+   "id": "dev-011",
+   "title": "Cluster autoscaling - infra notes",
+   "section_path": [
+    "Node pools"
+   ],
+   "text": "- `general` pool: m-class, min 3 / max 40, scales on pending pods\n- `batch` pool: spot only, min 0 / max 120, taint `workload=batch:NoSchedule`\n- `gpu` pool: min 0, scale-up takes ~6 min (image pull), so latency-sensitive inference keeps 2 warm nodes via `gpu-warm` deployment\n- Scale-down delay 10m; PDBs on stateful sets block drain",
+   "label": "design",
+   "kind": "design_bullets",
+   "note": "node pool layout, scaling limits and why warm nodes exist"
+  },
+  {
+   "id": "dev-012",
+   "title": "Auth service: token lifecycle",
+   "section_path": [
+    "Refresh token rotation"
+   ],
+   "text": "Refresh tokens are single use. On `/token/refresh` the service marks the presented token `used_at=now()` and issues a new pair. If a token that already has `used_at` set is presented again, we treat it as theft: the whole token family (`family_id`) is revoked and the user must sign in again.\n\nA 10 second grace window allows the same refresh token to be redeemed twice to cover mobile clients that retry on flaky networks; both calls return the same new pair.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "explains rotation, reuse detection and a grace window"
+  },
+  {
+   "id": "dev-013",
+   "title": "Schema migration playbook",
+   "section_path": [
+    "Adding a NOT NULL column"
+   ],
+   "text": "Never add a NOT NULL column with a default in one statement on tables over ~10M rows; it rewrites the table under an exclusive lock. Instead:\n\n1. `ALTER TABLE ... ADD COLUMN foo text NULL;`\n2. Deploy code that writes `foo`.\n3. Backfill in batches of 5k with `UPDATE ... WHERE id BETWEEN`.\n4. `ALTER TABLE ... ALTER COLUMN foo SET NOT NULL` (validated via a CHECK constraint first, `NOT VALID` then `VALIDATE`).",
+   "label": "design",
+   "kind": "design_procedure",
+   "note": "migration constraint and the required sequence"
+  },
+  {
+   "id": "dev-014",
+   "title": "Search relevance v2",
+   "section_path": [
+    "Ranking",
+    "Scoring formula"
+   ],
+   "text": "`score = bm25 * 0.6 + vector_sim * 0.3 + freshness * 0.1`\n\nfreshness decays with a 14-day half life. Weights live in `ranking.yaml` and are read at startup, not per request; a weight change needs a rolling restart.",
+   "label": "design",
+   "kind": "design_code",
+   "note": "short formula plus a configuration caveat"
+  },
+  {
+   "id": "dev-015",
+   "title": "Job queue evaluation",
+   "section_path": [
+    "Comparison"
+   ],
+   "text": "| | Redis lists | Postgres SKIP LOCKED | Dedicated broker |\n|---|---|---|---|\n| Ops cost | low | none (existing DB) | high |\n| Throughput | 50k/s | ~2k/s on our primary | 100k/s |\n| Exactly-once with DB write | no | yes (same txn) | no |\n| Delayed jobs | manual | `run_at` column | native |\n\nWe need same-transaction enqueue for billing jobs and peak is ~400/s, so Postgres SKIP LOCKED it is.",
+   "label": "design",
+   "kind": "design_table",
+   "note": "comparison table ending in a decision with reasons"
+  },
+  {
+   "id": "dev-016",
+   "title": "Notifications service",
+   "section_path": [
+    "Push batching"
+   ],
+   "text": "Pushes to the same device within a 30s window are collapsed into one notification with a summary (\"3 new messages\"). The collapse key is `device_id + channel`. Transactional pushes (2FA codes, payment confirmations) set `priority=high` and bypass batching entirely.\n\nAPNs rejects payloads over 4 KB, so the summary drops message previews first, then sender names.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "batching behaviour, exemption and provider limit"
+  },
+  {
+   "id": "dev-017",
+   "title": "Public API conventions",
+   "section_path": [
+    "Pagination"
+   ],
+   "text": "List endpoints use opaque cursors, never offsets. The cursor is base64 of `{\"k\": <last sort key>, \"id\": <last id>}`; clients must not parse it. `limit` defaults to 50, max 200. A cursor is valid for 24h; after that the API returns `400 cursor_expired`.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "pagination contract and limits"
+  },
+  {
+   "id": "dev-018",
+   "title": "Model serving: rollout",
+   "section_path": [
+    "Canary"
+   ],
+   "text": "New model versions get 5% of traffic through the router's weighted split. The canary is auto-promoted after 2h if:\n- p99 latency within 10% of baseline\n- prediction distribution KL divergence < 0.05 vs baseline on the same requests (shadow scored)\n- error rate < 0.1%\nOtherwise `model-router` rolls back and pages #ml-oncall.",
+   "label": "design",
+   "kind": "design_bullets",
+   "note": "canary promotion criteria and rollback"
+  },
+  {
+   "id": "dev-019",
+   "title": "Data retention policy - implementation",
+   "section_path": [
+    "Deletion jobs"
+   ],
+   "text": "Raw clickstream is kept 13 months. `retention-sweeper` runs daily at 02:00 UTC and drops whole date partitions older than the cutoff; it never issues row deletes. User-erasure requests are different: they are handled by `erasure-worker`, which rewrites the affected partitions, and they must complete within 30 days.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "how retention and erasure are implemented"
+  },
+  {
+   "id": "dev-020",
+   "title": "Metrics guidelines",
+   "section_path": [
+    "Cardinality"
+   ],
+   "text": "Per-service limit is 50k active series. Never put `user_id`, `request_id` or raw URLs in labels - use the route template (`/users/{id}`). The collector drops any metric whose series count for one label exceeds 5k and increments `metrics_dropped_total{reason=\"cardinality\"}`.",
+   "label": "design",
+   "kind": "design_short",
+   "note": "limits and the enforcement behaviour"
+  },
+  {
+   "id": "dev-021",
+   "title": "Why we moved internal RPC to gRPC (tech talk slides)",
+   "section_path": [
+    "Slide 4"
+   ],
+   "text": "**Why gRPC**\n- Schema in .proto -> generated clients in Go/Kotlin/TS\n- HTTP/2 multiplexing: one conn per peer, not a pool of 200\n- Deadlines propagate across hops\n- JSON over REST stays for public API only",
+   "label": "design",
+   "kind": "design_bullets",
+   "note": "slide stating rationale and the scope of the decision"
+  },
+  {
+   "id": "dev-022",
+   "title": "Ingest gateway - runbook & config",
+   "section_path": [
+    "Default config"
+   ],
+   "text": "```yaml\ningest:\n  max_batch_bytes: 8388608   # 8 MiB; producers above get 413\n  flush_interval_ms: 250\n  compression: zstd          # lz4 was 30% larger on our payloads\n  dedupe_window_s: 300       # same (source, seq) inside window is dropped\n```",
+   "label": "design",
+   "kind": "design_code",
+   "note": "config block with commented limits and a reason"
+  },
+  {
+   "id": "dev-023",
+   "title": "Checkout service",
+   "section_path": [
+    "Error handling"
+   ],
+   "text": "Payment provider errors are mapped into three classes:\n\n- **retryable** (timeouts, 5xx): retried up to 3 times with the same idempotency key;\n- **user** (card declined, insufficient funds): surfaced to the UI with the provider's reason code;\n- **fatal** (auth/config errors): the order is parked in `PAYMENT_HOLD` and an alert fires; we never retry these, because a misconfigured key would otherwise burn through the provider's fraud threshold.",
+   "label": "design",
+   "kind": "design_bullets",
+   "note": "error classification and why fatal errors are not retried"
+  },
+  {
+   "id": "dev-024",
+   "title": "Feature flags at Larkspur",
+   "section_path": [
+    "Evaluation"
+   ],
+   "text": "Flags are evaluated locally in the SDK from a ruleset pushed over SSE; there is no network call per evaluation. If the SDK has never received a ruleset (cold start, flag service down) it returns the default declared in code, so every `flags.bool(\"x\", default=...)` default must be the safe value.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "evaluation model and its consequence for defaults"
+  },
+  {
+   "id": "dev-025",
+   "title": "RFC-140: Multi-region active/passive",
+   "section_path": [
+    "Failover"
+   ],
+   "text": "The primary region serves all writes. The secondary runs a streaming replica with typical lag under 2s and serves read-only traffic for the `catalog` and `search` services.\n\nFailover is manual. The on-call runs `regionctl promote --region secondary`, which (1) fences the old primary by revoking its DB credentials, (2) promotes the replica, (3) flips the DNS weight. We chose manual promotion because automatic promotion during a network partition would risk split brain, and a 10-15 minute RTO is acceptable per the SLA.\n\nData written in the last replication window before the failure can be lost (RPO ~ seconds). Services that cannot tolerate this (ledger) write synchronously to both regions and accept the latency cost of ~40ms per write.\n\nFailback is not automated: after the old primary is rebuilt as a replica, we schedule a planned switchover.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "long failover design with reasons, RPO/RTO and exceptions"
+  },
+  {
+   "id": "dev-026",
+   "title": "Driftwood mobile app - offline sync",
+   "section_path": [
+    "Background fetch",
+    "Known issue"
+   ],
+   "text": "Known issue: Android 14 kills our foreground service after 6h unless the user exempts the app from battery optimisation.",
+   "label": "design",
+   "kind": "design_short",
+   "note": "one-line platform known issue"
+  },
+  {
+   "id": "dev-027",
+   "title": "Secrets & encryption",
+   "section_path": [
+    "Encryption at rest"
+   ],
+   "text": "Each tenant has a data key wrapped by the KMS key `kms/tenant-master`. Data keys are cached in-process for 5 min (`DEK_CACHE_TTL`). Rotating the master key re-wraps data keys only; stored data is not re-encrypted. Deleting a tenant destroys its wrapped key, which makes its backups unreadable - this is how we satisfy deletion in backups.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "key hierarchy, rotation semantics, crypto-shredding"
+  },
+  {
+   "id": "dev-028",
+   "title": "Recommendation pipeline",
+   "section_path": [
+    "Architecture overview"
+   ],
+   "text": "```\nevents -> stream-enricher -> candidate-gen (ANN, 500 items)\n                          -> ranker (GBDT, top 50) -> rerank (diversity) -> API\n```\ncandidate-gen index is rebuilt every 6h; items created since the last build are injected from a \"fresh items\" list so new listings show up within minutes.",
+   "label": "design",
+   "kind": "design_code",
+   "note": "architecture diagram with a freshness mechanism"
+  },
+  {
+   "id": "dev-029",
+   "title": "Weekly sync 2026-03-04",
+   "section_path": [
+    "Notes"
+   ],
+   "text": "- Catalog latency is back to normal after the index fix\n- Agreed to drop the LRU cache in front of pricing; memory overhead too high for the hit rate we measured (~12%)\n- Priya demoed the new admin page",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "contains an agreed technical decision with reason"
+  },
+  {
+   "id": "dev-030",
+   "title": "Infra sync - 2026-05-19",
+   "section_path": [
+    "Action items"
+   ],
+   "text": "- [ ] @marco update the on-call rota by Fri\n- [ ] @lena file ticket for the flaky disk alert\n- Decided: all new buckets get object versioning on by default\n- [ ] @sam book the DR drill room",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "one-line decision buried among action items"
+  },
+  {
+   "id": "dev-031",
+   "title": "Mobile standup 11/02",
+   "section_path": [],
+   "text": "**Ana:** finished the login screen polish, starting deep links\n**Tomas:** still on the crash in the image picker\n**Kai:** we're not supporting Android 9 from 4.0 - it's under 2% of MAU and blocks the camera API upgrade. Ana to update the min SDK.",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "standup containing a platform support decision with reason"
+  },
+  {
+   "id": "dev-032",
+   "title": "Sprint 41 retro",
+   "section_path": [
+    "To improve"
+   ],
+   "text": "- Two migrations locked prod tables this sprint.\n- **Action/decision:** every migration PR now runs `migrate --dry-run --lock-timeout 2s` in CI; anything that needs a longer lock goes through the playbook.\n- Standups ran long",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "retro item that records a technical process decision"
+  },
+  {
+   "id": "dev-033",
+   "title": "Payments status update - week 22",
+   "section_path": [],
+   "text": "Status: on track.\nDecision: v2 webhook signatures ship behind `webhooks_v2_sig`, default off until SDK 1.8 is out, since older SDKs reject the new header format.\nNext: docs review.",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "status update containing a rollout decision with reason"
+  },
+  {
+   "id": "dev-034",
+   "title": "Design review: search indexer",
+   "section_path": [
+    "Outcome"
+   ],
+   "text": "Approved with changes: indexer will consume from the CDC stream instead of polling `updated_at`, because polling missed rows updated within the same second. Reviewers asked for a backpressure limit; we set max lag before shedding at 5 min.",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "review outcome with mechanism change and a limit"
+  },
+  {
+   "id": "dev-035",
+   "title": "Incident review INC-2291 notes",
+   "section_path": [
+    "Follow-ups discussed"
+   ],
+   "text": "Root cause: the upstream geocoder hung and our 30s timeout held all worker threads. We agreed to cut the geocoder timeout to 2s and put it behind a circuit breaker (open after 20 failures/10s). Ruth noted the address form can fall back to unverified addresses.",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "incident notes recording a timeout and breaker decision"
+  },
+  {
+   "id": "dev-036",
+   "title": "Backend guild 2026-08-12",
+   "section_path": [],
+   "text": "1. Welcome new folks\n2. IDs: agreed - new tables use UUIDv7 primary keys, no more bigserial for anything exposed in URLs\n3. Lunch & learn signup",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "single agreed convention inside a guild agenda"
+  },
+  {
+   "id": "dev-037",
+   "title": "ML platform weekly - 9/9",
+   "section_path": [
+    "Discussion"
+   ],
+   "text": "- Eval dashboard is slow, Jo looking\n- Feature store: we're keeping features in the online store for 7 days max; anything older is served from offline only. Keeps the KV cluster under 2 TB.\n- Hiring update",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "retention limit decided in a weekly meeting"
+  },
+  {
+   "id": "dev-038",
+   "title": "Arch council minutes - April",
+   "section_path": [
+    "Decisions"
+   ],
+   "text": "- New services default to the shared Postgres cluster; a dedicated DB requires a written capacity estimate.",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "terse recorded decision"
+  },
+  {
+   "id": "dev-039",
+   "title": "Weekly sync 2026-03-04",
+   "section_path": [
+    "Attendees"
+   ],
+   "text": "- Priya Raman\n- Marco Ellison\n- Lena Vos\n- @sam (late)\n- Regrets: Tomas",
+   "label": "noise",
+   "kind": "attendance",
+   "note": "attendee list only"
+  },
+  {
+   "id": "dev-040",
+   "title": "Infra sync - 2026-05-19",
+   "section_path": [
+    "Agenda"
+   ],
+   "text": "1. Rollcall\n2. On-call handoff\n3. DR drill planning\n4. AOB",
+   "label": "noise",
+   "kind": "agenda",
+   "note": "agenda items with no content"
+  },
+  {
+   "id": "dev-041",
+   "title": "Platform planning 10/14",
+   "section_path": [
+    "Action items"
+   ],
+   "text": "- [ ] @lena - send the capacity spreadsheet - Fri 10/17\n- [ ] @marco - follow up with finance on the reserved instances - next week\n- [x] @priya - share the deck\n- [ ] Sam to schedule the follow-up",
+   "label": "noise",
+   "kind": "action_items",
+   "note": "owner + verb + date list"
+  },
+  {
+   "id": "dev-042",
+   "title": "Search team status - week 18",
+   "section_path": [],
+   "text": "**Overall: :large_green_circle: On track**\n\n- Indexer rework: 70% done\n- Ranking experiment: blocked on data access approval\n- Shipped this week: query autocomplete to 100%",
+   "label": "noise",
+   "kind": "status",
+   "note": "status percentages and shipped/blocked"
+  },
+  {
+   "id": "dev-043",
+   "title": "Web standup - Tue",
+   "section_path": [],
+   "text": "- Jonah: yesterday reviews, today the settings page\n- Mira: same as yesterday, nothing blocking\n- Ollie: out this afternoon\n- Fen: PTO",
+   "label": "noise",
+   "kind": "standup",
+   "note": "round robin with no decisions"
+  },
+  {
+   "id": "dev-044",
+   "title": "Sprint 40 retro",
+   "section_path": [],
+   "text": "**Went well**\n- Great collaboration with design\n- Demo went smoothly\n- Shout out to Kai for covering on-call\n\n**To improve**\n- Too many meetings\n- Tickets need clearer acceptance criteria",
+   "label": "noise",
+   "kind": "retro",
+   "note": "retro feelings without technical decisions"
+  },
+  {
+   "id": "dev-045",
+   "title": "Design review: search indexer",
+   "section_path": [
+    "Comments"
+   ],
+   "text": "+1, looks good to me\n\n> Nice write-up!\n\nThanks everyone for the quick turnaround :pray:",
+   "label": "noise",
+   "kind": "chatter",
+   "note": "approvals and thanks only"
+  },
+  {
+   "id": "dev-046",
+   "title": "RFC template",
+   "section_path": [
+    "Motivation"
+   ],
+   "text": "<Why are we doing this? What problem does it solve? Link to tickets.>",
+   "label": "noise",
+   "kind": "template",
+   "note": "unfilled template placeholder"
+  },
+  {
+   "id": "dev-047",
+   "title": "RFC-087: Orders API v3",
+   "section_path": [
+    "Revision history"
+   ],
+   "text": "| Date | Author | Change |\n|---|---|---|\n| 2026-02-03 | M. Ellison | Initial draft |\n| 2026-02-10 | P. Raman | Addressed review comments |\n| 2026-02-21 | M. Ellison | Marked approved |",
+   "label": "noise",
+   "kind": "revision_history",
+   "note": "who-edited-when table"
+  },
+  {
+   "id": "dev-048",
+   "title": "Platform handbook",
+   "section_path": [
+    "Contents"
+   ],
+   "text": "1. [Getting started](#getting-started)\n2. [Environments](#environments)\n3. [Deploying](#deploying)\n4. [On-call](#on-call)\n5. [FAQ](#faq)",
+   "label": "noise",
+   "kind": "toc",
+   "note": "table of contents"
+  },
+  {
+   "id": "dev-049",
+   "title": "Gatekeeper rate limiter - design",
+   "section_path": [
+    "Legal"
+   ],
+   "text": "Copyright (c) 2026 Larkspur Systems Ltd. All rights reserved. Confidential and proprietary. Do not distribute outside the organisation without written permission.",
+   "label": "noise",
+   "kind": "boilerplate",
+   "note": "copyright boilerplate"
+  },
+  {
+   "id": "dev-050",
+   "title": "RFC-140: Multi-region active/passive",
+   "section_path": [
+    "Reviewers"
+   ],
+   "text": "- [x] @priya (storage)\n- [x] @marco (SRE)\n- [ ] @lena (security) - pending",
+   "label": "noise",
+   "kind": "sign_off",
+   "note": "reviewer checklist in a design doc"
+  },
+  {
+   "id": "dev-051",
+   "title": "Event bus selection",
+   "section_path": [
+    "Open questions"
+   ],
+   "text": "TBD",
+   "label": "noise",
+   "kind": "template",
+   "note": "empty open questions section"
+  },
+  {
+   "id": "dev-052",
+   "title": "Team calendar",
+   "section_path": [
+    "Out of office"
+   ],
+   "text": "- Ana: Nov 10-14\n- Tomas: Nov 20 (half day)\n- Kai: back Dec 1",
+   "label": "noise",
+   "kind": "ooo",
+   "note": "OOO schedule"
+  },
+  {
+   "id": "dev-053",
+   "title": "DR drill planning",
+   "section_path": [
+    "Scheduling"
+   ],
+   "text": "Can we move the drill to Thursday 3pm? Tuesday clashes with the all-hands. @sam please send a new invite, and book the big room if it's free.",
+   "label": "noise",
+   "kind": "scheduling",
+   "note": "meeting scheduling"
+  },
+  {
+   "id": "dev-054",
+   "title": "ML platform onboarding",
+   "section_path": [
+    "Useful links"
+   ],
+   "text": "- [Feature store dashboard](https://dash.example.internal/fs)\n- [Runbook](https://wiki.example.internal/ml/runbook)\n- [Slack: #ml-platform](https://chat.example.internal/ml-platform)\n- [Training cluster UI](https://train.example.internal)",
+   "label": "noise",
+   "kind": "links_only",
+   "note": "links-only list"
+  },
+  {
+   "id": "dev-055",
+   "title": "Launch sign-off: Orders v3",
+   "section_path": [
+    "Approvals"
+   ],
+   "text": "| Role | Name | Status | Date |\n|---|---|---|---|\n| Eng lead | Marco E. | Approved | 3/2 |\n| PM | Dana K. | Approved | 3/2 |\n| Security | Lena V. | Approved | 3/4 |\n| Support | | Pending | |",
+   "label": "noise",
+   "kind": "sign_off",
+   "note": "sign-off table"
+  },
+  {
+   "id": "dev-056",
+   "title": "Q4 planning kickoff",
+   "section_path": [
+    "Intro"
+   ],
+   "text": "Hi all! :wave: Welcome to Q4 planning. Thanks for making the time, I know it's a busy week. Grab a coffee and let's get started.",
+   "label": "noise",
+   "kind": "chatter",
+   "note": "greeting"
+  },
+  {
+   "id": "dev-057",
+   "title": "Service one-pager template",
+   "section_path": [],
+   "text": "**Service name:**\n**Owner:**\n**On-call rotation:**\n**SLO:** <fill in>\n**Dependencies:**",
+   "label": "noise",
+   "kind": "template",
+   "note": "empty template fields"
+  },
+  {
+   "id": "dev-058",
+   "title": "Recommendation pipeline",
+   "section_path": [
+    "Document info"
+   ],
+   "text": "Status: Draft\nOwner: @jo\nLast updated: 2026-06-30\nStakeholders: ML platform, Growth",
+   "label": "noise",
+   "kind": "boilerplate",
+   "note": "doc metadata header"
+  },
+  {
+   "id": "dev-059",
+   "title": "Weekly sync 2026-03-11",
+   "section_path": [
+    "Next meeting"
+   ],
+   "text": "Next sync: Wed 3/18, 10:00, same link. Note taker: Lena.",
+   "label": "noise",
+   "kind": "scheduling",
+   "note": "next meeting logistics"
+  },
+  {
+   "id": "dev-060",
+   "title": "Mobile release 4.2 status",
+   "section_path": [],
+   "text": "- iOS: submitted to review Monday, approved\n- Android: rolling out, 20% -> 50% tomorrow\n- Crash-free sessions 99.6%\n- No blockers",
+   "label": "noise",
+   "kind": "status",
+   "note": "release status with no design content"
+  },
+  {
+   "id": "dev-061",
+   "title": "Data team monthly - Sept",
+   "section_path": [
+    "Shout-outs"
+   ],
+   "text": "Huge thanks to Jo and Ravi for the late nights on the quarter-end reports. Also congrats to Mira on the promotion! :tada:",
+   "label": "noise",
+   "kind": "chatter",
+   "note": "kudos"
+  },
+  {
+   "id": "dev-062",
+   "title": "Postmortem template",
+   "section_path": [
+    "Timeline"
+   ],
+   "text": "| Time (UTC) | Event |\n|---|---|\n| | |\n| | |",
+   "label": "noise",
+   "kind": "template",
+   "note": "empty table"
+  },
+  {
+   "id": "dev-063",
+   "title": "Checkout service",
+   "section_path": [
+    "Changelog"
+   ],
+   "text": "- 2026-07-01 - Ravi: fixed typos\n- 2026-07-03 - Dana: added screenshots\n- 2026-07-09 - Ravi: moved to the Payments space",
+   "label": "noise",
+   "kind": "revision_history",
+   "note": "doc edit changelog"
+  },
+  {
+   "id": "dev-064",
+   "title": "Backend guild 2026-08-12",
+   "section_path": [
+    "Attendance"
+   ],
+   "text": "14 attendees in room, 9 remote. Recording link posted in the channel.",
+   "label": "noise",
+   "kind": "attendance",
+   "note": "attendance count and recording logistics"
+  },
+  {
+   "id": "dev-065",
+   "title": "Parser team status - week 31",
+   "section_path": [],
+   "text": "Merged the PR for the new tokenizer in the query parser. Perf tests next week, then we'll flip the flag in staging.",
+   "label": "noise",
+   "kind": "hard_status",
+   "note": "technical-sounding progress report, no design info"
+  },
+  {
+   "id": "dev-066",
+   "title": "Storage sync - 7/22",
+   "section_path": [
+    "Discussion"
+   ],
+   "text": "Discussed whether to shard the events table by tenant or by time. Marco worried about hot tenants, Priya about cross-tenant queries. No conclusion; revisit when we have the load numbers.",
+   "label": "noise",
+   "kind": "hard_no_decision",
+   "note": "discussion with no decision"
+  },
+  {
+   "id": "dev-067",
+   "title": "RFC-151: Session store migration",
+   "section_path": [
+    "Open questions"
+   ],
+   "text": "- Do we need to keep sessions across the migration or can we force re-login?\n- What's the max acceptable p99 for session reads?\n- Who owns the cutover runbook?",
+   "label": "noise",
+   "kind": "hard_questions_only",
+   "note": "questions only, nothing decided"
+  },
+  {
+   "id": "dev-068",
+   "title": "RFC-151: Session store migration",
+   "section_path": [
+    "Write path"
+   ],
+   "text": "As agreed in the 3/4 sync, session writes go through the `session-events` queue rather than directly to the new store, because the dual-write period would otherwise need a distributed transaction. The consumer applies writes to both stores in order per `session_id`.",
+   "label": "design",
+   "kind": "hard_design_mentions_meeting",
+   "note": "design that references a meeting but states mechanism and reason"
+  },
+  {
+   "id": "dev-069",
+   "title": "Infra weekly 6/3",
+   "section_path": [],
+   "text": "- k8s 1.31 upgrade: staging done, prod scheduled for the 12th\n- Terraform state migration ~80%\n- Alertmanager config PR is up, needs review",
+   "label": "noise",
+   "kind": "hard_status",
+   "note": "infra status full of technical nouns but no design content"
+  },
+  {
+   "id": "dev-070",
+   "title": "Mobile sync 5/5",
+   "section_path": [
+    "Notes"
+   ],
+   "text": "Long discussion of whether to move image caching to a native module. Kai prototyped it, numbers look promising but inconclusive on low-end Android. Parking it until next sprint.",
+   "label": "noise",
+   "kind": "hard_no_decision",
+   "note": "technical discussion parked without a decision"
+  },
+  {
+   "id": "dev-071",
+   "title": "Notifications service",
+   "section_path": [
+    "Background"
+   ],
+   "text": "Per the platform review on Feb 12, we keep email and push in one service. Splitting was considered but both share the user preference lookup and the rate-limit budget per user (max 5 notifications/hour across channels), so splitting would need a shared counter anyway.",
+   "label": "design",
+   "kind": "hard_design_mentions_meeting",
+   "note": "mentions a meeting but records a decision, reason and limit"
+  }
+ ],
+ "held_out": [
+  {
+   "id": "test-001",
+   "title": "Tidewater time-series store: compaction",
+   "section_path": [
+    "Overview"
+   ],
+   "text": "Incoming points land in an in-memory write buffer per series shard, flushed to an L0 segment every 60s or 64 MB. Compaction merges L0 segments into hourly L1 segments and hourly into daily L2 segments. Downsampling to 1-minute resolution happens during L1->L2 compaction, so raw resolution is only available for data younger than 48h.\n\nQueries spanning both raw and downsampled ranges are stitched by the query planner; aggregates over the boundary can differ slightly from a full-raw computation because the 1-minute rollup stores min/max/sum/count, not percentiles.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "storage engine mechanism and a correctness caveat"
+  },
+  {
+   "id": "test-002",
+   "title": "Kestrel CDN migration - eng all-hands deck",
+   "section_path": [
+    "Slide 12: Edge rules"
+   ],
+   "text": "- Edge caches HTML for logged-out users only (cookie `ks_sess` absent)\n- Cache key: path + `Accept-Language` + device class\n- Purge by surrogate key `article:{id}` on publish\n- Max object 50 MB; video goes through the media origin",
+   "label": "design",
+   "kind": "design_bullets",
+   "note": "slide bullets with cache key, purge and limit"
+  },
+  {
+   "id": "test-003",
+   "title": "Warehouse jobs SLA",
+   "section_path": [
+    "Schedule"
+   ],
+   "text": "| Job | Runs | Upstream | Must finish by |\n|---|---|---|---|\n| `orders_daily` | 01:00 UTC | `raw.orders` load | 04:00 |\n| `finance_rollup` | after `orders_daily` | `orders_daily` | 06:00 |\n| `exec_dashboard` | 06:30 | `finance_rollup` | 07:00 |\n\nIf `orders_daily` misses 04:00, `finance_rollup` still runs on partial data and marks the partition `is_partial=true`; the dashboard shows a banner.",
+   "label": "design",
+   "kind": "design_table",
+   "note": "dependency table with partial-data behaviour"
+  },
+  {
+   "id": "test-004",
+   "title": "Webhook delivery worker",
+   "section_path": [
+    "Signature"
+   ],
+   "text": "Each delivery carries `X-Hook-Signature: t=<unix>,v1=<hex>` where\n\n```go\nmac := hmac.New(sha256.New, secret)\nmac.Write([]byte(fmt.Sprintf(\"%d.%s\", ts, body)))\n```\n\nReceivers must reject timestamps older than 5 minutes to block replays. During secret rotation both old and new secrets sign (`v1=` appears twice) for 24h.",
+   "label": "design",
+   "kind": "design_code",
+   "note": "code-level signature scheme with rotation behaviour"
+  },
+  {
+   "id": "test-005",
+   "title": "Profile service",
+   "section_path": [
+    "Limits"
+   ],
+   "text": "Display names are capped at 64 UTF-16 code units, not bytes, to match what the iOS client enforces.",
+   "label": "design",
+   "kind": "design_short",
+   "note": "one-line limit with reason"
+  },
+  {
+   "id": "test-006",
+   "title": "Vector search service",
+   "section_path": [
+    "Known issues"
+   ],
+   "text": "- HNSW index rebuild holds 2x the index in memory; nodes under 64 GB OOM on the `products` index. Rebuild runs only on the `large` pool.\n- Deletes are tombstones until the next rebuild; recall drops ~3% when more than 20% of vectors are tombstoned.\n- Filtered queries with very selective filters (<0.1% match) fall back to brute force and can take seconds.",
+   "label": "design",
+   "kind": "design_bullets",
+   "note": "known issues with thresholds"
+  },
+  {
+   "id": "test-007",
+   "title": "Billing engine v4",
+   "section_path": [
+    "Rollout and compatibility"
+   ],
+   "text": "Invoices generated by v3 and v4 must reconcile to the cent. We run v4 in shadow mode for one full billing cycle: it computes every invoice, stores it in `invoices_shadow`, and a nightly diff job reports mismatches. Cutover per region happens only after a cycle with zero unexplained diffs. v3 stays deployable for 60 days after cutover so a region can be switched back with `billing.engine=v3`.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "shadow rollout and rollback mechanism"
+  },
+  {
+   "id": "test-008",
+   "title": "Image resizing service",
+   "section_path": [
+    "Alternatives considered"
+   ],
+   "text": "1. *Resize on upload, store all variants* - rejected: 14 variants x 400M images, storage cost tripled.\n2. *Third-party image proxy* - rejected: per-request pricing and no control over EXIF stripping.\n3. *Resize on demand at the edge with a variant cache* (chosen) - first request ~300ms, then cached; variants limited to an allowlist so the cache cannot be blown up with arbitrary sizes.",
+   "label": "design",
+   "kind": "design_alternatives",
+   "note": "alternatives with rejection reasons"
+  },
+  {
+   "id": "test-009",
+   "title": "ADR-031",
+   "section_path": [
+    "Status: Accepted",
+    "Decision"
+   ],
+   "text": "We use one Kafka topic per bounded context, not per event type.",
+   "label": "design",
+   "kind": "design_decision",
+   "note": "bare decision without reason"
+  },
+  {
+   "id": "test-010",
+   "title": "Churn model pipeline",
+   "section_path": [
+    "Training data"
+   ],
+   "text": "Labels are computed 30 days after the snapshot date, so the most recent training snapshot is always at least 30 days old. The training set excludes accounts created less than 14 days before the snapshot, since their features (tenure, usage trend) are mostly null and were dominating the false positives. Class balance is handled by weighting, not downsampling, to keep calibration intact for the CS team's thresholds.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "ML data construction choices with reasons"
+  },
+  {
+   "id": "test-011",
+   "title": "Edge proxy fleet",
+   "section_path": [
+    "Capacity"
+   ],
+   "text": "- 3 AZs x 8 nodes, each sized for 15k RPS at 60% CPU\n- Survives loss of one AZ at peak (planning peak = 220k RPS)\n- Connection draining 30s on deploy; long-poll clients reconnect\n- TLS session tickets rotated every 12h, keys shared via the secrets agent",
+   "label": "design",
+   "kind": "design_bullets",
+   "note": "capacity sizing and operational behaviour"
+  },
+  {
+   "id": "test-012",
+   "title": "Identity platform: SSO",
+   "section_path": [
+    "SAML assertions"
+   ],
+   "text": "We accept assertions only with `NotOnOrAfter` within 5 minutes and record each `AssertionID` in a replay cache (Redis, TTL 10 min). IdP-initiated SSO is disabled by default because it cannot carry a `RelayState` nonce; tenants can enable it explicitly and accept the CSRF risk in the admin console.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "security behaviour and defaults with reasons"
+  },
+  {
+   "id": "test-013",
+   "title": "Zero-downtime index changes",
+   "section_path": [
+    "Creating indexes"
+   ],
+   "text": "Use `CREATE INDEX CONCURRENTLY` only, outside a transaction. Our migration runner wraps each file in a transaction by default, so index migrations need the `-- runner: no-transaction` header. If a concurrent build fails it leaves an INVALID index; drop it before retrying.",
+   "label": "design",
+   "kind": "design_procedure",
+   "note": "migration constraint and runner quirk"
+  },
+  {
+   "id": "test-014",
+   "title": "Autocomplete",
+   "section_path": [
+    "Suggestion source"
+   ],
+   "text": "`suggest(prefix)` reads from an in-memory trie built from the top 2M queries of the last 28 days, rebuilt nightly. Prefixes shorter than 2 characters return nothing. Queries flagged by the safety list are removed at build time, not filtered at request time.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "data source, limits and where filtering happens"
+  },
+  {
+   "id": "test-015",
+   "title": "Blob storage options",
+   "section_path": [
+    "Comparison"
+   ],
+   "text": "| Option | Durability | Egress cost | Lifecycle rules | Verdict |\n|---|---|---|---|---|\n| Object store (current provider) | 11 nines | high | yes | keep for hot data |\n| Self-hosted erasure-coded cluster | depends on ops | none | build ourselves | no |\n| Cold archive tier | 11 nines | very high, 12h restore | yes | backups > 90 days |",
+   "label": "design",
+   "kind": "design_table",
+   "note": "comparison table with verdicts"
+  },
+  {
+   "id": "test-016",
+   "title": "In-app messaging (mobile)",
+   "section_path": [
+    "Delivery"
+   ],
+   "text": "Messages are fetched on app foreground and via silent push. The client stores a `last_seen_seq` per conversation and asks the server for `seq > last_seen_seq`; the server keeps 30 days of messages, so a client offline longer than that does a full resync of the conversation list instead of an incremental fetch.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "sync protocol and its limit"
+  },
+  {
+   "id": "test-017",
+   "title": "Internal API style guide",
+   "section_path": [
+    "Errors"
+   ],
+   "text": "Errors use RFC 7807 problem documents. `type` is a stable URI per error class; clients branch on `type`, never on `title` or `detail`, which are human-readable and may change. Validation errors add an `errors` array of `{field, code}`.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "error contract for API callers"
+  },
+  {
+   "id": "test-018",
+   "title": "Fraud scoring service",
+   "section_path": [
+    "Thresholds and fallbacks"
+   ],
+   "text": "- score >= 0.92: block\n- 0.70 - 0.92: step-up auth (3DS)\n- < 0.70: allow\n- If the model call exceeds 120ms, use the rules-only score; never block on rules-only\n- Thresholds in `fraud_thresholds` config map, hot-reloaded",
+   "label": "design",
+   "kind": "design_bullets",
+   "note": "thresholds, timeout fallback, config location"
+  },
+  {
+   "id": "test-019",
+   "title": "Audit log",
+   "section_path": [
+    "Retention and immutability"
+   ],
+   "text": "Audit events are written to a WORM bucket with a 7-year retention lock; not even admins can delete before expiry. Because of this, PII is never put in audit payloads - only user ids, which are pseudonymous and resolvable through the identity service until the account is erased.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "immutability constraint and its consequence for PII"
+  },
+  {
+   "id": "test-020",
+   "title": "Tracing conventions",
+   "section_path": [
+    "Sampling"
+   ],
+   "text": "Head sampling at 5% in the SDK, plus tail sampling in the collector that keeps 100% of traces with an error span or root duration > 2s. Do not add a per-service sampler; it breaks the tail sampler's view of complete traces.",
+   "label": "design",
+   "kind": "design_short",
+   "note": "sampling setup and a prohibition with reason"
+  },
+  {
+   "id": "test-021",
+   "title": "Kotlin Multiplatform adoption - tech talk",
+   "section_path": [
+    "Slide 6: What's shared"
+   ],
+   "text": "**Shared (KMP module)**\n- Networking, models, validation\n- Offline cache (SQLDelight)\n\n**Stays native**\n- UI (SwiftUI / Compose)\n- Payments SDK wrappers",
+   "label": "design",
+   "kind": "design_bullets",
+   "note": "slide defining module boundary"
+  },
+  {
+   "id": "test-022",
+   "title": "Log shipper",
+   "section_path": [
+    "Configuration"
+   ],
+   "text": "```toml\n[sink.archive]\ntype = \"object_store\"\nbatch.max_bytes = 10_000_000\nbatch.timeout_secs = 300\nencoding = \"ndjson\"\ncompression = \"gzip\"   # archive readers only support gzip\n\n[buffer]\ntype = \"disk\"\nmax_size = 2_147_483_648  # 2 GiB; when full, oldest events are dropped\n```",
+   "label": "design",
+   "kind": "design_code",
+   "note": "config with buffer overflow behaviour"
+  },
+  {
+   "id": "test-023",
+   "title": "Order fulfilment service",
+   "section_path": [
+    "State machine"
+   ],
+   "text": "`CREATED -> PAID -> PICKING -> PACKED -> SHIPPED -> DELIVERED`\n\nCancellation is allowed until `PACKED`. After `PACKED` a cancel request becomes a return (`RETURN_REQUESTED`) because the warehouse system cannot un-pack. Transitions are enforced in `OrderStateMachine.transition()`; direct status updates in SQL are blocked by a trigger.",
+   "label": "design",
+   "kind": "design_code",
+   "note": "state machine with constraints and enforcement point"
+  },
+  {
+   "id": "test-024",
+   "title": "Experimentation platform",
+   "section_path": [
+    "Assignment"
+   ],
+   "text": "Assignment is `hash(experiment_salt + user_id) mod 10000`, deterministic and stateless. Changing traffic allocation from 10% to 20% keeps the original 10% in their arm. Changing the salt reshuffles everyone, so it is only allowed before an experiment starts.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "assignment algorithm and invariants"
+  },
+  {
+   "id": "test-025",
+   "title": "RFC-203: Tenant-level backups",
+   "section_path": [
+    "Restore"
+   ],
+   "text": "Tenant restore replays the tenant's rows from the nightly logical snapshot into a staging schema, diffs against live, and applies only rows the operator selects. We do not support point-in-time restore per tenant: WAL is cluster-wide and filtering it per tenant was measured at 9h for a 2 TB cluster, which defeats the purpose.\n\nRestored rows keep their original ids. If an id was reused after deletion (not possible for UUID tables, possible for the three legacy serial tables), the restore aborts and lists the conflicts.\n\nRestores are audited and require two approvers in the admin tool.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "long restore design with limits and reasons"
+  },
+  {
+   "id": "test-026",
+   "title": "Vector search service",
+   "section_path": [
+    "Embeddings",
+    "Note"
+   ],
+   "text": "Changing the embedding model requires a full re-embed; vectors from different models are not comparable and must not share an index.",
+   "label": "design",
+   "kind": "design_short",
+   "note": "short compatibility constraint"
+  },
+  {
+   "id": "test-027",
+   "title": "Session cookies",
+   "section_path": [
+    "Attributes"
+   ],
+   "text": "`SameSite=Lax; Secure; HttpOnly; Path=/; Max-Age=1209600`. Lax rather than Strict because Strict breaks the login redirect from the marketing site. The cookie is scoped to `app.` not the apex domain so marketing pages never receive it.",
+   "label": "design",
+   "kind": "design_short",
+   "note": "cookie config with reasons"
+  },
+  {
+   "id": "test-028",
+   "title": "GPU training cluster",
+   "section_path": [
+    "Scheduling"
+   ],
+   "text": "Jobs request whole nodes (8 GPUs); fractional GPU requests are rejected by the admission webhook because NCCL performance degraded badly when jobs shared a node. Preemptible jobs must checkpoint at least every 30 minutes; the scheduler preempts lowest-priority jobs first and gives them a 5-minute SIGTERM grace.",
+   "label": "design",
+   "kind": "design_prose",
+   "note": "scheduling rules with reasons"
+  },
+  {
+   "id": "test-029",
+   "title": "Weekly sync 2026-09-16",
+   "section_path": [],
+   "text": "- Welcome back Ruth\n- Agreed: CSV export moves to an async job; sync export was timing out above 50k rows\n- Reminder: expense reports due Friday",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "decision with reason among chatter"
+  },
+  {
+   "id": "test-030",
+   "title": "Data eng sync - 2026-10-01",
+   "section_path": [
+    "Action items"
+   ],
+   "text": "- [ ] @ravi - re-run the backfill for August - Mon\n- [ ] @jo - ask legal about the vendor DPA\n- [ ] @mira - update the dbt docs\n- Decision: dbt models in `marts/` must have a unique test on their grain\n- [ ] @ravi - close stale tickets",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "one-line decision in action items"
+  },
+  {
+   "id": "test-031",
+   "title": "Web team standup Thu",
+   "section_path": [],
+   "text": "- Jonah: wrapping up the date picker\n- Mira: blocked on API review\n- Fen: heads up - we're dropping IE-mode support in the build; the polyfills add 80 KB and the last enterprise customer moved off. Browserslist updated.",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "standup entry with compatibility decision"
+  },
+  {
+   "id": "test-032",
+   "title": "Incident retro: checkout outage",
+   "section_path": [
+    "What we'll change"
+   ],
+   "text": "We will set `statement_timeout = 5s` for the checkout DB role. The outage was a single reporting query holding locks for 11 minutes; reporting moves to the replica.",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "retro recording a config decision with cause"
+  },
+  {
+   "id": "test-033",
+   "title": "Growth eng status - Oct wk2",
+   "section_path": [],
+   "text": ":large_yellow_circle: At risk\n\nExperiment exposure logging moved server-side: client-side logging was undercounting by ~8% due to ad blockers. All new experiments must log via `exp.log_exposure()` in the API.\n\nRemaining: dashboard migration.",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "status update that contains an architecture change and rule"
+  },
+  {
+   "id": "test-034",
+   "title": "API design review - notes",
+   "section_path": [
+    "Outcome"
+   ],
+   "text": "Agreed to version by URL path (`/v2/`) not headers - caches and logs handle it without config. Deprecations get a `Sunset` header 6 months ahead.",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "review outcome with versioning decision and policy"
+  },
+  {
+   "id": "test-035",
+   "title": "Mobile sync 9/30",
+   "section_path": [
+    "Notes"
+   ],
+   "text": "- Crash rate fine\n- Decided to keep tokens in Keychain/Keystore only, never in shared prefs - security review flagged it\n- Next release train Monday",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "security storage decision among chatter"
+  },
+  {
+   "id": "test-036",
+   "title": "Infra weekly 8/26",
+   "section_path": [],
+   "text": "1. On-call handoff - nothing notable\n2. Terraform: agreed that modules pin provider versions exactly (`= 5.31.0`), no ranges, after last week's surprise upgrade\n3. Swag order",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "convention decided in a weekly agenda"
+  },
+  {
+   "id": "test-037",
+   "title": "Search sync 10/20",
+   "section_path": [
+    "Decisions"
+   ],
+   "text": "- synonyms list owned by the search team, merchandising requests via ticket\n- reindex window: Sun 02:00-05:00 UTC only",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "terse decisions"
+  },
+  {
+   "id": "test-038",
+   "title": "Q3 retro - ML platform",
+   "section_path": [
+    "Actions"
+   ],
+   "text": "- Pin CUDA base images by digest, not tag. Two training runs silently changed numerics when `:12-latest` moved.",
+   "label": "design",
+   "kind": "decision_in_notes",
+   "note": "retro action that is a technical rule with cause"
+  },
+  {
+   "id": "test-039",
+   "title": "Weekly sync 2026-09-16",
+   "section_path": [
+    "Attendees"
+   ],
+   "text": "Present: Ruth, Jonah, Mira, Fen, Dana\nAbsent: Ollie (sick)",
+   "label": "noise",
+   "kind": "attendance",
+   "note": "attendance"
+  },
+  {
+   "id": "test-040",
+   "title": "Data eng sync - 2026-10-01",
+   "section_path": [
+    "Agenda"
+   ],
+   "text": "- [ ] Review last week's actions\n- [ ] Backfill status\n- [ ] Vendor contract\n- [ ] Open floor",
+   "label": "noise",
+   "kind": "agenda",
+   "note": "agenda checkboxes"
+  },
+  {
+   "id": "test-041",
+   "title": "Q1 OKR planning",
+   "section_path": [
+    "Follow-ups"
+   ],
+   "text": "| Owner | Action | Due |\n|---|---|---|\n| Dana | Draft KR wording | 1/10 |\n| Ravi | Get baseline numbers | 1/12 |\n| Ruth | Share with leadership | 1/15 |",
+   "label": "noise",
+   "kind": "action_items",
+   "note": "action item table"
+  },
+  {
+   "id": "test-042",
+   "title": "Identity platform - status",
+   "section_path": [
+    "Week 40"
+   ],
+   "text": "- SCIM connector: 90%, finishing tests\n- Passkeys: blocked waiting on design\n- MFA reminder emails: shipped :rocket:\n- Overall green",
+   "label": "noise",
+   "kind": "status",
+   "note": "status only"
+  },
+  {
+   "id": "test-043",
+   "title": "Data eng standup",
+   "section_path": [
+    "Mon 10/6"
+   ],
+   "text": "Ravi - backfill, Jo - vendor stuff, Mira - docs. No blockers. Jo leaving early.",
+   "label": "noise",
+   "kind": "standup",
+   "note": "terse standup round"
+  },
+  {
+   "id": "test-044",
+   "title": "Sprint 57 retro",
+   "section_path": [
+    "Board"
+   ],
+   "text": "| Went well | Didn't go well | Ideas |\n|---|---|---|\n| Pairing sessions | Late requirement changes | Team lunch |\n| Faster code reviews | On-call was noisy | Rotate retro facilitator |",
+   "label": "noise",
+   "kind": "retro",
+   "note": "retro board without decisions"
+  },
+  {
+   "id": "test-045",
+   "title": "RFC-203: Tenant-level backups",
+   "section_path": [
+    "Comments"
+   ],
+   "text": "@ruth: LGTM :+1:\n@jonah: +1\n@dana: Thanks for writing this up, really clear!",
+   "label": "noise",
+   "kind": "chatter",
+   "note": "+1s and thanks"
+  },
+  {
+   "id": "test-046",
+   "title": "ADR template",
+   "section_path": [
+    "Consequences"
+   ],
+   "text": "_What becomes easier or harder because of this change?_",
+   "label": "noise",
+   "kind": "template",
+   "note": "template prompt only"
+  },
+  {
+   "id": "test-047",
+   "title": "Billing engine v4",
+   "section_path": [
+    "Document history"
+   ],
+   "text": "v0.1 - draft (Ravi)\nv0.2 - added rollout section (Ravi)\nv0.3 - comments from finance resolved (Dana)\nv1.0 - approved",
+   "label": "noise",
+   "kind": "revision_history",
+   "note": "version history"
+  },
+  {
+   "id": "test-048",
+   "title": "Billing engine v4",
+   "section_path": [
+    "Table of contents"
+   ],
+   "text": "- Summary\n- Goals\n- Design\n  - Rating\n  - Invoicing\n- Rollout\n- Appendix",
+   "label": "noise",
+   "kind": "toc",
+   "note": "nested table of contents"
+  },
+  {
+   "id": "test-049",
+   "title": "Vendor integration guide",
+   "section_path": [
+    "Notice"
+   ],
+   "text": "This document contains confidential information of Kestrel Media Group and is provided under NDA. (c) 2026. All trademarks are property of their respective owners.",
+   "label": "noise",
+   "kind": "boilerplate",
+   "note": "legal notice"
+  },
+  {
+   "id": "test-050",
+   "title": "Fraud scoring service",
+   "section_path": [
+    "Approvers"
+   ],
+   "text": "| Name | Team | Approved |\n|---|---|---|\n| Ruth | Risk | yes |\n| Jonah | Payments | yes |\n| Fen | Security | |",
+   "label": "noise",
+   "kind": "sign_off",
+   "note": "approver table in a design doc"
+  },
+  {
+   "id": "test-051",
+   "title": "Order fulfilment service",
+   "section_path": [
+    "Risks"
+   ],
+   "text": "TBD - to be filled in after the warehouse workshop.",
+   "label": "noise",
+   "kind": "template",
+   "note": "placeholder section"
+  },
+  {
+   "id": "test-052",
+   "title": "Holiday coverage",
+   "section_path": [],
+   "text": "- Dec 23-27: Jonah on call, Mira backup\n- Dec 30-Jan 2: Fen on call\n- Ruth OOO Dec 20 - Jan 5",
+   "label": "noise",
+   "kind": "ooo",
+   "note": "OOO and coverage schedule"
+  },
+  {
+   "id": "test-053",
+   "title": "Offsite planning",
+   "section_path": [],
+   "text": "Proposed dates: Feb 4-5 or Feb 11-12. Please vote in the poll by Friday. Dana will look at venues near the office.",
+   "label": "noise",
+   "kind": "scheduling",
+   "note": "scheduling"
+  },
+  {
+   "id": "test-054",
+   "title": "Search team wiki",
+   "section_path": [
+    "Resources"
+   ],
+   "text": "* Dashboards: https://grafana.example.internal/d/search\n* Runbook: https://wiki.example.internal/search/runbook\n* Design docs folder: https://docs.example.internal/folders/search",
+   "label": "noise",
+   "kind": "links_only",
+   "note": "links only"
+  },
+  {
+   "id": "test-055",
+   "title": "Q4 planning kickoff",
+   "section_path": [
+    "Wrap-up"
+   ],
+   "text": "Thanks everyone, great discussion today! Slides will be shared after the meeting. Have a good weekend :sunny:",
+   "label": "noise",
+   "kind": "chatter",
+   "note": "closing pleasantries"
+  },
+  {
+   "id": "test-056",
+   "title": "Integration spec template",
+   "section_path": [],
+   "text": "## Partner\n<name>\n## Endpoint\n<url>\n## Auth\n<fill in>\n## Contacts\n-",
+   "label": "noise",
+   "kind": "template",
+   "note": "empty template"
+  },
+  {
+   "id": "test-057",
+   "title": "Tidewater time-series store: compaction",
+   "section_path": [
+    "Metadata"
+   ],
+   "text": "**Author:** @ravi\n**Status:** In review\n**Created:** 2026-04-02\n**Tags:** storage, tsdb",
+   "label": "noise",
+   "kind": "boilerplate",
+   "note": "doc metadata"
+  },
+  {
+   "id": "test-058",
+   "title": "Data eng sync - 2026-10-08",
+   "section_path": [
+    "Next steps"
+   ],
+   "text": "- Ravi to set up time with finance\n- Jo to circulate notes\n- Reconvene next Wednesday",
+   "label": "noise",
+   "kind": "action_items",
+   "note": "action items without dates"
+  },
+  {
+   "id": "test-059",
+   "title": "Platform release notes - week 44",
+   "section_path": [],
+   "text": "Shipped this week:\n- Dark mode in admin console (100%)\n- Faster login page\n- 3 bug fixes\nThanks to everyone who helped test!",
+   "label": "noise",
+   "kind": "status",
+   "note": "shipped list with thanks"
+  },
+  {
+   "id": "test-060",
+   "title": "All-hands Q&A",
+   "section_path": [
+    "Housekeeping"
+   ],
+   "text": "Reminder: badge in at the front desk, and the 4th floor kitchen is closed for repairs this week.",
+   "label": "noise",
+   "kind": "chatter",
+   "note": "office housekeeping"
+  },
+  {
+   "id": "test-061",
+   "title": "Kestrel CDN migration - eng all-hands deck",
+   "section_path": [
+    "Slide 1"
+   ],
+   "text": "# Kestrel CDN Migration\n### Engineering All-Hands\nRuth & Jonah - October",
+   "label": "noise",
+   "kind": "boilerplate",
+   "note": "title slide"
+  },
+  {
+   "id": "test-062",
+   "title": "Postmortem: checkout outage",
+   "section_path": [
+    "Participants"
+   ],
+   "text": "Incident commander: Fen\nScribe: Mira\nResponders: Jonah, Ravi, Dana",
+   "label": "noise",
+   "kind": "attendance",
+   "note": "participant roles list"
+  },
+  {
+   "id": "test-063",
+   "title": "Sprint 58 planning",
+   "section_path": [],
+   "text": "Capacity: 34 points (Ollie at 50%). Committed: SEARCH-210, SEARCH-214, SEARCH-219, BILL-88. Stretch: SEARCH-230.",
+   "label": "noise",
+   "kind": "status",
+   "note": "sprint capacity and ticket list"
+  },
+  {
+   "id": "test-064",
+   "title": "Billing team status - wk 41",
+   "section_path": [],
+   "text": "Landed the refactor of the proration calculator into its own module, 1.2k lines removed. Load test against the shadow env runs Thursday; results in next update.",
+   "label": "noise",
+   "kind": "hard_status",
+   "note": "technical progress with no design facts"
+  },
+  {
+   "id": "test-065",
+   "title": "Architecture forum 10/9",
+   "section_path": [
+    "Topic: monorepo"
+   ],
+   "text": "Talked through moving the mobile apps into the monorepo. Pros: shared CI, atomic API changes. Cons: build times, tooling. Several people want data on CI cost first. No decision today.",
+   "label": "noise",
+   "kind": "hard_no_decision",
+   "note": "pros/cons discussion that reaches no conclusion"
+  },
+  {
+   "id": "test-066",
+   "title": "Vector search service",
+   "section_path": [
+    "Questions for reviewers"
+   ],
+   "text": "1. Is 3% recall loss from tombstones acceptable for the products index?\n2. Should we expose `ef_search` to callers?\n3. Do we need multi-tenancy in v1?",
+   "label": "noise",
+   "kind": "hard_questions_only",
+   "note": "questions only, no answers"
+  },
+  {
+   "id": "test-067",
+   "title": "Webhook delivery worker",
+   "section_path": [
+    "Retry schedule"
+   ],
+   "text": "Following the decision in the 9/12 payments sync, failed deliveries are retried at 1m, 5m, 30m, 2h, 6h, 24h and then dropped to the dead-letter table. We stopped at 24h because receivers that are down longer than a day nearly always need manual replay anyway, which the DLQ console supports.",
+   "label": "design",
+   "kind": "hard_design_mentions_meeting",
+   "note": "references a sync but gives the schedule and reason"
+  },
+  {
+   "id": "test-068",
+   "title": "SRE weekly 10/28",
+   "section_path": [],
+   "text": "- Postgres 17 upgrade done on 3 of 5 clusters\n- Cert rotation automation PR merged, rollout next sprint\n- Error budget for API at 64% remaining",
+   "label": "noise",
+   "kind": "hard_status",
+   "note": "status full of technical terms, no design"
+  },
+  {
+   "id": "test-069",
+   "title": "ML platform weekly - 10/21",
+   "section_path": [
+    "Discussion"
+   ],
+   "text": "Debated online vs batch features for the ranking model. Ravi thinks the latency budget can't absorb online lookups; Jo disagrees. Need benchmarks; carry over.",
+   "label": "noise",
+   "kind": "hard_no_decision",
+   "note": "technical debate carried over"
+  },
+  {
+   "id": "test-070",
+   "title": "Profile service",
+   "section_path": [
+    "Avatar storage"
+   ],
+   "text": "As discussed with security in last Tuesday's review, avatars are re-encoded server-side to strip EXIF (location data) and stored under a random key, not the user id, so URLs cannot be enumerated.",
+   "label": "design",
+   "kind": "hard_design_mentions_meeting",
+   "note": "meeting mention plus mechanism and reason"
+  }
+ ]
+}

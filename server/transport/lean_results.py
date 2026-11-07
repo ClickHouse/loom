@@ -342,6 +342,8 @@ def lean_knowledge_hits(section: Any, bodies: Any, home_ns: str = "") -> None:
             continue
         for k in KNOWLEDGE_HIT_DROP:
             h.pop(k, None)
+        if not h.get("noise"):
+            h.pop("noise", None)  # only a noise label reaches the model
         if mode not in ("full", "unit"):
             h.pop("tags", None)
         if mode == "none":

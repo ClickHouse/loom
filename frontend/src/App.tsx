@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, type ReactElement } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { flushView, installVitals, startView } from "./lib/vitals";
 import { ReloadBar } from "./components/ReloadBar";
 import { sharedMine, sharedHealth } from "./lib/sharedReads";
@@ -19,6 +19,7 @@ import {
   signedOut,
   storedToken,
   type MyNamespaceEntry,
+  type WhoAmI,
 } from "./api";
 import {
   canReadNamespace,
@@ -28,7 +29,15 @@ import {
   landingTarget,
   needsMemoryNamespace,
 } from "./lib/namespace";
-import { claimsFromToken, provisionalNamespace, rememberKinds, takeLinkToken } from "./lib/boot";
+import {
+  claimsFromToken,
+  provisionalNamespace,
+  rememberKinds,
+  sameAccount,
+  takeLinkToken,
+  takeSignInStarted,
+  takeSsoAsk,
+} from "./lib/boot";
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
 import { useStore, pathnameView, linkedNamespace, addressPageNamespace } from "./lib/state";
@@ -97,6 +106,7 @@ const ProfileSectionDialog = lazy(() =>
 );
 const HelpDialog = lazy(() => import("./components/HelpDialog").then((m) => ({ default: m.HelpDialog })));
 const TokenGate = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.TokenGate })));
+const LinkTokenConfirm = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.LinkTokenConfirm })));
 // The expired-session card's chunk is fetched as the app loads, from the build that served
 // it: it shows on a long-lived tab, the one most likely to predate a deploy, and a chunk
 // first asked for then would be gone and its stale-chunk reload would lose the page.
@@ -210,6 +220,16 @@ export default function App() {
   const helpOpen = useStore((s) => s.helpOpen);
   const inspectedProfileLabel = useStore((s) => s.inspectedProfileLabel);
   const setHelpOpen = useStore((s) => s.openHelp);
+  // A Loom page's ask to start SSO (`?sign_in=sso`), taken from the address at boot.
+  const [ssoAsked, setSsoAsked] = useState(false);
+  // A link token boot holds, unstored, until the person says whose account to sign in as.
+  const [linkAsk, setLinkAsk] = useState<{
+    subject: string | null;
+    org: string | null;
+    /** The token this browser held when the question was put. */
+    held: string | null;
+    answer: (ok: boolean) => void;
+  } | null>(null);
 
   // Global keyboard bindings — disabled while focus is in an input.
   useKeyboard(
@@ -308,12 +328,48 @@ export default function App() {
       let link: ReturnType<typeof takeLinkToken> = null;
       // The token boot asks whoami about; the catch reads it too.
       let sent: string | null = null;
+      // whoami's answer for a same-account link's token, which boot then does not ask again.
+      let linkAnswer: WhoAmI | null = null;
+      // whoami refused the link's token: the gate says so.
+      let linkRefused = false;
       try {
         // A login link (federation redirect) carries the token in the #token= fragment: taken
         // and scrubbed before anything can fail. The return to the page its sign-in started on
         // is a chunk of its own, and boot goes on without it.
         link = takeLinkToken();
+        const started = takeSignInStarted(link?.nonce ?? null);
+        if (takeSsoAsk()) setSsoAsked(true);
         if (link) {
+          // setToken strips whitespace; whoami is asked about the same token it stores.
+          const token = link.token?.replace(/\s+/g, "") || null;
+          link = { ...link, token };
+          // A proxy or auth off: the page sends no token of its own, so a link's is dropped.
+          if (token && (isProxyMode() || isAuthDisabled())) link = { ...link, token: null };
+          // The sign-in this tab started (its nonce came back) skips the checks below.
+          else if (token && !started) {
+            // Asked about with its own header first; nothing is stored, nor any tab told, before.
+            const answer = await whoamiWhenReady(token).catch(() => null);
+            // Refused, expired or unanswered: dropped without asking.
+            if (!answer?.authenticated) {
+              linkRefused = answer?.authenticated === false;
+              link = { ...link, token: null };
+            }
+            // Another account than the one held: the person confirms the one the server named.
+            // Boot asks whoami again: the person may read the question longer than it lives.
+            else if (!sameAccount(answer, storedToken())) {
+              let ok: boolean;
+              let held: string | null;
+              // Another tab that stores a token while the screen is up changes whose account
+              // a confirmation replaces: the question is put again, naming it. A cancel stands.
+              do {
+                held = storedToken();
+                const ask = { subject: answer.subject ?? null, org: answer.org ?? null, held };
+                ok = await new Promise<boolean>((resolve) => setLinkAsk({ ...ask, answer: resolve }));
+              } while (ok && storedToken() !== held);
+              setLinkAsk(null);
+              if (!ok) link = { ...link, token: null };
+            } else linkAnswer = answer;
+          }
           if (link.token) setToken(link.token);
           try {
             (await import("./lib/linkToken")).returnToSignInStart(link.atRoot);
@@ -364,7 +420,7 @@ export default function App() {
           : null;
 
         sent = storedToken();
-        const w = await whoamiWhenReady();
+        const w = linkAnswer ?? (await whoamiWhenReady());
         // Another tab stored someone's token while whoami answered for this one: that
         // token decides, on a fresh boot.
         if (storedToken() && storedToken() !== sent) {
@@ -381,9 +437,9 @@ export default function App() {
           // may be the way in while the identity provider is down.
           const out = signedOut();
           const note = sessionEndedNote();
-          if (((note || dropped) && !out) || hasToken()) {
+          if (((note || dropped) && !out) || hasToken() || linkRefused) {
             clearToken();
-            useStore.getState().setGateReason(link?.token ? "refused" : note || lostReason(sent));
+            useStore.getState().setGateReason(link?.token || linkRefused ? "refused" : note || lostReason(sent));
           }
           setAuthed(false);
           return;
@@ -520,8 +576,8 @@ export default function App() {
         // Only a token this boot itself lost: an earlier load's note alone (a Reload while
         // the server is away) starts no sign-in by itself.
         const note = sessionEndedNote();
-        if (!storedToken() && (link?.token || (note && !signedOut() && sent)))
-          useStore.getState().setGateReason(link?.token ? "refused" : note);
+        if (!storedToken() && (link?.token || linkRefused || (note && !signedOut() && sent)))
+          useStore.getState().setGateReason(link?.token || linkRefused ? "refused" : note);
         toastError("Auth bootstrap failed", e);
         setAuthed(false);
       }
@@ -530,12 +586,25 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  if (linkAsk) {
+    return (
+      <Suspense fallback={null}>
+        <LinkTokenConfirm
+          subject={linkAsk.subject}
+          org={linkAsk.org}
+          current={claimsFromToken(linkAsk.held)}
+          onConfirm={() => linkAsk.answer(true)}
+          onCancel={() => linkAsk.answer(false)}
+        />
+      </Suspense>
+    );
+  }
   // Unauthed → token gate
   if (!authed && !isProxyMode()) {
     return (
       <>
         <Suspense fallback={null}>
-          <TokenGate onLogin={() => location.reload()} reason={gateReason} />
+          <TokenGate onLogin={() => location.reload()} reason={gateReason} ssoAsked={ssoAsked} />
         </Suspense>
         <ToastViewport />
         <ConfirmViewport />

@@ -372,7 +372,7 @@ Create a shared memory workspace within an org; caller becomes admin.
 | `retrieval_defaults` | `NamespaceRetrievalDefaults \| None` | `None` | The retrieval knobs an unpinned memory.search on this namespace runs with (mode, k, auto_touch, include_tags, bodies, reinforcement_weight). |
 | `rerank_endpoint` | `str \| None` | `None` | Optional reranker for memory.search: "builtin:openai[:<model>]", "builtin:cohere[:<model>]" or the name of an endpoint in LOOM_RERANK_ENDPOINTS_JSON (a URL is refused); empty ⇒ cosine + entity_boost. builtin:cohere is refused while the… |
 | `rerank_prompt_template` | `str \| None` | `None` | Text forwarded as `prompt_template` in every call to `rerank_endpoint`. |
-| `classify_endpoint` | `str \| None` | `None` | Optional pluggable classifier for memory.set(classify=True). |
+| `classify_endpoint` | `str \| None` | `None` | Classifier for memory.set(classify=True): https at a public address (or a host in LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS), no credentials; while the gateway is required its host must be in LOOM_INFERENCE_GATEWAY_HOSTS, and at a listed gateway… |
 | `classify_prompt_template` | `str \| None` | `None` | Text forwarded as `prompt_template` in every call to `classify_endpoint`. |
 | `tag_registry` | `list[NamespaceTypeConfig]` | *(computed)* | Per-tag TTL + dedup_threshold registry, matched on tags at memory.set time. |
 | `default_conflict_policy` | `Literal['auto_reinforce', 'manual_review', 'newest_wins', 'append_only'] \| None` | `None` | fresh: auto_reinforce |

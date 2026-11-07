@@ -316,8 +316,10 @@ def render_block(
     *,
     home: str = "",
     now: datetime | None = None,
+    shown: list[dict[str, Any]] | None = None,
 ) -> tuple[str, int, bool]:
-    """Prompt-ready block. Returns (text, tokens, truncated).
+    """Prompt-ready block. Returns (text, tokens, truncated); `shown`, when given, gets
+    each hit whose row the block prints.
 
     Decision and constraint rows print whole, in their place in the order, up to
     `memory_for_file_whole_tokens` between them; one that would pass it is left out and
@@ -371,6 +373,8 @@ def render_block(
             hidden.update(h.get("supersedes_ids") or [])
             continue
         lines.append(row)
+        if shown is not None:
+            shown.append(h)
         if budgeted[i]:
             used += len(row) + 1
         else:
@@ -649,10 +653,11 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
             | {"memory_id": r.get("memory_id"), "supersedes_ids": r.get("supersedes_ids") or []}
         )
 
+    shown: list[dict[str, Any]] = []
     rendered, tokens, truncated = render_block(
-        path, to_render, input.token_budget, home=input.namespace
+        path, to_render, input.token_budget, home=input.namespace, shown=shown
     )
-    return MemoryForFileOutput(
+    out = MemoryForFileOutput(
         path=path,
         total=len(hits),
         hits=hits,
@@ -660,3 +665,5 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
         tokens_estimate=tokens,
         truncated=truncated,
     )
+    out._served_rows = [(str(h["namespace"]), str(h["memory_key"])) for h in shown]
+    return out

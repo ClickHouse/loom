@@ -33,10 +33,10 @@ def serves_agent(tags: list[str], agent: str) -> bool:
 
 
 def hits_to_ask(top_k: int) -> int:
-    """How many knowledge hits a read asks for again when serves_agent dropped
-    another bot's rule from its first `top_k`, so that `top_k` remain, within
+    """How many knowledge hits a read asks for again when hits were dropped from its
+    first `top_k` (another bot's rule, a noise section), so that `top_k` remain, within
     knowledge.search's cap."""
-    return min(top_k * 4, MAX_SEARCH_TOP_K)  # not a setting: headroom for other bots' rules
+    return min(top_k * 4, MAX_SEARCH_TOP_K)  # not a setting: headroom for dropped hits
 
 
 def _folded(text: str) -> str:

@@ -10,6 +10,7 @@ failure, not a new golden value.
 
 from __future__ import annotations
 
+import gc
 import io
 import json
 import sys
@@ -986,20 +987,28 @@ def test_a_heading_line_with_a_long_run_of_blanks_is_read_whole() -> None:
     assert (heading.type, heading.text) == ("heading", "a b")
 
 
-def _within(seconds: float, fn: Any) -> None:
-    """`fn` uses under `seconds` of this process's CPU time, so a test running beside it
-    does not count; a loop that turned quadratic on these inputs would take minutes.
+def _cpu(fn: Any) -> float:
+    """This process's CPU seconds `fn` takes, so a test running beside it does not count.
     The tracer is off while `fn` runs, so a coverage run times the parser, not itself:
-    every caller runs extractor code, which the unit job's coverage does not measure."""
+    every caller runs extractor code, which the unit job's coverage does not measure. The
+    garbage collector is off too, since a full pass walks every earlier test's heap."""
     previous = sys.gettrace()
     sys.settrace(None)
+    gc.collect()
+    gc.disable()
     try:
         start = time.process_time()
         fn()
-        spent = time.process_time() - start
+        return time.process_time() - start
     finally:
+        gc.enable()
         sys.settrace(previous)
-    assert spent < seconds
+
+
+def _within(seconds: float, fn: Any) -> None:
+    """`fn` uses under `seconds` of CPU time; a loop that turned quadratic on these
+    inputs would take minutes."""
+    assert _cpu(fn) < seconds
 
 
 def test_hostile_markdown_lines_parse_in_bounded_time() -> None:
@@ -1176,13 +1185,19 @@ def test_a_zip_entry_name_that_is_not_its_flagged_encoding_is_corrupt() -> None:
     assert e.value.code == "corrupt"
 
 
-def test_one_line_sql_with_a_comment_after_every_semicolon_splits_in_bounded_time() -> None:
+def test_one_line_sql_with_a_comment_after_every_semicolon_splits_in_linear_time() -> None:
     from loom_extractor import sql
 
-    text = "SELECT 1; /* c */ " * 100_000
+    sql._spans("SELECT 1;", "clickhouse")  # imports sqlglot and the dialect before timing
+    small_text = "SELECT 1; /* c */ " * 10_000
+    small = _cpu(lambda: sql._spans(small_text, "clickhouse"))
+    text = "SELECT 1; /* c */ " * 160_000
     out: list[list[Any]] = []
-    _within(10.0, lambda: out.append(sql._spans(text, "clickhouse")))
-    assert len(out[0]) == 100_000
+    large = _cpu(lambda: out.append(sql._spans(text, "clickhouse")))
+    # A linear split costs about 17x for 16x the statements; a newline search from each `;`
+    # not stopped at the next token scans to the end of this one-line text (about 50x).
+    assert large < 24 * small + 0.05, (small, large)
+    assert len(out[0]) == 160_000
     # No span cuts a comment: each holds every `*/` its `/*` opens.
     assert all(
         text[sp.start : sp.end].count("/*") == text[sp.start : sp.end].count("*/") for sp in out[0]
