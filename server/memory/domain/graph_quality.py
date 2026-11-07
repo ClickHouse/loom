@@ -445,12 +445,14 @@ def canonical_entity(raw: str) -> CanonicalEntity:
     Collapses first-person forms (i / me / user / ...) to "user" to match the
     read side (graph seeds and query triples use `canonical_entity_text`); the original
     surface form is preserved in `aliases` for provenance and recall. Text longer than
-    `MAX_ENTITY_CHARS` is no entity: its text is empty."""
+    `MAX_ENTITY_CHARS`, as written or once normalised, is no entity: its text is empty."""
 
     original = str(raw or "").strip()
     if len(original) > MAX_ENTITY_CHARS:
         return CanonicalEntity(text="", entity_id="")
     text = _normalise(original.lower())
+    if len(text) > MAX_ENTITY_CHARS:  # NFKC lengthens: "\ufb01" is "fi"
+        return CanonicalEntity(text="", entity_id="")
     entity_id = text.replace(" ", "_")
     return CanonicalEntity(text=text, entity_id=entity_id, aliases=[original] if original else [])
 
