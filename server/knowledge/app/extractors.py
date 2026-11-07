@@ -369,8 +369,14 @@ async def extract(
         raise ExtractionFailed("resource_limit", str(e)) from e
     try:
         # Off the event loop: decoding and checking up to the artifact bound takes a while.
-        artifact = await asyncio.to_thread(parse_artifact, body, fmt=fmt, max_bytes=cap)
-        refuse_past_source(artifact, len(data))
+        return await asyncio.to_thread(_checked, body, fmt, cap, len(data))
     except InvalidArtifact as e:
         raise ExtractionFailed("invalid_artifact", str(e)) from e
+
+
+def _checked(body: bytes, fmt: str, cap: int, size: int) -> Artifact:
+    """The artifact in `body`, read through the contract, its locators within a
+    `size`-byte original."""
+    artifact = parse_artifact(body, fmt=fmt, max_bytes=cap)
+    refuse_past_source(artifact, size)
     return artifact

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Iterable
 from typing import Any, get_args
 
 from server.knowledge.domain.extract.artifact import (
@@ -345,8 +346,11 @@ def refuse_past_source(artifact: Artifact, size: int) -> None:
     a source of `size` bytes. The size bounds both whatever the encoding: each
     character takes at least one byte, and each line but the last ends in one.
     Pages and rows are not bounded: the server does not read the original."""
-    located = [("blocks", i, b.locator) for i, b in enumerate(artifact.blocks)]
-    located += [("tables", i, t.locator) for i, t in enumerate(artifact.tables)]
-    for kind, i, loc in located:
+    _within("blocks", (b.locator for b in artifact.blocks), size)
+    _within("tables", (t.locator for t in artifact.tables), size)
+
+
+def _within(kind: str, locators: Iterable[Locator], size: int) -> None:
+    for i, loc in enumerate(locators):
         if loc.char_end > size or loc.line_end > size + 1:
             raise _fail(f"{kind}[{i}].locator", f"ends past the {size}-byte source")

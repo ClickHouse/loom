@@ -538,11 +538,12 @@ fails it `retries_exhausted`. The cases are
 | Object store fails the original's read or the artifact's write                                  | retried, then `failed` `retries_exhausted` |
 | Embedder down or past its deadline                                                              | retried, then `failed` `retries_exhausted` |
 | Embedder defect (any other error)                                                               | `failed` `internal`                        |
+| The store refuses the document row after the chunks                                             | `failed` `internal`                        |
 
-An original gone from the store fails `original_gone`, and a publish that stops after its chunks retires them (both in
-the same file). `tests/integration/test_knowledge_ingest_faults_live.py` runs the extractor down, a block under a
-missing parent, the object store's read failing, the embedder down and the document row refused after the chunks
-against a server and its ClickHouse, reading the earlier revision back through `knowledge.get` and `knowledge.search`.
+An original gone from the store fails `original_gone` (in the same file).
+`tests/integration/test_knowledge_ingest_faults_live.py` runs the extractor down, a block under a missing parent, the
+object store's read failing, the embedder down and the document row refused after the chunks against a server and its
+ClickHouse, reading the earlier revision back through `knowledge.get` and `knowledge.search`.
 
 ## Datasets
 
