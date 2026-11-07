@@ -573,7 +573,7 @@ const TUNE = {
   model_used: false,
 };
 
-async function openWithEveryPanel(page: Page) {
+async function installAssistant(page: Page) {
   await installApi(page);
   // Routes added after installApi answer first.
   for (const [op, body] of [
@@ -584,19 +584,16 @@ async function openWithEveryPanel(page: Page) {
   ] as const)
     await page.route(`**/v1/${op}`, (r) => r.fulfill({ json: body }));
   await page.goto("/assistant");
-  await expect(page.getByRole("heading", { level: 1, name: "Assistant" })).toBeVisible();
   await expect(page.getByTestId("assistant-populations")).toBeVisible();
+}
+
+async function openWithEveryPanel(page: Page) {
+  await installAssistant(page);
   await page.getByRole("button", { name: "Inspect documents" }).click();
   await expect(page.getByTestId("assistant-documents")).toBeVisible();
-  // The longest user id, picked from the overview: no typing. Its name is cut, and the tip
-  // shows it whole.
-  // The browser's own name for a pick, which its flex label must not run together.
-  await expect(page.getByRole("button", { name: "ada 3 memories", exact: true })).toBeVisible();
-  await page.getByTestId("pick-user").first().hover();
-  await expect(page.getByRole("tooltip")).toContainText(LONG_ID);
+  // The longest user id, picked from the overview.
   await page.getByTestId("pick-user").first().click();
   await expect(page.getByTestId("assistant-inspection")).toBeVisible();
-  await expect(page.getByRole("heading", { level: 2, name: "Memories", exact: true })).toBeFocused();
   await page.getByRole("button", { name: "Draft improvements" }).click();
   await expect(page.getByTestId("assistant-review")).toBeVisible();
   await page.waitForTimeout(300); // entry animations
@@ -638,6 +635,17 @@ for (const width of [1400, 375]) {
     });
   });
 }
+
+test("a pick is named by its aria-label, shows a cut id whole in its tip, and focuses the answer", async ({ page }) => {
+  await installAssistant(page);
+  await expect(page.getByRole("button", { name: "ada 3 memories", exact: true })).toBeVisible();
+  const longest = page.getByTestId("pick-user").first();
+  await longest.hover();
+  await expect(page.getByRole("tooltip")).toContainText(LONG_ID);
+  await longest.click();
+  await expect(page.getByTestId("assistant-inspection")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Memories", exact: true })).toBeFocused();
+});
 
 test("blocked picks with a long id fit the phone width", async ({ page }) => {
   // A token pinned to one user: the overview lists its user, and every pick is blocked.

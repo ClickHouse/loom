@@ -1,5 +1,6 @@
 import { Button } from "@clickhouse/click-ui/Button";
 import { render, screen } from "../../test/rtl";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { Unavailable } from "./Unavailable";
 
@@ -48,5 +49,25 @@ describe("Unavailable", () => {
     expect(screen.getByRole("button", { name: "Draft" })).toBe(button);
     expect(button).toHaveFocus();
     expect(button).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("shows its tip while it has no reason, and the reason over the tip", async () => {
+    const { rerender } = render(
+      <Unavailable tip="the whole id">
+        <Button htmlType="button" label="Pick" />
+      </Unavailable>,
+    );
+    const button = screen.getByRole("button", { name: "Pick" });
+    expect(button).not.toHaveAttribute("aria-disabled");
+    await userEvent.hover(button);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("the whole id");
+    rerender(
+      <Unavailable reason="Read-only here" tip="the whole id">
+        <Button htmlType="button" label="Pick" />
+      </Unavailable>,
+    );
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).toHaveAccessibleDescription("Read-only here");
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Read-only here");
   });
 });

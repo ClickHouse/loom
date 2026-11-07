@@ -27,7 +27,8 @@ import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { useStore } from "../lib/state";
 import { DocumentInspection } from "./assistant/DocumentInspection";
 import { Inspection } from "./assistant/Inspection";
-import { InventoryPopulations, InventoryScopeNote, InventorySections, SUBJECT_OF } from "./assistant/Inventory";
+import { InventoryPopulations, InventoryScopeNote, InventorySections } from "./assistant/Inventory";
+import { SUBJECT_OF } from "./assistant/subjects";
 import { ReviewChanges } from "./assistant/ReviewChanges";
 import { tokenReadScope } from "./assistant/tokenScope";
 import { useScopedRead } from "./assistant/useScopedRead";
@@ -226,13 +227,13 @@ export function Assistant() {
           </Unavailable>
         </form>
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          {/* A blocked button is described by its reason instead. */}
           <Unavailable reason={documentsGate}>
             <BusyButton
               type="secondary"
               htmlType="button"
               busy={documents.busy}
               onClick={() => documents.run((signal) => inspectKnowledge(where, { signal }))}
+              // While blocked, Unavailable's reason replaces this description.
               aria-describedby="assistant-documents-what"
             >
               Inspect documents

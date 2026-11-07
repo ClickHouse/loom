@@ -11,7 +11,8 @@ import { NameBadge } from "../../components/AgentBadge";
 import { Stat, Unavailable } from "../../components/ui";
 import { useClamped } from "../../components/ui/TextClamp";
 import { ListTime } from "../../components/ui/ListTime";
-import { displayAgent, fmtInt } from "../../lib/format";
+import { displayAgent, fmtInt, sentenceCase } from "../../lib/format";
+import { SUBJECT_OF } from "./subjects";
 
 const PLANE_LABEL: Record<InventoryPlane, string> = {
   memories: "Memories",
@@ -46,12 +47,13 @@ export function InventorySections({ inventory }: { inventory: NamespaceInventory
   );
 }
 
-/** Under a count: why it was not counted, else when the newest row was written. */
+/** Under a count: why it was not counted (the server's reason says so), else when the
+ *  newest row was written. */
 function planeHint(s: InventorySection): ReactNode {
   if (!s.complete)
     return (
       <span className="break-words" data-testid="inventory-incomplete">
-        Not counted: {s.reason || "no reason given"}
+        {sentenceCase(s.reason) || "Not counted."}
       </span>
     );
   if (!s.latest_at) return null;
@@ -61,12 +63,6 @@ function planeHint(s: InventorySection): ReactNode {
     </>
   );
 }
-
-// The subject each listed population can be inspected as; sessions are not listed.
-export const SUBJECT_OF: Partial<Record<InventoryPopulationName, InspectSubject>> = {
-  subjects: "user",
-  agents: "agent",
-};
 
 const POPULATION_LABEL: Record<InventoryPopulationName, { title: string; what: string }> = {
   subjects: { title: "Users", what: "users that memories are filed under" },
@@ -110,7 +106,7 @@ export function InventoryPopulations({
             {p.total !== null && p.top.length > 0 && p.total > p.top.length && (
               <p className="text-xs text-text-muted">The {fmtInt(p.top.length)} with the most memories are shown.</p>
             )}
-            {!p.complete && <p className="text-xs text-text-muted">Not complete: {p.reason || "no reason given"}</p>}
+            {!p.complete && <p className="text-xs text-text-muted">{sentenceCase(p.reason) || "Not complete."}</p>}
             {p.top.length > 0 && (
               <ul className="mt-1.5 flex flex-wrap gap-1.5" aria-label={`${label.title}, most memories first`}>
                 {p.top.map((who) => (
@@ -155,20 +151,20 @@ function PickButton({
   blocked: string | null;
   onPick: () => void;
 }) {
-  const [label, setLabel] = useState<HTMLSpanElement | null>(null);
+  const [nameEl, setNameEl] = useState<HTMLSpanElement | null>(null);
   const shown = subject === "agent" ? displayAgent(name) : name;
-  const cut = useClamped(label, shown);
+  const cut = useClamped(nameEl, shown);
   return (
-    <Unavailable reason={blocked && (cut ? `${blocked} (${name})` : blocked)} tip={cut ? name : undefined}>
+    <Unavailable reason={blocked && (cut ? `${blocked} Id: ${name}.` : blocked)} tip={cut ? name : undefined}>
       {/* The label is a flex row, which drops a space between its parts: the name is set here. */}
       <Button
         type="secondary"
         htmlType="button"
         onClick={onPick}
         data-testid={`pick-${subject}`}
-        aria-label={`${shown} ${fmtInt(rows)} memories`}
+        aria-label={`${shown} ${fmtInt(rows)} ${rows === 1 ? "memory" : "memories"}`}
       >
-        <span ref={setLabel} className="agent-badge truncate">
+        <span ref={setNameEl} className="agent-badge truncate">
           {shown}
         </span>
         <span className="ml-1.5 text-text-muted tabular">{fmtInt(rows)}</span>

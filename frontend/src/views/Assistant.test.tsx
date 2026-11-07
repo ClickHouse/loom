@@ -930,9 +930,7 @@ describe("Assistant: overview", () => {
     await screen.findByTestId("assistant-inventory");
     const held = screen.getByRole("region", { name: "What this namespace holds" });
     expect(held.querySelector('[data-plane="memories"]')).toHaveTextContent("Memories42");
-    expect(within(held).getByTestId("inventory-incomplete")).toHaveTextContent(
-      "Not counted: read failed: TimeoutError",
-    );
+    expect(within(held).getByTestId("inventory-incomplete")).toHaveTextContent("Read failed: TimeoutError");
     expect(screen.getByText(/Model: not enabled/)).toBeInTheDocument();
   });
 
@@ -942,9 +940,7 @@ describe("Assistant: overview", () => {
     const items = within(list).getAllByRole("listitem");
     const members = items.find((li) => li.getAttribute("data-population") === "members");
     expect(members).toHaveTextContent(/people with access to this namespace/);
-    expect(members).toHaveTextContent(
-      "Not complete: shared with everyone, a group or an agent: those members are not counted",
-    );
+    expect(members).toHaveTextContent("Shared with everyone, a group or an agent: those members are not counted");
     // Users come first: they are what a viewer picks most.
     expect(items[0]).toHaveAttribute("data-population", "subjects");
   });
@@ -982,6 +978,17 @@ describe("Assistant: overview", () => {
     await userEvent.click(screen.getByRole("button", { name: "Agent" }));
     const option = document.querySelector("#assistant-subject-suggestions option");
     expect([option?.getAttribute("value"), option?.textContent]).toEqual(["-", "No agent (admin / me)"]);
+  });
+
+  it("names a pick with one memory in the singular", async () => {
+    namespaceInventory.mockResolvedValueOnce({
+      ...INVENTORY,
+      populations: INVENTORY.populations.map((p) =>
+        p.population === "subjects" ? { ...p, top: [{ name: "ada", rows: 1 }] } : p,
+      ),
+    });
+    render(<Assistant />);
+    expect(await screen.findByRole("button", { name: "ada 1 memory" })).toBeInTheDocument();
   });
 
   it("lists authors without offering to inspect them", async () => {
