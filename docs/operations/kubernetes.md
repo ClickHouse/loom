@@ -426,6 +426,16 @@ until every roll finishes.
 usage and a namespace snapshot to an S3 bucket as Parquet, under a ServiceAccount of its
 own ([exporting usage to a data warehouse](./analytics-export.md)).
 
+## Alert rules
+
+`alerts.prometheusRule.enabled: true` adds a PrometheusRule (the Prometheus Operator's
+CRD, which the chart does not install) for a deployment that exports Loom's metrics over
+OTLP into Prometheus: `LoomCodeTierFailing` once a code-index tier has failed
+`alerts.prometheusRule.failingPasses` passes in a row, and `LoomCodeTierFailingFarBehind`
+once a failing tier is `alerts.prometheusRule.errorLagCommits` commits behind
+([when a tier fails](./code-index-operations.md#when-a-tier-fails)).
+`alerts.prometheusRule.labels` adds the labels your Prometheus selects rules by.
+
 ## Checks
 
 ```bash

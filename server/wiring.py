@@ -17,6 +17,7 @@ from __future__ import annotations
 
 def wire() -> None:
     from server.auth.directory import use_directory
+    from server.code.app.index import tier_health
     from server.code.domain.index import repos
     from server.code.domain.index.compiler_tiers import TIERS
     from server.core import namespace_write_marks
@@ -40,5 +41,6 @@ def wire() -> None:
             code_repos=lambda: repos.configured_repos(),
             repos_config_errors=lambda: repos.config_error_count(),
             compiler_tiers=TIERS,
+            failing_code_tiers=tier_health.metric_rows,
         )
     )

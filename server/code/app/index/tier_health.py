@@ -203,3 +203,19 @@ def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | No
                 }
             )
     return tuple(sorted(rows, key=lambda r: (r["severity"] != "error", r["org"], r["namespace"])))
+
+
+def metric_rows() -> tuple[dict[str, Any], ...]:
+    """Every failing tier this process last read, for the `loom.code.tier_failing` and
+    `loom.code.tier_lag_commits` gauges; () before the first read."""
+    return tuple(
+        {
+            "org": f.org,
+            "namespace": f.namespace,
+            "tier": f.health.tier,
+            "kind": f.health.kind,
+            "failed_passes": f.health.failed_passes,
+            "lag_commits": f.lag_commits,
+        }
+        for f in _FAILING or ()
+    )

@@ -53,6 +53,18 @@
       }
     },
     {
+      "id": "tier_failing",
+      "title": "Failing tiers: failed passes in a row, by namespace, tier and error kind",
+      "chart": "line",
+      "source": "metrics",
+      "sql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 5 MINUTE) AS t, concat(Attributes['loom.namespace'], ' ', Attributes['tier'], ' (', Attributes['kind'], ')') AS series, max(Value) AS failed_passes FROM default.otel_metrics_gauge WHERE MetricName = 'loom.code.tier_failing' AND TimeUnix > now() - INTERVAL 24 HOUR GROUP BY t, series ORDER BY t",
+      "alert": {
+        "name": "code tier failing",
+        "condition": "max(Value) >= 3 for 15m",
+        "why": "A tier that fails on every pass falls behind, and the lag gauges only say how far behind it is, not why. The series is the run of failed passes, labelled with the error kind; /v1/health's code_tier_failing problem and code.repos tier_health carry the fix. 3 matches LOOM_CODE_TIER_FAILING_WARN_PASSES; a tier stops reporting on its next successful pass."
+      }
+    },
+    {
       "id": "stale_files",
       "title": "Stale files: indexed paths whose chunks predate their last change, by namespace",
       "chart": "line",
