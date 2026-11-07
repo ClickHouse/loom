@@ -1055,8 +1055,11 @@ def no_directory_ties(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def registry_was_read(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The self-service registry counts as read, so an admin revoke off any
-    repository reads no directory row to learn whether its namespace is a code
-    index."""
-    monkeypatch.setattr("server.code.app.index.repo_registry.registry_read", lambda: True)
+def off_code_repos(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An admin revoke reads neither the self-service registry nor a directory
+    row to learn whether its namespace is a code index: it is not one."""
+
+    async def _no_repo(*_a: object, **_k: object) -> None:
+        return None
+
+    monkeypatch.setattr("server.code.app.index.maintainers.read_repo", _no_repo)

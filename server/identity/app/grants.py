@@ -510,9 +510,9 @@ async def _taking_admin[T](
     from server.code.app.index import maintainers
 
     org, namespace = input.org, input.namespace
+    repo = await maintainers.read_repo(org, namespace)
     async with (
-        maintainers.repo_change(org, namespace, subject),
-        maintainers.repo_admins_change(org, namespace),
+        maintainers.repo_admin_claims(org, repo, subject),
         admins_change(org, namespace),
     ):
         fanned_out = False
@@ -521,7 +521,7 @@ async def _taking_admin[T](
             if row is not None and _active_admin(row) and not fanned_out:
                 await _refuse_last_admin(input)
                 await maintainers.revoke_repo_maintainer(
-                    org, namespace, subject, lowered_to=lowered_to
+                    org, namespace, subject, repo=repo, lowered_to=lowered_to
                 )
                 fanned_out = True
             async with grant_change(org, namespace, subject):

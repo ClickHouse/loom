@@ -34,8 +34,13 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Awaitable, Callable
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, nullcontext
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import (
+    AbstractAsyncContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    nullcontext,
+)
 from datetime import datetime
 from typing import Any
 
@@ -74,28 +79,57 @@ def _reaches(source: str, target: str) -> bool:
     return source == "config" or target != "config"
 
 
+def repo_of(org: str, namespace: str) -> str | None:
+    """The repository `namespace` is a configured branch of, in this process's
+    snapshot; None off a configured repository."""
+    from server.code.domain.index.repos import configured_repos
+
+    me = next((c for c in configured_repos() if c.org == org and c.namespace == namespace), None)
+    return me.repo if me is not None else None
+
+
 def repo_change(org: str, namespace: str, subject: str) -> AbstractAsyncContextManager[None]:
     """Hold `subject`'s maintainer grants on `namespace`'s repository: one change
     at a time across its branches, taken before any branch's own claim. A
     no-op off a configured repository."""
     from server.auth.grant_claims import grant_change
-    from server.code.domain.index.repos import configured_repos
 
-    me = next((c for c in configured_repos() if c.org == org and c.namespace == namespace), None)
-    return grant_change(org, f"repo:{me.repo}", subject) if me is not None else nullcontext()
+    repo = repo_of(org, namespace)
+    return grant_change(org, f"repo:{repo}", subject) if repo is not None else nullcontext()
 
 
-def repo_admins_change(org: str, namespace: str) -> AbstractAsyncContextManager[None]:
-    """Hold the admins of `namespace`'s repository: a change that takes a
-    maintainer off every branch holds it from its own last-admin count to its
-    last write, so two such changes in one repository run one after the other.
-    Taken after `repo_change`, before any namespace's admins claim. A no-op off a
-    configured repository."""
-    from server.auth.grant_claims import admins_change
-    from server.code.domain.index.repos import configured_repos
+@asynccontextmanager
+async def repo_admin_claims(org: str, repo: str | None, subject: str) -> AsyncIterator[None]:
+    """Hold what a change that takes a maintainer off every branch of `repo`
+    needs: `subject`'s maintainer grants there, then the repository's admins,
+    from its own last-admin count to its last write, so two such changes in
+    one repository run one after the other. Taken before any namespace's
+    admins claim. A no-op when `repo` is None."""
+    from server.auth.grant_claims import admins_change, grant_change
 
-    me = next((c for c in configured_repos() if c.org == org and c.namespace == namespace), None)
-    return admins_change(org, f"repo:{me.repo}") if me is not None else nullcontext()
+    if repo is None:
+        yield
+        return
+    async with grant_change(org, f"repo:{repo}", subject), admins_change(org, f"repo:{repo}"):
+        yield
+
+
+async def read_repo(org: str, namespace: str, *, ch: Any | None = None) -> str | None:
+    """Before a change that takes admin on `namespace`: the repository it is a
+    branch of, from the self-service registry read again now, so a branch
+    another process added since this one's last read is seen. A revoke that
+    skipped a branch added from the page would leave its copies live, and no
+    later sync removes them, so on a code namespace a failed read raises
+    `GrantBusyError`. Off a code namespace nothing is read and None returned."""
+    from server.code.app.index.repo_registry import read_registry
+    from server.core.ch import get_client
+
+    client = ch or get_client()
+    if repo_of(org, namespace) is None and not await _is_code_namespace(client, org, namespace):
+        return None
+    if not await read_registry(client):
+        raise GrantBusyError("the self-service registry cannot be read; retry shortly")
+    return repo_of(org, namespace)
 
 
 def _row(
@@ -418,32 +452,28 @@ async def revoke_repo_maintainer(
     namespace: str,
     subject: str,
     *,
+    repo: str | None,
     ch: Any | None = None,
     lowered_to: str | None = None,
 ) -> int:
     """Revoke `subject`'s active admin grant on the other branches of the
     repository the revoke reaches, or lower it to `lowered_to`; a branch where
     they are the only active admin keeps them (the same guard `grants.revoke`
-    applies). The caller holds `repo_change` and `repo_admins_change`.
+    applies). `repo` is what `read_repo` answered, and the caller holds
+    `repo_admin_claims` on it.
 
     A revoke on a branch added from the page leaves the operator entries alone
     (`_reaches`); one on an operator entry takes off a branch added from the
     page only a mirror, and none while the subject holds an admin grant given
-    on a branch added from the page.
-
-    A revoke that skipped a branch added from the page would leave its
-    mirrors live, and no later sync removes them. So the registry is read
-    again first (a branch another process added since its last read is then
-    seen), and `GrantBusyError` is raised on a code namespace while it has
-    never been read. Returns rows written."""
-    from server.code.app.index.repo_registry import refresh_db_repos, registry_read
+    on a branch added from the page. Raises `GrantBusyError` when the snapshot
+    now puts `namespace` in another repository than the claims hold. Returns
+    rows written."""
     from server.core.ch import get_client
 
     client = ch or get_client()
-    await refresh_db_repos(force=True, ch=client)  # never raises: a failed read keeps the last
     sources = _branch_sources(org, namespace)
-    if not registry_read() and (sources or await _is_code_namespace(client, org, namespace)):
-        raise GrantBusyError("the self-service registry is not read yet; retry shortly")
+    if repo_of(org, namespace) != repo:
+        raise GrantBusyError("the repository's branches changed; retry shortly")
     own = sources.get(namespace, "")
     branches = [b for b, source in sources.items() if b != namespace and _reaches(own, source)]
     if not branches:

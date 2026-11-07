@@ -82,3 +82,26 @@ def test_the_registry_counts_as_read_only_after_a_read_succeeded(
         assert repo_registry.registry_read()
     finally:
         repo_registry.reset_for_tests()
+
+
+def test_a_failed_read_says_so_after_an_earlier_one_succeeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.code.store.index as store
+
+    class _Down(_Repo):
+        async def active_code_repos(self) -> list[dict[str, Any]]:
+            raise ConnectionError("store unreachable")
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    repo_registry.reset_for_tests()
+    try:
+        monkeypatch.setattr(store, "CodeRepo", _Repo)
+        _Repo.rows = [_row("standard")]
+        assert asyncio.run(repo_registry.read_registry())
+        monkeypatch.setattr(store, "CodeRepo", _Down)
+        assert not asyncio.run(repo_registry.read_registry())
+        assert repo_registry.registry_read()  # the last snapshot is kept
+        assert [c.namespace for c in registry_repos()] == ["code-widgets"]
+    finally:
+        repo_registry.reset_for_tests()

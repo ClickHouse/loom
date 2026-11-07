@@ -133,24 +133,32 @@ async def refresh_db_repos(*, force: bool = False, ch: Any | None = None) -> lis
     """Re-read loom.code_repos when the snapshot is older than
     ``code_repos_refresh_seconds`` (or ``force``) into the domain's registry
     snapshot. Never raises: a directory that cannot be read keeps the last snapshot."""
-    global _LOADED_AT, _EVER_LOADED
     if not settings.code_self_service_enabled:
         return []
-    now = time.monotonic()
-    if not force and now - _LOADED_AT < settings.code_repos_refresh_seconds:
-        return registry_repos()
+    if force or time.monotonic() - _LOADED_AT >= settings.code_repos_refresh_seconds:
+        await read_registry(ch)
+    return registry_repos()
+
+
+async def read_registry(ch: Any | None = None) -> bool:
+    """Read loom.code_repos into the snapshot now. False when that read failed
+    and the last snapshot was kept; True with self-service off."""
+    global _LOADED_AT, _EVER_LOADED
+    if not settings.code_self_service_enabled:
+        return True
     try:
         from server.code.store.index import CodeRepo
 
         rows = await CodeRepo(ch).active_code_repos()
         set_registry_repos([row_to_config(r) for r in rows if r.get("namespace") and r.get("repo")])
-        _LOADED_AT = now
+        _LOADED_AT = time.monotonic()
         _EVER_LOADED = True
+        return True
     except Exception as e:  # noqa: BLE001 — keep the last snapshot
         logger.warning(
             "code_repos: refresh failed, keeping %d entries: %s", len(registry_repos()), e
         )
-    return registry_repos()
+        return False
 
 
 def registry_read() -> bool:
