@@ -1025,7 +1025,7 @@ describe("Assistant: overview", () => {
     expect(screen.getByLabelText("Session id")).not.toHaveAttribute("list");
   });
 
-  it("says a population lists only its largest identities, and that any other can be typed", async () => {
+  it("says a population lists only its largest identities", async () => {
     namespaceInventory.mockResolvedValueOnce({
       ...INVENTORY,
       populations: INVENTORY.populations.map((p) => (p.population === "subjects" ? { ...p, total: 340 } : p)),

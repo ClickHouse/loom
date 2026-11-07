@@ -11,8 +11,8 @@ import { NameBadge } from "../../components/AgentBadge";
 import { Stat, Unavailable } from "../../components/ui";
 import { ListTime } from "../../components/ui/ListTime";
 import { useClamped } from "../../components/ui/TextClamp";
-import { displayAgent, fmtInt, sentenceCase } from "../../lib/format";
-import { SUBJECT_OF } from "./subjects";
+import { fmtInt, sentenceCase } from "../../lib/format";
+import { SUBJECT_OF, shownName } from "./subjects";
 
 const PLANE_LABEL: Record<InventoryPlane, string> = {
   memories: "Memories",
@@ -152,7 +152,7 @@ function PickButton({
   onPick: () => void;
 }) {
   const [nameEl, setNameEl] = useState<HTMLSpanElement | null>(null);
-  const shown = subject === "agent" ? displayAgent(name) : name;
+  const shown = shownName(subject, name);
   const cut = useClamped(nameEl, shown);
   return (
     <Unavailable reason={blocked} tip={cut ? name : undefined}>

@@ -23,21 +23,18 @@ export function Unavailable({
   children: ReactElement;
 }) {
   const id = useId();
+  const content =
+    reason && tip ? (
+      <>
+        {reason}
+        <span className="block break-all">{tip}</span>
+      </>
+    ) : (
+      reason || tip
+    );
   return (
     <>
-      <Tip
-        content={
-          reason && tip ? (
-            <>
-              {reason}
-              <span className="block break-all">{tip}</span>
-            </>
-          ) : (
-            reason || tip
-          )
-        }
-        disabled={!reason && !tip}
-      >
+      <Tip content={content} disabled={!content}>
         {reason
           ? cloneElement(children, {
               "aria-disabled": "true",

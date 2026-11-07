@@ -21,7 +21,6 @@ import { ListTime } from "../components/ui/ListTime";
 import { Loading, PageHeader, Panel, SectionHeading, Unavailable } from "../components/ui";
 import { PageContainer } from "../layout/PageContainer";
 import { canCall } from "../lib/canCall";
-import { displayAgent } from "../lib/format";
 import { openGraphAt } from "../lib/graphLink";
 import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { useStore } from "../lib/state";
@@ -29,7 +28,7 @@ import { DocumentInspection } from "./assistant/DocumentInspection";
 import { Inspection } from "./assistant/Inspection";
 import { InventoryPopulations, InventoryScopeNote, InventorySections } from "./assistant/Inventory";
 import { ReviewChanges } from "./assistant/ReviewChanges";
-import { SUBJECT_OF, SUBJECTS } from "./assistant/subjects";
+import { SUBJECT_OF, SUBJECTS, shownName } from "./assistant/subjects";
 import { tokenReadScope } from "./assistant/tokenScope";
 import { useScopedRead } from "./assistant/useScopedRead";
 
@@ -62,10 +61,7 @@ export function Assistant() {
   const [entity, setEntity] = useState("");
 
   // Each read is gated on its own op. All four are VIEWER, so a canCall refusal means the role
-  // is unknown. The server refuses memory.inspect and namespace.tune to a token pinned to one
-  // user or session; namespace.inventory and knowledge.inspect are scoped and answer it. The
-  // token's claims say so up front; for an end-user token, or behind a proxy (no token here),
-  // only the inventory's answer does.
+  // is unknown; the server refuses memory.inspect and namespace.tune to a pinned token.
   const narrowed =
     tokenScope?.readScope != null || (inventory.data !== null && inventory.data.scope.read_scope !== "namespace");
   // A scoped read under `own_session`, or under `own_user` with no `read_user_id`, needs the
@@ -87,7 +83,7 @@ export function Assistant() {
   const tuneGate = gate("namespace.tune");
   const copy = SUBJECTS[subject];
   const suggestions = inventory.data?.populations.find((p) => SUBJECT_OF[p.population] === subject)?.top ?? [];
-  const emptyReason = (suggestions.length > 0 && copy.pick) || copy.empty;
+  const emptyReason = (suggestions.length > 0 ? copy.pick : undefined) ?? copy.empty;
   const inspectBlocked = memoryGate ?? (subjectId.trim() ? null : emptyReason);
 
   const org = identity?.org ?? "";
@@ -206,7 +202,7 @@ export function Assistant() {
               <datalist id="assistant-subject-suggestions">
                 {suggestions.map((s) => (
                   <option key={s.name} value={s.name}>
-                    {subject === "agent" ? displayAgent(s.name) : s.name}
+                    {shownName(subject, s.name)}
                   </option>
                 ))}
               </datalist>
