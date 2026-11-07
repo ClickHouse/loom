@@ -824,10 +824,8 @@ paired per task, bootstrap over documents, 95% interval:
 With the filter on, 15 of the 65 knowledge hits an agent read came from the distractor
 documents (their decision sections, or noise no close design hit outranked), against 47
 of 90 with it off; every design-document hit served with the filter off was served with
-it on. Two earlier filter-on answer passes, under a labeller that also hid one design
-deck's agenda slide, moved arm 6 the same way: D misleading down, clear of zero, and A
-misleading up, inside its interval. That lean against the filter on why-questions is
-what this task set cannot resolve.
+it on. A misleading rose for arm 6, inside its interval: a lean against the filter on
+why-questions that this task set cannot resolve.
 
 Reproduce: the run above with `--arms 2,6 --judge-orders 1 --keep-namespaces` against a
 server started with `LOOM_KNOWLEDGE_NOISE_FILTER=true`; then a copy of that run's
