@@ -104,8 +104,8 @@ finding.
   hook that finds no `node` lets the session continue; it writes one `loom:` line to its
   stderr, which Claude Code shows as a hook error under `sh` (macOS, Linux, Git Bash) and,
   under PowerShell (where the hook exits 0), only in `claude --debug`. Without Git Bash,
-  commands run through Claude Code's PowerShell tool are captured, but the code shunt and
-  the test gate read only `sh` commands, so they do not judge them.
+  commands run through Claude Code's PowerShell tool are captured and the test gate reads
+  the paths they name, but the code shunt judges only `sh` commands.
 - A **writer** token for the namespace the session writes to. A viewer token lets the
   tools read, but the server refuses every capture.
 

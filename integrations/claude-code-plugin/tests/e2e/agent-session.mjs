@@ -331,6 +331,8 @@ async function claudeSession(opts, box, url) {
   if (!hooks.some((h) => h.hook_event === "SessionStart" && String(h.output || "").includes("# Loom"))) {
     problems.push("SessionStart's primer never reached Claude Code");
   }
+  // Under PowerShell every hook command ends in `exit 0`: there only the
+  // empty stderr says the hook itself did not fail.
   for (const h of hooks) {
     if (h.exit_code !== 0 || (h.stderr || "").trim()) {
       problems.push(`${h.hook_name} exited ${h.exit_code} with stderr: ${String(h.stderr || "").trim()}`);

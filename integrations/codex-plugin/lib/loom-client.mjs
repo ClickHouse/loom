@@ -818,7 +818,13 @@ const TOKEN_SHAPES_RE =
 // `password=…`, `"api_key": "…"`, `AWS_SECRET_ACCESS_KEY=…`: the name stays, the value goes.
 const SECRET_ASSIGNMENT_RE =
   /\b([\w.-]{0,64}?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
-const JWT_RE = /\beyJ[\w-]{0,512}\.[\w-]{1,8192}\.[\w-]{0,1024}/g;
+// A JWT's header and payload limits, shared by the pattern and redactJwts.
+const JWT_HEADER_MAX = 512;
+const JWT_PAYLOAD_MAX = 8192;
+export const JWT_RE = new RegExp(
+  String.raw`\beyJ[\w-]{0,${JWT_HEADER_MAX}}\.[\w-]{1,${JWT_PAYLOAD_MAX}}\.[\w-]{0,1024}`,
+  "g",
+);
 const JWT_AT = new RegExp(JWT_RE.source, "y");
 const JWT_START = /\beyJ/g;
 const WORD_RUN = /[\w-]*/y;
@@ -844,9 +850,9 @@ export function redactJwts(s) {
       WORD_RUN.lastIndex = runEnd + 1;
       WORD_RUN.exec(s);
       const payload = WORD_RUN.lastIndex - runEnd - 1;
-      payloadOk = s[runEnd] === "." && payload >= 1 && payload <= 8192 && s[WORD_RUN.lastIndex] === ".";
+      payloadOk = s[runEnd] === "." && payload >= 1 && payload <= JWT_PAYLOAD_MAX && s[WORD_RUN.lastIndex] === ".";
     }
-    if (!payloadOk || runEnd - i - 3 > 512) continue;
+    if (!payloadOk || runEnd - i - 3 > JWT_HEADER_MAX) continue;
     JWT_AT.lastIndex = i;
     const jwt = JWT_AT.exec(s);
     if (!jwt) continue; // the checks above imply a match; a pattern edit must not throw in a hook

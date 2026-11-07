@@ -423,6 +423,13 @@ export function splitOutsideQuotes(text, separators) {
 // a command reads: `grep -rn X server 2>/dev/null` is still the tree-wide grep.
 const HARMLESS_REDIRECT = /(^|\s)(?:[12]?>\s*\/dev\/null|2>&1)(?=\s|$)/g;
 
+/** On Windows, Git Bash's /c/x spelling of C:/x, which Node resolves as a
+ *  path on the current drive; `p` as given elsewhere. */
+export function gitBashPath(p, platform = process.platform) {
+  const m = platform === "win32" ? /^\/([A-Za-z])(\/.*)?$/.exec(p) : null;
+  return m ? `${m[1].toUpperCase()}:${m[2] || "/"}` : p;
+}
+
 /**
  * `parseBashBulk` over each segment of a compound command — the shape agents
  * actually send: `cd /repo; wc -l a.py; cat a.py`, `sed -n '1,80p' a.py; echo
@@ -438,13 +445,6 @@ const HARMLESS_REDIRECT = /(^|\s)(?:[12]?>\s*\/dev\/null|2>&1)(?=\s|$)/g;
  * whole command unjudged ([]), and a `cd` the parser cannot follow ends the
  * scan.
  */
-/** On Windows, Git Bash's /c/x spelling of C:/x, which Node resolves as a
- *  path on the current drive; `p` as given elsewhere. */
-export function gitBashPath(p, platform = process.platform) {
-  const m = platform === "win32" ? /^\/([A-Za-z])(\/.*)?$/.exec(p) : null;
-  return m ? `${m[1].toUpperCase()}:${m[2] || "/"}` : p;
-}
-
 export function parseBashBulkSegments(command) {
   const c = String(command || "");
   if (!c.trim()) return [];

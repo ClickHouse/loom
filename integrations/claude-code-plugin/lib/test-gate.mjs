@@ -226,7 +226,8 @@ export function sessionScope(changed, objs, { root, cwd } = {}) {
           const rel = relativeToRoot(root, p, cwd);
           if (rel) edited.add(rel);
         }
-      } else if (name === "Bash") {
+      } else if (name === "Bash" || name === "PowerShell") {
+        // A path a command names reads the same in either shell.
         const text = commandText(b.input);
         if (text) commands.push(text);
       }

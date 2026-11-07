@@ -92,8 +92,7 @@ test("diagnostics never carry Anthropic, OpenAI or GitLab keys, basic auth or UR
 });
 
 test("redactJwts replaces exactly what the JWT pattern matches", async () => {
-  const { redactJwts } = await import("../lib/loom-client.mjs");
-  const pattern = /\beyJ[\w-]{0,512}\.[\w-]{1,8192}\.[\w-]{0,1024}/g;
+  const { JWT_RE: pattern, redactJwts } = await import("../lib/loom-client.mjs");
   const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln-_x";
   for (const text of [
     `Bearer ${jwt}`,

@@ -171,6 +171,11 @@ test("a virtualenv's interpreter: bin/python, and Scripts\\python.exe on Windows
   assert.equal(venvPython("C:\\r\\.venv", "win32"), "C:\\r\\.venv\\Scripts\\python.exe");
 });
 
+test("a PowerShell command naming the path counts, as a Bash one does", () => {
+  const ps = [use("PowerShell", { command: "(Get-Content src/b.py) -replace 'x','y' | Set-Content src/b.py" })];
+  assert.deepEqual(sessionScope(DIRTY, ps, { root: ROOT }), ["src/b.py"]);
+});
+
 test("Codex shapes: argv shell commands and apply_patch envelopes", () => {
   const shell = [use("shell", { command: ["bash", "-lc", "sed -i 's/x/y/' src/a.py"] })];
   assert.deepEqual(sessionScope(DIRTY, shell, { root: ROOT }), ["src/a.py"]);
