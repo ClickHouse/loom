@@ -45,13 +45,13 @@ def test_a_lambda_the_test_defined_is_found(probe) -> None:
     assert _double_bound_at_import(before)
 
 
-class _FakeRepo:
-    pass
-
-
 def test_an_autospecced_function_is_found(probe) -> None:
     before = _fake_first_import(probe, get_client=create_autospec(get_client))
     assert _double_bound_at_import(before)
+
+
+class _FakeRepo:
+    pass
 
 
 def test_an_instance_of_a_test_class_is_found(probe) -> None:
@@ -73,13 +73,10 @@ def test_a_module_outside_the_source_files_is_not_checked(probe, where: str) -> 
     assert not _double_bound_at_import(before)
 
 
-def test_a_tests_helper_is_dropped_but_not_checked(probe) -> None:
-    # A tests/ helper first imported with a poisoned module may bind a name from it, so it
-    # goes too; its own fakes never count as a leak.
+def test_the_drop_set_includes_tests_helpers(probe) -> None:
     probe.__file__ = str(_REPO / "tests" / "unit" / "_probe_helper.py")
     before = _fake_first_import(probe)
     assert _source_modules_since(before, tests=True) == [_PROBE]
-    assert _source_modules_since(before) == []
 
 
 def test_a_scripts_module_is_checked(probe) -> None:
@@ -128,6 +125,7 @@ from unittest.mock import patch
 def test_first_import_under_a_patch():
     with patch("server.code.store.index.CodeRepo", lambda: None):
         import server.code.app.index.scip_full  # noqa: F401
+        import tests.unit.clock_fake  # noqa: F401 (a tests/ helper first imported here)
 
 
 def test_a_patch_on_the_module_itself(monkeypatch):
@@ -136,6 +134,7 @@ def test_a_patch_on_the_module_itself(monkeypatch):
     # real class. The patch below is undone before the fixture looks.
     assert "server.code.app.index.scip_delta" not in sys.modules
     assert "server.code.app.index.scip_full" not in sys.modules
+    assert "tests.unit.clock_fake" not in sys.modules
     from server.code.app.index import scip_delta as sd
     from server.code.app.index import scip_full as full
     import server.code.store.index as index
