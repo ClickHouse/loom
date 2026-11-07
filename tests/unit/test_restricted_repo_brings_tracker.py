@@ -99,3 +99,28 @@ async def test_the_tracker_record_is_granted_viewer_like_a_repository(
         "tracker-private": "viewer",
         "secret-notes": "writer",
     }
+
+
+@pytest.mark.asyncio
+async def test_the_tracker_record_is_viewer_whatever_the_role_handed_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A `*` mint hands the person's own role (writer here) for the bound record; the
+    # token's direct grant there is still read-only.
+    rows: list[dict[str, Any]] = []
+
+    async def _insert(batch: list[dict[str, Any]], **_kw: Any) -> None:
+        rows.extend(batch)
+
+    async def _isr(org: str, ns: str) -> bool:
+        return True
+
+    monkeypatch.setattr(grants_repo, "insert_rows", _insert)
+    monkeypatch.setattr(
+        "server.tracker.domain.namespaces.tracker_namespace",
+        lambda o, n: object() if n == "tracker-private" else None,
+    )
+    await tg.grant_restricted_to_token(
+        ORG, "sa:t", "alice", {"tracker-private": "writer"}, is_restricted=_isr
+    )
+    assert [(r["namespace"], r["role"]) for r in rows] == [("tracker-private", "viewer")]

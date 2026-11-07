@@ -45,6 +45,61 @@ def test_a_grant_on_a_namespace_without_a_directory_row_is_listed() -> None:
     assert by_ns["code-acme-private"]["visibility"] == "private"
 
 
+@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
+def test_a_grant_stored_in_another_case_is_listed() -> None:
+    setup = [
+        ddl("namespace_grants"),
+        ddl("namespaces"),
+        ddl("namespace_visits"),
+        "INSERT INTO loom.namespace_grants (org, namespace, subject, role, granted_at, "
+        "granted_by, version, status) VALUES "
+        "('acme', 'team-public', 'Kim@Acme.dev', 'viewer', now(), 'op', 1, 'active')",
+    ]
+    rows = run(setup, membership._MEMBERSHIP_SQL, {"org": "acme", "subs": ["kim@acme.dev"]})
+    assert [r["namespace"] for r in rows] == ["team-public"]
+
+
+@pytest.mark.asyncio
+async def test_a_token_inherits_no_restricted_repository_listed_only_in_the_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The directory knows no restricted namespace; the repository entry says restricted.
+    import server.auth.aliases as aliases
+    import server.auth.service_accounts as sa
+    import server.identity.app.namespace_classification as nc
+
+    entry = {
+        "org": "acme",
+        "namespace": "code-acme-private",
+        "repo": "acme/private",
+        "git_branch": "master",
+        "classification": "restricted",
+    }
+    monkeypatch.setattr(settings, "code_repos_json", json.dumps([entry]))
+
+    async def _creator(org: str, sub: str, *, ch: object = None) -> str:
+        return "kim@acme.dev"
+
+    async def _aliases(org: str, subject: str, *, ch: object = None) -> list[str]:
+        return [subject]
+
+    async def _rows(ch: object, org: str, subjects: list[str]) -> list[dict[str, object]]:
+        return [
+            {"namespace": "team-public", "role": "viewer", "status": "active", "kind": "memory"},
+            {"namespace": "code-acme-private", "role": "viewer", "status": "active", "kind": ""},
+        ]
+
+    async def _none_restricted(org: str) -> frozenset[str]:
+        return frozenset()
+
+    monkeypatch.setattr(sa, "inheriting_creator", _creator)
+    monkeypatch.setattr(aliases, "subject_aliases", _aliases)
+    monkeypatch.setattr(membership, "_membership_rows", _rows)
+    monkeypatch.setattr(nc, "restricted_set", _none_restricted)
+    rows = await membership._inherited_rows(object(), "acme", "sa:t-1", set())
+    assert [r["namespace"] for r in rows] == ["team-public"]
+
+
 def test_a_namespace_without_a_directory_row_is_code_when_a_repository_entry_names_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

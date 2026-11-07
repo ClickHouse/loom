@@ -400,11 +400,11 @@ _MEMBERSHIP_SQL = """
             -- a visit under any of the person's spellings clears `is_new`
             SELECT org, namespace, max(last_seen_at) AS last_seen_at
             FROM loom.namespace_visits FINAL
-            WHERE org = {org:String} AND subject IN {subs:Array(String)}
+            WHERE org = {org:String} AND lower(subject) IN {subs:Array(String)}
             GROUP BY org, namespace
         ) AS v
             ON v.org = g.org AND v.namespace = g.namespace
-        WHERE g.org = {org:String} AND g.subject IN {subs:Array(String)}
+        WHERE g.org = {org:String} AND lower(g.subject) IN {subs:Array(String)}
           AND g.revoked_at IS NULL
           AND ifNull(n.active, true) = true
         ORDER BY g.granted_at DESC
@@ -428,8 +428,10 @@ def _kind(org: str, namespace: str, kind: object) -> str:
 async def _membership_rows(ch: Any, org: str, subjects: list[str]) -> list[dict[str, Any]]:
     """Active grant rows (joined with the directory + visits) for any of
     `subjects` — one person's aliases, or a token's creator's."""
+    # Any case, as the gate matches a grant's subject (`authz.grant_role_for`).
+    subs = list(dict.fromkeys(s.lower() for s in subjects))
     rows: list[dict[str, Any]] = list(
-        await ch.query_all(_MEMBERSHIP_SQL, params={"org": org, "subs": subjects})
+        await ch.query_all(_MEMBERSHIP_SQL, params={"org": org, "subs": subs})
     )
     return rows
 
@@ -452,7 +454,7 @@ def _one_per_namespace(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def _inherited_rows(ch: Any, org: str, caller: str, skip: set[str]) -> list[dict[str, Any]]:
-    """A client token (`sa:` subject minted from the Setup page) reads every namespace its
+    """A client token (`sa:` subject minted by `service_accounts.create`) reads every namespace its
     creator holds a live grant on when its row says it inherits (`server/auth/service_accounts`,
     the gate's rule), so `namespace.list_mine` must list those too, or
     the doctor and any client asking "what can I read" would see only the token's own rows.
@@ -466,7 +468,11 @@ async def _inherited_rows(ch: Any, org: str, caller: str, skip: set[str]) -> lis
         return []
     try:
         from server.auth.aliases import subject_aliases
-        from server.identity.app.namespace_classification import restricted_set
+        from server.identity.app.namespace_classification import (
+            RESTRICTED,
+            config_classification,
+            restricted_set,
+        )
 
         subjects = await subject_aliases(org, creator, ch=ch)
         rows = await _membership_rows(ch, org, subjects)
@@ -484,7 +490,10 @@ async def _inherited_rows(ch: Any, org: str, caller: str, skip: set[str]) -> lis
         for r in rows:
             ns = str(r.get("namespace") or "")
             active = (r.get("status") or "active") == "active"
-            if not ns or ns in skip or ns in restricted or not active:
+            # The directory's restricted set, or a repository entry's own classification
+            # for one listed only in LOOM_CODE_REPOS_JSON.
+            config_restricted = config_classification(org, ns) == RESTRICTED
+            if not ns or ns in skip or ns in restricted or config_restricted or not active:
                 continue
             skip.add(ns)
             out.append(r)

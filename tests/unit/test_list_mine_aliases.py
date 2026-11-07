@@ -149,5 +149,5 @@ def test_the_visits_join_folds_the_same_spellings_as_the_grants() -> None:
     not by equality with the grant row's own subject."""
     sql = membership._MEMBERSHIP_SQL
     visits = sql.split("loom.namespace_visits", 1)[1]
-    assert "subject IN {subs:Array(String)}" in visits
+    assert "lower(subject) IN {subs:Array(String)}" in visits
     assert "v.subject = g.subject" not in sql
