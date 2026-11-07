@@ -177,14 +177,6 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
-        "pin_missing",
-        re.compile(
-            r"did not contain [0-9a-f]{7,64}|not our ref|reference is not a tree"
-            r"|unadvertised object|no such remote ref [0-9a-f]{7,64}",
-            re.IGNORECASE,
-        ),
-    ),
-    (
         "egress",
         re.compile(
             # the sandbox proxy refuses a host or port with 403 and a method with 405;
@@ -193,16 +185,27 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
+    # a submodule's pin also reads missing ("did not contain <sha>") when its host could
+    # not be reached, so the connection errors come before the pin test
     (
         "network",
         re.compile(
             r"could not resolve host|failed to connect to|connection refused|connection reset"
-            r"|network is unreachable|connection timed out|the remote end hung up unexpectedly"
-            r"|ssl_connect|gnutls_handshake"
+            r"|network is unreachable|connection timed out|ssl_connect|gnutls_handshake"
             r"|received http code 50[23] from proxy|connect tunnel failed, response 50[23]\b",
             re.IGNORECASE,
         ),
     ),
+    (
+        "pin_missing",
+        re.compile(
+            r"did not contain [0-9a-f]{7,64}|not our ref|reference is not a tree"
+            r"|unadvertised object|no such remote ref [0-9a-f]{7,64}",
+            re.IGNORECASE,
+        ),
+    ),
+    # a hang-up alone: a refused unadvertised object prints it too, so after the pin test
+    ("network", re.compile(r"the remote end hung up unexpectedly", re.IGNORECASE)),
     (
         "timeout",
         re.compile(

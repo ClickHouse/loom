@@ -59,6 +59,18 @@ FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).t
         ),
         ("fatal: unable to access 'https://h/': CONNECT tunnel failed, response 503", "network"),
         ("fatal: unable to access 'https://h/': Could not resolve host: h", "network"),
+        (
+            "fatal: unable to access 'https://h/o/sub/': Received HTTP code 403 from proxy after "
+            "CONNECT\nfatal: Fetched in submodule path 'contrib/sub', but it did not contain "
+            "2d70290e18f5. Direct fetching of that commit failed.",
+            "egress",
+        ),
+        (
+            "fatal: unable to access 'https://h/o/sub/': Could not resolve host: h\n"
+            "fatal: Fetched in submodule path 'contrib/sub', but it did not contain "
+            "2d70290e18f5. Direct fetching of that commit failed.",
+            "network",
+        ),
         ("RuntimeError: harness timed out after 600.0s", "timeout"),
         ("TimeoutError: git fetch origin in /c exceeded 600s", "timeout"),
         ("write error: No space left on device", "disk"),
