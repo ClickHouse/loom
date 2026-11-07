@@ -28,6 +28,7 @@ from server.memory.domain.graph_quality import (
     MAX_TRIPLES_PER_ROW,
     canonical_entity_text,
     canonical_relation,
+    fits_entity,
 )
 from server.memory.domain.search_text import canonicalize_verb
 from server.memory.domain.sensitivity import Sensitivity
@@ -271,6 +272,14 @@ def _canonical_at_least(min_chars: int, canonical: Any, dropped: str, needs: str
     return AfterValidator(check)
 
 
+def _fits_entity(raw: str) -> str:
+    if not fits_entity(raw):
+        raise ValueError(
+            f"{raw[:40]!r}… is longer than {MAX_ENTITY_CHARS} characters once normalised"
+        )
+    return raw
+
+
 def _relation_verb(raw: str) -> str:
     return canonical_relation(canonicalize_verb(raw)).verb
 
@@ -279,6 +288,7 @@ _ENTITY_DROPS = "articles, possessives and punctuation"
 _FactSubject = Annotated[
     str,
     Field(max_length=MAX_ENTITY_CHARS),
+    AfterValidator(_fits_entity),
     _canonical_at_least(
         2,
         canonical_entity_text,
@@ -299,6 +309,7 @@ _FactRelation = Annotated[
 _FactObject = Annotated[
     str,
     Field(max_length=MAX_ENTITY_CHARS),
+    AfterValidator(_fits_entity),
     _canonical_at_least(
         1, canonical_entity_text, _ENTITY_DROPS, "an object needs at least 1 character"
     ),

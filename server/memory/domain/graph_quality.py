@@ -439,6 +439,20 @@ def _normalise(lowered: str) -> str:
     return SELF_SUBJECT if text in _FIRST_PERSON_FORMS else text
 
 
+def _capped_normal(original: str) -> str | None:
+    """`original` normalised, or None when it or its normal form (NFKC lengthens:
+    "\ufb01" is "fi") is longer than `MAX_ENTITY_CHARS`."""
+    if len(original) > MAX_ENTITY_CHARS:
+        return None
+    text = _normalise(original.lower())
+    return text if len(text) <= MAX_ENTITY_CHARS else None
+
+
+def fits_entity(raw: str) -> bool:
+    """Whether `raw` is short enough to be an entity name, as written and normalised."""
+    return _capped_normal(str(raw or "").strip()) is not None
+
+
 def canonical_entity(raw: str) -> CanonicalEntity:
     """Return stable canonical entity text + ID for storage/search.
 
@@ -448,10 +462,8 @@ def canonical_entity(raw: str) -> CanonicalEntity:
     `MAX_ENTITY_CHARS`, as written or once normalised, is no entity: its text is empty."""
 
     original = str(raw or "").strip()
-    if len(original) > MAX_ENTITY_CHARS:
-        return CanonicalEntity(text="", entity_id="")
-    text = _normalise(original.lower())
-    if len(text) > MAX_ENTITY_CHARS:  # NFKC lengthens: "\ufb01" is "fi"
+    text = _capped_normal(original)
+    if text is None:
         return CanonicalEntity(text="", entity_id="")
     entity_id = text.replace(" ", "_")
     return CanonicalEntity(text=text, entity_id=entity_id, aliases=[original] if original else [])
@@ -766,7 +778,7 @@ def restates_current(
 
 def names_only(values: list[str]) -> list[str]:
     """`values` without the text too long to be an entity name."""
-    return [v for v in values if len(v.strip()) <= MAX_ENTITY_CHARS]
+    return [v for v in values if fits_entity(v)]
 
 
 def facet_triples(
