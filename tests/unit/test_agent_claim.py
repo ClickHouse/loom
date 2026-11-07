@@ -736,6 +736,26 @@ def test_a_form_body_that_cannot_be_read_answers_the_page(world) -> None:
     assert r.status_code == 400 and "Claim an agent" in r.text
 
 
+def test_a_write_found_by_the_later_read_back_is_claimed(world, monkeypatch) -> None:
+    ch, real_insert, real_landed, reads = world["ch"], world["ch"].insert, agent_claim._landed, []
+
+    async def insert(table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
+        await real_insert(table, rows, settings)
+        if table == "loom.namespaces":
+            raise _timed_out()
+
+    async def landed(org: str, namespace: str, password_hash: str) -> bool:
+        reads.append(namespace)  # the first read misses the write, the later one finds it
+        return len(reads) > 1 and await real_landed(org, namespace, password_hash)
+
+    monkeypatch.setattr(ch, "insert", insert)
+    monkeypatch.setattr(agent_claim, "_landed", landed)
+    r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
+    assert r.status_code == 200 and "Claimed" in r.text
+    [(_, kw)] = world["events"]
+    assert kw["subject"]["confirmed"] is True
+
+
 def test_a_personal_token_named_like_the_agent_is_named(world) -> None:
     # Only the token sign-up stored is the agent's; one a person named after the
     # namespace, with the same subject shape, is another holder.

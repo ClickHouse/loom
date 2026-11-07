@@ -319,17 +319,16 @@ async def _replace_code(
         # A write can land and still report a failure (a timeout after it was
         # applied, the lease's bound after it).
         if not written and not await _landed(org, namespace, password_hash):
-            # It may still land: the cutoff after it runs anyway, the claim is
-            # audited as unconfirmed, and the person is told to try their
-            # password before submitting again.
+            # It may still land: the cutoff after it runs anyway, and the claim
+            # is unconfirmed unless that step's read finds it.
             log.warning("agent claim of %s/%s: the write did not confirm: %r", org, namespace, e)
-            cutoff = await _after_write(org, namespace, subject, password_hash)
-            await _audit(org, namespace, confirmed=False)
-            return "unconfirmed", cutoff
+            cutoff, landed = await _after_write(org, namespace, subject, password_hash)
+            await _audit(org, namespace, confirmed=landed)
+            return ("claimed" if landed else "unconfirmed"), cutoff
         log.warning(
             "agent claim of %s/%s: the backend failed after the write: %r", org, namespace, e
         )
-    cutoff = await _after_write(org, namespace, subject, password_hash)
+    cutoff, _ = await _after_write(org, namespace, subject, password_hash)
     # After the last cutoff, so the audit's time does not delay it.
     await _audit(org, namespace)
     return "claimed", cutoff
@@ -389,28 +388,32 @@ async def _audit(org: str, namespace: str, *, confirmed: bool = True) -> None:
     )
 
 
-async def _after_write(org: str, namespace: str, subject: str, password_hash: str) -> datetime:
+async def _after_write(
+    org: str, namespace: str, subject: str, password_hash: str
+) -> tuple[datetime, bool]:
     """Read the write back, wait out the clock skew and cut off again; the cutoff
-    the claimer waits out. The claim stands whatever fails here."""
+    the claimer waits out, and whether the write read back. The claim stands
+    whatever fails here."""
     # A replica of the build before signs in with a plain-hash code, reading
     # without sequential consistency, until its ClickHouse replica has the
     # write, and the first cutoff predates that.
     # The read only times the cutoff below, which runs whatever it finds.
-    if not await _landed(org, namespace, password_hash):
+    landed = await _landed(org, namespace, password_hash)
+    if not landed:
         log.warning("agent claim of %s/%s: the write does not read back yet", org, namespace)
     # A replica whose clock runs up to CLOCK_SKEW_S ahead stamps later `iat`s:
     # after this wait the cutoff still ends what any replica issues for
     # CLOCK_SKEW_S + 1 seconds after the read back.
     await _skew_wait()
     try:
-        return await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
+        return await account_admin.end_tokens(subject, by=namespace, reason=_REASON), landed
     except Exception as e:  # noqa: BLE001 — the claim is written; the earlier cutoff holds
         log.warning(
             "agent claim of %s/%s: the cutoff after the write failed: %r", org, namespace, e
         )
         # Later than any cutoff the failed call could have stored, so the claimer's
         # next sign-in is not ended by it either.
-        return revocation.from_now_on()
+        return revocation.from_now_on(), landed
 
 
 def _past_a_claim_landed_now() -> datetime:
