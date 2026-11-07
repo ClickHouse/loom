@@ -923,6 +923,8 @@ describe("Assistant: overview", () => {
     render(<Assistant />);
     await screen.findByTestId("assistant-populations");
     expect(screen.getByRole("button", { name: "Inspect memories" })).toHaveAccessibleDescription("Type a user id.");
+    // Nobody to pick: the heading does not ask for a pick.
+    expect(screen.queryByRole("button", { name: "About Who appears here" })).toBeNull();
   });
 
   it("shows what the namespace holds, with a section it could not count said so", async () => {
@@ -1006,6 +1008,9 @@ describe("Assistant: overview", () => {
     await userEvent.click(screen.getByRole("button", { name: "Agent" }));
     const option = document.querySelector("#assistant-subject-suggestions option");
     expect([option?.getAttribute("value"), option?.textContent]).toEqual(["-", "No agent (admin / me)"]);
+    // The answer is headed by the same name.
+    await userEvent.click(screen.getByRole("button", { name: "No agent (admin / me) 5 memories" }));
+    expect(await screen.findByTestId("assistant-inspection")).toHaveTextContent("Agent No agent (admin / me)");
   });
 
   it("names a pick with one memory in the singular", async () => {

@@ -6,7 +6,7 @@ import { CodeBlock } from "./CodeBlock";
 import { ListTime } from "../../components/ui/ListTime";
 import { SectionHeading } from "../../components/ui";
 import { useStore } from "../../lib/state";
-import { SUBJECT_COPY } from "./subjects";
+import { SUBJECT_COPY, shownName } from "./subjects";
 
 // What the subject's own view holds, as the server defines it: rows filed under a user
 // (by any writer), rows an agent wrote, rows written in a session (by any user).
@@ -27,7 +27,8 @@ export function Inspection({ result }: { result: MemoryInspection }) {
   return (
     <div className="space-y-5" data-testid="assistant-inspection">
       <p className="text-sm text-text">
-        {SUBJECT_COPY[result.subject].label} <span className="font-mono break-all">{result.id}</span>
+        {SUBJECT_COPY[result.subject].label}{" "}
+        <span className="font-mono break-all">{shownName(result.subject, result.id)}</span>
       </p>
       <InspectViewBlock
         id="inspect-own"

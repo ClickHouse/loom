@@ -84,7 +84,10 @@ export function Assistant() {
   const tuneGate = gate("namespace.tune");
   const copy = SUBJECT_COPY[subject];
   const suggestions = inventory.data?.populations.find((p) => INSPECTED_AS[p.population] === subject)?.top ?? [];
-  const emptyReason = suggestions.length > 0 ? copy.pick : copy.empty;
+  const suggest = suggestions.length > 0;
+  const emptyReason = suggest ? copy.pick : copy.empty;
+  // Whether the overview lists anyone to pick.
+  const pickable = inventory.data?.populations.some((p) => INSPECTED_AS[p.population] && p.top.length > 0) ?? false;
   const inspectBlocked = memoryGate ?? (subjectId.trim() ? null : emptyReason);
 
   const org = identity?.org ?? "";
@@ -167,7 +170,7 @@ export function Assistant() {
                     id="assistant-people"
                     level={3}
                     label="Who appears here"
-                    hint={memoryGate ? undefined : "Pick a user or agent to see what it remembers."}
+                    hint={pickable && !memoryGate ? "Pick a user or agent to see what it remembers." : undefined}
                   />
                   <InventoryPopulations inventory={inventory.data} onPick={pick} pickBlocked={memoryGate} />
                 </section>
@@ -193,10 +196,9 @@ export function Assistant() {
             options={SUBJECT_OPTIONS}
             selected={subject}
             onClick={(v) => {
-              // A user id is not an agent name or a session id.
-              if (v === subject) return;
+              if (v === subject) return; // ButtonGroup calls onClick for the selected option too
               setSubject(v as InspectSubject);
-              setSubjectId("");
+              setSubjectId(""); // a user id is not an agent name or a session id
             }}
           />
           <div className="w-64 max-w-full">
@@ -205,13 +207,13 @@ export function Assistant() {
             <TextField
               id="assistant-subject-id"
               label={copy.field}
-              placeholder={suggestions.length ? "Pick or type" : undefined}
-              list={suggestions.length ? "assistant-subject-suggestions" : undefined}
+              placeholder={suggest ? "Pick or type" : undefined}
+              list={suggest ? "assistant-subject-suggestions" : undefined}
               autoComplete="off"
               value={subjectId}
               onChange={(v) => setSubjectId(v)}
             />
-            {suggestions.length > 0 && (
+            {suggest && (
               <datalist id="assistant-subject-suggestions">
                 {suggestions.map((s) => (
                   <option key={s.name} value={s.name}>
