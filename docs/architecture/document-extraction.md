@@ -368,11 +368,13 @@ that is no JSON number (an integer past signed 64 bits, an infinity, a NaN) is r
 no other rule reads (a style index of 5,000 digits, a date rounded past year 9999) reads as a number or as text, never
 failing the file; Parquet reads each by its column's type (below).
 
-**CSV.** The delimiter is sniffed from the whole lines of the file's first 64 KiB (a comma, semicolon, tab or pipe; a
-tab, with no quoting, for a `.tsv` name; a tab-separated file sent with no such name is sniffed, so it reads quotes as
-CSV does); a field is quoted with `"`, its quotes doubled, whatever the sniffer guesses, and a value is text unless it
-is written as a plain number, an ISO date or an ISO date and time (its zone kept). A row holds only its non-empty
-fields. A field over a megabyte, a record over 8 MiB, or quoting the reader cannot close, fails the rows from there on.
+**CSV.** For a `.tsv` name the delimiter is a tab, with no quoting. Otherwise it is a comma, semicolon, tab or pipe (a
+tab-separated file sent with no such name is sniffed, so it reads quotes as CSV does), guessed from quoted fields in the
+whole lines of the file's first 4 KiB, or else from delimiter counts over the whole lines of its first 64 KiB (each
+sample is cut mid-line only when its first line runs past it); a field is quoted with `"`, its quotes doubled, whatever
+the sniffer guesses, and a value is text unless it is written as a plain number, an ISO date or an ISO date and time
+(its zone kept). A row holds only its non-empty fields. A field over a megabyte, a record over 8 MiB, or quoting the
+reader cannot close, fails the rows from there on.
 
 **XLSX.** The workbook, its styles, its shared strings and its worksheets are read as they inflate, never held as a
 tree; the workbook's relationships are read whole, from a part of at most 4 MiB (past it, or not XML, the file is
