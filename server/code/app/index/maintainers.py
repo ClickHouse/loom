@@ -6,8 +6,9 @@ to ask branch by branch. This module copies *active admin* grants between the
 configured branch namespaces of one repository, in one direction (``_reaches``): the
 operator's entries pass their admins to every branch, and a branch added from the
 page (``code.repo.add``, open to any org member) passes its admins only to other
-branches added from the page. Registering a branch of a repository the operator
-configures gives no grant on the operator's namespaces.
+branches added from the page, except a restricted one, which takes the operator's
+admins only. Registering a branch of a repository the operator configures gives no
+grant on the operator's namespaces.
 
 * ``sync_repo_maintainers`` — every branch gets the union of the active admins
   of the branches that reach it, written where it lacks one (``granted_by =
@@ -78,6 +79,22 @@ def _reaches(source: str, target: str) -> bool:
     branch added from the page never passes its admins (or a revoke of one) to
     an operator entry; the operator's admins reach every branch."""
     return source == "config" or target != "config"
+
+
+def _private(org: str, namespaces: list[str]) -> set[str]:
+    """The restricted branches added from the page: one takes the operator's admins
+    only, since any org member who reads the repository may add a sibling branch."""
+    from server.code.domain.index.repos import configured_repos
+    from server.identity.app.namespace_classification import is_restricted_cached
+
+    return {
+        c.namespace
+        for c in configured_repos()
+        if c.org == org
+        and c.namespace in namespaces
+        and c.source == "registry"
+        and (c.classification == "restricted" or is_restricted_cached(org, c.namespace))
+    }
 
 
 def repo_of(org: str, namespace: str) -> str | None:
@@ -418,11 +435,15 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     client = ch or get_client()
     rows = await _grant_rows(client, org, branches)
     inserts: list[dict[str, Any]] = []
+    private = _private(org, branches)
     for kind in ("config", "registry"):
-        targets = [ns for ns in branches if sources[ns] == kind]
+        targets = [ns for ns in branches if sources[ns] == kind and ns not in private]
         read = [ns for ns in branches if _reaches(sources[ns], kind)]
         if targets:
             inserts += _plan_mirrors(org, rows, read, targets, branches)
+    config = [ns for ns in branches if sources[ns] == "config"]
+    for ns in sorted(private):
+        inserts += _plan_mirrors(org, rows, [*config, ns], [ns], branches)
     written = (
         await _write_under_claims(client, org, inserts, _mirror_wanted, rows, hold_repo=repo)
         if inserts
@@ -503,6 +524,8 @@ async def revoke_repo_maintainer(
     sources = _branches(org, repo)
     own = sources[namespace]
     branches = [b for b, source in sources.items() if b != namespace and _reaches(own, source)]
+    if own == "registry":  # a restricted branch added from the page took none of its admins
+        branches = [b for b in branches if b not in _private(org, branches)]
     if not branches:
         return 0
     rows = await _grant_rows(client, org, branches)

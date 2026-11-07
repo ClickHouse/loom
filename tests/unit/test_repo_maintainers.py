@@ -25,8 +25,16 @@ pytestmark = pytest.mark.usefixtures("no_directory_ties")
 
 
 class _Cfg:
-    def __init__(self, org: str, namespace: str, repo: str, source: str = "config") -> None:
+    def __init__(
+        self,
+        org: str,
+        namespace: str,
+        repo: str,
+        source: str = "config",
+        classification: str = "standard",
+    ) -> None:
         self.org, self.namespace, self.repo, self.source = org, namespace, repo, source
+        self.classification = classification
 
 
 REPOS = [
@@ -206,6 +214,29 @@ async def test_a_self_service_branch_admin_is_never_mirrored_onto_an_operator_en
         ("code-z-26-5", "ops"),
         ("code-z-dev", "ops"),
     ]
+
+
+PRIVATE = [
+    _Cfg("clickhouse", "code-z", "Org/z"),
+    _Cfg("clickhouse", "code-z-dev", "Org/z", source="registry"),
+    _Cfg("clickhouse", "code-z-26-5", "Org/z", source="registry", classification="restricted"),
+]
+
+
+async def test_a_restricted_self_service_branch_takes_only_the_operators_admins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Any org member who reads the repository may add a sibling branch: its admin
+    never reaches a restricted branch added from the page, nor does its revoke."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    ch = _FakeCH([_admin("code-z", "ops"), _admin("code-z-dev", "mallory")])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z-dev", ch=ch)
+    written = sorted((r["namespace"], r["subject"]) for r in ch.inserted)
+    assert written == [("code-z-26-5", "ops"), ("code-z-dev", "ops")]
+    rows = [_admin(ns, s) for ns in ("code-z-dev", "code-z-26-5") for s in ("alice", "bob")]
+    ch = _FakeCH(rows)
+    await _revoke("code-z-dev", "alice", ch=ch)
+    assert ch.inserted == []
 
 
 async def test_a_mirror_on_a_self_service_branch_never_stands_in_for_an_operator_entry(
