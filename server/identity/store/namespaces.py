@@ -28,6 +28,38 @@ async def fetch_row(
     return dict(row) if row else None
 
 
+async def unclaimed_rows(
+    namespace: str, unclaimed_sql: str, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """(org, namespace, password_hash) of the active accounts named `namespace`
+    that `unclaimed_sql` (`claim_codes.UNCLAIMED_SQL`, constants only) matches,
+    in every org."""
+    ch = ch or _default_client()
+    return await ch.query_all(
+        """
+        SELECT org, namespace, password_hash FROM loom.namespaces FINAL
+        WHERE namespace = {ns:String} AND active = 1 AND {unclaimed}
+        ORDER BY org
+        """.replace("{unclaimed}", unclaimed_sql),
+        params={"ns": namespace},
+    )
+
+
+def claimed_row(
+    row: dict[str, Any], password_hash: str, tag: str, description: str, now: Any
+) -> dict[str, Any]:
+    """`row` as a claim leaves it, every other column carried forward: the
+    claimer's password, the claim's tag, and `description` in place of the
+    sign-up's default."""
+    return {
+        **row,
+        "password_hash": password_hash,
+        "tags": [*row["tags"], tag],
+        "description": description,
+        "updated_at": max(now, row["updated_at"]),
+    }
+
+
 async def is_active(org: str, namespace: str, *, ch: _CHClient | None = None) -> bool:
     """Is (org, namespace) a registered, active namespace? A soft-deleted one is not."""
     ch = ch or _default_client()

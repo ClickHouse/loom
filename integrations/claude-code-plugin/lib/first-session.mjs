@@ -3,10 +3,10 @@
 // At the first SessionStart without a credential, the plugin calls the
 // server's agent self-signup: the server provisions a memory
 // namespace for this machine + client, grants it writer, and returns a
-// token plus a one-time claim code. The token goes to ~/.loom/config.json
+// token plus a claim code that works once. The token goes to ~/.loom/config.json
 // (0600), the claim code to ~/.loom/claim-<namespace>.txt (0600) — never
-// into the model's context. A person makes the namespace theirs by signing
-// in to the dashboard with the namespace name and the code (the ordinary login).
+// into the model's context. A person makes the namespace theirs at the claim
+// page (`claimUrl`) with the namespace name, the code and a password of their own.
 //
 // LOOM_AUTO_SIGNUP=off disables. A server with self-signup off (404) or a
 // rate limit (429) leaves the machine without a credential: hooks no-op, and

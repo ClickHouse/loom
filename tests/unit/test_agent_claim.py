@@ -66,6 +66,9 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
     )
     for module in (ss, agent_claim, login):
         monkeypatch.setattr(module, "get_client", lambda: ch)
+    import server.core.ch as core_ch
+
+    monkeypatch.setattr(core_ch, "get_client", lambda: ch)  # read lazily by service_accounts
     monkeypatch.setattr(namespaces, "_default_client", lambda: ch)
     monkeypatch.setattr(grants, "_default_client", lambda: ch)
     out = asyncio.run(ss.agent_signup(ss.AgentSignupInput(name="nightly triage"), _Req()))
@@ -228,6 +231,18 @@ def test_the_code_claims_once_and_the_claimer_signs_in_with_their_password(world
     assert _sign_in(world["code"]) is None
     subject, org, names, _ = _sign_in("correct horse")
     assert (subject, org, names) == (_NS, "dev", [_NS])
+
+
+def test_a_claim_drops_the_unclaimed_default_description(world) -> None:
+    row = _row(world, _LEGACY)
+    old = {**row, "description": "Created via agent self-signup; unclaimed."}
+    asyncio.run(world["ch"].insert("loom.namespaces", [old]))
+    assert (
+        _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY).status_code == 200
+    )
+    assert _row(world, _LEGACY)["description"] == ss.AGENT_DESCRIPTION
+    assert _claim(_app(), world["code"], "correct horse").status_code == 200
+    assert _row(world, _NS)["description"] == ss.AGENT_DESCRIPTION
 
 
 def test_an_unclaimed_code_never_signs_in(world) -> None:
@@ -822,6 +837,7 @@ def test_only_a_proven_code_costs_a_password_hash(world) -> None:
         _claim(c, "not-the-code", "correct horse")
     throttled = _claim(c, world["code"], "correct horse")
     assert throttled.status_code == 429 and throttled.headers["Retry-After"] == "900"
+    assert "Too many failed attempts for this namespace" in throttled.text
     assert world["hashed"] == []
     assert _row(world, _NS)["password_hash"].startswith(claim_codes.CLAIM_PREFIX)
 

@@ -21,13 +21,13 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
-from server.auth import grant_claims, oauth, revocation
+from server.auth import grant_claims, oauth, revocation, service_accounts
 from server.auth.attempts import client_address
 from server.auth.claim_codes import CLAIMED_TAG, UNCLAIMED_SQL, verify_claim_code_off_loop
 from server.auth.grant_claims import account_change
-from server.auth.login import LoginThrottled, throttled, verify_as_unknown
+from server.auth.login import LoginBusy, LoginThrottled, throttled, verify_as_unknown
 from server.auth.passwords import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, hash_password_off_loop
-from server.auth.self_signup import AGENT_NAME_PREFIX
+from server.auth.self_signup import AGENT_DESCRIPTION, AGENT_NAME_PREFIX
 from server.core.ch import get_client, own_write_reads
 from server.core.errors import (
     BackendTimeoutError,
@@ -47,13 +47,6 @@ _TITLE = "Claim an agent's namespace"
 # What ClickHouse or the account's lease answer when a step cannot run now.
 _BUSY = (GrantBusyError, BackendUnavailableError, BackendTimeoutError, OverloadedError)
 _REASON = "agent namespace claimed"
-
-# The active accounts named `ns` that still hold a claim code, in every org.
-_UNCLAIMED = """
-    SELECT org, namespace, password_hash FROM loom.namespaces FINAL
-    WHERE namespace = {ns:String} AND active = 1 AND {unclaimed}
-    ORDER BY org
-""".replace("{unclaimed}", UNCLAIMED_SQL)
 
 
 def _form(namespace: str, error: str = "", status_code: int = 200) -> Response:
@@ -119,7 +112,7 @@ async def agent_claim(request: Request) -> Response:
             namespace, client_address(request), lambda: _proven(namespace, code)
         )
     except LoginThrottled as e:
-        page = _form(namespace, e.message, 429)
+        page = _form(namespace, _throttled_message(e), 429)
         page.headers["Retry-After"] = str(e.retry_after_s)
         return page
     except Exception as e:  # noqa: BLE001 — a failed check answers the page, not a bare 500
@@ -176,22 +169,10 @@ def _grants_notice(others: list[str] | None) -> str:
     return f"<p>These subjects also hold grants on it: {names}.</p>{review}"
 
 
-# The agent's own token, as its sign-up stored it: a name under the agent prefix,
-# which no person's token can take, made by the namespace itself.
-_AGENT_TOKENS = """
-    SELECT sa_subject FROM loom.service_accounts FINAL
-    WHERE org = {org:String} AND created_by = {ns:String} AND client = 'agent-signup'
-      AND startsWith(name, {prefix:String})
-"""
-
-
 async def _other_grants(org: str, namespace: str) -> list[str]:
     """The subjects with an active grant on the namespace, besides its own
     subject and the agent's token while it holds the writer role sign-up gave it."""
-    agents = await get_client().query_all(
-        _AGENT_TOKENS, params={"org": org, "ns": namespace, "prefix": AGENT_NAME_PREFIX}
-    )
-    agent_tokens = {str(r["sa_subject"]) for r in agents}
+    agent_tokens = await service_accounts.agent_signup_tokens(org, namespace, AGENT_NAME_PREFIX)
     rows = await grants.active_on(org, namespace)
     return sorted(
         {
@@ -203,6 +184,17 @@ async def _other_grants(org: str, namespace: str) -> list[str]:
     )
 
 
+def _throttled_message(e: LoginThrottled) -> str:
+    if isinstance(e, LoginBusy):
+        return "Too many checks at once; try again in a second."
+    # The limits are the sign-in's: wrong codes count against signing in as the
+    # namespace too.
+    return (
+        "Too many failed attempts for this namespace or from this address; try again in "
+        f"{e.retry_after_s // 60} minutes. Until then signing in as it is refused too."
+    )
+
+
 def _retry_later(namespace: str, error: str) -> Response:
     page = _form(namespace, error, 503)
     page.headers["Retry-After"] = "60"
@@ -211,7 +203,7 @@ def _retry_later(namespace: str, error: str) -> Response:
 
 async def _proven(namespace: str, code: str) -> tuple[str, str] | None:
     """(org, stored hash) of the unclaimed `namespace` the code verifies, or None."""
-    rows = await get_client().query_all(_UNCLAIMED, params={"ns": namespace})
+    rows = await namespaces.unclaimed_rows(namespace, UNCLAIMED_SQL)
     if not rows:
         await verify_as_unknown(code)  # timed like a wrong code
         return None
@@ -236,13 +228,15 @@ def _done(task: asyncio.Task[Any]) -> None:
         log.warning("agent claim: the claim's task failed: %r", task.exception())
 
 
-# The longest one claim runs: the lease's wait and bound, the steps after it and
-# the skew wait.
+# The longest one claim runs to its last cutoff: the lease's wait and bound, a
+# landed check, the read-back, the skew wait, and the cutoff's wait for the
+# subject's lease plus a margin for its insert. The audit after it is not waited for.
 DRAIN_S = (
     grant_claims.WAIT_S
     + grant_claims.CHANGE_S
-    + 3 * _READ_BACK_S  # a landed check, the read-back, a margin for the last cutoff
+    + 3 * _READ_BACK_S
     + revocation.CLOCK_SKEW_S
+    + revocation.SUBJECT_WAIT_S
 )
 
 
@@ -327,17 +321,13 @@ async def _landed(org: str, namespace: str, password_hash: str) -> bool:
 async def _write(row: dict[str, Any], password_hash: str) -> None:
     """Replace the code with the claimer's password and mark the account claimed."""
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-    # Insert-as-replace carrying every other column forward.
+    # A row signed up under an earlier default calls the namespace unclaimed.
+    description = str(row["description"])
+    if description == "Created via agent self-signup; unclaimed.":
+        description = AGENT_DESCRIPTION
     await get_client().insert(
         "loom.namespaces",
-        [
-            {
-                **row,
-                "password_hash": password_hash,
-                "tags": [*row["tags"], CLAIMED_TAG],
-                "updated_at": max(now, row["updated_at"]),
-            }
-        ],
+        [namespaces.claimed_row(row, password_hash, CLAIMED_TAG, description, now)],
     )
 
 

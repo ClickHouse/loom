@@ -90,10 +90,10 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
 - **loom-session-start, first session.** With no credential anywhere
   (LOOM_API_KEY, the `token` option, ~/.loom/config.json, ~/.loom/token) the
   hook calls the server's agent self-signup once, writes the token to
-  ~/.loom/config.json (0600) and the one-time claim code to
-  ~/.loom/claim-<namespace>.txt (0600), and the primer tells the user how to
-  claim the namespace in the dashboard; a single-user server returns its one identity,
-  so there is no claim code and the primer just says it connected. The MCP
+  ~/.loom/config.json (0600) and the claim code to ~/.loom/claim-<namespace>.txt
+  (0600), and the primer points the user to the claim page (`claim_url`), where
+  the code works once with a password of their own; a single-user server
+  returns its one identity, so there is no claim code and the primer just says it connected. The MCP
   headers helper cannot see install options, so with no LOOM_BASE_URL or saved
   URL it waits for this hook's credential (`LOOM_MCP_HOOK_WAIT_MS`, 5 s, under
   Codex's 10 s helper limit) before signing up through the same lock itself.
