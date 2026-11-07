@@ -325,11 +325,11 @@ stored key. Elsewhere an admin uses one of two commands:
   one session
   (`clickhouse-client --log_queries=0 --distributed_ddl_output_mode=throw --multiquery --queries-file <file>`):
   the delete, the new password, the `KILL QUERY`, the rest of the entity set under the
-  new key, a settle of `SELECT sleep(...)` statements, and last the `INSERT` of the new
-  sealed row at a version from ClickHouse's clock in nanoseconds. Run in full, it starts
-  analysis on a first install, recovers it after a lost row and rotates a healthy key
-  alike. It is outside the lease and the rules below, so it is printed by the newest
-  build's CLI, and it is run, not kept.
+  new key, a settle of `SELECT sleep(...)` statements, the `KILL QUERY` again, and last
+  the `INSERT` of the new sealed row at a version from ClickHouse's clock in
+  nanoseconds. Run in full, it starts analysis on a first install, recovers it after a
+  lost row and rotates a healthy key alike. It is outside the lease and the rules below,
+  so it is printed by the newest build's CLI, and it is run, not kept.
 
 A printed rotation run only in part leaves analysis unavailable, by the order of a write
 below. Its statements must run in that one session: ClickHouse takes no per-statement
@@ -361,21 +361,23 @@ keeps:
      password cannot sign in with the old one, wherever its key came from.
   3. It ends every statement the analyst is running
      (`KILL QUERY WHERE user = 'loom_analyst' SYNC`, `ON CLUSTER` where there is a
-     cluster). That needs the
-     `KILL QUERY` grant beside access management; the CLI checks for it before the
-     delete and refuses without it. A statement ended this way answers
-     `ANALYSIS_UNAVAILABLE`.
+     cluster). That needs the `KILL QUERY` grant beside access management; the CLI
+     checks for it before the delete and refuses without it. A statement ended this way
+     answers `ANALYSIS_UNAVAILABLE`.
   4. It writes the policies and the rest of the entities under the new key.
-  5. It waits until every server holds the new policies, then stores the new row with
-     the time it was stored. Where the admin user can read
-     `clusterAllReplicas(<cluster>, system.row_policies)`, the CLI waits for each
-     server's policy to carry the new key; a server's policy is what decides the leak,
-     since once it carries the new key the old key reads nothing there, whatever
-     password the server still holds. Elsewhere, and always in the printed SQL, which
-     cannot wait on a condition, it waits a settle time instead
-     (`ch_analysis_rotation_settle_s`, a catalog setting, default 30 seconds), which
-     the operator sets above the lag the deployment's ClickHouse shows for access
-     changes.
+  5. It waits for the new policies to reach every server, ends the analyst's statements
+     again (a statement a lagging server started under its old policy keeps that
+     policy until it ends), and then stores the new row, with ClickHouse's clock at
+     insert as its stored time, which `loom secrets reseal` carries over unchanged.
+     Where the admin user can read `clusterAllReplicas(<cluster>, system.row_policies)`,
+     the CLI waits until each server's policy carries the new key: once it does, a new
+     statement with the old key reads nothing there, whatever password the server still
+     holds. It waits at most ten settle times and refuses a server it cannot reach; on
+     either it exits without storing the row, naming the server, so analysis stays
+     unavailable and a rerun finishes the rotation. Elsewhere, and always in the printed
+     SQL, which cannot wait on a condition, it waits a settle time instead
+     (`ch_analysis_rotation_settle_s`, a catalog setting, default 30 seconds), which the
+     operator sets above the lag the deployment's ClickHouse shows for access changes.
 
   On a single server, on a cluster that applies access statements `ON CLUSTER` with
   `distributed_ddl_output_mode = throw`, and wherever the CLI confirms every server's
@@ -388,14 +390,17 @@ keeps:
   after a leak, whoever holds the old key and password can read any org's allowlisted
   rows through it.
 
-  `loom doctor` judges a rotation by the time stored with the row and by probes of its
-  own, a few dozen in a row. Within three settle times of that time, failures to sign in
-  and canaries under another key are a server still applying the rotation, and it names
-  a longer settle time. Past that: failures on every probe are a rotation stopped after
-  the password change with a row a reseal put back, and it names `--live`; failures
-  that come and go are one server not applying access changes, an admin's problem, which
-  it names (with the server, where `clusterAllReplicas` shows it) instead of `--live`,
-  since a new rotation would not reach that server either.
+  `loom doctor` judges a rotation by the time stored with the row, against ClickHouse's
+  `now()`, and per server. Where the admin user can read `clusterAllReplicas`, it reads
+  each server's policy; elsewhere it runs a few dozen probes, each on a new connection,
+  so that a load balancer spreads them. Within three settle times of the stored time,
+  failures to sign in and canaries under another key are a server still applying the
+  rotation, and it names a longer settle time. Past that: every server failing is a
+  rotation stopped after the password change with a row a reseal put back, and it
+  names `--live`; one server failing while others pass is that server not applying
+  access changes, an admin's problem, which it names (with the server, where it can see
+  it) instead of `--live`, since a new rotation would not reach that server either.
+  Where its probes cannot tell the two apart, it names both.
 
 - **The caps apart.** The caps are deployment settings, kept in a second profile of
   their own: a write holding the lease (a boot, `loom ch-setup`) writes them when the
@@ -445,14 +450,14 @@ background, as the analyst itself, so the probe needs no access management:
 A failed check answers `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem. When the
 stored version is its own, a replica that writes the entities itself writes them again
 under the lease after a check failed with a definite answer that a write repairs: a
-table without its policy, a canary under another key (checked again once the settle time
-has passed, since a server still applying a rotation looks the same), a grant outside
-the allowlist. Elsewhere `loom doctor` names `loom ch-setup` as the fix. A policy Loom
-did not write, which a write cannot remove, is left to an admin: `loom doctor` names it
-where Loom's user can list policies, and the table that admits rows in the reserved
-scope where it cannot. The canary shows only that its own policy has the key; a single
-table's policy under another key, which only a hand edit leaves, shows as empty answers
-from that table.
+table without its policy, a canary under another key (checked again once three settle
+times have passed since the row's stored time, as `loom doctor` does, since a server
+still applying a rotation looks the same), a grant outside the allowlist. Elsewhere
+`loom doctor` names `loom ch-setup` as the fix. A policy Loom did not write, which a
+write cannot remove, is left to an admin: `loom doctor` names it where Loom's user can
+list policies, and the table that admits rows in the reserved scope where it cannot. The
+canary shows only that its own policy has the key; a single table's policy under another
+key, which only a hand edit leaves, shows as empty answers from that table.
 
 Between a policy dropped by hand and the next probe, ClickHouse by default lets the
 analyst read every row of that table. The ClickHouse that Loom configures itself (the
@@ -580,8 +585,13 @@ viewer token. Each case must be refused or return no canary:
   for the settle time; past that, failures on every probe, for which it names `--live`,
   and failures that come and go, which it names as one server's problem; and, where
   `clusterAllReplicas` reads every server's policies, a rotation that stores its row
-  only once each carries the new key; and a rotation stopped after the password change
-  with a row a reseal put back, which `loom doctor` maps to `--live`.
+  only once each carries the new key, an old-key statement a lagging server started
+  before its policy changed and still running then, which the second `KILL QUERY` ends
+  before the row is stored, and a server down during that wait, which leaves the row
+  unstored and analysis unavailable; and `loom doctor`'s probes all landing on the one
+  lagging server, for which it does not name `--live` alone; and a rotation stopped
+  after the password change with a row a reseal put back, which `loom doctor` maps to
+  `--live`.
 
 The same file will show that a revoked token stops new calls and that an erased memory
 is gone from the next statement. A unit test pins the generated grants and policies to
