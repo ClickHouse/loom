@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
 from server.memory.app import webhooks
 from server.memory.domain.proposal_policy import ProposalPolicy, parse_policy
 from server.memory.store.inserts import insert_memory_versions
@@ -132,7 +132,7 @@ def policy_verdict(policy: ProposalPolicy, counts: GradedCounts) -> Decision | N
 class DecideResult:
     memory_key: str
     decided: bool
-    status: str  # the row's status after the call ('' when not found)
+    status: str  # the key's status after the call ('' when not found)
     reason: str = ""  # why nothing changed
 
 
@@ -144,10 +144,12 @@ async def decide(
     *,
     actor: str,
     reason: str = "",
+    scope: ReadFilters = WHOLE_NAMESPACE,
     ch: Any = None,
 ) -> list[DecideResult]:
     """Accept (→ `active`) or reject (→ `rejected`) the proposals under `keys`, every
-    writer's proposal of a key included.
+    writer's proposal of a key within `scope` included. Proposals of one key with
+    different values are accepted as `conflicted`, each linked to the others.
 
     Only rows still `proposed` change; anything else is reported as it is.
     Each decided row is a new version carrying every column
@@ -166,7 +168,7 @@ async def decide(
         org=org, namespace=namespace, agent="*", user_id="-", session_id="-"
     )
     rows = await memory_repo.get_many_by_keys(
-        ident, wanted, ch=ch, strong=True, scope=WHOLE_NAMESPACE, every_identity=True
+        ident, wanted, ch=ch, strong=True, scope=scope, every_identity=True
     )
     # Several writers (agents, users, sessions) may each propose the same key: a decision
     # covers them all.
@@ -187,17 +189,22 @@ async def decide(
             status = str(getattr(newest, "status", "") or "")
             out.append(DecideResult(key, False, status, f"not a proposal (status {status})"))
             continue
+        # Proposals never meet each other on trial: values that differ are a conflict now.
+        disagree = len({getattr(r, "content_sha256", "") for r in proposed}) > 1
         statuses = []
         for row in proposed:
             # An accepted proposal that met a contradiction on trial lands as a
             # conflicted fact in the same version (no re-read that a lagging
             # replica could answer with the proposal); its peers are flagged below.
             contradicted = bool(getattr(row, "conflict_with", None))
-            accepted_status = "conflicted" if contradicted else "active"
+            accepted_status = "conflicted" if contradicted or disagree else "active"
             overrides: dict[str, Any] = {
                 "version": memory_repo.next_version(),
                 "status": accepted_status if decision == "accept" else "rejected",
             }
+            if decision == "accept" and disagree:
+                others = [str(p.memory_id) for p in proposed if p is not row]
+                overrides["conflict_with"] = list(row.conflict_with or []) + others
             if decision == "reject":
                 overrides["rejection_reason"] = (reason or "proposal rejected")[:512]
             to_write.append(memory_repo.build_memory_version_row(row, **overrides))
@@ -210,8 +217,8 @@ async def decide(
         return out
     await insert_memory_versions(to_write, ch=ch)
     if decision == "accept":
-        # The accepted row is the key's first served one: a proposal may not land on a
-        # key that holds a fact. A rejected proposal was never served or announced.
+        # An accepted row is served for the first time: proposals are not. A rejected one
+        # was never served or announced.
         await webhooks.announce([("memory.written", r) for r in to_write])
     # Every decided row, `active` included: write_versions_by_ids mirrors only
     # non-active flips, and an accepted proposal's mirror still says proposed.

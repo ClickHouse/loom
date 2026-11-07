@@ -332,7 +332,8 @@ does not add them: state them again once it is established. A key that already h
 `memory.proposals` lists proposals with the graded runs that relied on each, and
 `memory.proposal_decide` accepts or rejects them, by key: when several writers of the
 namespace (agents, users or sessions) proposed the same key, one decision covers each of
-their proposals. Loom decides only when the owner set
+their proposals the caller can read; accepted proposals of one key with different values
+land `conflicted`, linked to each other. Loom decides only when the owner set
 `proposal_policy.mode` to `auto` (`min_passes`, `max_fails`, `reject_after_fails`). See
 [runs](../runs.md).
 

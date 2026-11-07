@@ -716,7 +716,8 @@ async def test_a_high_row_past_its_window_is_never_read_nor_hides_a_live_row() -
 
 @pytest.mark.asyncio
 async def test_every_identity_reads_each_agents_head_of_a_key() -> None:
-    # Agents a and b each proposed `k`, and a revised its own: one head per agent, a's newest.
+    # Agents a and b each proposed `k`: one head per agent. (a's two versions are one row
+    # under FINAL; b's head is what `every_identity` adds.)
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.store import Identity, get_many_by_keys
 
@@ -802,5 +803,5 @@ async def test_proposals_grade_only_the_rows_they_can_return(
     )
     assert asked == used == [graded]
     assert out.total == 2
-    if not only:  # one row within `limit`, both counted (the two tie on created_at)
+    if not only:  # one row within `limit`, both counted
         assert len(out.proposals) == 1

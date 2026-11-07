@@ -125,6 +125,7 @@ async def handle_memory_proposal_decide(
         input.decision,
         actor=writer_actor() or "-",
         reason=input.reason,
+        scope=request_scope(),
     )
     return MemoryProposalDecideOutput(
         decided=sum(1 for r in results if r.decided),

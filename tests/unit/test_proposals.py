@@ -165,6 +165,45 @@ def test_a_decision_covers_every_agents_proposal_of_the_key(
     assert len(repo["audit"]) == 2
 
 
+def test_accepting_differing_proposals_of_a_key_lands_them_conflicted_and_linked(
+    repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory import store as memory_repo
+
+    inward, outward = _Row("k", "proposed"), _Row("k", "proposed")
+    inward.memory_id, outward.memory_id = "id-in", "id-out"
+    outward.content_sha256 = "other"
+
+    async def _many(ident: Any, keys: list[str], **kw: Any) -> list[Any]:
+        return [inward, outward]
+
+    monkeypatch.setattr(memory_repo, "get_many_by_keys", _many)
+    ch = _CH()
+    out = asyncio.run(p.decide("o", "n", ["k"], "accept", actor="human:t", ch=ch))
+    assert [(r.decided, r.status) for r in out] == [(True, "conflicted")]
+    assert [(r["status"], r["conflict_with"]) for r in ch.inserts[0]] == [
+        ("conflicted", ["id-out"]),
+        ("conflicted", ["id-in"]),
+    ]
+
+
+def test_a_decision_reads_only_the_callers_scope(
+    repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory import store as memory_repo
+
+    seen: list[Any] = []
+
+    async def _many(ident: Any, keys: list[str], **kw: Any) -> list[Any]:
+        seen.append(kw["scope"])
+        return []
+
+    monkeypatch.setattr(memory_repo, "get_many_by_keys", _many)
+    own = object()
+    asyncio.run(p.decide("o", "n", ["k"], "reject", actor="human:t", scope=own, ch=_CH()))  # type: ignore[arg-type]
+    assert seen == [own]
+
+
 def test_a_decision_leaves_another_writers_fact_of_the_key(
     repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
