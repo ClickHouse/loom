@@ -824,7 +824,7 @@ async def _fetch_and_write(
         # a write that fails leaves the old copy and its old key.
         extra["text_sha256"] = sha256_text(f"{f.get('name') or ''}\n{fetched.content}")
     try:
-        await write_document(
+        written = await write_document(
             src,
             f,
             uri,
@@ -839,8 +839,7 @@ async def _fetch_and_write(
     except Exception as e:  # noqa: BLE001 — one file's write must not stop the others
         log.warning("knowledge_source_sync: writing %s failed: %s", f["id"], e)
         return wait(f, turn, f"write_failed:{type(e).__name__}", type(e).__name__)
-    turn.changed += 1
-    return "written"
+    return counted(turn, written)
 
 
 def give_up(f: dict[str, Any], turn: TurnResult, reason: str) -> str:
@@ -932,6 +931,16 @@ async def _fetch(token: str, f: dict[str, Any]) -> _Fetched:
     return _Fetched(convert.artifact_markdown(artifact), fmt, data, convert.coverage_of(artifact))
 
 
+def counted(turn: TurnResult, written: bool) -> str:
+    """The outcome of a write step: `written`, or `skipped` for an address another writer
+    took during the fetch (counted as the check before the fetch counts it)."""
+    if not written:
+        turn.skipped += 1
+        return "skipped"
+    turn.changed += 1
+    return "written"
+
+
 async def _may_write(src: KnowledgeSource, uri: str) -> bool:
     """Whether the live document at `uri`, if any, is this source's: a document
     another writer or another source holds is never overwritten or retired."""
@@ -966,12 +975,14 @@ async def write_document(
     ingested_format: str,
     original: bytes = b"",
     extra_metadata: dict[str, Any] | None = None,
-) -> None:
+) -> bool:
     """Write one item (`f`: its `id`, `name`, `modifiedTime` and, with an original,
     its `mimeType`) at `uri` with `knowledge.upsert`, as the sync worker: tagged
     `source-kind:design_doc`, the repository's `repo:<id>` and `source:<name>`,
     class `imported`, with the source's kind and name, the item's id and revision
-    and the conversion in its metadata."""
+    and the conversion in its metadata. False, writing nothing, when another writer
+    took the address while the item was fetched: the check before the fetch is
+    seconds old by now."""
     tags = ["source-kind:design_doc", source_tag(src.name)]
     if repo := _repo_tag(src):
         tags.insert(1, repo)
@@ -984,6 +995,8 @@ async def write_document(
         **(extra_metadata or {}),
     }
     pass_context.check_stop()  # a stopped pass or a lost lease writes nothing
+    if not await _may_write(src, uri):
+        return False
     await writes.handle_knowledge_upsert(
         KnowledgeUpsertInput(
             org=src.org,
@@ -1000,6 +1013,7 @@ async def write_document(
             source_class="imported",
         )
     )
+    return True
 
 
 async def retire(src: KnowledgeSource, uri: str) -> bool:
@@ -1542,6 +1556,7 @@ __all__ = [
     "full_due",
     "give_up",
     "require_current",
+    "counted",
     "retire",
     "retire_absent",
     "run_sync",

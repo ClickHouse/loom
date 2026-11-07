@@ -137,7 +137,7 @@ async def _fetch_and_write(
     await sync.require_current(src)
     content = str(doc.get("content") or "")
     try:
-        await sync.write_document(src, f, f["uri"], content, ingested_format="markdown")
+        written = await sync.write_document(src, f, f["uri"], content, ingested_format="markdown")
     except ValidationError as e:
         # The write refuses this document whatever the pass: it will not go through.
         code = e.to_detail().get("code") or "invalid"
@@ -145,8 +145,7 @@ async def _fetch_and_write(
     except Exception as e:  # noqa: BLE001 — one document's write must not stop the others
         log.warning("knowledge_source_sync: writing %s failed: %s", f["id"], e)
         return sync.wait(f, result, f"write_failed:{type(e).__name__}", type(e).__name__)
-    result.changed += 1
-    return "written"
+    return sync.counted(result, written)
 
 
 async def _document_gone(

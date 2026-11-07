@@ -506,7 +506,7 @@ async def _write(
     if skipped:
         metadata["skipped_blocks"] = skipped
     try:
-        await sync.write_document(
+        written = await sync.write_document(
             t.src, f, uri, content, ingested_format="blocks", extra_metadata=metadata
         )
     except ValidationError as e:
@@ -516,8 +516,7 @@ async def _write(
     except Exception as e:  # noqa: BLE001 — one page's write must not stop the others
         log.warning("knowledge_source_sync: writing %s failed: %s", f["id"], e)
         return sync.wait(f, t.result, f"write_failed:{type(e).__name__}", type(e).__name__)
-    t.result.changed += 1
-    return "written"
+    return sync.counted(t.result, written)
 
 
 def _record_children(

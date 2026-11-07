@@ -1334,6 +1334,23 @@ def test_an_address_another_writer_holds_reads_no_extractor(world: _World) -> No
     assert _detail(world)["skipped"] == 1
 
 
+def test_an_address_a_writer_takes_during_the_fetch_is_not_overwritten(world: _World) -> None:
+    """The address is free when the file is listed; a person writes there while it is
+    downloaded and converted. The write step reads the address again and leaves theirs."""
+    uri = _uri("pdf1", "file")
+    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="14")]
+
+    def _download(request: httpx.Request) -> httpx.Response:
+        world.docs[uri] = {"actor": "human:ann", "tags": [], "metadata": {}}
+        return httpx.Response(200, content=b"%PDF-1.7 bytes")
+
+    world.file_answers["pdf1"] = _download
+    asyncio.run(source_sync.run_sync())
+    assert world.upserts == []
+    assert world.docs[uri]["actor"] == "human:ann"
+    assert _detail(world)["skipped"] == 1
+
+
 def _timeout(request: httpx.Request) -> httpx.Response:
     raise httpx.ReadTimeout("timed out", request=request)
 
