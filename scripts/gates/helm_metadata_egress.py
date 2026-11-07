@@ -161,6 +161,7 @@ def main() -> None:
     # a release upgraded with --reuse-values has no such key: the guard stays on
     assert web_policies(render(*sets("networkPolicy.guardMetadata=null"))) == [policy]
     assert not web_policies(render("--set-json", "networkPolicy.egressExcept=[]"))
+    assert not web_policies(render(*sets("networkPolicy.egressExcept=null")))
     # one address family only: the other family's range carries no except list
     for only, v4, v6 in (
         ('["169.254.169.254/32"]', ["169.254.169.254/32"], None),
