@@ -152,6 +152,11 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
 
     monkeypatch.setattr(revocation, "cut_off", cut_off)
     monkeypatch.setattr(revocation, "subjects_revoked", subjects_revoked)
+
+    async def stored_cutoffs(subjects: list[str], *, permanent: bool = False) -> Any:
+        return {s: cutoffs[s] for s in subjects if s in cutoffs}
+
+    monkeypatch.setattr(revocation, "cutoffs", stored_cutoffs)
     monkeypatch.setattr(revocation, "wait_out", wait_out)
     monkeypatch.setattr(login, "refreshed_roles", active)
     return {
@@ -420,6 +425,11 @@ def test_a_second_cutoff_that_stores_then_fails_is_waited_past(world, monkeypatc
     from server.identity.app import account_admin
 
     real_end, calls = account_admin.end_tokens, []
+    clock = [datetime(2026, 1, 1, tzinfo=UTC)]
+
+    def from_now_on() -> datetime:
+        clock[0] += timedelta(seconds=1)
+        return clock[0]
 
     async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
         calls.append(await real_end(subject, by=by, reason=reason))
@@ -427,13 +437,105 @@ def test_a_second_cutoff_that_stores_then_fails_is_waited_past(world, monkeypatc
             raise RuntimeError("revocation store away after the write")
         return calls[-1]
 
+    monkeypatch.setattr(revocation, "from_now_on", from_now_on)
     monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
     r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
     assert r.status_code == 200 and "Claimed" in r.text
     [waited] = world["waited"]
     stored = datetime.fromtimestamp(world["cutoffs"][_LEGACY], UTC)
-    assert waited >= calls[1] >= stored
+    assert stored == calls[1] and waited > calls[0] and waited >= calls[1]
     assert [e for e, _ in world["events"]] == ["auth.agent_claimed"]
+
+
+def test_a_second_submit_answers_after_the_first_claims_last_cutoff(world) -> None:
+    # Both submits proved the code before either wrote; the second gets the
+    # account once the first's last cutoff is stored, and waits it out, so the
+    # sign-in its answer asks for is not ended by that cutoff.
+    stored_hash = _row(world, _LEGACY)["password_hash"]
+
+    async def both() -> list[Any]:
+        first = asyncio.create_task(
+            agent_claim.claim_shielded("dev", _LEGACY, stored_hash, passwords.hash_password("a1"))
+        )
+        await asyncio.sleep(0)
+        second = agent_claim.claim_shielded(
+            "dev", _LEGACY, stored_hash, passwords.hash_password("a2")
+        )
+        return list(await asyncio.gather(first, second))
+
+    (first, c1), (second, c2) = asyncio.run(both())
+    assert (first, second) == ("claimed", "taken")
+    assert c2 >= c1 and int(c2.timestamp()) == world["cutoffs"][_LEGACY]
+    # A sign-in once the answer came is issued at or after the cutoff it waited
+    # out, which the subject's stored cutoff does not end; one before it would be.
+    assert not revocation.is_revoked(_LEGACY, issued_at=int(c2.timestamp()))
+    assert revocation.is_revoked(_LEGACY, issued_at=int(c2.timestamp()) - 1)
+
+
+def test_the_page_tells_a_second_submit_to_sign_in_once_the_first_is_done(
+    world, monkeypatch
+) -> None:
+    from contextlib import asynccontextmanager
+
+    real_change = agent_claim.account_change
+
+    @asynccontextmanager
+    async def claimed_first(org: str, namespace: str) -> Any:
+        # The first submit's claim and last cutoff land while this one waits.
+        row = await namespaces.fetch_row(org, namespace)
+        assert row is not None
+        claimed = {
+            **row,
+            "password_hash": passwords.hash_password("first"),
+            "tags": [*row["tags"], claim_codes.CLAIMED_TAG],
+        }
+        await world["ch"].insert("loom.namespaces", [claimed])
+        world["cutoffs"][_LEGACY] = 4_000_000_000
+        async with real_change(org, namespace):
+            yield
+
+    monkeypatch.setattr(agent_claim, "account_change", claimed_first)
+    r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
+    assert r.status_code == 400 and "claimed a moment ago" in r.text
+    assert [int(c.timestamp()) for c in world["waited"]] == [4_000_000_000]
+    assert world["events"] == []
+
+
+def test_a_cancelled_request_still_stores_the_last_cutoff(world, monkeypatch) -> None:
+    # A client that disconnects cancels the handler during the skew wait: the
+    # claim's own task runs on and stores its second cutoff.
+    from server.identity.app import account_admin
+
+    real_end, cutoffs = account_admin.end_tokens, []
+
+    async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
+        cutoffs.append(await real_end(subject, by=by, reason=reason))
+        return cutoffs[-1]
+
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+    stored_hash = _row(world, _LEGACY)["password_hash"]
+
+    async def run() -> None:
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def skew_wait() -> None:
+            entered.set()
+            await release.wait()
+
+        monkeypatch.setattr(agent_claim, "_skew_wait", skew_wait)
+        handler = asyncio.create_task(
+            agent_claim.claim_shielded("dev", _LEGACY, stored_hash, passwords.hash_password("p"))
+        )
+        await entered.wait()
+        handler.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await handler
+        release.set()
+        await asyncio.gather(*agent_claim._running)
+
+    asyncio.run(run())
+    assert len(cutoffs) == 2
+    assert passwords.verify_password(_row(world, _LEGACY)["password_hash"], "p")
 
 
 def revocation_cutoff(world: dict[str, Any], subject: str) -> Any:

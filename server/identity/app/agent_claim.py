@@ -109,23 +109,24 @@ async def agent_claim(request: Request) -> Response:
         page = _form(namespace, e.message, 429)
         page.headers["Retry-After"] = str(e.retry_after_s)
         return page
-    claimed = None
-    if proven is not None:
-        org, code_hash = proven
-        # Hashed only once the code is proven, so a guess costs one hash.
-        password_hash = await hash_password_off_loop(password)
-        claimed = await _replace_code(org, namespace, code_hash, password_hash)
-    if claimed is None:
-        return _form(
-            namespace,
-            "That code does not claim this namespace, or it was used. If you just submitted "
-            "this form, the first claim may have gone through: sign in with the namespace "
-            "name and your password.",
-            400,
-        )
+    if proven is None:
+        return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
+    org, code_hash = proven
+    # Hashed only once the code is proven, so a guess costs one hash.
+    password_hash = await hash_password_off_loop(password)
+    outcome, cutoff = await claim_shielded(org, namespace, code_hash, password_hash)
+    if outcome == "refused":
+        return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
     # The person signs in next: past the cutoff on every replica's clock, so the
     # token they get is not one it ends.
-    await revocation.wait_out(claimed)
+    await revocation.wait_out(cutoff)
+    if outcome == "taken":
+        return _form(
+            namespace,
+            "This namespace was claimed a moment ago, perhaps by an earlier submit of this "
+            "form: sign in with the namespace name and the password you chose.",
+            400,
+        )
     return oauth.html_page(
         _TITLE,
         f"<h2>Claimed</h2><p>Sign in as <b>{html.escape(namespace)}</b> with your password.</p>",
@@ -144,41 +145,89 @@ async def _proven(namespace: str, code: str) -> tuple[str, str] | None:
     return None
 
 
+# A claim's write and the cutoffs after it, kept here while they run so a
+# cancelled request does not drop them.
+_running: set[asyncio.Task[Any]] = set()
+
+
+async def claim_shielded(
+    org: str, namespace: str, code_hash: str, password_hash: str
+) -> tuple[str, datetime]:
+    """`_replace_code` in a task of its own: a client that disconnects cancels
+    the request, never the write's cutoffs."""
+    task = asyncio.create_task(_replace_code(org, namespace, code_hash, password_hash))
+    _running.add(task)
+    task.add_done_callback(_running.discard)
+    return await asyncio.shield(task)
+
+
 async def _replace_code(
     org: str, namespace: str, code_hash: str, password_hash: str
-) -> datetime | None:
-    """Replace the code with `password_hash` and cut off the subject's earlier
-    tokens; the cutoff the claimer waits out, or None when the row changed since
-    the code was checked (a claim or release that landed first)."""
-    # Held from the read to the write, as a release or a password link holds
-    # the account.
-    async with account_change(org, namespace):
-        with own_write_reads():
-            row = await namespaces.fetch_row(org, namespace)
-        if row is None or not row["active"] or row["password_hash"] != code_hash:
-            return None
-        # Before the write, so a write that fails leaves the code to retry with,
-        # never a spent code and live tokens. A subject cutoff also ends every
-        # OAuth and device session the code started (`oauth.issue_tokens`).
-        subject = str(row["owner_email"])
-        await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
-        now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-        # Insert-as-replace carrying every other column forward.
-        await get_client().insert(
-            "loom.namespaces",
-            [
-                {
-                    **row,
-                    "password_hash": password_hash,
-                    "tags": [*row["tags"], CLAIMED_TAG],
-                    "updated_at": max(now, row["updated_at"]),
-                }
-            ],
-        )
-        # The claim stands from here: audited before anything after it can fail.
-        await audit.emit(
-            "auth.agent_claimed", org=org, namespace=namespace, actor=namespace, subject={}
-        )
+) -> tuple[str, datetime]:
+    """("claimed", the cutoff the claimer waits out) when this call replaced the
+    code with `password_hash`; ("taken", the subject's stored cutoff) when a claim
+    landed first, as an earlier submit of the same form does; ("refused", now)
+    when the row changed otherwise (a release)."""
+    # Held from the read to the last cutoff, as a release or a password link
+    # holds the account: a second claim waits for the first's last cutoff.
+    written: list[bool] = []
+    try:
+        async with account_change(org, namespace):
+            with own_write_reads():
+                row = await namespaces.fetch_row(org, namespace)
+            if row is None or not row["active"]:
+                return "refused", revocation.from_now_on()
+            if row["password_hash"] != code_hash:
+                if CLAIMED_TAG not in (row.get("tags") or []):
+                    return "refused", revocation.from_now_on()
+                return "taken", await _stored_cutoff(str(row["owner_email"]))
+            return "claimed", await _write_claim(row, org, namespace, password_hash, written)
+    except Exception as e:  # once written, the claim stands whatever follows
+        if not written:
+            raise
+        # The claim is written; the lease's own bound ran out after it.
+        log.warning("agent claim of %s/%s: finishing the claim failed: %r", org, namespace, e)
+        return "claimed", revocation.from_now_on()
+
+
+async def _stored_cutoff(subject: str) -> datetime:
+    """The subject's latest stored cutoff, or now when none can be read."""
+    try:
+        stored = (await revocation.cutoffs([subject])).get(subject)
+    except Exception as e:  # noqa: BLE001 — waiting from now is the safe answer
+        log.warning("agent claim: reading %s's cutoff failed: %r", subject, e)
+        stored = None
+    return datetime.fromtimestamp(stored, UTC) if stored else revocation.from_now_on()
+
+
+async def _write_claim(
+    row: dict[str, Any], org: str, namespace: str, password_hash: str, written: list[bool]
+) -> datetime:
+    """Under the account's lease: cut off, write the claim (then mark `written`),
+    audit it, read it back, wait out the clock skew and cut off again."""
+    # Before the write, so a write that fails leaves the code to retry with,
+    # never a spent code and live tokens. A subject cutoff also ends every
+    # OAuth and device session the code started (`oauth.issue_tokens`).
+    subject = str(row["owner_email"])
+    await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    # Insert-as-replace carrying every other column forward.
+    await get_client().insert(
+        "loom.namespaces",
+        [
+            {
+                **row,
+                "password_hash": password_hash,
+                "tags": [*row["tags"], CLAIMED_TAG],
+                "updated_at": max(now, row["updated_at"]),
+            }
+        ],
+    )
+    written.append(True)
+    # The claim stands from here: audited before anything after it can fail.
+    await audit.emit(
+        "auth.agent_claimed", org=org, namespace=namespace, actor=namespace, subject={}
+    )
     # Again once the write reads back: a replica of the build before signs in with
     # a plain-hash code, reading without sequential consistency, until its
     # ClickHouse replica has the write, and the first cutoff predates it.

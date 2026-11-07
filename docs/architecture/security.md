@@ -335,11 +335,14 @@ sign-in limits and hashes the new password only once the code is proven. Holding
 from read to write, it cuts off every token the namespace's subject was issued before
 (`account_admin.end_tokens`, which also ends each OAuth and device session at its next
 refresh), replaces the code with the claimer's own password, adds the tag
-`machine:agent-signup:claimed` and audits `auth.agent_claimed`. Once the account is released it
+`machine:agent-signup:claimed` and audits `auth.agent_claimed`. Still holding the account, it
 reads the row back with sequential consistency, waits `CLOCK_SKEW_S` (5 s), and cuts off once
-more, for a sign-in with a plain-hash code on an older replica while the write was landing. A
-failed read-back is logged and the wait and the cutoff still run; a failed second cutoff is
-logged, the claim stands, and the page waits past any cutoff the failed call could have stored.
+more, for a sign-in with a plain-hash code on an older replica while the write was landing.
+These steps run in a task of their own, so a client that disconnects does not stop them. A
+second submit of the same form that proved the code too finds the account claimed once it holds
+it, waits out the subject's stored cutoff, and only then tells the person to sign in. A failed
+read-back is logged and the wait and the cutoff still run; a failed second cutoff is logged,
+the claim stands, and the page waits past any cutoff the failed call could have stored.
 `namespace.register` carries a `machine:` tag forward from the row and drops one from a form,
 on this build and the one before it, and a trust's name never holds `:`. On this build the
 claim's tag does not bind the namespace's owner as a trust's tag does; the build before binds
