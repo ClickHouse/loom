@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from server.code.app.index import sandbox
+from tests.unit.code_fixtures import git_config
 
 EPERM = sandbox.SECCOMP_RET_ERRNO_EPERM
 KILL = sandbox.SECCOMP_RET_KILL_PROCESS
@@ -179,9 +180,7 @@ def test_network_jobs_reach_the_relay_only(monkeypatch) -> None:
     env: dict[str, str] = {}
     sandbox._network_env(env)
     assert env["HTTPS_PROXY"] == env["https_proxy"] == sandbox.RELAY_URL
-    from tests.unit.test_gitrepo_token_env import _config
-
-    assert _config(env)["http.proxy"] == sandbox.RELAY_URL
+    assert git_config(env)["http.proxy"] == sandbox.RELAY_URL
     assert "ProxyCommand=" in env["GIT_SSH_COMMAND"]
     assert "connect %h %p" in env["GIT_SSH_COMMAND"]
 
@@ -682,12 +681,6 @@ async def test_scip_full_runs_in_the_clang_tree_when_clang_is_an_extra_tier(
     assert harness.await_args.args[1] == (tmp_path / "checkout.clang").resolve()
 
 
-def _git_config(env: dict[str, str]) -> dict[str, str]:
-    """The `GIT_CONFIG_KEY_i`/`VALUE_i` pairs `auth_env` sets, as a dict."""
-    n = int(env.get("GIT_CONFIG_COUNT", "0"))
-    return {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"] for i in range(n)}
-
-
 @pytest.mark.asyncio
 async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, monkeypatch) -> None:
     """The fetch reads the bare clone, which the sandbox mounts only when named,
@@ -736,10 +729,10 @@ async def test_a_networked_compiler_tier_git_authenticates_to_the_repository_own
     )
     await compiler_tier.git(tmp_path, *args, network=True)
     with_token, without = envs
-    header = _git_config(with_token)["http.https://github.com/o/.extraheader"]
+    header = git_config(with_token)["http.https://github.com/o/.extraheader"]
     assert header.startswith("AUTHORIZATION: basic ")
     assert not any("ghs_test" in a for a in argvs[0])
-    assert not any(k.endswith(".extraheader") for k in _git_config(without))
+    assert not any(k.endswith(".extraheader") for k in git_config(without))
 
 
 @pytest.mark.asyncio
@@ -762,7 +755,7 @@ async def test_a_local_remote_entry_keeps_the_file_transport_off_its_submodules(
         tmp_path, "submodule", "update", network=True, token="t", remote="/srv/m.git"
     )
     for env in envs:
-        assert "protocol.file.allow" not in _git_config(env)
+        assert "protocol.file.allow" not in git_config(env)
 
 
 @pytest.mark.asyncio

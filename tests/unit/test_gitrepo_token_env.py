@@ -9,20 +9,15 @@ import base64
 import pytest
 
 from server.code.app.index import gitrepo, sandbox
+from tests.unit.code_fixtures import git_config
 
 HEADER = "http.https://github.com/o/.extraheader"
-
-
-def _config(env: dict[str, str]) -> dict[str, str]:
-    """The `-c key=value` pairs an environment hands git."""
-    n = int(env.get("GIT_CONFIG_COUNT", "0"))
-    return {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"] for i in range(n)}
 
 
 def test_auth_env_carries_the_token_as_an_extraheader() -> None:
     env = gitrepo.auth_env("ghp_secret123", "https://github.com/o/example-private.git")
     assert env["GIT_TERMINAL_PROMPT"] == "0"
-    header = _config(env)[HEADER]
+    header = git_config(env)[HEADER]
     basic = base64.b64decode(header.split()[-1]).decode()
     assert basic == "x-access-token:ghp_secret123"
     assert "ghp_secret123" not in header  # encoded, not raw
@@ -39,20 +34,25 @@ def test_auth_env_carries_the_token_as_an_extraheader() -> None:
 )
 def test_the_token_is_sent_only_under_the_remote_owner(remote: str, key: str) -> None:
     """A submodule URL of another owner on the same host gets no credential."""
-    headers = [k for k in _config(gitrepo.auth_env("tok", remote)) if k.endswith(".extraheader")]
+    headers = [k for k in git_config(gitrepo.auth_env("tok", remote)) if k.endswith(".extraheader")]
     assert headers == [key]
+
+
+def test_an_ssh_remote_gets_no_extraheader() -> None:
+    env = gitrepo.auth_env("tok", "git@github.com:o/r.git")
+    assert not any(k.endswith(".extraheader") for k in git_config(env))
 
 
 def test_no_token_sets_no_extraheader() -> None:
     env = gitrepo.auth_env("")
     assert env["GIT_TERMINAL_PROMPT"] == "0"
-    assert not any(k.endswith(".extraheader") for k in _config(env))
+    assert not any(k.endswith(".extraheader") for k in git_config(env))
 
 
 def test_git_reads_no_system_or_global_config_and_allows_only_https_and_ssh() -> None:
     env = gitrepo.auth_env("tok", "https://github.com/o/r.git")
     assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_CONFIG_GLOBAL"] == "/dev/null"
-    config = _config(env)
+    config = git_config(env)
     assert config["protocol.allow"] == "never"
     assert config["protocol.https.allow"] == "always"
     assert config["protocol.ssh.allow"] == "always"
@@ -60,8 +60,8 @@ def test_git_reads_no_system_or_global_config_and_allows_only_https_and_ssh() ->
 
 
 def test_only_a_local_remote_allows_the_file_transport() -> None:
-    assert _config(gitrepo.auth_env("", "/srv/mirror.git"))["protocol.file.allow"] == "always"
-    assert "protocol.file.allow" not in _config(gitrepo.auth_env("", "git@github.com:o/r.git"))
+    assert git_config(gitrepo.auth_env("", "/srv/mirror.git"))["protocol.file.allow"] == "always"
+    assert "protocol.file.allow" not in git_config(gitrepo.auth_env("", "git@github.com:o/r.git"))
 
 
 @pytest.mark.parametrize(
@@ -111,7 +111,7 @@ def test_fetch_passes_the_token_to_the_environment_not_argv(monkeypatch) -> None
         gitrepo.fetch("/tmp/x.git", "https://github.com/o/r.git", "master", token="tok_abc")
     )
     assert "tok_abc" not in " ".join(seen["argv"])
-    assert HEADER in _config(seen["env"])
+    assert HEADER in git_config(seen["env"])
     argv = seen["argv"]
     assert argv[0] == "git"
     assert argv[argv.index("--git-dir") :][:3] == ("--git-dir", "/tmp/x.git", "fetch")

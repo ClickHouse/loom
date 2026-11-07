@@ -372,8 +372,8 @@ the `https` and `ssh` transports (`protocol.allow=never`); `ext::` and `file://`
 refused, so are URL rewrites. The entry's access token reaches only its clone, its
 fetches and the C/C++ tier's `git submodule update`, never a build or `go mod
 download`, and git sends it only to URLs under the remote's owner
-(`https://host/owner/`; the whole host for a remote with no owner path). Inside the sandbox an `ssh` remote has no
-host SSH key: use an HTTPS remote with an access token.
+(`https://host/owner/`; the whole host for a remote with no owner path). Inside the
+sandbox an `ssh` remote has no host SSH key: use an HTTPS remote with an access token.
 
 **Which stacks run the sandbox.** The blue/green colours `redeploy.sh` deploys
 (`dev/docker-compose.colour.yml`) set the container options below. The other Compose
