@@ -199,8 +199,9 @@ are refused. It changes nothing it reads and gives no recall credit. Like
   larger than `namespace_report_hash_max_bytes` (0 cites none) and a row revised
   between the listing and the citation read have no hash. `complete` is false when
   the listing holds fewer rows than the view, the view's counts could not be read, or,
-  under the Postgres authority, ClickHouse had not published what the namespace
-  committed (`skipped` names `projection`).
+  under the Postgres authority, ClickHouse could not be shown to hold what the
+  namespace committed: the wait ran out or Postgres did not answer (`skipped` names
+  `projection`).
 - **`activity`**: the calls the ledger files under the subject per operation in
   `window_seconds` (default 7 days), attempted and succeeded, without worker rows or the
   dashboard's and the assistant's calls. The ledger files a call under the `agent`,
