@@ -30,7 +30,7 @@ async def _write(
     user_turns: list[tuple[str, str]],
     existing: list[dict[str, str]],
     extracted: list[dict[str, Any]],
-    fetched: list[int] | None = None,
+    fetched: list[list[str]] | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     written: dict[str, str] = {}
     deleted: list[str] = []
@@ -46,7 +46,7 @@ async def _write(
 
     async def _fetch(state: Any, requests: Any, *, limit: int = 10) -> list:
         if fetched is not None:
-            fetched.append(len(requests))
+            fetched.append([r["value"] for r in requests])
         return []
 
     monkeypatch.setattr(bulk_set_mod, "handle_memory_bulk_set", _bulk)
@@ -416,7 +416,7 @@ async def test_a_correction_past_the_forget_cap_keeps_its_replacement(monkeypatc
     cap = forget.MAX_FORGET_REQUESTS
     turns = [("user", f"forget jazz{i}.") for i in range(cap)]
     turns.append(("user", "forget that I use Vim, I switched to Emacs."))
-    fetched: list[int] = []
+    fetched: list[list[str]] = []
     written, deleted = await _write(
         monkeypatch,
         turns,
@@ -434,4 +434,6 @@ async def test_a_correction_past_the_forget_cap_keeps_its_replacement(monkeypatc
     )
     assert written.get("user_editor") == "User uses Emacs."
     assert "user_editor" in deleted
-    assert fetched == [cap]  # the per-request candidate reads stop at the cap
+    # the per-request candidate reads stop at the cap, on the latest requests
+    assert len(fetched[0]) == cap and fetched[0][-1] == "I use Vim"
+    assert "jazz0" not in fetched[0]

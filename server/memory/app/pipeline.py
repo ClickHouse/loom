@@ -779,12 +779,13 @@ async def _forget_plan(
     # The request is read from the user's own sentences too;
     # the extractor is not asked to notice it.
     forget_requests = forget_requests_from_messages(state.messages)
-    state.forget_requests = len(forget_requests)
-    # Every request's words guard its replacement; the first ones are resolved by content.
-    resolved = forget_requests[:MAX_FORGET_REQUESTS]
+    # Every request's words guard its replacement; the latest ones, the user's
+    # last word, are resolved by content and counted in the result.
+    resolved = forget_requests[-MAX_FORGET_REQUESTS:]
+    state.forget_requests = len(resolved)
     if len(forget_requests) > MAX_FORGET_REQUESTS:
         log.info(
-            "forget requests: %d in one window, the first %d resolved by content",
+            "forget requests: %d in one window, the latest %d resolved by content",
             len(forget_requests),
             MAX_FORGET_REQUESTS,
         )

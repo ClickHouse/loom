@@ -186,6 +186,7 @@ def replacement_facts(
     msgs = set(rest_by_msg)
     clauses = [str(r.get("value") or "") for r in requests]
     asked = _words(clauses)  # what the user asked to forget
+    asked_text = " ".join(clauses)
     # Messages whose replacement is already an ordinary fact of the batch.
     kept_msgs: set[int] = set()
     for f in facts:
@@ -235,7 +236,7 @@ def replacement_facts(
         ]
         # ...and the request resolves by what was asked to forget, never by
         # the replacement's words.
-        out.append({**f, "value": " ".join(clauses), "linked_keys": kept_links})
+        out.append({**f, "value": asked_text, "linked_keys": kept_links})
         copy = {k: v for k, v in f.items() if k not in ("forget", "linked_keys")}
         copy["tags"] = [t for t in (f.get("tags") or []) if str(t).lower() != "forget"]
         copy["key"] = _FORGET_KEY_RE.sub("_", str(f.get("key") or "")).strip("_") or "user_update"
@@ -373,7 +374,20 @@ def forget_targets_by_content(
     key; a row whose tokens cover at least `min_overlap` of the request's
     (and at least two of them) is a target. The candidates are the rows the
     pipeline already fetched as semantically relevant to this batch."""
-    return _targets_by_words(fact, _row_words(existing), min_overlap=min_overlap)
+    return _targets_by_words(_request_words(fact), _row_words(existing), min_overlap=min_overlap)
+
+
+def _request_words(
+    fact: dict[str, Any], value_words: dict[str, set[str]] | None = None
+) -> set[str]:
+    """The content words of a forget entry's value and of its key less the
+    marker; `value_words` holds values already read (split entries share one)."""
+    value = str(fact.get("value") or "")
+    memo = {} if value_words is None else value_words
+    if value not in memo:
+        memo[value] = _content_tokens(value)
+    key = _FORGET_KEY_RE.sub(" ", str(fact.get("key") or "").replace("_", " "))
+    return memo[value] | _content_tokens(key)
 
 
 def _row_words(rows: list[dict[str, Any]] | None) -> list[tuple[str, set[str]]]:
@@ -388,11 +402,8 @@ def _row_words(rows: list[dict[str, Any]] | None) -> list[tuple[str, set[str]]]:
 
 
 def _targets_by_words(
-    fact: dict[str, Any], rows: list[tuple[str, set[str]]], *, min_overlap: float = 0.5
+    want: set[str], rows: list[tuple[str, set[str]]], *, min_overlap: float = 0.5
 ) -> set[str]:
-    want = _content_tokens(fact.get("value") or "") | _content_tokens(
-        _FORGET_KEY_RE.sub(" ", str(fact.get("key") or "").replace("_", " "))
-    )
     if not want:
         return set()
     # A one-word request ("forget what I told you about my salary") resolves
@@ -408,7 +419,7 @@ def _targets_by_words(
     return out
 
 
-def _link_is_about(f: dict[str, Any], key: str, existing: list[dict[str, Any]] | None) -> bool:
+def _link_is_about(want: set[str], key: str, existing: list[dict[str, Any]] | None) -> bool:
     """A forget entry's link retires a row only when the row
     shares a content word with the request — measured, the extractor linked
     "forget my tea preference" to the editor row and "stop using emojis" to
@@ -417,9 +428,6 @@ def _link_is_about(f: dict[str, Any], key: str, existing: list[dict[str, Any]] |
     row = next((r for r in existing or [] if str(r.get("memory_key") or "") == key), None)
     if row is None:
         return True
-    want = _content_tokens(f.get("value") or "") | _content_tokens(
-        _FORGET_KEY_RE.sub(" ", str(f.get("key") or "").replace("_", " "))
-    )
     have = _content_tokens(row.get("value") or "") | _content_tokens(key.replace("_", " "))
     return not want or not have or bool(want & have)
 
@@ -446,9 +454,11 @@ def forget_targets(
         and gk not in protected  # the replacement is not a target
     ]
     candidates: list[tuple[str, set[str]]] | None = None  # read on the first unlinked request
+    value_words: dict[str, set[str]] = {}  # entries split from carriers share a value
     for f in facts:
         if not is_forget_request(f):
             continue
+        want = _request_words(f, value_words)
         key = str(f.get("key") or "").strip()
         if key:
             out.add(key)
@@ -463,7 +473,7 @@ def forget_targets(
             for lk in (f.get("linked_keys") or [])
             if str(lk or "").strip() and not str(lk).strip().startswith("__idx:")
         ]
-        linked = [lk for lk in linked if _link_is_about(f, lk, existing)]
+        linked = [lk for lk in linked if _link_is_about(want, lk, existing)]
         out.update(linked)
         if not linked:
             # The premise and the request are often adjacent turns ("Since
@@ -473,5 +483,5 @@ def forget_targets(
             # drops the ones named.
             if candidates is None:
                 candidates = _row_words([*(existing or []), *batch])
-            out.update(_targets_by_words(f, candidates))
+            out.update(_targets_by_words(want, candidates))
     return out
