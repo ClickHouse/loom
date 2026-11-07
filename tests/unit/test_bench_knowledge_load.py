@@ -268,25 +268,28 @@ def test_an_answer_out_of_shape_mid_run_is_skipped_and_the_run_still_reports(
 
 
 @pytest.mark.parametrize(
-    ("upload", "ingest", "ingested"),
+    ("upload", "ingest", "upload_tally", "ingested"),
     [
-        ({}, {"ingestion_id": "j"}, 0),  # an upload without its id: no ingest is sent
-        ([], {"ingestion_id": "j"}, 0),  # not an object either
-        ({"upload_id": "u"}, {}, 1),  # an ingest without its id
+        # An answer without its id tallies its status; no ingest is sent.
+        ({"json": {}}, {"ingestion_id": "j"}, {"201": 1}, 0),
+        ({"json": []}, {"ingestion_id": "j"}, {"201": 1}, 0),
+        # A 201 that is not JSON is no answer: tallied 0, as op() counts it.
+        ({"text": "<html>proxy</html>"}, {"ingestion_id": "j"}, {"0": 1}, 0),
+        ({"json": {"upload_id": "u"}}, {}, {"201": 1}, 1),  # an ingest without its id
     ],
 )
 def test_an_upload_or_ingest_without_its_id_tallies_its_status_and_is_not_queued(
-    upload: Any, ingest: Any, ingested: int
+    upload: dict[str, Any], ingest: Any, upload_tally: dict[str, int], ingested: int
 ) -> None:
-    """Each call's tally is its HTTP status; the small ingest it was for ends "not
-    queued", which is what fails the run."""
+    """Each call's tally is its status (0 for a 2xx that is not JSON); the small
+    ingest it was for ends "not queued", which is what fails the run."""
     import asyncio
 
     import httpx
 
     def answer(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("knowledge.upload"):
-            return httpx.Response(201, json=upload)
+            return httpx.Response(201, **upload)
         return httpx.Response(200, json=ingest)
 
     async def go() -> load.Run:
@@ -299,10 +302,10 @@ def test_an_upload_or_ingest_without_its_id_tallies_its_status_and_is_not_queued
 
     run = asyncio.run(go())
     assert run.small_states == {"not queued": 1}
-    assert run.tallies["knowledge.upload"].summary()["ok"] == 1
+    tally = run.tallies["knowledge.upload"]
+    assert tally.summary()["ok"] == upload_tally.get("201", 0)  # timed as an answer
+    assert dict(tally.errors) == {c: n for c, n in upload_tally.items() if c != "201"}
     assert run.tallies["knowledge.ingest"].summary()["ok"] == ingested
-    report = {m: t.summary() for m, t in run.tallies.items()}
-    assert not [p for p in load.verdict(report, {"knowledge.upload": (1e9, 1e9)}) if p]
 
 
 def test_a_run_whose_small_ingests_are_not_queued_exits_1_and_names_them(
