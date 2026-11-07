@@ -90,7 +90,7 @@ def require_safe_bind(
     """Refuse to start on a non-loopback LOOM_BIND_HOST without
     LOOM_PUBLIC_BASE_URL (generated URLs would otherwise echo a request's Host),
     or, unless LOOM_ALLOW_INSECURE=1, with auth off, MCP open (`mcp_open`: every
-    tool runs with no principal), the dev signing secret, or a weak root key
+    tool runs with no principal), the dev signing secret, or a weak key
     (`weak_keys`: the root secret, gateway or end-user keys below the minimum key size
     of RFC 7518, an HMAC secret under 32 bytes or an RSA key under 2048 bits).
     A loopback bind is not checked."""

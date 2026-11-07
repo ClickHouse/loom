@@ -382,7 +382,8 @@ class AuthSettings(BaseModel):
     # (fetched every `jwt_end_user_jwks_refresh_seconds`) and/or `keys`. A key
     # here verifies only its own issuer's tokens, and only as an end user
     # (`sub: user:<id>`, one listed `org`, an optional `agent: agent:<id>`),
-    # never any other token. Empty: no end-user tokens.
+    # never any other token. Empty: no end-user tokens. A non-loopback bind refuses
+    # an inline RSA key under 2048 bits; one fetched from `jwks_url` is dropped.
     jwt_end_user_issuers_json: str = ""
     # The longest an end-user token may live, from its `iat` to its `exp`.
     jwt_end_user_max_ttl_seconds: int = Field(default=300, ge=60, le=3600)
@@ -4824,7 +4825,8 @@ class RuntimeSettings(BaseModel):
     # balancer's address for the sign-in and sign-up limits.
     trusted_proxies: str = "127.0.0.1"
     # True lets a non-loopback bind start with auth off, MCP open mode, the dev
-    # signing secret or a weak signing key. Only for a port others cannot reach.
+    # signing secret or a weak root, gateway or end-user key. Only for a port others
+    # cannot reach.
     allow_insecure: bool = False
 
     def workers_mode(self) -> str:

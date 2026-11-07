@@ -481,7 +481,8 @@ def _exposure_problems(settings: Any) -> list[Problem]:
             Problem(
                 "insecure_bind_weak_secret",
                 severity,
-                f"{', '.join(weak)} below the minimum key size on a non-loopback bind "
+                f"{', '.join(weak)} {'is' if len(weak) == 1 else 'are'} below the minimum key "
+                "size on a non-loopback bind "
                 f"(LOOM_BIND_HOST={settings.bind_host}).",
                 "Use a random secret of 32 or more bytes (`openssl rand -hex 32`) and RSA "
                 "keys of 2048 bits or more, or bind 127.0.0.1.",

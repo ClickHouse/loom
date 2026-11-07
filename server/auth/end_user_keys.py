@@ -20,7 +20,9 @@ from typing import Any
 
 import httpx
 import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
 
+from server.auth.keyring import MIN_RSA_BITS
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -65,7 +67,17 @@ async def _fetch(issuer: str, url: str) -> None:
         shared = sorted(kid for kid, k in found.items() if _numbers(k) in federated)
         if shared:
             log.warning("end-user issuer %r: keys %s are federated keys, dropped", issuer, shared)
-        _keys[issuer] = {kid: k for kid, k in found.items() if kid not in shared}
+        # An RSA key under RFC 7518's minimum: its published modulus can be factored.
+        weak = sorted(
+            kid
+            for kid, k in found.items()
+            if isinstance(k, (rsa.RSAPublicKey, rsa.RSAPrivateKey)) and k.key_size < MIN_RSA_BITS
+        )
+        if weak:
+            log.warning("end-user issuer %r: keys %s are under 2048 bits, dropped", issuer, weak)
+        _keys[issuer] = {
+            kid: k for kid, k in found.items() if kid not in shared and kid not in weak
+        }
     except Exception as e:  # noqa: BLE001 — a failed fetch keeps the last keys
         if issuer not in _warned:
             _warned.add(issuer)
