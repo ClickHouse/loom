@@ -94,6 +94,7 @@ def test_the_labelled_set_scores_as_measured() -> None:
         ("Storage sync 2026-03-04", ("Cache",), "Decision: TBD - revisit next week"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: deferred to next sync"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: open - revisit next week"),
+        ("Storage sync 2026-03-04", ("Cache",), "Decision: open -- revisit next week"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: not decided yet"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: no decision"),
         ("Storage sync 2026-03-04", ("Decision: not decided",), "- Revisit next week."),
@@ -173,6 +174,11 @@ def test_bookkeeping_and_discussion_without_a_decision_are_noise(
         ),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: pending writes go to the WAL."),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: open-source the parser."),
+        (
+            "Storage sync 2026-03-04",
+            ("Cache",),
+            "Decision: no consensus on Kafka, so we stay on Redis.",
+        ),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: pending-write queue goes first."),
         (
             "Storage sync 2026-03-04",

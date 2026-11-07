@@ -61,18 +61,23 @@ _DECISION = re.compile(
     rf"let's {_CHOICE_VERB})",
     re.IGNORECASE,
 )
-# A line of meeting notes that says the discussion reached no decision, with the label
-# it is written under ("Outcome: no decision yet").
-_UNDECIDED = re.compile(
-    r"\b(?:(?:outcome|conclusion|resolved|decisions?)\s*:\s*)?"
+# A line of meeting notes that says the discussion reached no decision.
+_NO_DECISION = (
     r"(?:no (?:conclusion|decision|consensus|agreement)|undecided|"
     r"not (?:yet )?(?:decided|concluded|agreed)|"
     r"to be decided|(?:haven't|hasn't|have not|has not)(?: yet)?(?: been)? decided|"
-    r"decision (?:pending|needed|deferred)|needs? a decision|"
-    r"decisions?\W+(?:tbd|tbc|deferred)\b|"
-    # "Decision: open" is a placeholder; "Decision: open the replica to reads" and
-    # "Decision: open-source the parser" are decisions.
-    r"decisions?\W+(?:none|pending|open)(?: yet)?(?=\W*$|\s*[.;,(\u2013\u2014]|\s+-(?:\s|$)))",
+    r"decision (?:pending|needed|deferred)|needs? a decision)"
+)
+# Where a label's value ends: the line, a stop, or a free-standing dash ("open -- later").
+_LABEL_END = r"(?: yet)?(?=\W*$|\s*[.;,(\u2013\u2014]|\s+-+(?:\s|$))"
+_UNDECIDED = re.compile(
+    # A label whose whole value says none was reached: "Outcome: no decision yet",
+    # "Decision: open". "Decision: open the replica to reads", "Decision: open-source the
+    # parser" and "Decision: no consensus on Kafka, so we stay on Redis" keep the label.
+    rf"\b(?:outcome|conclusion|resolved|decisions?)\s*:?\s*"
+    rf"(?:{_NO_DECISION}|none|pending|open){_LABEL_END}|"
+    r"\bdecisions?\W+(?:tbd|tbc|deferred)\b|"
+    rf"\b{_NO_DECISION}",
     re.IGNORECASE,
 )
 # The title shapes of meeting notes and status reports (the module docstring).
