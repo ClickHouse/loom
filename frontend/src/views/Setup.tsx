@@ -67,8 +67,6 @@ export function Setup() {
   const setView = useStore((s) => s.setView);
   const whoami = useStore((s) => s.whoami);
   const canManageModels = isAuthDisabled() || hasPlatformAdminClaim(whoami);
-  // The Structure tab reads four lists on open, all VIEWER.
-  const showStructure = canCall("memory_schema.list", useNamespaceRole(identity.namespace), whoami);
   const subject = whoami?.subject ?? "";
   // list_mine was fetched once at boot (App.tsx) — reuse it, never re-read.
   const mine = useStore((s) => s.myNamespaces);
@@ -98,6 +96,7 @@ export function Setup() {
   // null total.
   const role = useNamespaceRole(namespace);
   const canListMemories = canCall("memory.list", role, whoami);
+  const showStructure = !!memoryNamespace && canCall("memory_schema.list", role, whoami);
   const [memoryTotal, setMemoryTotal] = useState<number | null>(null);
   useEffect(() => {
     if (!memoryNamespace || !canListMemories) {
@@ -255,7 +254,12 @@ export function Setup() {
           <MemoryTab />
         </Tabs.Content>
         <Tabs.Content value="structure">
-          {showStructure ? <StructureTab /> : <p>Structure needs a role on this namespace.</p>}
+          {/* Keyed by scope: another namespace starts with no rows, draft or dialog of this one. */}
+          {showStructure ? (
+            <StructureTab key={`${identity.org}/${namespace}`} />
+          ) : (
+            <p>Structure is shown for a memory namespace you can read.</p>
+          )}
         </Tabs.Content>
         <Tabs.Content value="models">
           {canManageModels ? <ModelsSettings /> : <p>Model settings require a platform administrator.</p>}

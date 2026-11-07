@@ -23,7 +23,7 @@ export interface RecordSchema {
   schema_id: string;
   name: string;
   description: string;
-  /** `active`, or `proposed` until an admin approves it. */
+  /** `active`, `proposed` until an admin decides, or `rejected`. */
   status: string;
   fields: SchemaField[];
 }
@@ -66,8 +66,10 @@ export async function queryRecords(
   schemaName: string,
   opts: RequestOpts = {},
 ): Promise<{ rows: TypedRecord[]; truncated: boolean }> {
-  return post("/v1/memory.record.query", { ...scope(id), schema_name: schemaName, limit: 100 }, opts.signal);
+  return post("/v1/memory.record.query", { ...scope(id), schema_name: schemaName, limit: RECORD_LIMIT }, opts.signal);
 }
+
+export const RECORD_LIMIT = 100;
 
 export async function recordHistory(
   id: Scope,
@@ -83,6 +85,9 @@ export interface RecordConflict {
   field_name: string;
   prior_value: unknown;
   incoming_value: unknown;
+  /** The record the newer one superseded; its history holds what it said. */
+  prior_record_id: string;
+  incoming_record_id: string;
   detected_at: string | null;
 }
 
@@ -90,8 +95,12 @@ export async function recordConflicts(
   id: Scope,
   schemaName: string,
   opts: RequestOpts = {},
-): Promise<{ rows: RecordConflict[] }> {
-  return post("/v1/memory.record.conflicts", { ...scope(id), schema_name: schemaName }, opts.signal);
+): Promise<{ rows: RecordConflict[]; truncated: boolean }> {
+  return post(
+    "/v1/memory.record.conflicts",
+    { ...scope(id), schema_name: schemaName, limit: RECORD_LIMIT },
+    opts.signal,
+  );
 }
 
 // ===== Profile schema =====
@@ -125,26 +134,28 @@ export interface OntologyEntry {
   /** `accepted`, or `pending` until an admin accepts it. */
   status: string;
   description: string;
+  /** A relation's or attribute's `one` or `many`; "" lets the seed list decide. */
+  cardinality: string;
 }
 
-/** Accepted and pending terms; the server lists one status a call. */
+/** The accepted and pending terms, pending first. */
 export async function listOntology(id: Scope, opts: RequestOpts = {}): Promise<OntologyEntry[]> {
-  const [accepted, pending] = await Promise.all(
-    (["accepted", "pending"] as const).map((status) =>
-      post<{ entries: OntologyEntry[] }>("/v1/namespace.list_ontology", { ...scope(id), status }, opts.signal),
-    ),
+  const r = await post<{ entries: OntologyEntry[] }>(
+    "/v1/namespace.list_ontology",
+    { ...scope(id), status: null },
+    opts.signal,
   );
-  return [...(pending.entries ?? []), ...(accepted.entries ?? [])];
+  const live = r.entries.filter((e) => e.status !== "tombstoned");
+  return [...live.filter((e) => e.status === "pending"), ...live.filter((e) => e.status !== "pending")];
 }
 
-/** POST /v1/namespace.register_ontology: a new term, or a pending one accepted. */
+/** POST /v1/namespace.register_ontology: a new term, or a pending one accepted. A
+ *  registration replaces the whole entry, so an accepted term keeps its own fields. */
 export async function registerOntologyTerm(
   id: Scope,
-  kind: OntologyKind,
-  name: string,
-  description: string,
+  term: Pick<OntologyEntry, "kind" | "name" | "description" | "cardinality">,
 ): Promise<{ registered: boolean }> {
-  return post("/v1/namespace.register_ontology", { ...scope(id), kind, name, description, status: "accepted" });
+  return post("/v1/namespace.register_ontology", { ...scope(id), ...term, status: "accepted" });
 }
 
 // ===== Categories =====
