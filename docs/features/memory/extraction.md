@@ -243,7 +243,7 @@ token's read scope; every other id comes back in `unknown`, so an agent cannot l
 whether another principal's batch exists:
 
 - **The principal is the token's `kind:subject`**, the enqueuer a deferred call stores.
-  Each token minted on the Setup page and each delegated token is its own principal: a
+  Each token minted under Settings → Tokens and each delegated token is its own principal: a
   newly minted token, another client, or the token's creator does not see the batches
   another one queued. Subjects compare as stored, so a human subject spelled
   differently is another principal.

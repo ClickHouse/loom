@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MyNamespaceEntry, ServiceAccountEntry, WhoAmI } from "../api";
+import type { MyNamespaceEntry, TokenEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { onboardingKey } from "../lib/onboarding";
 import { axeViolations } from "../test/axe";
@@ -15,20 +15,29 @@ vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
-    listServiceAccounts: vi.fn(async (): Promise<ServiceAccountEntry[]> => []),
+    listTokens: vi.fn(async (): Promise<TokenEntry[]> => []),
     listMine: vi.fn(async (): Promise<MyNamespaceEntry[]> => []),
     listMemories: vi.fn(async () => ({ entries: [], truncated: false, total: 0, today: 0 })),
     countMemories: vi.fn(async () => 0),
     listBlacklist: vi.fn(async () => ({ rows: [] })),
     listGrants: vi.fn(async () => ({ rows: [] })),
-    generateMcpConfig: vi.fn(async () => ({
+    createToken: vi.fn(async () => ({
       token: "tok-123",
+      name: "token-2026-01-01-abcdef",
+      sa_subject: "sa:t",
+      org: "dev",
+      namespaces: ["personal-n", "*"],
+      ns_roles: {},
+      reads_everything: true,
+      saves_to: "personal-n",
+      created_at: "2026-01-01T00:00:00",
+      expires_at: null,
+      restricted_namespaces: [],
       mcp_url: "http://loom.test/mcp",
-      client: "claude-desktop",
     })),
   };
 });
-import { countMemories, generateMcpConfig, listGrants, listMemories } from "../api";
+import { countMemories, createToken, listGrants, listMemories } from "../api";
 
 const SUBJECT = "n@x";
 const NS = "personal-n";
@@ -97,7 +106,7 @@ describe("GettingStarted on Setup", () => {
     // The rest of the page is a tab away; the token form is open because there is no
     // token yet.
     expect(screen.getByRole("tab", { name: "Memory" })).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /Generate token/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Create token/ })).toBeInTheDocument();
     // One count for the total, never a page.
     expect(countMemories).toHaveBeenCalledTimes(1);
     expect(listMemories).not.toHaveBeenCalled();
@@ -127,16 +136,16 @@ describe("GettingStarted on Setup", () => {
     render(<Setup />);
     const region = await screen.findByRole("region", { name: "Getting started" });
 
-    // 1. Connect → scrolls to and focuses the token form's Generate button.
+    // 1. Connect → scrolls to and focuses the token form's Create button.
     await user.click(within(region).getByRole("button", { name: "Mint a token" }));
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: /Generate token/ })).toHaveFocus();
+    expect(screen.getByRole("button", { name: /Create token/ })).toHaveFocus();
     // A mint ticks the step and renders the one-line Claude Code command.
-    await user.click(screen.getByRole("button", { name: /Generate token/ }));
-    await waitFor(() => expect(generateMcpConfig).toHaveBeenCalled(), WAIT);
+    await user.click(screen.getByRole("button", { name: /Create token/ }));
+    await waitFor(() => expect(createToken).toHaveBeenCalled(), WAIT);
     // The existing post-mint dialog opens as before; close it to read the
     // checklist (a modal hides the rest of the page from assistive tech).
-    expect(await screen.findByRole("dialog", { name: /Token generated/ })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: /Token created/ })).toBeInTheDocument();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument(), WAIT);
     const cmd = await within(region).findByText(/claude mcp add --transport http loom/);

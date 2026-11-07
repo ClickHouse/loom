@@ -1,20 +1,17 @@
-// What a token minted from the Setup page can read and write, computed from
-// the caller's own membership list before the token exists.
+// What a new token can read and where it saves, computed from the person's own
+// membership list before the token exists, and the same in words for each token in the
+// list.
 //
-// Two token shapes leave that page:
-//  - "For an AI agent" (kind = mcp): ONE home namespace, where the client
-//    writes. A token claiming `*` inherits its creator's live grants, so it
-//    reads every namespace and repository the person belongs to, now and after
-//    they join more; one minted for a named namespace reads only that one (and
-//    any restricted namespaces it names).
-//  - "For a script or bot" (scoped): reads exactly the namespaces ticked, in
-//    that order, and nothing else.
+// A token reads either everything its owner belongs to (a `*` claim: every namespace
+// and repository, now and after they join more, at their own role in each) or exactly
+// the namespaces it lists, in that order. A `*` token saves to the namespace named
+// before `*`; a list follows the order in `server/identity/app/caller_home.py`.
 //
-// One rule narrows both: a restricted repository is read only by a token that names it
-// AND whose own subject holds a direct grant. A token minted here runs under a generated
-// `sa:` subject with no grants, so it never reads a restricted repository, however the
-// person's own access looks. The page says so before the click instead of after the 403.
-import type { CodeRepoSummary, MyNamespaceEntry, ServiceAccountEntry } from "../api";
+// A restricted repository is read only by a token that names it AND whose own subject
+// holds a direct grant; the mint writes that grant for each one named. The page lists
+// the restricted repositories a token would not read before the click instead of after
+// the 403.
+import type { CodeRepoSummary, MyNamespaceEntry, TokenEntry } from "../api";
 
 export interface ScopeRepo {
   repo: string;
@@ -23,7 +20,7 @@ export interface ScopeRepo {
 }
 
 export interface TokenReadScope {
-  /** Where an agent token writes: memories, captures, working notes. */
+  /** Where the token saves: memories, captured sessions, working notes. */
   home: string;
   /** Memory / tracker namespaces the token reads (active membership). */
   namespaces: string[];
@@ -32,8 +29,8 @@ export interface TokenReadScope {
   /** Restricted repositories the person belongs to that this token still
    * cannot read (the token's own subject holds no grant). */
   excludedRestricted: ScopeRepo[];
-  /** Memberships still awaiting approval: readable once approved, and the
-   *  agent token follows them in with no re-mint. */
+  /** Memberships still awaiting approval: readable once approved, with no
+   *  new token. */
   pending: string[];
 }
 
@@ -53,11 +50,11 @@ function groupRepos(rows: MyNamespaceEntry[], facts: Record<string, RepoFacts>):
   return Array.from(by.values()).sort((a, b) => a.repo.localeCompare(b.repo));
 }
 
-/** The read/write scope of an agent token minted with `home` as its
- *  namespace. `mine` is the caller's `namespace.list_mine` rows (null while
+/** What a token that reads everything its owner belongs to reads, saving to
+ *  `home`. `mine` is the caller's `namespace.list_mine` rows (null while
  *  loading); `repos` the `code.repos` rows, which carry each repository's
  *  classification (null when the caller may not list them). */
-export function agentTokenScope(
+export function everythingScope(
   mine: MyNamespaceEntry[] | null,
   repos: RepoFacts[] | null,
   home: string,
@@ -80,28 +77,44 @@ export function agentTokenScope(
   };
 }
 
-/** One line for a token row in the Tokens list: what it writes and what it
- *  reads, in words, instead of the raw `roles · namespaces` claim dump that
- *  reads as "this token sees one namespace". */
-export function describeTokenScope(t: Pick<ServiceAccountEntry, "kind" | "namespaces" | "roles">): string {
+type TokenClaim = Pick<TokenEntry, "namespaces" | "roles" | "ns_roles">;
+
+const WRITES = new Set(["writer", "admin"]);
+
+/** One line for a token row in the Tokens list: what it reads and where it saves, in
+ *  words, instead of the raw claim. */
+export function describeTokenScope(
+  t: TokenClaim,
+  {
+    writesAnywhere = true,
+    yours = true,
+    writable,
+  }: { writesAnywhere?: boolean; yours?: boolean; writable?: (ns: string) => boolean } = {},
+): string {
   const ns = t.namespaces || [];
-  const roles = t.roles || [];
-  if (t.kind === "mcp") {
-    // The first claim is the home namespace. A `*` claim reads wherever the person
-    // holds a grant (the server's `inherited_grants`), and its further claims are
-    // restricted namespaces the token reads by name. Without `*` the token reads only
-    // its claim (`named_namespaces`), which may be a `*` narrowed to the person's own
-    // namespaces, so the row cannot say which of them are restricted, nor which one
-    // its writes default to (the server decides), so it names none.
-    if (ns.length === 0) return "reads no namespace";
-    if (!ns.includes("*")) return `reads only ${ns.join(", ")}`;
-    const home = ns[0] !== "*" ? ns[0] : null;
-    const writes = home ? `writes ${home}` : "writes any namespace you can write";
-    const extras = ns.slice(1).filter((n) => n !== "*");
-    const restricted = extras.length ? ` · plus restricted: ${extras.join(", ")}` : "";
-    return `${writes} · reads every namespace and repository you belong to${restricted}`;
+  if (ns.length === 0) return "reads nothing";
+  if (ns.includes("*")) {
+    const home = ns[0] !== "*" ? ns[0] : "";
+    const also = ns.filter((n) => n !== "*" && n !== home);
+    // Another person's token (an admin of one of its namespaces sees it) reads as theirs.
+    const who = yours ? "you belong" : "its owner belongs";
+    const reads = `reads everything ${who} to${also.length ? `, plus ${also.join(", ")}` : ""}`;
+    // It writes through its owner's grants and its own one role: either one short of
+    // writer, and it only reads.
+    const tokenWrites = (t.roles || []).some((r) => WRITES.has(r));
+    if (!tokenWrites || (yours && !writesAnywhere)) return `${reads} · read-only`;
+    const pick = yours ? "the namespace you pick in Loom" : "the namespace its owner picks in Loom";
+    // Its home counts only while its owner may write there; else it follows the pick.
+    const saves = home && (!yours || !writable || writable(home)) ? home : pick;
+    return `${reads} · saves to ${saves}`;
   }
-  if (ns.length === 0) return roles.join(", ");
-  const role = roles.length ? `${roles.join(", ")} on ` : "";
-  return `reads only ${role}${ns.join(", ")}`;
+  const roles = t.ns_roles && Object.keys(t.ns_roles).length > 0 ? t.ns_roles : null;
+  const distinct = new Set(ns.map((n) => roles?.[n] ?? ""));
+  const listed =
+    roles && distinct.size > 1
+      ? ns.map((n) => `${n} (${roles[n]})`).join(", ")
+      : `${ns.join(", ")}${roles ? ` (${roles[ns[0]]})` : ""}`;
+  // Where a list saves can follow its owner's pick, so the row names no namespace.
+  const writes = roles ? ns.some((n) => WRITES.has(roles[n] ?? "")) : (t.roles || []).some((r) => WRITES.has(r));
+  return `reads only ${listed}${writes ? "" : " · read-only"}`;
 }

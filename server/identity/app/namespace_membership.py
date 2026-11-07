@@ -388,7 +388,7 @@ _MEMBERSHIP_SQL = """
             g.pending_since AS pending_since,
             g.granted_at AS joined_at,
             toString(ifNull(n.visibility, 'private')) AS visibility,
-            ifNull(n.kind, 'memory') AS kind,
+            ifNull(n.kind, '') AS kind,
             ifNull(n.description, '') AS description,
             if(g.granted_by != g.subject AND
                (v.last_seen_at IS NULL OR v.last_seen_at < g.granted_at),
@@ -408,7 +408,21 @@ _MEMBERSHIP_SQL = """
           AND g.revoked_at IS NULL
           AND ifNull(n.active, true) = true
         ORDER BY g.granted_at DESC
+        -- A grant on a namespace with no directory row (a repository listed only in
+        -- LOOM_CODE_REPOS_JSON) is a member's too: with the default, the join's empty
+        -- side reads `active = false` and the row would be dropped.
+        SETTINGS join_use_nulls = 1
 """
+
+
+def _kind(org: str, namespace: str, kind: object) -> str:
+    """A namespace's kind: its directory row's, else `code` for a configured repository
+    entry, else `memory`, the directory's own default."""
+    if kind:
+        return str(kind)
+    from server.code.domain.index.repos import repo_for_namespace
+
+    return "code" if repo_for_namespace(org, namespace) is not None else "memory"
 
 
 async def _membership_rows(ch: Any, org: str, subjects: list[str]) -> list[dict[str, Any]]:
@@ -525,7 +539,7 @@ async def handle_namespace_list_mine(
             pending_since=r.get("pending_since"),
             pending_admins=admins_by_ns.get(r["namespace"], []),
             visibility=r.get("visibility") or "private",
-            kind=r.get("kind") or "memory",
+            kind=_kind(input.org, r["namespace"], r.get("kind")),
             description=r.get("description") or "",
             joined_at=r["joined_at"],
             is_new=bool(r.get("is_new")),
@@ -553,7 +567,7 @@ async def handle_namespace_list_mine(
                     namespace=ns,
                     role="jwt",
                     visibility=m.get("visibility") or "private",  # type: ignore[arg-type]
-                    kind=m.get("kind") or "memory",
+                    kind=_kind(input.org, ns, m.get("kind")),
                     description=m.get("description") or "",
                 )
             )
@@ -567,7 +581,7 @@ async def handle_namespace_list_mine(
                 role=r["role"],
                 status="active",
                 visibility=r.get("visibility") or "private",
-                kind=r.get("kind") or "memory",
+                kind=_kind(input.org, r["namespace"], r.get("kind")),
                 description=r.get("description") or "",
                 joined_at=r.get("joined_at"),
                 is_new=False,

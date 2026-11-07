@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MyNamespaceEntry } from "../api";
-import { agentTokenScope, describeTokenScope } from "./tokenScope";
+import { everythingScope, describeTokenScope } from "./tokenScope";
 
 const row = (
   namespace: string,
@@ -23,9 +23,9 @@ const repos = [
   { namespace: "code-private", repo: "org/private", branch: "master", classification: "restricted" },
 ];
 
-describe("agentTokenScope", () => {
+describe("everythingScope", () => {
   it("reads every active membership; the home pick only sets where it writes", () => {
-    const s = agentTokenScope(
+    const s = everythingScope(
       [row("me", "memory"), row("team", "memory"), row("code-ch", "code"), row("code-ch-26-8", "code")],
       repos,
       "me",
@@ -46,7 +46,7 @@ describe("agentTokenScope", () => {
   });
 
   it("a restricted repository the person belongs to is listed as excluded, never as readable", () => {
-    const s = agentTokenScope([row("me", "memory"), row("code-private", "code")], repos, "me");
+    const s = everythingScope([row("me", "memory"), row("code-private", "code")], repos, "me");
     expect(s.repositories).toEqual([]);
     expect(s.excludedRestricted).toEqual([
       { repo: "org/private", branches: [{ namespace: "code-private", branch: "master" }] },
@@ -54,53 +54,81 @@ describe("agentTokenScope", () => {
   });
 
   it("pending joins are neither readable nor excluded; they are pending", () => {
-    const s = agentTokenScope([row("me", "memory"), row("shared", "memory", "pending")], null, "me");
+    const s = everythingScope([row("me", "memory"), row("shared", "memory", "pending")], null, "me");
     expect(s.namespaces).toEqual(["me"]);
     expect(s.pending).toEqual(["shared"]);
   });
 
   it("the home namespace is always in the read set, even before the list loads", () => {
-    const s = agentTokenScope(null, null, "me");
+    const s = everythingScope(null, null, "me");
     expect(s.namespaces).toEqual(["me"]);
     expect(s.repositories).toEqual([]);
   });
 
   it("a code namespace with no repo facts keeps its identifier and counts as readable", () => {
-    const s = agentTokenScope([row("code-x", "code")], null, "me");
+    const s = everythingScope([row("code-x", "code")], null, "me");
     expect(s.repositories).toEqual([{ repo: "code-x", branches: [{ namespace: "code-x", branch: "code-x" }] }]);
   });
 });
 
 describe("describeTokenScope", () => {
-  it("an agent token claiming `*` says reads follow membership", () => {
-    expect(describeTokenScope({ kind: "mcp", namespaces: ["me", "*"], roles: ["writer"] })).toBe(
-      "writes me · reads every namespace and repository you belong to",
+  it("a token claiming `*` reads everything and saves to the namespace named first", () => {
+    expect(describeTokenScope({ namespaces: ["me", "*"], roles: ["writer"] })).toBe(
+      "reads everything you belong to · saves to me",
     );
   });
-  it("an agent token for a named namespace reads only that one", () => {
-    expect(describeTokenScope({ kind: "mcp", namespaces: ["me"], roles: ["writer"] })).toBe("reads only me");
-  });
-  it("a wildcard agent token writes anywhere the person can", () => {
-    expect(describeTokenScope({ kind: "mcp", namespaces: ["*"], roles: ["writer"] })).toMatch(
-      /^writes any namespace you can write · reads every/,
+  it("a bare `*` token saves where its owner works", () => {
+    expect(describeTokenScope({ namespaces: ["*"], roles: ["writer"] })).toBe(
+      "reads everything you belong to · saves to the namespace you pick in Loom",
     );
   });
-  it("an agent token without `*` reads only its claim", () => {
+  it("a `*` token of someone who writes nowhere is read-only", () => {
+    expect(describeTokenScope({ namespaces: ["*"], roles: ["writer"] }, { writesAnywhere: false })).toBe(
+      "reads everything you belong to · read-only",
+    );
+  });
+  it("a `*` token minted read-only says so", () => {
+    expect(describeTokenScope({ namespaces: ["ns", "*"], roles: ["viewer"] })).toBe(
+      "reads everything you belong to · read-only",
+    );
+  });
+  it("a home you can no longer write gives way to your pick", () => {
+    const writable = (ns: string) => ns !== "team-x";
+    expect(describeTokenScope({ namespaces: ["team-x", "*"], roles: ["writer"] }, { writable })).toBe(
+      "reads everything you belong to · saves to the namespace you pick in Loom",
+    );
+  });
+  it("another person's `*` token reads as theirs, with no read-only judgement of yours", () => {
     expect(
-      describeTokenScope({ kind: "mcp", namespaces: ["me", "code-private", "code-private-26-8"], roles: ["writer"] }),
-    ).toBe("reads only me, code-private, code-private-26-8");
-  });
-  it("a `*` agent token's further claims are restricted namespaces it reads by name", () => {
-    expect(describeTokenScope({ kind: "mcp", namespaces: ["me", "*", "code-private"], roles: ["writer"] })).toBe(
-      "writes me · reads every namespace and repository you belong to · plus restricted: code-private",
+      describeTokenScope({ namespaces: ["team-x", "*"], roles: ["writer"] }, { writesAnywhere: false, yours: false }),
+    ).toBe("reads everything its owner belongs to · saves to team-x");
+    expect(describeTokenScope({ namespaces: ["*"], roles: ["writer"] }, { yours: false })).toBe(
+      "reads everything its owner belongs to · saves to the namespace its owner picks in Loom",
     );
   });
-  it("an agent token with no claim reads no namespace", () => {
-    expect(describeTokenScope({ kind: "mcp", namespaces: [], roles: ["writer"] })).toBe("reads no namespace");
-  });
-  it("a scoped token reads only what it names", () => {
-    expect(describeTokenScope({ kind: "agent", namespaces: ["a", "b"], roles: ["viewer"] })).toBe(
-      "reads only viewer on a, b",
+  it("names beside `*` are the restricted ones it also reads", () => {
+    expect(describeTokenScope({ namespaces: ["me", "*", "code-private"], roles: ["writer"] })).toBe(
+      "reads everything you belong to, plus code-private · saves to me",
     );
+  });
+  it("a listed token reads only its list, each at its role", () => {
+    expect(
+      describeTokenScope({
+        namespaces: ["docs", "billing"],
+        roles: ["viewer", "writer"],
+        ns_roles: { docs: "viewer", billing: "writer" },
+      }),
+    ).toBe("reads only docs (viewer), billing (writer)");
+  });
+  it("a listed token with one role says it once, and read-only when it writes nowhere", () => {
+    expect(
+      describeTokenScope({ namespaces: ["a", "b"], roles: ["viewer"], ns_roles: { a: "viewer", b: "viewer" } }),
+    ).toBe("reads only a, b (viewer) · read-only");
+  });
+  it("a flat token for one namespace reads only it", () => {
+    expect(describeTokenScope({ namespaces: ["me"], roles: ["writer"] })).toBe("reads only me");
+  });
+  it("a token with no claim reads nothing", () => {
+    expect(describeTokenScope({ namespaces: [], roles: ["writer"] })).toBe("reads nothing");
   });
 });

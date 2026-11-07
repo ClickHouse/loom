@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MyNamespaceEntry, PendingApproval, ServiceAccountEntry, WhoAmI } from "../api";
+import type { MyNamespaceEntry, PendingApproval, TokenEntry, WhoAmI } from "../api";
 import { useStore } from "./state";
 import { resetNamespaceRoleCache } from "./namespaceRole";
 import { invalidateShared } from "./sharedReads";
@@ -28,7 +28,7 @@ vi.mock("../api", async (importOriginal) => {
     getMySharingSummary: vi.fn(async () => {
       throw new Error("offline");
     }),
-    listServiceAccounts: vi.fn(async (): Promise<ServiceAccountEntry[]> => []),
+    listTokens: vi.fn(async (): Promise<TokenEntry[]> => []),
     countMemories: vi.fn(async () => 12),
     listBlacklist: vi.fn(async () => ({ rows: [] })),
   };

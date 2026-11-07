@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ServiceAccountEntry, WhoAmI } from "../api";
+import type { TokenEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { Setup } from "./Setup";
@@ -12,7 +12,7 @@ import { Setup } from "./Setup";
 const DAY = 24 * 3600 * 1000;
 // A naive UTC time `ms` from now, as the server spells it.
 const naive = (ms: number) => new Date(Date.now() + ms).toISOString().slice(0, 19);
-const token = (over: Partial<ServiceAccountEntry>): ServiceAccountEntry => ({
+const token = (over: Partial<TokenEntry>): TokenEntry => ({
   name: "tok",
   sa_subject: "sa-tok",
   namespaces: ["ns-a"],
@@ -24,8 +24,6 @@ const token = (over: Partial<ServiceAccountEntry>): ServiceAccountEntry => ({
   revoked_at: null,
   revoked_by: "",
   last_used_at: null,
-  kind: "mcp",
-  client: "claude-desktop",
   ...over,
 });
 
@@ -33,8 +31,8 @@ vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
-    listServiceAccounts: vi.fn(
-      async (): Promise<ServiceAccountEntry[]> => [
+    listTokens: vi.fn(
+      async (): Promise<TokenEntry[]> => [
         // Minted a minute ago, never used, expiring an hour past the 14-day warning.
         token({ name: "fresh", sa_subject: "sa-fresh", expires_at: naive(14 * DAY + 3600 * 1000) }),
         // Last used an hour inside the 7-day active window.

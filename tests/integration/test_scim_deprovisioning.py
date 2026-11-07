@@ -194,9 +194,9 @@ def test_deactivating_over_scim_ends_the_person_and_reactivating_lets_them_back(
     )
     assert never.status_code == 200 and never.json()["expires_at"] is None, never.text
     mcp = httpx.post(
-        f"{base}/v1/me/setup/mcp_config",
+        f"{base}/v1/me/service_accounts.create",
         headers=_bearer(session),
-        json={"client": "claude-code", "ttl_days": 0},
+        json={"ttl_days": 0},
     )
     assert mcp.status_code == 200, mcp.text
     # A token the person's own token made: created by its `sa:` subject.

@@ -1,11 +1,12 @@
 export type {
   AccountClient,
-  CreateServiceAccountOptions,
+  CreateTokenOptions,
   GrantRole,
-  ServiceAccountCreated,
-  ServiceAccountNamespace,
-  ServiceAccountRevoked,
-  ServiceAccountRow,
+  TokenClientSetup,
+  TokenCreated,
+  TokenNamespace,
+  TokenRevoked,
+  TokenRow,
 } from "./account.js";
 export type { Body, Scope } from "./agent.js";
 export { Agent, Datapack, SENTINEL } from "./agent.js";

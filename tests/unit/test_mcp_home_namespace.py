@@ -191,8 +191,8 @@ def test_memory_home_helpers() -> None:
     assert home.is_memory_home(KINDS, "code-loom") is False
 
 
-class _SetupTokenCH(_CH):
-    """A Setup-page `*` token: only its owner (`alice` unless named) holds
+class _StarTokenCH(_CH):
+    """A `*` token from the token mint: only its owner (`alice` unless named) holds
     grants and a saved default. Its `service_accounts` row names `row_creator`,
     which the default must not read: the token's signed `creator` decides."""
 
@@ -231,32 +231,49 @@ class _SetupTokenCH(_CH):
         return {n: 2 for n in self.grants} if subject == self.owner else {}
 
 
-def _setup_token(creator: str = "alice") -> Any:
+def _star_token(creator: str = "alice") -> Any:
     return _token(("*",), creator=creator)
 
 
-def test_a_wildcard_setup_token_defaults_to_its_creators_home(_wired) -> None:
-    ch = _SetupTokenCH(saved=None, grants=["code-loom", "alice"])
+def test_a_wildcard_token_defaults_to_its_creators_home(_wired) -> None:
+    ch = _StarTokenCH(saved=None, grants=["code-loom", "alice"])
     _wired(ch)
-    assert _defaults(_setup_token())["namespace"] == "alice"
+    assert _defaults(_star_token())["namespace"] == "alice"
     assert not any("service_accounts" in q for q in ch.sql), "the signed claim, no row read"
 
 
-def test_a_wildcard_setup_token_follows_its_creators_saved_default(_wired) -> None:
-    _wired(_SetupTokenCH(saved="agent-box-claude-code", grants=["alice", "agent-box-claude-code"]))
-    assert _defaults(_setup_token())["namespace"] == "agent-box-claude-code"
+def test_a_wildcard_token_follows_its_creators_saved_default(_wired) -> None:
+    _wired(_StarTokenCH(saved="agent-box-claude-code", grants=["alice", "agent-box-claude-code"]))
+    assert _defaults(_star_token())["namespace"] == "agent-box-claude-code"
+
+
+def test_a_token_minted_with_a_namespace_before_star_saves_there_not_at_the_pick(_wired) -> None:
+    # The mint's `[home, "*"]`, and `admin/token.mint` asked for `namespaces: [team-x, *]`.
+    _wired(_StarTokenCH(saved="agent-box-claude-code", grants=["alice", "team-x"]))
+    assert _defaults(_token(("team-x", "*"), creator="alice"))["namespace"] == "team-x"
+
+
+def test_a_listed_token_keeps_following_the_pick_and_the_owners_namespace(_wired) -> None:
+    # A list names no save target: the first entry is search order only.
+    _wired(_StarTokenCH(saved="alice", grants=["alice", "team-x"]))
+    assert _defaults(_token(("team-x", "alice"), creator="alice"))["namespace"] == "alice"
+
+
+def test_a_namespace_named_first_that_it_cannot_write_falls_back_to_the_pick(_wired) -> None:
+    _wired(_StarTokenCH(saved="alice", grants=["alice"]))
+    assert _defaults(_token(("team-x", "*"), creator="alice"))["namespace"] == "alice"
 
 
 def test_a_token_minted_by_another_service_account_follows_the_signed_creator(_wired) -> None:
     # The row says another service account made it; the gate checks alice's grants.
-    _wired(_SetupTokenCH(saved="agent-box-claude-code", grants=["agent-box-claude-code"]))
-    assert _defaults(_setup_token())["namespace"] == "agent-box-claude-code"
+    _wired(_StarTokenCH(saved="agent-box-claude-code", grants=["agent-box-claude-code"]))
+    assert _defaults(_star_token())["namespace"] == "agent-box-claude-code"
 
 
 def test_a_self_signup_agent_token_keeps_its_namespace_not_its_claimers_pick(_wired) -> None:
     # Self-signup: the row's created_by is the agent account, whose claimer
     # saved a team pick there. The token carries no creator and claims its own.
-    ch = _SetupTokenCH(
+    ch = _StarTokenCH(
         saved="team-x",
         grants=["team-x"],
         owner="agent-box-claude-code",
@@ -268,13 +285,13 @@ def test_a_self_signup_agent_token_keeps_its_namespace_not_its_claimers_pick(_wi
 
 
 def test_a_saved_restricted_namespace_is_no_default_for_a_wildcard_token(_wired) -> None:
-    _wired(_SetupTokenCH(saved="secret-team", grants=["secret-team", "alice"]))
-    assert _defaults(_setup_token())["namespace"] == "alice"
+    _wired(_StarTokenCH(saved="secret-team", grants=["secret-team", "alice"]))
+    assert _defaults(_star_token())["namespace"] == "alice"
 
 
 def test_the_ranking_skips_a_restricted_namespace_the_token_does_not_name(_wired) -> None:
-    _wired(_SetupTokenCH(saved=None, grants=["secret-team", "agent-box-claude-code"]))
-    assert _defaults(_setup_token())["namespace"] == "agent-box-claude-code"
+    _wired(_StarTokenCH(saved=None, grants=["secret-team", "agent-box-claude-code"]))
+    assert _defaults(_star_token())["namespace"] == "agent-box-claude-code"
 
 
 def _token(namespaces: tuple[str, ...], **kw: Any) -> Any:
@@ -291,9 +308,9 @@ def _token(namespaces: tuple[str, ...], **kw: Any) -> Any:
 
 
 def test_a_token_claiming_only_a_qa_plane_has_no_default_namespace(_wired) -> None:
-    # Setup token for `qa-clickhouse` only: the creator's memory grant and
+    # A token for `qa-clickhouse` only: the creator's memory grant and
     # personal namespace are outside the claim, so neither is its default.
-    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    _wired(_StarTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
     assert _defaults(_token(("qa-clickhouse",)))["namespace"] == ""
 
 
@@ -305,7 +322,7 @@ def test_an_unaddressed_write_from_a_qa_only_token_asks_for_a_namespace(
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import mcp_call
 
-    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    _wired(_StarTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
     monkeypatch.setattr(mcp_call, "_emit_mcp_event", lambda *a, **k: None)
     op = OPERATIONS_BY_NAME["memory.set"]
     args: dict[str, Any] = {"memory_key": "k", "value": "v"}
@@ -340,7 +357,7 @@ def _coding_line(token: Any) -> str:
     ids=["default_context", "coding_workspace_line", "loom_primer_text"],
 )
 def test_no_default_namespace_is_never_rendered_as_an_empty_one(_wired, render) -> None:
-    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    _wired(_StarTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
     text = render(_token(("qa-clickhouse",)))
     assert "namespace" in text
     for phrase in ("``", "filled in when a call names none", "trust the default"):
@@ -357,7 +374,7 @@ def _initialize_text(token: Any, toolset: str | None = None) -> str:
 def test_with_no_default_namespace_the_instructions_name_the_readable_claims(
     _wired, toolset: str | None
 ) -> None:
-    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    _wired(_StarTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
     text = _initialize_text(_token(("qa-clickhouse",)), toolset)
     assert "name one of `qa-clickhouse` on each memory or tracker call" in text
     assert "`loom_search` once" in text  # it takes no namespace, and needs none
@@ -365,14 +382,14 @@ def test_with_no_default_namespace_the_instructions_name_the_readable_claims(
 
 def test_a_token_that_can_read_no_claim_is_told_so(_wired) -> None:
     # `secret-team` is restricted and an org-`*` token is refused there even named.
-    _wired(_SetupTokenCH(saved=None, grants=["secret-team"]))
+    _wired(_StarTokenCH(saved=None, grants=["secret-team"]))
     text = _initialize_text(_token(("secret-team",), org="*"), "coding")
     assert "can read no namespace" in text
     assert "`secret-team`" not in text
 
 
 def test_the_coding_instructions_never_tell_code_calls_to_name_a_namespace(_wired) -> None:
-    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    _wired(_StarTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
     text = _initialize_text(_token(("qa-clickhouse",)), "coding")
     assert "every call" not in text
     assert "loom_code_* calls use the code scope" in text
@@ -384,7 +401,7 @@ def test_one_initialize_resolves_the_caller_defaults_once(
 ) -> None:
     from server.transport import mcp_primer
 
-    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    _wired(_StarTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
     calls: list[Any] = []
     real = mcp_primer._caller_defaults
 
@@ -405,7 +422,7 @@ def test_loom_search_from_a_qa_only_token_searches_its_claim(
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import gates, mcp_call
 
-    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    _wired(_StarTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
     monkeypatch.setattr(mcp_call, "_emit_mcp_event", lambda *a, **k: None)
     op = OPERATIONS_BY_NAME[mcp_call.SEARCH_OP]
     args: dict[str, Any] = {"query": "what did we decide"}
@@ -430,30 +447,30 @@ def test_loom_search_from_a_qa_only_token_searches_its_claim(
 
 def test_a_restricted_namespace_is_off_limits_to_a_token_of_another_org(_wired) -> None:
     # The gate refuses an org-`*` token on a restricted namespace, even named.
-    _wired(_SetupTokenCH(saved="secret-team", grants=["secret-team", "alice"]))
+    _wired(_StarTokenCH(saved="secret-team", grants=["secret-team", "alice"]))
     token = _token(("*", "secret-team"), subject="alice", org="*", creator="")
     assert asyncio.run(home.default_namespace(token, "clickhouse")) == "alice"
 
 
-def test_a_wildcard_setup_token_whose_creator_holds_no_grant_has_no_default(_wired) -> None:
+def test_a_wildcard_token_whose_creator_holds_no_grant_has_no_default(_wired) -> None:
     # `personal-alice` was never provisioned: the gate refuses it, so no default.
-    _wired(_SetupTokenCH(saved=None, grants=[]))
-    assert _defaults(_setup_token())["namespace"] == ""
+    _wired(_StarTokenCH(saved=None, grants=[]))
+    assert _defaults(_star_token())["namespace"] == ""
 
 
 def test_a_service_account_without_a_creator_keeps_todays_default(_wired) -> None:
     from server.auth.personal_namespace import derive_personal_slug
 
-    _wired(_SetupTokenCH(saved=None, grants=["alice"]))
-    assert _defaults(_setup_token(creator=""))["namespace"] == derive_personal_slug(
+    _wired(_StarTokenCH(saved=None, grants=["alice"]))
+    assert _defaults(_star_token(creator=""))["namespace"] == derive_personal_slug(
         "sa:cursor-ab12cd"
     )
 
 
 def test_the_away_note_compares_with_the_creators_login() -> None:
-    mi.note_default_namespace(True, "alice", _setup_token())
+    mi.note_default_namespace(True, "alice", _star_token())
     assert mi.default_namespace_note() == {}
-    mi.note_default_namespace(True, "agent-box-claude-code", _setup_token())
+    mi.note_default_namespace(True, "agent-box-claude-code", _star_token())
     assert mi.default_namespace_note() == {"namespace_defaulted": "agent-box-claude-code"}
 
 
@@ -466,11 +483,11 @@ def test_an_unaddressed_write_from_a_creator_without_grants_asks_for_a_namespace
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import mcp_call
 
-    _wired(_SetupTokenCH(saved=None, grants=[]))
+    _wired(_StarTokenCH(saved=None, grants=[]))
     monkeypatch.setattr(mcp_call, "_emit_mcp_event", lambda *a, **k: None)
     op = OPERATIONS_BY_NAME["memory.set"]
     args: dict[str, Any] = {"memory_key": "k", "value": "v"}
-    token = _setup_token()
+    token = _star_token()
 
     async def _call() -> Any:
         request_id, _ = await mcp_call._bind_caller_identity(op, args, token, "claude-code")
@@ -510,7 +527,7 @@ def test_a_delegated_claim_its_creator_holds_stays_named_after_its_own_grant_goe
     from server.operations.base import Role
 
     _revoke_subject_grant(monkeypatch, "agent-box-claude-code")
-    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse", "alice"]))
+    _wired(_StarTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse", "alice"]))
     token = _token(("agent-box-claude-code", "alice"))
     readable = asyncio.run(readable_named_claims(token, "clickhouse"))
     assert readable == ["agent-box-claude-code", "alice"]
@@ -531,7 +548,7 @@ def test_a_delegated_default_follows_the_creators_write_grant_not_the_subjects(
     from server.operations.base import Role
 
     _revoke_subject_grant(monkeypatch, "agent-box-claude-code")
-    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "team-notes"]))
+    _wired(_StarTokenCH(saved=None, grants=["agent-box-claude-code", "team-notes"]))
     token = _token(("agent-box-claude-code", "team-notes"))
     assert _defaults(token)["namespace"] == "agent-box-claude-code"
     asyncio.run(authz.check_authorized(token, Role.WRITER, "clickhouse", "agent-box-claude-code"))
@@ -539,7 +556,7 @@ def test_a_delegated_default_follows_the_creators_write_grant_not_the_subjects(
 
 def test_a_claim_the_creator_no_longer_holds_is_not_named(_wired) -> None:
     # alice left the team behind `gone-team`; the token still claims it first.
-    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    _wired(_StarTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
     token = _token(("gone-team", "qa-clickhouse"))
     assert asyncio.run(readable_named_claims(token, "clickhouse")) == ["qa-clickhouse"]
     text = _initialize_text(token, "coding")
@@ -548,14 +565,14 @@ def test_a_claim_the_creator_no_longer_holds_is_not_named(_wired) -> None:
 
 
 def test_a_creator_who_lost_every_claimed_grant_has_no_default(_wired) -> None:
-    _wired(_SetupTokenCH(saved=None, grants=["alice"]))
+    _wired(_StarTokenCH(saved=None, grants=["alice"]))
     token = _token(("agent-box-claude-code", "qa-clickhouse"))
     assert _defaults(token)["namespace"] == ""
     assert "can read no namespace" in _initialize_text(token, "coding")
 
 
 def test_the_agent_box_claim_is_no_default_once_its_creator_lost_it(_wired) -> None:
-    _wired(_SetupTokenCH(saved=None, grants=["qa-clickhouse"]))
+    _wired(_StarTokenCH(saved=None, grants=["qa-clickhouse"]))
     token = _token(("agent-box-claude-code", "qa-clickhouse"))
     assert _defaults(token)["namespace"] == ""
     text = _initialize_text(token, "coding")
@@ -572,7 +589,7 @@ def test_the_no_default_line_names_what_loom_search_reads(
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import mcp_call
 
-    _wired(_SetupTokenCH(saved=None, grants=["qa-clickhouse", "qa-example-private"]))
+    _wired(_StarTokenCH(saved=None, grants=["qa-clickhouse", "qa-example-private"]))
     monkeypatch.setattr(mcp_call, "_emit_mcp_event", lambda *a, **k: None)
     token = _token(("qa-clickhouse", "qa-example-private"))
     line = mi.no_default_namespace_line(_defaults(token))
@@ -598,7 +615,7 @@ def test_a_blank_or_dash_namespace_gets_the_default(
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import mcp_call
 
-    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    _wired(_StarTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
     token = _token(("agent-box-claude-code", "qa-clickhouse"))
     for op_name in ("memory.set", mcp_call.SEARCH_OP):
         args: dict[str, Any] = {"memory_key": "a/b/c", "value": "v", "namespace": named}
@@ -616,7 +633,7 @@ def test_a_steady_state_unaddressed_write_reads_no_grants(_wired) -> None:
     from server.transport import mcp_call
 
     delegation._account_active.clear()
-    ch = _SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"])
+    ch = _StarTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"])
     _wired(ch)
     token = _token(("agent-box-claude-code", "qa-clickhouse"))
     op = OPERATIONS_BY_NAME["memory.set"]
@@ -633,7 +650,7 @@ def test_a_steady_state_unaddressed_write_reads_no_grants(_wired) -> None:
     assert len(steady) == 1 and "user_state" in steady[0], steady
 
 
-class _CappedSACH(_SetupTokenCH):
+class _CappedSACH(_StarTokenCH):
     """A flat service account whose own grants on its claims are all revoked:
     every claim is capped at nothing, so its row is read for inheritance."""
 
@@ -657,9 +674,9 @@ def _steady_bind(ch: _CH, token: Any) -> list[str]:
 
 
 def test_a_wildcard_delegated_bind_reads_the_saved_pick_and_the_ranking_only(_wired) -> None:
-    ch = _SetupTokenCH(saved=None, grants=["code-loom", "alice"])
+    ch = _StarTokenCH(saved=None, grants=["code-loom", "alice"])
     _wired(ch)
-    steady = _steady_bind(ch, _setup_token())
+    steady = _steady_bind(ch, _star_token())
     assert len(steady) == 2, steady
     assert "user_state" in steady[0] and "namespace_grants" in steady[1]
 

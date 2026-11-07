@@ -1,26 +1,31 @@
-"""Service-account self-mint: `/v1/me/service_accounts{,.create,.revoke}`.
+"""The caller's own tokens: `/v1/me/service_accounts{,.create,.revoke}`.
 
-A namespace admin mints, lists and revokes scoped tokens for their own
-namespaces, with no operator round-trip.
+A signed-in person mints, lists and revokes tokens for their tools, agents,
+scripts and CI jobs, never wider than their own grants, with no operator
+round-trip.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 import time
 from collections.abc import Mapping
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
-from server.auth.delegation import Delegated, delegate
+from server.auth.delegation import Delegated, ceiling_role, delegate
 from server.auth.jwt import AuthInfo
 from server.auth.self_signup import AGENT_NAME_PREFIX
 from server.auth.service_accounts import hand_down_lineage, revoked_row
 from server.core.datetimes import naive_utc_now_seconds
+from server.core.errors import BackendUnavailableError
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.app import me_callers, token_grants
+from server.identity.app.caller_home import caller_org, default_namespace
+from server.identity.app.namespace_classification import is_restricted
 from server.identity.app.restricted_access import note_restricted_grants
 from server.operations.base import GRANT_ROLES, Role, grant_rank
 from server.settings import settings
@@ -60,26 +65,17 @@ def parse_ttl_days(ttl_raw: object) -> int | None:
 
 def _requested_roles(payload: dict[str, object]) -> dict[str, str | None]:
     """The body's namespaces in read-priority order, each with the role asked
-    for there (None: the caller's live grant); 422 on a malformed one."""
-    raw_namespaces = payload.get("namespaces") or []
+    for there (None: the caller's live grant); 422 on a malformed one. A
+    missing list, or `"*"`, asks for every namespace the caller belongs to."""
+    raw_namespaces = payload.get("namespaces")
+    if raw_namespaces is None or raw_namespaces == "*":
+        raw_namespaces = ["*"]
     if not isinstance(raw_namespaces, list) or not raw_namespaces:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": "namespaces must be a non-empty array",
-            },
-        )
+        raise _invalid('namespaces must be "*" or a non-empty array')
 
     default_role_raw = payload.get("role")
     if default_role_raw is not None and str(default_role_raw) not in GRANT_ROLES:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": "role must be viewer | writer | admin",
-            },
-        )
+        raise _invalid("role must be viewer | writer | admin")
     default_role = str(default_role_raw) if default_role_raw is not None else None
 
     # Parse ordered entries (order = read priority). Each is a bare string or
@@ -97,23 +93,69 @@ def _requested_roles(payload: dict[str, object]) -> dict[str, str | None]:
         if not ns:
             continue
         if r is not None and r not in GRANT_ROLES:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "VALIDATION_FAILED",
-                    "message": f"role for {ns} must be viewer | writer | admin",
-                },
-            )
+            raise _invalid(f"role for {ns} must be viewer | writer | admin")
         requested_role[ns] = r
     if not requested_role:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": "namespaces must be a non-empty array",
-            },
-        )
+        raise _invalid('namespaces must be "*" or a non-empty array')
+    if "*" in requested_role and default_role is not None:
+        # `*` reads through the caller's live grants, at the caller's role in each.
+        raise _invalid('role applies to a list without "*": a "*" token has your role everywhere')
+    if "*" in requested_role and any(r is not None for r in requested_role.values()):
+        raise _invalid('a role per namespace needs a list without "*"')
     return requested_role
+
+
+async def _restricted_grants(
+    org: str, subject: str, delegated: Delegated, requested: dict[str, str | None]
+) -> dict[str, str]:
+    """The role of the direct grant a new token gets on each restricted namespace it
+    names: its own role there, capped at the minting subject's own grant, which a
+    restricted namespace needs of every reader. That holds for one the mint named and
+    for one a narrower parent's own claim brought in through `*` (that parent named it at
+    its own mint). Where the subject holds no grant, a named one is refused (403) and one
+    that came from expanding `*` is left without a grant."""
+    out: dict[str, str] = {}
+    for ns in delegated.namespaces:
+        if ns == "*" or not await is_restricted(org, ns):
+            continue
+        held = await me_callers.caller_role_on(org, ns, subject)
+        if held is None:
+            if ns not in requested:
+                continue
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "AUTH_INSUFFICIENT", "message": f"cannot delegate access on {ns}"},
+            )
+        token_role = (delegated.ns_roles or {}).get(ns) or delegated.roles[0]
+        out[ns] = min(held, token_role, key=grant_rank)
+    return out
+
+
+def _invalid(message: str) -> HTTPException:
+    return HTTPException(status_code=422, detail={"code": "VALIDATION_FAILED", "message": message})
+
+
+async def _with_bound_tracker(org: str, subject: str, names: list[str]) -> list[str]:
+    """A repository named on a token brings its bound tracker record when that
+    record is itself restricted and the caller holds a direct grant on it. The
+    history-shaped code ops (blame, bisect, backport gaps, first build, symbol history) read
+    issues and PRs from that record through the tracker namespace's own two-factor gate, so
+    a token naming the repository but not the record would answer without them, silently.
+    A standard record needs nothing: it is read by whoever reads the repository. Order is
+    kept; nothing is removed."""
+    from server.tracker.app.binding import tracker_namespaces_for
+
+    out = list(names)
+    for ns in names:
+        for qa in tracker_namespaces_for(ns):  # every linked tracker
+            if qa in out:
+                continue
+            if not await is_restricted(org, qa):
+                continue
+            if await me_callers.caller_role_on(org, qa, subject) is None:
+                continue
+            out.append(qa)
+    return out
 
 
 async def _name_holder(org: str, name: str) -> str | None:
@@ -134,32 +176,14 @@ async def _name_holder(org: str, name: str) -> str | None:
 def token_name(raw: object) -> str:
     """A new token's name in its owner's token list; 422 for one off its shape."""
     name = str(raw or "").strip()
-    if not name or not (1 <= len(name) <= 64):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": "name required, 1-64 chars",
-            },
-        )
+    if not (1 <= len(name) <= 64):
+        raise _invalid("name must be 1-64 chars")
     if "\x00" in name:  # reserved: revocation cutoffs key on a NUL (mint_token refuses it)
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "VALIDATION_FAILED", "message": "name cannot hold a NUL character"},
-        )
+        raise _invalid("name cannot hold a NUL character")
     if ":" in name:  # reserved: `sa:<trust>:<agent>` is a machine trust's agent (auth.agents)
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "VALIDATION_FAILED", "message": "name cannot hold a ':'"},
-        )
+        raise _invalid("name cannot hold a ':'")
     if name.startswith(AGENT_NAME_PREFIX):  # self-signup's, written without this check
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": f"names starting {AGENT_NAME_PREFIX!r} are agents'",
-            },
-        )
+        raise _invalid(f"names starting {AGENT_NAME_PREFIX!r} are agents'")
     return name
 
 
@@ -168,11 +192,19 @@ async def refuse_taken_name(org: str, name: str, subject: str) -> None:
     holder = await _name_holder(org, name)
     if holder is not None:
         # Names are one per org; whose token holds one is not the caller's to learn.
-        taken = f"your token {name!r} is live" if holder == subject else "that name is in use"
+        mine = {s.lower() for s in await me_callers.subject_aliases_of(org, subject)}
+        yours = holder.lower() in mine
+        taken = f"your token {name!r} is live" if yours else "that name is in use"
         raise HTTPException(
             status_code=409,
             detail={"code": "TOKEN_NAME_TAKEN", "message": f"{taken}; choose another name"},
         )
+
+
+def generated_name(now: datetime) -> str:
+    """The name of a token made without one: its day and 48 random bits, so
+    names made in bulk do not meet in practice (a clash would be a 409)."""
+    return f"token-{now:%Y-%m-%d}-{secrets.token_hex(6)}"
 
 
 def new_token_subject(org: str, name: str, creator: str) -> str:
@@ -188,13 +220,9 @@ async def save_token(
     *,
     created_by: str,
     now: datetime,
-    kind: str = "service_account",
-    client: str = "",
 ) -> None:
     """List the token in its owner's token list (`loom.service_accounts`).
-    `kind` is "mcp" for a Setup-page token, with the MCP client it was made for.
-    Called under the name's claim, but for a Setup-page token, whose name is
-    new with each mint."""
+    Called under the name's claim."""
     from server.core.ch import get_client
     from server.core.versions import next_version
 
@@ -225,8 +253,8 @@ async def save_token(
                 "revoked_at": None,
                 "revoked_by": "",
                 "version": version,
-                "kind": kind,
-                "client": client,
+                "kind": "service_account",
+                "client": "",
                 # The gate and the namespace listings read this flag: a token
                 # reads through its creator's live grants (server/auth/service_accounts.py).
                 "inherit_creator_grants": True,
@@ -289,13 +317,19 @@ async def me_service_accounts_create(
     request: Request,
     payload: dict[str, object],
 ) -> dict[str, object]:
-    """Mint a service-account JWT scoped to a chosen subset of the caller's
-    namespaces, with a per-namespace role and an explicit priority order.
+    """Mint a token for the caller's own tools, agents, scripts and CI jobs,
+    never wider than the caller's grants, and hand it over with the setup of
+    every supported MCP client.
 
     Body:
-      name: str          # human-friendly label (e.g. 'agent-detector')
-      namespaces: [ ... ] # ORDERED (order = read priority). Each entry is
-                          #   either a bare "namespace" string, or an object
+      name?: str          # its name in the token list; blank: token-<day>-<hex>
+      namespaces?: "*" | [ ... ]
+                          # "*" (the default): every namespace the caller
+                          #   belongs to, now and later, at the caller's role
+                          #   in each. A name before "*" is where it saves;
+                          #   restricted namespaces it names are read too.
+                          # A list without "*": exactly these, ORDERED (order =
+                          #   read priority), each a bare "namespace" or
                           #   {"namespace": str, "role"?: str}. Role per entry
                           #   defaults to the top-level `role`, else the
                           #   caller's live grant on that namespace.
@@ -305,10 +339,14 @@ async def me_service_accounts_create(
     Each namespace's role is delegated from the caller's token
     (`server.auth.delegation.delegate`): at most the caller's live grant on
     that namespace, and the caller's token role there when that token is
-    itself delegated or per-namespace, or the namespace is restricted. The
-    token carries an `ns_roles` claim (the authoritative per-namespace role)
-    and an ordered `namespaces` claim (the read priority). Returns the JWT
-    exactly once.
+    itself delegated or per-namespace, or the namespace is restricted. A
+    list token carries an `ns_roles` claim (the authoritative per-namespace
+    role); a `*` token one role, rechecked against the caller's live grant on
+    every call. A restricted namespace it names gets a direct grant of the
+    token's own, capped at the caller's own grant there and revoked with it;
+    a restricted repository brings its bound restricted tracker record.
+    Returns the JWT exactly once, with where calls that name no namespace
+    save (`caller_home.default_namespace`).
     """
     caller: AuthInfo | None = None  # auth off: a mint writes no audit row
     if settings.auth_actually_required():
@@ -317,9 +355,17 @@ async def me_service_accounts_create(
         parent = dev_parent(request, payload)
     subject, org = parent.subject, parent.org
 
-    name = token_name(payload.get("name"))
+    raw_name = str(payload.get("name") or "").strip()
+    name = token_name(raw_name) if raw_name else generated_name(naive_utc_now_seconds())
     requested_role = _requested_roles(payload)
     ttl_seconds = parse_ttl_days(payload.get("ttl_days"))
+    everything = "*" in requested_role
+    # A restricted repository's bound tracker record is named beside it, read-only.
+    named = [ns for ns in requested_role if ns != "*" and await is_restricted(org, ns)]
+    for ns in await _with_bound_tracker(org, subject, named):
+        # Only where the parent token reaches it, or the bound record would refuse the mint.
+        if ns not in requested_role and ceiling_role(parent, org, ns) is not None:
+            requested_role[ns] = None if everything else "viewer"
 
     from server.auth.grant_claims import service_account_change
 
@@ -329,22 +375,22 @@ async def me_service_accounts_create(
             parent,
             org=org,
             requested=requested_role,
-            scoped=True,
+            scoped=not everything,
             ttl_seconds=ttl_seconds,
             is_service_account=True,
         )
-        ordered_ns = delegated.namespaces
-        ns_roles = delegated.ns_roles or {}
+        # Read before anything is saved, so a refusal or a failed read strands no token.
+        restricted_roles = await _restricted_grants(org, subject, delegated, requested_role)
         sa_subject = new_token_subject(org, name, subject)
         minted = delegated.mint(sa_subject)
-        now = naive_utc_now_seconds()
+        now = naive_utc_now_seconds()  # after the mint: the row is never older than the token's iat
         expires_at = delegated.expires_at(now)
         await save_token(name, sa_subject, delegated, created_by=subject, now=now)
-    # A restricted namespace ticked here is read only when the token's own subject holds a
-    # direct grant — write it now, capped, revoked with the token; a name in the claim alone
+    # A restricted namespace named here is read only when the token's own subject holds a
+    # direct grant: write it now, capped, revoked with the token; a name in the claim alone
     # would have every read of it refused.
     restricted_granted = await token_grants.grant_restricted_to_token(
-        org, sa_subject, subject, ns_roles
+        org, sa_subject, subject, restricted_roles
     )
     await note_restricted_grants(
         caller,
@@ -354,16 +400,37 @@ async def me_service_accounts_create(
         granted_to=sa_subject,
     )
 
+    from server.auth.public_url import public_base_url
+    from server.identity.app.token_clients import client_configs
+
+    try:
+        token = delegated.as_auth(sa_subject)
+        # The org the MCP transport resolves this token in: an org-wide parent's `*`
+        # child lands in the self-signup org there.
+        saves_to: str | None = await default_namespace(token, caller_org(token) or org)
+    except BackendUnavailableError:
+        # The token is minted and listed: hand it over without a name rather than
+        # fail, or a retry would mint a second one. Each call resolves it.
+        saves_to = None
+    mcp_url = f"{public_base_url(request)}/mcp"
     return {
         "token": minted,
         "name": name,
         "sa_subject": sa_subject,
         "org": org,
-        "namespaces": ordered_ns,
-        "ns_roles": ns_roles,
+        # The claim as minted: `*` (and what is named beside it), or the list it reads.
+        # A `*` asked under a narrower sign-in becomes that sign-in's list.
+        "namespaces": delegated.namespaces,
+        "ns_roles": delegated.ns_roles or {},
+        "reads_everything": "*" in delegated.namespaces,
+        # Where calls that name no namespace save; "": none, each call names one;
+        # null: not readable now.
+        "saves_to": saves_to,
         "created_at": now.isoformat(),
         "expires_at": expires_at.isoformat() if expires_at else None,
         "restricted_namespaces": restricted_granted,
+        "mcp_url": mcp_url,
+        "clients": client_configs(mcp_url, minted),
     }
 
 
@@ -378,14 +445,15 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
     else:
         subject, org = dev_caller(request, request.query_params)
 
-    subs = await me_callers.subject_aliases_of(org, subject)
+    # Every spelling of the caller, in any case, as grants match a subject.
+    subs = [s.lower() for s in await me_callers.subject_aliases_of(org, subject)]
     rows = await get_client().query_all(
         """
         WITH admin_ns AS (
             SELECT namespace
             FROM loom.namespace_grants FINAL
             WHERE org = {org:String}
-              AND subject IN {subs:Array(String)}
+              AND lower(subject) IN {subs:Array(String)}
               AND role = 'admin'
               AND {live}
         ),
@@ -416,7 +484,7 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
             FROM loom.service_accounts FINAL
             WHERE org = {org:String}
               AND (
-                  created_by = {sub:String}
+                  lower(created_by) IN {subs:Array(String)}
                   OR arrayExists(n -> n IN (SELECT namespace FROM admin_ns), namespaces)
               )
             ORDER BY created_at DESC
@@ -426,7 +494,7 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
         ORDER BY s.created_at DESC
         LIMIT 200
         """.replace("{live}", LIVE_GRANT),
-        params={"org": org, "sub": subject, "subs": subs},
+        params={"org": org, "subs": subs},
     )
 
     def _iso(v: datetime | None) -> str | None:
@@ -450,6 +518,9 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
                 "kind": r.get("kind") or "service_account",
                 "client": r.get("client") or "",
                 "ns_roles": me_callers.parse_ns_roles(r.get("ns_roles")),
+                # Made by the caller under any spelling of theirs, not by another person
+                # whose token reaches a namespace the caller administers.
+                "yours": str(r["created_by"]).lower() in subs,
             }
             for r in rows
         ],
@@ -504,7 +575,9 @@ async def me_service_accounts_revoke(
                 },
             )
 
-        authorized = row["created_by"] == subject
+        # Its maker under any spelling of theirs, as the list shows it.
+        mine = {s.lower() for s in await me_callers.subject_aliases_of(org, subject)}
+        authorized = str(row["created_by"]).lower() in mine
         if not authorized:
             for ns in row["namespaces"]:
                 if await me_callers.caller_admin_of(org, ns, subject):

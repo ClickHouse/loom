@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type {
   AccountClient,
-  CreateServiceAccountOptions,
+  CreateTokenOptions,
   GrantRole,
-  ServiceAccountCreated,
-  ServiceAccountNamespace,
-  ServiceAccountRevoked,
-  ServiceAccountRow,
+  TokenClientSetup,
+  TokenCreated,
+  TokenNamespace,
+  TokenRevoked,
+  TokenRow,
 } from "./account.js";
 import { Agent } from "./agent.js";
 import { LoomClient } from "./client.js";
@@ -40,7 +41,7 @@ function client(reply: (s: Sent) => Response, opts: Partial<TransportOptions> = 
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
-const row: ServiceAccountRow = {
+const row: TokenRow = {
   name: "ci",
   sa_subject: "sa:ci-abc123",
   namespaces: ["support"],
@@ -52,29 +53,40 @@ const row: ServiceAccountRow = {
   revoked_at: null,
   revoked_by: "",
   last_used_at: null,
-  kind: "service_account",
-  client: "",
   ns_roles: { support: "writer" },
+  yours: true,
+};
+
+const cursorSetup: TokenClientSetup = {
+  config_key: "mcpServers",
+  config: { mcpServers: { loom: { url: "http://x/mcp?toolset=coding" } } },
+  config_toml: "",
+  command: "",
+  config_path: { darwin: "~/.cursor/mcp.json", linux: "~/.cursor/mcp.json", win32: "%USERPROFILE%\\.cursor\\mcp.json" },
 };
 
 describe("AccountClient", () => {
-  it("creates with ordered mixed namespaces, a default role and ttlDays 0", async () => {
-    const created: ServiceAccountCreated = {
+  it("creates with ordered mixed namespaces, a name, a default role and ttlDays 0", async () => {
+    const created: TokenCreated = {
       token: "jwt",
       name: "ci",
       sa_subject: "sa:ci-abc123",
       org: "acme",
       namespaces: ["support", "docs"],
       ns_roles: { support: "writer", docs: "viewer" },
+      reads_everything: false,
+      saves_to: "support",
       created_at: "2026-10-01T00:00:00",
       expires_at: null,
       restricted_namespaces: [],
+      mcp_url: "http://x/mcp",
+      clients: { cursor: cursorSetup },
     };
     const { loom, sent } = client(() => json(created));
-    const namespaces: ServiceAccountNamespace[] = ["support", { namespace: "docs", role: "viewer" }];
+    const namespaces: TokenNamespace[] = ["support", { namespace: "docs", role: "viewer" }];
     const role: GrantRole = "writer";
-    const options: CreateServiceAccountOptions = { role, ttlDays: 0 };
-    const out = await loom.account.createServiceAccount("ci", namespaces, options);
+    const options: CreateTokenOptions = { name: "ci", role, ttlDays: 0 };
+    const out = await loom.account.createToken(namespaces, options);
     expect(out).toEqual(created);
     expect(sent[0].method).toBe("POST");
     expect(sent[0].url).toBe("http://x/v1/me/service_accounts.create");
@@ -86,17 +98,17 @@ describe("AccountClient", () => {
     });
   });
 
-  it("sends the default ttl of 90 days and no role unless given", async () => {
+  it("reads everything by default, with the default ttl of 90 days and no name or role unless given", async () => {
     const { loom, sent } = client(() => json({}));
-    await loom.account.createServiceAccount("ci", ["support"]);
-    expect(sent[0].body).toEqual({ name: "ci", namespaces: ["support"], ttl_days: 90 });
-    await loom.account.createServiceAccount("ci2", ["support"], { ttlDays: null });
-    expect(sent[1].body).toEqual({ name: "ci2", namespaces: ["support"], ttl_days: null });
+    await loom.account.createToken();
+    expect(sent[0].body).toEqual({ namespaces: "*", ttl_days: 90 });
+    await loom.account.createToken(["support"], { ttlDays: null });
+    expect(sent[1].body).toEqual({ namespaces: ["support"], ttl_days: null });
   });
 
   it("lists through a GET with the bearer and no body", async () => {
     const { loom, sent } = client(() => json({ rows: [row] }));
-    expect(await loom.account.serviceAccounts()).toEqual([row]);
+    expect(await loom.account.tokens()).toEqual([row]);
     expect(sent[0]).toMatchObject({ method: "GET", url: "http://x/v1/me/service_accounts", body: undefined });
     expect(sent[0].headers.Authorization).toBe("Bearer k-static");
     expect(sent[0].headers["X-Request-Id"]).toBeTruthy();
@@ -107,19 +119,19 @@ describe("AccountClient", () => {
   it("retries the GET on a 5xx, as a read", async () => {
     let n = 0;
     const { loom, sent } = client(() => (n++ === 0 ? json({ detail: { code: "X" } }, 503) : json({ rows: [] })));
-    expect(await loom.account.serviceAccounts()).toEqual([]);
+    expect(await loom.account.tokens()).toEqual([]);
     expect(sent.map((s) => s.headers["X-Loom-Retry-Count"])).toEqual(["0", "1"]);
   });
 
   it("revokes by name", async () => {
-    const revoked: ServiceAccountRevoked = {
+    const revoked: TokenRevoked = {
       revoked: true,
       name: "ci",
       revoked_at: "2026-10-02T00:00:00",
       grants_revoked: 1,
     };
     const { loom, sent } = client(() => json(revoked));
-    expect(await loom.account.revokeServiceAccount("ci")).toEqual(revoked);
+    expect(await loom.account.revokeToken("ci")).toEqual(revoked);
     expect(sent[0]).toMatchObject({
       method: "POST",
       url: "http://x/v1/me/service_accounts.revoke",
@@ -131,7 +143,7 @@ describe("AccountClient", () => {
     const { loom, sent } = client(() =>
       json({ detail: { code: "TOKEN_NAME_TAKEN", message: "that name is in use; choose another name" } }, 409),
     );
-    const err = await loom.account.createServiceAccount("ci", ["support"]).catch((e: unknown) => e);
+    const err = await loom.account.createToken(["support"], { name: "ci" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PreconditionFailed);
     expect((err as PreconditionFailed).code).toBe("TOKEN_NAME_TAKEN");
     expect((err as PreconditionFailed).status).toBe(409);
@@ -152,7 +164,7 @@ describe("AccountClient", () => {
         s.headers.Authorization === "Bearer t-old" ? json({ detail: { code: "AUTH" } }, 401) : json({ rows: [] }),
       { tokenProvider },
     );
-    expect(await loom.account.serviceAccounts()).toEqual([]);
+    expect(await loom.account.tokens()).toEqual([]);
     expect(sent.map((s) => [s.method, s.headers.Authorization])).toEqual([
       ["GET", "Bearer t-old"],
       ["GET", "Bearer t-new"],
@@ -164,7 +176,7 @@ describe("AccountClient", () => {
     const { loom, sent } = client(() => json({ rows: [] }));
     const ctrl = new AbortController();
     ctrl.abort();
-    await expect(loom.account.serviceAccounts({ signal: ctrl.signal })).rejects.toThrow(/aborted/);
+    await expect(loom.account.tokens({ signal: ctrl.signal })).rejects.toThrow(/aborted/);
     expect(sent).toHaveLength(0);
   });
 

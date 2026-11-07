@@ -251,22 +251,19 @@ Bot sign-in is Node-only. `transport.apiKeyHint` reads `bot:<client id>`; pass `
 
 ### Your tokens
 
-`loom.account` (and `bot.account` on an `Agent`) makes, lists and revokes your own scoped tokens, as the dashboard's Tokens list does. A new token is never wider than your own grants; `namespaces` are in read order, each a bare name or `{ namespace, role }`. `ttlDays` defaults to 90, `0` never expires. The token is in the answer once.
+`loom.account` (and `bot.account` on an `Agent`) makes, lists and revokes your own tokens, as the dashboard's Settings → Tokens does. A new token is never wider than your own grants. `namespaces` is `"*"` by default: every namespace you belong to, now and later. A list without `"*"` reads exactly those, in read order, each a bare name or `{ namespace, role }`. `ttlDays` defaults to 90, `0` never expires. The token is in the answer once, with `saves_to` and each MCP client's setup in `clients`.
 
 ```ts
 const loom = new LoomClient({ baseUrl, apiKey });
-const sa = await loom.account.createServiceAccount(
-  "ci",
-  ["support", { namespace: "docs", role: "viewer" }],
-  {
-    role: "writer",
-    ttlDays: 30,
-  },
-);
-console.log(sa.token, sa.expires_at);
-for (const t of await loom.account.serviceAccounts())
-  console.log(t.name, t.namespaces, t.revoked_at);
-await loom.account.revokeServiceAccount("ci");
+const mine = await loom.account.createToken(); // everything you belong to
+const ci = await loom.account.createToken(["support", { namespace: "docs", role: "viewer" }], {
+  name: "ci",
+  role: "writer",
+  ttlDays: 30,
+});
+console.log(ci.token, ci.saves_to, ci.expires_at);
+for (const t of await loom.account.tokens()) console.log(t.name, t.namespaces, t.revoked_at);
+await loom.account.revokeToken("ci");
 ```
 
 A name a live token already holds is a `PreconditionFailed` with code `TOKEN_NAME_TAKEN`.

@@ -9,16 +9,15 @@ of the token. This guide holds the procedures;
 
 ## Mint a token
 
-| Path                                               | Who                                              | Produces                                                                                                                                                                                                                  |
-| -------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom mint-token`                                  | an operator holding the signing key              | any token, for any subject (the CLI signs locally): the way to mint in another principal's name                                                                                                                           |
-| `POST /v1/admin/token.mint`                        | an `org_admin` token                             | a service-account token [delegated](#delegated-tokens) from the caller's, inside the caller's own org, saved to the caller's token list; body fields `name`, `namespaces`, `roles`, `ns_roles`, `consumer`, `ttl_seconds` |
-| `POST /v1/me/setup/mcp_config`                     | any signed-in person (the dashboard's Setup tab) | a flat token [delegated](#delegated-tokens) from the person's, saved to their token list: `*` (every namespace they hold a grant on, now and later) or the one namespace named                                            |
-| `POST /v1/me/service_accounts.create`              | any signed-in person (the dashboard)             | a scoped service-account token [delegated](#delegated-tokens) from the person's, over a subset of their own namespaces                                                                                                    |
-| `loom login`, `loom.login()`                       | a person, on any browser                         | an hour-long user token and a rotating refresh token, stored in `~/.loom/credentials` ([below](#sign-in-from-a-terminal-or-a-notebook))                                                                                   |
-| `POST /v1/auth/login`, OAuth                       | a person                                         | a user token for their own subject                                                                                                                                                                                        |
-| `POST /v1/auth/self-signup`                        | anyone, when `LOOM_SELF_SIGNUP=open`             | a writer token on the namespace the caller claims                                                                                                                                                                         |
-| `POST /v1/auth/agent-signup` (`loom init --agent`) | a bot, when `LOOM_SELF_SIGNUP=open`              | a service-account writer token on `agent-<slug>` plus a one-time claim code ([headless bots](headless-bots.md))                                                                                                           |
+| Path                                               | Who                                                                                             | Produces                                                                                                                                                                                                                  |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom mint-token`                                  | an operator holding the signing key                                                             | any token, for any subject (the CLI signs locally): the way to mint in another principal's name                                                                                                                           |
+| `POST /v1/admin/token.mint`                        | an `org_admin` token                                                                            | a service-account token [delegated](#delegated-tokens) from the caller's, inside the caller's own org, saved to the caller's token list; body fields `name`, `namespaces`, `roles`, `ns_roles`, `consumer`, `ttl_seconds` |
+| `POST /v1/me/service_accounts.create`              | any signed-in person (**Settings → Tokens**, `loom token create`, `agent.account.create_token`) | a token [delegated](#delegated-tokens) from the person's, saved to their token list: everything they belong to (`*`) or only the namespaces listed ([one token for every use](#one-token-for-every-use))                  |
+| `loom login`, `loom.login()`                       | a person, on any browser                                                                        | an hour-long user token and a rotating refresh token, stored in `~/.loom/credentials` ([below](#sign-in-from-a-terminal-or-a-notebook))                                                                                   |
+| `POST /v1/auth/login`, OAuth                       | a person                                                                                        | a user token for their own subject                                                                                                                                                                                        |
+| `POST /v1/auth/self-signup`                        | anyone, when `LOOM_SELF_SIGNUP=open`                                                            | a writer token on the namespace the caller claims                                                                                                                                                                         |
+| `POST /v1/auth/agent-signup` (`loom init --agent`) | a bot, when `LOOM_SELF_SIGNUP=open`                                                             | a service-account writer token on `agent-<slug>` plus a one-time claim code ([headless bots](headless-bots.md))                                                                                                           |
 
 ```bash
 loom mint-token --subject my-bot --org acme --namespaces support --roles writer --ttl-days 30 --save
@@ -80,10 +79,10 @@ session. `loom logout` revokes it on the server. `--profile NAME` (or
 `LOOM_PROFILE`) keeps sessions for several servers side by side; a profile's
 token is only ever sent to the server it signed in to.
 
-**CI and services** have no one to approve a code. Give them a scoped
-service-account token instead, minted by an operator or from the dashboard's
-service accounts. Pass it as `LOOM_API_KEY`, which takes precedence over a
-stored session:
+**CI and services** have no one to approve a code. Give them a token that reads
+only the namespaces they need instead, made under **Settings → Tokens** (_Only these
+namespaces_), with `loom token create --namespace …`, or by an operator. Pass it as
+`LOOM_API_KEY`, which takes precedence over a stored session:
 
 ```bash
 loom mint-token --service-account --subject sa:ci --org acme \
@@ -300,10 +299,40 @@ to `max_pages`.
   and scans the org's account directory for their ties, so a late page costs what the first
   does.
 
+## One token for every use
+
+![Settings → Tokens → New token: what it reads, where it saves, its name and expiry](../images/dashboard-new-token.png)
+
+**Settings → Tokens → New token**, `loom token create` and `agent.account.create_token`
+make the same token for an AI tool, an agent, a script or a CI job. One answer holds the
+token, once, with the setup of every supported MCP client (`clients`) and where it saves
+(`saves_to`); the same token also works as `LOOM_API_KEY`. Two choices shape it:
+
+- **What it reads.** `namespaces: "*"` (the default) reads every namespace and repository
+  the person belongs to, now and after they join more, at their own role in each; it takes
+  no `role`, so for a read-only token list the namespaces with `viewer`. A namespace named
+  before `*` is where it saves, when it may write there; restricted namespaces it names
+  are read too, each with a
+  [grant of the token's own](#restricted-namespaces-classificationrestricted) capped at the
+  person's own grant there (a namespace they hold none on is refused). A restricted
+  repository brings its bound restricted tracker record, read-only. A list without `*`
+  reads exactly those, in that order (the read priority), each at the role given there,
+  never above the person's grant.
+- **Where it saves.** A call that names no namespace lands, for a `*` token, in the
+  namespace named before `*` when it may write there (an `admin/token.mint` token whose
+  `namespaces` start with one too); otherwise it follows the namespace the person works
+  in on the dashboard, as their own sign-in does. A list token saves to that namespace
+  when it lists it and may write there, else to one named after the person, else to the
+  first it lists and may write. Each mint answers with the namespace (`saves_to`).
+
+Blank names become `token-<day>-<hex>`. Every token the person made is listed with what it
+reads (and, for a `*` token, where it saves), and revoking it there ends it in every tool at
+once.
+
 ## Delegated tokens
 
-The dashboard's Setup tab, `service_accounts.create` and `admin/token.mint` mint a token
-from the caller's own, through one policy (`server/auth/delegation.py`). The child gets
+`service_accounts.create` (the dashboard's **New token** form, `loom token create`, the SDKs) and
+`admin/token.mint` mint a token from the caller's own, through one policy (`server/auth/delegation.py`). The child gets
 what was asked for, cut to what the caller's token allows and to the caller's live grants:
 
 - the caller's org only (an org-wide `*` token names one);
@@ -315,7 +344,8 @@ what was asked for, cut to what the caller's token allows and to the caller's li
   a restricted namespace also stay inside the caller's token role there;
 - `*` only from a sign-in token or a delegated `*` token, and it means "wherever the person
   holds a grant", at the caller's token role; from a narrower token it becomes that token's
-  own namespace list;
+  own namespace list. A namespace named beside `*` without a role does not lower that one
+  role: the person's live grant caps every call there anyway;
 - the caller's `read_scope`, `read_user_id` and `ns_write`; a per-namespace child asking for
   `writer` or `admin` on a namespace outside the caller's `ns_write` is refused, and the
   inherited `ns_write` binds the child's writes whatever its `ns_roles` say;

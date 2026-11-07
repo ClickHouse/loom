@@ -410,7 +410,7 @@ async def test_set_source_writes_the_ordered_list(wired, monkeypatch) -> None:
 async def test_a_token_naming_the_repository_brings_every_restricted_linked_tracker(
     wired, monkeypatch
 ) -> None:
-    import server.identity.app.me_setup as me
+    import server.identity.app.me_service_accounts as me
     from server.identity.app import me_callers
 
     async def _restricted(org, ns):
@@ -420,6 +420,7 @@ async def test_a_token_naming_the_repository_brings_every_restricted_linked_trac
         return "viewer" if ns == PRIV else None
 
     monkeypatch.setattr("server.identity.app.namespace_classification.is_restricted", _restricted)
+    monkeypatch.setattr(me, "is_restricted", _restricted)
     monkeypatch.setattr(me_callers, "caller_role_on", _role)
     assert await me._with_bound_tracker(ORG, "alice", [CODE]) == [CODE, PRIV]
 

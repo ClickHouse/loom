@@ -153,7 +153,8 @@ async def delegate(
     highest the parent and the creator allow. `"*"` (flat only) asks for
     whatever the creator holds live. `scoped` mints an `ns_roles` token;
     otherwise a flat token whose one role is the lowest role allowed on any
-    requested namespace. The caller lists the child where its owner can revoke
+    requested namespace, a role-less name beside `*` counting at the parent's
+    ceiling (`_flat_role`). The caller lists the child where its owner can revoke
     it (`loom.service_accounts`). Raises 403 AUTH_INSUFFICIENT naming what was
     refused."""
     child_org = _child_org(parent, org)
@@ -180,7 +181,7 @@ async def delegate(
         flat: list[str] = []
     else:
         ns_roles = None
-        flat = [min(roles.values()).name.lower()]
+        flat = [_flat_role(parent, child_org, requested, roles).name.lower()]
     return Delegated(
         org=child_org,
         namespaces=list(roles),
@@ -196,6 +197,32 @@ async def delegate(
         creator=creator,
         is_service_account=is_service_account,
     )
+
+
+def _flat_role(
+    parent: AuthInfo, org: str, requested: dict[str, str | None], roles: dict[str, Role]
+) -> Role:
+    """The one role of a flat child: the lowest allowed on any namespace it
+    names. Beside `*`, a namespace asked for with no role counts at the
+    parent's ceiling there rather than the creator's grant: such a token reads
+    through the creator's live grants, which cap every call, so a repository
+    the creator only reads does not leave the token unable to write anywhere.
+    The child still never exceeds the parent on any namespace."""
+    if "*" not in requested:
+        return min(roles.values())
+
+    def counted(ns: str) -> Role:
+        # A namespace `*` expanded into carries the role asked for on `*`.
+        if requested.get(ns, requested["*"]) is not None:
+            return roles[ns]
+        # `or roles[ns]` only satisfies the type: `_allowed_roles` refused or dropped
+        # every namespace without a ceiling.
+        return ceiling_role(parent, org, ns) or roles[ns]
+
+    flat = min(counted(ns) for ns in roles)
+    # A role asked for on `*` also caps the names beside it that asked for none.
+    star = delegable_role(requested["*"])
+    return flat if star is None else min(flat, star)
 
 
 def _child_org(parent: AuthInfo, org: str) -> str:

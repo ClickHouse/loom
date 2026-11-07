@@ -24,13 +24,14 @@ async def caller_admin_of(org: str, namespace: str, subject: str) -> bool:
     """True if `subject` holds an active admin grant on `(org, namespace)`."""
     from server.core.ch import get_client
 
-    subs = await subject_aliases_of(org, subject)
+    # Any case, as the gate matches a grant's subject (`authz.grant_role_for`).
+    subs = [s.lower() for s in await subject_aliases_of(org, subject)]
     row = await get_client().query_one(
         """
         SELECT 1 AS x FROM loom.namespace_grants FINAL
         WHERE org = {org:String}
           AND namespace = {ns:String}
-          AND subject IN {subs:Array(String)}
+          AND lower(subject) IN {subs:Array(String)}
           AND role = 'admin'
           AND {live}
         LIMIT 1
@@ -60,14 +61,15 @@ async def caller_role_on(org: str, namespace: str, subject: str) -> str | None:
     from server.core.ch import get_client
     from server.core.grant_sql import GRANT_RANK_SQL
 
-    subs = await subject_aliases_of(org, subject)
+    # Any case, as the gate matches a grant's subject (`authz.grant_role_for`).
+    subs = [s.lower() for s in await subject_aliases_of(org, subject)]
     row = await get_client().query_one(
         """
         SELECT role
         FROM loom.namespace_grants FINAL
         WHERE org = {org:String}
           AND namespace = {ns:String}
-          AND subject IN {subs:Array(String)}
+          AND lower(subject) IN {subs:Array(String)}
           AND {live}
         ORDER BY {rank} DESC
         LIMIT 1

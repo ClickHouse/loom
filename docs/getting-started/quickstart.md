@@ -273,10 +273,10 @@ Before making the server reachable by a team, follow the
 In single-user mode a token is optional. Minting one anyway keeps your scripts working
 when auth is turned on.
 
-- **Dashboard:** **Settings → Tokens → New token**. _For my own tools_ gives a token
-  with one home namespace that reads everything you belong to, plus a client config
-  block. _For a bot that sees only these_ scopes it to the namespaces you tick, with a
-  role and an expiry.
+- **Dashboard:** **Settings → Tokens → New token**. By default the token reads everything
+  you belong to and saves to the namespace you are in; _Only these namespaces_ limits it to
+  the ones you tick. The result shows the token once, with the setup for your MCP client
+  or a script.
 - **CLI, as the operator:** run it inside the server container, which holds the signing
   secret:
 

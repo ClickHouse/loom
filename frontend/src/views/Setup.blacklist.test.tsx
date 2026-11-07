@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MyNamespaceEntry, ServiceAccountEntry, WhoAmI } from "../api";
+import type { MyNamespaceEntry, TokenEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -18,21 +18,23 @@ vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
-    listServiceAccounts: vi.fn(async (): Promise<ServiceAccountEntry[]> => []),
+    listTokens: vi.fn(async (): Promise<TokenEntry[]> => []),
     listMine: vi.fn(async (): Promise<MyNamespaceEntry[]> => []),
     countMemories: vi.fn(async () => 12),
     listCodeRepos: vi.fn(async () => []),
     registerNamespace: vi.fn(async () => undefined),
-    generateMcpConfig: vi.fn(async () => ({
-      client: "claude-desktop" as const,
-      config_path: { darwin: "", linux: "", win32: "" },
-      config_key: "mcpServers",
-      config: {},
+    createToken: vi.fn(async () => ({
       token: "tok",
-      subject: "a@x",
+      name: "token-2026-01-01-abcdef",
+      sa_subject: "sa:t",
       org: "dev",
-      namespace: "reporter-public",
-      namespace_scope: "single" as const,
+      namespaces: ["reporter-public", "*"],
+      ns_roles: {},
+      reads_everything: true,
+      saves_to: "reporter-public",
+      created_at: "2026-01-01T00:00:00",
+      expires_at: null,
+      restricted_namespaces: [],
       mcp_url: "http://localhost/mcp",
     })),
     listBlacklist: vi.fn(async () => ({
@@ -178,7 +180,7 @@ describe("Setup's 'Never save' panel", () => {
   });
 });
 
-describe("Setup's remembered MCP client", () => {
+describe("Setup's remembered connect choice", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.history.replaceState(null, "", "/settings");
@@ -202,9 +204,9 @@ describe("Setup's remembered MCP client", () => {
     const admin: WhoAmI = { authenticated: true, subject: "a@x", org: ORG, roles: ["ADMIN"] };
     seed(admin, [], MEMORY_NS);
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("button", { name: /Generate token/ }, WAIT));
-    const picker = await screen.findByLabelText(/^MCP client/, undefined, WAIT);
-    expect(picker).toHaveTextContent("Claude Desktop");
+    await userEvent.click(await screen.findByRole("button", { name: /Create token/ }, WAIT));
+    const picker = await screen.findByLabelText(/^Connect/, undefined, WAIT);
+    expect(picker).toHaveTextContent("Claude Code");
   });
 
   it("a stored id that names no client falls back to the default", async () => {
@@ -212,8 +214,8 @@ describe("Setup's remembered MCP client", () => {
     const admin: WhoAmI = { authenticated: true, subject: "a@x", org: ORG, roles: ["ADMIN"] };
     seed(admin, [], MEMORY_NS);
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("button", { name: /Generate token/ }, WAIT));
-    expect(await screen.findByLabelText(/^MCP client/, undefined, WAIT)).toHaveTextContent("Claude Desktop");
+    await userEvent.click(await screen.findByRole("button", { name: /Create token/ }, WAIT));
+    expect(await screen.findByLabelText(/^Connect/, undefined, WAIT)).toHaveTextContent("Claude Code");
     localStorage.clear();
   });
 });
@@ -236,12 +238,12 @@ describe("Setup's new-namespace button", () => {
     const admin: WhoAmI = { authenticated: true, subject: "a@x", org: ORG, roles: ["ADMIN"] };
     seed(admin, [], MEMORY_NS);
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("button", { name: "For a bot that sees only these" }, WAIT));
-    await userEvent.type(screen.getByLabelText("Namespace to add to the token"), "robot-ns");
-    await userEvent.click(screen.getByRole("button", { name: /New namespace/ }));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.type(screen.getByLabelText("New namespace name"), "robot-ns");
+    await userEvent.click(screen.getByRole("button", { name: /Create namespace/ }));
     await waitFor(() => expect(registerNamespace).toHaveBeenCalledTimes(1), WAIT);
     expect(vi.mocked(registerNamespace).mock.calls[0][1]).toMatchObject({ owner_email: "a@x" });
-    await screen.findByLabelText("Include robot-ns", undefined, WAIT);
+    await screen.findByLabelText("Read robot-ns", undefined, WAIT);
     const calls = vi.mocked(listMine).mock.calls.length;
     // The cache now holds the post-register rows: a later asker joins them, no new read.
     expect(await sharedMine(ORG)).toEqual([home, created]);
@@ -267,10 +269,10 @@ describe("Setup's new-namespace button", () => {
         <Setup />
       </>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: "For a bot that sees only these" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
     expect(screen.queryByText("Your role here: admin")).not.toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText("Namespace to add to the token"), "robot-ns");
-    await userEvent.click(screen.getByRole("button", { name: /New namespace/ }));
+    await userEvent.type(screen.getByLabelText("New namespace name"), "robot-ns");
+    await userEvent.click(screen.getByRole("button", { name: /Create namespace/ }));
     await waitFor(() => expect(registerNamespace).toHaveBeenCalledTimes(1), WAIT);
     expect(await screen.findByText("Your role here: admin", undefined, WAIT)).toBeInTheDocument();
     expect(useStore.getState().myNamespaces).toEqual([home, created]);

@@ -1,8 +1,7 @@
 """The caller API: `/v1/me/*`, the JSON endpoints about the authenticated
 caller that the dashboard calls. Per-user state and the sharing summary here,
-MCP-client setup in `me_setup.py`, service-account self-mint in
-`me_service_accounts.py`. `attach` mounts all of it; the dashboard page itself
-is `dashboard_routes.py`.
+the caller's own tokens in `me_service_accounts.py`. `attach` mounts all of it;
+the dashboard page itself is `dashboard_routes.py`.
 
 These endpoints authenticate through `me_callers`, not the operation
 registry's role gate.
@@ -16,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
-from server.identity.app import me_callers, me_service_accounts, me_setup
+from server.identity.app import me_callers, me_service_accounts
 from server.settings import settings
 
 me_router = APIRouter()
@@ -335,7 +334,6 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
 def attach(app: Any) -> None:
     """Mount the caller API on the FastAPI app."""
     app.include_router(me_router)
-    app.include_router(me_setup.router)
     app.include_router(me_service_accounts.router)
 
 

@@ -221,6 +221,52 @@ async def test_a_flat_child_keeps_the_sign_in_tokens_role(world) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_namespace_named_beside_star_does_not_lower_the_tokens_role(world) -> None:
+    """A `*` token reads through the creator's live grants, which cap every call: a
+    namespace named beside it (where it saves, a restricted repository the creator only
+    reads) counts at the parent's ceiling, so the token still writes where the creator
+    writes."""
+    world["grants"][(ORG, RESTRICTED, "alice")] = Role.VIEWER
+    child = await _child(_login(), {"a": None, "*": None, RESTRICTED: None})
+    assert child.namespaces == ("a", "*", RESTRICTED) and child.roles == (Role.WRITER,)
+    assert await _reaches(child, "a", Role.WRITER) and await _reaches(child, "b", Role.WRITER)
+    # On the restricted namespace the creator only reads, so does the token, whatever its
+    # one role, even with a direct grant of its own there.
+    world["grants"][(ORG, RESTRICTED, "sa:bot")] = Role.VIEWER
+    assert await _reaches(child, RESTRICTED) and not await _reaches(child, RESTRICTED, Role.WRITER)
+    # A role asked for still caps the one role, and without `*` the lowest grant does.
+    assert (await _child(_login(), {"*": None, "b": "viewer"})).roles == (Role.VIEWER,)
+    assert (await _child(_login(), {"a": None, RESTRICTED: None})).roles == (Role.VIEWER,)
+
+
+@pytest.mark.asyncio
+async def test_beside_star_a_narrow_parent_still_caps_the_role(world) -> None:
+    parent = _login(
+        namespaces=("a", "b"),
+        roles=(),
+        ns_roles=(("a", "writer"), ("b", "viewer")),
+        is_service_account=True,
+        token_id="sc-2",
+    )
+    child = await _child(parent, {"*": None})
+    assert child.namespaces == ("a", "b") and child.roles == (Role.VIEWER,)
+    assert not await _reaches(child, "a", Role.WRITER)
+    # A role asked for on `*` holds for every namespace it expands into.
+    writer = _login(
+        namespaces=("a", "b"),
+        roles=(),
+        ns_roles=(("a", "writer"), ("b", "writer")),
+        is_service_account=True,
+        token_id="sc-3",
+    )
+    assert (await _child(writer, {"*": None})).roles == (Role.WRITER,)
+    asked = await _child(writer, {"*": "viewer"})
+    assert asked.roles == (Role.VIEWER,) and not await _reaches(asked, "a", Role.WRITER)
+    beside = await _child(writer, {"a": None, "b": None, "*": "viewer"})
+    assert beside.roles == (Role.VIEWER,)
+
+
+@pytest.mark.asyncio
 async def test_a_viewer_flat_parent_delegates_its_subjects_grant_per_namespace(world) -> None:
     """`loom mint-token --roles viewer` for a subject who holds admin: the
     gate admits it as admin on that namespace, so a per-namespace child may be
@@ -831,12 +877,12 @@ async def test_a_primary_scoped_token_writes_by_its_role_map(world) -> None:
     assert not await _reaches(bound, "a", Role.WRITER)
 
 
-def test_setup_parent_in_dev_mode_is_a_flat_writer(monkeypatch: pytest.MonkeyPatch) -> None:
-    from server.identity.app import me_setup
-    from server.settings import settings
+def test_the_dev_mode_parent_is_a_flat_writer() -> None:
+    from server.identity.app import me_service_accounts
 
-    monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: False)
-    parent = me_setup._setup_parent(SimpleNamespace(headers={}), {"subject": "d", "org": "g"})
+    parent = me_service_accounts.dev_parent(
+        SimpleNamespace(headers={}), {"subject": "d", "org": "g"}
+    )
     assert (parent.subject, parent.org, parent.roles, parent.creator) == (
         "d",
         "g",

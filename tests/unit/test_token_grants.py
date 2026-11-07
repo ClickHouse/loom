@@ -254,21 +254,6 @@ async def test_grants_revoke_handler_calls_the_cascade(monkeypatch: pytest.Monke
     assert inserted and inserted[0]["revoked_at"] is not None
 
 
-def test_two_mints_in_one_minute_get_distinct_token_names() -> None:
-    """service_accounts is keyed on (org, name); a per-minute name would let
-    the second mint replace the first's row."""
-    from datetime import datetime
-
-    from server.identity.app.me_setup import _mcp_token_name
-
-    a = _mcp_token_name("Claude Desktop", datetime(2026, 9, 18, 14, 41, 12), "33c8e3")
-    b = _mcp_token_name("Claude Desktop", datetime(2026, 9, 18, 14, 41, 49), "27d1f2")
-    assert a != b
-    assert a == "Claude Desktop · 2026-09-18 14:41:12 · 33c8e3"
-    # same second, different subject: still distinct
-    assert _mcp_token_name("Claude Desktop", datetime(2026, 9, 18, 14, 41, 49), "aaaaaa") != b
-
-
 @pytest.mark.asyncio
 async def test_many_restricted_namespaces_cost_one_insert(monkeypatch: pytest.MonkeyPatch) -> None:
     """One synchronous insert per namespace makes the Setup page spin for

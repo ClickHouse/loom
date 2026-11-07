@@ -201,14 +201,38 @@ def test_install_codex_dry_run_runs_nothing_and_capture_writes_loom_config(
     )
 
 
-def test_setup_endpoint_client_table_names_codex() -> None:
-    from server.identity.app.me_setup import MCP_SETUP_CLIENT_LABELS
+def test_the_token_mint_client_table_names_codex() -> None:
+    from server.identity.app.token_clients import MCP_CLIENTS
 
-    assert MCP_SETUP_CLIENT_LABELS["codex"] == "Codex"
-    # the dashboard's picker mirrors this table
+    assert "codex" in MCP_CLIENTS
+    # the dashboard's picker mirrors this list
     ts = (ROOT / "frontend" / "src" / "lib" / "clients.ts").read_text()
-    for cid in MCP_SETUP_CLIENT_LABELS:
+    for cid in MCP_CLIENTS:
         assert f'"{cid}"' in ts, f"frontend client list lacks {cid}"
+
+
+def test_the_mint_builds_the_entries_the_dashboard_prints() -> None:
+    """The server's `clients` and the dashboard's snippets come from two builders; the
+    client sets each keys on, and the Claude Code line, are the same."""
+    import re
+
+    from server.identity.app import token_clients
+
+    ts = (ROOT / "frontend" / "src" / "lib" / "clients.ts").read_text()
+
+    def ts_set(name: str) -> set[str]:
+        m = re.search(rf"const {name}: ReadonlySet<ClientId> = new Set\(\[([^\]]*)\]\)", ts)
+        assert m, name
+        return set(re.findall(r'"([a-z-]+)"', m.group(1)))
+
+    assert ts_set("STDIO_VIA_NPX") == token_clients._STDIO_VIA_NPX
+    assert ts_set("CODING_TOOLSET_CLIENTS") == token_clients._CODING_CLIENTS
+    line = token_clients.client_config("claude-code", "http://x/mcp", "T")["command"]
+    template = 'claude mcp add --transport http ${name} "${args.mcpUrl}" -H "Authorization: Bearer ${args.token}" -s user'
+    assert template in ts
+    assert line == template.replace("${name}", "loom").replace(
+        "${args.mcpUrl}", "http://x/mcp?toolset=coding"
+    ).replace("${args.token}", "T")
 
 
 def test_codex_plugin_bundles_its_mcp_entry() -> None:

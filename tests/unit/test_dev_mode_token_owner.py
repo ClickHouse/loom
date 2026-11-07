@@ -47,14 +47,14 @@ class _Store:
         return [
             r
             for (org, _name), r in self.rows.items()
-            if org == params["org"] and r["created_by"] == params["sub"]
+            if org == params["org"] and r["created_by"].lower() in params["subs"]
         ]
 
 
 @pytest.fixture(params=["auth-off", "single-user"])
 def client(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     from server.auth import authz, revocation
-    from server.identity.app import me_callers, me_service_accounts, me_setup, token_grants
+    from server.identity.app import me_callers, me_service_accounts, token_grants
     from server.insights.app import admin_routes
 
     if request.param == "single-user":
@@ -69,6 +69,9 @@ def client(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> T
     monkeypatch.setattr("server.core.ch.get_client", lambda: store)
 
     async def _aliases(org: str, subject: str) -> list[str]:
+        # alice signs in as `alice` or under her email: one person.
+        if subject in ("alice", "alice@acme.dev"):
+            return ["alice", "alice@acme.dev"]
         return [subject]
 
     async def _none(*a: Any, **k: Any) -> Any:
@@ -121,7 +124,6 @@ def client(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> T
     app = FastAPI()
     app.include_router(admin_routes.org_admin_router)
     app.include_router(me_service_accounts.router)
-    app.include_router(me_setup.router)
     return TestClient(app)
 
 
@@ -155,11 +157,10 @@ def _token_mint(client: TestClient, headers: dict[str, str], org: str) -> None:
 
 
 def _setup_mint(client: TestClient, headers: dict[str, str]) -> str:
-    body = {"client": "cursor", "namespace": "home"}
-    r = client.post("/v1/me/setup/mcp_config", json=body, headers=headers)
+    r = client.post("/v1/me/service_accounts.create", json={}, headers=headers)
     assert r.status_code == 200, r.text
     [name] = _listed(client, headers)
-    assert _listed(client, headers)[name]["kind"] == "mcp"
+    assert name == r.json()["name"] and name.startswith("token-")
     return name
 
 
@@ -173,35 +174,35 @@ def test_a_token_minted_by_token_mint_is_listed_and_revoked(
 
 
 @pytest.mark.parametrize("headers", NO_CALLER)
-def test_a_setup_page_token_is_listed_and_revoked(
+def test_a_token_made_without_a_name_is_listed_and_revoked(
     client: TestClient, headers: dict[str, str]
 ) -> None:
     _revoke_and_check(client, headers, _setup_mint(client, headers))
 
 
-def test_a_wildcard_setup_token_names_the_default_namespace(
+def test_a_wildcard_token_names_the_default_namespace(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A `*` token with auth off writes to the default namespace, not alice's `home`.
     monkeypatch.setattr(settings, "default_namespace", "shared-dev")
-    r = client.post("/v1/me/setup/mcp_config", json={"client": "cursor"}, headers=_alice())
+    r = client.post("/v1/me/service_accounts.create", json={}, headers=_alice())
     assert r.status_code == 200, r.text
-    assert r.json()["namespace"] == "shared-dev"
+    assert r.json()["saves_to"] == "shared-dev"
 
 
-def test_a_wildcard_setup_token_with_auth_off_outside_single_user_names_the_personal_namespace(
+def test_a_wildcard_token_with_auth_off_outside_single_user_names_the_personal_namespace(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Only single-user writes to the default namespace; MCP falls back to personal-<sub>.
     monkeypatch.setattr(settings, "auth_required", False)
     monkeypatch.setattr(settings, "identity_provider", "trust-network")
     monkeypatch.setattr(settings, "default_namespace", "shared-dev")
-    r = client.post("/v1/me/setup/mcp_config", json={"client": "cursor"}, headers=_alice())
+    r = client.post("/v1/me/service_accounts.create", json={}, headers=_alice())
     assert r.status_code == 200, r.text
-    assert r.json()["namespace"] == "personal-alice"
+    assert r.json()["saves_to"] == "personal-alice"
 
 
-def test_a_wildcard_setup_token_from_a_wildcard_bearer_names_the_personal_namespace(
+def test_a_wildcard_token_from_a_wildcard_bearer_names_the_personal_namespace(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(settings, "auth_required", True)
@@ -211,12 +212,12 @@ def test_a_wildcard_setup_token_from_a_wildcard_bearer_names_the_personal_namesp
         subject="alice", org="acme", namespaces=["*"], roles=["writer"], ttl_seconds=300
     )
     headers = {"Authorization": f"Bearer {token}"}
-    r = client.post("/v1/me/setup/mcp_config", json={"client": "cursor"}, headers=headers)
+    r = client.post("/v1/me/service_accounts.create", json={}, headers=headers)
     assert r.status_code == 200, r.text
-    assert r.json()["namespace"] == "personal-alice"
+    assert r.json()["saves_to"] == "personal-alice"
 
 
-def test_a_wildcard_setup_token_names_where_its_unaddressed_calls_land(
+def test_a_wildcard_token_names_where_its_unaddressed_calls_land(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Alice's saved switcher pick is a team she writes: MCP lands there, so the page says so.
@@ -233,9 +234,9 @@ def test_a_wildcard_setup_token_names_where_its_unaddressed_calls_land(
     monkeypatch.setattr(settings, "identity_provider", "trust-network")
     monkeypatch.setattr(caller_defaults, "saved_default", _saved)
     monkeypatch.setattr(aliases, "subject_aliases", _own)
-    r = client.post("/v1/me/setup/mcp_config", json={"client": "cursor"}, headers=_alice())
+    r = client.post("/v1/me/service_accounts.create", json={}, headers=_alice())
     assert r.status_code == 200, r.text
-    assert r.json()["namespace"] == "team-x"
+    assert r.json()["saves_to"] == "team-x"
 
 
 def test_a_bearers_token_mint_token_is_its_own_and_revoked_by_it(client: TestClient) -> None:
@@ -245,10 +246,32 @@ def test_a_bearers_token_mint_token_is_its_own_and_revoked_by_it(client: TestCli
     _revoke_and_check(client, _alice(), "ci-bot")
 
 
-def test_a_bearers_setup_page_token_is_its_own_and_revoked_by_it(client: TestClient) -> None:
+def test_a_bearers_unnamed_token_is_its_own_and_revoked_by_it(client: TestClient) -> None:
     name = _setup_mint(client, _alice())
     assert _listed(client, _alice())[name]["created_by"] == "alice"
+    assert _listed(client, _alice())[name]["yours"] is True
     assert _listed(client, {}) == {}
+    _revoke_and_check(client, _alice(), name)
+
+
+def test_a_token_is_listed_and_revoked_under_another_spelling_of_its_maker(
+    client: TestClient,
+) -> None:
+    name = _setup_mint(client, _alice())
+    email = mint_token(
+        subject="alice@acme.dev", org="acme", namespaces=["home"], roles=["writer"], ttl_seconds=300
+    )
+    as_email = {"Authorization": f"Bearer {email}"}
+    assert _listed(client, as_email)[name]["yours"] is True
+    _revoke_and_check(client, as_email, name)
+
+
+def test_a_token_is_its_makers_whatever_the_case_of_the_spelling(client: TestClient) -> None:
+    upper = mint_token(
+        subject="Alice", org="acme", namespaces=["home"], roles=["writer"], ttl_seconds=300
+    )
+    name = _setup_mint(client, {"Authorization": f"Bearer {upper}"})
+    assert _listed(client, _alice())[name]["yours"] is True
     _revoke_and_check(client, _alice(), name)
 
 

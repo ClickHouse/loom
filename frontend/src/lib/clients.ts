@@ -1,7 +1,7 @@
 // Single source of truth for the MCP-client list — the picker labels and the
 // config-block formatter. The first-run wizard and the setup view both import
 // from here, so adding a client is one edit. The server mirrors the list in
-// server/identity/app/me_setup.py (MCP_SETUP_CLIENT_LABELS).
+// server/identity/app/token_clients.py (MCP_CLIENTS).
 
 export type ClientId = "claude-desktop" | "claude-code" | "codex" | "cursor" | "vscode" | "cline" | "windsurf" | "zed";
 
@@ -79,9 +79,11 @@ interface FormattedMcpConfig {
   envLines?: string;
 }
 
-/** Build an MCP config block for a client — same shape as the server's
- *  /v1/me/setup/mcp_config endpoint, duplicated client-side so the post-mint
- *  dialog can switch the preview between clients without re-minting.
+/** Build an MCP config block for a client — the same entry and command as the
+ *  `clients` the server's token mint returns for API callers. The dashboard builds
+ *  it here because the checklist's connect line and the result dialog need only the
+ *  token and the URL (which an answer from the previous build's replica lacks the
+ *  `clients` of), and a parity test (`test_codex_plugin.py`) keeps the two alike.
  *  For Claude Code the block is the project-scoped `.mcp.json` form and
  *  `command` is the `claude mcp add` one-liner (user scope) — the two places
  *  Claude Code actually reads. For Codex the block is `[mcp_servers.loom]`,

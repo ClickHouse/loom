@@ -1281,7 +1281,7 @@ export async function getMySharingSummary(opts: RequestOpts = {}): Promise<Shari
   return getJson<SharingSummary>("/v1/me/sharing-summary", opts);
 }
 
-export interface ServiceAccountEntry {
+export interface TokenEntry {
   name: string;
   sa_subject: string;
   namespaces: string[];
@@ -1295,37 +1295,71 @@ export interface ServiceAccountEntry {
   /** Max ts seen on agent_events for this SA's subject. Null = never
    *  used since creation. */
   last_used_at?: string | null;
-  /** "service_account" (Script/bot form) or "mcp" (AI-agent flow).
-   *  Drives the kind chip on the unified Tokens list. */
-  kind?: string;
-  /** For kind="mcp": which client this token was minted for. Empty for
-   *  service-account tokens. */
-  client?: string;
+  /** Made by you, under any spelling of yours (not another person's token that reaches a
+   *  namespace you administer). Absent from the previous build's answer. */
+  yours?: boolean;
   /** Authoritative per-namespace role map for scoped tokens
    *  (namespace -> "viewer"|"writer"|"admin"), each capped to the minter's
    *  grant. Empty for unscoped tokens (fall back to `roles`). */
   ns_roles?: Record<string, string>;
 }
 
-export interface ServiceAccountCreateResponse extends ServiceAccountEntry {
+/** One namespace of a new token: a name, `*` (every namespace you belong to, now and
+ *  later), or a name with the role the token gets there. */
+export type TokenNamespace = string | { namespace: string; role: "viewer" | "writer" | "admin" };
+
+export interface TokenCreated {
+  /** Shown in this answer only. */
   token: string;
-}
-
-export async function listServiceAccounts(): Promise<ServiceAccountEntry[]> {
-  return (await getJson<{ rows: ServiceAccountEntry[] }>("/v1/me/service_accounts")).rows;
-}
-
-export async function createServiceAccount(opts: {
   name: string;
-  /** Ordered (index 0 = highest read priority). Role per namespace is capped
-   *  server-side at the caller's live grant (downgrade allowed). */
-  namespaces: Array<{ namespace: string; role: "viewer" | "writer" | "admin" }>;
-  ttl_days: number | null;
-}): Promise<ServiceAccountCreateResponse> {
-  return post<ServiceAccountCreateResponse>("/v1/me/service_accounts.create", opts);
+  sa_subject: string;
+  org: string;
+  /** The claim as minted: `*` and what is named beside it, or the list it reads. */
+  namespaces: string[];
+  ns_roles: Record<string, string>;
+  reads_everything: boolean;
+  /** Where calls that name no namespace save; "" none; null not readable now. */
+  saves_to: string | null;
+  created_at: string;
+  expires_at: string | null;
+  /** Restricted namespaces the token reads with a grant of its own. */
+  restricted_namespaces: string[];
+  mcp_url: string;
 }
 
-export async function revokeServiceAccount(name: string): Promise<void> {
+export async function listTokens(): Promise<TokenEntry[]> {
+  return (await getJson<{ rows: TokenEntry[] }>("/v1/me/service_accounts")).rows;
+}
+
+export async function createToken(opts: {
+  /** Blank: the server names it `token-<day>-<hex>`. */
+  name?: string;
+  /** `*` and what is named beside it (a name before `*` is where it saves), or a list in
+   *  read priority. */
+  namespaces: TokenNamespace[];
+  ttl_days: number | null;
+}): Promise<TokenCreated> {
+  const r = await post<Partial<TokenCreated> & Pick<TokenCreated, "token" | "name" | "namespaces">>(
+    "/v1/me/service_accounts.create",
+    opts,
+  );
+  // A replica of the previous build answers a list mint without the fields it added
+  // (docs/architecture/rolling-upgrades.md, rule 35): the token is still shown.
+  return {
+    sa_subject: "",
+    org: "",
+    ns_roles: {},
+    created_at: "",
+    expires_at: null,
+    restricted_namespaces: [],
+    ...r,
+    reads_everything: r.reads_everything ?? r.namespaces.includes("*"),
+    saves_to: r.saves_to ?? null,
+    mcp_url: r.mcp_url ?? `${window.location.origin}/mcp`,
+  };
+}
+
+export async function revokeToken(name: string): Promise<void> {
   await post("/v1/me/service_accounts.revoke", { name });
 }
 

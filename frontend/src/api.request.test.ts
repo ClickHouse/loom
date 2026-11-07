@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearToken,
   getMySharingSummary,
-  listServiceAccounts,
+  listTokens,
   onSignInRejected,
   post,
   setToken,
@@ -60,10 +60,10 @@ describe("getMySharingSummary", () => {
   });
 });
 
-describe("listServiceAccounts", () => {
+describe("listTokens", () => {
   it("rejects a 500 with an ApiError carrying the code and request id, under a bounded signal", async () => {
     const fetchMock = stubFetch(500, failure, { "X-Request-Id": "req-sa" });
-    const err = await rejection(listServiceAccounts());
+    const err = await rejection(listTokens());
     expect(err.code).toBe("INTERNAL");
     expect(err.requestId).toBe("req-sa");
     expect(fetchMock.mock.calls[0][0]).toBe("/v1/me/service_accounts");
@@ -83,7 +83,7 @@ describe("listServiceAccounts", () => {
     );
     const seen: number[] = [];
     const unsubscribe = subscribeInflight((n) => seen.push(n));
-    const pending = listServiceAccounts();
+    const pending = listTokens();
     expect(seen.at(-1)).toBe(1);
     release(new Response('{"rows":[{"name":"ci"}]}', { status: 200 }));
     await expect(pending).resolves.toEqual([{ name: "ci" }]);

@@ -1,15 +1,16 @@
 """Direct grants that belong to a token, not a person.
 
 A restricted namespace is readable only by a token that names it AND whose own
-subject holds a direct grant. A token minted from the Setup page runs under a
-generated ``sa:`` subject: it can name the namespace but holds no grant of its
-own, so without one every read of the restricted repository it was minted for
-would be refused. This module writes that grant at mint, capped,
-``granted_by`` the person who minted the token; revokes it with the token;
-and, when the person's own grant on the namespace is revoked, revokes the
-grants of every token they minted there — access follows the person, at the
-moment it is taken away, without a read-time rule that would refuse
-operator-minted service accounts (which have no creator row at all).
+subject holds a direct grant. A token from the token mint
+(``me_service_accounts.create``) runs under a generated ``sa:`` subject: it can
+name the namespace but holds no grant of its own, so without one every read of
+the restricted repository it was minted for would be refused. This module
+writes that grant at mint, capped, ``granted_by`` the person who minted the
+token; revokes it with the token; and, when the person's own grant on the
+namespace is revoked, revokes the grants of every token they minted there —
+access follows the person, at the moment it is taken away, without a read-time
+rule that would refuse operator-minted service accounts (which have no creator
+row at all).
 
 Standard namespaces are never touched here: they read through the ordinary
 rules and creator-grant inheritance (``server/auth/context.py``).

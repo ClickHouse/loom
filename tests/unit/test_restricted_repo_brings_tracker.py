@@ -1,4 +1,4 @@
-"""A restricted repository added to a client token brings
+"""A restricted repository added to a token brings
 its bound tracker record, granted read-only."""
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-import server.identity.app.me_setup as me
+import server.identity.app.me_service_accounts as me
 import server.identity.app.token_grants as tg
 from server.identity.app import me_callers
 from server.identity.store import grants as grants_repo
@@ -42,14 +42,13 @@ def wired(monkeypatch: pytest.MonkeyPatch):
         return state["grants"].get(ns)
 
     monkeypatch.setattr(nc, "is_restricted", _isr)
-    monkeypatch.setattr(
-        binding, "tracker_namespace_for", lambda org, ns: state["bindings"].get(ns, "")
-    )
+    monkeypatch.setattr(me, "is_restricted", _isr)
+    monkeypatch.setattr(binding, "tracker_namespace_for", lambda ns: state["bindings"].get(ns, ""))
     # The token scope walks every linked tracker
     monkeypatch.setattr(
         binding,
         "tracker_namespaces_for",
-        lambda org, ns, **_: [state["bindings"][ns]] if state["bindings"].get(ns) else [],
+        lambda ns: [state["bindings"][ns]] if state["bindings"].get(ns) else [],
     )
     monkeypatch.setattr(me_callers, "caller_role_on", _role)
     return state

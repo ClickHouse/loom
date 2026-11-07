@@ -112,11 +112,11 @@ async def _token(args: argparse.Namespace) -> Any:
     agent = Agent("", "", "loom-cli", base_url=_server(args), profile=args.profile)
     try:
         if args.action == "list":
-            return await agent.account.service_accounts()
+            return await agent.account.tokens()
         if args.action == "revoke":
-            return await agent.account.revoke_service_account(args.name)
-        return await agent.account.create_service_account(
-            args.name, args.entries, ttl_days=args.ttl_days
+            return await agent.account.revoke_token(args.name)
+        return await agent.account.create_token(
+            args.entries or "*", name=args.name, ttl_days=args.ttl_days
         )
     finally:
         await agent.close()
@@ -129,10 +129,14 @@ def _role_entry(value: str) -> dict[str, str]:
     return {"namespace": ns, "role": role}
 
 
-_TOKEN_HELP = """Your tokens for CI and agents, as the Setup page makes them: each reads
-the namespaces you name, in the order you name them (first = searched first),
-at a role no higher than your own sign-in can give.
+_TOKEN_HELP = """Your tokens for agents, scripts and CI, as the dashboard's Settings make
+them. With no --namespace a token reads every namespace you belong to, now and
+later; with some, it reads only those, in the order you name them (first =
+searched first), at a role no higher than your sign-in can give. The answer
+holds the token once, each MCP client's setup, and where calls that name no
+namespace save (`saves_to`).
 
+  loom token create                                  # everything you belong to
   loom token create --name ci --namespace-role support=writer --namespace docs
   loom token create --name nightly --namespace support --ttl-days 0   # never expires
   loom token list
@@ -154,9 +158,13 @@ def _token_parser(sub: Any) -> None:
     )
     actions = p.add_subparsers(dest="action", required=True)
     create = actions.add_parser(
-        "create", parents=[common], help="a token for some of your namespaces"
+        "create",
+        parents=[common],
+        help="a token that reads everything you belong to, or only the namespaces named",
     )
-    create.add_argument("--name", required=True, help="its name, unique in the org while it lives")
+    create.add_argument(
+        "--name", help="its name, unique in the org while it lives (default: token-<day>-<hex>)"
+    )
     # Both into one list, so their order on the command line is the read priority.
     create.add_argument(
         "--namespace-role",
@@ -171,7 +179,8 @@ def _token_parser(sub: Any) -> None:
         dest="entries",
         action="append",
         metavar="NS",
-        help="a namespace at the most your sign-in can give there (repeatable)",
+        help="a namespace at the most your sign-in can give there (repeatable); '*' reads "
+        "everything you belong to, the default",
     )
     create.add_argument(
         "--ttl-days", type=int, default=None, help="days it lives (default 90; 0: never expires)"
@@ -197,9 +206,6 @@ def run(args: argparse.Namespace) -> int:
         elif args.cmd == "whoami":
             print(json.dumps(credentials.whoami(args.profile), indent=2))
         elif args.cmd == "token":
-            if args.action == "create" and not args.entries:
-                print("loom token create: name a --namespace or --namespace-role", file=sys.stderr)
-                return 2
             print(json.dumps(asyncio.run(_token(args)), indent=2, default=str))
         elif args.list:
             _list_ops()

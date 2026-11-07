@@ -2,7 +2,7 @@
 
 Leaf module: client-name slugification, the session→agent cache, and the
 caller's default workspace (its namespace from `server.identity.app.caller_home`,
-which the Setup page also asks). No imports back into
+which the token mint also asks for its `saves_to`). No imports back into
 ``server.transport.mcp``; constants come from ``mcp_config``.
 """
 
@@ -129,7 +129,7 @@ async def _caller_defaults(
 
     Used both to embed defaults in tool descriptions and to fill missing
     args on incoming tool calls. The namespace is `caller_home.default_namespace`,
-    the one the Setup page shows. ``client_name`` (the MCP `clientInfo.name`)
+    the one the token mint answers as `saves_to`. ``client_name`` (the MCP `clientInfo.name`)
     becomes the agent default when present. None when no caller can be
     identified — falls back to handler-level validation errors.
     """

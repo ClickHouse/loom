@@ -1,14 +1,16 @@
-"""The signed-in person's own account, outside the op registry: service
-accounts, MCP client setup, the default namespace and the sharing summary —
-what the dashboard's Setup and Sharing views do.
+"""The signed-in person's own account, outside the op registry: their tokens,
+the default namespace and the sharing summary — what the dashboard's Settings
+and Sharing views do.
 
-sa = await agent.account.create_service_account("ci", ["support"], role="writer")
-# sa["token"] is shown once; agent.account.revoke_service_account("ci") ends it
+t = await agent.account.create_token()  # reads everything you belong to
+ci = await agent.account.create_token(["support", "docs"], name="ci", role="viewer")
+# t["token"] is shown once, with t["clients"] (each MCP client's setup);
+# agent.account.revoke_token("ci") ends it
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from loom.agent import Agent
@@ -24,54 +26,40 @@ class AccountClient:
     async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         return await self._agent.transport.request_json("POST", path, json=body)
 
-    async def service_accounts(self) -> list[dict[str, Any]]:
-        """Your service accounts and MCP client tokens."""
+    async def tokens(self) -> list[dict[str, Any]]:
+        """The tokens you made, and other people's that reach a namespace you
+        administer, newest first; each row's `yours` marks your own."""
         rows: list[dict[str, Any]] = (await self._get("/v1/me/service_accounts"))["rows"]
         return rows
 
-    async def create_service_account(
+    async def create_token(
         self,
-        name: str,
-        namespaces: list[str | dict[str, str]],
+        namespaces: Literal["*"] | list[str | dict[str, str]] = "*",
         *,
+        name: str | None = None,
         role: str | None = None,
         ttl_days: int | None = 90,
     ) -> dict[str, Any]:
-        """A scoped token for a machine, never wider than your own grants.
-        `namespaces` in read order; an entry `{"namespace", "role"}` sets its
-        own role. The token is in the answer once and never again."""
-        body: dict[str, Any] = {"name": name, "namespaces": namespaces, "ttl_days": ttl_days}
+        """A token for your tools, agents, scripts or CI, never wider than your
+        own grants. `namespaces`: "*" reads every namespace you belong to, now
+        and later, at your role in each (name one before "*", as in
+        `["notes", "*"]`, to save there when it may, and restricted ones beside
+        it to read them too). A list without "*" reads exactly those, in read
+        order; an entry `{"namespace", "role"}` sets its own role and `role` the
+        role of bare entries (a 422 with "*"). `name`: None names it
+        `token-<day>-<hex>`. `ttl_days`: None for 90 days, 0 for never. The token
+        is in the answer once and never again, with `saves_to` (where calls that
+        name no namespace save) and `clients` (each MCP client's setup)."""
+        body: dict[str, Any] = {"namespaces": namespaces, "ttl_days": ttl_days}
+        if name is not None:
+            body["name"] = name
         if role is not None:
             body["role"] = role
         return await self._post("/v1/me/service_accounts.create", body)
 
-    async def revoke_service_account(self, name: str) -> dict[str, Any]:
+    async def revoke_token(self, name: str) -> dict[str, Any]:
+        """End the token `name` now, and the grants it was given."""
         return await self._post("/v1/me/service_accounts.revoke", {"name": name})
-
-    async def mcp_config(
-        self,
-        client: str,
-        *,
-        namespace: str | None = None,
-        restricted_namespaces: list[str] | None = None,
-        ttl_days: int | None = None,
-    ) -> dict[str, Any]:
-        """A fresh token and the config block to paste into an MCP client
-        (one of the Setup tab's client keys), saved to your token list, where
-        you revoke it. `ttl_days`: None for 90 days, 0 for never. The result's
-        `namespace` is where calls that name none land; "" when the token has no
-        default, so every call from the client must name one; None when the
-        server could not read it at mint time (each call resolves it)."""
-        # The previous server build reads a missing `persist` as false; drop it once that
-        # build is gone.
-        body: dict[str, Any] = {"client": client, "persist": True}
-        if namespace is not None:
-            body["namespace"] = namespace
-        if restricted_namespaces is not None:
-            body["restricted_namespaces"] = restricted_namespaces
-        if ttl_days is not None:
-            body["ttl_days"] = ttl_days
-        return await self._post("/v1/me/setup/mcp_config", body)
 
     async def set_default_namespace(self, namespace: str) -> dict[str, Any]:
         """The namespace MCP sessions use when a call names none."""
