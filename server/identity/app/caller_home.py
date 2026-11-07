@@ -179,10 +179,10 @@ def _minted_home(auth: Any) -> str:
     and `admin/token.mint` when asked for that order). "" for any other token:
     a bare `*` follows its owner's saved pick, and a list token keeps the order
     below. Rolling upgrades: docs/architecture/rolling-upgrades.md, rule 35."""
-    namespaces = tuple(getattr(auth, "namespaces", ()) or ())
-    if not getattr(auth, "creator", "") or "*" not in namespaces or namespaces[0] == "*":
+    if auth is None or not auth.creator:  # auth off, or not a delegated token
         return ""
-    return str(namespaces[0])
+    namespaces = auth.namespaces
+    return namespaces[0] if "*" in namespaces and namespaces[0] != "*" else ""
 
 
 async def _first_admitted(names: list[str], admits: Admits, role: Role) -> str:

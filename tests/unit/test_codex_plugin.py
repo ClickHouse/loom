@@ -229,6 +229,8 @@ def test_the_mint_builds_the_entries_the_dashboard_prints() -> None:
 
     assert ts_set("STDIO_VIA_NPX") == token_clients._STDIO_VIA_NPX
     assert ts_set("CODING_TOOLSET_CLIENTS") == token_clients._CODING_CLIENTS
+    assert token_clients.client_config("codex", "http://x/mcp", "T")["env"] == {"LOOM_API_KEY": "T"}
+    assert re.search(r'CODEX_TOKEN_ENV\b[^=]*=\s*"LOOM_API_KEY"', ts)
     line = token_clients.client_config("claude-code", "http://x/mcp", "T")["command"]
     template = 'claude mcp add --transport http ${name} "${args.mcpUrl}" -H "Authorization: Bearer ${args.token}" -s user'
     assert template in ts

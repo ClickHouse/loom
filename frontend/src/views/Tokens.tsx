@@ -274,7 +274,9 @@ function TokenForm({
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
   const storedMine = useStore((s) => s.myNamespaces);
-  const [mine, setMine] = useState<MyNamespaceEntry[] | null>(null);
+  // Every membership, pending requests too; `mine` is the ones already granted.
+  const [rows, setRows] = useState<MyNamespaceEntry[] | null>(null);
+  const mine = useMemo(() => rows?.filter((r) => r.status !== "pending") ?? null, [rows]);
   const [reach, setReach] = useState<Reach>("everything");
   const [name, setName] = useState("");
   const [ttlDays, setTtlDays] = useState("90");
@@ -294,15 +296,16 @@ function TokenForm({
   // The first answer ticks the page's namespace for "Only these" when nothing is ticked.
   useAbortableEffect(
     async (_signal, live) => {
-      let active: MyNamespaceEntry[];
+      let all: MyNamespaceEntry[];
       try {
-        active = (await sharedMine(identity.org)).filter((r) => r.status !== "pending");
+        all = await sharedMine(identity.org);
       } catch {
-        if (live()) setMine([]);
+        if (live()) setRows([]);
         return;
       }
       if (!live()) return;
-      setMine(active);
+      setRows(all);
+      const active = all.filter((r) => r.status !== "pending");
       const seed = active.find((r) => r.namespace === identity.namespace && r.kind !== "code");
       if (!seed) return;
       setSelectedNs((prev) => (prev.length > 0 ? prev : [seed.namespace]));
@@ -350,26 +353,21 @@ function TokenForm({
   const scope = useMemo(
     () =>
       everythingScope(
-        mine,
+        rows,
         Object.entries(repoInfo).map(([namespace, f]) => ({ namespace, ...f })),
         everythingHome,
       ),
-    [mine, repoInfo, everythingHome],
+    [rows, repoInfo, everythingHome],
   );
 
   const toggleNs = (ns: string) => {
-    setSelectedNs((prev) => {
-      if (prev.includes(ns)) {
-        setNsRole((m) => {
-          const c = { ...m };
-          delete c[ns];
-          return c;
-        });
-        return prev.filter((x) => x !== ns);
-      }
+    if (selectedNs.includes(ns)) {
+      setSelectedNs((prev) => prev.filter((x) => x !== ns));
+      setNsRole(({ [ns]: _, ...rest }) => rest);
+    } else {
+      setSelectedNs((prev) => [...prev, ns]);
       setNsRole((m) => ({ ...m, [ns]: grantRoleOf(mine, ns) }));
-      return [...prev, ns];
-    });
+    }
   };
   const setPriority = (ns: string, pos: number) => {
     setSelectedNs((prev) => {
@@ -394,9 +392,9 @@ function TokenForm({
       // The new admin grant must reach every reader of list_mine at once: the store's
       // copy and the shared cache.
       invalidateShared("mine:");
-      const rows = await sharedMine(identity.org);
-      useStore.getState().setMyNamespaces(rows);
-      setMine(rows.filter((r) => r.status !== "pending"));
+      const fresh = await sharedMine(identity.org);
+      useStore.getState().setMyNamespaces(fresh);
+      setRows(fresh);
       setSelectedNs((prev) => [...prev.filter((x) => x !== ns), ns]);
       setNsRole((m) => ({ ...m, [ns]: "admin" }));
       setNewNs("");

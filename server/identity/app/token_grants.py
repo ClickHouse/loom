@@ -20,12 +20,19 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from fastapi import HTTPException
 
 from server.core.datetimes import naive_utc_now_seconds
+from server.identity.app import me_callers, namespace_classification
 from server.identity.store import grants as grants_repo
 from server.operations.base import grant_rank
+
+if TYPE_CHECKING:
+    from server.auth.delegation import Delegated
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +70,32 @@ def revoked_grant_row(org: str, subject: str, row: dict[str, Any], now: datetime
         "revoked_at": now,
         "version": time.time_ns(),
     }
+
+
+async def restricted_roles(
+    org: str, subject: str, delegated: Delegated, requested: Mapping[str, str | None]
+) -> dict[str, str]:
+    """The role of the direct grant a new token gets on each restricted namespace it
+    names: its own role there, capped at the minting subject's own grant, which a
+    restricted namespace needs of every reader. That holds for one the mint named and
+    for one a narrower parent's own claim brought in through `*` (that parent named it at
+    its own mint). Where the subject holds no grant, a named one is refused (403) and one
+    that came from expanding `*` is left without a grant."""
+    out: dict[str, str] = {}
+    for ns in delegated.namespaces:
+        if ns == "*" or not await namespace_classification.is_restricted(org, ns):
+            continue
+        held = await me_callers.caller_role_on(org, ns, subject)
+        if held is None:
+            if ns not in requested:
+                continue
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "AUTH_INSUFFICIENT", "message": f"cannot delegate access on {ns}"},
+            )
+        token_role = (delegated.ns_roles or {}).get(ns) or delegated.roles[0]
+        out[ns] = min(held, token_role, key=grant_rank)
+    return out
 
 
 async def grant_restricted_to_token(

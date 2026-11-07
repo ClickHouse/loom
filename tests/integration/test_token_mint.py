@@ -84,12 +84,12 @@ async def _assert_unaddressed_write_lands_in(base_url: str, token: str, namespac
     assert got["value"] == value
 
 
-def _person_token(person: str, personal: str) -> str:
+def _person_token(person: str, personal: str, org: str) -> str:
     from server.auth.jwt import mint_token
 
     return mint_token(
         subject=person,
-        org="clickhouse",
+        org=org,
         namespaces=[personal],
         roles=["WRITER"],
         is_service_account=False,
@@ -103,25 +103,26 @@ async def test_a_default_token_reads_everything_and_carries_every_client_setup(
     from server.auth.personal_namespace import derive_personal_slug
 
     # A person of their own, holding their personal namespace as sign-in leaves them.
+    org = unique_org("mint")
     person = f"mint-{uuid.uuid4().hex[:8]}"
     personal = derive_personal_slug(person)
-    _grant_writer(ch_client, "clickhouse", personal, person, revoke=False)
-    r = await _post(control_plane_url, _person_token(person, personal), {})
+    _grant_writer(ch_client, org, personal, person, revoke=False)
+    r = await _post(control_plane_url, _person_token(person, personal, org), {})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["org"] == "clickhouse" and body["name"].startswith("token-")
+    assert body["org"] == org and body["name"].startswith("token-")
     # The namespace the answer names is where the token's unaddressed writes land:
     # the person's own with login; single-user mode names the one it serves,
     # which the test grants them too.
     shown = body["saves_to"]
     if await _auth_on(control_plane_url):
         assert shown == personal
-    _grant_writer(ch_client, "clickhouse", shown, person, revoke=False)
+    _grant_writer(ch_client, org, shown, person, revoke=False)
     try:
         await _assert_unaddressed_write_lands_in(control_plane_url, body["token"], shown)
     finally:
         for ns in {personal, shown}:
-            _grant_writer(ch_client, "clickhouse", ns, person, revoke=True)
+            _grant_writer(ch_client, org, ns, person, revoke=True)
     assert body["reads_everything"] is True and body["namespaces"] == ["*"]
     assert body["mcp_url"].endswith("/mcp")
 
@@ -145,7 +146,7 @@ async def test_a_default_token_reads_everything_and_carries_every_client_setup(
     decoded = pyjwt.decode(body["token"], options={"verify_signature": False})
     # Saved to the person's token list under its own subject.
     assert decoded["sub"] == body["sa_subject"] and decoded["sub"].startswith(f"sa:{body['name']}-")
-    assert decoded["org"] == "clickhouse" and decoded["namespaces"] == ["*"]
+    assert decoded["org"] == org and decoded["namespaces"] == ["*"]
 
 
 def _save_default(ch_client: Any, org: str, subject: str, namespace: str) -> None:
@@ -164,12 +165,13 @@ async def test_a_bare_star_token_follows_the_pick_and_a_named_home_beats_it(
     `*` token saves there; one made with the first named before `*` saves to the first."""
     from server.auth.personal_namespace import derive_personal_slug
 
+    org = unique_org("mint")
     person = f"mint-{uuid.uuid4().hex[:8]}"
     personal, team = derive_personal_slug(person), f"team-{uuid.uuid4().hex[:8]}"
     for ns in (personal, team):
-        _grant_writer(ch_client, "clickhouse", ns, person, revoke=False)
-    _save_default(ch_client, "clickhouse", person, team)
-    token = _person_token(person, personal)
+        _grant_writer(ch_client, org, ns, person, revoke=False)
+    _save_default(ch_client, org, person, team)
+    token = _person_token(person, personal, org)
     shown: set[str] = set()
     try:
         r = await _post(control_plane_url, token, {})
@@ -179,7 +181,7 @@ async def test_a_bare_star_token_follows_the_pick_and_a_named_home_beats_it(
         # Single-user mode writes its one namespace; every other mode follows the pick.
         assert bare["saves_to"] != personal, bare["saves_to"]
         if bare["saves_to"] != team:
-            _grant_writer(ch_client, "clickhouse", bare["saves_to"], person, revoke=False)
+            _grant_writer(ch_client, org, bare["saves_to"], person, revoke=False)
         await _assert_unaddressed_write_lands_in(control_plane_url, bare["token"], bare["saves_to"])
         r = await _post(control_plane_url, token, {"namespaces": [personal, "*"]})
         assert r.status_code == 200, r.text
@@ -188,8 +190,8 @@ async def test_a_bare_star_token_follows_the_pick_and_a_named_home_beats_it(
         await _assert_unaddressed_write_lands_in(control_plane_url, homed["token"], personal)
     finally:
         for ns in {personal, team, *shown}:
-            _grant_writer(ch_client, "clickhouse", ns, person, revoke=True)
-        _save_default(ch_client, "clickhouse", person, "")
+            _grant_writer(ch_client, org, ns, person, revoke=True)
+        _save_default(ch_client, org, person, "")
 
 
 @pytest.mark.asyncio
@@ -199,8 +201,8 @@ async def test_a_named_namespace_needs_a_live_grant(control_plane_url: str) -> N
     from server.auth.jwt import mint_token
 
     token = mint_token(
-        subject="alice",
-        org="clickhouse",
+        subject=f"mint-{uuid.uuid4().hex[:8]}",
+        org=unique_org("mint"),
         namespaces=["personal-alice", "team-shared"],
         roles=["WRITER"],
         is_service_account=False,
@@ -214,7 +216,7 @@ async def test_a_named_namespace_needs_a_live_grant(control_plane_url: str) -> N
 @pytest.mark.asyncio
 async def test_every_minted_token_expires_unless_asked_not_to(control_plane_url: str) -> None:
     """ttl_days when given, else 90 days."""
-    token = _person_token("alice", "personal-alice")
+    token = _person_token(f"mint-{uuid.uuid4().hex[:8]}", "personal-alice", unique_org("mint"))
     r = await _post(control_plane_url, token, {"ttl_days": 7})
     assert r.status_code == 200, r.text
     decoded = pyjwt.decode(r.json()["token"], options={"verify_signature": False})
@@ -227,7 +229,7 @@ async def test_every_minted_token_expires_unless_asked_not_to(control_plane_url:
 
 @pytest.mark.asyncio
 async def test_a_role_beside_star_is_a_422(control_plane_url: str) -> None:
-    token = _person_token("alice", "personal-alice")
+    token = _person_token(f"mint-{uuid.uuid4().hex[:8]}", "personal-alice", unique_org("mint"))
     body = {"namespaces": ["*", {"namespace": "personal-alice", "role": "viewer"}]}
     r = await _post(control_plane_url, token, body)
     assert r.status_code == 422

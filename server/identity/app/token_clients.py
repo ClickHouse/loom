@@ -79,7 +79,9 @@ def client_config(client: str, mcp_url: str, minted: str) -> dict[str, object]:
     """One MCP client's setup for a token: the config-file key, the server entry
     (URL + bearer, the `mcp-remote` bridge for stdio clients,
     `bearer_token_env_var` for Codex), the file's own text when it is not JSON,
-    the one-line registration command, and the file's path per platform."""
+    the one-line registration command, the variables to export before the client
+    starts (Codex reads the token from `LOOM_API_KEY`), and the file's path per
+    platform."""
     key = config_key(client)
     auth_header = f"Authorization: Bearer {minted}"
     if client in _STDIO_VIA_NPX:
@@ -126,6 +128,7 @@ def client_config(client: str, mcp_url: str, minted: str) -> dict[str, object]:
         "config": config_block,
         "config_toml": config_toml,
         "command": command,
+        "env": {"LOOM_API_KEY": minted} if client == "codex" else {},
         "config_path": CONFIG_PATHS[client],
     }
 

@@ -872,6 +872,10 @@ async def admin_token_mint(
                 ttl_seconds=input.ttl_seconds,
                 is_service_account=True,
             )
+            # Capped at the caller's own grant there; read before anything is saved.
+            restricted = await token_grants.restricted_roles(
+                input.org, creator, delegated, requested
+            )
         else:
             # Auth off: nothing to delegate from.
             ttl = DEFAULT_TTL_DAYS * 86400 if input.ttl_seconds is None else input.ttl_seconds
@@ -890,15 +894,17 @@ async def admin_token_mint(
                 creator="",
                 is_service_account=True,
             )
+            flat_role = (delegated.roles or ["viewer"])[0]
+            restricted = delegated.ns_roles or dict.fromkeys(delegated.namespaces, flat_role)
         sa_subject = tokens.new_token_subject(input.org, name, creator)
         minted = delegated.mint(sa_subject, jti=jti, consumer=input.consumer or None)
         await tokens.save_token(
             name, sa_subject, delegated, created_by=creator, now=naive_utc_now_seconds()
         )
     # A restricted namespace is read only by a subject with a direct grant there.
-    flat_role = (delegated.roles or ["viewer"])[0]
-    roles_on = delegated.ns_roles or dict.fromkeys(delegated.namespaces, flat_role)
-    granted = await token_grants.grant_restricted_to_token(input.org, sa_subject, creator, roles_on)
+    granted = await token_grants.grant_restricted_to_token(
+        input.org, sa_subject, creator, restricted
+    )
     await note_restricted_grants(
         info, op="admin.token.mint", org=input.org, namespaces=granted, granted_to=sa_subject
     )

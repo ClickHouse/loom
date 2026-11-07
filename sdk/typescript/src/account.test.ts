@@ -61,6 +61,7 @@ const cursorSetup: TokenClientSetup = {
   config_key: "mcpServers",
   config: { mcpServers: { loom: { url: "http://x/mcp?toolset=coding" } } },
   config_toml: "",
+  env: {},
   command: "",
   config_path: { darwin: "~/.cursor/mcp.json", linux: "~/.cursor/mcp.json", win32: "%USERPROFILE%\\.cursor\\mcp.json" },
 };

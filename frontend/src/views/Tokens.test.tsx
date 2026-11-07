@@ -126,6 +126,12 @@ describe("the token form", () => {
     expect(await create()).toEqual({ name: undefined, namespaces: ["ns-a", "*"], ttl_days: 90 });
   });
 
+  it("a namespace still awaiting approval is named as readable once approved", async () => {
+    vi.mocked(listMine).mockResolvedValue([...ROWS, row("ns-asked", { status: "pending" })]);
+    render(<Setup />);
+    expect(await screen.findByText(/Awaiting approval: ns-asked\./, undefined, WAIT)).toBeInTheDocument();
+  });
+
   it("saves to where the page goes, unless a namespace was picked here", async () => {
     render(<Setup />);
     await waitFor(() => expect(savesTo()).toHaveTextContent(/^ns-a/), WAIT);

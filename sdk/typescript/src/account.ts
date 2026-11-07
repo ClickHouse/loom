@@ -34,6 +34,8 @@ export interface TokenClientSetup {
   config_toml: string;
   /** A one-line registration command; `""` when the client has none. */
   command: string;
+  /** Variables to export before the client starts (Codex: `LOOM_API_KEY`); `{}` otherwise. */
+  env: Record<string, string>;
   config_path: { darwin: string; linux: string; win32: string };
 }
 

@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from server.auth.delegation import Delegated, ceiling_role, delegate
 from server.auth.jwt import AuthInfo
+from server.auth.public_url import public_base_url
 from server.auth.self_signup import AGENT_NAME_PREFIX
 from server.auth.service_accounts import hand_down_lineage, revoked_row
 from server.core.datetimes import naive_utc_now_seconds
@@ -27,6 +28,7 @@ from server.identity.app import me_callers, token_grants
 from server.identity.app.caller_home import caller_org, default_namespace
 from server.identity.app.namespace_classification import is_restricted
 from server.identity.app.restricted_access import note_restricted_grants
+from server.identity.app.token_clients import client_configs
 from server.operations.base import GRANT_ROLES, Role, grant_rank
 from server.settings import settings
 
@@ -103,32 +105,6 @@ def _requested_roles(payload: dict[str, object]) -> dict[str, str | None]:
     if "*" in requested_role and any(r is not None for r in requested_role.values()):
         raise _invalid('a role per namespace needs a list without "*"')
     return requested_role
-
-
-async def _restricted_grants(
-    org: str, subject: str, delegated: Delegated, requested: dict[str, str | None]
-) -> dict[str, str]:
-    """The role of the direct grant a new token gets on each restricted namespace it
-    names: its own role there, capped at the minting subject's own grant, which a
-    restricted namespace needs of every reader. That holds for one the mint named and
-    for one a narrower parent's own claim brought in through `*` (that parent named it at
-    its own mint). Where the subject holds no grant, a named one is refused (403) and one
-    that came from expanding `*` is left without a grant."""
-    out: dict[str, str] = {}
-    for ns in delegated.namespaces:
-        if ns == "*" or not await is_restricted(org, ns):
-            continue
-        held = await me_callers.caller_role_on(org, ns, subject)
-        if held is None:
-            if ns not in requested:
-                continue
-            raise HTTPException(
-                status_code=403,
-                detail={"code": "AUTH_INSUFFICIENT", "message": f"cannot delegate access on {ns}"},
-            )
-        token_role = (delegated.ns_roles or {}).get(ns) or delegated.roles[0]
-        out[ns] = min(held, token_role, key=grant_rank)
-    return out
 
 
 def _invalid(message: str) -> HTTPException:
@@ -382,7 +358,9 @@ async def me_service_accounts_create(
             is_service_account=True,
         )
         # Read before anything is saved, so a refusal or a failed read strands no token.
-        restricted_roles = await _restricted_grants(org, subject, delegated, requested_role)
+        restricted_roles = await token_grants.restricted_roles(
+            org, subject, delegated, requested_role
+        )
         sa_subject = new_token_subject(org, name, subject)
         minted = delegated.mint(sa_subject)
         now = naive_utc_now_seconds()  # after the mint: the row is never older than the token's iat
@@ -402,11 +380,8 @@ async def me_service_accounts_create(
         granted_to=sa_subject,
     )
 
-    from server.auth.public_url import public_base_url
-    from server.identity.app.token_clients import client_configs
-
+    token = delegated.as_auth(sa_subject)
     try:
-        token = delegated.as_auth(sa_subject)
         # The org the MCP transport resolves this token in: an org-wide parent's `*`
         # child lands in the self-signup org there.
         saves_to: str | None = await default_namespace(token, caller_org(token) or org)
