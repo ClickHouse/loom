@@ -3,10 +3,13 @@
 memory.set with `classify=True` posts the memory's value there. While the
 gateway is required the endpoint must be an https URL with no explicit port at
 one of LOOM_INFERENCE_GATEWAY_HOSTS: a namespace admin can neither send content
-elsewhere nor reach another port or service of a host to probe it. Otherwise it
-must be https (or a host LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS names), and the call
-reaches only a public address it vetted (`server.memory.app.classify`), so a
-namespace admin cannot aim the server at its own network.
+elsewhere nor reach another port or service of a host to probe it. A URL at a
+listed gateway host is held to the same rule when the gateway is not required:
+another port of the gateway's host is still inward reach. Otherwise it must be
+https (or a host LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS names) with no user name or
+password, and the call reaches only a public address it vetted
+(`server.memory.app.classify`), so a namespace admin cannot aim the server at its
+own network.
 """
 
 from __future__ import annotations
@@ -43,6 +46,9 @@ def classify_refusal(url: str) -> str:
             return "it is not a valid URL"
         if not host:
             return "it names no host"
+        # The call drops them, and namespace.get would hand the credential back.
+        if parts.username is not None or parts.password is not None:
+            return "the URL may not carry a user name or password"
         private = host in settings.memory_classify_private_host_set()
         if parts.scheme != "https" and not (private and parts.scheme == "http"):
             return "it must be https"

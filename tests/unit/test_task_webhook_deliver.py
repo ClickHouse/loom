@@ -541,6 +541,25 @@ async def test_pinned_target_connects_to_the_vetted_address_only_over_http_or_ht
 
 
 @pytest.mark.asyncio
+async def test_an_internationalized_host_goes_as_its_idna_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Host header and the SNI are ASCII: httpx refuses a Unicode header value."""
+
+    async def resolver(host: str, **_: Any) -> tuple[str, str]:
+        return "", "203.0.113.7"
+
+    monkeypatch.setattr(webhooks, "vet_host", resolver)
+    assert await webhooks.pinned_target("https://bücher.example:8443/h") == (
+        "",
+        "https://203.0.113.7:8443/h",
+        "xn--bcher-kva.example:8443",
+        "xn--bcher-kva.example",
+    )
+    assert (await webhooks.pinned_target("https://a..example/h"))[0] == "the URL is not valid"
+
+
+@pytest.mark.asyncio
 async def test_a_secret_ref_outside_the_prefix_is_never_read(fake: FakeRepo) -> None:
     """A row naming any other variable (written before the prefix rule) would
     sign notices to a caller-chosen URL with a server secret as the key."""

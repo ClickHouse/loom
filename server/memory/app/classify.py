@@ -46,7 +46,8 @@ from server.settings import settings
 
 log = logging.getLogger(__name__)
 
-# Namespaces whose stored classify_endpoint is refused, logged once per process.
+# Namespaces whose classify_endpoint, stored or its host at the call, is refused:
+# logged once per process, as it is read again at every memory.set(classify=true).
 _REFUSED_LOGGED = LogOnce()
 
 
@@ -57,6 +58,8 @@ def _timeout() -> httpx.Timeout:
 
 async def classify(
     *,
+    org: str,
+    namespace: str,
     endpoint: str,
     prompt_template: str,
     value: str,
@@ -92,7 +95,7 @@ async def classify(
             resp.raise_for_status()
             payload = resp.json()
         else:
-            payload = await _post_vetted(endpoint, body)
+            payload = await _post_vetted(endpoint, body, scope=(org, namespace))
             if payload is None:
                 return ""
     except customer.HOLDS:
@@ -126,12 +129,12 @@ async def classify(
 _MAX_ANSWER_BYTES = 64 * 1024  # not a setting: bounds what an admin's endpoint can send
 
 
-async def _post_vetted(endpoint: str, body: Mapping[str, object]) -> Any:
+async def _post_vetted(endpoint: str, body: Mapping[str, object], *, scope: tuple[str, str]) -> Any:
     """POST to a classifier off the gateway and return its decoded answer: to the public
     address its host resolves to (vetted here and connected to, so a rebinding name
     cannot move it), with no redirect and no identity headers. The lookup, the call
     and the answer, at most `_MAX_ANSWER_BYTES`, are under one deadline. None, noted,
-    when the host is refused."""
+    when the host is refused (logged once per `scope`, the (org, namespace))."""
     private = settings.memory_classify_private_host_set()
     listed = (urlsplit(endpoint).hostname or "").lower() in private
     async with asyncio.timeout(settings.memory_classify_timeout_s):
@@ -139,7 +142,12 @@ async def _post_vetted(endpoint: str, body: Mapping[str, object]) -> Any:
             endpoint, schemes=("https", "http") if listed else ("https",), private_hosts=private
         )
         if refusal:
-            log.warning("classify: the endpoint's host is refused: %s", refusal)
+            if _REFUSED_LOGGED.first(("host", *scope)):
+                log.warning(
+                    "%s/%s: its classify_endpoint's host is refused (%s): not classified",
+                    *scope,
+                    refusal,
+                )
             _degradations.note("classify", "caller_type_kept", "endpoint host refused")
             return None
         async with (

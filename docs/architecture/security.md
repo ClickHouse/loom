@@ -1184,9 +1184,11 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   name the address, a URL with a user name or password is refused, and logs name the
   host only.
 - **A namespace's classifier is held to the same rule.** Off the inference gateway, a
-  `classify_endpoint` must be https (`namespace.register` refuses another scheme with
-  422), and `memory.set(classify=true)` posts only to the public address its host was
-  vetted to, with no redirect and no gateway identity headers; a host
+  `classify_endpoint` must be https with no user name or password (`namespace.register`
+  refuses another with 422), and `memory.set(classify=true)` posts only to the public
+  address its host was vetted to, with no redirect and no gateway identity headers. A URL
+  at a listed gateway host is held to the gateway's rule, https at the default port, also
+  while the gateway is not required: another port of that host is inward reach. A host
   `LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS` names is the operator's exception, reachable on any
   port and path, so it lists only a host that serves nothing else. A failed call is
   reported in `degraded` by its kind alone, so the write's answer cannot map which addresses

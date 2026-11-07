@@ -214,6 +214,8 @@ async def _set_resolve_type(input: MemorySetInput) -> tuple[MemorySetInput, str,
                 # An outbound HTTP call to an operator-supplied endpoint, on the write path.
                 with traced("classify.call", endpoint_configured=True):
                     classified = await _classify(
+                        org=input.org,
+                        namespace=input.namespace,
                         endpoint=endpoint,
                         prompt_template=prompt_template,
                         value=json.dumps(input.value),

@@ -257,7 +257,12 @@ async def test_a_classify_endpoint_call_waits_its_setting(
     monkeypatch.setattr("server.core.webhooks.pinned_target", _vetted)
     monkeypatch.setattr(classify.httpx, "AsyncClient", _Pinned)
     got = await classify.classify(
-        endpoint="https://classify.example/v1", prompt_template="", value="v", valid_types=[]
+        org="acme",
+        namespace="ns",
+        endpoint="https://classify.example/v1",
+        prompt_template="",
+        value="v",
+        valid_types=[],
     )
     assert got == ""  # the caller's type stays
     assert [t.read for t in recording_client] == [2.5]

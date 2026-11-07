@@ -584,7 +584,14 @@ def test_no_rerank_or_classify_endpoint_posts_off_the_gateways_hosts(
         assert out == candidates  # fails open, in input order
     for url in _OFF:
         label = asyncio.run(
-            classify.classify(endpoint=url, prompt_template="", value="v", valid_types=[])
+            classify.classify(
+                org="acme",
+                namespace="ns",
+                endpoint=url,
+                prompt_template="",
+                value="v",
+                valid_types=[],
+            )
         )
         assert label == ""  # the caller's type stays
     assert wire.posted == []
@@ -632,6 +639,8 @@ def test_a_classify_endpoint_at_a_listed_host_receives_the_post(
     wire = _posts(monkeypatch, {"memory_type": "decision"})
     label = asyncio.run(
         classify.classify(
+            org="acme",
+            namespace="ns",
             endpoint="https://gateway.example/classify",
             prompt_template="",
             value="v",

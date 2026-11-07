@@ -112,18 +112,22 @@ async def pinned_target(
         port = parts.port
     except ValueError:
         return "the URL has an invalid port", "", "", ""
+    try:  # the Host header and the SNI are ASCII: a Unicode name goes as its IDNA form
+        ascii_host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return "the URL is not valid", "", "", ""
     refusal, address = await vet_host(
         host, allow_private=host.lower() in private_hosts, name_address=False
     )
     if refusal:
         return refusal, "", "", ""
     suffix = f":{port}" if port else ""
-    name = f"[{host}]" if ":" in host else host
+    name = f"[{ascii_host}]" if ":" in ascii_host else ascii_host
     if not address:  # an allowlisted host: connect by name
         return "", urlunsplit((parts.scheme, name + suffix, parts.path, parts.query, "")), "", ""
     literal = f"[{address}]" if ":" in address else address
     pinned = urlunsplit((parts.scheme, literal + suffix, parts.path, parts.query, ""))
-    return "", pinned, name + suffix, host
+    return "", pinned, name + suffix, ascii_host
 
 
 @dataclass(frozen=True)

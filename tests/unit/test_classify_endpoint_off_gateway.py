@@ -102,7 +102,14 @@ def vetted(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _classify(endpoint: str) -> str:
     return asyncio.run(
-        classify.classify(endpoint=endpoint, prompt_template="", value="v", valid_types=[])
+        classify.classify(
+            org="acme",
+            namespace="ns",
+            endpoint=endpoint,
+            prompt_template="",
+            value="v",
+            valid_types=[],
+        )
     )
 
 
@@ -205,7 +212,12 @@ def test_a_lookup_that_never_answers_is_cut_by_the_calls_deadline(
     async def _timed() -> tuple[str, float]:
         started = time.perf_counter()
         label = await classify.classify(
-            endpoint="https://slow.example/c", prompt_template="", value="v", valid_types=[]
+            org="acme",
+            namespace="ns",
+            endpoint="https://slow.example/c",
+            prompt_template="",
+            value="v",
+            valid_types=[],
         )
         return label, time.perf_counter() - started
 
@@ -350,3 +362,80 @@ def test_a_redirect_is_not_followed(monkeypatch: pytest.MonkeyPatch, vetted: Non
     assert _classify("https://classifier.example/c") == ""
     assert asked == ["https://203.0.113.7/c"]
     assert degradations.current() == ["classify: caller_type_kept (HTTPStatusError)"]
+
+
+def test_a_listed_gateway_host_off_its_default_port_is_refused_though_not_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Another port of the gateway's host is inward reach, whether or not the gateway is
+    required, and listing the host as private does not open it."""
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
+    monkeypatch.setattr(settings, "memory_classify_private_hosts", "gateway.example")
+    assert classify_refusal("http://gateway.example:8080/c") != ""
+    assert classify_refusal("https://gateway.example:8443/c") != ""
+    assert classify_refusal("https://gateway.example/c") == ""
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://user:secret@classifier.example/c",
+        "https://token@classifier.example/c",
+        "https://:secret@classifier.example/c",
+    ],
+)
+def test_a_url_carrying_a_user_name_or_password_is_refused(url: str) -> None:
+    """The call would drop them and namespace.get would hand the credential back."""
+    assert classify_refusal(url) == "the URL may not carry a user name or password"
+
+
+def test_an_internationalized_host_is_posted_with_its_idna_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    hosts: list[str] = []
+
+    class _Wire(httpx.AsyncByteStream):  # as a network answer arrives
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield b'{"memory_type": "note"}'
+
+    def _answer(request: httpx.Request) -> httpx.Response:
+        hosts.append(request.headers["host"])
+        return httpx.Response(200, stream=_Wire())
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr("server.core.hosts._resolve", lambda host: ["93.184.215.14"])
+    monkeypatch.setattr(
+        classify.httpx,
+        "AsyncClient",
+        lambda **kw: real(transport=httpx.MockTransport(_answer), follow_redirects=False),
+    )
+    assert _classify("https://bücher.example/c") == "note"
+    assert hosts == ["xn--bcher-kva.example"]
+
+
+def test_a_refused_host_is_logged_once_per_namespace(
+    monkeypatch: pytest.MonkeyPatch, client: type[_Client], caplog: pytest.LogCaptureFixture
+) -> None:
+    from server.memory.app.log_once import LogOnce
+
+    monkeypatch.setattr(classify, "_REFUSED_LOGGED", LogOnce())
+
+    async def _calls() -> list[str]:
+        return [
+            await classify.classify(
+                org="acme",
+                namespace=ns,
+                endpoint="https://10.0.0.5/c",
+                prompt_template="",
+                value="v",
+                valid_types=[],
+            )
+            for ns in ("a", "a", "a", "b")
+        ]
+
+    assert asyncio.run(_calls()) == ["", "", "", ""] and client.seen == []
+    warned = [r.getMessage() for r in caplog.records if "host is refused" in r.getMessage()]
+    assert len(warned) == 2
+    assert warned[0].startswith("acme/a:") and warned[1].startswith("acme/b:")
