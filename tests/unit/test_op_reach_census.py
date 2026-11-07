@@ -89,8 +89,8 @@ def test_mcp_reach_derives_from_the_tier_frozensets():
 
 
 def test_manifest_matches_the_tree():
-    """SDK methods, examples/dev/scripts and integrations are scanned at test
-    time; the committed table must equal the scan (regenerate with
+    """SDK methods, examples/dev/scripts, integrations and dashboard call sites
+    are scanned at test time; the committed table must equal the scan (regenerate with
     scripts/codegen/op_reach_census.py --write-manifest)."""
     derived = derive_static_reach(REPO_ROOT)
     assert derived == STATIC_REACH, {
@@ -108,8 +108,8 @@ def test_manifest_matches_the_tree():
 
 
 def test_scan_of_a_checkout_under_a_tests_directory_still_finds_reach(tmp_path):
-    """Only `tests` directories inside the scanned tree are skipped; the
-    checkout's own location does not matter."""
+    """Only `tests` and `test` directories inside the scanned tree are skipped;
+    the checkout's own location does not matter."""
     root = tmp_path / "tests" / "loom"
     sdk = root / "sdk" / "python" / "loom"
     sdk.mkdir(parents=True)
@@ -126,10 +126,50 @@ def test_a_test_beside_its_source_is_not_reach(tmp_path):
     src = tmp_path / "frontend" / "src"
     src.mkdir(parents=True)
     (src / "Page.tsx").write_text('post("/v1/memory.pin");\n')
-    (src / "Page.test.tsx").write_text('const OP = "memory.unpin";\n')
+    (src / "Page.test.tsx").write_text('post("/v1/memory.unpin");\n')
     derived = derive_static_reach(tmp_path)
-    assert derived.get("memory.pin") == ("plugin_hook",)
+    assert derived.get("memory.pin") == ("dashboard",)
     assert "memory.unpin" not in derived
+
+
+def test_a_dashboard_call_site_is_a_quoted_path(tmp_path):
+    """A quoted `/v1/<op>` posts the op; a bare op name (an audit label, a
+    comment) and the test helpers do not."""
+    src = tmp_path / "frontend" / "src"
+    (src / "test").mkdir(parents=True)
+    (src / "api.ts").write_text(
+        'post("/v1/memory.pin", body);\n'
+        "post(`/v1/memory.unpin`, body);\n"
+        '// see "/v1/memory.lock"\n'
+        "/** POST the bytes (`/v1/memory.touch?...`) */\n"
+        'fetch("https://host/v1/memory.history", {}); // `/v1/memory.reject`\n'
+        'onClick={() => pin()} // posts "/v1/memory.lock"\n'
+        'bar(); /* "/v1/memory.demote" */ baz();\n'
+        "const r = /^spaces\\//; post('/v1/memory.verify');\n"
+        "<p>couldn't</p>\n"
+        '// "/v1/memory.promote"\n'
+        'const hint = "**/generated/**, third_party/**";\n'
+        'post("/v1/memory.redact", body);\n'
+        '{/* the drawer posts\n   post("/v1/memory.unlock") */}\n'
+        'const LABEL = "memory.restore";\n'
+    )
+    (src / "test" / "stub.ts").write_text('post("/v1/memory.touch", {});\n')
+    (src / "Page.test.tsx").write_text('post("/v1/memory.unlock", {});\n')
+    derived = derive_static_reach(tmp_path)
+    assert derived == {
+        "memory.pin": ("dashboard",),
+        "memory.unpin": ("dashboard",),
+        "memory.redact": ("dashboard",),
+        "memory.verify": ("dashboard",),
+    }
+
+
+def test_the_census_sources_add_no_reach(tmp_path):
+    """The scan reads `scripts/`, the census's own home: its comments name no op."""
+    source = REPO_ROOT / "scripts" / "codegen" / "op_reach_census.py"
+    (tmp_path / "scripts" / "codegen").mkdir(parents=True)
+    (tmp_path / "scripts" / "codegen" / source.name).write_text(source.read_text())
+    assert derive_static_reach(tmp_path) == {}
 
 
 def test_manifest_finds_the_known_reach_paths():
@@ -139,8 +179,8 @@ def test_manifest_finds_the_known_reach_paths():
     assert "sdk_example" in op_reach("memory.set")
     # plugin hook: loom-working-memory.mjs posts working_memory.append
     assert "plugin_hook" in op_reach("working_memory.append")
-    # dashboard: frontend/src/views/admin/Health.tsx reads ops.health
-    assert "plugin_hook" in op_reach("ops.health")
+    # dashboard: frontend/src/api/admin.ts posts ops.health
+    assert "dashboard" in op_reach("ops.health") and "plugin_hook" not in op_reach("ops.health")
 
 
 # ------------------------------------------------------------------ the exposed verbs

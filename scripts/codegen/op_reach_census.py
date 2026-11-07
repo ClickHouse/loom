@@ -12,10 +12,11 @@ maturity and, with ``--call-counts``, its call count from ``loom.agent_events``.
 the server CLI uses (``LOOM_ENV_FILE=/path/.env`` to name another dotenv).
 
 The gate (also ``tests/unit/test_op_reach_census.py``): every op has a reach
-path other than a raw HTTP POST or is declared experimental; the committed
-manifest is byte-identical to what ``--write-manifest`` writes. ``--owners``
-names, for every experimental op, the commit that added its declaration: the
-owner a deletion PR should cite.
+path other than a raw HTTP POST or is declared experimental; every op is on the
+dashboard or in ``server.operations.dashboard`` (with the reason it is not, or
+pending); the committed manifest is byte-identical to what ``--write-manifest``
+writes. ``--owners`` names, for every experimental op, the commit that added its
+declaration: the owner a deletion PR should cite.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ if str(ROOT) not in sys.path:  # run as a file
 
 from scripts.codegen.common import GeneratedFile, ruff_format  # noqa: E402
 from server.operations.base import MATURITIES, Operation  # noqa: E402
+from server.operations.dashboard import DASHBOARD_PENDING, NOT_IN_DASHBOARD  # noqa: E402
 from server.operations.reach import STATIC_KINDS, has_reach  # noqa: E402
 from server.operations.registry import ALL_OPERATIONS  # noqa: E402
 
@@ -53,28 +55,45 @@ GROUP BY operation
 
 _SDK_DIR = "sdk/python/loom"
 _EXAMPLE_DIRS = ("examples", "dev", "scripts")
-_PLUGIN_DIRS = ("integrations", "frontend/src")
+_PLUGIN_DIR = "integrations"
 _PLUGIN_SUFFIXES = (".mjs", ".js", ".ts", ".tsx", ".sh", ".py", ".yaml", ".yml", ".json")
+_DASHBOARD_DIR = "frontend/src"
+_DASHBOARD_SUFFIXES = (".ts", ".tsx")
 
 _V1 = re.compile(r"/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b")
 _QUOTED = re.compile(r"""["']([a-z_]+(?:\.[a-z_]+){1,2})["']""")
 _SDK_CALL = re.compile(r"\.([a-z_]+)\.([a-z_]+)\(")
+# A dashboard call site: the path as a string literal (`post("/v1/<op>", …)`), outside
+# a comment. A bare op name there is an audit label, not a call.
+_DASHBOARD_CALL = re.compile(r"""["'`]/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b""")
+# Keeps escapes, strings (a `'` or `"` string ends at its line) and template literals;
+# drops `//` and `/* */`. A JSX apostrophe paired with a `'` later in a comment on its
+# line keeps the rest of that comment.
+_TS_KEEP_OR_COMMENT = re.compile(
+    r"""(\\.|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)|//[^\n]*|/\*.*?\*/""",
+    re.DOTALL,
+)
+
+
+def _without_comments(code: str) -> str:
+    """TypeScript `code` with its comments dropped and its strings kept."""
+    return _TS_KEEP_OR_COMMENT.sub(lambda m: m.group(1) or "", code)
 
 
 def _files(root: Path, rel: str, suffixes: tuple[str, ...]) -> list[Path]:
     base = root / rel
     if not base.exists():
         return []
-    # Excluded directories are matched below `base` only: a checkout that
-    # itself sits under a `tests` directory still scans every file. A test kept
-    # beside its source (the dashboard's `*.test.tsx`) is skipped by its name.
+    # `tests` and `test` directories below `base`, and a test kept beside its
+    # source (`*.test.tsx`), are skipped; a checkout that itself sits under
+    # `tests` still scans every file.
     return sorted(
         p
         for p in base.rglob("*")
         if p.is_file()
         and p.suffix in suffixes
         and ".test." not in p.name
-        and not {"tests", "__pycache__"} & set(p.relative_to(base).parts)
+        and not {"tests", "test", "__pycache__"} & set(p.relative_to(base).parts)
     )
 
 
@@ -156,15 +175,19 @@ def derive_static_reach(root: Path | None = None) -> dict[str, tuple[str, ...]]:
                 for op in classes.get(cls or "", {}).get(method, ()):
                     hit(op, "sdk_example")
 
-    # plugin_hook: op names or /v1/<op> in the integrations (hooks, gateways,
-    # shims) and the dashboard source.
-    for rel in _PLUGIN_DIRS:
-        for path in _files(root, rel, _PLUGIN_SUFFIXES):
-            text = path.read_text(encoding="utf-8", errors="replace")
-            for m in _V1.finditer(text):
-                hit(m.group(1), "plugin_hook")
-            for m in _QUOTED.finditer(text):
-                hit(m.group(1), "plugin_hook")
+    # plugin_hook: op names or /v1/<op> in the integrations (hooks, gateways, shims).
+    for path in _files(root, _PLUGIN_DIR, _PLUGIN_SUFFIXES):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for m in _V1.finditer(text):
+            hit(m.group(1), "plugin_hook")
+        for m in _QUOTED.finditer(text):
+            hit(m.group(1), "plugin_hook")
+
+    # dashboard: a quoted /v1/<op> call site in the dashboard source.
+    for path in _files(root, _DASHBOARD_DIR, _DASHBOARD_SUFFIXES):
+        code = _without_comments(path.read_text(encoding="utf-8", errors="replace"))
+        for m in _DASHBOARD_CALL.finditer(code):
+            hit(m.group(1), "dashboard")
 
     return {op: tuple(k for k in STATIC_KINDS if k in kinds) for op, kinds in sorted(found.items())}
 
@@ -174,9 +197,9 @@ def render_manifest(static: dict[str, tuple[str, ...]]) -> str:
     lines = [
         '"""GENERATED by scripts/codegen/op_reach_census.py --write-manifest — do not edit.',
         "",
-        "File-derived reach kinds per op: which SDK methods,",
-        "examples/dev scripts and integrations name it. The MCP kinds are read",
-        "live from toolsets; tests/unit/test_op_reach_census.py regenerates",
+        "File-derived reach kinds per op: which SDK methods, examples/dev",
+        "scripts, integrations and dashboard call sites name it. The MCP kinds",
+        "are read live from toolsets; tests/unit/test_op_reach_census.py regenerates",
         'this table from the tree and fails when it drifts."""',
         "",
         "from __future__ import annotations",
@@ -214,8 +237,34 @@ def violations(ops: list[Operation]) -> list[str]:
             out.append(f"{op.name}: maturity {op.maturity!r} not in {MATURITIES}")
         if not has_reach(op.name) and op.maturity == "stable":
             out.append(f"{op.name}: no reach path (only a raw /v1 POST) and not experimental")
+    out += dashboard_violations(ops)
     if not MANIFEST.is_current(manifest_text()):
         out.append(f"{MANIFEST.display} is stale — run {MANIFEST.command}")
+    return out
+
+
+def dashboard_violations(ops: list[Operation]) -> list[str]:
+    """Every op is on the dashboard or says why not, and nothing says why not
+    for an op the dashboard calls (`server.operations.dashboard`)."""
+    out: list[str] = []
+    names = {op.name for op in ops}
+    for op in ops:
+        called = "dashboard" in op.reach
+        named = op.name in NOT_IN_DASHBOARD
+        pending = op.name in DASHBOARD_PENDING
+        if not called and not named and not pending:
+            out.append(
+                f"{op.name}: no dashboard call site; add its control, or name it in "
+                "NOT_IN_DASHBOARD with the reason"
+            )
+        if called and (named or pending):
+            out.append(
+                f"{op.name}: the dashboard calls it, so drop it from server/operations/dashboard.py"
+            )
+        if named and pending:
+            out.append(f"{op.name}: in both NOT_IN_DASHBOARD and DASHBOARD_PENDING")
+    for name in sorted((set(NOT_IN_DASHBOARD) | DASHBOARD_PENDING) - names):
+        out.append(f"{name}: in server/operations/dashboard.py but no such op")
     return out
 
 

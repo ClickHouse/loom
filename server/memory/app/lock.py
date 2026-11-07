@@ -89,7 +89,7 @@ async def handle_memory_lock(input: MemoryLockInput) -> MemoryLockOutput:
             exc.detail["message"] = (  # type: ignore[index]
                 f"memory.lock refused: {input.memory_key!r} is already locked "
                 f"{previous}; a WRITER may only tighten a lock. "
-                "Only the user can loosen it (the memory's Lock control in the dashboard); "
+                "Only the user can loosen it; "
                 "ask them rather than looking for another route or credential."
             )
             raise exc

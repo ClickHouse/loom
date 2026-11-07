@@ -141,8 +141,8 @@ class Operation:
     def reach(self) -> frozenset[str]:
         """How a caller reaches this op, derived: MCP tier
         membership from ``server.operations.toolsets`` plus the committed
-        scan of the SDK, the examples/dev scripts and the plugin hooks
-        (``server.operations.reach``). ``{"http_only"}`` means nothing but a
+        scan of the SDK, the examples/dev scripts, the plugin hooks and the
+        dashboard (``server.operations.reach``). ``{"http_only"}`` means nothing but a
         raw ``/v1/*`` POST reaches it."""
         from server.operations.reach import op_reach
 

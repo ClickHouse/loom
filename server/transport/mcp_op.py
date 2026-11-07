@@ -146,19 +146,33 @@ _INSTEAD: dict[str, str] = {
     # An owner-only op names the person, never a route: naming the SDK/HTTP
     # op sends a model probing env vars and token files for a way around it.
     "memory.unlock": (
-        "only the user can unlock a memory: ask them to use the memory's Lock "
-        "control in the dashboard, leave the key as it is and say it is locked. Don't look "
-        "for another route, token or credential to unlock it yourself"
+        "only the user can unlock a memory: leave the key as it is and tell them it is "
+        "locked. Don't look for another route, token or credential to unlock it yourself"
     ),
     "memory.search": "call loom_search (memory, profile, knowledge and conversations in one call)",
     "knowledge.search": "call loom_search",
     "conversation.search": "call loom_search",
     "namespace.list": "call loom_namespace_list_mine",
     "run.list": "call run.get with a run id (loom_op)",
+    "code.context_packs": "call code.context_pack (loom_op) with the pr_number you want",
     "memory.extraction_status": (
         "call memory.extraction_status_mine (loom_op) with the queue_id each deferred "
         "memory.set_from_messages returned"
     ),
+    "erasure.status": "call erasure.list (loom_op); each saga row carries its status",
+    "memory.search_trace": (
+        "call loom_search with explain=true; each memory hit carries its ranking terms"
+    ),
+    # Ops a client program calls, not a person: the agent's nearest op, or nothing to call.
+    "ui.vitals": "the dashboard posts its own paint timings; nothing to call",
+    "code.outcome": "the plugin's hooks report what was done with a code answer; nothing to call",
+    "code.coverage.watch": (
+        "a bot's watch on its own inbox; for the commit the index has reached, call "
+        "code.index_status (loom_op)"
+    ),
+    "code.coverage.unwatch": "a bot's watch on its own inbox; nothing to call",
+    "code.scip_ingest": "a CI job uploads the SCIP index; nothing to call",
+    "code.scip_status": "a CI job uploads the SCIP index and polls its batch; nothing to call",
 }
 
 
@@ -166,19 +180,26 @@ _NEEDS_THE_USER = (
     "this needs the user: ask them to do it in the dashboard. Don't look for another "
     "route, token or credential to do it yourself"
 )
+# For an op without the `dashboard` reach kind (server/operations/reach.py).
+_NEEDS_AN_OPERATOR = (
+    "this needs the user or an operator, outside this chat. Don't look for another "
+    "route, token or credential to do it yourself"
+)
 
 
 def hidden_refusal(name: str) -> dict[str, Any] | None:
-    """The refusal for an op that exists but is kept off MCP: why, and what
-    to call instead. None when `name` is not a hidden op."""
-    from server.operations.registry import ALL_OPERATIONS
+    """The refusal for an op that exists but is kept off MCP: that it is not on
+    MCP, and what to do instead. None when `name` is not a hidden op."""
+    from server.operations.registry import OPERATIONS_BY_NAME
 
-    if name not in _MCP_HIDDEN_OPS or not any(op.name == name for op in ALL_OPERATIONS):
+    op = OPERATIONS_BY_NAME.get(name)
+    if op is None or name not in _MCP_HIDDEN_OPS:
         return None
+    default = _NEEDS_THE_USER if "dashboard" in op.reach else _NEEDS_AN_OPERATOR
     return {
-        "error": f"{name} exists but is kept for the user and operators, not agents",
+        "error": f"{name} exists but is not callable on this MCP connection",
         "code": "OP_NOT_ON_MCP",
-        "instead": _INSTEAD.get(name, _NEEDS_THE_USER),
+        "instead": _INSTEAD.get(name, default),
     }
 
 
