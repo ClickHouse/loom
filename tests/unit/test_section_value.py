@@ -410,6 +410,16 @@ def test_a_recorded_meetings_transcript_and_template_are_noise(
         ),
         ("Incident 2026-03-04 14:00 UTC - notes by Ana", ("Action items",), "- Ana: add an alert"),
         ("Outage 2026-03-04 14:00 UTC - notes by Ana", ("Timeline", "14:05"), "Errors passed 5%."),
+        # a design word keeps "notes by" a person's notes, beside a meeting word too
+        ("Incident sync 2026-03-04 14:00 UTC - notes by Ana", ("Timeline", "14:05"), "Errors 5%."),
+        ("Release sync - 2026-03-04 10:00 - Notes by Assistant", ("Summary",), "Ana led it."),
+        (_RECORDED, ("Action items for the parser",), "Ana showed the parse times."),
+        # a first heading that repeats the title with markdown escapes is the title
+        (
+            "Planner sync - 2026-03-04 10:00 CET - Transcript",
+            ("Planner sync \\- 2026-03-04 10:00 CET \\- Transcript", "Summary"),
+            "The team reviewed the fallback list.",
+        ),
         (
             "Customer call 2026-03-04 14:00 - notes by Ana",
             ("Action items",),

@@ -137,7 +137,7 @@ _RECORDED_STAMP = re.compile(rf"\b{_DAY}\s+\d{{1,2}}[:.]\d{{2}}\b", re.IGNORECAS
 # A transcript mark is a whole part of the title ("Planner sync — Transcript & notes — ...",
 # "... - Transcript"); "Incident ... - transcript export failing" names a topic.
 _TRANSCRIPT_MARK = re.compile(
-    r"(?:^|\\?[-\u2013\u2014|:])\s*transcript(?:\s*&\s*notes)?\s*(?:$|\\?[-\u2013\u2014|:])",
+    r"(?:^|[-\u2013\u2014|:])\s*transcript(?:\s*&\s*notes)?\s*(?:$|[-\u2013\u2014|:])",
     re.IGNORECASE,
 )
 _NOTES_BY_MARK = re.compile(r"\bnotes by\b", re.IGNORECASE)
@@ -146,7 +146,7 @@ _NOTES_BY_MARK = re.compile(r"\bnotes by\b", re.IGNORECASE)
 # template's own sections; not a topic that names one ("Transcript search latency").
 _TRANSCRIPT_HEADING = re.compile(
     r"^\W*\d{1,2}:\d{2}(?::\d{2})?\W*$|^\W*transcript\W*$|^\W*transcription ended\b"
-    r"|\s\\?[-\u2013\u2014|:]\s*transcript\W*$"
+    r"|\s[-\u2013\u2014|:]\s*transcript\W*$"
     r"|^\W*(?:suggested\s+)?(?:next\s+steps|action\s+items|attendees)\W*$",
     re.IGNORECASE,
 )
@@ -196,6 +196,8 @@ _SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
 _LINE_LEAD = re.compile(r"^\s*(?:[-+>|]|\*(?!\*)|\d{1,3}[.)])\s*")
 # Underscore emphasis ("__Agreed:__"), which `\b` cannot see past; snake_case stays.
 _UNDERSCORES = re.compile(r"(?<!\w)_{1,3}|_{1,3}(?!\w)")
+# A markdown escape: a backslash before punctuation.
+_ESCAPED = re.compile(r"\\([^\w\s])")
 # A table's separator row, an empty table row and a horizontal rule carry no text.
 _RULE = re.compile(r"^[\s|:\-=*_]*$")
 
@@ -305,5 +307,6 @@ def _lines(text: str) -> tuple[list[str], int]:
 
 
 def _plain(text: str) -> str:
-    """`text` with curly apostrophes made straight and underscore emphasis dropped."""
-    return _UNDERSCORES.sub("", text.replace("\u2019", "'"))
+    """`text` with markdown escapes undone ("Planner sync \\- Transcript"), curly apostrophes
+    made straight and underscore emphasis dropped."""
+    return _UNDERSCORES.sub("", _ESCAPED.sub(r"\1", text).replace("\u2019", "'"))
