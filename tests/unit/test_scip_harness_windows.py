@@ -195,7 +195,7 @@ while [[ $# -gt 0 ]]; do
 done
 """
 
-# stub cmake: logs its call, fails under CMAKE_FAIL, else lists every src/*.cpp
+# stub cmake: logs its call, fails under CMAKE_FAIL, else lists every src/*.cpp, .cc and .cxx
 # in the compile database, as a configure over a glob does
 _FAKE_CMAKE = """#!/usr/bin/env bash
 echo "cmake $*" >>"$CMAKE_CALLS"
@@ -203,7 +203,7 @@ echo "cmake $*" >>"$CMAKE_CALLS"
 "$PYTHON" - <<'PYEOF'
 import json, pathlib
 root = pathlib.Path.cwd()
-compdb = [{"directory": str(root), "file": str(p), "command": "c++"} for p in sorted(root.glob("src/*.cpp"))]
+compdb = [{"directory": str(root), "file": str(p), "command": "c++"} for p in sorted(root.glob("src/*.c[cpx]*"))]
 (root / "build" / "compile_commands.json").write_text(json.dumps(compdb))
 PYEOF
 """
@@ -305,16 +305,17 @@ def test_a_window_that_only_edits_a_translation_unit_keeps_the_compile_database(
     assert w.cmake_runs == [] and w.compdbs == [["a.cpp"]]
 
 
-def test_a_translation_unit_added_after_the_configure_is_indexed(tmp_path: Path) -> None:
-    """The compile database was configured before src/c.cpp existed: the window that
-    adds it reconfigures on the existing cache, so c.cpp is indexed, not dropped."""
+@pytest.mark.parametrize("name", ["c.cpp", "c.cc", "c.cxx"])
+def test_a_translation_unit_added_after_the_configure_is_indexed(tmp_path: Path, name: str) -> None:
+    """The compile database was configured before the file existed: the window that
+    adds it reconfigures on the existing cache, so it is indexed, not dropped."""
     w = _CppWindow(tmp_path)
-    (w.repo / "src" / "c.cpp").write_text("int c() { return 3; }\n")
+    (w.repo / "src" / name).write_text("int c() { return 3; }\n")
     head = _commit(w.repo, "add c")
-    delta = w.run(head, ["src/c.cpp"])
+    delta = w.run(head, [f"src/{name}"])
     assert w.cmake_runs == ["cmake -B build -S ."]
-    assert w.compdbs == [["c.cpp"]]
-    assert delta is not None and [f["path"] for f in delta["files"]] == ["src/c.cpp"]
+    assert w.compdbs == [[name]]
+    assert delta is not None and [f["path"] for f in delta["files"]] == [f"src/{name}"]
 
 
 def _edit_build(repo: Path, edit: str) -> None:
