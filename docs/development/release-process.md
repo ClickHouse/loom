@@ -84,7 +84,9 @@ gh workflow run release.yml --ref <branch> -f dry_run=true
 It runs at the version `server/__init__.py` names. Its images go to run artifacts instead of ghcr.io,
 without the provenance and SBOM attestations that only a registry keeps, and `docker-smoke` loads them
 from there. The `preflight` job reports each missing [prerequisite](#before-the-first-release) as a
-warning instead of failing.
+warning instead of failing. What only a published release exercises, a dry run does not: `docker-tag`
+(joining each image's two digests, the Latest decision, `:latest`), the GitHub Release, and the
+registry publishes.
 
 ## Before the first release
 
@@ -183,8 +185,11 @@ tests), and then three publish jobs:
 | `npm`          | `@clickhouse/loom` to npm with provenance                        | the verified tarball; a published version is skipped; a prerelease goes to the `next` dist-tag; `NPM_TOKEN` as fallback                                                                                                               |
 | `mcp-registry` | `server.json` to the MCP Registry as `io.github.ClickHouse/loom` | the committed file, whose version the `version` job checks against the tag; GitHub OIDC login with a pinned `mcp-publisher`; a listed version and a prerelease are skipped; `preflight` refuses a private repository before any build |
 
-The Docker image is already published by the tag run. Manual dispatch still rebuilds the
-same immutable version safely, while publishing the SDK registries and the MCP Registry listing.
+The images are already published by the tag run: a dispatch on a tag whose images carry the
+version builds and tags none (`scripts/release/published_images.sh`), smoke-tests the published
+ones, and goes on to the registries. Release images build without the cache, so a rebuild would
+move the version's tags onto other bytes. When only one of the two carries the version (a failed
+`docker-tag`), re-run the failed jobs of the tag's run, which tags the same build.
 
 A re-run after a partial publish is safe: each publish job skips what already exists.
 

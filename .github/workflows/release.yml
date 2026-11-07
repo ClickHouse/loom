@@ -18,8 +18,9 @@ name: release
 # pypi, npm, mcp-registry (dispatch only). A re-run after a partial publish is
 # safe: the bundle keeps the ClickHouse release it was first published with,
 # the release is updated in place, PyPI skips files it already has, npm and the
-# MCP Registry skip a version they already have, and the image tags are
-# overwritten with the same build.
+# MCP Registry skip a version they already have, a re-run of failed jobs tags
+# the same build again, and a run on a tag whose images are published builds
+# and tags none.
 #
 # The PyPI, npm and MCP Registry jobs are dispatch-only, so a tag's GitHub
 # Release can be checked before the SDKs and the server listing reach the
@@ -119,13 +120,15 @@ jobs:
             || { echo "::error file=server.json::version is not $VERSION"; exit 1; }
 
   # What only an owner can grant (a public repository; ghcr.io packages this
-  # workflow can push and anyone can pull), checked before forty minutes of
-  # builds rather than at the push. A dry run reports each as a warning.
+  # workflow can push and anyone can pull), checked before the builds rather
+  # than at the push. A dry run reports each as a warning.
   preflight:
     name: Release prerequisites
     needs: version
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      images_published: ${{ steps.images.outputs.published }}
     permissions:
       contents: read
       packages: write # the push probe asks for the access the docker job uses
@@ -140,6 +143,17 @@ jobs:
           IMAGES: ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor
           MODE: ${{ inputs.dry_run && 'report' || 'strict' }}
         run: bash scripts/release/preflight.sh "$MODE"
+      # The registry dispatch on a tag whose images the tag run published keeps
+      # them: an uncached rebuild would move the version's tags onto other bytes.
+      - name: Are this version's images published
+        id: images
+        if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          published=$(bash scripts/release/published_images.sh "$VERSION" \
+            ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor)
+          echo "published=$published" >> "$GITHUB_OUTPUT"
 
   # The bundle names the ClickHouse release that is latest now, so an installed
   # Loom version keeps its ClickHouse; it is migrated and checked here first.
@@ -426,12 +440,13 @@ jobs:
   docker:
     # The server's image, and the document extractor service's (extractor/), which
     # the compose stack and the chart run beside it at the same version. Each
-    # architecture builds on its own runner (an emulated arm64 build took most of
-    # the run's hour), is pushed by digest and scanned; docker-tag joins the two.
+    # architecture builds on its own runner, is pushed by digest and scanned;
+    # docker-tag joins the two. None is built when the version's are published.
     # A dry run exports each image to an artifact instead of pushing it, without
     # the provenance and SBOM attestations, which only a registry keeps.
     name: Docker (${{ matrix.artifact }}, ${{ matrix.arch }})
-    needs: [version, verify]
+    if: ${{ needs.preflight.outputs.images_published != 'true' }}
+    needs: [version, preflight, verify]
     strategy:
       # A dry run reports every image's failure; a release stops at the first.
       fail-fast: ${{ !inputs.dry_run }}
@@ -539,8 +554,8 @@ jobs:
 
   docker-tag:
     name: Tag every scanned image
-    if: ${{ !inputs.dry_run }}
-    needs: [version, docker]
+    if: ${{ !inputs.dry_run && needs.preflight.outputs.images_published != 'true' }}
+    needs: [version, preflight, docker]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -596,10 +611,10 @@ jobs:
 
   docker-smoke:
     name: Released quickstart (${{ matrix.arch }})
-    # A dry run smokes the images its docker jobs exported, as a release smokes
-    # the ones docker-tag published.
-    if: ${{ !cancelled() && needs.docker.result == 'success' && (needs.docker-tag.result == 'success' || (inputs.dry_run && needs.docker-tag.result == 'skipped')) }}
-    needs: [version, clickhouse, docker, docker-tag]
+    # A dry run smokes the images its docker jobs exported, a release the ones
+    # docker-tag published, and a dispatch on a published tag the published ones.
+    if: ${{ !cancelled() && needs.clickhouse.result == 'success' && ((needs.docker.result == 'success' && (needs.docker-tag.result == 'success' || (inputs.dry_run && needs.docker-tag.result == 'skipped'))) || needs.preflight.outputs.images_published == 'true') }}
+    needs: [version, preflight, clickhouse, docker, docker-tag]
     strategy:
       fail-fast: false
       matrix:
@@ -643,8 +658,8 @@ jobs:
 
   github-release:
     name: GitHub Release (artifacts attached)
-    if: ${{ !inputs.dry_run }}
-    needs: [version, verify, docker-tag, docker-smoke]
+    if: ${{ !cancelled() && !inputs.dry_run && needs.verify.result == 'success' && needs.docker-smoke.result == 'success' && (needs.docker-tag.result == 'success' || needs.preflight.outputs.images_published == 'true') }}
+    needs: [version, preflight, verify, docker-tag, docker-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # One publish at a time across every tag, so the downgrade check below

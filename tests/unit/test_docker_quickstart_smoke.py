@@ -150,6 +150,7 @@ def test_release_gate_installs_browser_dependencies_before_running_provider_flow
     # Tagged together after both scans, so a version never names one image alone.
     assert "docker-tag" in job["needs"] and workflow["jobs"]["docker-tag"]["needs"] == [
         "version",
+        "preflight",
         "docker",
     ]
     assert "docker-tag" in workflow["jobs"]["github-release"]["needs"]

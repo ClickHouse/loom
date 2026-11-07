@@ -215,11 +215,12 @@ def test_a_dry_run_publishes_nothing() -> None:
 def test_a_dry_run_smokes_its_own_images_and_a_release_the_published_ones() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     smoke = jobs["docker-smoke"]
-    assert smoke["needs"] == ["version", "clickhouse", "docker", "docker-tag"]
+    assert smoke["needs"] == ["version", "preflight", "clickhouse", "docker", "docker-tag"]
     assert smoke["if"] == (
-        "${{ !cancelled() && needs.docker.result == 'success' && "
-        "(needs.docker-tag.result == 'success' || "
-        "(inputs.dry_run && needs.docker-tag.result == 'skipped')) }}"
+        "${{ !cancelled() && needs.clickhouse.result == 'success' && "
+        "((needs.docker.result == 'success' && (needs.docker-tag.result == 'success' || "
+        "(inputs.dry_run && needs.docker-tag.result == 'skipped'))) || "
+        "needs.preflight.outputs.images_published == 'true') }}"
     )
     loads = [s for s in smoke["steps"] if s.get("if") == "${{ inputs.dry_run }}"]
     assert loads[0]["with"]["pattern"] == "scanned-*-${{ matrix.arch }}"
@@ -269,3 +270,86 @@ def test_make_latest_reads_the_repositorys_tags(tmp_path: Path) -> None:
 
     assert latest("1.2.1") == "true"
     assert latest("1.1.1") == "false"
+
+
+# A stub registry for published_images.sh: PUBLISHED lists "package:tag" pairs
+# that exist, NEVER packages never pushed, DOWN makes every request a 503.
+FAKE_REGISTRY = r"""#!/usr/bin/env bash
+echo "$*" >> "$CALLS"
+url=${@: -1} out=
+for ((i = 1; i < $#; i++)); do [ "${!i}" = -o ] && { j=$((i + 1)); out=${!j}; }; done
+[ -n "${DOWN:-}" ] && { echo 503; exit 0; }
+case $url in
+  *"/token?"*)
+    pkg=${url#*scope=repository:}; pkg=${pkg%%:*}
+    if [[ " ${NEVER:-} " == *" $pkg "* ]]; then echo 403; exit 0; fi
+    echo '{"token":"anon"}' > "$out"; echo 200 ;;
+  *"/manifests/"*)
+    pkg=${url#*/v2/}; tag=${pkg##*/manifests/}; pkg=${pkg%/manifests/*}
+    if [[ " $PUBLISHED " == *" $pkg:$tag "* ]]; then echo 200; else echo 404; fi ;;
+esac
+"""
+
+
+def _published(tmp_path: Path, **env: str) -> subprocess.CompletedProcess[str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "curl").write_text(FAKE_REGISTRY)
+    (bin_dir / "curl").chmod(0o755)
+    return subprocess.run(
+        ["bash", str(ROOT / "scripts/release/published_images.sh"), "1.2.0", *IMAGES.split()],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "CALLS": str(tmp_path / "calls"),
+            "GHCR": "https://registry.test",
+            "PUBLISHED": "",
+            **env,
+        },
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("published", "never", "answer"),
+    [
+        ("clickhouse/loom:1.2.0 clickhouse/loom-extractor:1.2.0", "", "true"),
+        ("clickhouse/loom:1.2.0", "", "false"),  # one image out: build both again
+        ("clickhouse/loom:1.1.0 clickhouse/loom-extractor:1.1.0", "", "false"),
+        ("", "clickhouse/loom-extractor", "false"),  # a package never pushed
+    ],
+)
+def test_published_images_says_whether_every_image_carries_the_version(
+    tmp_path: Path, published: str, never: str, answer: str
+) -> None:
+    result = _published(tmp_path, PUBLISHED=published, NEVER=never)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == answer
+    assert " -u " not in (tmp_path / "calls").read_text()  # signed in to nothing
+
+
+def test_published_images_fails_on_an_outage_instead_of_rebuilding(tmp_path: Path) -> None:
+    result = _published(tmp_path, DOWN="1")
+    assert result.returncode == 1 and result.stdout == ""
+    assert "the registry answered HTTP 503" in result.stderr
+
+
+def test_a_run_on_a_published_tag_builds_and_tags_no_image() -> None:
+    """The registry dispatch on a released tag: an uncached rebuild would move
+    the version's tags onto other bytes."""
+    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
+    assert (
+        jobs["preflight"]["outputs"]["images_published"] == "${{ steps.images.outputs.published }}"
+    )
+    (step,) = [s for s in jobs["preflight"]["steps"] if s.get("id") == "images"]
+    assert step["if"] == "${{ !inputs.dry_run }}"
+    assert "published_images.sh" in step["run"]
+    assert jobs["docker"]["if"] == "${{ needs.preflight.outputs.images_published != 'true' }}"
+    assert "needs.preflight.outputs.images_published != 'true'" in jobs["docker-tag"]["if"]
+    release = jobs["github-release"]
+    assert release["if"] == (
+        "${{ !cancelled() && !inputs.dry_run && needs.verify.result == 'success' && "
+        "needs.docker-smoke.result == 'success' && (needs.docker-tag.result == 'success' || "
+        "needs.preflight.outputs.images_published == 'true') }}"
+    )
