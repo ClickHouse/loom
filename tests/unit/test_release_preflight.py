@@ -217,9 +217,10 @@ def test_a_dry_run_smokes_its_own_images_and_a_release_the_published_ones() -> N
     smoke = jobs["docker-smoke"]
     assert smoke["needs"] == ["version", "preflight", "clickhouse", "docker", "docker-tag"]
     assert smoke["if"] == (
-        "${{ !cancelled() && needs.clickhouse.result == 'success' && "
-        "((needs.docker.result == 'success' && (needs.docker-tag.result == 'success' || "
-        "(inputs.dry_run && needs.docker-tag.result == 'skipped'))) || "
+        "${{ !cancelled() && needs.clickhouse.result == 'success' && ( "
+        "(needs.docker.result == 'success' && needs.docker-tag.result == 'success') || "
+        "(inputs.dry_run && needs.docker.result == 'success' && "
+        "needs.docker-tag.result == 'skipped') || "
         "needs.preflight.outputs.images_published == 'true') }}"
     )
     loads = [s for s in smoke["steps"] if s.get("if") == "${{ inputs.dry_run }}"]
@@ -273,10 +274,12 @@ def test_make_latest_reads_the_repositorys_tags(tmp_path: Path) -> None:
 
 
 # A stub registry for published_images.sh: PUBLISHED lists "package:tag" pairs
-# that exist, NEVER packages never pushed, DOWN makes every request a 503.
+# that exist (an index of one platform plus an attestation, its manifest, and a
+# config labelled with BUILT_FROM), NEVER packages never pushed, DOWN makes
+# every request a 503.
 FAKE_REGISTRY = r"""#!/usr/bin/env bash
 echo "$*" >> "$CALLS"
-url=${@: -1} out=
+url=${@: -1} out=/dev/null
 for ((i = 1; i < $#; i++)); do [ "${!i}" = -o ] && { j=$((i + 1)); out=${!j}; }; done
 [ -n "${DOWN:-}" ] && { echo 503; exit 0; }
 case $url in
@@ -284,9 +287,18 @@ case $url in
     pkg=${url#*scope=repository:}; pkg=${pkg%%:*}
     if [[ " ${NEVER:-} " == *" $pkg "* ]]; then echo 403; exit 0; fi
     echo '{"token":"anon"}' > "$out"; echo 200 ;;
+  *"/manifests/sha256:platform")
+    echo '{"config":{"digest":"sha256:config"}}' > "$out"; echo 200 ;;
   *"/manifests/"*)
     pkg=${url#*/v2/}; tag=${pkg##*/manifests/}; pkg=${pkg%/manifests/*}
-    if [[ " $PUBLISHED " == *" $pkg:$tag "* ]]; then echo 200; else echo 404; fi ;;
+    if [[ " $PUBLISHED " == *" $pkg:$tag "* ]]; then
+      echo '{"manifests":[{"digest":"sha256:att","platform":{"os":"unknown"}},
+        {"digest":"sha256:platform","platform":{"os":"linux","architecture":"amd64"}}]}' > "$out"
+      echo 200
+    else echo 404; fi ;;
+  *"/blobs/sha256:config")
+    printf '{"config":{"Labels":{"org.opencontainers.image.revision":"%s"}}}' "$BUILT_FROM" > "$out"
+    echo 200 ;;
 esac
 """
 
@@ -304,6 +316,8 @@ def _published(tmp_path: Path, **env: str) -> subprocess.CompletedProcess[str]:
             "CALLS": str(tmp_path / "calls"),
             "GHCR": "https://registry.test",
             "PUBLISHED": "",
+            "REVISION": "c0ffee",
+            "BUILT_FROM": "c0ffee",
             **env,
         },
         capture_output=True,
@@ -329,6 +343,19 @@ def test_published_images_says_whether_every_image_carries_the_version(
     assert " -u " not in (tmp_path / "calls").read_text()  # signed in to nothing
 
 
+def test_published_images_refuses_images_built_from_another_commit(tmp_path: Path) -> None:
+    """A tag moved after its images were pushed: those images would ship beside
+    the new commit's files."""
+    both = "clickhouse/loom:1.2.0 clickhouse/loom-extractor:1.2.0"
+    result = _published(tmp_path, PUBLISHED=both, BUILT_FROM="0ldc0de")
+    assert result.returncode == 1 and result.stdout == ""
+    assert "was built from 0ldc0de, not c0ffee" in result.stderr
+    assert "needs a new version, never a moved tag" in result.stderr
+    # The platform's own manifest was read, not the attestation's.
+    calls = (tmp_path / "calls").read_text()
+    assert "manifests/sha256:platform" in calls and "sha256:att" not in calls
+
+
 def test_published_images_fails_on_an_outage_instead_of_rebuilding(tmp_path: Path) -> None:
     result = _published(tmp_path, DOWN="1")
     assert result.returncode == 1 and result.stdout == ""
@@ -345,6 +372,7 @@ def test_a_run_on_a_published_tag_builds_and_tags_no_image() -> None:
     (step,) = [s for s in jobs["preflight"]["steps"] if s.get("id") == "images"]
     assert step["if"] == "${{ !inputs.dry_run }}"
     assert "published_images.sh" in step["run"]
+    assert step["env"]["REVISION"] == "${{ github.sha }}"
     assert jobs["docker"]["if"] == "${{ needs.preflight.outputs.images_published != 'true' }}"
     assert "needs.preflight.outputs.images_published != 'true'" in jobs["docker-tag"]["if"]
     release = jobs["github-release"]
@@ -353,3 +381,13 @@ def test_a_run_on_a_published_tag_builds_and_tags_no_image() -> None:
         "needs.docker-smoke.result == 'success' && (needs.docker-tag.result == 'success' || "
         "needs.preflight.outputs.images_published == 'true') }}"
     )
+
+
+@pytest.mark.parametrize("name", ["pypi", "npm", "mcp-registry"])
+def test_the_registries_publish_after_a_release_that_skipped_its_image_jobs(name: str) -> None:
+    """An implicit success() reads every job upstream: on a dispatch on a
+    published tag the skipped docker jobs would skip every registry publish."""
+    job = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"][name]
+    condition = job["if"]
+    assert condition.startswith("${{ !cancelled() && needs.github-release.result == 'success' && ")
+    assert "github.event_name == 'workflow_dispatch' && !inputs.dry_run" in condition

@@ -150,6 +150,7 @@ jobs:
         if: ${{ !inputs.dry_run }}
         env:
           VERSION: ${{ needs.version.outputs.version }}
+          REVISION: ${{ github.sha }}
         run: |
           published=$(bash scripts/release/published_images.sh "$VERSION" \
             ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor)
@@ -613,7 +614,11 @@ jobs:
     name: Released quickstart (${{ matrix.arch }})
     # A dry run smokes the images its docker jobs exported, a release the ones
     # docker-tag published, and a dispatch on a published tag the published ones.
-    if: ${{ !cancelled() && needs.clickhouse.result == 'success' && ((needs.docker.result == 'success' && (needs.docker-tag.result == 'success' || (inputs.dry_run && needs.docker-tag.result == 'skipped'))) || needs.preflight.outputs.images_published == 'true') }}
+    if: >-
+      ${{ !cancelled() && needs.clickhouse.result == 'success' && (
+      (needs.docker.result == 'success' && needs.docker-tag.result == 'success') ||
+      (inputs.dry_run && needs.docker.result == 'success' && needs.docker-tag.result == 'skipped') ||
+      needs.preflight.outputs.images_published == 'true') }}
     needs: [version, preflight, clickhouse, docker, docker-tag]
     strategy:
       fail-fast: false
@@ -754,7 +759,9 @@ jobs:
 
   pypi:
     name: PyPI (clickhouse-loom)
-    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
+    # !cancelled(): an implicit success() would read the docker jobs a dispatch on
+    # a published tag skips, and skip this one too.
+    if: ${{ !cancelled() && needs.github-release.result == 'success' && github.event_name == 'workflow_dispatch' && !inputs.dry_run }}
     needs: github-release
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -776,7 +783,8 @@ jobs:
 
   npm:
     name: npm (@clickhouse/loom)
-    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
+    # !cancelled(): as in the pypi job.
+    if: ${{ !cancelled() && needs.github-release.result == 'success' && github.event_name == 'workflow_dispatch' && !inputs.dry_run }}
     needs: [version, github-release]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -815,7 +823,7 @@ jobs:
     name: MCP Registry (io.github.ClickHouse/loom)
     # A prerelease is not listed. The listing links the repository and its
     # icon, which preflight has checked are public.
-    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && needs.version.outputs.prerelease != 'true'
+    if: ${{ !cancelled() && needs.github-release.result == 'success' && github.event_name == 'workflow_dispatch' && !inputs.dry_run && needs.version.outputs.prerelease != 'true' }}
     needs: [version, github-release]
     runs-on: ubuntu-latest
     timeout-minutes: 10

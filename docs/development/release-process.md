@@ -189,7 +189,9 @@ The images are already published by the tag run: a dispatch on a tag whose image
 version builds and tags none (`scripts/release/published_images.sh`), smoke-tests the published
 ones, and goes on to the registries. Release images build without the cache, so a rebuild would
 move the version's tags onto other bytes. When only one of the two carries the version (a failed
-`docker-tag`), re-run the failed jobs of the tag's run, which tags the same build.
+`docker-tag`), re-run the failed jobs of the tag's run, which tags the same build. Never move a tag
+whose images are published: `published_images.sh` fails when a published image was built from another
+commit than the run's, and a fix needs a new version.
 
 A re-run after a partial publish is safe: each publish job skips what already exists.
 
