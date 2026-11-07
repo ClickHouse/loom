@@ -196,11 +196,11 @@ read every linked tracker and name the source of each result.
 | maintainer | `code.repo.set_source` with `tracker_namespaces` (repository admin, and admin of each tracker the repository's own links do not already hold), or the repository card's Trackers section. Replaces the operator map for that repository within `LOOM_CODE_REPOS_REFRESH_SECONDS`. A tracker whose `repos` do not cover the repository is accepted with `not_covering`. |
 | operator   | `LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON`: glob keys over code namespace names, each to one tracker namespace or an ordered list.                                                                                                                                                                                                                                    |
 
-A linked tracker is read by every reader of the repository, so linking one is a lasting
-delegation that only the tracker's admin makes, restricted or not. A reader of the tracker
-who is not its admin gets 403; anyone else gets `NOT_A_TRACKER_NAMESPACE`. Once a tracker
-admin links a standard tracker, the repository's admins decide who reads it, including
-through a later `code.repo.set_access` join-policy change.
+A linked standard tracker is read by every reader of the repository, so linking one is a
+lasting delegation; a new link needs the tracker's admin, restricted or not. A reader of
+the tracker who is not its admin gets 403; anyone else gets `NOT_A_TRACKER_NAMESPACE`.
+Once a tracker admin links a standard tracker, the repository's admins decide who reads
+it, including through a later `code.repo.set_access` join-policy change.
 
 ```bash
 LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON='{"code-widgets*": ["tracker-widgets", "tracker-helpdesk"]}'
