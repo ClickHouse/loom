@@ -556,7 +556,31 @@ async def test_an_internationalized_host_goes_as_its_idna_form(
         "xn--bcher-kva.example:8443",
         "xn--bcher-kva.example",
     )
-    assert (await webhooks.pinned_target("https://a..example/h"))[0] == "the URL is not valid"
+    assert (await webhooks.pinned_target("https://bü..example/h"))[0] == "the URL is not valid"
+    # UTS 46, not IDNA 2003: ß is kept, not mapped to "ss"
+    assert (await webhooks.pinned_target("https://faß.example/h"))[2] == "xn--fa-hia.example"
+
+
+@pytest.mark.asyncio
+async def test_the_ascii_name_is_resolved_and_matched_against_the_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings.catalog import ascii_host_set
+
+    asked: list[tuple[str, bool]] = []
+
+    async def resolver(host: str, *, allow_private: bool, **_: Any) -> tuple[str, str]:
+        asked.append((host, allow_private))
+        return "", ""
+
+    monkeypatch.setattr(webhooks, "vet_host", resolver)
+    for listed, url in (
+        ("xn--bcher-kva.local", "https://bücher.local/h"),
+        ("bücher.local", "https://xn--bcher-kva.local/h"),
+    ):
+        target = await webhooks.pinned_target(url, private_hosts=ascii_host_set(listed))
+        assert target == ("", "https://xn--bcher-kva.local/h", "", "")
+    assert asked == [("xn--bcher-kva.local", True)] * 2
 
 
 @pytest.mark.asyncio

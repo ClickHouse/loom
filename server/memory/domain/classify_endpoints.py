@@ -6,10 +6,10 @@ one of LOOM_INFERENCE_GATEWAY_HOSTS: a namespace admin can neither send content
 elsewhere nor reach another port or service of a host to probe it. A URL at a
 listed gateway host is held to the same rule when the gateway is not required:
 another port of the gateway's host is still inward reach. Otherwise it must be
-https (or a host LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS names) with no user name or
-password, and the call reaches only a public address it vetted
-(`server.memory.app.classify`), so a namespace admin cannot aim the server at its
-own network.
+https (or a host LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS names), and the call reaches
+only a public address it vetted (`server.memory.app.classify`), so a namespace
+admin cannot aim the server at its own network. No endpoint carries a user name or
+password, and every check reads one host: httpx's and `urlsplit`'s must agree.
 """
 
 from __future__ import annotations
@@ -17,17 +17,38 @@ from __future__ import annotations
 from typing import Annotated
 from urllib.parse import urlsplit
 
-import httpx
 from pydantic import AfterValidator
 
 from server.settings import settings
-from server.settings.catalog import url_host
+from server.settings.catalog import ascii_host, url_host
 
 
 def via_gateway(url: str) -> bool:
     """Whether a classifier at `url` is called as a model call, through the gateway:
-    while the gateway is required, or at one of its listed hosts."""
+    while the gateway is required, or at one of its listed hosts. Read only for a URL
+    `classify_refusal` passes, so httpx's host and the call's are one."""
     return settings.gateway_required() or url_host(url.strip()) in settings.gateway_hosts()
+
+
+def _one_host(url: str) -> tuple[str, str]:
+    """(refusal, host): the one host httpx (the gateway check, the model call) and
+    `urlsplit` (the off-gateway call, `webhooks.pinned_target`) both read in `url`,
+    as `ascii_host` spells it. Refused when they would read two, or either none."""
+    # urlsplit drops a tab or a newline that httpx refuses, and either may read a
+    # control character apart: no URL carries one.
+    if any(ch.isspace() or not ch.isprintable() for ch in url):
+        return "it may not carry a control or whitespace character", ""
+    try:
+        parts = urlsplit(url)
+        host = ascii_host(parts.hostname or "")
+        parts.port  # noqa: B018 — an invalid port raises here, as at the call
+    except ValueError:  # an IDNA error is a ValueError too
+        return "it is not a valid URL", ""
+    if not host:
+        return "it names no host", ""
+    if host != url_host(url):  # "" when httpx cannot parse it
+        return "it is not a valid URL", ""
+    return "", host
 
 
 def classify_refusal(url: str) -> str:
@@ -36,28 +57,21 @@ def classify_refusal(url: str) -> str:
     url = url.strip()
     if not url:
         return ""
+    refusal, host = _one_host(url)
+    if refusal:
+        return refusal
+    parts = urlsplit(url)
+    # The call drops them, and namespace.get would hand the credential back.
+    if parts.username is not None or parts.password is not None:
+        return "the URL may not carry a user name or password"
     if not via_gateway(url):
-        # Parsed as the call parses it (`webhooks.pinned_target`), so both read one host.
-        try:
-            parts = urlsplit(url)
-            host = (parts.hostname or "").lower()
-            parts.port  # noqa: B018 — an invalid port raises here, as at the call
-        except ValueError:
-            return "it is not a valid URL"
-        if not host:
-            return "it names no host"
-        # The call drops them, and namespace.get would hand the credential back.
-        if parts.username is not None or parts.password is not None:
-            return "the URL may not carry a user name or password"
         private = host in settings.memory_classify_private_host_set()
         if parts.scheme != "https" and not (private and parts.scheme == "http"):
             return "it must be https"
         return ""
-    host = settings.off_gateway(url)
-    if host:
+    if settings.gateway_required() and host not in settings.gateway_hosts():
         return f"{host} is not in LOOM_INFERENCE_GATEWAY_HOSTS"
-    parsed = httpx.URL(url)  # off_gateway parsed it already
-    if parsed.scheme != "https" or parsed.port is not None:
+    if parts.scheme != "https" or parts.port is not None:
         return "it must be https at the default port"
     return ""
 

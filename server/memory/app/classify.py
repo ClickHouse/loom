@@ -31,7 +31,6 @@ import json
 import logging
 from collections.abc import Mapping
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
 
@@ -135,11 +134,12 @@ async def _post_vetted(endpoint: str, body: Mapping[str, object], *, scope: tupl
     cannot move it), with no redirect and no identity headers. The lookup, the call
     and the answer, at most `_MAX_ANSWER_BYTES`, are under one deadline. None, noted,
     when the host is refused (logged once per `scope`, the (org, namespace))."""
-    private = settings.memory_classify_private_host_set()
-    listed = (urlsplit(endpoint).hostname or "").lower() in private
     async with asyncio.timeout(settings.memory_classify_timeout_s):
         refusal, url, host, server_name = await webhooks.pinned_target(
-            endpoint, schemes=("https", "http") if listed else ("https",), private_hosts=private
+            # http only for a listed host: classify_refusal refused it for any other
+            endpoint,
+            schemes=("https", "http"),
+            private_hosts=settings.memory_classify_private_host_set(),
         )
         if refusal:
             if _REFUSED_LOGGED.first(("host", *scope)):

@@ -25,6 +25,7 @@ from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
+import idna
 from pydantic import AfterValidator, BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from server.core.document_formats import route_key
@@ -2606,9 +2607,7 @@ class MemorySettings(BaseModel):
     memory_classify_private_hosts: str = ""
 
     def memory_classify_private_host_set(self) -> frozenset[str]:
-        return frozenset(
-            h.strip().lower() for h in self.memory_classify_private_hosts.split(",") if h.strip()
-        )
+        return ascii_host_set(self.memory_classify_private_hosts)
 
     # ---- delete-version checks ----
     # Run the delete_version_check worker, which finishes the memory.delete_version checks a
@@ -3569,9 +3568,7 @@ class MemoryWebhookSettings(BaseModel):
         return self
 
     def memory_webhook_private_host_set(self) -> frozenset[str]:
-        return frozenset(
-            h.strip().lower() for h in self.memory_webhook_private_hosts.split(",") if h.strip()
-        )
+        return ascii_host_set(self.memory_webhook_private_hosts)
 
 
 # ===== Model ==================================================================
@@ -3955,6 +3952,30 @@ class ObservabilitySettings(BaseModel):
 
 
 # ===== Provider ===============================================================
+
+
+def ascii_host(host: str) -> str:
+    """`host` as a host list names it: lower-case, no trailing dot, a non-ASCII name as
+    its UTS 46 IDNA form (`faß.example` is `xn--fa-hia.example`, a fullwidth name its
+    ASCII one). An ASCII name or an address literal is kept as it is. ValueError when
+    IDNA cannot encode it."""
+    host = host.strip().lower().rstrip(".")
+    if host.isascii():
+        return host
+    return idna.encode(host, uts46=True).decode("ascii").lower().rstrip(".")
+
+
+def ascii_host_set(hosts: str) -> frozenset[str]:
+    """The comma-separated `hosts`, each as `ascii_host` spells it (one IDNA cannot
+    encode is dropped: no URL's host can equal it)."""
+    out = set()
+    for h in hosts.split(","):
+        try:
+            out.add(ascii_host(h))
+        except ValueError:
+            continue
+    out.discard("")
+    return frozenset(out)
 
 
 def url_host(url: str) -> str:
@@ -4563,11 +4584,7 @@ class ProviderSettings(ModelSettings):
 
     def gateway_hosts(self) -> frozenset[str]:
         """The hosts of inference_gateway_hosts, as `url_host` spells them."""
-        return frozenset(
-            h.strip().lower().rstrip(".")
-            for h in self.inference_gateway_hosts.split(",")
-            if h.strip()
-        )
+        return ascii_host_set(self.inference_gateway_hosts)
 
     def off_gateway(self, url: str) -> str:
         """While the gateway is required, the host of a `url` it does not list

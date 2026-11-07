@@ -30,6 +30,7 @@ import httpx
 
 from server.core.hosts import vet_host
 from server.core.webhook_secrets import webhook_secret_ref_ok
+from server.settings.catalog import ascii_host
 
 log = logging.getLogger(__name__)
 
@@ -99,8 +100,10 @@ async def pinned_target(
 
     The scheme must be one of `schemes`. The host must resolve to public
     addresses only (`vet_host`), and the request goes to the address vetted
-    here. A host named in `private_hosts` (an operator's allowlist, lower case)
-    may resolve to a private or loopback address and is reached by its name."""
+    here. A host named in `private_hosts` (an operator's allowlist, spelled as
+    `ascii_host` spells it) may resolve to a private or loopback address and is
+    reached by its name. The name is resolved, matched and sent (Host, SNI) in its
+    ASCII form: a Unicode one as its UTS 46 IDNA form."""
     try:
         parts = urlsplit(url)
         host = parts.hostname or ""
@@ -112,22 +115,22 @@ async def pinned_target(
         port = parts.port
     except ValueError:
         return "the URL has an invalid port", "", "", ""
-    try:  # the Host header and the SNI are ASCII: a Unicode name goes as its IDNA form
-        ascii_host = host.encode("idna").decode("ascii")
-    except UnicodeError:
+    try:  # the Host header and the SNI are ASCII
+        host = ascii_host(host)
+    except ValueError:  # IDNA cannot encode it
+        host = ""
+    if not host:
         return "the URL is not valid", "", "", ""
-    refusal, address = await vet_host(
-        host, allow_private=host.lower() in private_hosts, name_address=False
-    )
+    refusal, address = await vet_host(host, allow_private=host in private_hosts, name_address=False)
     if refusal:
         return refusal, "", "", ""
     suffix = f":{port}" if port else ""
-    name = f"[{ascii_host}]" if ":" in ascii_host else ascii_host
+    name = f"[{host}]" if ":" in host else host
     if not address:  # an allowlisted host: connect by name
         return "", urlunsplit((parts.scheme, name + suffix, parts.path, parts.query, "")), "", ""
     literal = f"[{address}]" if ":" in address else address
     pinned = urlunsplit((parts.scheme, literal + suffix, parts.path, parts.query, ""))
-    return "", pinned, name + suffix, ascii_host
+    return "", pinned, name + suffix, host
 
 
 @dataclass(frozen=True)

@@ -439,3 +439,52 @@ def test_a_refused_host_is_logged_once_per_namespace(
     warned = [r.getMessage() for r in caplog.records if "host is refused" in r.getMessage()]
     assert len(warned) == 2
     assert warned[0].startswith("acme/a:") and warned[1].startswith("acme/b:")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://gate\tway.example:8443/c",  # urlsplit drops the tab; httpx refuses it
+        "https://gateway.example:8443/c#\x01",
+        "https://gateway.example:8443/c#" + "a" * 70000,  # past httpx's URL length
+        "https://ｇａｔｅｗａｙ.example:8443/c",  # fullwidth: IDNA maps it to the gateway's host
+    ],
+)
+def test_a_url_two_parsers_read_apart_is_refused_and_never_posted(
+    monkeypatch: pytest.MonkeyPatch, url: str, client: type[_Client]
+) -> None:
+    """httpx (the gateway check) and urlsplit (the call) must read one host: each of
+    these reads as off the gateway to one and reaches the gateway's host by the other."""
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
+    monkeypatch.setattr("server.core.hosts._resolve", lambda host: ["93.184.215.14"])
+    with pytest.raises(ValueError, match="classify_endpoint"):
+        check_classify_endpoint(url)
+    assert _classify(url) == "" and client.seen == []
+
+
+def test_a_gateway_url_carrying_a_user_name_or_password_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
+    assert classify_refusal("https://gateway.example/c") == ""
+    assert classify_refusal("https://user:pw@gateway.example/c") == (
+        "the URL may not carry a user name or password"
+    )
+
+
+@pytest.mark.parametrize(
+    ("listed", "url"),
+    [
+        ("xn--bcher-kva.local", "http://bücher.local:9000/c"),
+        ("bücher.local", "http://xn--bcher-kva.local:9000/c"),
+    ],
+)
+def test_a_private_host_matches_in_either_spelling(
+    monkeypatch: pytest.MonkeyPatch, client: type[_Client], listed: str, url: str
+) -> None:
+    monkeypatch.setattr(settings, "memory_classify_private_hosts", listed)
+    monkeypatch.setattr("server.core.hosts._resolve", lambda host: ["10.0.0.9"])
+    assert classify_refusal(url) == ""
+    assert _classify(url) == "note"
+    (seen,) = client.seen
+    assert seen["url"] == "http://xn--bcher-kva.local:9000/c"

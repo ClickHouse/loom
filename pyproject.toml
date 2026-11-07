@@ -26,6 +26,7 @@ dependencies = [
   "clickhouse-connect>=1.7", # older ones drop milliseconds (<1.2) or bind a naive datetime as local time
   "aiohttp>=3.10",           # clickhouse-connect's async client requires it
   "httpx[http2]>=0.27",
+  "idna>=3.7",               # UTS 46 host names: server.settings.catalog.ascii_host
   "tenacity>=9.0",
   "pyjwt[crypto]>=2.10",
   # OpenTelemetry: ship spans + logs to HyperDX / ClickStack's OTLP

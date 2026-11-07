@@ -610,7 +610,8 @@ def test_no_rerank_or_classify_endpoint_posts_off_the_gateways_hosts(
 )
 def test_the_gateway_check_reads_a_url_as_httpx_sends_it(required: None, url: str) -> None:
     # Checked with the parser that sends, so the two never disagree: refused
-    # exactly when httpx would send somewhere other than gateway.example.
+    # whenever httpx would send somewhere other than gateway.example, and a classifier
+    # otherwise only for the user name it carries.
     from server.memory.domain.classify_endpoints import classify_refusal
 
     try:
@@ -619,7 +620,8 @@ def test_the_gateway_check_reads_a_url_as_httpx_sends_it(required: None, url: st
         sent_to = ""
     off = sent_to != "gateway.example"
     assert bool(settings.off_gateway(url)) is off
-    assert bool(classify_refusal(url)) is off
+    refusal = classify_refusal(url)
+    assert bool(refusal) is off or refusal == "the URL may not carry a user name or password"
 
 
 def test_an_idn_host_is_matched_as_the_punycode_httpx_sends_to(
