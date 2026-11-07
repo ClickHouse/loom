@@ -107,11 +107,11 @@ A release candidate is a `vX.Y.Z-rc.N` tag, and makes a GitHub pre-release; the 
 other prerelease tag. The first candidate goes on the release pull request's merge commit, whose
 files name `X.Y.Z`, so the candidate's server already reports `X.Y.Z`; a later one, after a fix,
 goes on a later commit of `main`. The final `vX.Y.Z` tag goes on the last candidate's commit after
-the soak. The final's bundle keeps the ClickHouse release that candidate's bundle names (the newest
+the soak. The final's bundle keeps the ClickHouse release that candidate's bundle names (the highest-numbered
 candidate on that commit with a published bundle); its images are built again from the same
 commit, uncached, so an OS package may be newer than in the soaked image. A run of a candidate tag
 after its final is refused. One on the final's commit is told to run the final. One numbered below
-the newest candidate on the final's commit, such as an older candidate dispatched to publish its
+the highest-numbered candidate on the final's commit, such as an older candidate dispatched to publish its
 SDKs, has nothing to run, and its tag stays. Any other is a stray: it also fails the final's later
 runs until it is deleted. The chart's `appVersion` names `X.Y.Z` too, so a soak on Kubernetes sets
 `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`.
@@ -184,7 +184,7 @@ the package's visibility to public in its settings, then re-run the failed jobs.
      never replaces one, so nobody can have installed it);
    - a dispatch's `clickhouse_image`, which for a final is used in place of any release its
      candidates on the same commit published;
-   - for a final, the one the newest candidate on the same commit with a published bundle was
+   - for a final, the one the highest-numbered candidate on the same commit with a published bundle was
      soaked with;
    - the release `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`);
 4. `build` writes the version into the Python and TypeScript SDK sources and builds the

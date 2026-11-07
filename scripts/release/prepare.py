@@ -224,7 +224,7 @@ def candidates(final: str, root: Path = ROOT) -> list[str]:
 
 
 def candidates_at(final: str, ref: str = "HEAD", root: Path = ROOT) -> list[str]:
-    """The candidate tags of `final` on `ref`'s commit, newest first."""
+    """The candidate tags of `final` on `ref`'s commit, highest-numbered first."""
     at_ref = set(_git(root, "tag", "--points-at", ref).stdout.split())
     return [t for t in reversed(candidates(final, root)) if t in at_ref]
 
@@ -239,10 +239,11 @@ def refuse_tagged(version: str, root: Path = ROOT) -> None:
 def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
     """An error for a tag that breaks the candidate order, or None.
 
-    Once `vX.Y.Z` is out, a candidate of it is refused three ways: on the final's
-    commit (run the final), numbered below the newest candidate there (nothing
-    to run, and its tag stays), or any other (a stray, to delete). A final `vX.Y.Z` is
-    refused on another commit than its last candidate."""
+    Once `vX.Y.Z` is out, a candidate of it is refused three ways: on the
+    final's commit (run the final), numbered below the highest-numbered
+    candidate on that commit (nothing to run, and its tag stays), or any other
+    (a stray, to delete). A final `vX.Y.Z` is refused on another commit than its
+    highest-numbered candidate."""
     final = final_of(tag_version)
     if tag_version != final:  # a candidate, X.Y.Z-rc.N
         final_sha = _tag_sha(root, f"v{final}")
@@ -255,10 +256,10 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
             )
         soaked = candidates_at(final, final_sha, root)
         if soaked and _candidate_number(tag_version) < _candidate_number(soaked[0]):
-            # Most likely soaked before the newest candidate there; git cannot tell
-            # when a tag was pushed, so its tag is kept.
+            # Most likely soaked before soaked[0]; git cannot tell when a tag
+            # was pushed, so its tag is kept.
             return (
-                f"v{tag_version} is numbered below {soaked[0]}, the newest candidate"
+                f"v{tag_version} is numbered below {soaked[0]}, the highest-numbered candidate"
                 f" on v{final}'s commit: nothing to run"
             )
         return (
@@ -633,7 +634,8 @@ def main() -> None:
     previous_cmd.add_argument("tag_version", type=_tag_version, help=tag_version_help)
     previous_cmd.set_defaults(run=_previous)
     candidates_cmd = commands.add_parser(
-        "candidates-on-head", help="the final's candidate tags on this commit, newest first"
+        "candidates-on-head",
+        help="the final's candidate tags on this commit, highest-numbered first",
     )
     candidates_cmd.add_argument("version", type=_final_version, help="the release, X.Y.Z")
     candidates_cmd.set_defaults(run=_candidates_on_head)
