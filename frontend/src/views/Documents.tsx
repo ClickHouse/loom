@@ -546,6 +546,7 @@ export function Documents() {
     setAddOpen(false);
     setReplaceEntry(null);
     setEditEntry(null);
+    setTablesFor(null);
   }, [place]);
 
   // The first screen mounts with the page, the rest of the rows in a transition after the

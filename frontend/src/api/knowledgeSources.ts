@@ -6,6 +6,7 @@ import type { Identity, RequestOpts } from "../api";
 import type {
   KnowledgeSourceAddResult,
   KnowledgeSourceCheckResult,
+  KnowledgeSourceDetail,
   KnowledgeSourceList,
   KnowledgeSourceRemoveResult,
   KnowledgeSourceRotateResult,
@@ -21,17 +22,6 @@ type Ns = Pick<Identity, "org" | "namespace">;
 
 export async function listKnowledgeSources(id: Ns, opts: RequestOpts = {}): Promise<KnowledgeSourceList> {
   return post<KnowledgeSourceList>("/v1/knowledge.source.list", { org: id.org, namespace: id.namespace }, opts.signal);
-}
-
-/** One source's config (credential never returned), sync state and the documents it wrote. */
-export interface KnowledgeSourceDetail {
-  name: string;
-  kind: string;
-  config: Record<string, unknown>;
-  created_by: string;
-  created_at: string;
-  sync: { status: string; last_synced_at: string; documents_seen: number; error: string };
-  documents: { source_uri: string; title: string; source_revision: string; ingested_at: string }[];
 }
 
 export async function inspectKnowledgeSource(

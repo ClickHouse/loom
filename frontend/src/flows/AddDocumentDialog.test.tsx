@@ -201,6 +201,32 @@ describe("AddDocumentDialog", () => {
     expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toBe("Stopped spec.pdf");
   });
 
+  it("a Stop that finds the job already published adds it like any other", async () => {
+    ingestClock.sleep = () => new Promise<void>(() => {});
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(status("processing", { stage: "embed" }));
+    vi.mocked(cancelIngestion).mockResolvedValue({ found: true, state: "ready", cancelled: false });
+    const { dialog, onAdded } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
+    await waitFor(() => expect(onAdded).toHaveBeenCalled());
+    expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toBe("spec.pdf was already added");
+  });
+
+  it("a Stop of a running job says it stops before it publishes", async () => {
+    ingestClock.sleep = () => new Promise<void>(() => {});
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(status("processing", { stage: "embed" }));
+    vi.mocked(cancelIngestion).mockResolvedValue({ found: true, state: "processing", cancelled: true });
+    const { dialog, onAdded } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
+    await waitFor(() => expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toBe("Stopping spec.pdf before it publishes"));
+    expect(onAdded).not.toHaveBeenCalled();
+  });
+
   it("can cancel a pending upload, which queues nothing, and holds through the ingest call", async () => {
     let landed: (u: KnowledgeUpload) => void = () => {};
     vi.mocked(uploadKnowledgeFile).mockImplementation(() => new Promise((r) => (landed = r)));

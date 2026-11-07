@@ -35,6 +35,19 @@ export interface KnowledgeSource {
   sync: KnowledgeSourceSync;
 }
 
+/** A document a source wrote, as knowledge.source.inspect lists it. */
+export interface KnowledgeSourceDocument {
+  source_uri: string;
+  title: string;
+  source_revision: string;
+  ingested_at: string;
+}
+
+/** knowledge.source.inspect: the source and the documents it wrote. */
+export interface KnowledgeSourceDetail extends KnowledgeSource {
+  documents: KnowledgeSourceDocument[];
+}
+
 export interface KnowledgeSourceList {
   sources: KnowledgeSource[];
   /** Whether this deployment runs the sync worker. */

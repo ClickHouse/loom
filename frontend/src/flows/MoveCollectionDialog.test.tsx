@@ -42,12 +42,33 @@ describe("MoveCollectionDialog", () => {
       expect(el).not.toBeNull();
       return el as HTMLElement;
     });
+    expect(screen.getByText("Everyone who reaches finance reaches it too.")).toBeInTheDocument();
     // A collection is never offered as its own parent.
     expect(document.querySelector('[cui-select-item][data-value="q3"]')).toBeNull();
     await userEvent.click(top);
+    expect(
+      screen.getByText("At the top, only its own members reach it. Whoever reached it only through finance loses it."),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     await waitFor(() => expect(api.moveCollection).toHaveBeenCalledWith("acme", "q3", ""));
     expect(onMoved).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("offers no collection inside its own subtree, and says who loses access", async () => {
+    render(
+      <MoveCollectionDialog
+        org="acme"
+        collection={entry("finance", "corp")}
+        parents={[entry("corp"), entry("finance", "corp"), entry("q3", "finance"), entry("q3-eu", "q3"), entry("hr")]}
+        onMoved={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByText("Everyone who reaches corp reaches it too.")).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText("Inside"));
+    await waitFor(() => expect(document.querySelector('[cui-select-item][data-value="hr"]')).not.toBeNull());
+    for (const below of ["finance", "q3", "q3-eu"])
+      expect(document.querySelector(`[cui-select-item][data-value="${below}"]`)).toBeNull();
   });
 });

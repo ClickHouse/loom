@@ -246,7 +246,6 @@ DASHBOARD_PENDING: frozenset[str] = frozenset(
         "profile_schema.clear",
         "profile_schema.get",
         "profile_schema.set",
-        # documents and sources
         # pages of their own
         "conversation.delete",
         "conversation.update",

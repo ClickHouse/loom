@@ -59,11 +59,11 @@ export function MoveCollectionDialog({
         }}
       >
         <div className="space-y-4">
-          <p className="text-sm text-text-muted">Everyone who reaches the new parent reaches this collection too.</p>
+          <p className="text-sm text-text-muted">{moveEffect(collection.parent, target)}</p>
           <Select id="move-collection-parent" label="Inside" value={parent} onSelect={setParent} showSearch>
             <Select.Item value={TOP}>Top level</Select.Item>
             {parents
-              .filter((c) => c.namespace !== collection.namespace)
+              .filter((c) => !inside(c, collection.namespace, parents))
               .map((c) => (
                 <Select.Item key={c.namespace} value={c.namespace}>
                   {c.namespace}
@@ -83,4 +83,20 @@ export function MoveCollectionDialog({
       </form>
     </Modal>
   );
+}
+
+/** Whether `c` is `root` or sits under it: a collection cannot move into its own subtree. */
+function inside(c: CollectionEntry, root: string, all: CollectionEntry[]): boolean {
+  const byName = new Map(all.map((e) => [e.namespace, e]));
+  for (let at: CollectionEntry | undefined = c; at; at = at.parent ? byName.get(at.parent) : undefined)
+    if (at.namespace === root) return true;
+  return false;
+}
+
+/** Who reaches the collection after the move: its own members always, the new parent's
+ *  readers when it has one; the old parent's readers lose the access they had through it. */
+function moveEffect(from: string, to: string): string {
+  const lose = from && from !== to ? ` Whoever reached it only through ${from} loses it.` : "";
+  const gain = to ? `Everyone who reaches ${to} reaches it too.` : "At the top, only its own members reach it.";
+  return gain + lose;
 }

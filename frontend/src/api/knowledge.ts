@@ -360,7 +360,7 @@ export interface Dataset {
   name: string;
   sheet: string;
   snapshot_id: string;
-  /** Whether a person approved the schema, or it waits for one. */
+  /** `inferred`, `needs_clarification` or `approved`. */
   schema_state: string;
   columns: { name: string; type: DatasetType; inferred: string }[];
   /** What the typing could not settle and asks a person. */
@@ -387,7 +387,7 @@ export async function getDatasets(
 export async function approveDataset(
   id: Pick<Identity, "org" | "namespace">,
   sourceUri: string,
-  dataset: Dataset,
+  dataset: Pick<Dataset, "dataset_id" | "snapshot_id">,
   columns: Record<string, DatasetType>,
 ): Promise<{ found: boolean; retyped: boolean }> {
   return post("/v1/knowledge.dataset_approve", {

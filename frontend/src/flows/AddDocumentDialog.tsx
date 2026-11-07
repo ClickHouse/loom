@@ -67,6 +67,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
   const following = useRef<AbortController | null>(null);
   // The job being followed, for Stop.
   const [jobId, setJobId] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
   const formats = useKnowledgeFormats(identity, open);
   const verdict = file ? fileVerdict(file, formats) : null;
   // Leaving the page stops the following, as closing does; the job goes on on the server.
@@ -208,16 +209,22 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
     if (!v) reset();
     onOpenChange(v);
   };
-  // Stop the job being followed: knowledge.ingest_cancel. One that ended meanwhile says how.
+  // Stop the job being followed: knowledge.ingest_cancel. One that ended meanwhile says how,
+  // and one that published is added like any other.
   const stop = async () => {
     if (!jobId) return;
+    setStopping(true);
     try {
       const r = await cancelIngestion(identity, jobId);
-      toast(r.cancelled ? `Stopped ${sourceUri.trim()}` : `${sourceUri.trim()} had already ${r.state}`, "info");
+      const uri = sourceUri.trim();
+      if (r.found && (r.state === "ready" || r.state === "partial")) onAdded();
+      toast(stopped(uri, r), "info");
       reset();
       onOpenChange(false);
     } catch (e) {
       setError(humanizeError(e));
+    } finally {
+      setStopping(false);
     }
   };
   const holdWhileBusy = (e: Event) => {
@@ -336,7 +343,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
             {busy === "follow" ? "Close" : "Cancel"}
           </Button>
           {busy === "follow" && jobId && (
-            <Button type="danger" htmlType="button" onClick={() => void stop()}>
+            <Button type="danger" htmlType="button" loading={stopping} disabled={stopping} onClick={() => void stop()}>
               Stop ingestion
             </Button>
           )}
@@ -347,4 +354,14 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
       </form>
     </Modal>
   );
+}
+
+/** What a Stop came to: a running job only stops before it publishes, and one that ended
+ *  meanwhile stays as it ended. */
+function stopped(uri: string, r: { found: boolean; state: string; cancelled: boolean }): string {
+  if (!r.found) return `${uri} has no ingestion to stop`;
+  if (r.cancelled) return r.state === "processing" ? `Stopping ${uri} before it publishes` : `Stopped ${uri}`;
+  if (r.state === "ready" || r.state === "partial") return `${uri} was already added`;
+  if (r.state === "failed") return `${uri} had already failed`;
+  return `${uri} was already stopped`;
 }

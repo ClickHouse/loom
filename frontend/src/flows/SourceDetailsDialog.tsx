@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
-import { inspectKnowledgeSource, type KnowledgeSourceDetail } from "../api/knowledgeSources";
+import { inspectKnowledgeSource } from "../api/knowledgeSources";
+import { kindLabel, type KnowledgeSourceDetail } from "../lib/knowledgeSources";
 import { humanizeError } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { Modal, ModalFooter } from "../components/ui/Modal";
@@ -36,10 +37,10 @@ export function SourceDetailsDialog({
       {detail && (
         <div className="space-y-4">
           <MetaList>
-            <MetaRow label="Kind">{detail.kind}</MetaRow>
+            <MetaRow label="Kind">{kindLabel(detail.kind)}</MetaRow>
             {Object.entries(detail.config).map(([k, v]) => (
               <MetaRow key={k} label={k} mono>
-                {typeof v === "string" ? v : JSON.stringify(v)}
+                {configText(v)}
               </MetaRow>
             ))}
             <MetaRow label="Added by">{detail.created_by || "—"}</MetaRow>
@@ -47,7 +48,8 @@ export function SourceDetailsDialog({
               {detail.sync.last_synced_at ? <ListTime time={detail.sync.last_synced_at} /> : "never"} ·{" "}
               {detail.sync.status || "—"}
             </MetaRow>
-            {detail.sync.error && (
+            {/* An ok turn's error says why it was incomplete, as the source row shows it. */}
+            {detail.sync.error && detail.sync.status !== "ok" && (
               <MetaRow label="Error" tone="danger">
                 {detail.sync.error}
               </MetaRow>
@@ -77,4 +79,10 @@ export function SourceDetailsDialog({
       </ModalFooter>
     </Modal>
   );
+}
+
+/** A config value as text: a list of ids reads as one comma-separated line. */
+function configText(v: unknown): string {
+  if (Array.isArray(v)) return v.join(", ");
+  return typeof v === "string" ? v : JSON.stringify(v);
 }

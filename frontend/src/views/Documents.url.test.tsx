@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
   getKnowledge: vi.fn(),
   fetchKnowledgePreview: vi.fn(),
   searchKnowledge: vi.fn(),
+  getDatasets: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 const toastError = vi.hoisted(() => vi.fn());
@@ -206,6 +207,20 @@ describe("Library keeps the open document in its URL", () => {
     );
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(api.getKnowledge).not.toHaveBeenCalled();
+  });
+
+  it("a namespace switch closes a file's Tables, so its approve never reaches the new place", async () => {
+    api.listKnowledge.mockResolvedValue({ rows: [{ ...ROWS[0], has_blob: true }], next_cursor: null });
+    api.getDatasets.mockResolvedValue({ found: true, datasets: [] });
+    history.replaceState(null, "", "/library?doc=docs%2Fhandbook.md");
+    useStore.getState().bootView("knowledge");
+    render(<Documents />);
+    await settle();
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Handbook" })).getByRole("button", { name: "Tables" }));
+    expect(await screen.findByRole("dialog", { name: "Tables" })).toBeInTheDocument();
+    act(() => useStore.setState({ identity: { org: "acme", namespace: "other", agent: "loom-ui" } }));
+    await settle();
+    expect(screen.queryByRole("dialog", { name: "Tables" })).toBeNull();
   });
 
   it("a ?doc= link to a document the namespace does not hold opens nothing and leaves the URL", async () => {

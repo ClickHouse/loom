@@ -14,6 +14,12 @@ import { Alert, Loading, SectionHeading } from "../components/ui";
  * and types, what the typing asks a person, and an Approve that may retype columns
  * (knowledge.dataset_approve). `canApprove` follows the writer role the op asks.
  */
+const SCHEMA_STATE: Record<string, string> = {
+  inferred: "types inferred",
+  needs_clarification: "needs a decision",
+  approved: "approved",
+};
+
 export function DatasetsDialog({
   identity,
   sourceUri,
@@ -25,13 +31,14 @@ export function DatasetsDialog({
   canApprove: boolean;
   onClose: () => void;
 }) {
-  const [datasets, setDatasets] = useState<Dataset[] | null>(null);
+  // null while it reads; `found: false` when the document is no longer live.
+  const [read, setRead] = useState<{ found: boolean; datasets: Dataset[] } | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
   useAbortableEffect(
     (signal, live) => {
       getDatasets(identity, sourceUri, { signal })
-        .then((r) => live() && setDatasets(r.datasets ?? []))
+        .then((r) => live() && setRead(r))
         .catch((e) => live() && setError(e));
     },
     [identity.org, identity.namespace, sourceUri, reload],
@@ -39,17 +46,20 @@ export function DatasetsDialog({
   return (
     <Modal open onOpenChange={(v) => !v && onClose()} title="Tables" className="w-full max-w-[720px]">
       {!!error && <Alert role="alert" state="danger" text={humanizeError(error)} />}
-      {!error && datasets === null && <Loading label="Loading the tables" />}
-      {datasets?.length === 0 && <p className="text-sm text-text-muted">No table was read from this document.</p>}
+      {!error && read === null && <Loading label="Loading the tables" />}
+      {read && !read.found && <p className="text-sm text-text-muted">This document is no longer here.</p>}
+      {read?.found && read.datasets.length === 0 && (
+        <p className="text-sm text-text-muted">No table was read from this document.</p>
+      )}
       <div className="space-y-6">
-        {datasets?.map((d) => (
+        {read?.datasets.map((d) => (
           <DatasetCard
             key={d.dataset_id}
             identity={identity}
             sourceUri={sourceUri}
             dataset={d}
             canApprove={canApprove}
-            onApproved={() => setReload((n) => n + 1)}
+            onChanged={() => setReload((n) => n + 1)}
           />
         ))}
       </div>
@@ -67,13 +77,13 @@ function DatasetCard({
   sourceUri,
   dataset: d,
   canApprove,
-  onApproved,
+  onChanged,
 }: {
   identity: Pick<Identity, "org" | "namespace">;
   sourceUri: string;
   dataset: Dataset;
   canApprove: boolean;
-  onApproved: () => void;
+  onChanged: () => void;
 }) {
   const [types, setTypes] = useState<Record<string, DatasetType>>({});
   const [busy, setBusy] = useState(false);
@@ -83,9 +93,9 @@ function DatasetCard({
   const approve = async () => {
     setBusy(true);
     try {
-      await approveDataset(identity, sourceUri, d, retyped);
-      toast(`Approved ${d.name}`, "ok");
-      onApproved();
+      const r = await approveDataset(identity, sourceUri, d, retyped);
+      toast(r.found ? `Approved ${d.name}` : `${d.name} changed meanwhile; read it again`, r.found ? "ok" : "info");
+      onChanged();
     } catch (e) {
       toast(`Approve failed: ${humanizeError(e)}`, "error");
     } finally {
@@ -99,14 +109,19 @@ function DatasetCard({
         level={3}
         caption={`${d.row_count.toLocaleString()} rows${d.rejected_rows ? `, ${d.rejected_rows} rejected` : ""}`}
         actions={
-          <Badge text={d.approved_by ? `approved by ${d.approved_by}` : d.schema_state} state="neutral" size="sm" />
+          <Badge
+            text={d.approved_by ? `approved by ${d.approved_by}` : (SCHEMA_STATE[d.schema_state] ?? d.schema_state)}
+            state="neutral"
+            size="sm"
+          />
         }
       />
       {d.clarifications.length > 0 && (
         <ul className="mt-2 space-y-1 text-sm">
           {d.clarifications.map((c) => (
             <li key={`${c.code}-${c.column}`}>
-              <span className="font-mono text-xs">{c.column}</span>: {c.detail}
+              {c.column && <span className="font-mono text-xs">{c.column}: </span>}
+              {c.detail}
             </li>
           ))}
         </ul>
@@ -115,6 +130,7 @@ function DatasetCard({
         {d.columns.map((c) => (
           <li key={c.name} className="flex items-center gap-3 py-1.5">
             <span className="min-w-0 flex-1 truncate font-mono text-xs">{c.name}</span>
+            {c.inferred !== c.type && <span className="text-xs text-text-muted">read as {c.inferred}</span>}
             {canApprove ? (
               <div className="w-40">
                 <Select
@@ -135,7 +151,7 @@ function DatasetCard({
           </li>
         ))}
       </ul>
-      {canApprove && (
+      {canApprove && (d.schema_state !== "approved" || Object.keys(retyped).length > 0) && (
         <div className="mt-2 flex justify-end">
           <Button type="secondary" htmlType="button" disabled={busy} onClick={() => void approve()}>
             {Object.keys(retyped).length ? "Retype and approve" : "Approve schema"}
