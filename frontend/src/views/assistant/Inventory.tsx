@@ -9,8 +9,8 @@ import type {
 } from "../../api";
 import { NameBadge } from "../../components/AgentBadge";
 import { Stat, Unavailable } from "../../components/ui";
-import { useClamped } from "../../components/ui/TextClamp";
 import { ListTime } from "../../components/ui/ListTime";
+import { useClamped } from "../../components/ui/TextClamp";
 import { displayAgent, fmtInt, sentenceCase } from "../../lib/format";
 import { SUBJECT_OF } from "./subjects";
 
@@ -53,7 +53,7 @@ function planeHint(s: InventorySection): ReactNode {
   if (!s.complete)
     return (
       <span className="break-words" data-testid="inventory-incomplete">
-        {sentenceCase(s.reason) || "Not counted."}
+        {sentenceCase(s.reason) || "Not counted"}
       </span>
     );
   if (!s.latest_at) return null;
@@ -106,7 +106,7 @@ export function InventoryPopulations({
             {p.total !== null && p.top.length > 0 && p.total > p.top.length && (
               <p className="text-xs text-text-muted">The {fmtInt(p.top.length)} with the most memories are shown.</p>
             )}
-            {!p.complete && <p className="text-xs text-text-muted">{sentenceCase(p.reason) || "Not complete."}</p>}
+            {!p.complete && <p className="text-xs text-text-muted">{sentenceCase(p.reason) || "Not complete"}</p>}
             {p.top.length > 0 && (
               <ul className="mt-1.5 flex flex-wrap gap-1.5" aria-label={`${label.title}, most memories first`}>
                 {p.top.map((who) => (
@@ -156,7 +156,7 @@ function PickButton({
   const cut = useClamped(nameEl, shown);
   return (
     <Unavailable reason={blocked && (cut ? `${blocked} Id: ${name}.` : blocked)} tip={cut ? name : undefined}>
-      {/* The label is a flex row, which drops a space between its parts: the name is set here. */}
+      {/* Click UI lays the label out as a flex row, so its text reads "ada12"; aria-label gives the spoken name. */}
       <Button
         type="secondary"
         htmlType="button"

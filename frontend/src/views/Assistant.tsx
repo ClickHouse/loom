@@ -28,8 +28,8 @@ import { useStore } from "../lib/state";
 import { DocumentInspection } from "./assistant/DocumentInspection";
 import { Inspection } from "./assistant/Inspection";
 import { InventoryPopulations, InventoryScopeNote, InventorySections } from "./assistant/Inventory";
-import { SUBJECT_OF } from "./assistant/subjects";
 import { ReviewChanges } from "./assistant/ReviewChanges";
+import { SUBJECT_OF } from "./assistant/subjects";
 import { tokenReadScope } from "./assistant/tokenScope";
 import { useScopedRead } from "./assistant/useScopedRead";
 
@@ -119,7 +119,8 @@ export function Assistant() {
     inspection.run((signal) => inspectMemories(where, who, id, { signal }));
   };
   // A pick in the overview fills the form, inspects, and moves the focus to the answer,
-  // which is further down the page.
+  // which is further down the page. The read runs inside flushSync: the Memories heading
+  // mounts once it is busy, and must exist before it is focused.
   const pick = (who: InspectSubject, id: string) => {
     flushSync(() => {
       setSubject(who);
@@ -322,7 +323,7 @@ export function Assistant() {
           <ReadState read={tune} label="the drafts" />
         </div>
         {tune.data && (
-          <div className="mt-4" aria-busy={tune.busy || undefined}>
+          <section className="mt-4" aria-labelledby="assistant-review-heading" aria-busy={tune.busy || undefined}>
             <SectionHeading
               id="assistant-review-heading"
               level={3}
@@ -331,7 +332,7 @@ export function Assistant() {
             />
             <ReviewChanges tune={tune.data} />
             <ReadAt time={tune.data.computed_at} />
-          </div>
+          </section>
         )}
       </Panel>
     </PageContainer>

@@ -40,5 +40,8 @@ describe("BusyButton", () => {
     const button = screen.getByRole("button", { name: "Save" });
     expect(ref.current).toBe(button);
     expect(button).toHaveAttribute("aria-disabled", "true");
+    // Blocking the click is the wrapper's job (Unavailable), not BusyButton's.
+    fireEvent.click(button);
+    expect(onClick).toHaveBeenCalledTimes(1);
   });
 });
