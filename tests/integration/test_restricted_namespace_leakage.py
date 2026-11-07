@@ -201,10 +201,7 @@ def seed(control_plane_url: str, ch_client, mint_test_token) -> _Seed:
         from server.embedding.fake import FakeNGramEmbedder
         from server.settings import settings
 
-        try:
-            await get_client().connect()
-        except Exception as e:  # noqa: BLE001
-            pytest.skip(f"clickhouse unavailable: {e}")
+        await get_client().connect()
         stats = await ingest_file(
             CodeRepo(),
             s.org,

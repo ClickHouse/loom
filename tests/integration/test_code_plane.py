@@ -44,10 +44,7 @@ async def code_env(ch_client):
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
-    try:
-        await get_client().connect()
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"clickhouse unavailable: {e}")
+    await get_client().connect()
     ns = f"code-it-{os.urandom(4).hex()}"
     yield CodeRepo(), "test-org", ns
 

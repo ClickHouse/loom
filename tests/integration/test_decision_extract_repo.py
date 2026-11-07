@@ -62,10 +62,7 @@ async def env(ch_client, monkeypatch):
     from server.knowledge.app.writes import handle_knowledge_add
     from server.settings import Settings, settings
 
-    try:
-        await get_client().connect()
-    except Exception as e:  # noqa: BLE001 — no ClickHouse: the test skips
-        pytest.skip(f"clickhouse unavailable: {e}")
+    await get_client().connect()
     tag = os.urandom(3).hex()
     trunk, person = f"code-widgets-{tag}", f"person-{tag}"
     set_registry_repos(

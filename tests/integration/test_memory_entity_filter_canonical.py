@@ -24,10 +24,7 @@ async def test_a_plural_entity_meets_its_singular_filter(ch_client) -> None:
     from server.memory.app.search.handler import handle_memory_search
     from server.memory.app.write import handle_memory_set
 
-    try:
-        await get_client().connect()
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"clickhouse unavailable: {e}")
+    await get_client().connect()
     ns = f"agent-entcanon-{os.urandom(3).hex()}"
     await handle_memory_set(
         MemorySetInput(
@@ -66,10 +63,7 @@ async def test_a_timeline_entity_matches_canonical_and_older_lowercase_rows(ch_c
     from server.memory.app.curation import handle_memory_timeline
     from server.memory.app.write import handle_memory_set
 
-    try:
-        await get_client().connect()
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"clickhouse unavailable: {e}")
+    await get_client().connect()
     ns = f"agent-entcanon-{os.urandom(3).hex()}"
     for key in ("shipped", "older"):
         await handle_memory_set(
@@ -108,10 +102,7 @@ async def test_a_touch_keeps_entities_and_their_boost(ch_client) -> None:
     from server.memory.app.search.handler import handle_memory_search
     from server.memory.app.write import handle_memory_set
 
-    try:
-        await get_client().connect()
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"clickhouse unavailable: {e}")
+    await get_client().connect()
     ns = f"agent-entcanon-{os.urandom(3).hex()}"
     ident = {"org": ORG, "namespace": ns, "agent": "a", "memory_key": "api-shape"}
     await handle_memory_set(
@@ -146,10 +137,7 @@ async def test_healing_a_legacy_pair_converges(ch_client) -> None:
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.app.write import handle_memory_set
 
-    try:
-        await get_client().connect()
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"clickhouse unavailable: {e}")
+    await get_client().connect()
     ns = f"agent-entcanon-{os.urandom(3).hex()}"
     await handle_memory_set(
         MemorySetInput(
@@ -179,20 +167,12 @@ async def test_healing_a_legacy_pair_converges(ch_client) -> None:
         assert mirror() == [(versions, entities)]
 
 
-async def _connected() -> None:
-    from server.core.ch import get_client
-
-    try:
-        await get_client().connect()
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"clickhouse unavailable: {e}")
-
-
 async def test_distinct_acronyms_stay_distinct(ch_client) -> None:
+    from server.core.ch import get_client
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.app.write import handle_memory_set
 
-    await _connected()
+    await get_client().connect()
     ns = f"agent-entcanon-{os.urandom(3).hex()}"
     await handle_memory_set(
         MemorySetInput(
@@ -215,13 +195,14 @@ async def test_distinct_acronyms_stay_distinct(ch_client) -> None:
 
 @pytest.mark.parametrize("raw", ["re.S", "re.S.S.S.S.S"])
 async def test_a_dotted_name_given_in_canonical_form_keeps_its_boost(ch_client, raw: str) -> None:
+    from server.core.ch import get_client
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app.search.handler import handle_memory_search
     from server.memory.app.write import handle_memory_set
     from server.memory.domain.graph_quality import canonical_entity_text
 
-    await _connected()
+    await get_client().connect()
     ns = f"agent-entcanon-{os.urandom(3).hex()}"
     await handle_memory_set(
         MemorySetInput(
@@ -243,12 +224,13 @@ async def test_a_dotted_name_given_in_canonical_form_keeps_its_boost(ch_client, 
 async def test_a_huge_entity_neither_slows_a_write_nor_a_search(ch_client) -> None:
     import time
 
+    from server.core.ch import get_client
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app.search.handler import handle_memory_search
     from server.memory.app.write import handle_memory_set
 
-    await _connected()
+    await get_client().connect()
     ns = f"agent-entcanon-{os.urandom(3).hex()}"
     huge = "re" + ".S" * 16000
     started = time.perf_counter()
@@ -274,13 +256,14 @@ async def test_a_huge_entity_neither_slows_a_write_nor_a_search(ch_client) -> No
     ],
 )
 async def test_long_and_unicode_names_keep_their_identity_and_boost(ch_client, names) -> None:
+    from server.core.ch import get_client
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app.search.handler import handle_memory_search
     from server.memory.app.write import handle_memory_set
     from server.memory.domain.graph_quality import canonical_entity_text
 
-    await _connected()
+    await get_client().connect()
     ns = f"agent-entcanon-{os.urandom(3).hex()}"
     await handle_memory_set(
         MemorySetInput(
@@ -308,6 +291,7 @@ async def test_long_and_unicode_names_keep_their_identity_and_boost(ch_client, n
 async def test_a_name_whose_article_hides_a_dot_keeps_its_boost_and_graph_path(
     ch_client, raw: str
 ) -> None:
+    from server.core.ch import get_client
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.api.models_facts import FactsPathInput
     from server.memory.api.models_search import MemorySearchInput
@@ -316,7 +300,7 @@ async def test_a_name_whose_article_hides_a_dot_keeps_its_boost_and_graph_path(
     from server.memory.app.write import handle_memory_set
     from server.memory.domain.graph_quality import canonical_entity_text
 
-    await _connected()
+    await get_client().connect()
     ns = f"agent-entcanon-{os.urandom(3).hex()}"
     canonical = canonical_entity_text(raw)
     assert canonical == "net service"
@@ -350,12 +334,13 @@ async def test_a_name_whose_article_hides_a_dot_keeps_its_boost_and_graph_path(
 
 async def test_a_name_too_long_to_bind_is_dropped_on_write_and_search(ch_client) -> None:
     # Over 128 KiB, a name cannot be sent as a query parameter: neither side keeps it.
+    from server.core.ch import get_client
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app.search.handler import handle_memory_search
     from server.memory.app.write import handle_memory_set
 
-    await _connected()
+    await get_client().connect()
     ns = f"agent-entcanon-{os.urandom(3).hex()}"
     huge = "Zed" + "x" * 200_000
     await handle_memory_set(
