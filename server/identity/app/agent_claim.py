@@ -120,6 +120,9 @@ async def agent_claim(request: Request) -> Response:
         )
     if password != f.get("repeat", ""):
         return _form(namespace, "The two passwords differ.", 400)
+    if len(code) > PASSWORD_MAX_LENGTH or len(namespace) > 64:
+        # Longer than any code or namespace: wrong for every account, and not hashed.
+        return _form("", "That code does not claim this namespace, or it was used.", 400)
     if password == code:
         # Whoever kept the code would sign in with it.
         return _form(namespace, "Choose a password other than the code.", 400)

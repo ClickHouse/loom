@@ -166,6 +166,7 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
         "audited_before_wait": audited_before_wait,
         "ch": ch,
         "code": out.claim_code,
+        "agent_token": out.token,
         "legacy_code": legacy_code,
         "events": events,
         "hashed": hashed,
@@ -227,6 +228,10 @@ def test_the_code_claims_once_and_the_claimer_signs_in_with_their_password(world
     # The agent's own grant is not another holder's.
     assert kw["subject"] == {"other_grants": [], "confirmed": True} and "hold grants" not in r.text
 
+    # The agent's own token is another subject and keeps working.
+    from server.auth.jwt import verify_token
+
+    verify_token(world["agent_token"])
     # The code is spent: neither a second claim nor a sign-in takes it.
     assert _claim(c, world["code"], "attacker pass").status_code == 400
     assert passwords.verify_password(_row(world, _NS)["password_hash"], "correct horse")
@@ -880,6 +885,8 @@ def test_a_wrong_code_or_a_bad_password_claims_nothing_and_keeps_the_code(world)
     assert _claim(c, "not-the-code", "correct horse").status_code == 400
     assert _claim(c, world["code"], "short").status_code == 400
     assert _claim(c, world["code"], "correct horse", "correct hors").status_code == 400
+    assert _claim(c, "x" * 300, "correct horse").status_code == 400
+    assert world["hashed"] == []
     assert _row(world, _NS)["password_hash"].startswith(claim_codes.CLAIM_PREFIX)
     assert _claim(c, world["code"], "correct horse").status_code == 200
 
