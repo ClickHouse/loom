@@ -271,7 +271,7 @@ def _unanswered(section_path: tuple[str, ...], prose: list[str], code: int) -> b
 
 
 def _below_title(name: str, section_path: tuple[str, ...]) -> tuple[str, ...]:
-    """The headings below a first heading that repeats the document's name."""
+    """The section's headings without a first heading that repeats the document's name."""
     if section_path and _same(section_path[0], name):
         return section_path[1:]
     return section_path
