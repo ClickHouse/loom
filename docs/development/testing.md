@@ -103,7 +103,7 @@ A test whose environment is missing skips with a reason; it never fails for a mi
 variable. Use `os.environ.get(...) or pytest.skip(...)`, never `os.environ[...]`. The
 shared fixtures follow the rule: `control_plane_url` skips without `LOOM_BASE_URL`, and
 fails with the URL and the error when a set `LOOM_BASE_URL` does not answer 200 on
-`/v1/health`: a configured server that is down is a failure, not a missing variable.
+`/v1/health`. A configured server that does not answer is broken, not missing.
 `require_real_embedder` skips a search-quality test on a server running the fake embedder.
 The analyzer suite (`migrated_ch`) skips, with the address and the fix in the reason, when
 no ClickHouse answers at `LOOM_CH_*` or the target is behind on migrations, and fails

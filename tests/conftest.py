@@ -146,28 +146,6 @@ def _seed_test_api_key(_load_repo_dotenv):
     os.environ.pop("LOOM_API_KEY", None)
 
 
-@pytest.fixture(scope="session")
-def control_plane_url() -> str:
-    """$LOOM_BASE_URL after a /v1/health probe; skips when it is unset or unhealthy.
-
-    Sync: a session-scoped async fixture would bind its awaitables to a loop
-    function-scoped tests do not share.
-    """
-    url = os.environ.get("LOOM_BASE_URL")
-    if not url:
-        pytest.skip(
-            "Set LOOM_BASE_URL to point at a running Control Plane "
-            "(e.g. http://localhost:7777) and apply migrations with `make migrate`."
-        )
-    try:
-        with httpx.Client(base_url=url, timeout=2.0) as c:
-            r = c.get("/v1/health")
-            assert r.status_code == 200, f"/v1/health returned {r.status_code}"
-    except Exception as e:  # noqa: BLE001 — any health-probe failure means skip, not error
-        pytest.skip(f"Control Plane at {url} not responding: {e}")
-    return url
-
-
 @pytest.fixture
 def require_real_embedder(control_plane_url: str):
     """Skip search-quality tests when the server runs the fake embedder.
