@@ -185,6 +185,14 @@ def test_both_smoke_workflows_build_or_pull_the_extractor_beside_the_server() ->
     assert "--extractor-image loom-extractor:docker-smoke" in run
 
 
+# docker for the tag step: logs each call, and `imagetools inspect TAG` answers
+# an index digest named after the tag's repository.
+DOCKER_STUB = (
+    '#!/bin/sh\necho "$@" >> "$CALLS"\n'
+    'case "$3" in inspect) printf \'{"digest":"sha256:index-%s"}\\n\' "${4%%:*}" ;; esac\n'
+)
+
+
 def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> None:
     """The release's tag step, run against four scans' artifacts and a stub docker:
     each image's tags name one index of its amd64 and arm64 digests."""
@@ -194,10 +202,7 @@ def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> 
     script = next(s["run"] for s in steps if s.get("name") == "Tag the scanned images")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "docker").write_text(
-        '#!/bin/sh\necho "$@" >> "$CALLS"\n'
-        'case "$3" in inspect) printf \'{"digest":"sha256:index-%s"}\\n\' "${4%%:*}" ;; esac\n'
-    )
+    (bin_dir / "docker").write_text(DOCKER_STUB)
     (bin_dir / "docker").chmod(0o755)
     for name, image, pin, tags in (
         ("server", "ghcr.io/clickhouse/loom", "image.digest", "loom:1.2.3\nloom:1.2\n\n"),
@@ -256,10 +261,7 @@ def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> 
     failed = run()
     assert failed.returncode != 0
     assert not (tmp_path / "summary").exists()  # no pin, empty or not
-    (bin_dir / "docker").write_text(
-        '#!/bin/sh\necho "$@" >> "$CALLS"\n'
-        'case "$3" in inspect) printf \'{"digest":"sha256:index-%s"}\\n\' "${4%%:*}" ;; esac\n'
-    )
+    (bin_dir / "docker").write_text(DOCKER_STUB)
 
     shutil.rmtree(tmp_path / "scanned-extractor-arm64")
     failed = run()

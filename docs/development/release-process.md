@@ -196,10 +196,9 @@ move the version's tags onto other bytes.
 When only one of the two carries the version (a failed `docker-tag`), use "Re-run failed jobs" on
 the tag's run, which tags the same build. "Re-run all jobs" would start with a `preflight` that
 refuses the half-tagged version, and every "Re-run failed jobs" after it fails in that `preflight`
-again.
-To recover from there, tag the missing image by hand from that run's digests (from its
-`scanned-<artifact>-<arch>` artifacts), adding `-t ghcr.io/clickhouse/<image>:X.Y` for a final version
-and `-t ghcr.io/clickhouse/<image>:latest` when `python3 scripts/release/make_latest.py X.Y.Z` prints
+again. To recover from there, tag the missing image by hand from that run's digests (from its
+`scanned-<artifact>-<arch>` artifacts), adding `-t ghcr.io/clickhouse/<image>:X.Y` for a final
+version and `-t ghcr.io/clickhouse/<image>:latest` when `python3 scripts/release/make_latest.py X.Y.Z` prints
 `true` (with `GH_TOKEN` and `GITHUB_REPOSITORY=ClickHouse/loom` set), then dispatch the tag:
 
 ```bash
