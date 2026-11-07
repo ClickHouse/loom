@@ -489,6 +489,9 @@ def test_a_recorded_meetings_transcript_and_template_are_noise(
         ),
         ("Planner sync | 2026-03-04 10:00 CET | Transcript", ("Summary",), "The team met."),
         ("Planner sync 2026-03-04 10:00 CET: Transcript", ("Summary",), "The team met."),
+        # a person's dated sync notes signed with a clock time read as a recording: their
+        # discussion stays content (recall lost, nothing hidden)
+        ("Storage sync 2026-03-04 10:00 - notes by Ana", ("Cache",), "Talked about the TTL."),
         # a clock time without a transcript or notes-by mark names no recording
         ("Cutover 2026-03-04 10:00", ("Transcript",), "Ana walked through the steps."),
     ],

@@ -140,7 +140,8 @@ _RECORDED_STAMP = re.compile(rf"\b{_DAY}\s+\d{{1,2}}[:.]\d{{2}}\b", re.IGNORECAS
 # export failing" names a topic.
 _TRANSCRIPT_MARK = re.compile(
     # A hyphen separates only with a space beside it: "transcript-export" is one word.
-    r"(?:^|[\u2013\u2014|:]|\s-)\s*transcript(?:\s*&\s*notes)?(?:\s*(?:\.\w+)?$|\s*[\u2013\u2014|:]|\s+-)",
+    r"(?:^|[\u2013\u2014|:]|\s-)\s*transcript(?:\s*&\s*notes)?"
+    r"(?:\s*(?:\.\w+)?$|\s*[\u2013\u2014|:]|\s+-)",
     re.IGNORECASE,
 )
 _EXTENSION = re.compile(r"\.\w+$")
