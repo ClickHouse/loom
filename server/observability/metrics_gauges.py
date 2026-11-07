@@ -792,8 +792,8 @@ def code_tier_series(
     """(failing, lag) points, one per entry and tier the `code_tier_failing` problem
     reports: its failed passes in a row, labelled with the error kind and the tier's
     severity as the problem grades it, and the commits it trails the fetched tip by
-    (no point when unknown). Labelled raw, as the other code-plane gauges are: the
-    entries come from the config."""
+    (no point when unknown). Labelled raw, as the other code-plane gauges are: one
+    series per configured or registered entry and tier."""
     failing: list[tuple[int, dict[str, str]]] = []
     lag: list[tuple[int, dict[str, str]]] = []
     for r in rows:
