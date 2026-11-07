@@ -122,7 +122,11 @@ describe("PrivacyFilters sweep", () => {
     vi.mocked(api.listBlacklist).mockResolvedValue({ rows: [row("p2", "org"), row("p3", "global")] });
     signIn(["org_admin"]);
     render(<PrivacyFilters />);
-    expect(await screen.findByRole("button", { name: "Actions for secret-p2" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Actions for secret-p3" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Actions for secret-p3" })).toBeInTheDocument();
+    await sweepOf("secret-p2");
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.objectContaining({ title: expect.stringContaining("across acme") }),
+    );
+    await waitFor(() => expect(guardrails.sweepBlacklistPattern).toHaveBeenCalledWith(expect.anything(), "p2"));
   });
 });

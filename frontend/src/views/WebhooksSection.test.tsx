@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api/webhooks";
 import type { Webhook } from "../api/webhooks";
+import { confirmAction } from "../components/ConfirmDialog";
+import { toast } from "../components/Toast";
 import { useStore } from "../lib/state";
 import { WebhooksSection } from "./WebhooksSection";
 
@@ -19,7 +21,6 @@ vi.mock("../api/webhooks", async (importOriginal) => {
       deliveries: [
         {
           event_id: "e1",
-          webhook_id: "w1",
           event_type: "memory.written",
           memory_key: "deploy_window",
           occurred_at: "2000-01-01 00:00:00",
@@ -101,7 +102,22 @@ describe("WebhooksSection", () => {
     render(<WebhooksSection />);
     await userEvent.click(await screen.findByRole("button", { name: `Actions for ${HOOK.url}` }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
+    expect(confirmAction).toHaveBeenCalledWith(expect.objectContaining({ danger: true }));
     await waitFor(() => expect(api.removeWebhook).toHaveBeenCalledWith(expect.objectContaining(scope), "w1"));
+  });
+
+  it("removes nothing when the confirmation is declined, and says when the webhook was already gone", async () => {
+    vi.mocked(confirmAction).mockResolvedValueOnce(false);
+    render(<WebhooksSection />);
+    await userEvent.click(await screen.findByRole("button", { name: `Actions for ${HOOK.url}` }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
+    await waitFor(() => expect(confirmAction).toHaveBeenCalled());
+    expect(api.removeWebhook).not.toHaveBeenCalled();
+
+    vi.mocked(api.removeWebhook).mockResolvedValueOnce({ removed: false });
+    await userEvent.click(screen.getByRole("button", { name: `Actions for ${HOOK.url}` }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("This webhook was already removed", "info"));
   });
 
   it("drops the previous namespace's webhooks on a switch", async () => {

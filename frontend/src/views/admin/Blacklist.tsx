@@ -29,14 +29,14 @@ import { ListState } from "../../components/ui/ListState";
 export const PRIVACY_FILTERS_MANAGED_BY_ADMIN = "Refusal patterns are managed by an admin of this space.";
 /** A viewer who may list but not add. */
 export const PRIVACY_FILTERS_READ_ONLY =
-  "You can see the patterns here but not change them — a writer adds, an admin removes.";
+  "You can see the patterns here but not change them — a writer adds and deletes a namespace pattern's matches, an admin removes.";
 
 const SCOPES: readonly BlacklistScope[] = ["namespace", "org", "global"];
 const SCOPE_LABELS: Record<BlacklistScope, string> = { namespace: "Namespace", org: "Org", global: "Global" };
 
 /**
- * Page wrapper for /admin/guardrails. Renders
- * the inline form below with full page chrome.
+ * Page wrapper for /admin/guardrails: the pattern list below with full page chrome, and
+ * the org's extraction rules and model-call switch for an org admin claim.
  */
 export function Blacklist() {
   const namespace = useStore((s) => s.identity?.namespace ?? "");
@@ -181,7 +181,7 @@ export function PrivacyFilters({
         return;
       }
       const more = s.truncated ? "; more remain, sweep again" : "";
-      toast(`Deleted ${s.tombstoned} of ${s.matched} matching memories${more}`, "ok");
+      toast(`Deleted ${s.tombstoned} of ${s.matched} matching ${s.matched === 1 ? "memory" : "memories"}${more}`, "ok");
     } catch (e) {
       toast(`Sweep failed: ${humanizeError(e)}`, "error");
     } finally {
@@ -303,6 +303,7 @@ export function PrivacyFilters({
             {rows.map((r) => (
               <div
                 key={r.pattern_id}
+                aria-busy={sweeping === r.pattern_id || undefined}
                 className={
                   compact
                     ? "flex items-center gap-3 px-3 py-2"

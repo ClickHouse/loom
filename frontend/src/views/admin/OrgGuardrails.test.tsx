@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "../../test/rtl";
+import { act, cleanup, render, screen, waitFor } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api/guardrails";
@@ -21,13 +21,10 @@ vi.mock("../../api/guardrails", async (importOriginal) => {
   };
 });
 
-const policy = (scope: "org" | "namespace", text: string): ExtractionPolicy => ({
-  scope,
-  namespace: scope === "org" ? "" : "team",
+const policy = (_scope: "org" | "namespace", text: string): ExtractionPolicy => ({
   policy: text,
   updated_by: text ? "alice" : "",
   updated_at: null,
-  effective: text,
 });
 const CALLS: OrgModelCalls = {
   enabled: true,
@@ -70,7 +67,34 @@ describe("OrgGuardrails", () => {
     );
     // The org's rules are set, so its panel offers Remove; the namespace's only once saved.
     await userEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+    expect(confirmAction).toHaveBeenCalledWith(expect.objectContaining({ confirmLabel: "Remove", danger: true }));
     await waitFor(() => expect(api.clearExtractionPolicy).toHaveBeenCalledWith(expect.objectContaining(scope), "org"));
+  });
+
+  it("removes no rules when the confirmation is declined", async () => {
+    vi.mocked(confirmAction).mockResolvedValueOnce(false);
+    render(<OrgGuardrails />);
+    await screen.findAllByLabelText(/^Rules for/);
+    await userEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+    await waitFor(() => expect(confirmAction).toHaveBeenCalled());
+    expect(api.clearExtractionPolicy).not.toHaveBeenCalled();
+  });
+
+  it("keeps a save that lands after a namespace switch out of the new namespace's rules", async () => {
+    let answer: (p: ExtractionPolicy) => void = () => {};
+    vi.mocked(api.setExtractionPolicy).mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    render(<OrgGuardrails />);
+    const field = (await screen.findAllByLabelText(/^Rules for/))[1];
+    await userEvent.type(field, "No health data.");
+    await userEvent.click(screen.getAllByRole("button", { name: "Save rules" })[1]);
+    vi.mocked(api.getExtractionPolicy).mockImplementation(async (_id, s) =>
+      policy(s, s === "org" ? "Never store card numbers." : "Other team's rule."),
+    );
+    act(() => useStore.setState({ identity: { ...scope, namespace: "other", agent: "loom-ui" } }));
+    expect(await screen.findByLabelText("Rules for other")).toHaveValue("Other team's rule.");
+    act(() => answer(policy("namespace", "No health data.")));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByLabelText("Rules for other")).toHaveValue("Other team's rule.");
   });
 
   it("switches the org's model calls off only after a confirmation", async () => {

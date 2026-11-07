@@ -19,14 +19,10 @@ export type PolicyScope = "org" | "namespace";
 
 /** The fields of `server/memory/api/models_extraction_policy.py::ExtractionPolicyOutput` the page reads. */
 export interface ExtractionPolicy {
-  scope: PolicyScope;
-  namespace: string;
   /** This scope's rules; "" when none is set. */
   policy: string;
   updated_by: string;
   updated_at: string | null;
-  /** What extraction in this scope runs under: the org's rules, then the namespace's. */
-  effective: string;
 }
 
 function policyBody(id: Scope, scope: PolicyScope) {

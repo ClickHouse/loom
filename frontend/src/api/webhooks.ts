@@ -58,7 +58,6 @@ export async function removeWebhook(id: Scope, webhookId: string): Promise<{ rem
 /** The fields of `server/memory/api/models_webhook.py::WebhookDelivery` the dialog reads. */
 export interface WebhookDelivery {
   event_id: string;
-  webhook_id: string;
   event_type: string;
   memory_key: string;
   occurred_at: string;

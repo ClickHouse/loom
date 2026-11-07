@@ -204,8 +204,9 @@ const DELIVERY_STATE: Record<WebhookDelivery["status"], BadgeState> = {
 };
 
 /** Why a delivery has not arrived: the receiver's HTTP status, or the transport error when
- *  no status came back. */
+ *  no status came back; "" once it arrived. */
 function deliveryFailure(d: WebhookDelivery): string {
+  if (d.status === "delivered") return "";
   if (d.last_status) return `HTTP ${d.last_status}`;
   return d.last_error;
 }
@@ -236,34 +237,33 @@ function DeliveriesDialog({ hook, onClose }: { hook: Webhook; onClose: () => voi
           aria-label="Webhook deliveries"
           size="sm"
           headers={[{ label: "Event" }, { label: "Memory" }, { label: "Status" }, { label: "When", width: "110px" }]}
-          rows={rows.map((d) => ({
-            id: d.event_id,
-            items: [
-              { label: <span className="font-mono text-xs">{d.event_type}</span> },
-              { label: <span className="font-mono text-xs">{d.memory_key}</span> },
-              {
-                label: (
-                  <span className="inline-flex items-center gap-1.5">
-                    {deliveryFailure(d) ? (
-                      <Tip content={deliveryFailure(d)}>
+          rows={rows.map((d) => {
+            const failure = deliveryFailure(d);
+            return {
+              id: d.event_id,
+              items: [
+                { label: <span className="font-mono text-xs">{d.event_type}</span> },
+                { label: <span className="font-mono text-xs">{d.memory_key}</span> },
+                {
+                  label: (
+                    <span className="inline-flex items-center gap-1.5">
+                      <Tip content={failure} disabled={!failure}>
                         <span>
                           <Badge text={d.status} state={DELIVERY_STATE[d.status]} size="sm" />
                         </span>
                       </Tip>
-                    ) : (
-                      <Badge text={d.status} state={DELIVERY_STATE[d.status]} size="sm" />
-                    )}
-                    {d.attempts > 0 && (
-                      <span className="text-xs text-text-muted tabular">
-                        {d.attempts} {d.attempts === 1 ? "try" : "tries"}
-                      </span>
-                    )}
-                  </span>
-                ),
-              },
-              { label: <ListTime time={d.occurred_at} quiet /> },
-            ],
-          }))}
+                      {d.attempts > 0 && (
+                        <span className="text-xs text-text-muted tabular">
+                          {d.attempts} {d.attempts === 1 ? "try" : "tries"}
+                        </span>
+                      )}
+                    </span>
+                  ),
+                },
+                { label: <ListTime time={d.occurred_at} quiet /> },
+              ],
+            };
+          })}
         />
       )}
       {rows?.length === DELIVERY_LIMIT && (
