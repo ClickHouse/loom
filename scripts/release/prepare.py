@@ -117,18 +117,18 @@ def next_chart_version(version: str, previous_version: str, previous_chart: str)
     return f"{major}.{minor + 1}.0"
 
 
-def check(root: Path = ROOT) -> list[str]:
-    """Every pin that does not carry the server's version."""
+def check(root: Path = ROOT) -> list[tuple[str, str]]:
+    """(file, error) for every pin that does not carry the server's version."""
     want = read(SERVER, root)
     errors = []
     for pin in FOLLOWERS:
         try:
             got = read(pin, root)
         except ValueError as e:
-            errors.append(str(e))
+            errors.append((pin.path, str(e)))
             continue
         if got != want:
-            errors.append(f"{pin.path} names {got}, server/__init__.py {want}")
+            errors.append((pin.path, f"{pin.path} names {got}, server/__init__.py {want}"))
     return errors
 
 
@@ -452,8 +452,8 @@ def release_notes(version: str, previous: str, root: Path = ROOT) -> str:
 
 def _check() -> None:
     errors = check()
-    for error in errors:
-        print(f"::error::{error}")
+    for path, error in errors:
+        print(f"::error file={path}::{error}")
     if errors:
         raise SystemExit(1)
 

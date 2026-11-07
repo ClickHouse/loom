@@ -20,7 +20,7 @@ def _module():
 
 
 def test_the_probe_reads_this_revisions_registry() -> None:
-    """HEAD's registry, as committed: a working-tree change does not move it."""
+    """HEAD's registry, as committed."""
     snap = _module().snapshot_at("HEAD", repo=ROOT)
     assert {"memory.set", "memory.search", "memory.get", "code.search"} <= set(snap["ops"])
     assert all(op["path"] == f"/v1/{name}" for name, op in snap["ops"].items())

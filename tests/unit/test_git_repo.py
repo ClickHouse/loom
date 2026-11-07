@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from tests.unit import git_repo
 
 
@@ -23,3 +25,8 @@ def test_a_commit_and_a_tag_need_no_key_where_the_config_asks_to_sign(tmp_path: 
         check=True,
     )
     assert tagged.stdout.strip() == "commit"  # a plain tag, not a signed tag object
+
+
+def test_a_failure_says_what_git_said(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="^git tag v1 failed: fatal: "):
+        git_repo.git(tmp_path, "tag", "v1")  # not a repository

@@ -163,7 +163,8 @@ def test_a_file_left_behind_is_named(tmp_path: Path) -> None:
     root = _copy(tmp_path)
     chart = root / "deploy/helm/loom/Chart.yaml"
     chart.write_text(chart.read_text().replace('appVersion: "', 'appVersion: "0.0.0-'))
-    (error,) = prepare.check(root)
+    ((path, error),) = prepare.check(root)
+    assert path == "deploy/helm/loom/Chart.yaml"
     assert error.startswith("deploy/helm/loom/Chart.yaml names 0.0.0-")
 
 
@@ -454,13 +455,14 @@ def test_the_merged_pull_requests_are_the_squash_merges_since_the_tag(tmp_path: 
     assert list(prepare.merged_pull_requests("v1.0.0", tmp_path)) == [12, 13, 14]
 
 
-def _released(root: Path) -> Path:
-    """v1.0.0, then #12, #13 and #14, and a wire changelog that leaves a mark."""
+def _released(root: Path, merges: tuple[int, ...] = (12, 13, 14)) -> Path:
+    """v1.0.0, then a squash merge for each of `merges`, and a wire changelog
+    that leaves a mark."""
     root.mkdir()
     git_repo.git(root, "init", "-q")
     _commit(root, "before (#1)")
     git_repo.git(root, "tag", "v1.0.0")
-    for n in (12, 13, 14):
+    for n in merges:
         _commit(root, f"Change {n} (#{n})")
     wire = root / "scripts/codegen/wire_changelog.py"
     wire.parent.mkdir(parents=True)
@@ -506,17 +508,10 @@ def test_the_notes_read_the_merged_pull_requests_in_one_call_in_merge_order(
 def test_notes_with_nothing_merged_since_the_tag_ask_gh_for_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    git_repo.git(root, "init", "-q")
-    _commit(root, "before (#1)")
-    git_repo.git(root, "tag", "v1.0.0")
-    wire = root / "scripts/codegen/wire_changelog.py"
-    wire.parent.mkdir(parents=True)
-    wire.write_text("print('## What changed for clients: a → b\\n\\nNothing.')\n")
+    root = _released(tmp_path / "repo", merges=())
     gh = tmp_path / "bin" / "gh"
     gh.parent.mkdir()
-    gh.write_text("#!/bin/sh\nexit 1\n")
+    gh.write_text("#!/bin/sh\nexit 1\n")  # any gh call fails the notes
     gh.chmod(0o755)
     monkeypatch.setenv("PATH", f"{gh.parent}:{os.environ['PATH']}")
     text = prepare.release_notes("1.0.1", "v1.0.0", root)
@@ -648,7 +643,7 @@ def test_a_release_with_no_final_tag_below_is_refused(monkeypatch: pytest.Monkey
 def test_a_version_file_the_check_cannot_read_is_an_error_line(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def unreadable() -> list[str]:
+    def unreadable() -> list[tuple[str, str]]:
         raise ValueError("server/__init__.py: matches 0 times, not once")
 
     monkeypatch.setattr(prepare, "check", unreadable)
@@ -817,7 +812,8 @@ def test_a_version_file_that_is_missing_is_an_error_line(
     with pytest.raises(SystemExit) as exited:
         prepare.main()
     assert exited.value.code == 1
-    assert "::error::frontend/package-lock.json: missing\n" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "::error file=frontend/package-lock.json::frontend/package-lock.json: missing\n" in out
 
 
 def test_a_bump_with_a_version_file_missing_is_a_plain_line(
