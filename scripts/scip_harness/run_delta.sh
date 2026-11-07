@@ -38,7 +38,17 @@ cmake_configure() {
   fi
 }
 
-# cached_compiler_missing: the cache names a C or C++ compiler the host no longer has.
+# cache_unusable: the cache was made in another directory (CMake refuses it), or
+# names a C or C++ compiler the host no longer has.
+cache_unusable() {
+  local dir
+  dir=$(sed -n 's/^CMAKE_CACHEFILE_DIR:INTERNAL=//p' build/CMakeCache.txt)
+  if [[ -n "$dir" && "$(realpath -m "$dir")" != "$(realpath -m build)" ]]; then
+    return 0
+  fi
+  cached_compiler_missing
+}
+
 cached_compiler_missing() {
   local tool
   while IFS= read -r tool; do
@@ -48,10 +58,10 @@ cached_compiler_missing() {
 }
 
 # 1. compile_commands.json — cmake configure only (no build). Without its cache,
-# or with a cache naming a compiler the host no longer has, the compile database
-# cannot be reconfigured: start clean.
+# or with a cache made elsewhere or naming a compiler the host no longer has, the
+# compile database cannot be reconfigured: start clean.
 CONFIGURED=
-if [[ ! -f build/compile_commands.json || ! -f build/CMakeCache.txt ]] || cached_compiler_missing; then
+if [[ ! -f build/compile_commands.json || ! -f build/CMakeCache.txt ]] || cache_unusable; then
   # ClickHouse's CMake refuses GCC ("Compiler GNU is not supported"), and a
   # fresh checkout has no cache to remember the compiler — pin clang
   # explicitly.

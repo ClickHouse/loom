@@ -386,8 +386,9 @@ def test_a_full_index_whose_reconfigure_fails_fails(tmp_path: Path) -> None:
         None,
         "CMAKE_C_COMPILER:FILEPATH=/bin/sh\nCMAKE_CXX_COMPILER:FILEPATH=/nonexistent/clang++-18\n",
         "CMAKE_C_COMPILER:FILEPATH=/nonexistent/clang-18\nCMAKE_CXX_COMPILER:FILEPATH=/bin/sh\n",
+        "CMAKE_CACHEFILE_DIR:INTERNAL=/elsewhere/build\nCMAKE_CXX_COMPILER:FILEPATH=/bin/sh\n",
     ],
-    ids=["no cache", "missing C++ compiler", "missing C compiler"],
+    ids=["no cache", "missing C++ compiler", "missing C compiler", "made elsewhere"],
 )
 def test_a_cache_that_cannot_be_reconfigured_is_configured_from_scratch(
     tmp_path: Path, cache: str | None

@@ -323,7 +323,7 @@ def fix_for(kind: str, text: str) -> str:
     if kind == "cmake":
         return (
             "CMake could not configure the build tree, or the host has no clang: the "
-            "lines just above the error's last one name which. The tier retries the "
+            "lines above `>> cmake configure failed` say which. The tier retries the "
             "run: fix the build, or give the host what the configure needs."
         )
     if kind == "harness":
