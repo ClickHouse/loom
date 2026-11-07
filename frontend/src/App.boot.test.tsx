@@ -757,6 +757,35 @@ describe("login link", () => {
     expect(screen.queryByText(/Sign in from a link/)).toBeNull();
   });
 
+  it("strips whitespace from a link's token before asking whoami about it and storing it", async () => {
+    const mid = Math.floor(mallory.length / 2);
+    const spaced = `${mallory.slice(0, mid)}%20%0A${mallory.slice(mid)}`;
+    window.history.replaceState(null, "", `/settings#token=${spaced}`);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in as mallory" }));
+    await settle();
+    expect(stored).toEqual([mallory]);
+  });
+
+  it("asks again when another tab stores a token while the screen is up", async () => {
+    localStorage.setItem("loom_token_v1", alice);
+    stored = [];
+    window.history.replaceState(null, "", `/settings#token=${mallory}`);
+    render(<App />);
+    const first = await screen.findByRole("button", { name: "Sign in as mallory" });
+    expect(screen.getByText(/You are signed in as/).textContent).toContain("alice");
+    const bob = jwt({ sub: "bob", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
+    localStorage.setItem("loom_token_v1", bob); // another tab signs in as bob
+    stored = [];
+    fireEvent.click(first);
+    // The question is put again, naming the account now held.
+    await until(() => /bob/.test(screen.queryByText(/You are signed in as/)?.textContent ?? ""));
+    expect(stored).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in as mallory" }));
+    await settle();
+    expect(stored).toEqual([mallory]);
+  });
+
   it("a sign-in mark older than ten minutes counts as none", async () => {
     window.history.replaceState(null, "", `/me${markSignIn(Date.now() - 11 * 60 * 1000)}#token=${mallory}`);
     render(<App />);

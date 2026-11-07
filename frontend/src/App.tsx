@@ -226,6 +226,8 @@ export default function App() {
   const [linkAsk, setLinkAsk] = useState<{
     subject: string | null;
     org: string | null;
+    /** The token this browser held when the question was put. */
+    held: string | null;
     answer: (ok: boolean) => void;
   } | null>(null);
 
@@ -338,7 +340,9 @@ export default function App() {
         const started = takeSignInStarted(link?.nonce ?? null);
         if (takeSsoAsk()) setSsoAsked(true);
         if (link) {
-          const token = link.token;
+          // setToken strips whitespace; whoami is asked about the same token it stores.
+          const token = link.token?.replace(/\s+/g, "") || null;
+          link = { ...link, token };
           // A proxy or auth off: the page sends no token of its own, so a link's is dropped.
           if (token && (isProxyMode() || isAuthDisabled())) link = { ...link, token: null };
           // The sign-in this tab started (its nonce came back) skips the checks below.
@@ -353,9 +357,15 @@ export default function App() {
             // Another account than the one held: the person confirms the one the server named.
             // Boot asks whoami again: the person may read the question longer than it lives.
             else if (!sameAccount(answer, storedToken())) {
-              const ok = await new Promise<boolean>((resolve) =>
-                setLinkAsk({ subject: answer.subject ?? null, org: answer.org ?? null, answer: resolve }),
-              );
+              let ok: boolean;
+              let held: string | null;
+              // Another tab that stores a token while the screen is up changes whose account
+              // is replaced: the question is put again, naming it.
+              do {
+                held = storedToken();
+                const ask = { subject: answer.subject ?? null, org: answer.org ?? null, held };
+                ok = await new Promise<boolean>((resolve) => setLinkAsk({ ...ask, answer: resolve }));
+              } while (storedToken() !== held);
               setLinkAsk(null);
               if (!ok) link = { ...link, token: null };
             } else linkAnswer = answer;
@@ -582,7 +592,7 @@ export default function App() {
         <LinkTokenConfirm
           subject={linkAsk.subject}
           org={linkAsk.org}
-          current={claimsFromToken(storedToken())}
+          current={claimsFromToken(linkAsk.held)}
           onConfirm={() => linkAsk.answer(true)}
           onCancel={() => linkAsk.answer(false)}
         />

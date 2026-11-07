@@ -43,11 +43,8 @@ export function endSession(lost = storedToken()): void {
  *  is 5 s), before boot gives up. With `asToken`, about that token instead of the stored one,
  *  which stays as it is. */
 export async function whoamiWhenReady(asToken?: string): Promise<WhoAmI> {
-  const asked = storedToken();
-  // Asked about the stored token, a token stored meanwhile (checked after the failure and
-  // after the wait) is not the one being asked about: no retry carries it, and the caller,
-  // which checks the stored token next, decides on the new one. Asked about `asToken`, the
-  // stored token plays no part.
+  // A token stored meanwhile is not the one asked about; with asToken the stored one plays no part.
+  const asked = asToken ? null : storedToken();
   const changed = () => !asToken && storedToken() !== asked;
   for (let attempt = 1; ; attempt++) {
     try {
