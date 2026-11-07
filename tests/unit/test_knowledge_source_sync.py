@@ -487,6 +487,8 @@ def test_a_definition_shown_in_code_is_fetched_but_neither_written_nor_mined_aga
     for _ in range(2):
         asyncio.run(source_sync.run_sync(full=True))
     assert world.upserts == [] and world.mined == []
+    exports = [r for r in world.requests if r.url.path == "/drive/v3/files/doc1/export"]
+    assert len(exports) == 1
     assert _detail(world)["mined"] == {uri: REV1}
 
 

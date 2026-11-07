@@ -255,9 +255,9 @@ async def source_revisions(
     (else "") when the copy was read (`read_at`) and the exact hash of what was
     written (`text_sha256`). With `pictures`, also whether the stored text still
     holds a picture's bytes as a reference definition (`inline_pictures`, "1" or
-    ""), as a native document stored by an earlier conversion does, and the
-    SHA-256 of the stored text (`stored_content_sha256`): that reads every document's text, so
-    only a full listing asks; the hash is computed only for a flagged copy. One
+    ""), as a native document stored by an earlier conversion does, and the SHA-256
+    of the stored text (`stored_content_sha256`): that reads every document's text,
+    so only a full listing asks; the hash is computed only for a flagged copy. One
     statement, a tag filter over the namespace's key prefix like `source_documents`.
 
     With `searchable_only`, only a version whose chunks are live counts: a write cut

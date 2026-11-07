@@ -62,6 +62,7 @@ LINES = [
     ("[image1]: data:image/png;base64,AAAA", True, True),
     ("   [image2]: <data:image/jpeg;base64,BBBB>  ", True, True),
     ('[image3]: <data:image/png;base64,CCCC> "Figure 1"', True, True),
+    ("[image5]: <data:image/png;base64,EEEE> (Figure 2)", True, True),
     ("[image4]: <data:image/png;base64,DDDD>\r", True, True),
     ("[Step 1]: data: the raw input", True, False),
     ("[spec]: https://example.com/spec", False, False),

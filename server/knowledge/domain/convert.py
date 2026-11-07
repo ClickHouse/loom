@@ -373,11 +373,11 @@ def coverage_of(artifact: Artifact) -> dict[str, Any]:
 
 
 # A reference definition whose destination is an inline picture (`[image1]:
-# <data:image/png;base64,...>`, with or without a quoted title), as a native document's
-# Markdown export holds each pasted picture, and a reference or inline image that
-# shows one. `store.sources._INLINE_PICTURE` flags these lines in stored text, and a few
-# more (a fenced one, one that only starts like a definition), which the stored-copy
-# comparison then finds unchanged.
+# <data:image/png;base64,...>`, with or without a quoted or parenthesised title), as a
+# native document's Markdown export holds each pasted picture, and a reference or
+# inline image that shows one. `store.sources._INLINE_PICTURE` flags these lines in
+# stored text, and a few more (a fenced one, one that only starts like a definition),
+# which the stored-copy comparison then finds unchanged.
 _DATA_DEFINITION = re.compile(
     r" {0,3}\[([^\]\n]+)\]:[ \t]*<?data:[^\s>]*>?"
     r"""(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)\n]*\)))?[ \t]*\r?"""
@@ -474,27 +474,35 @@ def _skip_blanks(line: str, at: int) -> int:
     return at
 
 
+def _opening_run(before: str) -> str:
+    """The emphasis run ending `before` when it opens at a word boundary, else ""."""
+    head = _TRAILING_EMPHASIS.search(before)
+    if head is None or (head.start() > 0 and before[head.start() - 1] not in " \t"):
+        return ""
+    return head.group()
+
+
+def _closing_run(after: str) -> str:
+    """The emphasis run starting `after` when it closes at a word boundary, else ""."""
+    tail = _LEADING_EMPHASIS.match(after)
+    if tail is None or after[tail.end() : tail.end() + 1] not in ("", " ", "\t"):
+        return ""
+    return tail.group()
+
+
 def _emptied_emphasis(before: str, after: str) -> int:
     """The length of an emphasis run that opens right before a removed picture and
     closes right after it, so nothing is left inside it; 0 when there is none."""
-    head, tail = _TRAILING_EMPHASIS.search(before), _LEADING_EMPHASIS.match(after)
-    if head is None or tail is None or head.group() != tail.group():
-        return 0
-    opens = head.start() == 0 or before[head.start() - 1] in " \t"
-    closes = after[tail.end() : tail.end() + 1] in ("", " ", "\t")
-    return len(head.group()) if opens and closes else 0
+    run = _opening_run(before)
+    return len(run) if run and run == _closing_run(after) else 0
 
 
 def _joined(before: str, alt: str, after: str) -> str:
     """`before` with a removed picture's alt text appended, spaced so the words on both
     sides of the picture stay one space apart: no space at a line's end, after an
     opening bracket or emphasis, or before punctuation or a closing one."""
-    head = _TRAILING_EMPHASIS.search(before)
-    opens = head is not None and (head.start() == 0 or before[head.start() - 1] in " \t")
-    left = before[-1:] in ("", "(", "[", "{") or opens
-    tail = _LEADING_EMPHASIS.match(after)
-    closes = tail is not None and after[tail.end() : tail.end() + 1] in ("", " ", "\t")
-    right = after[:1] in ("", *".,;:!?)]}") or closes
+    left = before[-1:] in ("", "(", "[", "{") or bool(_opening_run(before))
+    right = after[:1] in ("", *".,;:!?)]}") or bool(_closing_run(after))
     if alt:
         return before + ("" if left else " ") + alt + ("" if right else " ")
     return before + ("" if left or right else " ")
