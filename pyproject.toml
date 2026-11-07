@@ -27,6 +27,7 @@ dependencies = [
   "aiohttp>=3.10",           # clickhouse-connect's async client requires it
   "httpx[http2]>=0.27",
   "idna>=3.7",               # UTS 46 host names: server.settings.catalog.ascii_host
+  "dnspython>=2.6",          # a cancellable lookup for names a tenant chooses: server.core.hosts
   "tenacity>=9.0",
   "pyjwt[crypto]>=2.10",
   # OpenTelemetry: ship spans + logs to HyperDX / ClickStack's OTLP

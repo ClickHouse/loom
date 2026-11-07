@@ -34,13 +34,9 @@ call's identity) passes through instead: the write fails, not "kept the type".
 from __future__ import annotations
 
 import asyncio
-import functools
 import json
 import logging
-import threading
-from collections import Counter
-from collections.abc import Callable, Mapping
-from concurrent.futures import Executor, Future, ThreadPoolExecutor
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
@@ -137,56 +133,8 @@ async def classify(
 
 
 class _NotCalled(Exception):
-    """The call is refused before it is sent (the host, or the namespace's lookups
-    are all taken): kept apart from any answer, a JSON null included."""
-
-
-# Concurrent name lookups for classifiers off the gateway. A lookup cut by the deadline
-# keeps its thread until the resolver gives up, and the names are a namespace admin's:
-# a burst at a name that never answers fills this pool, never asyncio's shared one.
-# One namespace holds at most _LOOKUPS_PER_NAMESPACE of its threads, pending or
-# running, so it cannot take every thread from the other namespaces; a call past
-# that is refused at once.
-_LOOKUP_THREADS = 4  # not a setting: a bound on what an admin's names can hold
-_LOOKUPS_PER_NAMESPACE = 2  # not a setting: half the pool, so two tenants always fit
-_lookups: Counter[tuple[str, str]] = Counter()  # (org, namespace) -> lookups held
-_lookups_lock = threading.Lock()  # released from the pool's threads
-
-
-@functools.cache
-def _lookup_pool() -> ThreadPoolExecutor:
-    return ThreadPoolExecutor(max_workers=_LOOKUP_THREADS, thread_name_prefix="classify-dns")
-
-
-def _take_lookup(scope: tuple[str, str]) -> bool:
-    with _lookups_lock:
-        if _lookups[scope] >= _LOOKUPS_PER_NAMESPACE:
-            return False
-        _lookups[scope] += 1
-        return True
-
-
-def _release_lookup(scope: tuple[str, str]) -> None:
-    with _lookups_lock:
-        _lookups[scope] -= 1
-        if _lookups[scope] <= 0:
-            del _lookups[scope]
-
-
-class _NamespaceLookup(Executor):
-    """The lookup pool, for one call of one namespace: the slot `_take_lookup` took
-    is released when the lookup's thread is done (or it is cancelled before it
-    starts), not when the call's deadline cuts the wait."""
-
-    def __init__(self, scope: tuple[str, str]) -> None:
-        self.scope = scope
-        self.submitted = False
-
-    def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
-        self.submitted = True
-        future = _lookup_pool().submit(fn, *args, **kwargs)
-        future.add_done_callback(lambda _: _release_lookup(self.scope))
-        return future
+    """The call is refused before it is sent (its host): kept apart from any answer,
+    a JSON null included."""
 
 
 # The largest classifier answer read: {"memory_type": ...} is a few dozen bytes.
@@ -198,24 +146,17 @@ async def _post_vetted(endpoint: str, body: Mapping[str, object], *, scope: tupl
     address its host resolves to (vetted here and connected to, so a rebinding name
     cannot move it), with no redirect and no identity headers. The lookup, the call
     and the answer, at most `_MAX_ANSWER_BYTES`, are under one deadline. _NotCalled,
-    noted, when the host is refused (logged once per `scope`, the (org, namespace)) or
-    the namespace already holds its share of the lookup pool."""
-    if not _take_lookup(scope):
-        _degradations.note("classify", "caller_type_kept", "endpoint busy")
-        raise _NotCalled
-    lookup = _NamespaceLookup(scope)
+    noted, when the host is refused (logged once per `scope`, the (org, namespace)).
+    The name is looked up on the event loop, so a name that never answers holds
+    nothing past the deadline: no thread is left for a tenant's names to fill."""
     async with asyncio.timeout(settings.memory_classify_timeout_s):
-        try:
-            refusal, url, host, server_name = await webhooks.pinned_target(
-                # http only for a listed host: classify_refusal refused it for any other
-                endpoint,
-                schemes=("https", "http"),
-                private_hosts=settings.memory_classify_private_host_set(),
-                pool=lookup,
-            )
-        finally:
-            if not lookup.submitted:  # refused before any lookup: the slot is free now
-                _release_lookup(scope)
+        refusal, url, host, server_name = await webhooks.pinned_target(
+            # http only for a listed host: classify_refusal refused it for any other
+            endpoint,
+            schemes=("https", "http"),
+            private_hosts=settings.memory_classify_private_host_set(),
+            in_loop=True,
+        )
         if refusal:
             if _REFUSED_LOGGED.first(("host", *scope)):
                 log.warning(

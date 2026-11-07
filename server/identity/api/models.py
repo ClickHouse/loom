@@ -173,7 +173,8 @@ class NamespaceRegisterInput(BaseModel):
     rerank_prompt_template: str | None = None
     # Classifier for memory.set(classify=True): https at a public address (or a host in
     # LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS), no credentials; while the gateway is required its
-    # host must be in LOOM_INFERENCE_GATEWAY_HOSTS. Refusals: classify_refusal.
+    # host must be in LOOM_INFERENCE_GATEWAY_HOSTS, and at a listed gateway host it must be
+    # https at the default port even while it is not. Refusals: classify_refusal.
     classify_endpoint: ClassifyEndpoint = None
     # Text forwarded as `prompt_template` in every call to `classify_endpoint`.
     classify_prompt_template: str | None = None

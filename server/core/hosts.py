@@ -11,9 +11,11 @@ repository-job egress proxy share this gate.
 from __future__ import annotations
 
 import asyncio
+import functools
 import ipaddress
 import socket
-from concurrent.futures import Executor
+
+import dns.asyncresolver
 
 # The NAT64 well-known prefix: its low 32 bits are the IPv4 address a packet reaches
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
@@ -44,25 +46,62 @@ def _resolve(host: str) -> list[str]:
     return list(dict.fromkeys(str(i[4][0]) for i in infos))
 
 
+@functools.cache
+def _async_resolver() -> dns.asyncresolver.Resolver:
+    return dns.asyncresolver.Resolver()  # the system's resolv.conf, read once
+
+
+async def _resolve_in_loop(host: str) -> list[str]:
+    """The A then AAAA addresses of `host`, looked up on the event loop from the
+    system's resolv.conf nameservers (not /etc/hosts): cancelling the wait ends the
+    lookup, and no thread is left behind. An address literal is itself."""
+    try:
+        return [str(ipaddress.ip_address(host))]
+    except ValueError:
+        pass
+    resolver = _async_resolver()
+    answers = await asyncio.gather(
+        *(resolver.resolve(host, kind, raise_on_no_answer=False) for kind in ("A", "AAAA")),
+        return_exceptions=True,
+    )
+    addrs: list[str] = []
+    failed: list[BaseException] = []
+    for answer in answers:
+        if isinstance(answer, asyncio.CancelledError):
+            raise answer
+        if isinstance(answer, BaseException):
+            failed.append(answer)
+        else:
+            addrs.extend(record.to_text() for record in answer)
+    if not addrs and failed:
+        raise failed[0]
+    return list(dict.fromkeys(addrs))
+
+
 async def vet_host(
     host: str,
     *,
     allow_private: bool = False,
     name_address: bool = True,
-    pool: Executor | None = None,
+    in_loop: bool = False,
 ) -> tuple[str, str]:
     """(refusal, address): refusal is "" when the host is acceptable, else one
     sentence saying why not; address is the validated one to connect to ("" when
     refused, or when `allow_private` (a dev stack) uses the name as given).
     `name_address=False` keeps the resolved address out of the refusal, for a
-    caller whose refusal reaches someone who should not learn it. The lookup runs
-    on `pool` (None: asyncio's default one), so a caller whose names a tenant
-    chooses keeps its never-answering lookups off the shared pool."""
+    caller whose refusal reaches someone who should not learn it. `in_loop` looks a
+    public host up on the event loop (`_resolve_in_loop`) instead of in a thread, for
+    a caller whose names a tenant chooses: a lookup cut by the caller's deadline holds
+    nothing after it. An `allow_private` host is still looked up by the system's
+    resolver, /etc/hosts included: the operator listed it."""
     h = (host or "").strip()
     if not h:
         return "host is required", ""
     try:
-        addrs = await asyncio.get_running_loop().run_in_executor(pool, _resolve, h)
+        if in_loop and not allow_private:
+            addrs = await _resolve_in_loop(h)
+        else:
+            addrs = await asyncio.to_thread(_resolve, h)
     except Exception as e:  # noqa: BLE001 — a name that does not resolve
         return f"{h} does not resolve ({type(e).__name__})", ""
     if not addrs:

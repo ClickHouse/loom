@@ -16,10 +16,26 @@ from typing import Any
 
 import pytest
 
+from server.core.hosts import _resolve_in_loop as _REAL_RESOLVE_IN_LOOP
 from server.memory.app import classify
 from server.memory.domain.classify_endpoints import check_classify_endpoint, classify_refusal
 from server.observability import degradations
 from server.settings import settings
+
+
+def _no_thread(host: str) -> list[str]:
+    raise AssertionError(f"{host} was looked up in a thread")
+
+
+def _resolves(monkeypatch: pytest.MonkeyPatch, answer: Callable[[str], list[str]]) -> None:
+    """Both lookups answer with `answer`: the system's (a listed private host) and the
+    in-loop one (any other host off the gateway)."""
+
+    async def _in_loop(host: str) -> list[str]:
+        return answer(host)
+
+    monkeypatch.setattr("server.core.hosts._resolve", answer)
+    monkeypatch.setattr("server.core.hosts._resolve_in_loop", _in_loop)
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +48,7 @@ def _off_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "inference_gateway_required", False)
     monkeypatch.setattr(settings, "memory_classify_private_hosts", "")
     # An address literal resolves to itself; nothing here reaches a resolver.
-    monkeypatch.setattr("server.core.hosts._resolve", lambda host: [host.strip("[]")])
+    _resolves(monkeypatch, lambda host: [host.strip("[]")])
     monkeypatch.setattr(customer, "require", _anyone)
 
 
@@ -158,8 +174,8 @@ def test_a_public_looking_name_that_resolves_inward_is_never_posted_to(
     monkeypatch: pytest.MonkeyPatch, client: type[_Client]
 ) -> None:
     """The realistic attack: a name the admin controls resolves to a private address."""
-    monkeypatch.setattr(
-        "server.core.hosts._resolve",
+    _resolves(
+        monkeypatch,
         lambda host: ["10.1.2.3"] if host == "classifier.attacker.example" else [host],
     )
     degradations.begin()
@@ -192,7 +208,7 @@ def test_a_listed_private_host_is_reached_by_name(
     monkeypatch: pytest.MonkeyPatch, client: type[_Client]
 ) -> None:
     monkeypatch.setattr(settings, "memory_classify_private_hosts", "classifier.local")
-    monkeypatch.setattr("server.core.hosts._resolve", lambda host: ["10.0.0.9"])
+    _resolves(monkeypatch, lambda host: ["10.0.0.9"])
     assert _classify("http://classifier.local:9000/c") == "note"
     (seen,) = client.seen
     assert seen["url"] == "http://classifier.local:9000/c"
@@ -202,14 +218,23 @@ def test_a_listed_private_host_is_reached_by_name(
 def test_a_lookup_that_never_answers_is_cut_by_the_calls_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _hangs(host: str) -> list[str]:
-        time.sleep(2)
-        return ["203.0.113.7"]
+    """The lookup runs on the event loop: the deadline ends it, and nothing of it is
+    left running (no thread, no task) once the call has returned."""
+    running: list[str] = []
+
+    async def _hangs(host: str) -> list[str]:
+        running.append(host)
+        try:
+            await asyncio.sleep(30)
+        finally:
+            running.remove(host)
+        return ["93.184.215.14"]
 
     monkeypatch.setattr(settings, "memory_classify_timeout_s", 0.2)
-    monkeypatch.setattr("server.core.hosts._resolve", _hangs)
+    monkeypatch.setattr("server.core.hosts._resolve_in_loop", _hangs)
+    monkeypatch.setattr("server.core.hosts._resolve", _no_thread)
 
-    async def _timed() -> tuple[str, float]:
+    async def _timed() -> tuple[str, float, list[str]]:
         started = time.perf_counter()
         label = await classify.classify(
             org="acme",
@@ -219,11 +244,10 @@ def test_a_lookup_that_never_answers_is_cut_by_the_calls_deadline(
             value="v",
             valid_types=[],
         )
-        return label, time.perf_counter() - started
+        return label, time.perf_counter() - started, list(running)
 
-    # timed inside the loop: the resolver's thread finishes on its own after the deadline
-    label, waited = asyncio.run(_timed())
-    assert label == "" and waited < 1.5
+    label, waited, left = asyncio.run(_timed())
+    assert label == "" and waited < 1.5 and left == []
 
 
 def test_an_answer_that_trickles_is_cut_by_the_calls_deadline(
@@ -407,7 +431,7 @@ def test_an_internationalized_host_is_posted_with_its_idna_form(
         return httpx.Response(200, stream=_Wire())
 
     real = httpx.AsyncClient
-    monkeypatch.setattr("server.core.hosts._resolve", lambda host: ["93.184.215.14"])
+    _resolves(monkeypatch, lambda host: ["93.184.215.14"])
     monkeypatch.setattr(
         classify.httpx,
         "AsyncClient",
@@ -458,7 +482,7 @@ def test_a_url_two_parsers_read_apart_is_refused_and_never_posted(
     """httpx (the gateway check) and urlsplit (the call) must read one host: each of
     these reads as off the gateway to one and reaches the gateway's host by the other."""
     monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
-    monkeypatch.setattr("server.core.hosts._resolve", lambda host: ["93.184.215.14"])
+    _resolves(monkeypatch, lambda host: ["93.184.215.14"])
     with pytest.raises(ValueError, match="classify_endpoint"):
         check_classify_endpoint(url)
     assert _classify(url) == "" and client.seen == []
@@ -485,7 +509,7 @@ def test_a_private_host_matches_in_either_spelling(
     monkeypatch: pytest.MonkeyPatch, client: type[_Client], listed: str, url: str
 ) -> None:
     monkeypatch.setattr(settings, "memory_classify_private_hosts", listed)
-    monkeypatch.setattr("server.core.hosts._resolve", lambda host: ["10.0.0.9"])
+    _resolves(monkeypatch, lambda host: ["10.0.0.9"])
     assert classify_refusal(url) == ""
     assert _classify(url) == "note"
     (seen,) = client.seen
@@ -514,7 +538,7 @@ def test_a_host_that_is_not_a_bare_name_or_address_is_refused_and_never_posted(
     monkeypatch: pytest.MonkeyPatch, url: str, client: type[_Client]
 ) -> None:
     monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
-    monkeypatch.setattr("server.core.hosts._resolve", lambda host: ["93.184.215.14"])
+    _resolves(monkeypatch, lambda host: ["93.184.215.14"])
     assert classify_refusal(url) == "it is not a valid URL"
     assert _classify(url) == "" and client.seen == []
 
@@ -524,7 +548,7 @@ def test_a_private_host_with_an_underscore_is_accepted(
 ) -> None:
     """A Compose service name: both parsers read the `_` alike."""
     monkeypatch.setattr(settings, "memory_classify_private_hosts", "my_classifier")
-    monkeypatch.setattr("server.core.hosts._resolve", lambda host: ["172.18.0.4"])
+    _resolves(monkeypatch, lambda host: ["172.18.0.4"])
     assert classify_refusal("http://my_classifier:8080/c") == ""
     assert _classify("http://my_classifier:8080/c") == "note"
     assert client.seen[0]["url"] == "http://my_classifier:8080/c"
@@ -557,82 +581,29 @@ def test_the_gateways_explicit_default_port_is_called_as_a_model_call(
     assert posted == ["https://gateway.example:443/c"] and client.seen == []
 
 
-def test_lookups_that_never_answer_hold_at_most_the_classifiers_own_threads(
+def test_namespaces_whose_names_never_answer_leave_another_namespaces_call_alone(
     monkeypatch: pytest.MonkeyPatch, client: type[_Client]
 ) -> None:
-    """A burst at a name that never answers: each call ends at its deadline, and the
-    lookups hold only the classifier's small pool, never asyncio's shared one."""
-    import threading
+    """Two namespaces burst at names that never answer: each call ends at its deadline
+    with nothing of its lookup left running, and a third namespace's classifier
+    answers meanwhile: no lookup holds a thread another namespace needs."""
+    running: list[str] = []
 
-    release = threading.Event()
-    lock = threading.Lock()
-    running = [0, 0]  # now, most at once
-    threads: set[str] = set()
-
-    def _hangs(host: str) -> list[str]:
-        with lock:
-            running[0] += 1
-            running[1] = max(running[1], running[0])
-            threads.add(threading.current_thread().name)
-        release.wait(10)
-        with lock:
-            running[0] -= 1
+    async def _lookup(host: str) -> list[str]:
+        if host.startswith("never"):
+            running.append(host)
+            try:
+                await asyncio.sleep(30)
+            finally:
+                running.remove(host)
         return ["93.184.215.14"]
 
     monkeypatch.setattr(settings, "memory_classify_timeout_s", 0.3)
-    monkeypatch.setattr("server.core.hosts._resolve", _hangs)
+    monkeypatch.setattr("server.core.hosts._resolve_in_loop", _lookup)
+    monkeypatch.setattr("server.core.hosts._resolve", _no_thread)
 
-    async def _burst() -> list[str]:
-        return await asyncio.gather(
-            *(
-                classify.classify(
-                    org="acme",
-                    namespace=f"burst{i % 3}",
-                    endpoint=f"https://never{i}.example/c",
-                    prompt_template="",
-                    value="v",
-                    valid_types=[],
-                )
-                for i in range(12)
-            )
-        )
-
-    try:
-        assert asyncio.run(_burst()) == [""] * 12 and client.seen == []
-        # another test's cut lookup may still hold a thread of the pool
-        assert 1 <= running[1] <= classify._LOOKUP_THREADS < 12
-        assert all(name.startswith("classify-dns") for name in threads)
-    finally:
-        release.set()
-
-
-def test_one_namespace_holds_at_most_its_share_of_the_lookup_threads(
-    monkeypatch: pytest.MonkeyPatch, client: type[_Client]
-) -> None:
-    """A namespace whose names never answer holds two lookup threads and no more, its
-    excess is refused at once as busy, and another namespace's classifier still runs."""
-    import threading
-
-    release = threading.Event()
-    lock = threading.Lock()
-    hung = [0, 0]  # now, most at once
-
-    def _resolve(host: str) -> list[str]:
-        if host.startswith("never"):
-            with lock:
-                hung[0] += 1
-                hung[1] = max(hung[1], hung[0])
-            release.wait(10)
-            with lock:
-                hung[0] -= 1
-        return ["93.184.215.14"]
-
-    monkeypatch.setattr(settings, "memory_classify_timeout_s", 0.5)
-    monkeypatch.setattr("server.core.hosts._resolve", _resolve)
-
-    async def _call(namespace: str, host: str) -> tuple[str, list[str]]:
-        degradations.begin()
-        label = await classify.classify(
+    async def _call(namespace: str, host: str) -> str:
+        return await classify.classify(
             org="acme",
             namespace=namespace,
             endpoint=f"https://{host}/c",
@@ -640,19 +611,114 @@ def test_one_namespace_holds_at_most_its_share_of_the_lookup_threads(
             value="v",
             valid_types=[],
         )
-        return label, degradations.current()
 
-    async def _both() -> list[tuple[str, list[str]]]:
-        hogs = [_call("hog", f"never{i}.example") for i in range(6)]
-        await asyncio.sleep(0)
-        return await asyncio.gather(*hogs, _call("other", "classifier.example"))
+    async def _all() -> tuple[list[str], list[str]]:
+        hogs = [_call(ns, f"never{i}.example") for ns in ("hog-a", "hog-b") for i in range(8)]
+        labels = await asyncio.gather(*hogs, _call("other", "classifier.example"))
+        return labels, list(running)
 
-    try:
-        *hogs, other = asyncio.run(_both())
-        assert other == ("note", [])
-        assert hung[1] == classify._LOOKUPS_PER_NAMESPACE
-        busy = [notes for label, notes in hogs if "endpoint busy" in notes[0]]
-        assert len(busy) == 6 - classify._LOOKUPS_PER_NAMESPACE
-        assert all(label == "" for label, _ in hogs)
-    finally:
-        release.set()
+    labels, left = asyncio.run(_all())
+    *hogs, other = labels
+    assert other == "note" and hogs == [""] * 16
+    assert left == [] and [s["url"] for s in client.seen] == ["https://93.184.215.14/c"]
+
+
+def test_the_in_loop_lookup_reads_a_and_aaaa_and_fails_only_when_both_do(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import dns.resolver
+
+    from server.core import hosts
+
+    # the real _resolve_in_loop (the autouse fixture stubs it), over a fake nameserver
+    monkeypatch.setattr(hosts, "_resolve_in_loop", _REAL_RESOLVE_IN_LOOP)
+
+    class _Record:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+        def to_text(self) -> str:
+            return self.text
+
+    class _Resolver:
+        def __init__(self, zone: dict[tuple[str, str], list[str]]) -> None:
+            self.zone = zone
+
+        async def resolve(self, host: str, kind: str, **_: Any) -> list[_Record]:
+            if (host, kind) not in self.zone:
+                raise dns.resolver.NXDOMAIN
+            return [_Record(a) for a in self.zone[(host, kind)]]
+
+    zone = {
+        ("both.example", "A"): ["93.184.215.14"],
+        ("both.example", "AAAA"): ["2606:2800:21f:cb07:6820:80da:af6b:8b2c"],
+        ("v4.example", "A"): ["93.184.215.14"],
+    }
+    monkeypatch.setattr(hosts, "_async_resolver", lambda: _Resolver(zone))
+    assert asyncio.run(hosts._resolve_in_loop("both.example")) == [
+        "93.184.215.14",
+        "2606:2800:21f:cb07:6820:80da:af6b:8b2c",
+    ]
+    assert asyncio.run(hosts._resolve_in_loop("v4.example")) == ["93.184.215.14"]
+    assert asyncio.run(hosts._resolve_in_loop("10.0.0.5")) == ["10.0.0.5"]  # a literal
+    with pytest.raises(dns.resolver.NXDOMAIN):
+        asyncio.run(hosts._resolve_in_loop("none.example"))
+    refusal, _ = asyncio.run(hosts.vet_host("none.example", in_loop=True))
+    assert refusal == "none.example does not resolve (NXDOMAIN)"
+
+
+def test_a_listed_private_host_is_looked_up_by_the_system_resolver(
+    monkeypatch: pytest.MonkeyPatch, client: type[_Client]
+) -> None:
+    """/etc/hosts included: the operator listed it, so it is not a tenant's name."""
+
+    async def _never(host: str) -> list[str]:
+        raise AssertionError("a listed host is not looked up in the loop")
+
+    monkeypatch.setattr(settings, "memory_classify_private_hosts", "classifier.local")
+    monkeypatch.setattr("server.core.hosts._resolve", lambda host: ["10.0.0.9"])
+    monkeypatch.setattr("server.core.hosts._resolve_in_loop", _never)
+    assert _classify("http://classifier.local:9000/c") == "note"
+
+
+def test_a_lookup_cancelled_from_outside_leaves_nothing_and_the_namespace_classifies_again(
+    monkeypatch: pytest.MonkeyPatch, client: type[_Client]
+) -> None:
+    """The write is cancelled (its request dropped) mid-lookup: the lookup ends with it,
+    and the namespace's next classification runs as before."""
+    running: list[str] = []
+    started = asyncio.Event()
+
+    async def _lookup(host: str) -> list[str]:
+        if host == "never.example":
+            running.append(host)
+            started.set()
+            try:
+                await asyncio.sleep(30)
+            finally:
+                running.remove(host)
+        return ["93.184.215.14"]
+
+    monkeypatch.setattr("server.core.hosts._resolve_in_loop", _lookup)
+    monkeypatch.setattr("server.core.hosts._resolve", _no_thread)
+
+    async def _call(host: str) -> str:
+        return await classify.classify(
+            org="acme",
+            namespace="ns",
+            endpoint=f"https://{host}/c",
+            prompt_template="",
+            value="v",
+            valid_types=[],
+        )
+
+    async def _cancel_then_again() -> tuple[list[str], str]:
+        task = asyncio.create_task(_call("never.example"))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return list(running), await _call("classifier.example")
+
+    left, again = asyncio.run(_cancel_then_again())
+    assert left == [] and again == "note"

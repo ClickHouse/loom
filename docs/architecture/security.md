@@ -1194,11 +1194,13 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   another port of that host is inward reach. A host `LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS`
   names is the operator's exception, reachable on any port and path, so it lists only a
   host that serves nothing else. A failed call is reported in `degraded` by its kind
-  alone, so the write's answer cannot map which addresses and ports answer. The name
-  lookups run on the classifier's own pool of four threads, and one namespace holds at
-  most two of them, pending or running, until each lookup's thread is done: a namespace
-  whose names never answer is refused at once past that (`endpoint busy`), and cannot
-  take every lookup thread from the other namespaces.
+  alone, so the write's answer cannot map which addresses and ports answer. The name is
+  looked up on the event loop (A and AAAA, from the system's `resolv.conf`), not in a
+  thread, so the call's deadline ends the lookup: however many namespaces aim at names
+  that never answer, nothing of their lookups outlives their calls, and no namespace
+  holds a resource another one's classifier needs. A host
+  `LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS` lists is looked up by the system resolver,
+  `/etc/hosts` included.
 - **No slow receiver holds a worker.** One deadline per POST covers the name lookup, the
   connection and the status line (`LOOM_MEMORY_WEBHOOK_ACK_TIMEOUT_SECONDS` for memory
   webhooks, a fixed 10 s for task inbox notices), and the answer's body is never read.
