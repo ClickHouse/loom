@@ -7,7 +7,7 @@ write as no recall."""
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -742,7 +742,7 @@ async def test_an_as_of_read_never_serves_a_high_row_past_its_window() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("only", "graded"), [("", 1), ("ready", 2)])
 async def test_proposals_grade_only_the_rows_they_can_return(
-    monkeypatch, only: str, graded: int
+    monkeypatch, only: Literal["", "ready"], graded: int
 ) -> None:
     """A listing without `only` grades just the rows within `limit` (a badge's `limit=1`
     reads one row's grades); `only="ready"` grades every row to choose."""
@@ -775,9 +775,41 @@ async def test_proposals_grade_only_the_rows_they_can_return(
     monkeypatch.setattr(proposals, "graded_counts", _counts)
     monkeypatch.setattr(proposals_ops, "_usage_counts", _usage)
     out = await proposals_ops.handle_memory_proposals(
-        MemoryProposalsInput(org="o", namespace="n", limit=1, only=only)  # type: ignore[arg-type]
+        MemoryProposalsInput(org="o", namespace="n", limit=1, only=only)
     )
     assert asked == used == [graded]
     assert out.total == 2
     if not only:  # one row within `limit`, both counted
         assert len(out.proposals) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_keys_first_proposal_listed_is_the_one_a_decision_takes(monkeypatch) -> None:
+    """Agent a proposed `k` first and revised it after b proposed: the listing puts a's row
+    first, as memory.proposal_decide's newest-version read picks it."""
+    from server.memory.api.models_proposals import MemoryProposalsInput
+    from server.memory.app import proposals, proposals_ops
+    from server.memory.domain.proposal_policy import ProposalPolicy
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, version, created_at) VALUES "
+        f"('o', 'n', 'a', '-', '-', '{_A}', 'k', 'semantic', 'a revised', 'proposed', 3, "
+        "'2026-01-01 00:00:00'), "
+        f"('o', 'n', 'b', '-', '-', '{_B}', 'k', 'semantic', 'b', 'proposed', 2, "
+        "'2026-01-02 00:00:00')",
+    )
+
+    async def _policy(*_a: Any, **_k: Any) -> Any:
+        return ProposalPolicy()
+
+    async def _none(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {}
+
+    monkeypatch.setattr(proposals_ops, "get_client", lambda: ch)
+    monkeypatch.setattr(proposals, "policy_for", _policy)
+    monkeypatch.setattr(proposals, "graded_counts", _none)
+    monkeypatch.setattr(proposals_ops, "_usage_counts", _none)
+    out = await proposals_ops.handle_memory_proposals(MemoryProposalsInput(org="o", namespace="n"))
+    assert [(p.agent, p.value_preview) for p in out.proposals] == [("a", "a revised"), ("b", "b")]

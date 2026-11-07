@@ -864,8 +864,8 @@ function trialLabel(r: MemoryProposal): string {
 // The characters of a proposal's value `memory.proposals` sends.
 const PREVIEW_CHARS = 400;
 
-// A key's proposals as one row. Several writers may propose the same key, and
-// `memory.proposal_decide` decides the newest of them (the listing's first): the row
+// A key's proposals as one row. Several identities may propose the same key, and
+// `memory.proposal_decide` decides the newest version (the listing's first): the row
 // shows that one and counts the older ones behind it.
 type ProposalRow = MemoryProposal & { older: number };
 
@@ -998,6 +998,7 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
     }
   };
 
+  const shown = rows ? proposalsIn(rows) : 0;
   return (
     <div>
       <ListToolbar
@@ -1005,9 +1006,9 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
         search={false}
         count={
           !error && rows !== null
-            ? total > proposalsIn(rows)
-              ? `the newest ${proposalsIn(rows)} of ${total} proposals read`
-              : `${proposalsIn(rows)} ${proposalsIn(rows) === 1 ? "proposal" : "proposals"}`
+            ? total > shown
+              ? `the newest ${shown} of ${total} proposals read`
+              : `${shown} ${shown === 1 ? "proposal" : "proposals"}`
             : undefined
         }
       />
@@ -1066,8 +1067,7 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
               </div>
               {r.older > 0 && (
                 <div className="text-xs text-text-muted mb-2">
-                  {plural(r.older, "older proposal")} of this key from other writers; a decision applies to this one,
-                  the newest.
+                  {plural(r.older, "older proposal")} of this key; a decision applies to the newest, shown here.
                 </div>
               )}
               {r.sensitivity === "high" ? (
@@ -1077,7 +1077,7 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
                   {r.value_preview ?? ""}
                   {/* The server sends the first 400 characters, so a value of exactly 400 is
                       marked too: the key opens the whole value. */}
-                  {(r.value_preview?.length ?? 0) >= PREVIEW_CHARS && "…"}
+                  {[...(r.value_preview ?? "")].length >= PREVIEW_CHARS && "…"}
                 </div>
               )}
               <div className="text-xs text-text-muted mb-2">

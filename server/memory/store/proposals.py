@@ -1,19 +1,47 @@
-"""The statements behind memory.proposals: the scan of proposed rows and what a listed
-proposal shows. `where` and `params` are the listing's filters."""
+"""The statements behind memory.proposals: the scan of a namespace's proposed rows, and
+what a listed proposal shows."""
 
 from __future__ import annotations
 
 from typing import Any
 
+from server.core.repo_base import _CHClient
+from server.identity.domain.read_scope import ReadFilters, scope_where
 
-async def scan_proposals(ch: Any, where: list[str], params: dict[str, Any]) -> list[Any]:
-    """Newest first, at most `cap`: ids and keys only, so a short listing reads no values."""
+
+async def scan_proposals(
+    ch: _CHClient,
+    org: str,
+    namespace: str,
+    *,
+    scope: ReadFilters,
+    cap: int,
+    prefix: str = "",
+    tags: list[str] | None = None,
+) -> list[Any]:
+    """Keys and (memory_id, version) only, newest version first: the order
+    memory.proposal_decide picks a key's row by, so a key's first row here is the one a
+    decision acts on."""
+    where = [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "tombstoned_at IS NULL",
+        "status = 'proposed'",
+    ]
+    params: dict[str, Any] = {"org": org, "ns": namespace, "cap": cap}
+    if prefix:
+        where.append("startsWith(memory_key, {p:String})")
+        params["p"] = prefix
+    if tags:
+        where.append("hasAny(tags, {tags:Array(String)})")
+        params["tags"] = list(tags)
+    where.extend(scope_where(scope, params))
     rows: list[Any] = await ch.query_all(
         f"""
-        SELECT memory_key, toString(memory_id) AS mid
+        SELECT memory_key, toString(memory_id) AS mid, version
         FROM loom.memory FINAL
         WHERE {" AND ".join(where)}
-        ORDER BY created_at DESC
+        ORDER BY version DESC, created_at DESC
         LIMIT {{cap:UInt32}}
         """,
         params=params,
@@ -22,20 +50,28 @@ async def scan_proposals(ch: Any, where: list[str], params: dict[str, Any]) -> l
 
 
 async def proposal_details(
-    ch: Any, where: list[str], params: dict[str, Any], memory_ids: list[str]
+    ch: _CHClient, org: str, namespace: str, located: list[Any]
 ) -> dict[str, dict[str, Any]]:
-    """What a listed proposal shows, for the scanned rows it returns, by memory id."""
-    if not memory_ids:
+    """What a listed proposal shows, by memory id, read by the scan's (memory_id, version)
+    pairs without FINAL."""
+    if not located:
         return {}
     rows = await ch.query_all(
-        f"""
+        """
         SELECT toString(memory_id) AS mid, agent, memory_type,
                -- a high value is readable by key only
                if(sensitivity = 'high', '', substringUTF8(value_preview, 1, 400)) AS preview,
                sensitivity, tags, toString(created_at) AS created, conflict_with
-        FROM loom.memory FINAL
-        WHERE {" AND ".join(where)} AND memory_id IN {{ids:Array(UUID)}}
+        FROM loom.memory
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND (memory_id, version) IN {pairs:Array(Tuple(UUID, UInt64))}
+        LIMIT 1 BY memory_id, version
         """,
-        params={**params, "ids": memory_ids},
+        params={
+            "org": org,
+            "ns": namespace,
+            "pairs": [(str(r["mid"]), int(r["version"])) for r in located],
+        },
     )
     return {str(r["mid"]): r for r in rows}

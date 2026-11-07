@@ -7,7 +7,6 @@ from typing import Any
 
 from server.core.ch import get_client
 from server.identity.app.request_scope import request_scope
-from server.identity.domain.read_scope import scope_where
 from server.memory.api.models_proposals import (
     MemoryProposal,
     MemoryProposalDecideInput,
@@ -26,30 +25,19 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
     from server.memory.app import proposals as _p
 
     ch = get_client()
-    where = [
-        "org = {org:String}",
-        "namespace = {ns:String}",
-        "tombstoned_at IS NULL",
-        "status = 'proposed'",
-    ]
-    params: dict[str, Any] = {
-        "org": input.org,
-        "ns": input.namespace,
-        "cap": settings.memory_proposals_scan_cap,
-    }
-    if input.prefix:
-        where.append("startsWith(memory_key, {p:String})")
-        params["p"] = input.prefix
-    if input.tags:
-        where.append("hasAny(tags, {tags:Array(String)})")
-        params["tags"] = list(input.tags)
-    where.extend(scope_where(request_scope(), params))
-    rows = await proposals_repo.scan_proposals(ch, where, params)
+    rows = await proposals_repo.scan_proposals(
+        ch,
+        input.org,
+        input.namespace,
+        scope=request_scope(),
+        cap=settings.memory_proposals_scan_cap,
+        prefix=input.prefix,
+        tags=list(input.tags or []),
+    )
     policy = await _p.policy_for(input.org, input.namespace, ch=ch)
     # `ready` grades every row to choose which to return.
     wanted = rows if input.only == "ready" else rows[: input.limit]
-    ids = [str(r["mid"]) for r in wanted]
-    details = await proposals_repo.proposal_details(ch, where, params, ids)
+    details = await proposals_repo.proposal_details(ch, input.org, input.namespace, wanted)
     graded = [{**r, **details[str(r["mid"])]} for r in wanted if str(r["mid"]) in details]
     keys = [str(r["memory_key"]) for r in graded]
     counts = await _p.graded_counts(ch, input.org, input.namespace, keys)

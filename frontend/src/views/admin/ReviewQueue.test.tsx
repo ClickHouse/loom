@@ -788,7 +788,7 @@ describe("ReviewQueue", () => {
     expect(toast).toHaveBeenCalledWith("Not decided: not a proposal (status active)", "error");
   });
 
-  it("shows the newest proposal of a key two writers proposed, and counts the older one", async () => {
+  it("shows the newest proposal of a key two agents proposed, and counts the older one", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listProposals).mockResolvedValue({
       proposals: [
@@ -802,7 +802,7 @@ describe("ReviewQueue", () => {
     await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
     await screen.findByText("b's version", {}, WAIT);
     expect(screen.queryByText("a's version")).toBeNull();
-    expect(screen.getByText(/1 older proposal of this key from other writers/)).toBeTruthy();
+    expect(screen.getByText(/1 older proposal of this key; a decision applies to the newest/)).toBeTruthy();
     expect(screen.getByText("2 proposals")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Accept k" })).toHaveLength(1);
   });
