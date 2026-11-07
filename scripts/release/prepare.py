@@ -134,7 +134,7 @@ def check(tag_version: str | None = None, root: Path = ROOT) -> list[tuple[str, 
             errors.append((e.path, e.reason))
             continue
         if got != want:
-            errors.append((pin.path, f"names {got}, {SERVER.path} {want}"))
+            errors.append((pin.path, f"names {got}, not {want} ({SERVER.path})"))
     return errors
 
 
@@ -415,7 +415,7 @@ def squash_merges(previous_tag: str, root: Path = ROOT) -> dict[int, int]:
         SERVER.path,
     )
     releases = set(bumps.stdout.split())
-    merged = {}
+    merged: dict[int, int] = {}
     for line in log.stdout.splitlines():
         sha, authored, subject = line.split(" ", 2)
         if sha not in releases and (m := re.search(r"\(#(\d+)\)$", subject)):
