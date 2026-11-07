@@ -40,19 +40,26 @@ export interface OpGate {
   by: "namespace" | "claim";
 }
 
+// One shared object per gate: the table sits in the boot chunk, and a literal per entry
+// costs bytes on every page load.
+const VIEWER: OpGate = { min: "viewer", by: "namespace" };
+const WRITER: OpGate = { min: "writer", by: "namespace" };
+const ADMIN: OpGate = { min: "admin", by: "namespace" };
+const ADMIN_CLAIM: OpGate = { min: "admin", by: "claim" };
+
 export const OP_MIN_ROLE = {
   // Gated at a call site: Sidebar badge polls, Recent / MemoryInspector
   // conflict chips, Health's workers panel.
-  "conflicts.list": { min: "viewer", by: "namespace" },
-  "cost.budget_status": { min: "viewer", by: "namespace" },
-  "cost.summary": { min: "viewer", by: "namespace" },
-  "agents.connected": { min: "viewer", by: "namespace" },
-  "audit.list": { min: "viewer", by: "namespace" },
-  "erasure.list": { min: "viewer", by: "namespace" },
+  "conflicts.list": VIEWER,
+  "cost.budget_status": VIEWER,
+  "cost.summary": VIEWER,
+  "agents.connected": VIEWER,
+  "audit.list": VIEWER,
+  "erasure.list": VIEWER,
   // Activity's Exposure tab reads on open; the Agents page's "Forget its memories".
-  "memory.exposure_summary": { min: "admin", by: "namespace" },
-  "memory.clear": { min: "admin", by: "namespace" },
-  "admin/workers.status": { min: "admin", by: "claim" },
+  "memory.exposure_summary": ADMIN,
+  "memory.clear": ADMIN,
+  "admin/workers.status": ADMIN_CLAIM,
   // Setup's "Don't save these" panel (`views/admin/Blacklist.tsx::PrivacyFilters`) must
   // not list the blacklist for every visitor — that is one AUTH_INSUFFICIENT per page
   // load from a viewer token with no memory namespace. The three blacklist ops are
@@ -60,38 +67,38 @@ export const OP_MIN_ROLE = {
   // ADMIN); the panel reads only when the role is known, and shows the add form / remove
   // buttons only to a role that reaches them. Setup's `memory.list` total for the
   // checklist is gated the same way.
-  "blacklist.list": { min: "viewer", by: "namespace" },
-  "blacklist.add": { min: "writer", by: "namespace" },
-  "blacklist.remove": { min: "admin", by: "namespace" },
-  "memory.auto_retirements": { min: "viewer", by: "namespace" },
-  "memory.list": { min: "viewer", by: "namespace" },
+  "blacklist.list": VIEWER,
+  "blacklist.add": WRITER,
+  "blacklist.remove": ADMIN,
+  "memory.auto_retirements": VIEWER,
+  "memory.list": VIEWER,
   // The Memories view's "Usage audit" panel offers the button only to a role that reaches
   // `namespace.audit` (VIEWER); the inspector's "Rename (keep redirect)" only to one that
   // reaches `memory.move` (WRITER).
-  "namespace.audit": { min: "viewer", by: "namespace" },
+  "namespace.audit": VIEWER,
   // The mentor brief reads the ledger for one agent; a viewer of the namespace may ask.
-  "mentor.brief": { min: "viewer", by: "namespace" },
+  "mentor.brief": VIEWER,
   // The Assistant page's four reads.
-  "namespace.inventory": { min: "viewer", by: "namespace" },
-  "memory.inspect": { min: "viewer", by: "namespace" },
-  "knowledge.inspect": { min: "viewer", by: "namespace" },
-  "namespace.tune": { min: "viewer", by: "namespace" },
-  "memory.move": { min: "writer", by: "namespace" },
-  "memory.pin": { min: "writer", by: "namespace" },
+  "namespace.inventory": VIEWER,
+  "memory.inspect": VIEWER,
+  "knowledge.inspect": VIEWER,
+  "namespace.tune": VIEWER,
+  "memory.move": WRITER,
+  "memory.pin": WRITER,
   // The inspector's Restore on a superseded row and the Review queue's Auto-resolved Undo.
-  "memory.restore": { min: "writer", by: "namespace" },
-  "memory.unpin": { min: "admin", by: "namespace" },
+  "memory.restore": WRITER,
+  "memory.unpin": ADMIN,
   // Conversations' recording toggle: a namespace setting, ADMIN on the namespace.
-  "conversation.set_logging": { min: "admin", by: "namespace" },
+  "conversation.set_logging": ADMIN,
   // A repository card's Docs and Sources facets (`canCallOn`): Add a document and Remove,
   // and every verb on a document source.
-  "knowledge.add": { min: "writer", by: "namespace" },
-  "knowledge.delete": { min: "writer", by: "namespace" },
-  "knowledge.source.add": { min: "admin", by: "namespace" },
-  "knowledge.source.check": { min: "admin", by: "namespace" },
-  "knowledge.source.rotate": { min: "admin", by: "namespace" },
-  "knowledge.source.remove": { min: "admin", by: "namespace" },
-  "knowledge.source.sync_now": { min: "admin", by: "namespace" },
+  "knowledge.add": WRITER,
+  "knowledge.delete": WRITER,
+  "knowledge.source.add": ADMIN,
+  "knowledge.source.check": ADMIN,
+  "knowledge.source.rotate": ADMIN,
+  "knowledge.source.remove": ADMIN,
+  "knowledge.source.sync_now": ADMIN,
   // Listed for the registry mirror, not yet consulted at a call site: the
   // other namespace-scoped ops a view reads on mount. Each is the page's
   // own content (the view renders the humanized 403) or a secondary read
@@ -99,49 +106,49 @@ export const OP_MIN_ROLE = {
   // client cannot mirror (`namespace.list_mine`, `namespace.browse`) are
   // deliberately absent; `code.repos` is not a role gate either — see
   // `canCallCodeRepos` below.
-  "memory.get": { min: "viewer", by: "namespace" },
-  "memory.bulk_get": { min: "viewer", by: "namespace" },
-  "memory.history": { min: "viewer", by: "namespace" },
-  "memory.related": { min: "viewer", by: "namespace" },
-  "memory.lineage": { min: "viewer", by: "namespace" },
-  "memory.provenance": { min: "viewer", by: "namespace" },
-  "memory.search_trace_log": { min: "viewer", by: "namespace" },
-  "conversation.threads": { min: "viewer", by: "namespace" },
-  "conversation.list": { min: "viewer", by: "namespace" },
-  "namespace.get": { min: "viewer", by: "namespace" },
-  "namespace.taxonomy": { min: "viewer", by: "namespace" },
-  "knowledge.list": { min: "viewer", by: "namespace" },
-  "facts.list": { min: "viewer", by: "namespace" },
-  "run.list": { min: "viewer", by: "namespace" },
-  "run.get": { min: "viewer", by: "namespace" },
-  "grants.list": { min: "viewer", by: "namespace" },
-  "learnings.list": { min: "viewer", by: "namespace" },
-  "policy.decisions": { min: "viewer", by: "namespace" },
-  "consolidations.list": { min: "viewer", by: "namespace" },
-  "conflicts.allowlist_list": { min: "viewer", by: "namespace" },
+  "memory.get": VIEWER,
+  "memory.bulk_get": VIEWER,
+  "memory.history": VIEWER,
+  "memory.related": VIEWER,
+  "memory.lineage": VIEWER,
+  "memory.provenance": VIEWER,
+  "memory.search_trace_log": VIEWER,
+  "conversation.threads": VIEWER,
+  "conversation.list": VIEWER,
+  "namespace.get": VIEWER,
+  "namespace.taxonomy": VIEWER,
+  "knowledge.list": VIEWER,
+  "facts.list": VIEWER,
+  "run.list": VIEWER,
+  "run.get": VIEWER,
+  "grants.list": VIEWER,
+  "learnings.list": VIEWER,
+  "policy.decisions": VIEWER,
+  "consolidations.list": VIEWER,
+  "conflicts.allowlist_list": VIEWER,
   // The task inbox plane. The header bell polls `task.counts` only for a known role; the
   // Tasks view offers each action to a role that reaches it (the handler still authorizes
   // against the inbox's owner namespace).
-  "task.get": { min: "viewer", by: "namespace" },
-  "task.list": { min: "viewer", by: "namespace" },
-  "task.counts": { min: "viewer", by: "namespace" },
-  "task.history": { min: "viewer", by: "namespace" },
-  "inbox.list": { min: "viewer", by: "namespace" },
-  "inbox.policy_list": { min: "viewer", by: "namespace" },
-  "task.create": { min: "writer", by: "namespace" },
-  "task.accept": { min: "writer", by: "namespace" },
-  "task.defer": { min: "writer", by: "namespace" },
-  "task.block": { min: "writer", by: "namespace" },
-  "task.unblock": { min: "writer", by: "namespace" },
-  "task.resume": { min: "writer", by: "namespace" },
-  "task.wont_do": { min: "writer", by: "namespace" },
-  "task.cancel": { min: "writer", by: "namespace" },
-  "task.reopen": { min: "writer", by: "namespace" },
-  "task.update": { min: "writer", by: "namespace" },
-  "task.reassign": { min: "writer", by: "namespace" },
-  "inbox.register": { min: "admin", by: "namespace" },
-  "inbox.policy_set": { min: "admin", by: "namespace" },
-  "inbox.principals": { min: "admin", by: "namespace" },
+  "task.get": VIEWER,
+  "task.list": VIEWER,
+  "task.counts": VIEWER,
+  "task.history": VIEWER,
+  "inbox.list": VIEWER,
+  "inbox.policy_list": VIEWER,
+  "task.create": WRITER,
+  "task.accept": WRITER,
+  "task.defer": WRITER,
+  "task.block": WRITER,
+  "task.unblock": WRITER,
+  "task.resume": WRITER,
+  "task.wont_do": WRITER,
+  "task.cancel": WRITER,
+  "task.reopen": WRITER,
+  "task.update": WRITER,
+  "task.reassign": WRITER,
+  "inbox.register": ADMIN,
+  "inbox.policy_set": ADMIN,
+  "inbox.principals": ADMIN,
 } as const satisfies Record<string, OpGate>;
 
 export type GatedOp = keyof typeof OP_MIN_ROLE;
