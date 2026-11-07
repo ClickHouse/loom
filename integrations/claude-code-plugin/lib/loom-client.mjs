@@ -407,18 +407,6 @@ export function realPath(p) {
   }
 }
 
-// A hook asks about one checkout root many times (each edit a transcript
-// names): it is resolved once.
-let lastRoot = "";
-let lastRealRoot = "";
-function realRoot(root) {
-  if (root !== lastRoot) {
-    lastRealRoot = realPath(root);
-    lastRoot = root;
-  }
-  return lastRealRoot;
-}
-
 function isDirectory(p) {
   try {
     return statSync(p).isDirectory();
@@ -444,7 +432,7 @@ export function pathUnder(root, p) {
   if (!root || !p) return null;
   const abs = resolve(String(p));
   const keepName = isSymlink(abs) && !isDirectory(abs);
-  const rel = relative(realRoot(root), keepName ? join(realPath(dirname(abs)), basename(abs)) : realPath(abs));
+  const rel = relative(realPath(root), keepName ? join(realPath(dirname(abs)), basename(abs)) : realPath(abs));
   if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
   return rel.split(sep).join("/");
 }

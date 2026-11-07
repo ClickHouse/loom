@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -235,6 +236,17 @@ def test_codex_plugin_bundles_its_mcp_entry() -> None:
     assert "bearer_token_env_var" not in entry  # the token comes from ~/.loom/config.json
     assert (CODEX / "bin" / "loom-mcp-headers.mjs").is_file()
     assert (CODEX / "bin" / "loom-node").is_file()
+
+
+def test_codex_page_override_carries_the_shipped_helper() -> None:
+    """The config.toml override on the Codex page replaces the plugin's entry
+    whole, so its helper must be the one the plugin ships."""
+    page = (ROOT / "docs" / "features" / "integrations" / "codex.md").read_text()
+    block = re.search(r"```toml\n(\[mcp_servers\.loom\]\n.*?)```", page, re.S)
+    assert block, "codex.md has no [mcp_servers.loom] override"
+    override = tomllib.loads(block.group(1))["mcp_servers"]["loom"]
+    entry = json.loads((CODEX / ".mcp.json").read_text())["mcpServers"]["loom"]
+    assert override["http_headers_helper"] == entry["http_headers_helper"]
 
 
 def test_both_plugins_ship_one_version() -> None:
