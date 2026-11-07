@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from server.core.ch import sequential_reads_active
 from server.erasure.store import steps_memory
 from server.knowledge.store import ingestions
 from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl, run
@@ -38,7 +39,11 @@ class _LocalCH(KeptCH):
             return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
         return await super().query_all(sql, params)
 
+    copied_sequentially: bool | None = None
+
     async def execute(self, sql, params=None, *, settings=None):
+        if sql == steps_memory._KEEP_OTHERS_CANCELS:
+            self.copied_sequentially = sequential_reads_active()
         await super().execute(sql.replace("mutations_sync = 0", "mutations_sync = 2"), params)
 
 
@@ -82,6 +87,7 @@ def test_a_cancel_on_another_writers_open_job_outlives_its_canceller(tmp_path) -
     def cancelled(job_id: str) -> bool:
         return asyncio.run(ingestions.cancel_requested("o", "ns", job_id, ch=ch))
 
+    assert ch.copied_sequentially  # a replica behind would copy nothing
     assert cancelled(OTHERS_OPEN) and cancelled(AGENTS_OPEN)
     assert not cancelled(OTHERS_DONE) and not cancelled(OWN_OPEN)
     left = run(
