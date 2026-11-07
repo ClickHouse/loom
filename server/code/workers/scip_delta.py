@@ -36,12 +36,10 @@ from server.code.app.index.compiler_tier import (
     compiler_target,
     git,
     harness_failure,
-    raise_if_stale_compdb,
     resolve_binary,
     resolve_checkout,
     run_harness,
     run_tier,
-    stale_compdb_pending,
 )
 from server.code.app.index.entry_lock import check_held
 from server.code.app.index.gitrepo import git_config_env
@@ -94,7 +92,7 @@ def _resolve_paths(cfg: RepoConfig) -> tuple[Path, str, Path, str | None]:
     return checkout, str(scip_clang.resolve()), bare, None
 
 
-async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult) -> bool | None:
+async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult) -> None:
     target = await compiler_target(repo, cfg)
     scip_commit = await repo.get_state(cfg.org, cfg.namespace, WATERMARK)
     if not target or not scip_commit:
@@ -102,9 +100,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
         result.skipped.append(f"{cfg.namespace}: watermarks not seeded")
         return
     if target == scip_commit:
-        # current: a record failing on a stale compile database stays until a configure
-        # succeeds (False leaves it)
-        return not await asyncio.to_thread(stale_compdb_pending, cfg)
+        return  # compiler tier is current
 
     checkout, scip_clang_abs, bare, missing = await asyncio.to_thread(_resolve_paths, cfg)
     if missing:
@@ -163,7 +159,6 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
             logger.info("code_scip_delta: %s no C++ changes in window", cfg.namespace)
             check_held()
             await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
-            await raise_if_stale_compdb(checkout, out)
             return
 
         from server.code.app.index.scip_delta import ScipDelta, apply_delta
@@ -182,4 +177,3 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
         target[:8],
         stats.model_dump(),
     )
-    await raise_if_stale_compdb(checkout, out)

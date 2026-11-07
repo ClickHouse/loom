@@ -72,21 +72,8 @@ FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).t
             "network",
         ),
         (
-            "stale compile database: cmake reconfigure failed\n"
-            "cmake: CMake Error: Could not resolve host: h",
+            "harness exit 1: CMake Error: Could not resolve host: h\n>> cmake reconfigure failed\n",
             "cmake",
-        ),
-        # as a worker's TierDegraded is stored (`error_text`)
-        (
-            "TierDegraded: stale compile database: cmake reconfigure failed\n"
-            "cmake: CMake Error: Could not resolve host: h",
-            "cmake",
-        ),
-        # a failed run whose output mentions CMake is classified by its own failure
-        (
-            "harness exit 1: >> CMake exited non-zero; indexing with the last "
-            "compile_commands.json\nOSError: No space left on device",
-            "disk",
         ),
         ("RuntimeError: harness timed out after 600.0s", "timeout"),
         ("TimeoutError: git fetch origin in /c exceeded 600s", "timeout"),

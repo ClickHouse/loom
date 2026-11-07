@@ -157,12 +157,7 @@ def _scip_full_paths(args: argparse.Namespace, cfg: Any) -> tuple[Path, Path, Pa
 async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: Any) -> int:
     """One entry's full compiler-tier run; the caller holds the entry lock."""
     from server.code.app.index import scip_full, tier_health
-    from server.code.app.index.compiler_tier import (
-        SANDBOX_REQUIRED_SKIP,
-        TierDegraded,
-        settle_compdb,
-        unsandboxed_skip,
-    )
+    from server.code.app.index.compiler_tier import SANDBOX_REQUIRED_SKIP, unsandboxed_skip
     from server.code.app.index.entry_lock import EntryLockLost
     from server.code.store.index import CodeRepo
     from server.settings import settings
@@ -211,17 +206,13 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
     except Exception as e:
         await tier_health.record(repo, org, ns, "clang_full", e)
         raise
-    stale = await asyncio.to_thread(settle_compdb, checkout, out)
-    # a stale compile database fails the record, as the worker's run does
-    await tier_health.record(repo, org, ns, "clang_full", TierDegraded(stale) if stale else None)
+    await tier_health.record(repo, org, ns, "clang_full")
     _write_tail(out)
     if getattr(args, "keep_delta", ""):
         print(f"delta kept at {args.keep_delta}")
     print(f"applied: {stats.model_dump()}")
     print(f"{scip_full.WATERMARK} -> {git_head[:12]}")
-    if stale:
-        print(f"{ns}: {stale.splitlines()[0]}", file=sys.stderr)
-    _note(head=git_head[:12], harness_exit=0, stale_compdb=bool(stale), **stats.model_dump())
+    _note(head=git_head[:12], harness_exit=0, **stats.model_dump())
     return 0
 
 

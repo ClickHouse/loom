@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from server.code.app.index.compiler_tier import STALE_COMPDB_MARKER, settle_compdb, stale_compdb
+from server.code.domain.index.tier_health import classify
 
 _HARNESS = Path(__file__).resolve().parents[2] / "scripts" / "scip_harness"
 
@@ -263,6 +263,17 @@ class _CppWindow:
         ).stdout
         return json.loads(self.delta.read_text()) if self.delta.exists() else None
 
+    def run_unchecked(self, head: str) -> subprocess.CompletedProcess[str]:
+        _write_index(self.index, [])
+        return subprocess.run(
+            ["bash", str(_HARNESS / "run_delta.sh"), str(self.repo), self.base, head, "-"],
+            env=self.env,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
     @property
     def cmake_runs(self) -> list[str]:
         return self.cmake_calls.read_text().splitlines() if self.cmake_calls.exists() else []
@@ -337,130 +348,46 @@ def test_a_window_that_edits_the_build_reconfigures(tmp_path: Path, edit: str) -
     assert w.cmake_runs == ["cmake -B build -S ."]
 
 
-def test_a_failed_reconfigure_indexes_with_the_last_compile_database(tmp_path: Path) -> None:
-    """A build edit the host cannot configure leaves the last compile database: the
-    window's edited translation unit is still indexed, and the harness warns."""
-    w = _CppWindow(tmp_path)
-    w.env["CMAKE_FAIL"] = "1"
-    (w.repo / "CMakeLists.txt").write_text("project(y)\n")
-    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
-    head = _commit(w.repo, "edit the build and a")
-    delta = w.run(head, ["src/a.cpp"])
-    assert w.cmake_runs == ["cmake -B build -S ."] and w.compdbs == [["a.cpp"]]
-    assert stale_compdb(w.out).startswith("stale compile database")
-    assert "cmake: CMake Error: a package is missing" in stale_compdb(w.out)
-    assert delta is not None and "src/a.cpp" in [f["path"] for f in delta["files"]]
-
-
-def test_a_translation_unit_added_while_cmake_failed_is_indexed_once_it_configures(
-    tmp_path: Path,
-) -> None:
-    """The window that adds src/c.cpp cannot configure, so its database lacks c.cpp; the
-    window whose configure succeeds indexes c.cpp although it changes only a.cpp."""
+def test_a_failed_reconfigure_fails_the_run_with_cmakes_last_lines(tmp_path: Path) -> None:
+    """A build edit the host cannot configure fails the run, as a failed first configure
+    does: no delta, CMake's last lines in the output, classified `cmake`."""
     w = _CppWindow(tmp_path)
     w.env["CMAKE_FAIL"] = "1"
     (w.repo / "src" / "c.cpp").write_text("int c() { return 3; }\n")
-    w.run(_commit(w.repo, "add c"), [])
-    assert w.compdbs == []
-    del w.env["CMAKE_FAIL"]
-    w.base = _git(w.repo, "rev-parse", "HEAD")
-    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
-    delta = w.run(_commit(w.repo, "edit a"), ["src/a.cpp", "src/c.cpp"])
-    assert w.compdbs == [["a.cpp", "c.cpp"]]
-    assert delta is not None and "src/c.cpp" in [f["path"] for f in delta["files"]]
+    proc = w.run_unchecked(_commit(w.repo, "add c"))
+    assert proc.returncode == 1 and not w.delta.exists() and w.compdbs == []
+    assert "CMake Error: a package is missing" in proc.stdout
+    assert classify(f"harness exit 1: {proc.stdout[-2000:]}") == "cmake"
 
 
-def test_a_run_left_unapplied_after_its_configure_still_owes_its_units(tmp_path: Path) -> None:
-    """The window whose configure succeeds lists c.cpp anew; its run is not applied (the
-    apply failed or the lease was lost), so the same window again still indexes c.cpp."""
+def test_a_window_whose_configure_failed_indexes_what_it_adds_once_it_configures(
+    tmp_path: Path,
+) -> None:
+    """The failed run moved no watermark, so the retried window still adds c.cpp."""
     w = _CppWindow(tmp_path)
     w.env["CMAKE_FAIL"] = "1"
     (w.repo / "src" / "c.cpp").write_text("int c() { return 3; }\n")
-    w.run(_commit(w.repo, "add c"), [])
+    head = _commit(w.repo, "add c")
+    assert w.run_unchecked(head).returncode == 1
     del w.env["CMAKE_FAIL"]
-    w.base = _git(w.repo, "rev-parse", "HEAD")
-    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
-    head = _commit(w.repo, "edit a")
-    w.run(head, ["src/a.cpp", "src/c.cpp"])
-    w.run(head, ["src/a.cpp", "src/c.cpp"])
-    assert w.compdbs == [["a.cpp", "c.cpp"], ["a.cpp", "c.cpp"]]
+    delta = w.run(head, ["src/c.cpp"])
+    assert w.compdbs == [["c.cpp"]]
+    assert delta is not None and [f["path"] for f in delta["files"]] == ["src/c.cpp"]
 
 
-def test_the_cap_keeps_the_units_a_reconfigure_owes(tmp_path: Path) -> None:
+def test_a_full_index_whose_reconfigure_fails_fails(tmp_path: Path) -> None:
     w = _CppWindow(tmp_path)
     w.env["CMAKE_FAIL"] = "1"
-    for name in ("c", "d"):
-        (w.repo / "src" / f"{name}.cpp").write_text(f"int {name}() {{ return 3; }}\n")
-    w.run(_commit(w.repo, "add c and d"), [])
-    del w.env["CMAKE_FAIL"]
-    w.env["MAX_TUS"] = "1"
-    w.base = _git(w.repo, "rev-parse", "HEAD")
-    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
-    w.run(_commit(w.repo, "edit a"), [])
-    assert w.compdbs == [["a.cpp", "c.cpp", "d.cpp"]]
-
-
-def test_a_failed_reconfigure_is_retried_until_one_succeeds(tmp_path: Path) -> None:
-    """After a failed reconfigure, a window that only edits a translation unit
-    reconfigures again (and warns again), until a configure succeeds and the worker,
-    having applied that run, removes the marker."""
-    w = _CppWindow(tmp_path)
-    w.env["CMAKE_FAIL"] = "1"
-    (w.repo / "CMakeLists.txt").write_text("project(y)\n")
-    w.run(_commit(w.repo, "edit the build"), [])
-    w.base = _git(w.repo, "rev-parse", "HEAD")
-    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
-    w.run(_commit(w.repo, "edit a"), ["src/a.cpp"])
-    assert len(w.cmake_runs) == 2 and stale_compdb(w.out)
-    assert (w.repo / STALE_COMPDB_MARKER).exists()
-    del w.env["CMAKE_FAIL"]
-    w.base = _git(w.repo, "rev-parse", "HEAD")
-    (w.repo / "src" / "a.cpp").write_text("int a() { return 4; }\n")
-    w.run(_commit(w.repo, "edit a again"), ["src/a.cpp"])
-    assert len(w.cmake_runs) == 3 and not stale_compdb(w.out)
-    assert (w.repo / STALE_COMPDB_MARKER).exists()  # until the worker applies the run
-    settle_compdb(w.repo, w.out)
-    assert not (w.repo / STALE_COMPDB_MARKER).exists()
-    w.base = _git(w.repo, "rev-parse", "HEAD")
-    (w.repo / "src" / "a.cpp").write_text("int a() { return 5; }\n")
-    w.run(_commit(w.repo, "edit a once more"), ["src/a.cpp"])
-    assert len(w.cmake_runs) == 3
-
-
-def test_a_full_index_whose_reconfigure_fails_indexes_the_last_compile_database(
-    tmp_path: Path,
-) -> None:
-    w = _CppWindow(tmp_path)
-    w.env["CMAKE_FAIL"] = "1"
-    _write_index(w.index, ["src/a.cpp", "src/b.cpp"])
     proc = subprocess.run(
         ["bash", str(_HARNESS / "run_delta.sh"), str(w.repo), "--full", "", "-"],
         env=w.env,
-        check=True,
+        check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
     )
-    assert "cmake: CMake Error: a package is missing" in stale_compdb(proc.stdout)
-    assert (w.repo / STALE_COMPDB_MARKER).exists()
-    assert w.compdbs == [["a.cpp", "b.cpp"]]
-
-
-def test_a_link_the_repository_puts_at_the_marker_is_replaced_not_written_through(
-    tmp_path: Path,
-) -> None:
-    """The checkout is the repository's: a link at the marker makes at most a retry,
-    and a failed reconfigure replaces it rather than writing to what it names."""
-    w = _CppWindow(tmp_path)
-    secret = tmp_path / "secret"
-    secret.write_text("token\n")
-    (w.repo / STALE_COMPDB_MARKER).symlink_to(secret)
-    w.env["CMAKE_FAIL"] = "1"
-    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
-    w.run(_commit(w.repo, "edit a"), ["src/a.cpp"])
-    assert len(w.cmake_runs) == 1 and "token" not in w.out
-    assert secret.read_text() == "token\n"
-    assert not (w.repo / STALE_COMPDB_MARKER).is_symlink()
+    assert proc.returncode == 1 and w.compdbs == []
+    assert "cmake reconfigure failed" in proc.stdout
 
 
 def test_a_first_configure_is_not_followed_by_a_reconfigure(tmp_path: Path) -> None:

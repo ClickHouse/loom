@@ -26,10 +26,7 @@ JOBS=${JOBS:-$(($(nproc) / 2 > 0 ? $(nproc) / 2 : 1))}
 cd "$CHECKOUT"
 HEAD_SHA=${HEAD_SHA:-$(git rev-parse HEAD)}
 
-# 1. compile_commands.json — cmake configure only (no build). $STALE marks a
-# reconfigure whose run is not applied yet; it lists the TUs that run owes the
-# index. The worker removes it once a run that configured is applied.
-STALE=build/.loom-reconfigure-pending
+# 1. compile_commands.json — cmake configure only (no build).
 if [[ ! -f build/compile_commands.json ]]; then
   # ClickHouse's CMake refuses GCC ("Compiler GNU is not supported"), and a
   # fresh checkout has no cache to remember the compiler — pin clang
@@ -47,69 +44,22 @@ if [[ ! -f build/compile_commands.json ]]; then
     -DCOMPILER_CACHE=disabled -DENABLE_RUST=0 >/dev/null
   # ^ the two gates a fresh checkout hits: cmake/ccache.cmake errors without ccache/sccache, and
   #   corrosion wants a Rust toolchain the indexer host does not have.
-  rm -f "$STALE"
   CONFIGURED=1
 fi
 
 # reconfigure: the compile database lists only the TUs of the tree it was
-# configured on; the existing cache keeps the compiler, and a failed configure
-# keeps the last database. A delta also indexes the TUs the new database lists
-# and the old did not (added while a configure failed, or pulled in by a build
-# edit), and those a run left unapplied. The marker is replaced, never written
-# through, since the checkout can hold a link there.
+# configured on, so a file added since then has no entry and is never indexed.
+# CMake reruns on the existing cache, which keeps its compiler and options. A
+# configure that fails fails the run, as the first configure does: the window
+# is retried, with the TUs it adds, once the build configures again.
 reconfigure() {
   if [[ -z "${CONFIGURED:-}" ]]; then
     echo ">> cmake reconfigure (compile_commands.json): $1"
-    : >"$WORK/owed.txt"
-    if [[ -f "$STALE" ]]; then
-      cat "$STALE" >"$WORK/owed.txt"
+    if ! cmake -B build -S . >"$WORK/cmake.log" 2>&1; then
+      tail -n 20 "$WORK/cmake.log"
+      echo ">> cmake reconfigure failed" >&2
+      exit 1
     fi
-    if [[ "$BASE" != "--full" ]]; then
-      compdb_files "$WORK/listed.before.txt"
-    fi
-    # pending before CMake runs, so a run killed mid-configure still retries
-    rm -f "$STALE"
-    cp "$WORK/owed.txt" "$STALE"
-    if cmake -B build -S . >"$WORK/cmake.log" 2>&1; then
-      if [[ "$BASE" != "--full" ]]; then
-        compdb_files "$WORK/listed.after.txt"
-        LC_ALL=C comm -13 "$WORK/listed.before.txt" "$WORK/listed.after.txt" \
-          >>"$WORK/owed.txt"
-      fi
-    else
-      tail -n 20 "$WORK/cmake.log" >"$WORK/cmake.tail"
-      echo ">> CMake exited non-zero; indexing with the last compile_commands.json" >&2
-    fi
-    sort -u "$WORK/owed.txt" -o "$WORK/owed.txt"
-    rm -f "$STALE"
-    cp "$WORK/owed.txt" "$STALE"
-  fi
-}
-
-# compdb_files <out>: the repository's source files compile_commands.json lists,
-# relative to the checkout (real paths on both sides), sorted.
-compdb_files() {
-  "$PYTHON" - build/compile_commands.json "$PWD" >"$1" <<'PYEOF'
-import json, os, sys
-root = os.path.realpath(sys.argv[2])
-with open(sys.argv[1]) as fh:
-    entries = json.load(fh)
-files = set()
-for e in entries:
-    path = os.path.join(e.get("directory", ""), e["file"])
-    rel = os.path.relpath(os.path.realpath(path), root)
-    if rel.startswith(("src/", "base/", "programs/")):
-        files.add(rel)
-sys.stdout.write("".join(f + "\n" for f in sorted(files)))
-PYEOF
-}
-
-# report_stale: a run that indexed with a stale compile database says so in its
-# closing lines, with CMake's last lines; the workers read them from the output.
-report_stale() {
-  if [[ -f "$WORK/cmake.tail" ]]; then
-    echo ">> stale compile database: cmake reconfigure failed"
-    sed 's/^/>> cmake: /' "$WORK/cmake.tail"
   fi
 }
 
@@ -130,8 +80,6 @@ else
   if grep -qE '\.(cpp|cc|cxx)$' "$WORK/added.txt" \
     || grep -qE '(^|/)CMakeLists\.txt$|\.cmake$' "$WORK/changed.txt" "$WORK/deleted.txt"; then
     reconfigure "the window adds a translation unit or edits the build"
-  elif [[ -f "$STALE" ]]; then
-    reconfigure "the last reconfigure failed"
   fi
 
   grep -E '\.(cpp|cc|cxx)$' "$WORK/changed.txt" >"$WORK/tus.txt" || true
@@ -143,22 +91,16 @@ else
     base_hdr=$(basename "$hdr")
     git_paths grep -l -F -e "$base_hdr" -- 'src/*.cpp' 'programs/*.cpp' 'base/*.cpp' || true
   done | sort -u >>"$WORK/tus.txt"
-  if [[ -f "$WORK/owed.txt" ]]; then
-    cat "$WORK/owed.txt" >>"$WORK/tus.txt"
-  fi
   sort -u "$WORK/tus.txt" -o "$WORK/tus.txt"
 
   N_TUS=$(wc -l <"$WORK/tus.txt")
   if ((N_TUS > MAX_TUS)); then
     echo ">> $N_TUS TUs exceed cap $MAX_TUS — degrading to changed .cpp only" >&2
-    # the TUs a reconfigure owes stay: nothing else would index them before a --full
-    { grep -E '\.(cpp|cc|cxx)$' "$WORK/changed.txt" || true; cat "$WORK/owed.txt" 2>/dev/null || true; } \
-      | sort -u >"$WORK/tus.txt"
+    { grep -E '\.(cpp|cc|cxx)$' "$WORK/changed.txt" || true; } | sort -u >"$WORK/tus.txt"
     echo ">> skipped header-driven TUs are healed by the next --full run" >&2
   fi
   if [[ ! -s "$WORK/tus.txt" && ! -s "$WORK/deleted.txt" ]]; then
     echo ">> no C++ TUs changed — nothing to index"
-    report_stale
     exit 0
   fi
   echo ">> $(wc -l <"$WORK/tus.txt") TUs to index"
@@ -181,7 +123,6 @@ PYEOF
   )
   if ((N_COMPDB == 0)) && [[ ! -s "$WORK/deleted.txt" ]]; then
     echo ">> changed TUs not present in compile_commands.json — nothing to index"
-    report_stale
     exit 0
   fi
   echo ">> $N_COMPDB TUs matched in compdb"
@@ -214,4 +155,3 @@ else
   echo ">> converting + uploading…"
   convert_delta "${ARGS[@]}" --producer "scip_harness@$(hostname -s)"
 fi
-report_stale

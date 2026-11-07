@@ -49,13 +49,13 @@ def _repo(state: dict[tuple[str, str], str]) -> AsyncMock:
     return repo
 
 
-async def _full_pass(tmp_path, monkeypatch, state, cfgs, out: str = "") -> tuple[Any, AsyncMock]:
+async def _full_pass(tmp_path, monkeypatch, state, cfgs) -> tuple[Any, AsyncMock]:
     from server.settings import settings
 
     clang = tmp_path / "scip-clang"
     clang.touch()
     monkeypatch.setattr(settings, "code_scip_clang_path", str(clang))
-    run = AsyncMock(return_value=(ScipApplyStats(), out))
+    run = AsyncMock(return_value=(ScipApplyStats(), ""))
     monkeypatch.setattr(scip_full, "full_index", run)
     with (
         patch("server.code.store.index.CodeRepo", return_value=_repo(state)),
@@ -71,63 +71,6 @@ async def test_an_unseeded_entry_gets_its_first_index_and_a_checkout(tmp_path, m
     assert res.deltas_applied == 1 and not res.errors
     assert (tmp_path / "checkout-code-a" / ".git").is_dir()
     assert run.await_args.args[5] == "a" * 40
-
-
-_STALE_OUT = (
-    ">> applied\n>> stale compile database: cmake reconfigure failed\n"
-    ">> cmake: CMake Error: a package is missing\n"
-)
-
-
-@pytest.mark.asyncio
-async def test_a_full_run_on_a_stale_compile_database_fails_the_full_record(tmp_path, monkeypatch):
-    """The harness's closing lines say it indexed with a stale compile database."""
-    from server.code.app.index.tier_health import error_text
-    from server.code.domain.index.tier_health import classify
-
-    cfg = _cfg(tmp_path, "code-a")
-    record = AsyncMock()
-    with patch("server.code.app.index.tier_health.record", record):
-        res, _ = await _full_pass(
-            tmp_path, monkeypatch, {("code-a", "git_head"): "a" * 40}, [cfg], out=_STALE_OUT
-        )
-    assert res.deltas_applied == 1 and not res.errors
-    (_, _, ns, tier, err) = record.await_args.args
-    assert (ns, tier) == ("code-a", "clang_full") and "a package is missing" in str(err)
-    assert classify(error_text(err)) == "cmake"
-
-
-@pytest.mark.asyncio
-async def test_a_manual_full_run_on_a_stale_compile_database_says_so(tmp_path, monkeypatch, capsys):
-    """`loom code scip-full` prints the stale database and fails clang_full, as the
-    full worker does."""
-    import argparse
-
-    from server.cli import code_scip
-    from server.code.app.index import scip_full as app
-    from server.settings import settings
-
-    cfg = _cfg(tmp_path, "code-a")
-    checkout = tmp_path / "checkout-code-a"
-    checkout.mkdir()
-    clang = tmp_path / "scip-clang"
-    clang.touch()
-    monkeypatch.setattr(settings, "code_scip_clang_path", str(clang))
-    monkeypatch.setattr(app, "full_index", AsyncMock(return_value=(ScipApplyStats(), _STALE_OUT)))
-    args = argparse.Namespace(checkout=str(checkout), apply_delta="", jobs=0, keep_delta="")
-    record = AsyncMock()
-    with (
-        patch(
-            "server.code.store.index.CodeRepo",
-            return_value=_repo({("code-a", "git_head"): "a" * 40}),
-        ),
-        patch("server.code.app.index.tier_health.record", record),
-    ):
-        rc = await code_scip._scip_full_locked(args, "o", "code-a", cfg)
-    assert rc == 0
-    assert "code-a: stale compile database: cmake reconfigure failed" in capsys.readouterr().err
-    (_, _, _, tier, err) = record.await_args.args
-    assert tier == "clang_full" and "a package is missing" in str(err)
 
 
 @pytest.mark.asyncio
