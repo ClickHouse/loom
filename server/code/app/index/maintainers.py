@@ -58,16 +58,19 @@ _ACTIVE = ("", "active")
 
 def _branch_sources(org: str, namespace: str) -> dict[str, str]:
     """Every configured branch namespace of the repository `namespace` belongs
-    to, itself included, in configuration order, with its source: ``config``
-    for the operator's entries, ``registry`` for a branch added from the page.
-    Empty when `namespace` is not a configured code entry."""
+    to, itself included (`_branches`). Empty when `namespace` is not a
+    configured code entry."""
+    repo = repo_of(org, namespace)
+    return _branches(org, repo) if repo is not None else {}
+
+
+def _branches(org: str, repo: str) -> dict[str, str]:
+    """Every configured branch namespace of `repo`, in configuration order,
+    with its source: ``config`` for the operator's entries, ``registry`` for a
+    branch added from the page."""
     from server.code.domain.index.repos import configured_repos
 
-    repos = configured_repos()
-    me = next((c for c in repos if c.org == org and c.namespace == namespace), None)
-    if me is None:
-        return {}
-    return {c.namespace: c.source for c in repos if c.org == org and c.repo == me.repo}
+    return {c.namespace: c.source for c in configured_repos() if c.org == org and c.repo == repo}
 
 
 def _reaches(source: str, target: str) -> bool:
@@ -114,21 +117,32 @@ async def repo_admin_claims(org: str, repo: str | None, subject: str) -> AsyncIt
         yield
 
 
+async def _read_registry_now(client: Any) -> None:
+    """Read the self-service registry now, consistent with every write made
+    before it on any replica. A revoke that skipped a branch added from the
+    page would leave its copies live, and no later sync removes them, so a
+    failed read raises `GrantBusyError`."""
+    from server.code.app.index.repo_registry import read_registry
+    from server.core.ch import sequential_reads
+
+    with sequential_reads():
+        read = await read_registry(client)
+    if not read:
+        raise GrantBusyError("the self-service registry cannot be read; retry shortly")
+
+
 async def read_repo(org: str, namespace: str, *, ch: Any | None = None) -> str | None:
     """Before a change that takes admin on `namespace`: the repository it is a
-    branch of, from the self-service registry read again now, so a branch
-    another process added since this one's last read is seen. A revoke that
-    skipped a branch added from the page would leave its copies live, and no
-    later sync removes them, so on a code namespace a failed read raises
-    `GrantBusyError`. Off a code namespace nothing is read and None returned."""
-    from server.code.app.index.repo_registry import read_registry
+    branch of, from the self-service registry read now (`_read_registry_now`),
+    so a branch another process added since this one's last read is seen. It
+    names the claims `repo_admin_claims` takes. Off a code namespace nothing is
+    read and None returned."""
     from server.core.ch import get_client
 
     client = ch or get_client()
     if repo_of(org, namespace) is None and not await _is_code_namespace(client, org, namespace):
         return None
-    if not await read_registry(client):
-        raise GrantBusyError("the self-service registry cannot be read; retry shortly")
+    await _read_registry_now(client)
     return repo_of(org, namespace)
 
 
@@ -465,15 +479,21 @@ async def revoke_repo_maintainer(
     A revoke on a branch added from the page leaves the operator entries alone
     (`_reaches`); one on an operator entry takes off a branch added from the
     page only a mirror, and none while the subject holds an admin grant given
-    on a branch added from the page. Raises `GrantBusyError` when the snapshot
-    now puts `namespace` in another repository than the claims hold. Returns
-    rows written."""
+    on a branch added from the page.
+
+    The registry is read again under the claims: a branch added after
+    `read_repo` read it, and given a copy by a sync that held the claims
+    first, is then among the branches. Raises `GrantBusyError` when that read
+    fails, or when it puts `namespace` in another repository than the claims
+    hold. Returns rows written."""
     from server.core.ch import get_client
 
     client = ch or get_client()
-    sources = _branch_sources(org, namespace)
+    if repo is not None:
+        await _read_registry_now(client)
     if repo_of(org, namespace) != repo:
         raise GrantBusyError("the repository's branches changed; retry shortly")
+    sources = _branches(org, repo) if repo is not None else {}
     own = sources.get(namespace, "")
     branches = [b for b, source in sources.items() if b != namespace and _reaches(own, source)]
     if not branches:

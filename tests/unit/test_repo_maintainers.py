@@ -326,20 +326,25 @@ async def test_a_revoke_off_a_code_namespace_reads_no_registry(
     assert reads == [True]
 
 
-async def test_the_registry_is_read_before_the_repository_claims_are_taken(
+async def test_a_branch_added_after_read_repo_is_reached_by_the_revoke(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A branch another process added since this one last read the registry.
+    from server.core.ch import sequential_reads_active
+
+    # code-x-dev is added, and given alice's copy, after `read_repo` read the
+    # registry and before the revoke held the repository's claims.
     known = [*REPOS]
+    consistent: list[bool] = []
 
     async def _read(_ch: Any = None) -> bool:
-        known.append(_Cfg("clickhouse", "code-x-dev", "Org/x", source="registry"))
+        consistent.append(sequential_reads_active())
+        if len(consistent) == 2:
+            known.append(_Cfg("clickhouse", "code-x-dev", "Org/x", source="registry"))
         return True
 
     monkeypatch.setattr(repo_registry, "read_registry", _read)
     monkeypatch.setattr(repos, "configured_repos", lambda: known)
-    _code_rows(monkeypatch, {"code-x-dev"})
-    assert await maintainers.read_repo("clickhouse", "code-x-dev", ch=object()) == "Org/x"
+    repo = await maintainers.read_repo("clickhouse", "code-x", ch=object())
     mirror = {"granted_by": "repo-maintainers:code-x"}
     ch = _FakeCH(
         [
@@ -348,8 +353,22 @@ async def test_the_registry_is_read_before_the_repository_claims_are_taken(
             _admin("code-x-dev", "bob"),
         ]
     )
-    await _revoke("code-x", "alice", ch=ch)
+    await maintainers.revoke_repo_maintainer("clickhouse", "code-x", "alice", repo=repo, ch=ch)
     assert [r["namespace"] for r in ch.inserted] == ["code-x-dev"]
+    assert consistent == [True, True], "both reads see every replica's writes"
+
+
+async def test_a_revoke_answers_busy_when_the_registry_read_under_its_claims_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _failed(_ch: Any = None) -> bool:
+        return False
+
+    monkeypatch.setattr(repo_registry, "read_registry", _failed)
+    ch = _FakeCH([_admin(ns, s) for ns in ("code-x-26-5", "code-x-26-6") for s in ("alice", "bob")])
+    with pytest.raises(GrantBusyError):
+        await _revoke("code-x", "alice", ch=ch)
+    assert ch.inserted == []
 
 
 async def test_a_revoke_whose_repository_changed_after_its_claims_answers_busy(
