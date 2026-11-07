@@ -24,9 +24,10 @@ errors by status and the rejected ones (429 and 503); per ingest, the time from
 its job's creation to its end (the server's timestamps); and the queue depth over
 the run. It exits 1 when a measure is past its declared level or has calls that
 failed (not counting rejections), or a small-document ingest did not end ready.
-It exits 2 when the server cannot run the load: knowledge.inspect reports the
-ingest worker off or no extractor in this server's settings, or no process takes
-a canary document's job within CANARY_S.
+It exits 2 when the server cannot run the load: it does not answer, the token
+does not reach every tenant's org, knowledge.inspect reports the ingest worker
+off or no extractor in this server's settings, or a canary document is not
+taken and published ready within CANARY_S.
 
 The deployment needs a process running the ingest worker (a server started with
 `LOOM_BACKGROUND_WORKERS=on`, or a deployment, `LOOM_DEPLOYMENT=1`, under `auto`)
@@ -71,7 +72,9 @@ OPS = (
 INGEST_SMALL = "ingest small document"
 REJECTED = (429, 503)
 OPEN = ("pending", "processing")
-POLL_S = 1.0  # between knowledge.ingest_status reads of one job: they share its budget
+# Between one job's knowledge.ingest_status reads: every open job polls from the
+# namespace's knowledge.read rate limit.
+POLL_S = 1.0
 CANARY_S = 60.0  # a deployment that takes no job in this long runs no worker
 INGEST_WAIT_S = 600  # past it a job counts as still open: the run reports it, not hangs
 
@@ -334,6 +337,24 @@ def _csv(rows: int) -> bytes:
     return ("order_id,region,amount\n" + body).encode()
 
 
+async def _probe(c: httpx.AsyncClient, orgs: list[str], ns: str) -> str:
+    """Why the server cannot run the load, or "": knowledge.inspect in each tenant's
+    org must answer (the token reaches it) and report the ingest worker on and an
+    extractor configured in this server's settings."""
+    for org in orgs:
+        try:
+            r = await c.post("/v1/knowledge.inspect", json={"org": org, "namespace": ns})
+            body = r.json() if r.status_code == 200 else {}
+        except (httpx.HTTPError, ValueError) as e:
+            return f"knowledge.inspect in {org} got no answer: {type(e).__name__}"
+        if r.status_code in (401, 403):
+            return f"the token cannot read {org}/{ns}: {r.status_code} {r.text[:300]}"
+        totals = (body if isinstance(body, dict) else {}).get("ingestions") or {}
+        if not (totals.get("worker_enabled") and totals.get("extractor_configured")):
+            return f"knowledge.inspect in {org} said {r.status_code} {totals or r.text[:300]}"
+    return ""
+
+
 def _fresh_tallies() -> dict[str, Tally]:
     return {m: Tally() for m in (*OPS, INGEST_SMALL)}
 
@@ -348,15 +369,9 @@ async def main(args: argparse.Namespace) -> int:
     tallies = _fresh_tallies()
     small_states: Counter[str] = Counter()
     async with httpx.AsyncClient(base_url=args.base_url, timeout=120, headers=headers) as c:
-        probe = await c.post("/v1/knowledge.inspect", json={"org": orgs[0], "namespace": ns})
-        if probe.status_code in (401, 403):
-            print(f"the token cannot read {orgs[0]}/{ns}: {probe.status_code} {probe.text[:300]}",
-                  file=sys.stderr)  # fmt: skip
-            return 2
-        totals = (probe.json() if probe.status_code == 200 else {}).get("ingestions") or {}
-        if not (totals.get("worker_enabled") and totals.get("extractor_configured")):
-            print(f"the server cannot run the load: knowledge.inspect said {probe.status_code}"
-                  f" {totals or probe.text[:300]}", file=sys.stderr)  # fmt: skip
+        refused = await _probe(c, orgs, ns)
+        if refused:
+            print(f"the server cannot run the load: {refused}", file=sys.stderr)
             return 2
         # knowledge.inspect reads this server's settings, not whether any process runs
         # the worker: a canary job, outside the run's tallies, shows one takes jobs.
@@ -364,9 +379,9 @@ async def main(args: argparse.Namespace) -> int:
         state, _ = await canary.ingest(
             b"# Canary\n\nReady.\n", "canary.md", "repo://canary.md", CANARY_S
         )
-        if state in ("not queued", "still open"):
-            print(f"the canary ingest was {state} after {CANARY_S:g} s: is a worker running?",
-                  file=sys.stderr)  # fmt: skip
+        if state != "ready":
+            print(f"the canary ingest ended {state!r} (waited up to {CANARY_S:g} s): a worker"
+                  " must take and publish a small document", file=sys.stderr)  # fmt: skip
             return 2
         start = time.monotonic()
         deadline = start + args.duration

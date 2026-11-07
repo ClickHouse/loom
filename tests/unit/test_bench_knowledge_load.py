@@ -139,7 +139,7 @@ def test_a_jobs_time_is_its_servers_creation_to_its_end() -> None:
     assert load._job_seconds(naive) == 60.0
 
 
-def _main_against(answer: Any, monkeypatch: pytest.MonkeyPatch) -> int:
+def _main_against(answer: Any, monkeypatch: pytest.MonkeyPatch, *argv: str) -> int:
     import asyncio
 
     import httpx
@@ -152,14 +152,20 @@ def _main_against(answer: Any, monkeypatch: pytest.MonkeyPatch) -> int:
     monkeypatch.setattr(load.httpx, "AsyncClient", mocked)
     monkeypatch.setattr(load, "CANARY_S", 0.3)
     monkeypatch.setattr(load, "POLL_S", 0.05)
-    return asyncio.run(load.main(load._args(["--base-url", "http://x", "--duration", "1"])))
+    args = load._args(["--base-url", "http://x", "--duration", "1", *argv])
+    return asyncio.run(load.main(args))
 
 
-def test_a_canary_no_worker_takes_exits_2(monkeypatch: pytest.MonkeyPatch) -> None:
+def _server(job_state: str, refuse_org: str = "") -> Any:
+    """A server whose canary job reads `job_state`, refusing `refuse_org` with 403."""
+    import json
+
     import httpx
 
     def answer(request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        if refuse_org and request.content and json.loads(request.content).get("org") == refuse_org:
+            return httpx.Response(403, json={"error": "no"})
         if path.endswith("knowledge.inspect"):
             settings = {"worker_enabled": True, "extractor_configured": True}
             return httpx.Response(200, json={"ingestions": settings})
@@ -167,9 +173,31 @@ def test_a_canary_no_worker_takes_exits_2(monkeypatch: pytest.MonkeyPatch) -> No
             return httpx.Response(201, json={"upload_id": "u"})
         if path.endswith("knowledge.ingest"):
             return httpx.Response(200, json={"ingestion_id": "j"})
-        return httpx.Response(200, json={"state": "pending"})  # nobody takes the job
+        times = {"created_at": "2026-01-02T03:04:05Z", "updated_at": "2026-01-02T03:04:06Z"}
+        return httpx.Response(200, json={"state": job_state, **times})
 
-    assert _main_against(answer, monkeypatch) == 2
+    return answer
+
+
+@pytest.mark.parametrize("state", ["pending", "failed", "cancelled"])
+def test_a_canary_that_does_not_end_ready_exits_2(
+    monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    assert _main_against(_server(state), monkeypatch) == 2
+
+
+def test_a_server_that_does_not_answer_exits_2(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    def refused(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    assert _main_against(refused, monkeypatch) == 2
+
+
+def test_a_tenant_org_the_token_cannot_reach_exits_2(monkeypatch: pytest.MonkeyPatch) -> None:
+    answer = _server("ready", refuse_org="bench-1")
+    assert _main_against(answer, monkeypatch, "--tenants", "2") == 2
 
 
 def test_a_token_that_cannot_read_the_tenant_exits_2(monkeypatch: pytest.MonkeyPatch) -> None:
