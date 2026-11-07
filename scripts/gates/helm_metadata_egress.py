@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Render the chart and check that no Loom pod can reach the instance metadata
-service, whatever `networkPolicy.enabled` says: the pods run the compiler tiers
-of operator-listed repositories, and that code must not take the node's cloud
-role. With the policy off, every other egress stays open; `egressExcept: []`
-renders no policy, as before.
+"""Render the chart and check that no pod running the Loom image can reach the
+instance metadata service, with `networkPolicy.enabled` on or off: the pods run
+the compiler tiers of operator-listed repositories, and that code must not take
+the node's cloud role. Off, the policy is egress-only with one rule that names
+every pod and every address but `egressExcept`; `guardMetadata: false` or
+`egressExcept: []` renders none.
 
     python scripts/gates/helm_metadata_egress.py
 
@@ -22,25 +23,63 @@ import yaml
 
 CHART = Path(__file__).resolve().parents[2] / "deploy" / "helm" / "loom"
 METADATA = ("169.254.169.254", "fd00:ec2::254")
+REQUIRED = (
+    "secrets.jwtSecret=" + "j" * 40,
+    "publicBaseUrl=https://loom.example.com",
+    "clickhouse.host=ch",
+)
+# Every optional object that runs the Loom image.
+EVERYTHING = (
+    "workers.enabled=true",
+    "analyticsExport.enabled=true",
+    "analyticsExport.bucket=ci",
+    "analyticsExport.nameKeySecret.name=ci",
+    "extractor.enabled=true",
+    "secrets.extractorToken=" + "t" * 24,
+    "mustMatchChange.publish=ci",
+)
 
 
 def render(*args: str) -> list[dict[str, Any]]:
-    cmd = ["helm", "template", "loom", str(CHART), "--set", "secrets.jwtSecret=" + "j" * 40]
-    cmd += ["--set", "publicBaseUrl=https://loom.example.com", "--set", "clickhouse.host=ch"]
+    cmd = ["helm", "template", "loom", str(CHART)]
+    for s in REQUIRED:
+        cmd += ["--set", s]
     out = subprocess.run([*cmd, *args], check=True, capture_output=True, text=True).stdout
     return [d for d in yaml.safe_load_all(out) if d]
 
 
-def loom_policies(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The NetworkPolicies that select the release's web pods."""
-    web = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "loom")
-    labels = web["spec"]["template"]["metadata"]["labels"]
-    return [
-        d["spec"]
+def sets(*values: str) -> tuple[str, ...]:
+    return tuple(arg for v in values for arg in ("--set", v))
+
+
+def loom_pods(docs: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    """The labels of every pod that runs the Loom image, by object name."""
+    image = next(
+        c["image"]
         for d in docs
-        if d["kind"] == "NetworkPolicy"
-        and all(labels.get(k) == v for k, v in d["spec"]["podSelector"]["matchLabels"].items())
-    ]
+        if d["kind"] == "Deployment" and d["metadata"]["name"] == "loom"
+        for c in d["spec"]["template"]["spec"]["containers"]
+    )
+    out = {}
+    for d in docs:
+        spec = d.get("spec", {})
+        if d["kind"] == "Pod":
+            pod = d
+        elif d["kind"] == "CronJob":
+            pod = spec["jobTemplate"]["spec"]["template"]
+        else:
+            pod = spec.get("template")
+        if not pod:
+            continue
+        containers = pod["spec"].get("containers", []) + pod["spec"].get("initContainers", [])
+        if any(c.get("image") == image for c in containers):
+            out[f"{d['kind']}/{d['metadata']['name']}"] = pod["metadata"].get("labels", {})
+    return out
+
+
+def selects(policy: dict[str, Any], labels: dict[str, str]) -> bool:
+    match = policy["podSelector"].get("matchLabels", {})
+    return all(labels.get(k) == v for k, v in match.items())
 
 
 def reaches(peer: dict[str, Any], address: str) -> bool:
@@ -58,35 +97,56 @@ def reaches(peer: dict[str, Any], address: str) -> bool:
 
 
 def check_metadata_denied(docs: list[dict[str, Any]], what: str) -> None:
-    policies = [p for p in loom_policies(docs) if "Egress" in p["policyTypes"]]
-    assert policies, f"{what}: no egress policy selects the Loom pods"
-    for policy in policies:
-        for rule in policy.get("egress", []):
-            assert rule.get("to"), f"{what}: an egress rule with no peers reaches everything"
-            for address in METADATA:
-                assert not any(reaches(p, address) for p in rule["to"]), f"{what}: {address}"
+    policies = [d["spec"] for d in docs if d["kind"] == "NetworkPolicy"]
+    pods = loom_pods(docs)
+    assert len(pods) > 1, f"{what}: found only {pods}"
+    for name, labels in pods.items():
+        mine = [p for p in policies if selects(p, labels) and "Egress" in p["policyTypes"]]
+        assert mine, f"{what}: no egress policy selects {name}"
+        for policy in mine:
+            for rule in policy.get("egress", []):
+                assert rule.get("to"), f"{what}: an egress rule of {name} has no peers"
+                for address in METADATA:
+                    reached = any(reaches(p, address) for p in rule["to"])
+                    assert not reached, f"{what}: {name} reaches {address}"
+
+
+def web_policies(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    labels = loom_pods(docs)["Deployment/loom"]
+    return [d["spec"] for d in docs if d["kind"] == "NetworkPolicy" and selects(d["spec"], labels)]
 
 
 def main() -> None:
+    kind, eks = ("-f", str(CHART / "values-kind.yaml")), ("-f", str(CHART / "values-eks.yaml"))
     for what, args in (
-        ("defaults", ()),
-        ("kind overlay", ("-f", str(CHART / "values-kind.yaml"))),
-        ("eks overlay", ("-f", str(CHART / "values-eks.yaml"))),
-        ("policy on", ("--set", "networkPolicy.enabled=true")),
+        ("defaults", sets(*EVERYTHING)),
+        ("kind overlay", (*kind, *sets(*EVERYTHING))),
+        ("eks overlay", (*eks, *sets(*EVERYTHING))),
+        ("policy on", sets("networkPolicy.enabled=true", *EVERYTHING)),
     ):
         check_metadata_denied(render(*args), what)
-    # Off, the policy keeps ingress and every other egress open: one rule, no ports,
-    # pods anywhere in the cluster (engines differ on matching pod IPs by range).
-    (policy,) = loom_policies(render())
+    # Off, the one policy changes nothing else: egress only, one portless rule
+    # naming every pod and every address but the metadata service.
+    (policy,) = web_policies(render())
     assert policy["policyTypes"] == ["Egress"], policy
-    (rule,) = policy["egress"]
-    assert "ports" not in rule and {"namespaceSelector": {}} in rule["to"], rule
-    assert not loom_policies(render("--set-json", "networkPolicy.egressExcept=[]"))
+    assert policy["egress"] == [
+        {
+            "to": [
+                {"namespaceSelector": {}},
+                {"ipBlock": {"cidr": "0.0.0.0/0", "except": ["169.254.169.254/32"]}},
+                {"ipBlock": {"cidr": "::/0", "except": ["fd00:ec2::254/128"]}},
+            ]
+        }
+    ], policy["egress"]
+    assert not web_policies(render("--set", "networkPolicy.guardMetadata=false"))
+    assert not web_policies(render("--set-json", "networkPolicy.egressExcept=[]"))
     print("metadata egress: denied with the policy on and off; other egress open when off")
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (AssertionError, subprocess.CalledProcessError) as e:
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"metadata egress: {e}\n{e.stderr}")
+    except AssertionError as e:
         sys.exit(f"metadata egress: {e}")

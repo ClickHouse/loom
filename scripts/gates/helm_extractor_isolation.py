@@ -94,6 +94,7 @@ def main() -> None:
         on = ("networkPolicy.enabled=true", "workers.enabled=true", token)
         docs = render(overlay, *on)
         check(docs)
+        check(render(overlay, *on[1:]))  # the policy off: the Loom pods' egress-only one
         if overlay == "values-kind.yaml":  # the EKS overlay's Secret is the operator's
             rotated = render(overlay, *on[:2], "secrets.extractorToken=" + "u" * 24)
             before, after = annotations(docs), annotations(rotated)

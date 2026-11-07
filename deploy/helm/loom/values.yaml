@@ -334,17 +334,23 @@ extractor:
 # Ingress to the Loom port from `ingressFrom` only. Egress to DNS, the
 # release's web pods, the extractor's pods (with extractor.enabled), and TCP 443
 # and the ClickHouse port anywhere except `egressExcept` (providers, the IdP and
-# git remotes have no fixed range). Off, the Loom pods still get an egress-only
-# policy that allows everything but `egressExcept`; `egressExcept: []` drops it.
+# git remotes have no fixed range). Off, `guardMetadata` gives the Loom pods an
+# egress-only policy that allows every pod and every address but `egressExcept`.
 networkPolicy:
   enabled: false
   # NetworkPolicy peers allowed to reach the pods (the ALB's subnets, the
   # ingress controller's namespace). [] = any source.
   ingressFrom: []
-  # Never reachable, with the policy on or off: the instance metadata service,
-  # so repository code a pod builds cannot take the node's IAM role. Add the
-  # cluster's own ranges to keep pods off them.
+  # Denied by every policy the chart renders (a policy engine enforces it, and
+  # extraEgress must not reopen it): the instance metadata service, so repository
+  # code a pod builds cannot take the node's cloud role. 169.254.169.254 serves
+  # most clouds; add your provider's address if it differs, and the cluster's
+  # own ranges to keep pods off them.
   egressExcept: [169.254.169.254/32, fd00:ec2::254/128]
+  # With enabled: false, render the egress-only policy above. Set false when your
+  # own policies limit the pods' egress: NetworkPolicies add up, so this one
+  # would let the pods reach everything else. Deny `egressExcept` there instead.
+  guardMetadata: true
   # More egress rules, e.g. SSH git remotes or an OTLP collector.
   extraEgress: []
 

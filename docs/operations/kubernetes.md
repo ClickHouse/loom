@@ -17,6 +17,7 @@ it on a laptop.
 | Optional `<release>-publish`          | A pre-upgrade Job for a change that cannot roll ([below](#changing-what-cannot-roll)).                                                                        |
 | Optional `<release>-analytics-export` | A daily CronJob and its own ServiceAccount (`analyticsExport.enabled`, [below](#analytics-export)).                                                           |
 | Optional `<release>-extractor`        | The document extractor's Deployment, Service and NetworkPolicy (`extractor.enabled`, [below](#document-extractor)).                                           |
+| NetworkPolicy `<release>`             | Egress to all but the metadata service ([below](#repository-job-sandbox)); with `networkPolicy.enabled`, the full policy.                                     |
 | Optional dev ClickHouse               | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                                                                     |
 
 ## Before you install
@@ -327,13 +328,24 @@ Loom runs them under bubblewrap, which needs unprivileged user namespaces. The d
 pod security does not allow them, so by default (`sandbox.required: false`) the compiler
 tiers of the repositories the operator lists in `LOOM_CODE_REPOS_JSON` run as plain
 processes in the pod, and a repository added from the dashboard is refused. List only
-repositories you trust. Whatever `networkPolicy.enabled` says, the Loom pods never reach
+repositories you trust.
+
+Whatever `networkPolicy.enabled` says, the Loom pods never reach
 `networkPolicy.egressExcept` (the instance metadata service), so that code cannot take
-the node's IAM role: off, the chart renders an egress-only NetworkPolicy that allows
-everything else, and the cluster needs a policy engine for it to hold. Pods then get cloud
-credentials from IRSA or EKS Pod Identity only, never the node's role;
-`networkPolicy.egressExcept: []` drops the policy. With `sandbox.required: true` a pod is not ready until the sandbox
-works, so set it only once the nodes are prepared:
+the node's cloud role. Off, `networkPolicy.guardMetadata` renders an egress-only
+NetworkPolicy whose one rule allows every pod and every address but those; the cluster
+needs a policy engine for it to hold. What changes:
+
+- A pod that took cloud credentials from the metadata service has none: the node's
+  instance role, and GKE Workload Identity, which is served at that address. IRSA and
+  EKS Pod Identity are not affected. Set `guardMetadata: false` to keep that access.
+- NetworkPolicies add up: where your own policies limit the pods' egress, this one
+  would let them reach everything else. Set `guardMetadata: false` and deny the
+  metadata addresses in your own policy.
+- An engine that keeps address ranges off node IPs (Cilium's default) blocks host-network
+  endpoints and the nodes' own addresses: add them through `extraEgress` with the policy
+  on, or use the engine's node matching. With `sandbox.required: true` a pod is not ready until the sandbox
+  works, so set it only once the nodes are prepared:
 
 1. Run Loom on nodes whose OS allows unprivileged user namespaces.
 2. Install `dev/seccomp/loom-repo-sandbox.json` under the kubelet's seccomp directory

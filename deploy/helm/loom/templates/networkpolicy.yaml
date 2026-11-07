@@ -76,11 +76,9 @@ spec:
     {{- with .Values.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-{{- else if .Values.networkPolicy.egressExcept }}
-{{- /* Off, the pods still never reach `egressExcept`: they run the compiler
-tiers of operator-listed repositories, and that code must not take the node's
-cloud role from the metadata service. Ingress and every other egress stay open;
-pods are named apart, as engines differ on matching pod IPs by range. */}}
+{{- else if and .Values.networkPolicy.guardMetadata .Values.networkPolicy.egressExcept }}
+{{- /* Off, the Loom pods still never reach `egressExcept` (the metadata service);
+a pod peer is listed because engines differ on matching pod IPs by range. */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
