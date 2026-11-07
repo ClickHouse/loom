@@ -189,7 +189,7 @@ def set_identity(
     operation: str = "",
     capture_level: str = "",
 ) -> None:
-    """Record the active request's identity for provider spans to stamp.
+    """Record the active request's identity for the spans the request opens to stamp.
 
     Set once per request from the transport layer. Deliberately a plain `set`
     with no reset: each HTTP request runs in its own context, so there is

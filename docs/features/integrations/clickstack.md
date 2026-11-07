@@ -85,8 +85,8 @@ so the backend (`ClickStackBackend` in `server/erasure/app/backends.py`) runs li
   `user_id,user.id,enduser.id,loom.user_id,langfuse.user.id`), ORed, since SDKs disagree
   on the key name. Loom's request span carries `enduser.id`; its model-call spans carry
   `loom.user_id` and `langfuse.user.id`, and with Langfuse configured so does every other
-  span the request opens once its caller is resolved. Each of them also carries `loom.org`, so the org guard below
-  applies.
+  span the request opens once its caller is resolved. Each of them also carries
+  `loom.org`, so the org guard below applies.
 - **A namespace scope** matches `loom.namespace` or `service.namespace`. Loom's exporter
   sets `service.namespace` to the constant `loom` and carries the tenant in
   `loom.namespace`; `service.namespace` covers other emitters writing into the same

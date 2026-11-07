@@ -48,10 +48,10 @@ A chat call is a `GENERATION` observation and an embedding call that reached the
 is an `EMBEDDING`; an embedding served from Loom's own cache is a plain span. Every span
 a request opens once its caller is resolved carries the request's user id, session id,
 `org:` and `namespace:` tags and trace name, because Langfuse 4 reads them per
-observation rather than from the trace root. With Langfuse configured, these keys reach ClickStack's spans too. Each search
-stage (`search.<stage>`) is a `retriever` observation, one of the types Langfuse's
-agent-graph view is drawn from. With OTel disabled (`LOOM_OTEL_ENABLED=false`) no traces
-reach Langfuse.
+observation rather than from the trace root. These keys reach ClickStack's spans too.
+Each search stage (`search.<stage>`) is a `retriever` observation, one of the types
+Langfuse's agent-graph view is drawn from. With OTel disabled (`LOOM_OTEL_ENABLED=false`)
+no traces reach Langfuse.
 
 | Setting                                                                       | Default                                             | Effect                                                                                                   |
 | ----------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
