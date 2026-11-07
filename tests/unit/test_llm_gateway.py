@@ -624,6 +624,15 @@ def test_the_gateway_check_reads_a_url_as_httpx_sends_it(required: None, url: st
     assert bool(refusal) is off or refusal == "the URL may not carry a user name or password"
 
 
+def test_a_classify_endpoint_at_the_gateways_explicit_default_port_is_accepted(
+    required: None,
+) -> None:
+    from server.memory.domain.classify_endpoints import classify_refusal
+
+    assert classify_refusal("https://gateway.example:443/c") == ""
+    assert classify_refusal("https://gateway.example:8443/c") != ""
+
+
 def test_an_idn_host_is_matched_as_the_punycode_httpx_sends_to(
     required: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

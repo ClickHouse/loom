@@ -73,7 +73,8 @@ def classify_refusal(url: str) -> str:
         return ""
     if host not in gateway_hosts:
         return f"{host} is not in LOOM_INFERENCE_GATEWAY_HOSTS"
-    if parts.scheme != "https" or parts.port is not None:
+    # urlsplit reads an explicit :443 as 443; httpx, which sends it, as the default port
+    if parts.scheme != "https" or parts.port not in (None, 443):
         return "it must be https at the default port"
     return ""
 

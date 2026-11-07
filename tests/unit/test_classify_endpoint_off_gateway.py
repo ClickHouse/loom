@@ -374,6 +374,8 @@ def test_a_listed_gateway_host_off_its_default_port_is_refused_though_not_requir
     assert classify_refusal("http://gateway.example:8080/c") != ""
     assert classify_refusal("https://gateway.example:8443/c") != ""
     assert classify_refusal("https://gateway.example/c") == ""
+    # an explicit default port: urlsplit reads 443, httpx (which sends it) no port
+    assert classify_refusal("https://gateway.example:443/c") == ""
 
 
 @pytest.mark.parametrize(
