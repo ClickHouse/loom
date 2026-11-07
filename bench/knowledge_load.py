@@ -22,8 +22,9 @@ so a slow server meets the same load, and a rejected call is not retried. It
 reports, per op, the calls, p50 / p95 / p99 latency of the successful ones,
 errors by status and the rejected ones (429 and 503); per ingest, the time from
 its job's creation to its end (the server's timestamps, else the time polled); and
-the queue depth over the run. An answer the harness cannot read is counted, not a
-crash. It exits 1 when a measure is past its declared level or has calls that
+the queue depth over the run. An answer the harness cannot read is skipped (no
+sample, no dataset to query) or, where reading it fails, counted as a harness
+error; it never ends the run. It exits 1 when a measure is past its declared level or has calls that
 failed (not counting rejections), a small-document ingest did not end ready, or
 an answer could not be read.
 It exits 2 when the server cannot run the load: it does not answer, the token
@@ -207,9 +208,9 @@ class Run:
         self, data: bytes, filename: str, uri: str, wait_s: float = INGEST_WAIT_S
     ) -> tuple[str, float]:
         """Upload and ingest `data`, then wait for its job to end: its state and the
-        seconds from the job's creation to its end, by the server's own timestamps (the
-        time polled when the answer has none), so the 1 s poll adds nothing ("not
-        queued" when the upload or the ingest failed, "still open" past `wait_s`)."""
+        seconds from the job's creation to its end, by the server's own timestamps,
+        which the 1 s poll does not inflate (else the time polled; "not queued" when
+        the upload or the ingest failed, "still open" past `wait_s`)."""
         t0 = time.perf_counter()
         try:
             up = await self.c.post(
@@ -325,9 +326,9 @@ def _job_seconds(status: dict[str, Any], waited_s: float) -> float:
         created, updated = (
             datetime.fromisoformat(str(status[k])) for k in ("created_at", "updated_at")
         )
-    except (KeyError, ValueError):
+        return (updated - created).total_seconds()
+    except (KeyError, ValueError, TypeError):  # TypeError: one aware, one naive
         return waited_s
-    return (updated - created).total_seconds()
 
 
 def combined_depth(series: list[list[tuple[int, int]]]) -> dict[int, int]:
@@ -367,7 +368,8 @@ async def _probe(c: httpx.AsyncClient, orgs: list[str], ns: str) -> str:
             return f"knowledge.inspect in {org} got no answer: {type(e).__name__}"
         if r.status_code in (401, 403):
             return f"the token cannot read {org}/{ns}: {r.status_code} {r.text[:300]}"
-        totals = (body if isinstance(body, dict) else {}).get("ingestions") or {}
+        totals = body.get("ingestions") if isinstance(body, dict) else None
+        totals = totals if isinstance(totals, dict) else {}
         if not (totals.get("worker_enabled") and totals.get("extractor_configured")):
             return f"knowledge.inspect in {org} said {r.status_code} {totals or r.text[:300]}"
     return ""
