@@ -70,9 +70,9 @@ _DECISION = re.compile(
     r"defaults? to|"
     rf"we(?:'re| are|'ll| will| won't| will not)(?: not)? {_CHOICE_VERB}|"
     # For "I", only a plan ("I'll remove the old flag", not "I'll move on").
-    rf"(?:we|i)(?:'ll| will| won't| will not|'m going to| am going to|'re going to|"
-    rf" are going to)(?: not)? {_PLAN_VERB}|"
-    rf"let's {_PLAN_VERB}|we(?:'re| are) {_PLAN_ING}|"
+    rf"(?:we(?:'ll| will| won't| will not|(?:'re| are)(?: not)? going to)|"
+    rf"i(?:'ll| will| won't| will not|(?:'m| am)(?: not)? going to))(?: not)? {_PLAN_VERB}|"
+    rf"let's {_PLAN_VERB}|we(?:'re| are)(?: not)? {_PLAN_ING}|"
     r"the plan is to|"
     rf"(?:we|the team)(?:'ve| have| had)? {_CHOSE}|"
     r"(?:was|were|is|are) (?:picked|selected)|"
@@ -214,10 +214,13 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
     headings = tuple(_plain(h) for h in section_path)
     # A document stored with no title is named by its first heading.
     name = _plain(title) if title else (headings[0] if headings else "")
+    # The title's own heading names the document, not a part of it.
+    own = _below_title(name, headings)
     dated = bool(_NOTES_TITLE.search(name)) or (
         bool(_MEETING_TITLE.search(name))
         # A running notes page dates each meeting in its top heading below the title.
-        and bool(_DATE_HEADING.match((_below_title(name, headings) or ("",))[0]))
+        and bool(own)
+        and bool(_DATE_HEADING.match(own[0]))
     )
     # A transcript names a recording whatever else the title says; "notes by" also signs a
     # person's notes, so it needs a meeting word and no design-document word.
@@ -240,8 +243,6 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
     if _unanswered(headings, prose, code):
         return True
     if recorded:
-        # The title's own heading names the recording, not a part of it.
-        own = _below_title(name, headings)
         # The template fills its section: a summary after the meeting's date is content,
         # and so is a list of links with no template line.
         if any(_TRANSCRIPT_HEADING.search(h) for h in own):

@@ -517,6 +517,8 @@ def test_a_recorded_meetings_account_is_content(
         "I'll remove the old flag in the next release.",
         "We're deprecating the v1 export API.",
         "Let's disable the legacy exporter.",
+        "We're not going to remove the old flag.",
+        "We're not removing the v1 export API.",
     ],
 )
 def test_a_stated_plan_is_a_decision_in_notes(text: str) -> None:
