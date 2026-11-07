@@ -57,8 +57,8 @@ It fetches the upstream repository's tags itself, reads the pull requests with `
 diff through the server's registry, so it needs a signed-in `gh` and the project's environment
 (`uv sync`). `.venv/bin/python scripts/release/prepare.py notes X.Y.Z` prints the section again
 without bumping anything: run it after rebasing the release pull request just before it merges,
-and again at the last candidate's commit before the final tag, so the notes name every pull request
-the tag ships.
+and again at the highest-numbered candidate's commit before the final tag, so the notes name every
+pull request the tag ships.
 
 ## Cutting the release
 
@@ -84,8 +84,8 @@ the tag ships.
    pull request raises both plugins' `minServerVersion` to this version and bumps both plugin
    versions: clients get a manifest only through a new plugin version.
 3. After the release pull request merges, tag its merge commit and push the tag. To soak a
-   release candidate first, tag `vX.Y.Z-rc.1` there instead, and the final later on the last
-   candidate's commit (below):
+   release candidate first, tag `vX.Y.Z-rc.1` there instead, and the final later on the
+   highest-numbered candidate's commit (below):
 
    ```bash
    git tag vX.Y.Z <merge commit>
@@ -106,10 +106,10 @@ the tag ships.
 A release candidate is a `vX.Y.Z-rc.N` tag, and makes a GitHub pre-release; the release refuses any
 other prerelease tag. The first candidate goes on the release pull request's merge commit, whose
 files name `X.Y.Z`, so the candidate's server already reports `X.Y.Z`; a later one, after a fix,
-goes on a later commit of `main`. The final `vX.Y.Z` tag goes on the last candidate's commit after
-the soak. The final's bundle keeps the ClickHouse release that candidate's bundle names (the
-highest-numbered candidate on that commit with a published bundle); its images are built again
-from the same commit, uncached, so an OS package may be newer than in the soaked image. A run of a
+goes on a later commit of `main`. The final `vX.Y.Z` tag goes on the highest-numbered candidate's
+commit after the soak. The final's bundle keeps the ClickHouse release of the highest-numbered
+candidate on that commit with a published bundle; its images are built again from the same
+commit, uncached, so an OS package may be newer than in the soaked image. A run of a
 candidate tag after its final is refused. One on the final's commit is told to run the final. One
 numbered below the highest-numbered candidate on the final's commit, such as an older candidate
 dispatched to publish its SDKs, has nothing to run, and its tag stays. Any other is a stray: it
@@ -291,8 +291,8 @@ A run that stopped in `clickhouse` published nothing.
   soak it, and tag the final there, which keeps that release.
 - **A downgrade during the soak**: a final carrying its candidate's release is checked too, so a
   patch to an older line published during the soak with a newer release stops it. Either delete
-  the final's tag (it published nothing), soak a new candidate on that commit dispatched with that
-  newer release, and tag the final there again; or dispatch the final with
+  the final's tag (it published nothing), tag a new candidate on that commit (its tag push
+  resolves `latest`, which the downgrade check accepts), soak it, and tag the final there again; or dispatch the final with
   `-f allow_clickhouse_downgrade=true` and accept the downgrade for that patch's installs.
 
 Each dispatch above also runs the `pypi` and `npm` jobs, so a dispatched candidate publishes its
