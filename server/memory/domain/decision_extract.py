@@ -40,9 +40,10 @@ from server.memory.domain.decision_statement import (
 # Not a placeholder: link text `[image tiles](tiles.md)`, a reference link `[image][1]`,
 # a definition `[image]: x.png`, the label of `[the diagram][image]`, a shortcut link
 # `[image tiles]`, text such as `[images are in the appendix]`, or a word `[imagine]`.
-# Each part stops at the next opener (`[`, `(`, `<`): a scan from every unclosed one to
-# the end of the text would cost quadratic time on a document of them.
-_PAREN_TARGET = r"\([^()]*+(?:\([^()]*+\)[^()]*+)*+\)"
+# Alt text and a placeholder stop at the next `[`, a tag at the next `<`, a target at
+# its first `)` but never past the next `](` or a line end outside a quoted title: a
+# scan from every unclosed opener to the end of the text would cost quadratic time.
+_PAREN_TARGET = r"\((?:[^)\]\n\"']++|\](?!\()|\"[^\")\]]*+\"|'[^')\]]*+'|[\"'])*+\)"
 _IMAGE_MARKUP = re.compile(
     rf"!\[[^\[\]]*+\]{_PAREN_TARGET}"
     r"|!\[[^\[\]]*+\]\[[^\]]*\]"

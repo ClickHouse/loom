@@ -3078,11 +3078,16 @@ def test_only_tag_shaped_markup_is_removed_from_a_caption() -> None:
         ('<img\n  src="flow.png"\n  alt="flow"\n/>', ['<img\n  src="flow.png"\n  alt="flow"\n/>']),
         ("<IMG SRC=c.png>", ["<IMG SRC=c.png>"]),
         ("[image: the spill path] [Image 3]", ["[image: the spill path]", "[Image 3]"]),
-        # A target with a pair of parentheses, as a wiki page name has, is read whole.
-        (
-            "![x](https://wiki.example.com/Run_(sort))",
-            ["![x](https://wiki.example.com/Run_(sort))"],
-        ),
+        # A target ends at its first `)`, whatever `(` it holds.
+        ("![x](diagrams/flow(v2.png)", ["![x](diagrams/flow(v2.png)"]),
+        (r"![x](a\(b.png)", [r"![x](a\(b.png)"]),
+        ('![x](f.png "see (a")', ['![x](f.png "see (a")']),
+        ("![x](a(b.png) and 1) done", ["![x](a(b.png)"]),
+        ("![x](it's.png)", ["![x](it's.png)"]),
+        # Only a quoted title runs onto the next line.
+        ('![x](f.png "a\nb")', ['![x](f.png "a\nb")']),
+        ("![x](f.png 'a\nb')", ["![x](f.png 'a\nb')"]),
+        ("![x](a(b.png\nand 1) done", []),
         # Unclosed markup is no image.
         ("![open ![x](a.png) <img ](b", ["![x](a.png)"]),
     ],
@@ -3092,7 +3097,7 @@ def test_image_markup_matches(text: str, images: list[str]) -> None:
 
 
 def test_link_targets_are_removed_from_a_caption() -> None:
-    text = "[notes](https://example.com/a_(b)) and [ref][1], ](dangling"
+    text = "[notes](https://example.com/notes) and [ref][1], ](dangling"
     assert dx.caption_text(text) == "[notes] and [ref], ](dangling"
 
 
