@@ -6,16 +6,13 @@ type Scope = Pick<Identity, "org" | "namespace">;
 
 // ===== Namespace health (viewer) =====
 
-/** Mirrors `server/memory/api/models_admin.py::MemoryHealthOutput` (the fields shown). */
+/** Mirrors `server/memory/api/models_admin.py::MemoryHealthOutput` (the fields read). */
 export interface MemoryHealth {
   live: number;
   recalled_ever: number;
-  used_ever: number;
-  silent: number;
   silent_share: number;
   silent_after_days: number;
-  by_type: { memory_type: string; live: number; recalled: number }[];
-  staleness: { expiring_7d: number; pinned: number; days_since_reinforced_p50: number };
+  staleness: { expiring_7d: number };
 }
 
 export async function getMemoryHealth(id: Scope, opts: RequestOpts = {}): Promise<MemoryHealth> {
@@ -49,11 +46,15 @@ export interface ExtractionBatch {
   enqueued_at: string | null;
 }
 
+/** The newest batches in any state; the counts cover those batches only. */
+export interface ExtractionBatches {
+  batches: ExtractionBatch[];
+  pending: number;
+  failed: number;
+}
+
 /** POST /v1/memory.extraction_status, across the namespace's agents and users. */
-export async function getExtractionBatches(
-  id: Scope,
-  opts: RequestOpts = {},
-): Promise<{ batches: ExtractionBatch[]; pending: number; failed: number }> {
+export async function getExtractionBatches(id: Scope, opts: RequestOpts = {}): Promise<ExtractionBatches> {
   return post("/v1/memory.extraction_status", { org: id.org, namespace: id.namespace, agent: "*" }, opts.signal);
 }
 
@@ -72,7 +73,7 @@ export async function sweepExpired(id: Scope, dryRun: boolean): Promise<ExpirySw
   return post("/v1/memory.sweep_expired", { org: id.org, namespace: id.namespace, dry_run: dryRun });
 }
 
-/** POST /v1/memory.reindex: re-embed the memories another embedding model made, up to `limit`. */
+/** POST /v1/memory.reindex: re-embed up to 200 memories another embedding model made. */
 export async function reembedMemories(
   id: Scope,
 ): Promise<{ processed: number; skipped_already_current: number; target_model: string }> {

@@ -146,13 +146,13 @@ function parseWorkersStatus(d: unknown): { rows: WorkerRow[]; store: WorkersStor
 type HealthTab = "workers" | "extraction" | "opmix" | "consolidations" | "namespace" | "repairs" | "projections";
 // One name per tab, for its trigger and the document title.
 const HEALTH_TABS: Record<HealthTab, string> = {
-  namespace: "Namespace",
-  repairs: "Repairs",
-  projections: "Projection failures",
   workers: "Workers",
   extraction: "Extraction quality",
   opmix: "Operation mix",
   consolidations: "Consolidations",
+  namespace: "Namespace",
+  repairs: "Repairs",
+  projections: "Projection failures",
 };
 
 export function Health() {
@@ -163,8 +163,8 @@ export function Health() {
   const whoami = useStore((s) => s.whoami);
   const seesWorkers = hasAdminClaim(whoami);
   const seesOpMix = hasOrgAdminClaim(whoami);
-  // Namespace reads memory.health (VIEWER); Repairs holds ADMIN-only writes and reads
-  // nothing on open; Projection failures is ORG_ADMIN, like Operation mix.
+  // Namespace reads memory.health (VIEWER); every repair is ADMIN, as memory.sweep_expired
+  // is, and none reads on open; Projection failures is ORG_ADMIN, like Operation mix.
   const role = useNamespaceRole(identity.namespace);
   const seesNamespace = canCall("memory.health", role, whoami);
   const seesRepairs = canCall("memory.sweep_expired", role, whoami);
@@ -184,19 +184,27 @@ export function Health() {
     [identity.org, identity.namespace],
   );
 
+  // A tab gated by the namespace's role can vanish on a switch; Extraction quality is always there.
+  const shown: Record<HealthTab, boolean> = {
+    workers: seesWorkers,
+    extraction: true,
+    opmix: seesOpMix,
+    consolidations: hasConsolidations,
+    namespace: seesNamespace,
+    repairs: seesRepairs,
+    projections: seesOpMix,
+  };
+  const open = shown[tab] ? tab : "extraction";
+
   return (
     <PageContainer>
       <div className="mb-6">
-        <PageHeader title="Health" tab={HEALTH_TABS[tab]} />
+        <PageHeader title="Health" tab={HEALTH_TABS[open]} />
         <p className="text-sm text-text-muted max-w-2xl">
-          {seesOpMix
-            ? "Operator view: worker schedules, operation mix + extraction quality across the org."
-            : seesWorkers
-              ? "Operator view: worker schedules + extraction quality for the namespaces you can access."
-              : "Extraction quality for the namespaces you can access. Worker telemetry is hidden — that's the Loom operator's concern."}
+          How Loom's workers, extraction and this namespace's memories are doing, and the repairs your role allows.
         </p>
       </div>
-      <Tabs value={tab} onValueChange={(v) => setTab(v as HealthTab)}>
+      <Tabs value={open} onValueChange={(v) => setTab(v as HealthTab)}>
         <Tabs.TriggersList className="mb-5" aria-label="Health">
           {seesWorkers && (
             <TabTrigger value="workers" icon="settings">
@@ -222,7 +230,7 @@ export function Health() {
             </TabTrigger>
           )}
           {seesRepairs && (
-            <TabTrigger value="repairs" icon="settings">
+            <TabTrigger value="repairs" icon="refresh">
               {HEALTH_TABS.repairs}
             </TabTrigger>
           )}

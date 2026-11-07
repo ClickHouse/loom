@@ -1,4 +1,6 @@
 import { cleanup, render, screen } from "../../test/rtl";
+import userEvent from "@testing-library/user-event";
+import * as api from "../../api/maintenance";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../lib/state";
 import { NamespaceHealthPanel } from "./NamespaceHealth";
@@ -10,12 +12,9 @@ vi.mock("../../api/maintenance", async (importOriginal) => {
     getMemoryHealth: vi.fn(async () => ({
       live: 120,
       recalled_ever: 80,
-      used_ever: 40,
-      silent: 30,
       silent_share: 0.25,
       silent_after_days: 30,
-      by_type: [],
-      staleness: { expiring_7d: 2, pinned: 1, days_since_reinforced_p50: 4 },
+      staleness: { expiring_7d: 2 },
     })),
     getCalibration: vi.fn(async () => ({
       source: "namespace",
@@ -45,15 +44,35 @@ vi.mock("../../api/maintenance", async (importOriginal) => {
 });
 
 beforeEach(() => useStore.setState({ identity: { org: "acme", namespace: "team", agent: "loom-ui" } }));
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 
 describe("NamespaceHealthPanel", () => {
-  it("shows the namespace's recall, its search gates and the waiting extractions", async () => {
+  it("shows the namespace's recall, its search gates and its recent extractions", async () => {
     render(<NamespaceHealthPanel />);
     expect(await screen.findByText("25%")).toBeInTheDocument();
     expect(screen.getByText("bge-small")).toBeInTheDocument();
     expect(screen.getByText("0.310")).toBeInTheDocument();
-    expect(screen.getByText("1 pending · 0 failed")).toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "Waiting extractions" })).toBeInTheDocument();
+    expect(screen.getByText("From this namespace's calibration.")).toBeInTheDocument();
+    expect(screen.getByText("The newest 1: 1 pending · 0 failed")).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Recent extractions" })).toBeInTheDocument();
+  });
+
+  it("keeps the other sections when one read fails, and Retry reads that one again", async () => {
+    vi.mocked(api.getCalibration).mockRejectedValueOnce(new Error("down"));
+    render(<NamespaceHealthPanel />);
+    expect(await screen.findByText("25%")).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("bge-small")).toBeInTheDocument();
+    expect(api.getCalibration).toHaveBeenCalledTimes(2);
+    expect(api.getMemoryHealth).toHaveBeenCalledTimes(1);
+  });
+
+  it("says when no transcript was queued", async () => {
+    vi.mocked(api.getExtractionBatches).mockResolvedValueOnce({ pending: 0, failed: 0, batches: [] });
+    render(<NamespaceHealthPanel />);
+    expect(await screen.findByText("No transcript was queued for extraction.")).toBeInTheDocument();
   });
 });

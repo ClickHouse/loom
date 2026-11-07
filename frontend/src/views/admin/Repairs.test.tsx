@@ -35,8 +35,28 @@ describe("RepairsPanel", () => {
     await waitFor(() => expect(api.sweepExpired).toHaveBeenCalledTimes(2));
     expect(vi.mocked(api.sweepExpired).mock.calls.map((c) => c[1])).toEqual([true, false]);
     expect(confirmAction).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Apply the expiry of 2 memories now?" }),
+      expect.objectContaining({ title: "Apply the expiry of 2 memories in team now?" }),
     );
+  });
+
+  it("applies nothing when no memory is due, or when the confirmation is declined", async () => {
+    vi.mocked(api.sweepExpired).mockResolvedValueOnce({
+      scanned: 9,
+      tombstoned: 0,
+      demoted: 0,
+      anonymized: 0,
+      locked_skipped: 0,
+    });
+    render(<RepairsPanel />);
+    const apply = screen.getByRole("button", { name: "Apply expiries now" });
+    await userEvent.click(apply);
+    await waitFor(() => expect(api.sweepExpired).toHaveBeenCalledTimes(1));
+    expect(confirmAction).not.toHaveBeenCalled();
+    vi.mocked(confirmAction).mockResolvedValueOnce(false);
+    await userEvent.click(apply);
+    await waitFor(() => expect(confirmAction).toHaveBeenCalled());
+    // The second dry run, and no write after the declined confirmation.
+    expect(vi.mocked(api.sweepExpired).mock.calls.map((c) => c[1])).toEqual([true, true]);
   });
 
   it("removes one extractor's facts once it is named", async () => {
@@ -66,5 +86,6 @@ describe("RepairsPanel", () => {
     const file = new File([JSON.stringify({ snapshot_id: "s1" })], "team.json", { type: "application/json" });
     await userEvent.upload(screen.getByLabelText("Snapshot file"), file);
     await waitFor(() => expect(api.restoreNamespace).toHaveBeenCalledWith("acme", "team", { snapshot_id: "s1" }));
+    expect(confirmAction).toHaveBeenCalledWith(expect.objectContaining({ danger: true }));
   });
 });

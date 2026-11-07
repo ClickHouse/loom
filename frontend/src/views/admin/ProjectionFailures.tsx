@@ -9,16 +9,18 @@ import {
 } from "../../api/maintenance";
 import { useIdentity } from "../../lib/state";
 import { useAbortableEffect } from "../../lib/hooks";
-import { humanizeError } from "../../lib/format";
-import { toast } from "../../components/Toast";
+import { toast, toastError } from "../../components/Toast";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
 import { TableSkeleton } from "../../components/Skeleton";
 
+// The server's default list page; a full page means there are more.
+const FAILURE_LIST_LIMIT = 100;
+
 /**
  * Projection failures: derived rows (an embedding, a graph edge, a summary) a write
- * could not produce. Retry runs them again for this namespace; Dismiss marks one resolved
+ * could not produce. Retry runs the newest 50 again for this namespace; Dismiss marks one resolved
  * without retrying it. The ops are ORG_ADMIN.
  */
 export function ProjectionFailuresPanel() {
@@ -32,8 +34,9 @@ export function ProjectionFailuresPanel() {
   useAbortableEffect(
     (signal, live) => {
       setError(null);
+      setRows(null);
       listProjectionFailures(identity, { signal })
-        .then((r) => live() && setRows(r.rows ?? []))
+        .then((r) => live() && setRows(r.rows))
         .catch((e) => live() && setError(e));
     },
     [identity.org, identity.namespace, reload],
@@ -45,7 +48,7 @@ export function ProjectionFailuresPanel() {
       toast(await work(), "ok");
       refresh();
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Projection failures", e);
     } finally {
       setBusy(false);
     }
@@ -73,7 +76,11 @@ export function ProjectionFailuresPanel() {
     );
   return (
     <>
-      <ListToolbar label="Projection failures" search={false} count={rows ? `${rows.length} open` : undefined}>
+      <ListToolbar
+        label="Projection failures"
+        search={false}
+        count={rows ? `${rows.length === FAILURE_LIST_LIMIT ? `${rows.length}+` : rows.length} open` : undefined}
+      >
         <Button
           type="secondary"
           htmlType="button"
@@ -81,7 +88,7 @@ export function ProjectionFailuresPanel() {
           disabled={busy || !rows}
           onClick={() => void retry()}
         >
-          Retry all
+          Retry failures
         </Button>
       </ListToolbar>
       <Table

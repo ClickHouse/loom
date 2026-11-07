@@ -6,7 +6,7 @@ import {
   getExtractionBatches,
   getMemoryHealth,
   type Calibration,
-  type ExtractionBatch,
+  type ExtractionBatches,
   type MemoryHealth,
 } from "../../api/maintenance";
 import { useIdentity } from "../../lib/state";
@@ -16,106 +16,138 @@ import { ListState } from "../../components/ui/ListState";
 import { Loading, MetaList, MetaRow, Panel, SectionHeading, Stat } from "../../components/ui";
 import { ListTime } from "../../components/ui/ListTime";
 
+// What each calibration tier is, for the caption over the gates.
+const CALIBRATION_FROM: Record<string, string> = {
+  namespace: "this namespace's calibration",
+  cluster: "the cluster's calibration",
+  scalar: "the default settings",
+};
+
+type Read<T> = { value: T } | { error: unknown } | null;
+
+/** One read per section, so a failed one leaves the others on screen. */
+function useRead<T>(read: (signal: AbortSignal) => Promise<T>, deps: unknown[]): [Read<T>, () => void] {
+  const [state, setState] = useState<Read<T>>(null);
+  const [reload, setReload] = useState(0);
+  useAbortableEffect(
+    (signal, live) => {
+      setState(null);
+      read(signal)
+        .then((value) => live() && setState({ value }))
+        .catch((error) => live() && setState({ error }));
+    },
+    [...deps, reload],
+  );
+  return [state, () => setReload((n) => n + 1)];
+}
+
 /**
  * One namespace's own health: how much of what it stores is ever recalled
  * (memory.health), the similarity gates its searches run under (calibration.get), and
- * the transcripts still waiting for extraction (memory.extraction_status).
+ * its newest extraction batches (memory.extraction_status).
  */
 export function NamespaceHealthPanel() {
   const identity = useIdentity();
-  const [health, setHealth] = useState<MemoryHealth | null>(null);
-  const [calibration, setCalibration] = useState<Calibration | null>(null);
-  const [batches, setBatches] = useState<{ rows: ExtractionBatch[]; pending: number; failed: number } | null>(null);
-  const [error, setError] = useState<unknown>(null);
-  const [reload, setReload] = useState(0);
+  const deps = [identity.org, identity.namespace];
+  const [health, rereadHealth] = useRead((signal) => getMemoryHealth(identity, { signal }), deps);
+  const [calibration, rereadCalibration] = useRead((signal) => getCalibration(identity, { signal }), deps);
+  const [batches, rereadBatches] = useRead((signal) => getExtractionBatches(identity, { signal }), deps);
 
-  useAbortableEffect(
-    (signal, live) => {
-      setError(null);
-      setHealth(null);
-      Promise.all([
-        getMemoryHealth(identity, { signal }),
-        getCalibration(identity, { signal }),
-        getExtractionBatches(identity, { signal }),
-      ])
-        .then(([h, c, b]) => {
-          if (!live()) return;
-          setHealth(h);
-          setCalibration(c);
-          setBatches({ rows: b.batches ?? [], pending: b.pending, failed: b.failed });
-        })
-        .catch((e) => live() && setError(e));
-    },
-    [identity.org, identity.namespace, reload],
-  );
-
-  if (error)
-    return <ListState kind="error" things="namespace health" error={error} onRetry={() => setReload((n) => n + 1)} />;
-  if (!health || !calibration || !batches) return <Loading label="Loading namespace health" />;
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Stat label="Live memories" value={health.live.toLocaleString()} />
-        <Stat label="Ever recalled" value={health.recalled_ever.toLocaleString()} />
-        <Stat
-          label="Silent"
-          value={`${Math.round(health.silent_share * 100)}%`}
-          hint={`not recalled in ${health.silent_after_days} days`}
-        />
-        <Stat label="Expiring in 7 days" value={health.staleness.expiring_7d.toLocaleString()} />
-      </div>
-      <Panel>
-        <SectionHeading label="Search gates" level={2} caption={`From the ${calibration.source} calibration.`} />
-        <MetaList className="mt-2">
-          <MetaRow label="Embedder" mono>
-            {calibration.embedder_model || "—"}
-          </MetaRow>
-          <MetaRow label="Noise floor">{calibration.noise_floor.toFixed(3)}</MetaRow>
-          <MetaRow label="Abstain below">{calibration.abstain_threshold.toFixed(3)}</MetaRow>
-          <MetaRow label="Conflict above">{calibration.conflict_threshold.toFixed(3)}</MetaRow>
-          <MetaRow label="Duplicate above">{calibration.duplicate_threshold.toFixed(3)}</MetaRow>
-        </MetaList>
-      </Panel>
-      <section>
-        <SectionHeading
-          label="Waiting extractions"
-          level={2}
-          caption={`${batches.pending} pending · ${batches.failed} failed`}
-        />
-        {batches.rows.length === 0 ? (
-          <p className="text-sm text-text-muted">No transcript is waiting for extraction.</p>
-        ) : (
-          <Table
-            aria-label="Waiting extractions"
-            size="sm"
-            headers={[
-              { label: "Agent" },
-              { label: "Status", width: "120px" },
-              { label: "Messages", width: "100px" },
-              { label: "Written", width: "90px" },
-              { label: "Queued", width: "110px" },
-            ]}
-            rows={batches.rows.map((b) => ({
-              id: b.queue_id,
-              items: [
-                { label: <AgentBadge agent={b.agent} /> },
-                {
-                  label: (
-                    <Badge
-                      text={b.status}
-                      state={b.status === "failed" ? "danger" : b.status === "done" ? "success" : "neutral"}
-                      size="sm"
-                    />
-                  ),
-                },
-                { label: <span className="tabular">{b.message_count}</span> },
-                { label: <span className="tabular">{b.written}</span> },
-                { label: b.enqueued_at ? <ListTime time={b.enqueued_at} quiet /> : "—" },
-              ],
-            }))}
-          />
-        )}
-      </section>
+      {section(health, "memory report", rereadHealth, (h) => (
+        <MemoryReport health={h} />
+      ))}
+      {section(calibration, "search gates", rereadCalibration, (c) => (
+        <SearchGates calibration={c} />
+      ))}
+      {section(batches, "extraction batches", rereadBatches, (b) => (
+        <Extractions batches={b} />
+      ))}
     </div>
+  );
+}
+
+function section<T>(read: Read<T>, things: string, retry: () => void, show: (value: T) => React.ReactNode) {
+  if (read === null) return <Loading label={`Loading ${things}`} />;
+  if ("error" in read) return <ListState kind="error" things={things} error={read.error} onRetry={retry} />;
+  return show(read.value);
+}
+
+function MemoryReport({ health }: { health: MemoryHealth }) {
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <Stat label="Live memories" value={health.live.toLocaleString()} />
+      <Stat label="Ever recalled" value={health.recalled_ever.toLocaleString()} />
+      <Stat
+        label="Silent"
+        value={`${Math.round(health.silent_share * 100)}%`}
+        hint={`not recalled in ${health.silent_after_days} days`}
+      />
+      <Stat label="Expiring in 7 days" value={health.staleness.expiring_7d.toLocaleString()} />
+    </div>
+  );
+}
+
+function SearchGates({ calibration }: { calibration: Calibration }) {
+  const from = CALIBRATION_FROM[calibration.source] ?? `the ${calibration.source} calibration`;
+  return (
+    <Panel>
+      <SectionHeading label="Search gates" level={2} caption={`From ${from}.`} />
+      <MetaList className="mt-2">
+        <MetaRow label="Embedder" mono>
+          {calibration.embedder_model || "—"}
+        </MetaRow>
+        <MetaRow label="Noise floor">{calibration.noise_floor.toFixed(3)}</MetaRow>
+        <MetaRow label="Abstain below">{calibration.abstain_threshold.toFixed(3)}</MetaRow>
+        <MetaRow label="Conflict above">{calibration.conflict_threshold.toFixed(3)}</MetaRow>
+        <MetaRow label="Duplicate above">{calibration.duplicate_threshold.toFixed(3)}</MetaRow>
+      </MetaList>
+    </Panel>
+  );
+}
+
+function Extractions({ batches }: { batches: ExtractionBatches }) {
+  return (
+    <section>
+      <SectionHeading
+        label="Recent extractions"
+        level={2}
+        caption={`The newest ${batches.batches.length}: ${batches.pending} pending · ${batches.failed} failed`}
+      />
+      {batches.batches.length === 0 ? (
+        <p className="text-sm text-text-muted">No transcript was queued for extraction.</p>
+      ) : (
+        <Table
+          aria-label="Recent extractions"
+          size="sm"
+          headers={[
+            { label: "Agent" },
+            { label: "Status", width: "120px" },
+            { label: "Messages", width: "100px" },
+            { label: "Written", width: "90px" },
+            { label: "Queued", width: "110px" },
+          ]}
+          rows={batches.batches.map((b) => ({
+            id: b.queue_id,
+            items: [
+              { label: <AgentBadge agent={b.agent} /> },
+              {
+                label: (
+                  <Badge
+                    text={b.status}
+                    state={b.status === "failed" ? "danger" : b.status === "done" ? "success" : "neutral"}
+                    size="sm"
+                  />
+                ),
+              },
+              { label: <span className="tabular">{b.message_count}</span> },
+              { label: <span className="tabular">{b.written}</span> },
+              { label: b.enqueued_at ? <ListTime time={b.enqueued_at} quiet /> : "—" },
+            ],
+          }))}
+        />
+      )}
+    </section>
   );
 }

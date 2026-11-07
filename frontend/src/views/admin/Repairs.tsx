@@ -10,9 +10,9 @@ import {
   sweepExpired,
 } from "../../api/maintenance";
 import { useIdentity } from "../../lib/state";
-import { humanizeError } from "../../lib/format";
+import { saveJson } from "../../lib/download";
 import { confirmAction } from "../../components/ConfirmDialog";
-import { toast } from "../../components/Toast";
+import { toast, toastError } from "../../components/Toast";
 import { Panel, SectionHeading } from "../../components/ui";
 import { DateTimeField } from "../../flows/TaskDialogFrame";
 
@@ -32,7 +32,7 @@ export function RepairsPanel() {
     try {
       await work();
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Repair failed", e);
     } finally {
       setBusy(false);
     }
@@ -43,7 +43,13 @@ export function RepairsPanel() {
       const preview = await sweepExpired(identity, true);
       const due = preview.tombstoned + preview.demoted + preview.anonymized;
       if (due === 0) return toast("No memory is past its expiry.", "info");
-      if (!(await confirmAction({ title: `Apply the expiry of ${due} memories now?`, confirmLabel: "Apply" }))) return;
+      if (
+        !(await confirmAction({
+          title: `Apply the expiry of ${due} memories in ${identity.namespace} now?`,
+          confirmLabel: "Apply",
+        }))
+      )
+        return;
       const r = await sweepExpired(identity, false);
       toast(`Expired ${r.tombstoned + r.demoted + r.anonymized}; ${r.locked_skipped} locked kept`, "ok");
     });
@@ -51,7 +57,7 @@ export function RepairsPanel() {
   const reembed = () =>
     run(async () => {
       const ok = await confirmAction({
-        title: "Re-embed memories made by another embedding model?",
+        title: `Re-embed the memories in ${identity.namespace} made by another embedding model?`,
         message: "Up to 200 a run; each is one embedding call.",
         confirmLabel: "Re-embed",
       });
@@ -64,14 +70,14 @@ export function RepairsPanel() {
     run(async () => {
       const name = adapter.trim();
       const ok = await confirmAction({
-        title: `Remove the graph facts the ${name} extractor wrote?`,
+        title: `Remove the graph facts the ${name} extractor wrote in ${identity.namespace}?`,
         message: "The memories they came from stay.",
         confirmLabel: "Remove facts",
         danger: true,
       });
       if (!ok) return;
       const r = await expireAdapterFacts(identity, name);
-      toast(`Removed ${r.expired_triples} facts from ${r.expired_triple_memories} memories`, "ok");
+      toast(`Removed ${r.expired_triples} facts and ${r.expired_triple_memories} memory links`, "ok");
       setAdapter("");
     });
 
@@ -83,26 +89,19 @@ export function RepairsPanel() {
       const more = preview.truncated ? " (the first 5,000 keys)" : "";
       const ok = await confirmAction({
         title: `Roll ${identity.namespace} back to ${asOf.replace("T", " ")}?`,
-        message: `${preview.reinstate} memories go back to their version then and ${preview.remove} written since are deleted${more}.`,
+        message: `${preview.reinstate} memories go back to their version then and ${preview.remove} created since are deleted${more}.`,
         confirmLabel: "Roll back",
         danger: true,
       });
       if (!ok) return;
       const r = await rollbackNamespace(identity, at, false);
-      toast(`Rolled back: ${r.reinstate} reinstated, ${r.remove} removed`, "ok");
+      const rest = r.truncated ? "; run it again for the rest" : "";
+      toast(`Rolled back: ${r.reinstate} reinstated, ${r.remove} removed${rest}`, "ok");
     });
 
   const download = () =>
     run(async () => {
-      const snapshot = await snapshotNamespace(identity);
-      const url = URL.createObjectURL(new Blob([JSON.stringify(snapshot)], { type: "application/json" }));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${identity.namespace}-snapshot.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      saveJson(await snapshotNamespace(identity), `${identity.namespace}-snapshot.json`);
     });
 
   const restore = (file: File) =>
@@ -110,8 +109,10 @@ export function RepairsPanel() {
       const payload: unknown = JSON.parse(await file.text());
       const ok = await confirmAction({
         title: `Restore ${file.name} into ${identity.namespace}?`,
-        message: "Its memories, types and grants are written here; nothing here is deleted.",
+        message:
+          "Its memories replace their current versions here, deleted ones come back, and its grants are active again, including any revoked since.",
         confirmLabel: "Restore",
+        danger: true,
       });
       if (!ok) return;
       const r = await restoreNamespace(identity.org, identity.namespace, payload);
