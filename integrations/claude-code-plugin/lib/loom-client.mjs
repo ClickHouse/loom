@@ -48,11 +48,15 @@ export function recordRoundTrip(serverUrl, rttMs) {
   writeJsonFile(rttCachePath(tmpdir(), serverUrl), { rtt_ms: Math.round(Number(rttMs)), ts: Date.now() });
 }
 
-/** One GET /v1/health round trip in ms, or null. Bounded by the default. */
-export async function measureRoundTrip(serverUrl) {
+/** One `GET /v1/health` (SessionStart): `ms` is the round trip when it
+ *  answered 2xx, else null; `body` is the parsed answer, or null. */
+export async function probeHealth(serverUrl) {
   const started = Date.now();
-  const res = await requestJson(`${serverUrl}/v1/health`, { method: "GET", timeoutMs: DEFAULT_BOUND_MS });
-  return res.status >= 200 && res.status < 300 ? Date.now() - started : null;
+  // Waited for beside the primer, so a lower LOOM_HOOK_TIMEOUT_MS bounds it too.
+  const timeoutMs = Math.min(DEFAULT_BOUND_MS, requestTimeoutMs());
+  const res = await requestJson(`${serverUrl}/v1/health`, { method: "GET", timeoutMs });
+  const ok = res.status >= 200 && res.status < 300;
+  return { ms: ok ? Date.now() - started : null, body: ok ? res.body : null };
 }
 
 // --- switches and numbers from the environment ------------------------------

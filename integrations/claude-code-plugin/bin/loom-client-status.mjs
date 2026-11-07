@@ -16,6 +16,7 @@ import {
   tokenLookup,
 } from "../lib/loom-client.mjs";
 import { entryIsFixed, sameServer, statusServerUrl } from "../lib/plugin-options.mjs";
+import { serverVersionMessage } from "../lib/server-version.mjs";
 
 const FLUSH_RE = /^loom-flush-\d{13}-\d+\.json$/;
 const WRITER_ROLES = new Set(["writer", "admin", "jwt", "org_admin", "platform_admin"]);
@@ -59,6 +60,9 @@ export async function clientStatus({
   const health = await requestJson(`${serverUrl}/v1/health`, { method: "GET", timeoutMs: 5000, fetchImpl });
   if (health.status === 200) {
     add("server", "PASS", `${serverUrl} answers; build ${health.body?.build_commit || "unknown"}`);
+    // The SessionStart line, here too: a check only when the server is older.
+    const older = serverVersionMessage(health.body, { serverUrl });
+    if (older) add("server version", "WARN", older);
   } else {
     add(
       "server",

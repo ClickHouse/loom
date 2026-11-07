@@ -15,7 +15,7 @@ from typing import Any, cast
 from fastapi import APIRouter
 from fastapi.responses import Response
 
-from server import boot
+from server import __version__, boot
 from server.operations.capabilities import SCHEMA_VERSION
 from server.settings import settings
 
@@ -331,6 +331,9 @@ async def health(response: Response, include: str = "") -> dict[str, object]:
     if not ch_ok:
         response.status_code = 503
     out: dict[str, object] = {
+        # The server's release, which a coding-agent plugin compares with the
+        # minimum its manifest declares.
+        "version": __version__,
         "schema_version": SCHEMA_VERSION,
         "build_commit": settings.build_commit or "unknown",
         # The process (hostname:pid) and the launcher's label, the same
