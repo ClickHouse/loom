@@ -2,6 +2,7 @@
 // in that view's chunk and the shell evaluates only the functions it calls. Importers
 // still import from `api.ts`.
 import { post } from "../api";
+import type { Identity } from "../api";
 
 // ---------------------------------------------------------------------------
 // Run ledger: one row per agent execution — goal → recalled → used → written → cost → outcome. Wire shapes mirror server/tasks/api/models_run.py.
@@ -117,4 +118,21 @@ export async function listRuns(id: { org: string; namespace: string }, opts: Run
 
 export async function getRun(id: { org: string; namespace: string }, runId: string): Promise<RunGetResponse> {
   return post<RunGetResponse>("/v1/run.get", { org: id.org, namespace: id.namespace, run_id: runId });
+}
+
+/** POST /v1/run.grade: whether a closed run's result held up, from the person who knows. */
+export async function gradeRun(
+  id: Pick<Identity, "org" | "namespace">,
+  runId: string,
+  grade: "pass" | "fail",
+  reason: string,
+): Promise<{ graded: number; skipped_active: number }> {
+  return post("/v1/run.grade", {
+    org: id.org,
+    namespace: id.namespace,
+    run_id: runId,
+    grade,
+    reason,
+    source: "dashboard",
+  });
 }

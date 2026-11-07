@@ -86,6 +86,7 @@ import {
 } from "../api";
 import { invalidateShared, sharedHealth, sharedIndexStatus } from "../lib/sharedReads";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
+import { CodeReindexDialog } from "../flows/CodeReindexDialog";
 import { joinTarget, withdrawTarget, leaveTarget, type JoinTarget } from "../lib/joinActions";
 import { freshness, type Fresh } from "../lib/codeFreshness";
 import { tierCards, type TierIcon } from "../lib/compilerTiers";
@@ -414,6 +415,7 @@ function RepositoriesHome({
   const actions = useJoinActions(onChanged);
   const phone = useMedia(PHONE_QUERY);
   const [requesting, setRequesting] = useState<{ repo: CodeRepoSummary; role: RepoRole } | null>(null);
+  const [reindexing, setReindexing] = useState<CodeRepoSummary | null>(null);
   const [adding, setAdding] = useState(false);
   const { problem: sandbox, recheck: recheckSandbox } = useSandboxProblem();
   const canAdd = sandbox === null;
@@ -573,6 +575,7 @@ function RepositoriesHome({
       onManage: setManaging,
       onAddBranch: canAdd ? setAddingBranch : undefined,
       onRefresh: (b) => void handlers.current.refreshBranch(b),
+      onReindex: setReindexing,
       onRemove: (b) => void handlers.current.removeBranch(b),
       onSetAccess: (g, classification, join_policy, opening) =>
         void handlers.current.setAccess(g, classification, join_policy, opening),
@@ -761,6 +764,7 @@ function RepositoriesHome({
         />
       )}
 
+      {reindexing && <CodeReindexDialog branch={reindexing} onClose={() => setReindexing(null)} />}
       <JoinDialog
         target={requesting}
         onOpenChange={(v) => {

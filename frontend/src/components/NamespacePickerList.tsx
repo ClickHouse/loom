@@ -9,6 +9,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
@@ -566,6 +567,7 @@ function NamespaceRow({
           <span className="text-sm truncate block">{first}</span>
           {second && <span className="text-xs text-text-muted truncate block">{second}</span>}
         </span>
+        {r.is_new && <Badge text="New" state="info" size="sm" />}
         <VisibilityBadge v={r.visibility} />
       </button>
       {pendingRole && (

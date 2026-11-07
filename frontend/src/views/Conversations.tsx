@@ -32,6 +32,7 @@ import { SessionBriefsSection } from "../components/SessionBriefsSection";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { ThreadReplayDialog, threadTitle, UNTITLED_THREAD, type ReplayThread } from "../components/ThreadReplayDialog";
+import { ThreadActions } from "../flows/ThreadActions";
 
 const THREADS_PAGE = 30;
 
@@ -325,6 +326,8 @@ export function Conversations() {
   }, [pendingConversationThread, openThreadDialog, clearPendingConversationThread]);
 
   const canSetLogging = canCall("conversation.set_logging", roleHere, whoami);
+  const canRenameThread = canCall("conversation.update", roleHere, whoami);
+  const canDeleteThread = canCall("conversation.delete", roleHere, whoami);
 
   const toggleLogging = async () => {
     if (loggingEnabled === null) return;
@@ -434,6 +437,13 @@ export function Conversations() {
                     </span>
                   </span>
                 </button>
+                <ThreadActions
+                  identity={identity}
+                  thread={{ thread_id: t.thread_id, agent: t.agent, title }}
+                  canRename={canRenameThread}
+                  canDelete={canDeleteThread}
+                  onChanged={() => setThreadsRetry((n) => n + 1)}
+                />
               </ListRow>
             );
           })}

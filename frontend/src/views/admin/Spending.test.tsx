@@ -19,6 +19,7 @@ vi.mock("../../api", async (importOriginal) => {
     getBudgetStatus: vi.fn(),
     getNamespace: vi.fn(),
     reregisterNamespace: vi.fn(),
+    getAgentSpend: vi.fn(async () => ({ rows: [], total_cost_usd: 0, total_turns: 0, unpriced_turns: 0 })),
   };
 });
 

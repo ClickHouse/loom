@@ -1184,6 +1184,12 @@ export interface MyNamespaceEntry {
   is_new: boolean;
 }
 
+/** POST /v1/namespace.mark_seen: the caller opened `namespace`, so list_mine stops
+ *  calling it new. */
+export async function markNamespaceSeen(org: string, namespace: string): Promise<unknown> {
+  return post("/v1/namespace.mark_seen", { org, namespace });
+}
+
 export async function listMine(org: string, opts: RequestOpts = {}): Promise<MyNamespaceEntry[]> {
   const r = await post<{ rows: MyNamespaceEntry[] }>("/v1/namespace.list_mine", { org }, opts.signal);
   return r.rows;
@@ -1403,6 +1409,20 @@ export async function browseNamespaces(
   if (opts.includeClosed) body["include_closed"] = true;
   const r = await post<{ rows: BrowseEntry[] }>("/v1/namespace.browse", body, opts.signal);
   return r.rows;
+}
+
+/** One saved revision of a namespace's guide, without its text (`namespace.guide_history`). */
+export interface GuideRevision {
+  revision: number;
+  summary: string;
+  note: string;
+  updated_by: string;
+  updated_at: string;
+}
+
+export async function guideHistory(org: string, namespace: string, opts: RequestOpts = {}): Promise<GuideRevision[]> {
+  const r = await post<{ revisions: GuideRevision[] }>("/v1/namespace.guide_history", { org, namespace }, opts.signal);
+  return r.revisions ?? [];
 }
 
 /** A namespace's guide (`namespace.guide_get`); `revision` 0 when it never had one. */

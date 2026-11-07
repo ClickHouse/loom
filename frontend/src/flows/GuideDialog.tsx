@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { getNamespaceGuide, saveNamespaceGuide, type NamespaceGuide } from "../api";
+import { getNamespaceGuide, guideHistory, saveNamespaceGuide, type GuideRevision, type NamespaceGuide } from "../api";
 import { toast } from "../components/Toast";
 import { Alert, Loading, Unavailable } from "../components/ui";
 import { Modal, ModalFooter } from "../components/ui/Modal";
@@ -133,6 +133,7 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
               <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded border border-border p-3 font-mono text-xs text-text">
                 {guide.content}
               </pre>
+              {guide.revision > 1 && <GuideHistory org={org} namespace={namespace} />}
             </>
           ) : (
             <p className="text-sm text-text-muted">
@@ -205,5 +206,53 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
         </form>
       )}
     </Modal>
+  );
+}
+
+/** The guide's earlier revisions, read when opened: who changed it, when and why. */
+function GuideHistory({ org, namespace }: { org: string; namespace: string }) {
+  const [open, setOpen] = useState(false);
+  const [revisions, setRevisions] = useState<GuideRevision[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open || revisions !== null) return;
+    let live = true;
+    guideHistory(org, namespace)
+      .then((r) => live && setRevisions(r))
+      .catch((e) => live && setError(humanizeError(e)));
+    return () => {
+      live = false;
+    };
+  }, [open, revisions, org, namespace]);
+  return (
+    <section>
+      <Button
+        type="empty"
+        htmlType="button"
+        iconLeft={open ? "chevron-down" : "chevron-right"}
+        aria-expanded={open}
+        aria-controls="guide-history"
+        onClick={() => setOpen((o) => !o)}
+      >
+        History
+      </Button>
+      {open && (
+        <div id="guide-history" className="mt-1">
+          {error && <Alert role="alert" state="danger" text={error} />}
+          {!error && revisions === null && <Loading label="Loading the history" />}
+          <ul className="space-y-1 text-xs">
+            {revisions?.map((r) => (
+              <li key={r.revision}>
+                <span className="text-text-muted">
+                  Revision {r.revision}
+                  {r.updated_by ? ` by ${r.updated_by}` : ""}, {relativeTime(r.updated_at)}
+                </span>
+                {(r.note || r.summary) && <span className="text-text"> — {r.note || r.summary}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
   );
 }

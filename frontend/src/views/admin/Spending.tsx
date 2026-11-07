@@ -30,6 +30,7 @@ import { Tip } from "../../components/ui/Tooltip";
 import { displayAgent, humanizeError, SENTINEL_AGENTS } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
+import { AgentSpend } from "./AgentSpend";
 import { Alert, LoadingSkeleton, PageHeader, Stat } from "../../components/ui";
 
 /**
@@ -447,6 +448,7 @@ export function Spending() {
           )}
         </>
       )}
+      <AgentSpend />
     </PageContainer>
   );
 }

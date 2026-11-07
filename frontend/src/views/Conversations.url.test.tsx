@@ -58,7 +58,7 @@ describe("Conversations keeps the open thread in its URL", () => {
     history.replaceState(null, "", "/conversations");
     const before = history.length;
     render(<Conversations />);
-    await userEvent.click(await screen.findByRole("button", { name: /Deploy chat/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /^Deploy chat/ }));
     const dialog = await screen.findByRole("dialog", { name: "Deploy chat" });
     expect(location.search).toBe("?thread=t-7");
     await userEvent.click(within(dialog).getByRole("button", { name: /close/i }));

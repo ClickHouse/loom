@@ -2,7 +2,7 @@ import { Suspense, forwardRef, lazy, useEffect, useRef, useState, type Component
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Popover } from "@clickhouse/click-ui/Popover";
-import { setSavedNamespace, isAuthDisabled } from "../api";
+import { markNamespaceSeen, setSavedNamespace, isAuthDisabled } from "../api";
 import { invalidateShared } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
 import { WILDCARD_NAMESPACE } from "../lib/namespace";
@@ -91,6 +91,13 @@ function NamespacePickerMenu() {
 
   const onPick = (ns: string) => {
     if (!identity) return;
+    // A namespace someone just shared is badged New until it is opened once.
+    if (stored?.find((r) => r.namespace === ns)?.is_new) {
+      useStore.getState().setMyNamespaces(stored.map((r) => (r.namespace === ns ? { ...r, is_new: false } : r)));
+      markNamespaceSeen(identity.org, ns)
+        .then(() => invalidateShared("mine:"))
+        .catch(() => {});
+    }
     setIdentity({ ...identity, namespace: ns });
     setSavedNamespace(ns);
     setOpen(false);

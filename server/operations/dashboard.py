@@ -229,19 +229,5 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
 
 DASHBOARD_PENDING: frozenset[str] = frozenset(
     {
-        # health and maintenance
-        "code.calibrate",
-        "code.reindex",
-        # pages of their own
-        "conversation.delete",
-        "conversation.update",
-        "cost.agent_summary",
-        "grants.share_agent",
-        "grants.unshare_agent",
-        "namespace.guide_history",
-        "namespace.mark_seen",
-        "procedure.list",
-        "run.grade",
-        "session.brief_delete",
     }
 )

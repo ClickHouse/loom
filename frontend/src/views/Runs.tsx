@@ -45,6 +45,9 @@ import { ListState } from "../components/ui/ListState";
 import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { DraftSearch } from "../components/ui/DraftSearch";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
+import { RunGrade } from "../flows/RunGrade";
+import { canCall } from "../lib/canCall";
+import { useNamespaceRole } from "../lib/namespaceRole";
 
 // The ten fields a run row reads of the twenty a run carries; the replay reads the rest
 // (the request, the expected outcome, the response, the confidence) from run.get.
@@ -529,6 +532,12 @@ interface Shown {
 
 export function Runs() {
   const identity = useIdentity();
+  // A closed run's grade is WRITER.
+  const canGrade = canCall(
+    "run.grade",
+    useNamespaceRole(identity.namespace),
+    useStore((s) => s.whoami),
+  );
   // Below Tailwind's sm breakpoint the toolbar holds the search alone; below Click UI's
   // table breakpoint the runs are list rows.
   const phone = useMedia(PHONE_QUERY);
@@ -1133,6 +1142,11 @@ export function Runs() {
           {replayed?.final_response && (
             <Section title="Final response">
               <div className="text-sm whitespace-pre-wrap">{replayed.final_response}</div>
+            </Section>
+          )}
+          {open && open.status !== "active" && canGrade && (
+            <Section title="Did it hold up?">
+              <RunGrade key={open.run_id} identity={identity} runId={open.run_id} />
             </Section>
           )}
           {open && Object.keys(open.metadata || {}).length > 0 && (

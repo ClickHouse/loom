@@ -220,3 +220,29 @@ export async function reviewLearning(
     reason,
   });
 }
+
+/** POST /v1/conversation.update: a thread's new title. */
+export async function renameThread(
+  id: Pick<Identity, "org" | "namespace">,
+  agent: string,
+  threadId: string,
+  title: string,
+): Promise<{ updated: boolean }> {
+  return post("/v1/conversation.update", { org: id.org, namespace: id.namespace, agent, thread_id: threadId, title });
+}
+
+/** POST /v1/conversation.delete (ADMIN): tombstones the thread and its messages; the
+ *  server asks for the thread id again as its confirmation. */
+export async function deleteThread(
+  id: Pick<Identity, "org" | "namespace">,
+  agent: string,
+  threadId: string,
+): Promise<{ total: number }> {
+  return post("/v1/conversation.delete", {
+    org: id.org,
+    namespace: id.namespace,
+    agent,
+    thread_id: threadId,
+    confirm_thread_id: threadId,
+  });
+}

@@ -267,6 +267,12 @@ export async function codeRefresh(
   return post("/v1/code.refresh", { ...id, agent: "loom-ui", wait: false });
 }
 
+/** POST /v1/code.reindex (ADMIN): move the index's git watermark to `gitHead`; the ingest
+ *  worker walks again from there. */
+export async function codeReindex(id: CodeId, gitHead: string): Promise<{ previous_head: string; new_head: string }> {
+  return post("/v1/code.reindex", { ...id, agent: "loom-ui", git_head: gitHead });
+}
+
 export interface CodeUnit {
   unit_id: string;
   path: string;

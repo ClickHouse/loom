@@ -34,18 +34,6 @@ AGENT_ONLY = {AGENT_STEP, CODE_QUESTION, TRACKER_QUESTION}
 # and nothing joins it.
 PENDING_AT_MOST = frozenset(
     {
-        "code.calibrate",
-        "code.reindex",
-        "conversation.delete",
-        "conversation.update",
-        "cost.agent_summary",
-        "grants.share_agent",
-        "grants.unshare_agent",
-        "namespace.guide_history",
-        "namespace.mark_seen",
-        "procedure.list",
-        "run.grade",
-        "session.brief_delete",
     }
 )
 

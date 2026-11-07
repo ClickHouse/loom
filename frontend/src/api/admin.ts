@@ -4,6 +4,32 @@
 import { post } from "../api";
 import type { Identity, RequestOpts } from "../api";
 
+/** One row of the coding agent's own spend (`server/insights/api/models_cost.py`). */
+export interface AgentSpendRow {
+  model: string | null;
+  turns: number;
+  sessions: number;
+  cost_usd: number;
+  unpriced_turns: number;
+}
+
+/** POST /v1/cost.agent_summary: what the coding agents spent themselves, by model, over
+ *  the last `days` (cost.summary prices what Loom spends upstream). */
+export async function getAgentSpend(
+  id: Pick<Identity, "org" | "namespace">,
+  days: number,
+  opts: RequestOpts = {},
+): Promise<{ rows: AgentSpendRow[]; total_cost_usd: number; total_turns: number; unpriced_turns: number }> {
+  const day = (d: Date) => d.toISOString().slice(0, 10);
+  const to = new Date();
+  const from = new Date(to.getTime() - days * 86_400_000);
+  return post(
+    "/v1/cost.agent_summary",
+    { org: id.org, namespace: id.namespace, from_date: day(from), to_date: day(to), group_by: ["model"] },
+    opts.signal,
+  );
+}
+
 // ===== Namespace usage audit =====
 
 export type NamespaceAuditSeverity = "info" | "warning" | "critical";

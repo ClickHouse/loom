@@ -345,6 +345,8 @@ export interface CodeActions {
   onAddBranch?: (facet: CodeFacet) => void;
   /** An ingest pass on a branch the person reads (`code.refresh`). */
   onRefresh?: (b: CodeRepoSummary) => void;
+  /** A maintainer moves a branch's watermark back to a commit (`code.reindex`). */
+  onReindex?: (b: CodeRepoSummary) => void;
   /** A maintainer retires a branch added from the dashboard (`code.repo.remove`). */
   onRemove?: (b: CodeRepoSummary) => void;
   /** A maintainer sets the repository's access (every branch it maintains). */
@@ -405,6 +407,9 @@ function branchMenu(b: CodeRepoSummary, actions: CodeActions, busy: boolean): Ro
     items.push({ label: "Request access", icon: "lock", onSelect: () => actions.onRequest(b, "viewer") });
   else if (st === "pending")
     items.push({ label: "Withdraw request", icon: "clock", onSelect: () => actions.onCancel(b) });
+  const reindex = actions.onReindex;
+  if (reindex && st === "member" && b.my_role === "admin")
+    items.push({ label: "Re-walk from a commit…", icon: "history", onSelect: () => reindex(b) });
   const remove = actions.onRemove;
   if (remove && b.my_role === "admin" && b.source === "registry")
     items.push({ label: "Remove branch", icon: "trash", danger: true, onSelect: () => remove(b) });
