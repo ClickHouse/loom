@@ -213,7 +213,7 @@ def _nested_model(annotation: Any) -> type[BaseModel] | None:
 def _digest(value: Any) -> dict[str, Any]:
     """A value's SHA-256 and length: a string's own UTF-8, anything else as the JSON
     `json.dumps(value, sort_keys=True)` writes (default separators)."""
-    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
+    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
     return {"sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "chars": len(text)}
 
 
