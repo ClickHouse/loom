@@ -17,7 +17,7 @@ it on a laptop.
 | Optional `<release>-publish`          | A pre-upgrade Job for a change that cannot roll ([below](#changing-what-cannot-roll)).                                                                        |
 | Optional `<release>-analytics-export` | A daily CronJob and its own ServiceAccount (`analyticsExport.enabled`, [below](#analytics-export)).                                                           |
 | Optional `<release>-extractor`        | The document extractor's Deployment, Service and NetworkPolicy (`extractor.enabled`, [below](#document-extractor)).                                           |
-| Optional NetworkPolicy `<release>`    | With `networkPolicy.enabled`, the pods' full policy; otherwise egress to all but the metadata service ([below](#instance-metadata-service)).                  |
+| NetworkPolicy `<release>`             | With `networkPolicy.enabled`, the full policy; else, unless `guardMetadata: false`, egress to all but `egressExcept` ([below](#instance-metadata-service)).   |
 | Optional dev ClickHouse               | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                                                                     |
 
 ## Before you install

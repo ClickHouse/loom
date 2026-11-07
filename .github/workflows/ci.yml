@@ -430,6 +430,7 @@ jobs:
           # guardMetadata is a bool; a string or number is refused by name, with the policy on or off.
           refused "networkPolicy.guardMetadata must be true or false" --set-string networkPolicy.guardMetadata=false
           refused "networkPolicy.guardMetadata must be true or false" --set networkPolicy.guardMetadata=0
+          refused "networkPolicy.guardMetadata must be true or false" --set networkPolicy.enabled=true --set-string networkPolicy.guardMetadata=true
       - name: install PyYAML for the render gates
         run: python3 -m pip install --quiet --user pyyaml==6.0.3
       # What the extractor's pods can be reached by and reach, read off the render.
