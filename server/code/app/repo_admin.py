@@ -519,9 +519,7 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
         exclude_generated=bool(getattr(src, "exclude_generated", True)),
         scip_producer=str(getattr(src, "scip_producer", "") or ""),
     )
-    await _inherit_tracker_links(
-        input.org, input.namespace, namespace, operator_source=src.source == "config"
-    )
+    await _inherit_tracker_links(input.org, input.namespace, namespace)
     return out
 
 
@@ -540,9 +538,7 @@ async def _empty_tracker_links(org: str, namespace: str, *, detail: str) -> None
     binding.forget_links(org, namespace)
 
 
-async def _inherit_tracker_links(
-    org: str, source_ns: str, namespace: str, *, operator_source: bool
-) -> None:
+async def _inherit_tracker_links(org: str, source_ns: str, namespace: str) -> None:
     """Follow an operator root (`qa_branch_of`, written last) or copy the source's own
     row; see code-index-architecture.md."""
     from server.code.store.index import CodeRepo
@@ -550,7 +546,8 @@ async def _inherit_tracker_links(
 
     repo = CodeRepo()
     try:
-        if operator_source:
+        operator = binding.operator_repositories()
+        if (org, source_ns) in operator:
             # An operator entry is its own root, whatever row a removed namespace left there.
             root, own = source_ns, None
         else:
@@ -571,7 +568,7 @@ async def _inherit_tracker_links(
             )
         # Only an operator root: a self-service root's branch would start reading the map
         # if the operator later configured the root's name.
-        if (org, root) in binding.operator_repositories():
+        if (org, root) in operator:
             await repo.set_state(
                 org, namespace, binding.BRANCH_OF_KEY, root, detail=f"branch of {root}"
             )

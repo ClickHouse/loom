@@ -381,5 +381,17 @@ def test_branches_following_names_only_the_branches_that_read_the_links(monkeypa
         [],
     ]
     assert binding.branches_following(ORG_Y, CODE) == []
+    # a branch the operator later configures reads the map under its own name
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        json.dumps(
+            [
+                {"org": ORG_X, "namespace": CODE, "repo": "Acme/widgets"},
+                {"org": ORG_X, "namespace": names[0], "repo": "Acme/widgets"},
+            ]
+        ),
+    )
+    assert binding.branches_following(ORG_X, CODE) == []
     monkeypatch.setattr(settings, "code_repos_json", "[]")  # the root left the config
     assert binding.branches_following(ORG_X, CODE) == []

@@ -145,14 +145,17 @@ def forget_links(org: str, code_namespace: str) -> None:
 def branches_following(org: str, code_namespace: str) -> list[str]:
     """The branches that read the org's operator repository's links too, as of the last
     refresh: registered, naming it in `qa_branch_of`, with no `qa_binding` of their own
-    (the same test `tracker_namespaces_for` makes)."""
-    if (org, code_namespace) not in operator_repositories():
+    and not operator repositories themselves (the same test `tracker_namespaces_for`
+    makes)."""
+    operator = operator_repositories()
+    if (org, code_namespace) not in operator:
         return []
     registered = repos.registry_namespaces()
     return sorted(
         ns
         for (o, ns), root in _BRANCH_OF.items()
         if o == org
+        and (o, ns) not in operator
         and root == code_namespace
         and (o, ns) in registered
         and override_for(o, ns) is None
