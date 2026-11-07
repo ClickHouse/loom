@@ -33,10 +33,9 @@ import json
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 ROOT = Path(__file__).resolve().parents[2]
 NOTES_FILE = ROOT / "release-notes.md"
@@ -47,16 +46,11 @@ CANDIDATE = re.compile(r"\d+\.\d+\.\d+-rc\.\d+")
 REPOSITORY = "ClickHouse/loom"
 
 
-@dataclass(frozen=True)
-class Pin:
+class Pin(NamedTuple):
     """One place a file carries the version: `pattern`'s group `v`, found exactly once."""
 
     path: str
     pattern: str
-
-    @functools.cached_property
-    def regex(self) -> re.Pattern[str]:
-        return re.compile(self.pattern, re.MULTILINE)
 
 
 _TOP_JSON = r'^  "version": "(?P<v>[^"]+)",$'
@@ -89,7 +83,7 @@ CHART = Pin("deploy/helm/loom/Chart.yaml", r"^version: (?P<v>\S+)$")
 
 
 def _match(pin: Pin, text: str) -> re.Match[str]:
-    found = list(pin.regex.finditer(text))
+    found = list(re.finditer(pin.pattern, text, re.MULTILINE))
     if len(found) != 1:
         raise ValueError(f"{pin.path}: {pin.pattern!r} matches {len(found)} times, not once")
     return found[0]
@@ -160,7 +154,8 @@ def chart_baseline(tag_version: str, root: Path = ROOT) -> str | None:
     """The release before `tag_version`'s, or None when `vX.Y.Z` is on another
     commit (a dry run of a branch still naming a shipped release)."""
     version = final_of(tag_version)
-    if _sha(root, f"v{version}") and not tag_on_head(version, root):
+    tagged = _sha(root, f"v{version}")
+    if tagged and tagged != _sha(root, "HEAD"):
         return None
     return previous_release(version, root)
 
@@ -366,10 +361,11 @@ def changelog(body: str) -> tuple[str, str, str]:
     return category, "" if entry in ("", "...") else entry, _operator_steps(body)
 
 
-def merged_pull_requests(previous_tag: str, root: Path = ROOT) -> list[int]:
+def merged_pull_requests(previous_tag: str, root: Path = ROOT) -> dict[int, int]:
     """The squash merges since the previous release, oldest first, but a release
-    pull request's own (the one that moves the server's version)."""
-    log = _git(root, "log", "--reverse", "--format=%H %s", f"{previous_tag}..HEAD")
+    pull request's own (the one that moves the server's version): number to
+    commit time."""
+    log = _git(root, "log", "--reverse", "--format=%H %ct %s", f"{previous_tag}..HEAD")
     log.check_returncode()
     bumps = _git(
         root,
@@ -383,11 +379,11 @@ def merged_pull_requests(previous_tag: str, root: Path = ROOT) -> list[int]:
     )
     bumps.check_returncode()
     releases = set(bumps.stdout.split())
-    merged = []
+    merged = {}
     for line in log.stdout.splitlines():
-        sha, subject = line.split(" ", 1)
+        sha, committed, subject = line.split(" ", 2)
         if sha not in releases and (m := re.search(r"\(#(\d+)\)$", subject)):
-            merged.append(int(m.group(1)))
+            merged[int(m.group(1))] = int(committed)
     return merged
 
 
@@ -421,32 +417,30 @@ def notes(version: str, previous: str, pulls: list[dict[str, Any]], wire: str) -
     return "\n".join(out)
 
 
-def _merged_since(previous_tag: str, root: Path) -> str:
-    """A UTC day before the oldest commit since the tag, for gh's `merged:`: every
-    pull request merged since then passes, whatever the merger's timezone."""
-    log = _git(root, "log", "--reverse", "--format=%ct", f"{previous_tag}..HEAD")
-    log.check_returncode()
-    oldest = (
-        int(log.stdout.split()[0]) if log.stdout.strip() else int(datetime.now(UTC).timestamp())
-    )
-    return (datetime.fromtimestamp(oldest, UTC) - timedelta(days=1)).date().isoformat()
-
-
-def release_notes(version: str, previous: str, root: Path = ROOT) -> str:
-    numbers = merged_pull_requests(previous, root)
+def merged_pulls(merged: dict[int, int]) -> list[dict[str, Any]]:
+    """The merged pull requests' number, title and body, in `merged`'s order,
+    from one `gh pr list` call."""
+    if not merged:
+        return []
+    # gh's `merged:` takes a date: a day of slack before the earliest merge.
+    since = datetime.fromtimestamp(min(merged.values()), UTC) - timedelta(days=1)
     listed = subprocess.run(
         ["gh", "pr", "list", "-R", REPOSITORY, "--state", "merged",
-         "--search", f"merged:>={_merged_since(previous, root)}", "--limit", "1000",
+         "--search", f"merged:>={since.date().isoformat()}", "--limit", "1000",
          "--json", "number,title,body"],
         check=True,
         stdout=subprocess.PIPE,  # its error reaches the terminal
         text=True,
     ).stdout  # fmt: skip
     by_number = {pull["number"]: pull for pull in json.loads(listed)}
-    missing = ", ".join(f"#{n}" for n in numbers if n not in by_number)
+    missing = ", ".join(f"#{n}" for n in merged if n not in by_number)
     if missing:
         raise ValueError(f"gh pr list did not return the merged pull requests {missing}")
-    pulls = [by_number[n] for n in numbers]
+    return [by_number[n] for n in merged]
+
+
+def release_notes(version: str, previous: str, root: Path = ROOT) -> str:
+    pulls = merged_pulls(merged_pull_requests(previous, root))
     wire = subprocess.run(
         [sys.executable, "scripts/codegen/wire_changelog.py", previous, "HEAD"],
         cwd=root,
@@ -534,7 +528,11 @@ def main() -> None:
     notes_parser = commands.add_parser("notes", help="only print the release notes")
     for command in (bump_parser, notes_parser):
         command.add_argument("version", help="the release, X.Y.Z")
-    commands.add_parser("check", help="every file names one version")
+    bump_parser.set_defaults(run=lambda args: _bump(args.version))
+    notes_parser.set_defaults(run=lambda args: _notes(args.version))
+    commands.add_parser("check", help="every file names one version").set_defaults(
+        run=lambda args: _check()
+    )
     chart_parser = commands.add_parser(
         "check-chart", help="the chart's version is above the previous release's"
     )
@@ -543,18 +541,11 @@ def main() -> None:
     )
     for command in (chart_parser, tag_parser):
         command.add_argument("tag_version", help="the tag's version, X.Y.Z or X.Y.Z-rc.N")
+    chart_parser.set_defaults(run=lambda args: _check_chart(args.tag_version))
+    tag_parser.set_defaults(run=lambda args: _check_tag(args.tag_version))
     args = parser.parse_args()
     try:
-        if args.command == "bump":
-            _bump(args.version)
-        elif args.command == "notes":
-            _notes(args.version)
-        elif args.command == "check":
-            _check()
-        elif args.command == "check-chart":
-            _check_chart(args.tag_version)
-        else:
-            _check_tag(args.tag_version)
+        args.run(args)
     # A refusal raises ValueError and a failed git or gh call CalledProcessError;
     # either is one line, and in a check, which the release workflow runs, an
     # `::error::` annotation.

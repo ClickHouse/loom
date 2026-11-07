@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.git_repo import git as _git
+
 ROOT = Path(__file__).resolve().parents[2]
 NEWEST = "clickhouse/clickhouse-server:26.10.1.1"
 
@@ -42,26 +44,6 @@ echo "$1" >> "$STUB_PUBLISHED/refuse.log"
 
 Git = Callable[..., None]
 Resolve = Callable[..., subprocess.CompletedProcess[str]]
-
-
-def _git(repo: Path, *args: str) -> None:
-    subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@t",
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "tag.gpgSign=false",
-            *args,
-        ],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
 
 
 @pytest.fixture

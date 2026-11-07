@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.git_repo import git
+
 
 def _module():
     path = Path(__file__).parents[2] / "scripts" / "release" / "build_stack_bundle.py"
@@ -199,21 +201,8 @@ def _run_step(tmp_path: Path, script: str, **env: str):
     # A copy, not a link: through a link, the script's ../../dev would be the
     # real dev/, not the stub written beside it.
     shutil.copytree(Path(__file__).parents[2] / "scripts" / "release", work / "scripts" / "release")
-    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "release"]):
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@t",
-                "-c",
-                "commit.gpgsign=false",
-                *args,
-            ],
-            cwd=work,
-            check=True,
-        )
+    git(work, "init", "-q")
+    git(work, "commit", "-q", "--allow-empty", "-m", "release")
     other, _ = _module().build(
         "1.2.0", tmp_path / "other", "clickhouse/clickhouse-server:26.9.18.11"
     )

@@ -157,8 +157,8 @@ the package's visibility to public in its settings, then re-run the failed jobs.
 **On a tag push (`v*`)**:
 
 1. `version` takes the version from the tag (`vX.Y.Z` → `X.Y.Z`) and refuses a ref that
-   is not a `v*` tag (unless the run is a [dry run](#rehearsing-a-release)) or not SemVer. It
-   fails when any of these is false (for `vX.Y.Z-rc.N`, against `X.Y.Z`):
+   is not a `v*` tag (unless the run is a [dry run](#rehearsing-a-release)) or not `X.Y.Z` or
+   `X.Y.Z-rc.N`. It fails when any of these is false (for `vX.Y.Z-rc.N`, against `X.Y.Z`):
    - `server/__init__.py` reads `__version__ = "X.Y.Z"`;
    - `prepare.py check`: every other version file, `server.json` included, names that version;
    - `prepare.py check-chart`: the chart's version is above the previous release's;

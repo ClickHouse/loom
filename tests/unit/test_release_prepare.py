@@ -16,6 +16,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.unit.git_repo import git as _git
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -24,8 +26,6 @@ def _module():
     spec = importlib.util.spec_from_file_location("release_prepare", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    # Its dataclass looks its module up by name.
-    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -41,15 +41,6 @@ def _copy(tmp_path: Path) -> Path:
         (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / path, tmp_path / path)
     return tmp_path
-
-
-def _git(root: Path, *args: str) -> None:
-    """git in `root`, signing nothing whatever the host's config says."""
-    subprocess.run(
-        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
-         "-c", "tag.gpgSign=false", *args],
-        cwd=root, check=True, capture_output=True,
-    )  # fmt: skip
 
 
 def _commit(root: Path, message: str) -> None:
@@ -460,7 +451,7 @@ def test_the_merged_pull_requests_are_the_squash_merges_since_the_tag(tmp_path: 
     (tmp_path / "server").mkdir()
     (tmp_path / "server/__init__.py").write_text('__version__ = "1.1.0"\n')
     _commit(tmp_path, "Release 1.1.0 (#15)")  # the release pull request itself
-    assert prepare.merged_pull_requests("v1.0.0", tmp_path) == [12, 13, 14]
+    assert list(prepare.merged_pull_requests("v1.0.0", tmp_path)) == [12, 13, 14]
 
 
 def _released(root: Path) -> Path:
@@ -490,7 +481,9 @@ def _gh_listing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, numbers: list[i
     ]
     (bin_dir / "listed.json").write_text(json.dumps(pulls))
     gh = bin_dir / "gh"
-    gh.write_text(f'#!/bin/sh\necho "$@" > "{bin_dir}/args"\ncat "{bin_dir}/listed.json"\n')
+    gh.write_text(
+        f'#!/bin/sh\nprintf "%s\\n" "$@" > "{bin_dir}/args"\ncat "{bin_dir}/listed.json"\n'
+    )
     gh.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     return bin_dir
@@ -506,7 +499,8 @@ def test_the_notes_read_the_merged_pull_requests_in_one_call_in_merge_order(
     text = prepare.release_notes("1.1.0", "v1.0.0", root)
     assert "- Entry 12. (#12)\n- Entry 13. (#13)\n- Entry 14. (#14)\n" in text
     # A UTC day before the oldest merge since the tag: 2026-11-06T23:30Z.
-    assert "--search merged:>=2026-11-05 " in (gh / "args").read_text()
+    args = (gh / "args").read_text().splitlines()
+    assert args[args.index("--search") + 1] == "merged:>=2026-11-05"
 
 
 def test_a_merged_pull_request_gh_does_not_list_stops_the_notes(
@@ -829,17 +823,6 @@ def test_a_tag_check_git_cannot_read_is_an_error(
         prepare.tag_on_head("1.2.0-rc.1", tmp_path)
 
 
-def test_a_chart_missing_its_version_at_a_tag_names_the_tag(tmp_path: Path) -> None:
-    chart = tmp_path / "deploy/helm/loom/Chart.yaml"
-    chart.parent.mkdir(parents=True)
-    chart.write_text('appVersion: "1.0.0"\n')
-    _git(tmp_path, "init", "-q")
-    _commit(tmp_path, "chart")
-    _git(tmp_path, "tag", "v1.0.0")
-    with pytest.raises(ValueError, match=r"matches 0 times, not once \(at v1.0.0\)$"):
-        prepare.released_chart("v1.0.0", tmp_path)
-
-
 def _release_version_job() -> dict:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
     return workflow["jobs"]["version"]
@@ -880,14 +863,26 @@ def test_the_only_prerelease_the_release_takes_is_a_candidate(
         assert "is not X.Y.Z or X.Y.Z-rc.N" in result.stdout
 
 
-def test_a_chart_version_unparsable_at_a_tag_names_the_tag(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("chart_text", "error"),
+    [
+        ('appVersion: "1.0.0"\n', r"matches 0 times, not once \(at v1.0.0\)$"),
+        (
+            'version: "0.1.0"\nappVersion: "1.0.0"\n',
+            r"is not a SemVer X.Y.Z\[-pre\] version \(at v1.0.0\)$",
+        ),
+    ],
+)
+def test_a_chart_unreadable_at_a_tag_names_the_tag(
+    tmp_path: Path, chart_text: str, error: str
+) -> None:
     chart = tmp_path / "deploy/helm/loom/Chart.yaml"
     chart.parent.mkdir(parents=True)
-    chart.write_text('version: "0.1.0"\nappVersion: "1.0.0"\n')
+    chart.write_text(chart_text)
     _git(tmp_path, "init", "-q")
     _commit(tmp_path, "chart")
     _git(tmp_path, "tag", "v1.0.0")
-    with pytest.raises(ValueError, match=r"is not a SemVer X.Y.Z\[-pre\] version \(at v1.0.0\)$"):
+    with pytest.raises(ValueError, match=error):
         prepare.released_chart("v1.0.0", tmp_path)
 
 
