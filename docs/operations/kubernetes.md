@@ -17,6 +17,7 @@ it on a laptop.
 | Optional `<release>-publish`          | A pre-upgrade Job for a change that cannot roll ([below](#changing-what-cannot-roll)).                                                                        |
 | Optional `<release>-analytics-export` | A daily CronJob and its own ServiceAccount (`analyticsExport.enabled`, [below](#analytics-export)).                                                           |
 | Optional `<release>-extractor`        | The document extractor's Deployment, Service and NetworkPolicy (`extractor.enabled`, [below](#document-extractor)).                                           |
+| NetworkPolicy `<release>`             | Full policy with `networkPolicy.enabled`; else all egress but [`egressExcept`](#instance-metadata-service), unless it is `[]` or `guardMetadata: false`.      |
 | Optional dev ClickHouse               | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                                                                     |
 
 ## Before you install
@@ -351,6 +352,44 @@ or later, where `ProcMountType` and `UserNamespacesSupport` are on), and the nam
 Pod Security level must allow it (`baseline` and `restricted` do not). Run
 `dev/sandbox_probe.sh` in a pod to check the result before setting `sandbox.required: true`.
 
+## Instance metadata service
+
+By default, and with `networkPolicy.enabled`, a NetworkPolicy (enforced only where the
+cluster runs a policy engine) keeps the Loom pods off `networkPolicy.egressExcept` (the
+instance metadata service), so repository code a pod runs cannot take the node's cloud
+role. With the policy off, `networkPolicy.guardMetadata` renders an egress-only
+NetworkPolicy whose one rule allows every pod and every address but those (none with
+`egressExcept: []`). The policy's effects:
+
+- A pod has no cloud credentials from the metadata service: not the node's instance
+  role, and not GKE Workload Identity on Dataplane V2. IRSA, and EKS Pod Identity on an
+  engine that matches node addresses by range, work. With the policy off, set
+  `guardMetadata: false` to keep metadata access; with `networkPolicy.enabled`, open it
+  through `extraEgress`.
+- `egressExcept` applies with the policy off too: a range listed there (a VPC range,
+  say) cuts the pods off every address in it but other pods, and an entry that is not a
+  CIDR fails the upgrade.
+- A metadata proxy that redirects 169.254.169.254 to another address is reached at
+  that address, which the engine may check instead: add the address of one that passes
+  node credentials through to `egressExcept` (outside the cluster's pods, which stay
+  reachable).
+- A service in the cluster that fetches URLs for its callers (a forward proxy, a
+  ClickHouse whose `url()` reaches any host, such as the test-only dev ClickHouse) reaches
+  `egressExcept` for them: deny those addresses in its own policy.
+- NetworkPolicies add up: where your own policies limit the pods' egress, this one
+  lets them reach everything else. Set `guardMetadata: false` and deny the metadata
+  addresses in your own policy. Set it too when your own policy is named after the
+  release: Helm refuses to take over an object it does not own, so the upgrade fails.
+- An engine that keeps address ranges off node IPs (Cilium's default) blocks host-network
+  endpoints and the nodes' own addresses: NodeLocal DNSCache (so DNS), the EKS Pod
+  Identity agent, and the API server (which `retireLostPods` calls) where the engine
+  gives it an identity of its own. Turn on the engine's node matching, or set
+  `guardMetadata: false` and allow them in your own policy.
+
+A `helm upgrade --reuse-values` from a chart with a shorter `egressExcept` keeps that
+list: set `networkPolicy.egressExcept` again, or upgrade with `--reset-then-reuse-values`
+(Helm 3.14 or later).
+
 ## Separate workers
 
 `workers.enabled: true` moves the background workers to their own Deployment
@@ -373,8 +412,8 @@ read that one key and nothing else of the Secret, mount no service-account token
 uid 10001 on a read-only root filesystem with every capability dropped, and carry labels
 of their own, so no policy or Service that selects the Loom pods selects them. Their
 NetworkPolicy, rendered whatever `networkPolicy.enabled` says, admits the release's Loom
-pods on 8790 and allows no egress; with `networkPolicy.enabled`, the Loom pods' policy
-allows egress to them. `extractor.env` takes the service's `LOOM_EXTRACTOR_*` limits
+pods on 8790 and allows no egress; either form of the Loom pods' policy allows egress to
+them. `extractor.env` takes the service's `LOOM_EXTRACTOR_*` limits
 ([extractor](../../extractor/README.md)), and `extractor.resources` bounds each pod.
 Each side holds one token, so changing `secrets.extractorToken` restarts the Loom
 Deployments (web, and workers when enabled) and the extractor's, and while they roll, a

@@ -1,4 +1,16 @@
-{{- if .Values.networkPolicy.enabled }}
+{{- $guard := .Values.networkPolicy.guardMetadata }}
+{{- if not (or (kindIs "invalid" $guard) (kindIs "bool" $guard)) }}
+{{- fail "networkPolicy.guardMetadata must be true or false" }}
+{{- end }}
+{{- $except := .Values.networkPolicy.egressExcept }}
+{{- if not (or (kindIs "invalid" $except) (kindIs "slice" $except)) }}
+{{- fail "networkPolicy.egressExcept must be a list of CIDRs" }}
+{{- end }}
+{{- /* Off: every pod and every address but `egressExcept`; pods are named apart
+because engines differ on whether an ipBlock matches pod IPs. A missing
+`guardMetadata` counts as on: `helm upgrade --reuse-values` keeps the old values. */}}
+{{- $guarded := and (ne $guard false) $except }}
+{{- if or .Values.networkPolicy.enabled $guarded }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -9,6 +21,7 @@ spec:
   podSelector:
     matchLabels:
       {{- include "loom.selectorLabels" . | nindent 6 }}
+{{- if .Values.networkPolicy.enabled }}
   policyTypes: [Ingress, Egress]
   ingress:
     - ports:
@@ -57,22 +70,7 @@ spec:
         - port: 8123
     {{- end }}
     - to:
-        {{- $v4 := list }}{{- $v6 := list }}
-        {{- range .Values.networkPolicy.egressExcept }}
-        {{- if contains ":" . }}{{ $v6 = append $v6 . }}{{ else }}{{ $v4 = append $v4 . }}{{ end }}
-        {{- end }}
-        - ipBlock:
-            cidr: 0.0.0.0/0
-            {{- with $v4 }}
-            except:
-              {{- toYaml . | nindent 14 }}
-            {{- end }}
-        - ipBlock:
-            cidr: ::/0
-            {{- with $v6 }}
-            except:
-              {{- toYaml . | nindent 14 }}
-            {{- end }}
+        {{- include "loom.anywhereBut" . | nindent 8 }}
       ports:
         - port: 443
         {{- if .Values.retireLostPods }}
@@ -91,4 +89,11 @@ spec:
     {{- with .Values.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+{{- else }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}
+        {{- include "loom.anywhereBut" . | nindent 8 }}
+{{- end }}
 {{- end }}
