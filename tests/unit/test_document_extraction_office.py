@@ -14,7 +14,14 @@ from pypdf import PdfWriter
 from loom_extractor import ExtractionError, Options, extract, ocr, ooxml
 from loom_extractor.artifact import Artifact
 from server.knowledge.domain.extract import InvalidArtifact, parse_artifact, structural
-from tests.fixtures.office_files import FORM_IMAGE, FORM_INLINE_IMAGE, INLINE_IMAGE, pdf
+from tests.fixtures.office_files import (
+    FORM_IMAGE,
+    FORM_INLINE_IMAGE,
+    IMAGE,
+    INLINE_IMAGE,
+    UNDRAWN_IMAGE,
+    pdf,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -246,6 +253,245 @@ def _pptx() -> bytes:
     return _zip(parts)
 
 
+def test_a_pptx_slide_of_text_with_a_picture_or_a_chart_names_it_as_not_read() -> None:
+    chart = "<p:graphicFrame><a:graphic><a:graphicData/></a:graphic></p:graphicFrame>"
+    notes = f"<p:notes {_P}><p:cSld><p:spTree>{_sp('Explain the chart.', 'body')}</p:spTree></p:cSld></p:notes>"
+    parts = {
+        "ppt/presentation.xml": (
+            f"<p:presentation {_P}><p:sldIdLst>"
+            '<p:sldId id="256" r:id="r1"/><p:sldId id="257" r:id="r2"/>'
+            '<p:sldId id="258" r:id="r3"/><p:sldId id="259" r:id="r4"/>'
+            '<p:sldId id="260" r:id="r5"/></p:sldIdLst></p:presentation>'
+        ),
+        "ppt/_rels/presentation.xml.rels": _rels(
+            ("r1", "slide", "slides/slide1.xml"),
+            ("r2", "slide", "slides/slide2.xml"),
+            ("r3", "slide", "slides/slide3.xml"),
+            ("r4", "slide", "slides/slide4.xml"),
+            ("r5", "slide", "slides/slide5.xml"),
+        ),
+        "ppt/slides/slide1.xml": _slide(_sp("Plain text")),
+        "ppt/slides/slide2.xml": _slide(_sp("Latency", "title") + "<p:pic/>"),
+        "ppt/slides/slide3.xml": _slide(_sp("Growth", "title") + chart),
+        # A picture and notes alone: the notes are the slide's text.
+        "ppt/slides/slide4.xml": _slide("<p:pic/>"),
+        # A shape filled with a picture holds text of its own; its picture is not read.
+        "ppt/slides/slide5.xml": _slide(
+            "<p:sp><p:nvSpPr><p:nvPr/></p:nvSpPr><p:spPr><a:blipFill/></p:spPr>"
+            "<p:txBody><a:p><a:r><a:t>Logo text</a:t></a:r></a:p></p:txBody></p:sp>"
+        ),
+        "ppt/slides/_rels/slide4.xml.rels": _rels(("n1", "notesSlide", "../notesSlides/n4.xml")),
+        "ppt/notesSlides/n4.xml": notes,
+    }
+    a = extract(_zip(parts), "deck.pptx")
+    assert [b.text for b in a.blocks] == [
+        "Plain text",
+        "Latency",
+        "Growth",
+        "Explain the chart.",
+        "Logo text",
+    ]
+    assert a.coverage.to_dict()["complete"]
+    assert a.attrs == {"slides": 5, "images_unread": [2, 3, 4, 5]}
+    assert a.warnings == (
+        "pictures, charts, diagrams or embedded objects on 4 slides of text are not read: text"
+        " inside them is not extracted (attrs.images_unread)",
+    )
+
+
+_A = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+_DRAWINGML = "http://schemas.openxmlformats.org/drawingml/2006"
+_WPS = "http://schemas.microsoft.com/office/word/2010/wordprocessing"
+
+
+def _drawing(uri: str, inner: str) -> str:
+    """A paragraph of one drawing whose graphic is `uri`'s, holding `inner`."""
+    return (
+        f'<w:p><w:r><w:drawing><a:graphic {_A}><a:graphicData uri="{uri}">{inner}'
+        "</a:graphicData></a:graphic></w:drawing></w:r></w:p>"
+    )
+
+
+_TEXT_BOX = "<w:txbxContent><w:p><w:r><w:t>Sidebar</w:t></w:r></w:p></w:txbxContent>"
+_BLIP = '<a:blip r:embed="rId9" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>'
+
+
+def _picture() -> str:
+    return _drawing(f"{_DRAWINGML}/picture", _BLIP)
+
+
+def _run(paragraph: str) -> str:
+    """The run a paragraph of one drawing holds."""
+    return paragraph.removeprefix("<w:p><w:r>").removesuffix("</w:r></w:p>")
+
+
+# A 3D model as Word writes it: a drawing in alternate content, its picture in the fallback.
+_MODEL_3D = (
+    '<w:p><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">'
+    '<mc:Choice Requires="am3d">'
+    + _run(_drawing("http://schemas.microsoft.com/office/drawing/2017/model3d", ""))
+    + f"</mc:Choice><mc:Fallback>{_run(_picture())}</mc:Fallback></mc:AlternateContent></w:r></w:p>"
+)
+
+
+# A text box as Word writes it: a shape in alternate content, its VML copy in the fallback.
+# WordArt as a document saved for an older Word writes it: its text a VML path's.
+_WORDART = (
+    '<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml">'
+    '<v:textpath string="Grand opening"/></v:shape></w:pict></w:r></w:p>'
+)
+
+
+_TEXT_BOX_AS_WORD_WRITES_IT = (
+    '<w:p><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">'
+    f'<mc:Choice Requires="wps">{_run(_drawing(f"{_WPS}Shape", _TEXT_BOX))}</mc:Choice>'
+    '<mc:Fallback><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml">'
+    f"<v:textbox>{_TEXT_BOX}</v:textbox></v:shape></w:pict></mc:Fallback>"
+    "</mc:AlternateContent></w:r></w:p>"
+)
+
+
+# The same box filled with a pattern: its VML copy's fill names the pattern's tile.
+_PATTERN_FILLED_BOX = _TEXT_BOX_AS_WORD_WRITES_IT.replace(
+    "<v:textbox>",
+    '<v:fill r:id="rId7" type="pattern" '
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/><v:textbox>',
+)
+
+
+@pytest.mark.parametrize(
+    "drawing",
+    [
+        _drawing(
+            f"{_DRAWINGML}/picture", f'<pic:pic xmlns:pic="{_DRAWINGML}/picture">{_BLIP}</pic:pic>'
+        ),
+        _drawing(f"{_DRAWINGML}/chart", '<c:chart xmlns:c="x"/>'),
+        _drawing(f"{_DRAWINGML}/diagram", ""),
+        _drawing("http://schemas.microsoft.com/office/drawing/2014/chartex", ""),
+        # A group of a picture and a captioned text box: the picture is not read.
+        _drawing(f"{_WPS}Group", f'<wpg:wgp xmlns:wpg="y">{_BLIP}{_TEXT_BOX}</wpg:wgp>'),
+        # A shape filled with a picture.
+        _drawing(f"{_WPS}Shape", f"<a:blipFill>{_BLIP}</a:blipFill>{_TEXT_BOX}"),
+        '<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml">'
+        '<v:imagedata r:id="rId9" xmlns:r="z"/></v:shape></w:pict></w:r></w:p>',
+        # A VML shape filled with a picture, as a document saved for an older Word writes it.
+        '<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml">'
+        '<v:fill r:id="rId5" type="frame" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>'
+        "</v:shape></w:pict></w:r></w:p>",
+        _MODEL_3D,  # a drawing the reader does not know, its picture in the fallback
+        _WORDART,
+        # An embedded spreadsheet or diagram: an OLE object and its preview image.
+        '<w:p><w:r><w:object><v:shape xmlns:v="urn:schemas-microsoft-com:vml">'
+        '<v:imagedata r:id="rId5" xmlns:r="z"/></v:shape></w:object></w:r></w:p>',
+    ],
+    ids=[
+        "picture",
+        "chart",
+        "diagram",
+        "chartex",
+        "group",
+        "picture fill",
+        "vml image",
+        "vml picture fill",
+        "3d model",
+        "wordart",
+        "embedded object",
+    ],
+)
+def test_a_docx_of_text_with_a_picture_chart_diagram_or_object_warns_it_is_not_read(
+    drawing: str,
+) -> None:
+    a = extract(_docx(_wp("Body") + drawing), "a.docx")
+    assert a.blocks[0].text == "Body"
+    assert a.coverage.to_dict()["complete"]
+    assert a.warnings == (
+        "its pictures, charts, diagrams or embedded objects are not read: text inside them is"
+        " not extracted",
+    )
+
+
+@pytest.mark.parametrize(
+    "drawing",
+    [
+        "",
+        _drawing(f"{_WPS}Shape", _TEXT_BOX),  # a text box: its text is read
+        # A horizontal line: nothing to read.
+        '<w:p><w:r><w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" o:hr="t" xmlns:o="o"/>'
+        "</w:pict></w:r></w:p>",
+        _drawing(f"{_WPS}Shape", ""),
+        # A picture in a text box that a tracked deletion removed is not the document's.
+        _drawing(
+            f"{_WPS}Shape",
+            "<w:txbxContent><w:p><w:r><w:t>Sidebar</w:t></w:r><w:del><w:r>"
+            + _run(_picture())
+            + "</w:r></w:del></w:p></w:txbxContent>",
+        ),
+        _TEXT_BOX_AS_WORD_WRITES_IT,
+        _PATTERN_FILLED_BOX,
+    ],
+    ids=[
+        "none",
+        "text box",
+        "rule",
+        "shape",
+        "deleted picture",
+        "text box in alternate content",
+        "pattern fill",
+    ],
+)
+def test_a_docx_of_text_with_no_picture_warns_of_nothing(drawing: str) -> None:
+    assert extract(_docx(_wp("Body") + drawing), "a.docx").warnings == ()
+
+
+def test_a_docx_picture_in_a_table_or_note_warns_and_a_deleted_one_does_not() -> None:
+    def table(trpr: str) -> str:
+        return (
+            f"<w:tbl><w:tr><w:tc>{_wp('Cell')}</w:tc></w:tr>"
+            f"<w:tr>{trpr}<w:tc>{_picture()}</w:tc></w:tr></w:tbl>"
+        )
+
+    assert extract(_docx(table("")), "a.docx").warnings
+    # A deleted row or cell is not the document's, nor what it draws; nor a deleted run.
+    assert extract(_docx(table("<w:trPr><w:del/></w:trPr>")), "b.docx").warnings == ()
+    cell = f"<w:tbl><w:tr><w:tc>{_wp('Cell')}</w:tc><w:tc><w:tcPr><w:cellDel/></w:tcPr>{_picture()}</w:tc></w:tr></w:tbl>"
+    assert extract(_docx(cell), "e.docx").warnings == ()
+    run = f"<w:r>{_run(_picture())}</w:r>"
+    deleted = f"<w:p><w:r><w:t>Body</w:t></w:r><w:del>{run}</w:del></w:p>"
+    assert extract(_docx(deleted), "f.docx").warnings == ()
+    note = f'<w:footnote w:id="1">{_picture()}{_wp("A note.")}</w:footnote>'
+    assert extract(_docx(_wp("Body"), footnotes=note), "c.docx").warnings
+    obj = "<w:p><w:r><w:object/></w:r><w:r><w:t>See it.</w:t></w:r></w:p>"
+    note = f'<w:footnote w:id="1">{obj}</w:footnote>'
+    assert extract(_docx(_wp("Body"), footnotes=note), "d.docx").warnings
+
+
+@pytest.mark.parametrize(
+    "drawing",
+    [
+        '<w:p><w:r><w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" o:hr="t" xmlns:o="o"/>'
+        "</w:pict></w:r></w:p>",
+        _drawing(f"{_WPS}Shape", ""),
+        _TEXT_BOX_AS_WORD_WRITES_IT.replace(_TEXT_BOX, ""),
+        _PATTERN_FILLED_BOX.replace(_TEXT_BOX, ""),
+    ],
+    ids=["line", "shape", "shape in alternate content", "pattern-filled shape"],
+)
+def test_a_docx_of_a_line_or_a_shape_and_no_text_reads_as_empty(drawing: str) -> None:
+    a = extract(_docx(drawing), "a.docx")
+    # A line or a shape holds nothing to read: no failed unit, nothing lost.
+    assert a.blocks == () and a.coverage.failed == () and a.warnings == ()
+
+
+def test_a_docx_of_an_embedded_object_and_no_text_is_a_failed_unit() -> None:
+    obj = (
+        '<w:p><w:r><w:object><v:shape xmlns:v="urn:schemas-microsoft-com:vml">'
+        '<v:imagedata r:id="rId5" xmlns:r="z"/></v:shape></w:object></w:r></w:p>'
+    )
+    a = extract(_docx(obj), "a.docx")
+    assert not a.coverage.to_dict()["complete"]
+    assert [f.unit for f in a.coverage.failed] == ["document"]
+
+
 def test_pptx_slides_read_in_deck_order_with_titles_tables_notes_and_hidden_slides() -> None:
     a = extract(_pptx(), "deck.pptx")
     title = ("Quarterly review",)
@@ -267,7 +513,10 @@ def test_pptx_slides_read_in_deck_order_with_titles_tables_notes_and_hidden_slid
         "total": 4,
         "extracted": 3,
         "failed": [
-            {"unit": "slide 3", "reason": "no text: its pictures, charts or diagrams are not read"}
+            {
+                "unit": "slide 3",
+                "reason": "no text: its pictures, charts, diagrams or embedded objects are not read",
+            }
         ],
         "lost": [],
         "complete": False,
@@ -303,6 +552,148 @@ def test_pdf_pages_are_cited_by_page_and_the_outline_gives_their_sections() -> N
 def test_a_pdf_page_drawing_its_image_through_a_form_or_inline_needs_ocr_too(scan: str) -> None:
     a = extract(pdf(["Text", scan], []), "scan.pdf")
     assert [f.unit for f in a.coverage.failed] == ["page 2"]
+
+
+@pytest.mark.parametrize("kind", [IMAGE, FORM_IMAGE, INLINE_IMAGE, FORM_INLINE_IMAGE])
+def test_a_pdf_page_of_text_that_draws_an_image_names_it_as_not_read(kind: str) -> None:
+    a = extract(pdf(["Text only", ("See the figure", kind)], []), "figure.pdf")
+    assert [b.text for b in a.blocks] == ["Text only", "See the figure"]
+    # Its text is read, so the page is no failed unit; the image's text is named as not read.
+    assert a.coverage.to_dict()["complete"]
+    assert a.attrs["images_unread"] == [2]
+    assert a.warnings == (
+        "images on 1 page of text are not read: text drawn only inside an image is not extracted"
+        " (attrs.images_unread)",
+    )
+
+
+def test_an_image_the_pdf_walk_saw_before_its_bounds_counts_without_the_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loom_extractor import pdffile
+
+    def has_image(*a: Any) -> bool:
+        return False  # were it asked, the pages would not be listed
+
+    monkeypatch.setattr(
+        pdffile.layout, "drawing", lambda *a: pdffile.layout.Drawing([], images=True, read=False)
+    )
+    monkeypatch.setattr(pdffile, "_has_image", has_image)
+    a = extract(pdf(["Text only", ("See the figure", IMAGE)], []), "figure.pdf")
+    assert a.attrs["images_unread"] == [1, 2]
+    assert len(a.warnings) == 1
+
+
+@pytest.mark.parametrize("walk", ["fails", "stops at its bounds"])
+def test_a_pdf_page_whose_drawing_is_not_read_whole_is_looked_at_for_images(
+    walk: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from loom_extractor import pdffile
+
+    def drawing(*a: Any) -> Any:
+        if walk == "fails":
+            raise ValueError("unreadable drawing")
+        return pdffile.layout.Drawing([], images=False, read=False)
+
+    monkeypatch.setattr(pdffile.layout, "drawing", drawing)
+    a = extract(pdf(["Text only", ("See the figure", FORM_IMAGE)], []), "figure.pdf")
+    # The page's images are looked for apart from its layout.
+    assert a.attrs["images_unread"] == [2]
+
+
+def test_a_pdf_page_whose_images_cannot_be_looked_for_is_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loom_extractor import pdffile
+
+    def unreadable(*a: Any) -> Any:
+        raise ValueError("unreadable drawing")
+
+    monkeypatch.setattr(pdffile.layout, "drawing", unreadable)
+    monkeypatch.setattr(pdffile, "_has_image", unreadable)
+    a = extract(pdf(["Text only"], []), "a.pdf")
+    # Its text is read; that its images could not be looked for is said, not passed over.
+    assert [b.text for b in a.blocks] == ["Text only"] and a.coverage.to_dict()["complete"]
+    assert a.warnings == ("page 1: whether it draws an image could not be read",)
+
+
+def _nested_forms(depth: int) -> bytes:
+    """A page of text that draws an image through `depth` forms, each drawing the next."""
+    from pypdf.generic import (
+        ArrayObject,
+        DecodedStreamObject,
+        DictionaryObject,
+        NameObject,
+        NumberObject,
+    )
+
+    w = PdfWriter()
+    w.append(io.BytesIO(pdf(["Text"], [])))
+    page = w.pages[0]
+    image = DecodedStreamObject()
+    image.set_data(b"\x00")
+    image.update(
+        {
+            NameObject("/Type"): NameObject("/XObject"),
+            NameObject("/Subtype"): NameObject("/Image"),
+            NameObject("/Width"): NumberObject(1),
+            NameObject("/Height"): NumberObject(1),
+            NameObject("/ColorSpace"): NameObject("/DeviceGray"),
+            NameObject("/BitsPerComponent"): NumberObject(8),
+        }
+    )
+    child = w._add_object(image)
+    for _ in range(depth):
+        form = DecodedStreamObject()
+        form.set_data(b"/X Do")
+        form.update(
+            {
+                NameObject("/Type"): NameObject("/XObject"),
+                NameObject("/Subtype"): NameObject("/Form"),
+                NameObject("/BBox"): ArrayObject(
+                    [NumberObject(0), NumberObject(0), NumberObject(1), NumberObject(1)]
+                ),
+                NameObject("/Resources"): DictionaryObject(
+                    {NameObject("/XObject"): DictionaryObject({NameObject("/X"): child})}
+                ),
+            }
+        )
+        child = w._add_object(form)
+    resources = page["/Resources"].get_object()
+    resources[NameObject("/XObject")] = DictionaryObject({NameObject("/X"): child})
+    contents = page.get_contents()
+    assert contents is not None
+    contents.set_data(contents.get_data() + b" /X Do")
+    page.replace_contents(contents)
+    out = io.BytesIO()
+    w.write(out)
+    return out.getvalue()
+
+
+def test_an_image_drawn_by_a_form_at_the_depth_bound_counts_and_past_it_does_not() -> None:
+    from loom_extractor import pdflayout
+
+    bound = pdflayout._MAX_FORM_DEPTH
+    # A form at the bound is walked and its image counts; the forms it names are not.
+    assert extract(_nested_forms(bound), "a.pdf").attrs.get("images_unread") == [1]
+    assert "images_unread" not in extract(_nested_forms(bound + 1), "b.pdf").attrs
+
+
+def test_the_pdf_fallback_searches_the_forms_the_walk_does(monkeypatch: pytest.MonkeyPatch) -> None:
+    from loom_extractor import pdffile, pdflayout
+
+    monkeypatch.setattr(
+        pdffile.layout, "drawing", lambda *a: pdflayout.Drawing([], images=False, read=False)
+    )
+    bound = pdflayout._MAX_FORM_DEPTH
+    assert extract(_nested_forms(bound), "a.pdf").attrs.get("images_unread") == [1]
+    assert "images_unread" not in extract(_nested_forms(bound + 1), "b.pdf").attrs
+
+
+def test_a_pdf_page_whose_resources_hold_an_image_it_never_draws_is_not_listed() -> None:
+    a = extract(pdf(["Text only", ("Shared resources", UNDRAWN_IMAGE)], []), "a.pdf")
+    # The layout read the whole drawing and no image is drawn.
+    assert "images_unread" not in a.attrs and a.warnings == ()
 
 
 def test_a_pdf_heading_whose_title_is_on_no_line_opens_its_page() -> None:
@@ -441,7 +832,10 @@ def test_docx_rows_and_cells_inside_content_controls_are_read() -> None:
     ("body", "unit"),
     [
         (_wp("Text") + "<w:altChunk/>", "embedded document"),
-        ("<w:p><w:r><w:drawing/></w:r></w:p>", "document"),
+        (_picture(), "document"),
+        (_drawing(f"{_DRAWINGML}/chart", ""), "document"),
+        (_MODEL_3D, "document"),
+        (_WORDART, "document"),
     ],
 )
 def test_docx_content_it_does_not_read_is_a_failed_unit(body: str, unit: str) -> None:
@@ -450,7 +844,7 @@ def test_docx_content_it_does_not_read_is_a_failed_unit(body: str, unit: str) ->
 
 
 def test_a_docx_drawing_beside_text_is_no_failure_and_an_odd_outline_level_no_heading() -> None:
-    body = "<w:p><w:r><w:drawing/></w:r></w:p>" + _wp("Text", extra='<w:outlineLvl w:val="²"/>')
+    body = _picture() + _wp("Text", extra='<w:outlineLvl w:val="²"/>')
     a = extract(_zip(_docx_parts(body)), "a.docx")
     assert [(b.type, b.text) for b in a.blocks] == [("paragraph", "Text")]
     assert a.coverage.complete
@@ -487,6 +881,79 @@ def _deck(slides: dict[str, str]) -> dict[str, str | bytes]:
         ),
         **{f"ppt/slides/{name}": xml for name, xml in slides.items()},
     }
+
+
+def test_a_pptx_slides_background_picture_or_picture_filled_group_is_named_as_not_read() -> None:
+    background = (
+        f"<p:sld {_P}><p:cSld><p:bg><p:bgPr><a:blipFill/></p:bgPr></p:bg>"
+        f"<p:spTree>{_sp('Over a screenshot')}</p:spTree></p:cSld></p:sld>"
+    )
+    group = _slide(f"<p:grpSp><p:grpSpPr><a:blipFill/></p:grpSpPr>{_sp('Grouped')}</p:grpSp>")
+    cell = (
+        "<p:graphicFrame><a:graphic><a:graphicData><a:tbl><a:tr>"
+        "<a:tc><a:txBody><a:p><a:r><a:t>Shot</a:t></a:r></a:p></a:txBody><a:tcPr><a:blipFill/></a:tcPr></a:tc>"
+        "</a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>"
+    )
+    slides = {
+        "a.xml": _slide(_sp("Plain")),
+        "b.xml": background,
+        "c.xml": group,
+        "d.xml": _slide(cell),
+    }
+    a = extract(_zip(_deck(slides)), "deck.pptx")
+    assert [b.text for b in a.blocks] == ["Plain", "Over a screenshot", "Grouped", "Shot"]
+    assert a.attrs["images_unread"] == [2, 3, 4]
+
+
+def test_a_pptx_drawing_the_reader_does_not_know_is_named_by_its_fallback_picture() -> None:
+    ink = (
+        f'<mc:AlternateContent {_MC}><mc:Choice Requires="p14"><p14:contentPart xmlns:p14="p14"/>'
+        "</mc:Choice><mc:Fallback><p:pic/></mc:Fallback></mc:AlternateContent>"
+    )
+    # An equation's math is no text the walk reads: its picture fallback counts.
+    math = (
+        '<a14:m xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main">'
+        '<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">'
+        "<m:r><m:t>x=1</m:t></m:r></m:oMath></a14:m>"
+    )
+    equation = (
+        f'<mc:AlternateContent {_MC}><mc:Choice Requires="a14"><p:sp><p:nvSpPr><p:nvPr/></p:nvSpPr>'
+        f"<p:txBody><a:p>{math}</a:p></p:txBody></p:sp></mc:Choice>"
+        "<mc:Fallback><p:pic/></mc:Fallback></mc:AlternateContent>"
+    )
+    # A shape in alternate content whose choice is read: its fallback is a copy.
+    shape = (
+        f'<mc:AlternateContent {_MC}><mc:Choice Requires="a14">{_sp("Boxed")}</mc:Choice>'
+        "<mc:Fallback><p:pic/></mc:Fallback></mc:AlternateContent>"
+    )
+    # A 3D model: its choice a graphic frame, read as a graphic the walk does not read.
+    model = (
+        f'<mc:AlternateContent {_MC}><mc:Choice Requires="am3d"><p:graphicFrame><a:graphic>'
+        '<a:graphicData uri="http://schemas.microsoft.com/office/drawing/2017/model3d"/>'
+        "</a:graphic></p:graphicFrame></mc:Choice><mc:Fallback><p:pic/></mc:Fallback></mc:AlternateContent>"
+    )
+    # A run's text filled with a picture, in a table cell, is no picture behind the cell.
+    filled_text = (
+        "<p:graphicFrame><a:graphic><a:graphicData><a:tbl><a:tr><a:tc><a:txBody><a:p><a:r>"
+        "<a:rPr><a:blipFill/></a:rPr><a:t>Shiny</a:t></a:r></a:p></a:txBody></a:tc></a:tr>"
+        "</a:tbl></a:graphicData></a:graphic></p:graphicFrame>"
+    )
+    slides = {
+        "a.xml": _slide(_sp("Notes on ink") + ink),
+        "b.xml": _slide(_sp("Proof") + equation),
+        "c.xml": _slide(_sp("Model") + model),
+        "d.xml": _slide(filled_text),
+        "e.xml": _slide(shape),
+    }
+    a = extract(_zip(_deck(slides)), "deck.pptx")
+    assert [b.text for b in a.blocks] == ["Notes on ink", "Proof", "Model", "Shiny", "Boxed"]
+    assert a.attrs["images_unread"] == [1, 2, 3]
+
+
+def test_a_slide_of_a_picture_filled_shape_and_no_text_is_a_failed_unit() -> None:
+    filled = "<p:sp><p:nvSpPr><p:nvPr/></p:nvSpPr><p:spPr><a:blipFill/></p:spPr></p:sp>"
+    a = extract(_zip(_deck({"a.xml": _slide(_sp("Text")), "b.xml": _slide(filled)})), "deck.pptx")
+    assert [f.unit for f in a.coverage.failed] == ["slide 2"]
 
 
 def test_a_damaged_or_oversized_slide_part_fails_that_slide_alone(
@@ -540,7 +1007,7 @@ def test_docx_styles_or_notes_that_cannot_be_read_fail_that_unit_not_the_body(
 
 
 def test_a_docx_of_pictures_in_a_table_and_no_text_fails() -> None:
-    table = "<w:tbl><w:tr><w:tc><w:p><w:r><w:drawing/></w:r></w:p></w:tc></w:tr></w:tbl>"
+    table = f"<w:tbl><w:tr><w:tc>{_picture()}</w:tc></w:tr></w:tbl>"
     a = extract(_zip(_docx_parts(table)), "a.docx")
     assert [f.unit for f in a.coverage.failed] == ["document"]
 
@@ -703,7 +1170,8 @@ def test_a_slide_nested_past_what_the_walk_reads_fails_that_slide_alone() -> Non
 
 
 def test_a_docx_whose_only_picture_was_deleted_is_no_pictures_only_document() -> None:
-    a = extract(_zip(_docx_parts("<w:p><w:del><w:r><w:drawing/></w:r></w:del></w:p>")), "a.docx")
+    deleted = f"<w:p><w:del><w:r>{_run(_picture())}</w:r></w:del></w:p>"
+    a = extract(_zip(_docx_parts(deleted)), "a.docx")
     assert a.blocks == () and a.coverage.failed == ()
 
 

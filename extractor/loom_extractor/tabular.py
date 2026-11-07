@@ -229,7 +229,7 @@ def _row_size(names: list[str], cells: list[Cell], left: int) -> int:
 
 
 def counted(n: int, noun: str) -> str:
-    """`1 row`, `2 rows`: a failure's count and what it counts."""
+    """`1 row`, `2 rows`: a count and what it counts."""
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 

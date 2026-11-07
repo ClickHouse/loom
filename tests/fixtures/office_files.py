@@ -12,18 +12,22 @@ from pypdf import PdfWriter
 FORM_IMAGE = "\x00form"
 INLINE_IMAGE = "\x00inline"
 FORM_INLINE_IMAGE = "\x00form-inline"  # a form whose own stream draws the image inline
+IMAGE = "\x00image"  # an image XObject drawn from the page, as None draws a page of one
+UNDRAWN_IMAGE = "\x00undrawn"  # an image the page's resources hold and its content never draws
 
 
 def pdf(
-    pages: list[str | None],
+    pages: list[str | tuple[str, str] | None],
     outline: list[tuple[str, int, list[tuple[str, int]]]],
     *,
     broken_cmap: bool = False,
 ) -> bytes:
-    """A PDF of `pages` (each its lines, None for a page of one image, FORM_IMAGE,
-    INLINE_IMAGE or FORM_INLINE_IMAGE) with `outline` entries `(title, page index,
-    children)`. With `broken_cmap`, the font's character map gives `A` a lone
-    surrogate."""
+    """A PDF of `pages` with `outline` entries `(title, page index, children)`. A page
+    is its lines; None, FORM_IMAGE, INLINE_IMAGE or FORM_INLINE_IMAGE for a page
+    of one image; or `(lines, kind)` for a page of text that also draws an image
+    of `kind` (any of the above, or IMAGE). UNDRAWN_IMAGE as `kind` names an
+    image in the page's resources that its content never draws. With
+    `broken_cmap`, the font's character map gives `A` a lone surrogate."""
     objs: list[bytes] = []
 
     def add(body: bytes) -> int:
@@ -57,28 +61,30 @@ def pdf(
     )
     pages_id = len(objs) + 1 + 2 * len(pages)  # after every page and its contents
     page_ids = []
-    for text in pages:
-        if text == INLINE_IMAGE:
-            stream, res = (
-                b"q 100 0 0 100 0 0 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q",
-                b"<< >>",
-            )
-        elif text == FORM_INLINE_IMAGE:
-            stream, res = (
-                b"q 100 0 0 100 0 0 cm /Fm1 Do Q",
-                b"<< /XObject << /Fm1 %d 0 R >> >>" % form_inline,
-            )
-        elif text is None or text == FORM_IMAGE:
-            stream, res = (
-                b"q 100 0 0 100 0 0 cm /Im1 Do Q",
-                b"<< /XObject << /Im1 %d 0 R >> >>" % (image if text is None else form),
-            )
+    # Each kind of image as the content that draws it and the XObjects it names.
+    drawn = {
+        INLINE_IMAGE: (b"q 100 0 0 100 0 0 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q", b""),
+        FORM_INLINE_IMAGE: (b"q 100 0 0 100 0 0 cm /Fm1 Do Q", b"/Fm1 %d 0 R" % form_inline),
+        IMAGE: (b"q 100 0 0 100 0 0 cm /Im1 Do Q", b"/Im1 %d 0 R" % image),
+        FORM_IMAGE: (b"q 100 0 0 100 0 0 cm /Im1 Do Q", b"/Im1 %d 0 R" % form),
+        UNDRAWN_IMAGE: (b"", b"/Im1 %d 0 R" % image),
+    }
+    for page in pages:
+        if page is None:
+            text, kind = "", IMAGE
+        elif isinstance(page, tuple):
+            text, kind = page
+        elif page in drawn:
+            text, kind = "", page
         else:
+            text, kind = page, ""
+        stream, xobjects = drawn.get(kind, (b"", b""))
+        if text:
             lines = b" ".join(b"(%s) Tj 0 -20 Td" % line.encode() for line in text.split("\n"))
-            stream, res = (
-                b"BT /F1 12 Tf 72 720 Td " + lines + b" ET",
-                b"<< /Font << /F1 %d 0 R >> >>" % font,
-            )
+            stream = b"BT /F1 12 Tf 72 720 Td " + lines + b" ET " + stream
+        fonts = b" /Font << /F1 %d 0 R >>" % font if text else b""
+        images = b" /XObject << %s >>" % xobjects if xobjects else b""
+        res = b"<<%s%s >>" % (fonts, images)
         contents = add(b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream))
         page_ids.append(
             add(
