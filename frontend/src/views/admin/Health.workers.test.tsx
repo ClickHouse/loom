@@ -218,6 +218,28 @@ describe("WorkersPanel", () => {
     expect(within(dedup).getAllByRole("cell")[1]).not.toHaveTextContent("Healthy");
   });
 
+  it("judges a worker that runs back to back by its idle interval, not as never stalling", async () => {
+    const ago = (s: number) => new Date(Date.now() - s * 1000).toISOString();
+    const worker = {
+      enabled: true,
+      effective: true,
+      interval_seconds: 0,
+      idle_interval_seconds: 15,
+      last_run_at: ago(30),
+      last_duration_ms: 420,
+      consecutive_failures: 0,
+      last_pass_status: "ok",
+    };
+    respond({ workers: { embedding_worker: worker, dedup_worker: { ...worker, last_run_at: ago(60) } } });
+    render(<WorkersPanel />);
+    await waitFor(() => expect(screen.getByText("Memory indexing")).toBeInTheDocument());
+    const [, indexing, dedup] = within(screen.getByRole("table", { name: "Workers" })).getAllByRole("row");
+    // 30 s since its last tick is within 3 × 15 s; 60 s is past it.
+    expect(within(indexing).getAllByRole("cell")[1]).toHaveTextContent("Healthy");
+    expect(within(dedup).getAllByRole("cell")[1]).toHaveTextContent("Stalled");
+    expect(within(indexing).getAllByRole("cell")[3]).toHaveTextContent("back to back");
+  });
+
   it("draws the first read as the table's header over a skeleton, marked busy", async () => {
     vi.stubGlobal(
       "fetch",

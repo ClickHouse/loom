@@ -714,6 +714,27 @@ def test_the_ingest_worker_runs_on_its_settings(settings_override: Any) -> None:
     assert "knowledge_ingest" not in {w.name for w in registry.enabled_workers()}
 
 
+def test_the_job_is_read_again_under_its_lease_with_sequential_consistency(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The worker takes the next job at once, so the run that ended a job may have
+    written on another replica a moment ago: the re-read under the lease must see it,
+    or a job already ended reads as pending and runs again."""
+    from server.core.ch import sequential_reads_active
+
+    read = ingestions.get_ingestion
+    consistent: list[bool] = []
+
+    async def recording(*a: Any, **k: Any) -> Any:
+        consistent.append(sequential_reads_active())
+        return await read(*a, **k)
+
+    job_id = _ingest(world, _upload(world))
+    monkeypatch.setattr(ingestions, "get_ingestion", recording)
+    assert _run(world, job_id) == "ready"
+    assert consistent and consistent[0] is True  # the re-read under the lease
+
+
 def test_by_default_the_worker_takes_the_next_job_at_once_and_waits_only_when_idle() -> None:
     """A pass that ran a job is followed at once, so a queue drains at the speed of
     its jobs; one that found none waits the idle interval."""
@@ -721,8 +742,8 @@ def test_by_default_the_worker_takes_the_next_job_at_once_and_waits_only_when_id
     from server.workers.supervisor import next_interval_seconds
 
     spec = next(w for w in registry.enabled_workers() if w.name == "knowledge_ingest")
-    busy, idle = (pass_context.PassContext("knowledge_ingest") for _ in range(2))
-    idle.idle = True
+    busy = pass_context.PassContext("knowledge_ingest")
+    idle = pass_context.PassContext("knowledge_ingest", idle=True)
     assert next_interval_seconds(spec, busy) == 0
     assert next_interval_seconds(spec, idle) == 15
 

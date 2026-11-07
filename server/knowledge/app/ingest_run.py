@@ -49,6 +49,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from server.core.ch import sequential_reads
 from server.core.errors import BACKEND_NOT_NOW, BackendUnavailableError, EmbedTimeoutError
 from server.core.leases import LeaseLost
 from server.knowledge.app import datasets
@@ -616,9 +617,12 @@ async def take_and_run(job: dict[str, Any]) -> str | None:
         return None
     try:
         async with lease.renewed():
-            current = await ingestions.get_ingestion(
-                job["org"], job["namespace"], job["ingestion_id"]
-            )
+            # Sequentially consistent: the run that held the lease before may have just
+            # ended the job on another replica, and the worker takes the next job at once.
+            with sequential_reads():
+                current = await ingestions.get_ingestion(
+                    job["org"], job["namespace"], job["ingestion_id"]
+                )
             if current is None or current["state"] not in OPEN_STATES:
                 return None
             # Its own publish first: a published revision stays published, even
