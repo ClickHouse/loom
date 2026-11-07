@@ -48,6 +48,15 @@ class _FakeRepo:
     pass
 
 
+def test_an_autospecced_function_is_found(probe) -> None:
+    from unittest.mock import create_autospec
+
+    from server.core.ch import get_client
+
+    before = _fake_first_import(probe, get_client=create_autospec(get_client))
+    assert _double_bound_at_import(before)
+
+
 def test_an_instance_of_a_test_class_is_found(probe) -> None:
     before = _fake_first_import(probe, CodeRepo=_FakeRepo())
     assert _double_bound_at_import(before)
