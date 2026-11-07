@@ -131,10 +131,10 @@ _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     # an Authorization header or a bearer value
     (re.compile(r"(authorization:\s*)\S+(?:\s+\S+)?", re.IGNORECASE), r"\1***"),
     (re.compile(r"(bearer\s+)[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE), r"\1***"),
-    # a credential in a URL's query: ?token=..., &sig=...
+    # a credential in a URL's query: any parameter whose name ends in one of these
     (
         re.compile(
-            r"([?&](?:access_token|token|sig|signature|key|x-amz-signature)=)[^&\s'\"]+",
+            r"([?&][\w.-]*(?:token|key|sig|signature|secret|password)=)[^&\s'\"]+",
             re.IGNORECASE,
         ),
         r"\1***",

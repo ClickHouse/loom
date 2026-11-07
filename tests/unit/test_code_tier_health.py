@@ -738,3 +738,12 @@ def test_a_credential_in_a_url_query_reaches_neither_the_error_nor_the_fix() -> 
     assert record.kind == "credential"
     assert "abcd1234" not in record.error and "token=***&v=2" in record.error
     assert "dl.example.com/pkg.tgz)" in record.fix and "abcd1234" not in record.fix
+
+
+@pytest.mark.parametrize(
+    "param", ["private_token", "api_key", "apikey", "client_secret", "password", "X-Goog-Signature"]
+)
+def test_a_query_credential_is_redacted_by_its_name_ending(param: str) -> None:
+    assert tier_health.redact(f"GET https://h/x?{param}=s3cr3t&v=2") == (
+        f"GET https://h/x?{param}=***&v=2"
+    )
