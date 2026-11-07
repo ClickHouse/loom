@@ -277,10 +277,10 @@ A run that stopped in `clickhouse` published nothing.
 - **The release does not dump the tag's `schemas/schema.sql`**: regenerate it on that release (the
   [schema dump](./migrations.md#schema-dump-and-check) commands with
   `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D`) and commit it. For a candidate, tag
-  the next `-rc.N` on the fix's commit. For a final (one with no soaked candidate on its commit, as
-  only that one resolves `latest`), delete its tag (`git push origin :refs/tags/vX.Y.Z`, and
-  `git tag -d vX.Y.Z` in every clone that fetched it, as a fetch never removes a tag), then tag a
-  new candidate on the fix's commit. Either way dispatch the new candidate with the same
+  the next `-rc.N` on the fix's commit. For a final (one with no candidate on its commit that
+  published a bundle, as only that one resolves `latest`), delete its tag
+  (`git push origin :refs/tags/vX.Y.Z`, and `git tag -d vX.Y.Z` in every clone that fetched it, as a
+  fetch never removes a tag), then tag a new candidate on the fix's commit. Either way dispatch the new candidate with the same
   `-f clickhouse_image=...`, as its tag push resolves `latest` again; soak it, and tag the final
   there, which keeps that release.
 - **A downgrade during the soak**: a final carrying its candidate's release is checked too, so a

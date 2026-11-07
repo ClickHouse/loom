@@ -42,7 +42,8 @@ on:
       clickhouse_image:
         description: >-
           An exact ClickHouse release for a bundle not yet published (e.g.
-          clickhouse/clickhouse-server:26.9.18.11), when `latest` names a bad one
+          clickhouse/clickhouse-server:26.9.18.11), when `latest` names a bad one;
+          for a final it also replaces the release its candidates were soaked with
         required: false
         default: ""
       allow_clickhouse_downgrade:
@@ -208,7 +209,8 @@ jobs:
       # release_clickhouse.sh decides which release, in order of
       # preference. A downgrade is refused here so the run stops before it
       # builds and pushes images; github-release checks again before it uploads.
-      - id: resolve
+      - name: Which ClickHouse release the bundle names
+        id: resolve
         env:
           VERSION: ${{ needs.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}

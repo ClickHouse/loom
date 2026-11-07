@@ -160,7 +160,9 @@ def bump(version: str, chart: str, root: Path = ROOT) -> None:
     texts: dict[str, str] = {}
     edits = [(CHART, chart)] + [(p, version) for p in PINS]
     for pin, value in edits:
-        text = texts[pin.path] if pin.path in texts else _text(pin.path, root)
+        if pin.path not in texts:
+            texts[pin.path] = _text(pin.path, root)
+        text = texts[pin.path]
         start, end = _match(pin, text).span("v")
         texts[pin.path] = text[:start] + value + text[end:]
     for path, text in texts.items():

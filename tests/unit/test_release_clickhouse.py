@@ -125,6 +125,7 @@ def test_a_dispatch_must_name_one_release(resolve: Resolve) -> None:
 def test_a_dispatch_names_the_release_over_the_candidates(resolve: Resolve) -> None:
     result = resolve("1.2.0", {"v1.2.0-rc.1": "ch:soaked"}, CLICKHOUSE_IMAGE="ch:named")
     assert result.stdout == "ch:named\n"
+    assert "::notice::clickhouse_image=ch:named replaces the release" in result.stderr
 
 
 @pytest.mark.parametrize(

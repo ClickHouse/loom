@@ -6,28 +6,16 @@ against an archived revision."""
 from __future__ import annotations
 
 import contextlib
-import importlib.util
 import io
 import json
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def _module():
-    spec = importlib.util.spec_from_file_location(
-        "wire_changelog", ROOT / "scripts" / "codegen" / "wire_changelog.py"
-    )
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+from scripts.codegen import wire_changelog
 
 
 def test_the_probe_reads_the_registry() -> None:
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        exec(_module()._PROBE, {})
+        exec(wire_changelog._PROBE, {})
     ops = json.loads(out.getvalue())["ops"]
     assert {"memory.set", "memory.search", "memory.get", "code.search"} <= set(ops)
     assert "memory_key" in ops["memory.set"]["request_fields"]
