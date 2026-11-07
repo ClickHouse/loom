@@ -9,14 +9,13 @@ tighten, clear reports what it left behind.
 
 from __future__ import annotations
 
-import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
 from fastapi import HTTPException
 
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.core.hashing import sha256_value
 from server.memory.api.models_crud import (
     MemoryDeleteInput,
@@ -235,47 +234,61 @@ async def test_set_refuses_a_changed_value_under_read_only(monkeypatch: pytest.M
     assert e.value.detail["refused_action"] == "expire"
 
 
-async def _expiry_after_set(
-    monkeypatch: pytest.MonkeyPatch, existing: MemoryRow
-) -> datetime | None:
-    """The expiry a same-value memory.set gives `existing`, under a type keeping 30 days."""
-    from server.memory.app import namespace_types
-    from server.memory.app.conflicts import WriteConfig
+def _thirty_day_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.memory.app import blacklist_guard, namespace_types
 
     async def thirty_days(*_: Any) -> Any:
         return namespace_types.TypeConfig(
             retention_days=30, dedup_threshold=None, hot_quota=0, conflict_policy=""
         )
 
+    async def no_match(**_: Any) -> None:
+        return None
+
     monkeypatch.setattr(namespace_types, "get_type_config", thirty_days)
-    restatement = MemorySetInput(
-        **_ID, memory_key="deploy_window", value="Tue and Thu only", classify=False
+    monkeypatch.setattr(blacklist_guard, "enforce_on_insert", no_match)
+
+
+async def _restate(monkeypatch: pytest.MonkeyPatch, existing: MemoryRow) -> dict[str, Any]:
+    """The loom.memory row a same-value memory.set writes over `existing`."""
+    _thirty_day_type(monkeypatch)
+    ch = _stub_repo(monkeypatch, existing)
+    # The whole write path runs: every read it makes answers from the same fake.
+    import server.memory.app.conflicts as _cf
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(_cf, "get_client", lambda: ch, raising=False)
+    await write_mod.handle_memory_set(
+        MemorySetInput(**_ID, memory_key="deploy_window", value="Tue and Thu only", classify=False)
     )
-    prefetched = asyncio.get_running_loop().create_future()
-    prefetched.set_result(WriteConfig())
-    return await write_mod._set_expiry(restatement, existing, prefetched, "semantic")
+    (row,) = [r for table, rows in ch.inserts if table == "loom.memory" for r in rows]
+    return row
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("expires_in", "kept"), [(None, False), (timedelta(days=-1), False), (timedelta(days=2), True)]
 )
-async def test_a_read_only_row_keeps_its_live_expiry_or_none(
+async def test_a_read_only_restatement_lands_with_the_live_expiry_or_none(
     monkeypatch: pytest.MonkeyPatch, expires_in: timedelta | None, kept: bool
 ) -> None:
     # The checks read the real clock, so the expiry is set from it.
     expires_at = naive_utc_now() + expires_in if expires_in is not None else None
-    row = _row(lock_mode="read_only", lock_reason="hold", expires_at=expires_at)
-    assert await _expiry_after_set(monkeypatch, row) == (expires_at if kept else None)
+    row = await _restate(
+        monkeypatch, _row(lock_mode="read_only", lock_reason="hold", expires_at=expires_at)
+    )
+    assert row["expires_at"] == (expires_at if kept else None)
+    assert row["lock_mode"] == "read_only"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("lock_mode", ["", "no_delete"])
-async def test_a_row_its_lock_lets_expire_takes_the_type_retention(
+async def test_an_unlocked_or_no_delete_row_takes_the_type_retention(
     monkeypatch: pytest.MonkeyPatch, lock_mode: str
 ) -> None:
-    expires_at = await _expiry_after_set(monkeypatch, _row(lock_mode=lock_mode))
-    assert expires_at is not None and expires_at - datetime.now(UTC) > timedelta(days=29)
+    row = await _restate(monkeypatch, _row(lock_mode=lock_mode))
+    assert row["expires_at"] is not None
+    assert to_naive_utc(row["expires_at"]) - naive_utc_now() > timedelta(days=29)
 
 
 @pytest.mark.asyncio

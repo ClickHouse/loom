@@ -113,15 +113,18 @@ def refusal(row: Any, action: str, *, op: str, mode: str) -> HTTPException:
 
 
 def refuses(row: Any, action: LockAction, *, now: datetime | None = None) -> bool:
-    """Whether the lock in force on `row` refuses `action` (False for no row)."""
-    mode = effective_mode(row, now=now) if row is not None else ""
+    """Whether the lock in force on `row` refuses `action`; no row has no lock."""
+    mode = effective_mode(row, now=now)
     return bool(mode) and action in REFUSES[mode]
 
 
 def assert_unlocked(row: Any, action: LockAction, *, op: str, now: datetime | None = None) -> None:
     """Raise 423 LOCKED when the lock in force on `row` refuses `action`."""
-    if refuses(row, action, now=now):
-        raise refusal(row, action, op=op, mode=effective_mode(row, now=now))
+    if row is None:
+        return
+    mode = effective_mode(row, now=now)
+    if mode and action in REFUSES[mode]:
+        raise refusal(row, action, op=op, mode=mode)
 
 
 def locked_predicate(alias: str = "", now: str = "now()") -> str:
