@@ -117,17 +117,10 @@ def require_real_llm(control_plane_url: str) -> None:
 
 
 @pytest.fixture
-def require_real_embedder(control_plane_url: str):
-    """Skip search-quality tests when the server runs the fake embedder.
-
-    The fake-ngram embedder is documented to mis-rank every search, so
-    ranking-threshold assertions (entity-boost beating a cosine winner,
-    procedure.match surfacing a hit) structurally can't hold on it. They
-    exercise quality only against a real embedder — CI with a key, or a
-    local real-embedder stack. Authoritative: reads the server's own
-    /v1/health.fake_embedding, not a test-process env guess.
-    """
-    with httpx.Client(base_url=control_plane_url, timeout=2.0) as c:
+def require_real_embedder(control_plane_url: str) -> None:
+    """Skip unless the server under test runs a real embedder (its /v1/health says so):
+    ranking thresholds cannot hold on the fake one."""
+    with httpx.Client(base_url=control_plane_url, timeout=5.0) as c:
         health = c.get("/v1/health").json()
     if health.get("fake_embedding"):
         pytest.skip("search-quality test needs a real embedder (server is on the fake embedder)")

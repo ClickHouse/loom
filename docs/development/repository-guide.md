@@ -60,7 +60,7 @@ import rules a contract test enforces; the request path is in
 | Path                 | Contents                                                                                                                                                 |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `tests/unit/`        | fast tests that need no ClickHouse; `snapshots/` (CLI tree and help, worker registry, SDK public API), `fixtures/`, shared helpers                       |
-| `tests/integration/` | tests against a running server and ClickHouse (`conftest.py` at `tests/` wires them), including the cross-principal leakage probe                        |
+| `tests/integration/` | tests against a running server and ClickHouse (`tests/integration/conftest.py` wires them), including the cross-principal leakage probe                  |
 | `tests/analyzer/`    | the statement corpus: every SQL builder's shapes through `EXPLAIN QUERY TREE` on migrated empty tables; see its [README](../../tests/analyzer/README.md) |
 | `tests/code_lanes/`  | the SQL and shell lanes corpus: what the code index derives from `tests/fixtures/code_lanes/`, compared with a committed expectation                     |
 | `tests/fixtures/`    | inputs shared across suites                                                                                                                              |
