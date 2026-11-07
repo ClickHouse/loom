@@ -69,6 +69,12 @@ def _seed(ch_client: Any, org: str) -> None:
     memory("ns", "-", "topic-rebuilt", "alice is vegetarian", ["consolidated", "src:user_diet"])
     memory("ns", "-", "topic-rebuilt", "bob eats fish", ["consolidated", "src:bob-diet"], v=2)
     memory("ns2", "-", "topic-carol", "carol is vegan", ["consolidated", "src:user_diet"])
+    # a summary of alice's fact whose row has merged away: only its history names her
+    ch_client.insert(
+        "loom.memory_versions",
+        [[org, "ns", "a", "-", "-", "topic-gone", "fact", "alice is vegetarian", 1, consolidated]],
+        column_names=_MEMORY_COLS,
+    )
     # a summary tagged with alice's key in a namespace she holds no key in: not hers
     memory("ns3", "-", "topic-cross", "alice is vegetarian", ["consolidated", "src:user_diet"])
     vector = build_embedding_row(
@@ -92,6 +98,7 @@ def _seed(ch_client: Any, org: str) -> None:
             ["m", "quoted-topic", org, "ns", "ask_synthesize", "vegetarian", ["topic-diets"]],
             ["m", "quoted-bob", org, "ns", "ask_synthesize", "fish", ["topic-bob"]],
             ["m", "quoted-carol", org, "ns2", "ask_synthesize", "vegan", ["topic-carol"]],
+            ["m", "quoted-gone", org, "ns", "ask_synthesize", "vegetarian", ["topic-gone"]],
         ],
         column_names=["model", "key", "org", "namespace", "stage", "text", "window_keys"],
     )
@@ -101,6 +108,7 @@ def _seed(ch_client: Any, org: str) -> None:
             [org, "ns", "a" * 64, "diets?", "vegetarian", ["topic-diets"], []],
             [org, "ns", "b" * 64, "bob?", "fish", [], ["topic-bob"]],
             [org, "ns2", "c" * 64, "carol?", "vegan", ["topic-carol"], []],
+            [org, "ns", "d" * 64, "gone?", "vegetarian", [], ["topic-gone"]],
         ],
         column_names=["org", "namespace", "precedent_key", "question", "answer"]
         + ["cited_keys", "window_keys"],
@@ -136,8 +144,8 @@ async def test_the_answers_that_quoted_a_consolidated_row_leave_with_its_source(
         before = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
         assert {t: before[t] for t in _COUNTED} == {
             "loom.memory": 1,
-            "loom.llm_response_cache": 1,
-            "loom.memory_ask_precedents": 1,
+            "loom.llm_response_cache": 2,
+            "loom.memory_ask_precedents": 2,
         }
         for name, step in _STEPS[:-1]:
             await _run(name, step, org, ch)
