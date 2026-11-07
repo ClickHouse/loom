@@ -8,6 +8,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from server.auth.aliases import lowered
 from server.auth.grant_claims import admins_change, grant_change
 from server.core.ch import get_client
 from server.core.grant_sql import LIVE_GRANT
@@ -24,7 +25,6 @@ from server.identity.api.models import (
     NamespaceMarkSeenOutput,
     _MineEntry,
 )
-from server.identity.app import me_callers
 from server.identity.app import namespace as _registry
 from server.identity.domain import join_policy as _jp
 from server.operations.base import grant_rank
@@ -428,7 +428,7 @@ def _kind(org: str, namespace: str, kind: object) -> str:
 async def _membership_rows(ch: Any, org: str, subjects: list[str]) -> list[dict[str, Any]]:
     """Active grant rows (joined with the directory + visits) for any of
     `subjects` — one person's aliases, or a token's creator's."""
-    subs = me_callers.lowered(subjects)
+    subs = lowered(subjects)
     rows: list[dict[str, Any]] = list(
         await ch.query_all(
             _MEMBERSHIP_SQL,

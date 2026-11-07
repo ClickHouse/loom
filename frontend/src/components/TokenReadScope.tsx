@@ -43,7 +43,7 @@ export function TokenReadScopePanel({
           ) : null}
           <span className="font-normal text-text-muted">
             {" "}
-            today, and any you join later. A restricted one is read only when added to the token.
+            today, and any you join later. A restricted namespace is read only by a token that lists it.
           </span>
         </div>
         <div className="flex flex-wrap gap-1">

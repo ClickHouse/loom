@@ -74,8 +74,8 @@ def config_key(client: str) -> str:
 
 
 def _coding_url(mcp_url: str) -> str:
-    # The dashboard's withToolset, kept alike for the fixture: a URL that already has a
-    # query or a toolset keeps it.
+    # The dashboard's withToolset, kept alike for the fixture: a URL that already names a
+    # toolset keeps it; otherwise toolset=coding is appended.
     if re.search(r"[?&]toolset=", mcp_url):
         return mcp_url
     return f"{mcp_url}{'&' if '?' in mcp_url else '?'}toolset=coding"
@@ -114,9 +114,10 @@ def client_config(client: str, mcp_url: str, minted: str) -> dict[str, object]:
         # User scope, kept in ~/.claude.json; the dashboard prints the same line.
         header = f"Authorization: Bearer {minted}"
         command = f'claude mcp add --transport http loom "{url}" -H "{header}" -s user'
+    key = config_key(client)
     return {
-        "config_key": config_key(client),
-        "config": {config_key(client): {"loom": mcp_entry(client, url, minted)}},
+        "config_key": key,
+        "config": {key: {"loom": mcp_entry(client, url, minted)}},
         "config_toml": toml,
         "command": command,
         "env": env,

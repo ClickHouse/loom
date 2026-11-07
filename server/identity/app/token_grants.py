@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 
+from server.auth.aliases import lowered
 from server.core.datetimes import naive_utc_now_seconds
 from server.identity.app import me_callers, namespace_classification
 from server.identity.store import grants as grants_repo
@@ -76,8 +77,8 @@ async def restricted_roles(
     org: str, subject: str, delegated: Delegated, requested: Mapping[str, str | None]
 ) -> dict[str, str]:
     """The token's own grant on each restricted namespace it names: its role there,
-    capped at the minting subject's grant. Where the subject holds none, a named one is
-    refused (403) and one that came from expanding `*` gets no grant."""
+    capped at the minting token's own subject's grant. Where that subject holds none, a
+    named one is refused (403); one a delegated parent's list brought in gets no grant."""
     out: dict[str, str] = {}
     for ns in delegated.namespaces:
         if ns == "*" or not await namespace_classification.is_restricted(org, ns):
@@ -230,7 +231,7 @@ async def cascade_revoke_to_created_tokens(
           AND revoked_at IS NULL
         """,
         # Any case, as the token list matches its maker.
-        params={"org": org, "subs": me_callers.lowered(creators)},
+        params={"org": org, "subs": lowered(creators)},
     )
     touched = 0
     for r in sa_rows:

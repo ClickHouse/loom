@@ -8,11 +8,11 @@ caller's live grants under every spelling the directory ties to them.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from fastapi import Request
 
+from server.auth.aliases import lowered
 from server.core.grant_sql import LIVE_GRANT
 from server.operations.base import grant_rank
 from server.settings import settings
@@ -124,14 +124,8 @@ async def subject_aliases_of(org: str, subject: str) -> list[str]:
     return await subject_aliases(org, subject) if org and subject else [subject]
 
 
-def lowered(subjects: Iterable[str]) -> list[str]:
-    """`subjects` in lower case, to match a stored subject in any case, as the gate does
-    (`authz.grant_role_for`)."""
-    return sorted({s.lower() for s in subjects})
-
-
 async def lowered_aliases(org: str, subject: str) -> list[str]:
-    """The caller's spellings in lower case (`lowered`)."""
+    """The caller's spellings in lower case, matched the way the gate matches a grant."""
     return lowered(await subject_aliases_of(org, subject))
 
 
@@ -171,7 +165,6 @@ __all__ = [
     "caller_admin_of",
     "caller_identity",
     "caller_role_on",
-    "lowered",
     "lowered_aliases",
     "parse_ns_roles",
     "remember_caller",

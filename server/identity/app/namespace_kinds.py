@@ -31,8 +31,8 @@ def reset_cache() -> None:
 
 
 def configured_kinds(org: str) -> dict[str, str]:
-    """`code` for each repository `LOOM_CODE_REPOS_JSON` lists in `org`: one with no
-    directory row is a repository all the same."""
+    """`code` for each repository the code config lists in `org` (`configured_repos`):
+    one with no directory row is a repository all the same."""
     from server.code.domain.index.repos import configured_repos
 
     return {r.namespace: "code" for r in configured_repos() if r.org == org}

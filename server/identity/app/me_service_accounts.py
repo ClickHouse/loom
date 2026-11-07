@@ -485,6 +485,7 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
                 "revoked_at": _iso(r.get("revoked_at")),
                 "revoked_by": r.get("revoked_by") or "",
                 "last_used_at": _iso(r.get("last_used_at")),
+                # Served for build N-1's dashboard, which labels a row by them.
                 "kind": r.get("kind") or "service_account",
                 "client": r.get("client") or "",
                 "ns_roles": me_callers.parse_ns_roles(r.get("ns_roles")),

@@ -176,7 +176,7 @@ async def test_revoking_the_person_cascades_to_the_tokens_they_minted_on_that_na
         ("sa:t2", "code-private"),
     ]
     sa_sql, sa_params = next(x for x in fake.sql if "service_accounts" in x[0])
-    assert sa_params["subs"] == ["alice", "alice@x"]
+    assert sa_params["subs"] == ["alice@x", "alice"]
 
 
 @pytest.mark.asyncio
@@ -201,7 +201,7 @@ async def test_the_rows_a_revoke_took_reach_their_tokens_whatever_a_read_sees(
         ORG, "team-z", "bob@x", unheld=True, taken=("Mallory",), ch=fake
     )
     _, sa_params = next(x for x in fake.sql if "service_accounts" in x[0])
-    assert sa_params["subs"] == ["bob@x", "mallory"]  # matched against lower(created_by)
+    assert sa_params["subs"] == ["mallory", "bob@x"]  # matched against lower(created_by)
 
 
 @pytest.mark.asyncio

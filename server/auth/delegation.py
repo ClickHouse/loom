@@ -389,7 +389,7 @@ async def creator_best_grant(org: str, creator: str) -> Role | None:
 
 async def _creator_account(org: str, creator: str) -> _Account:
     """Cached for the revocation refresh interval; a failed read is not cached."""
-    from server.auth.aliases import subject_aliases
+    from server.auth.aliases import lowered, subject_aliases
     from server.core.ch import get_client
 
     key = (org, creator)
@@ -415,7 +415,7 @@ async def _creator_account(org: str, creator: str) -> _Account:
                 WHERE org = {{org:String}} AND lower(subject) IN {{subs:Array(String)}}
             ) AS g
             """,
-            params={"org": org, "subs": [s.lower() for s in subjects]},
+            params={"org": org, "subs": lowered(subjects)},
         )
     except Exception as e:  # noqa: BLE001 — an unreadable account counts as disabled (closed)
         log.warning("account lookup failed for %s/%s: %s", org, creator, e)
