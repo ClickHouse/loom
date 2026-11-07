@@ -6,17 +6,15 @@ from __future__ import annotations
 import sys
 import types
 from collections.abc import Iterator
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from server.code.store.index import CodeRepo
-from tests.unit.conftest import _double_bound_at_import
+from tests.unit.conftest import _REPO, _double_bound_at_import
 
 pytest_plugins = ["pytester"]
 
-_REPO = Path(__file__).resolve().parents[2]
 _PROBE = "server._import_binding_probe"
 
 
@@ -60,10 +58,19 @@ def test_a_class_the_test_defined_is_found(probe) -> None:
     assert _double_bound_at_import(before)
 
 
-def test_a_module_outside_the_source_trees_is_not_checked(probe) -> None:
-    probe.__file__ = str(_REPO / "tests" / "_import_binding_probe.py")
+@pytest.mark.parametrize(
+    "where", ["tests/_probe.py", ".venv/lib/site-packages/_probe.py", "../elsewhere/_probe.py"]
+)
+def test_a_module_outside_the_source_files_is_not_checked(probe, where: str) -> None:
+    probe.__file__ = str(_REPO / where)
     before = _fake_first_import(probe, CodeRepo=MagicMock())
     assert not _double_bound_at_import(before)
+
+
+def test_a_scripts_module_is_checked(probe) -> None:
+    probe.__file__ = str(_REPO / "scripts" / "_probe.py")
+    before = _fake_first_import(probe, CodeRepo=MagicMock())
+    assert _double_bound_at_import(before)
 
 
 def test_the_real_class_is_not_found(probe) -> None:

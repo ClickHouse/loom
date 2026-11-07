@@ -607,24 +607,24 @@ def _provider_clients_left_as_found() -> Iterator[None]:
         )
 
 
-# The source trees whose modules can bind a patched name at import: tests/ is left out,
-# since its fakes are the doubles.
-_SOURCE_TREES = frozenset({"server", "bench", "dev", "extractor", "sdk"})
+def _is_source_file(path: str) -> bool:
+    """Whether `path` is a repository file outside tests/ (whose fakes are the doubles)
+    and outside a dot directory such as .venv."""
+    resolved = Path(path).resolve()
+    if not resolved.is_relative_to(_REPO):
+        return False
+    top = resolved.relative_to(_REPO).parts[0]
+    return top != "tests" and not top.startswith(".")
 
 
 def _source_modules_since(modules_before: set[str]) -> list[str]:
-    """The modules under `_SOURCE_TREES` imported since `modules_before`, skipping the
-    `None` entries a test sets in `sys.modules` to block an import."""
-    found = []
-    for name in sys.modules.keys() - modules_before:
-        path = getattr(sys.modules.get(name), "__file__", None)
-        if path is None:
-            continue
-        parts = Path(path).resolve().parts
-        top = parts[len(_REPO.parts)] if parts[: len(_REPO.parts)] == _REPO.parts else ""
-        if top in _SOURCE_TREES:
-            found.append(name)
-    return found
+    """The repository modules outside tests/ imported since `modules_before`, skipping
+    entries without a file: blocked imports (`None`), builtins and namespace packages."""
+    return [
+        name
+        for name in sys.modules.keys() - modules_before
+        if (path := getattr(sys.modules.get(name), "__file__", None)) and _is_source_file(path)
+    ]
 
 
 def _double_bound_at_import(modules_before: set[str]) -> bool:
