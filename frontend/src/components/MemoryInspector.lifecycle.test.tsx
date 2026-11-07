@@ -179,7 +179,8 @@ describe("MemoryInspector lifecycle actions", () => {
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Change" })).toBeNull();
-    expect(screen.queryByLabelText("Add a tag")).toBeNull();
+    // No lock gates tags.
+    expect(screen.getByLabelText("Add a tag")).toBeInTheDocument();
     const items = within(await menu())
       .getAllByRole("menuitem")
       .map((i) => i.textContent);
@@ -213,6 +214,15 @@ describe("MemoryInspector lifecycle actions", () => {
     await open("writer");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "This helped" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Couldn't record that", "error"));
+  });
+
+  it("leaves the drawer's shortcuts alone while a reason dialog is open", async () => {
+    await open("writer");
+    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Lock…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Lock memory" });
+    within(dialog).getByRole("button", { name: "Cancel" }).focus();
+    await userEvent.keyboard("d");
+    expect(confirmAction).not.toHaveBeenCalled();
   });
 
   it("says a lock is gone when the unlock finds none", async () => {

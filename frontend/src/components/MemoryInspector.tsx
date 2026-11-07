@@ -173,7 +173,6 @@ export function MemoryInspector({
   // The Lock or Mark-as-wrong dialog, over the drawer.
   const [reasonDialog, setReasonDialog] = useState<"lock" | "reject" | null>(null);
   const [redacting, setRedacting] = useState<{ entry: MemoryHistoryEntry; label: string } | null>(null);
-  const loadHistory = (key: string) => memoryHistory(identity, key, 8).then((r) => r.rows || []);
   const [conflictCount, setConflictCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   // A Restore in flight for the memory on screen; reset when the drawer moves on.
@@ -234,7 +233,7 @@ export function MemoryInspector({
   const openConversationThread = useStore((s) => s.openConversationThread);
   // A dialog over the drawer (Copy to…, the source conversation) owns the keys and the
   // outside clicks while it is open.
-  const dialogOver = copyOpen || sourceThread !== null;
+  const dialogOver = copyOpen || sourceThread !== null || reasonDialog !== null || redacting !== null;
   // An entity popover's memory link swaps the drawer in place; the focus goes to the
   // drawer, as on any open, since the chip that had it is about to go.
   const inspectInPlace = (key: string) => {
@@ -364,6 +363,7 @@ export function MemoryInspector({
     };
   }, [identity, memoryKey]);
 
+  const loadHistory = (key: string) => memoryHistory(identity, key, 8).then((r) => r.rows || []);
   useEffect(() => {
     const k = memoryKey;
     const mine = inspection.current;
@@ -461,12 +461,13 @@ export function MemoryInspector({
   const canUnshare = canCall("memory.demote", role, whoami);
   // memory.promote refuses a profile row and a high one.
   const shareable = detail?.memory_type !== "profile" && detail?.sensitivity !== "high";
-  // Both lock modes refuse a delete; read_only also refuses a value, tag or expiry change.
+  const canRedact = canCall("memory.redact", role, whoami);
+  const canJudge = canCall("memory.outcome", role, whoami);
+  // Both lock modes refuse a delete; read_only also refuses a value or expiry change. No
+  // lock gates tags (server/memory/domain/lock.py).
   const valueLocked = detail?.lock_mode === "read_only";
   const deleteLocked = !!detail?.lock_mode;
   const linkCount = links ? links.in.length + links.out.length : 0;
-  const canRedact = canCall("memory.redact", role, whoami);
-  const canJudge = canCall("memory.outcome", role, whoami);
   const verified = detail?.verification === "human" || detail?.verification === "process";
   useEffect(() => {
     setConflictCount(0);
@@ -1037,41 +1038,39 @@ export function MemoryInspector({
                         label={t}
                         tip={`Show all memories tagged ${t}`}
                         onClick={() => searchByTag(t)}
-                        onRemove={valueLocked ? undefined : () => onRemoveTag(t)}
+                        onRemove={() => onRemoveTag(t)}
                       />
                     ))}
-                    {!valueLocked && (
-                      <span className="w-36">
-                        <TextField
-                          aria-label="Add a tag"
-                          placeholder={(detail.tags || []).length > 0 ? "Add tag" : "Add tags…"}
-                          list="loom-inspector-tags"
-                          value={tagDraft}
-                          onChange={(v) => setTagDraft(v)}
-                          onFocus={() => {
-                            // The vocabulary is read when someone goes to add a tag, not on
-                            // every open.
-                            if (namespaceTags.length === 0)
-                              sharedTagVocabulary(identity)
-                                .then(setNamespaceTags)
-                                .catch(() => setNamespaceTags([]));
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === ",") {
-                              e.preventDefault();
-                              onAddTag(tagDraft);
-                              setTagDraft("");
-                            }
-                          }}
-                          onBlur={() => {
-                            if (tagDraft.trim()) {
-                              onAddTag(tagDraft);
-                              setTagDraft("");
-                            }
-                          }}
-                        />
-                      </span>
-                    )}
+                    <span className="w-36">
+                      <TextField
+                        aria-label="Add a tag"
+                        placeholder={(detail.tags || []).length > 0 ? "Add tag" : "Add tags…"}
+                        list="loom-inspector-tags"
+                        value={tagDraft}
+                        onChange={(v) => setTagDraft(v)}
+                        onFocus={() => {
+                          // The vocabulary is read when someone goes to add a tag, not on
+                          // every open.
+                          if (namespaceTags.length === 0)
+                            sharedTagVocabulary(identity)
+                              .then(setNamespaceTags)
+                              .catch(() => setNamespaceTags([]));
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === ",") {
+                            e.preventDefault();
+                            onAddTag(tagDraft);
+                            setTagDraft("");
+                          }
+                        }}
+                        onBlur={() => {
+                          if (tagDraft.trim()) {
+                            onAddTag(tagDraft);
+                            setTagDraft("");
+                          }
+                        }}
+                      />
+                    </span>
                     {namespaceTags.length > 0 && (
                       <datalist id="loom-inspector-tags">
                         {namespaceTags
@@ -2024,6 +2023,8 @@ function RenameForm({
 }) {
   const [toKey, setToKey] = useState(fromKey);
   const [keepRedirect, setKeepRedirect] = useState(true);
+  // A lock that lands while the form is open holds the redirect on.
+  const redirect = keepRedirect || mustRedirect;
   const [preview, setPreview] = useState<MemoryMoveResult | null>(null);
   const [busy, setBusy] = useState<"preview" | "rename" | null>(null);
   const target = toKey.trim();
@@ -2032,7 +2033,7 @@ function RenameForm({
   const call = async (dryRun: boolean) => {
     setBusy(dryRun ? "preview" : "rename");
     try {
-      const r = await moveMemory(identity, fromKey, target, { keepRedirect, dryRun });
+      const r = await moveMemory(identity, fromKey, target, { keepRedirect: redirect, dryRun });
       if (dryRun) setPreview(r);
       else onRenamed(r);
     } catch (e) {
@@ -2069,7 +2070,7 @@ function RenameForm({
       />
       <Checkbox
         label="Keep old key readable (redirect)"
-        checked={keepRedirect}
+        checked={redirect}
         disabled={mustRedirect}
         onCheckedChange={(c) => {
           setKeepRedirect(c === true);
@@ -2077,7 +2078,7 @@ function RenameForm({
         }}
       />
       <p className="text-xs text-text-muted leading-relaxed">
-        {keepRedirect
+        {redirect
           ? "A reader of the old key keeps getting the old value, with the new key named; nothing changes under an agent that still reads it."
           : "The old key is deleted (restorable for 14 days). An agent that still reads it will get “not found”."}
       </p>
@@ -2096,7 +2097,7 @@ function RenameForm({
                 as <span className="font-mono">{preview.memory_type}</span>
               </>
             )}
-            {preview.redirected || keepRedirect ? (
+            {preview.redirected || redirect ? (
               <>
                 {" "}
                 and leave <span className="font-mono">{preview.from_key}</span> redirecting to it.
