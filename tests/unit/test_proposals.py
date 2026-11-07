@@ -64,7 +64,6 @@ class _Row:
         self.memory_id = f"id-{key}"
         self.conflict_with = conflict_with or []
         self.content_sha256 = "sha"
-        self.version, self.created_at = 1, 0
 
 
 class _CH:
@@ -89,15 +88,9 @@ def repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     seen: dict[str, Any] = {"mirror": [], "audit": [], "flagged": [], "announced": []}
 
     async def _many(
-        ident: Any,
-        keys: list[str],
-        *,
-        ch: Any = None,
-        strong: bool = False,
-        scope: Any = None,
-        every_identity: bool = False,
+        ident: Any, keys: list[str], *, ch: Any = None, strong: bool = False, scope: Any = None
     ) -> list[Any]:
-        assert strong and every_identity and ident.agent == "*"
+        assert strong and ident.agent == "*"
         return [rows[k] for k in keys if k in rows]
 
     async def _mirror(batch: list[dict[str, Any]], *, ch: Any = None) -> int:
@@ -144,87 +137,6 @@ def test_decide_changes_only_proposals_and_mirrors_every_decided_row(repo: dict[
     # an `active` flip is mirrored too (write_versions_by_ids would skip it)
     assert [r["memory_key"] for r in repo["mirror"]] == ["p1"]
     assert repo["audit"] == [("memory.proposal_accept", "human:t", "p1")]
-
-
-def test_a_decision_covers_every_agents_proposal_of_the_key(
-    repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from server.memory import store as memory_repo
-
-    heads = [_Row("k", "proposed"), _Row("k", "proposed", conflict_with=["id-fact"])]
-
-    async def _many(ident: Any, keys: list[str], **kw: Any) -> list[Any]:
-        assert kw["every_identity"]
-        return heads
-
-    monkeypatch.setattr(memory_repo, "get_many_by_keys", _many)
-    ch = _CH()
-    out = asyncio.run(p.decide("o", "n", ["k"], "accept", actor="human:t", ch=ch))
-    assert [(r.memory_key, r.decided, r.status) for r in out] == [("k", True, "conflicted")]
-    assert [r["status"] for r in ch.inserts[0]] == ["active", "conflicted"]
-    assert len(repo["audit"]) == 2
-
-
-def test_accepting_differing_proposals_of_a_key_lands_them_conflicted_and_linked(
-    repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from server.memory import store as memory_repo
-
-    inward, outward = _Row("k", "proposed"), _Row("k", "proposed")
-    inward.memory_id, outward.memory_id = "id-in", "id-out"
-    outward.content_sha256 = "other"
-
-    async def _many(ident: Any, keys: list[str], **kw: Any) -> list[Any]:
-        return [inward, outward]
-
-    monkeypatch.setattr(memory_repo, "get_many_by_keys", _many)
-    ch = _CH()
-    out = asyncio.run(p.decide("o", "n", ["k"], "accept", actor="human:t", ch=ch))
-    assert [(r.decided, r.status) for r in out] == [(True, "conflicted")]
-    assert [(r["status"], r["conflict_with"]) for r in ch.inserts[0]] == [
-        ("conflicted", ["id-out"]),
-        ("conflicted", ["id-in"]),
-    ]
-
-
-def test_a_decision_reads_only_the_callers_scope(
-    repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from server.memory import store as memory_repo
-
-    seen: list[Any] = []
-
-    async def _many(ident: Any, keys: list[str], **kw: Any) -> list[Any]:
-        seen.append(kw["scope"])
-        return []
-
-    monkeypatch.setattr(memory_repo, "get_many_by_keys", _many)
-    own = object()
-    asyncio.run(p.decide("o", "n", ["k"], "reject", actor="human:t", scope=own, ch=_CH()))  # type: ignore[arg-type]
-    assert seen == [own]
-
-
-def test_a_decision_leaves_another_writers_fact_of_the_key(
-    repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from server.memory import store as memory_repo
-
-    fact, proposal = _Row("k", "active"), _Row("k", "proposed")
-    fact.version = 2
-    heads = [proposal, fact]
-
-    async def _many(ident: Any, keys: list[str], **kw: Any) -> list[Any]:
-        return heads
-
-    monkeypatch.setattr(memory_repo, "get_many_by_keys", _many)
-    ch = _CH()
-    out = asyncio.run(p.decide("o", "n", ["k"], "reject", actor="human:t", ch=ch))
-    assert [(r.decided, r.status) for r in out] == [(True, "rejected")]
-    assert len(ch.inserts[0]) == 1
-    # No proposal left: the newest head names the key's status.
-    proposal.status = "rejected"
-    out = asyncio.run(p.decide("o", "n", ["k"], "accept", actor="human:t", ch=_CH()))
-    assert [(r.decided, r.reason) for r in out] == [(False, "not a proposal (status active)")]
 
 
 def test_an_accepted_proposal_that_met_a_contradiction_lands_conflicted(

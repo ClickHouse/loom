@@ -788,32 +788,41 @@ describe("ReviewQueue", () => {
     expect(toast).toHaveBeenCalledWith("Not decided: not a proposal (status active)", "error");
   });
 
-  it("shows a key two writers proposed as one row with both values, and one decision takes it off", async () => {
+  it("shows the newest proposal of a key two writers proposed, and counts the older one", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
-    vi.mocked(listProposals)
-      .mockResolvedValueOnce({
-        proposals: [
-          { memory_key: "k", memory_id: "m2", agent: "b", value_preview: "b's version" },
-          { memory_key: "k", memory_id: "m1", agent: "a", value_preview: "a's version" },
-        ],
-        total: 2,
-      })
-      .mockResolvedValue({ proposals: [], total: 0 });
-    vi.mocked(decideProposal).mockResolvedValue({
-      decided: 1,
-      results: [{ memory_key: "k", decided: true, status: "active" }],
+    vi.mocked(listProposals).mockResolvedValue({
+      proposals: [
+        { memory_key: "k", memory_id: "m2", agent: "b", value_preview: "b's version" },
+        { memory_key: "k", memory_id: "m1", agent: "a", value_preview: "a's version" },
+      ],
+      total: 2,
     });
     seed("ns-a", "writer");
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
     await screen.findByText("b's version", {}, WAIT);
-    expect(screen.getByText("a's version")).toBeTruthy();
-    expect(screen.getByText(/2 writers proposed this key; a decision covers every proposal of it/)).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: "Accept k" })).toHaveLength(1);
+    expect(screen.queryByText("a's version")).toBeNull();
+    expect(screen.getByText(/1 older proposal of this key from other writers/)).toBeTruthy();
     expect(screen.getByText("2 proposals")).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "Accept k" }));
-    await waitFor(() => expect(screen.queryByText("b's version")).toBeNull(), WAIT);
-    expect(decideProposal).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByRole("button", { name: "Accept k" })).toHaveLength(1);
+  });
+
+  it("keeps a decided key off the list when a re-read still returns it", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    const a = { memory_key: "a", memory_id: "m1", value_preview: "first" };
+    const b = { memory_key: "b", memory_id: "m2", value_preview: "second" };
+    // A replica that has not seen the decision yet answers the re-read.
+    vi.mocked(listProposals).mockResolvedValue({ proposals: [a, b], total: 2 });
+    vi.mocked(decideProposal).mockResolvedValue({ decided: 1, results: [{ memory_key: "a", decided: true }] });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Accept a" }, WAIT));
+    // The page's probe, then the re-read after the decision.
+    await waitFor(() => expect(listProposals).toHaveBeenCalledTimes(2), WAIT);
+    await screen.findByText("second", {}, WAIT);
+    expect(screen.queryByText("first")).toBeNull();
+    expect(screen.getByText("second")).toBeTruthy();
   });
 
   it("says a contradicted proposal it accepted now waits as a conflict", async () => {

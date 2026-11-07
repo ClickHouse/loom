@@ -330,10 +330,7 @@ only to reads that pass `include_proposed`, and never retires, supersedes or fla
 established fact. The `relations` it names stay out of the fact graph, and accepting it
 does not add them: state them again once it is established. A key that already holds a fact answers 409 `KEY_HOLDS_FACT`.
 `memory.proposals` lists proposals with the graded runs that relied on each, and
-`memory.proposal_decide` accepts or rejects them, by key: when several writers of the
-namespace (agents, users or sessions) proposed the same key, one decision covers each of
-their proposals the caller can read; accepted proposals of one key with different values
-land `conflicted`, linked to each other. Loom decides only when the owner set
+`memory.proposal_decide` accepts or rejects them. Loom decides only when the owner set
 `proposal_policy.mode` to `auto` (`min_passes`, `max_fails`, `reject_after_fails`). See
 [runs](../runs.md).
 

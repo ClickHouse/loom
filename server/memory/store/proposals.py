@@ -1,13 +1,9 @@
 """The statements behind memory.proposals: the scan of proposed rows and what a listed
-proposal shows. `where` and `params` are the listing's filters. Both read with sequential
-consistency when read-your-writes is on, so a re-read right after a decision does not see
-the decided row on a lagging replica."""
+proposal shows. `where` and `params` are the listing's filters."""
 
 from __future__ import annotations
 
 from typing import Any
-
-from server.memory.store.sql import _SEQUENTIAL, read_your_writes_enabled
 
 
 async def scan_proposals(ch: Any, where: list[str], params: dict[str, Any]) -> list[Any]:
@@ -19,7 +15,6 @@ async def scan_proposals(ch: Any, where: list[str], params: dict[str, Any]) -> l
         WHERE {" AND ".join(where)}
         ORDER BY created_at DESC
         LIMIT {{cap:UInt32}}
-        {_SEQUENTIAL if read_your_writes_enabled() else ""}
         """,
         params=params,
     )
@@ -36,11 +31,10 @@ async def proposal_details(
         f"""
         SELECT toString(memory_id) AS mid, agent, memory_type,
                -- a high value is readable by key only
-               if(sensitivity = 'high', '', substring(value_preview, 1, 400)) AS preview,
+               if(sensitivity = 'high', '', substringUTF8(value_preview, 1, 400)) AS preview,
                sensitivity, tags, toString(created_at) AS created, conflict_with
         FROM loom.memory FINAL
         WHERE {" AND ".join(where)} AND memory_id IN {{ids:Array(UUID)}}
-        {_SEQUENTIAL if read_your_writes_enabled() else ""}
         """,
         params={**params, "ids": memory_ids},
     )

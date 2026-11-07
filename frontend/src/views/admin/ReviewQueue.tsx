@@ -864,24 +864,22 @@ function trialLabel(r: MemoryProposal): string {
 // The characters of a proposal's value `memory.proposals` sends.
 const PREVIEW_CHARS = 400;
 
-// A key's proposals as one row: several writers of a namespace may propose the same key,
-// and `memory.proposal_decide` decides them together, so the row shows each of them.
-interface ProposalRow {
-  memory_key: string;
-  items: MemoryProposal[];
-}
+// A key's proposals as one row. Several writers may propose the same key, and
+// `memory.proposal_decide` decides the newest of them (the listing's first): the row
+// shows that one and counts the older ones behind it.
+type ProposalRow = MemoryProposal & { older: number };
 
 function oneRowPerKey(read: MemoryProposal[]): ProposalRow[] {
   const rows = new Map<string, ProposalRow>();
   for (const p of read) {
     const row = rows.get(p.memory_key);
-    if (row) row.items.push(p);
-    else rows.set(p.memory_key, { memory_key: p.memory_key, items: [p] });
+    if (row) row.older += 1;
+    else rows.set(p.memory_key, { ...p, older: 0 });
   }
   return [...rows.values()];
 }
 
-const proposalsIn = (rows: ProposalRow[]) => rows.reduce((n, r) => n + r.items.length, 0);
+const proposalsIn = (rows: ProposalRow[]) => rows.reduce((n, r) => n + 1 + r.older, 0);
 
 function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null; onSeedUsed: () => void }) {
   const identity = useIdentity();
@@ -889,6 +887,9 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
   const inspect = useStore((s) => s.inspect);
   const role = useNamespaceRole(identity.namespace);
   const mayDecide = canCall("memory.proposal_decide", role, whoami);
+  // Proposals this panel decided, by memory id: a re-read from a replica that has not
+  // seen the decision yet must not bring them back. Each is kept until a read drops it.
+  const decided = useRef(new Set<string>());
   const [rows, setRows] = useState<ProposalRow[] | null>(initial ? oneRowPerKey(initial.proposals) : null);
   const [total, setTotal] = useState(initial?.total ?? 0);
   const [reason, setReason] = useState<Record<string, string>>({});
@@ -925,9 +926,11 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
       listProposals({ org: identity.org, namespace: identity.namespace }, PROPOSALS_READ, { signal })
         .then((r) => {
           if (!live()) return;
-          // The listing reads with sequential consistency: a decided proposal is not back.
-          setRows(oneRowPerKey(r.proposals || []));
-          setTotal(r.total ?? 0);
+          const read = r.proposals || [];
+          const stale = read.filter((p) => decided.current.has(p.memory_id));
+          decided.current = new Set(stale.map((p) => p.memory_id));
+          setRows(oneRowPerKey(read.filter((p) => !decided.current.has(p.memory_id))));
+          setTotal(Math.max(0, (r.total ?? 0) - stale.length));
         })
         .catch((e) => {
           if (!live()) return;
@@ -974,10 +977,11 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
       // have taken a row above it off the list meanwhile, or a re-read the row itself.
       const at = Math.max(0, rowsNow.current?.findIndex((r) => r.memory_key === key) ?? 0);
       const gone = rowsNow.current?.find((r) => r.memory_key === key);
+      if (gone) decided.current.add(gone.memory_id);
       // Off the list at once, so its buttons cannot send the decision again.
       setRows((rs) => rs?.filter((r) => r.memory_key !== key) ?? rs);
       setReason(({ [key]: _gone, ...rest }) => rest);
-      setTotal((t) => Math.max(0, t - (gone?.items.length ?? 1)));
+      setTotal((t) => Math.max(0, t - 1));
       // Only when focus is still in the decided row or was lost: never pull it away from
       // a field the person moved to while the decision was out.
       const active = document.activeElement;
@@ -1043,49 +1047,45 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
                 else rowBoxes.current.delete(r.memory_key);
               }}
             >
-              <Link
-                component="button"
-                type="button"
-                size="sm"
-                weight="mono"
-                className="min-w-0 break-all text-left mb-2"
-                aria-label={`Open ${r.memory_key} in full`}
-                onClick={() => inspect(r.memory_key, { agent: r.items[0].agent })}
-              >
-                {r.memory_key}
-              </Link>
-              {r.items.length > 1 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                <Link
+                  component="button"
+                  type="button"
+                  size="sm"
+                  weight="mono"
+                  className="min-w-0 break-all text-left"
+                  aria-label={`Open ${r.memory_key} in full`}
+                  onClick={() => inspect(r.memory_key, { agent: r.agent })}
+                >
+                  {r.memory_key}
+                </Link>
+                <span className="flex items-center gap-2 text-xs text-text-muted tabular">
+                  {r.agent && <AgentBadge agent={r.agent} quiet />}
+                  {r.created_at && <ListTime time={r.created_at} quiet />}
+                </span>
+              </div>
+              {r.older > 0 && (
                 <div className="text-xs text-text-muted mb-2">
-                  {r.items.length} writers proposed this key; a decision covers every proposal of it.
+                  {plural(r.older, "older proposal")} of this key from other writers; a decision applies to this one,
+                  the newest.
                 </div>
               )}
-              {r.items.map((p) => (
-                <div key={p.memory_id || p.agent} className="mb-2">
-                  <div className="flex items-center gap-2 text-xs text-text-muted tabular mb-1">
-                    {p.agent && <AgentBadge agent={p.agent} quiet />}
-                    {p.created_at && <ListTime time={p.created_at} quiet />}
-                  </div>
-                  {p.sensitivity === "high" ? (
-                    <div className="text-sm text-text-muted">{SENSITIVE_READ_BY_KEY}</div>
-                  ) : (
-                    <div className="text-sm text-text whitespace-pre-wrap break-words">
-                      {p.value_preview ?? ""}
-                      {/* The server sends the first 400 characters, so a value of exactly 400 is
-                          marked too: the key opens the whole value. */}
-                      {(p.value_preview?.length ?? 0) >= PREVIEW_CHARS && "…"}
-                    </div>
-                  )}
-                  <div className="text-xs text-text-muted">
-                    {trialLabel(p)}
-                    {(p.conflict_with?.length ?? 0) > 0 && (
-                      <>
-                        {" "}
-                        · contradicts {p.conflict_with?.length === 1 ? "1 fact" : `${p.conflict_with?.length} facts`}
-                      </>
-                    )}
-                  </div>
+              {r.sensitivity === "high" ? (
+                <div className="text-sm text-text-muted mb-2">{SENSITIVE_READ_BY_KEY}</div>
+              ) : (
+                <div className="text-sm text-text mb-2 whitespace-pre-wrap break-words">
+                  {r.value_preview ?? ""}
+                  {/* The server sends the first 400 characters, so a value of exactly 400 is
+                      marked too: the key opens the whole value. */}
+                  {(r.value_preview?.length ?? 0) >= PREVIEW_CHARS && "…"}
                 </div>
-              ))}
+              )}
+              <div className="text-xs text-text-muted mb-2">
+                {trialLabel(r)}
+                {(r.conflict_with?.length ?? 0) > 0 && (
+                  <> · contradicts {r.conflict_with?.length === 1 ? "1 fact" : `${r.conflict_with?.length} facts`}</>
+                )}
+              </div>
               {mayDecide && (
                 <>
                   <TextAreaField

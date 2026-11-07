@@ -82,8 +82,7 @@ class MemoryProposalDecideInput(BaseModel):
 class MemoryProposalDecision(BaseModel):
     memory_key: str
     decided: bool
-    # The key's status after the call ('' = no such key): `conflicted` when any of its
-    # proposals landed conflicted.
+    # The row's status after the call ('' = no such key).
     status: str = ""
     reason: str = ""
 

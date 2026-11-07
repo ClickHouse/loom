@@ -531,7 +531,6 @@ async def get_many_by_keys(
     ch: _CHClient | None = None,
     strong: bool = False,
     exclude_high_sensitivity: bool = False,
-    every_identity: bool = False,
 ) -> list[MemoryRow]:
     """Bulk read: one CH round-trip for N keys under one identity tuple.
 
@@ -540,8 +539,7 @@ async def get_many_by_keys(
     `memory_keys` → empty result, no CH call. `exclude_high_sensitivity`
     (the procedure, search-body and extraction-prompt reads) leaves 'high'
     rows out of the locate, so under an open axis the newest other row of
-    the key answers instead. `every_identity` returns each identity's head of the key
-    instead of the newest one across them (`memory.proposal_decide`).
+    the key answers instead.
     """
     if not memory_keys:
         return []
@@ -579,11 +577,9 @@ async def get_many_by_keys(
         params["sid"] = identity.session_id
     # With any axis open, several identities may hold the same key: the
     # newest row per key answers, the way `get_by_key`'s wildcard read orders
-    # (version DESC, created_at DESC) and takes one; `every_identity` takes
-    # each identity's newest instead.
-    heads_by = "memory_key, agent, user_id, session_id" if every_identity else "memory_key"
+    # (version DESC, created_at DESC) and takes one.
     one_per_key = (
-        f"ORDER BY {heads_by} ASC, version DESC, created_at DESC LIMIT 1 BY {heads_by}"
+        "ORDER BY memory_key ASC, version DESC, created_at DESC LIMIT 1 BY memory_key"
         if not (agent_clause and user_clause and session_clause)
         else ""
     )
