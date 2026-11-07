@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +39,32 @@ def test_the_token_is_sent_only_under_the_remote_owner(remote: str, key: str) ->
     """A submodule URL of another owner on the same host gets no credential."""
     headers = [k for k in git_config(gitrepo.auth_env("tok", remote)) if k.endswith(".extraheader")]
     assert headers == [key]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+@pytest.mark.parametrize(
+    ("url", "sent"),
+    [
+        ("https://github.com/o/sub.git", True),
+        ("https://github.com/other/x.git", False),
+        ("https://github.com/o-evil/x.git", False),
+        ("https://gitlab.com/o/x.git", False),
+    ],
+)
+def test_git_matches_the_header_to_the_remote_owner_only(
+    tmp_path: Path, url: str, sent: bool
+) -> None:
+    """Git's own URL matching, not just the key string: the header reaches the
+    remote owner's repositories and no other owner or host."""
+    env = gitrepo.auth_env("tok", "https://github.com/o/r.git")
+    got = subprocess.run(
+        ["git", "config", "--get-urlmatch", "http.extraheader", url],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert got.stdout.startswith("AUTHORIZATION: basic ") is sent
 
 
 def test_an_ssh_remote_gets_no_extraheader() -> None:
