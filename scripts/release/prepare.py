@@ -223,10 +223,10 @@ def candidates(final: str, root: Path = ROOT) -> list[str]:
     )
 
 
-def candidates_on_head(final: str, root: Path = ROOT) -> list[str]:
-    """The candidate tags of `final` on the checked-out commit, newest first."""
-    on_head = set(_git(root, "tag", "--points-at", "HEAD").stdout.split())
-    return [t for t in reversed(candidates(final, root)) if t in on_head]
+def candidates_at(final: str, ref: str = "HEAD", root: Path = ROOT) -> list[str]:
+    """The candidate tags of `final` on `ref`'s commit, newest first."""
+    at_ref = set(_git(root, "tag", "--points-at", ref).stdout.split())
+    return [t for t in reversed(candidates(final, root)) if t in at_ref]
 
 
 def refuse_tagged(version: str, root: Path = ROOT) -> None:
@@ -240,8 +240,8 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
     """An error for a tag that breaks the candidate order, or None.
 
     Once `vX.Y.Z` is out, a candidate of it is refused three ways: on the final's
-    commit (run the final), numbered below the candidate there (an older one,
-    released before it), or above it (a stray, to delete). A final `vX.Y.Z` is
+    commit (run the final), numbered below the candidate there (nothing to run,
+    and its tag stays), or above it (a stray, to delete). A final `vX.Y.Z` is
     refused on another commit than its last candidate."""
     final = final_of(tag_version)
     if tag_version != final:  # a candidate, X.Y.Z-rc.N
@@ -253,11 +253,14 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
             return (
                 f"v{tag_version} is on v{final}'s commit, which is released: run v{final} instead"
             )
-        soaked = [t for t in candidates(final, root) if _tag_sha(root, t) == final_sha]
-        if soaked and _candidate_number(tag_version) < _candidate_number(soaked[-1]):
-            # Soaked and superseded by a later candidate: its pre-release is
-            # published and its tag stays.
-            return f"v{tag_version} is an older candidate of the released v{final}: nothing to run"
+        soaked = candidates_at(final, final_sha, root)
+        if soaked and _candidate_number(tag_version) < _candidate_number(soaked[0]):
+            # Most likely soaked before the final's candidate; git cannot tell
+            # when a tag was pushed, so it is never told to go.
+            return (
+                f"v{tag_version} is numbered below {soaked[0]}, v{final}'s candidate:"
+                " nothing to run"
+            )
         return (
             f"v{final} is already tagged: a candidate for it would publish after it;"
             f" delete this tag (git push origin :refs/tags/v{tag_version}), or, when"
@@ -547,7 +550,7 @@ def _fetch_tags() -> None:
 
 
 def _candidates_on_head(args: argparse.Namespace) -> None:
-    for tag in candidates_on_head(args.version):
+    for tag in candidates_at(args.version):
         print(tag)
 
 

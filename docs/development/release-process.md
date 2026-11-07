@@ -106,14 +106,14 @@ the tag ships.
 A release candidate is a `vX.Y.Z-rc.N` tag, and makes a GitHub pre-release; the release refuses any
 other prerelease tag. The first candidate goes on the release pull request's merge commit, whose
 files name `X.Y.Z`, so the candidate's server already reports `X.Y.Z`; a later one, after a fix,
-goes on a later commit of `main`. The final `vX.Y.Z` tag goes on the last
-candidate's commit after the soak. The final's bundle keeps the ClickHouse release that candidate's
-bundle names (the newest candidate on that commit with a published bundle); its images are built
-again from the same commit, uncached, so an OS package may be newer than in the soaked image. A
-candidate tag pushed after its final is refused; on another commit than the final's, it also fails
-the final's later runs until it is deleted. A dispatch of an older candidate after its final (to
-publish its SDKs, say) is refused, and its tag stays. The chart's `appVersion` names `X.Y.Z` too, so a soak on
-Kubernetes sets `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`.
+goes on a later commit of `main`. The final `vX.Y.Z` tag goes on the last candidate's commit after
+the soak. The final's bundle keeps the ClickHouse release that candidate's bundle names (the newest
+candidate on that commit with a published bundle); its images are built again from the same
+commit, uncached, so an OS package may be newer than in the soaked image. A candidate tag run after
+its final is refused. One numbered below the final's candidate, such as an older candidate
+dispatched to publish its SDKs, has nothing to run, and its tag stays. One numbered above it is a
+stray: it also fails the final's later runs until it is deleted. The chart's `appVersion` names
+`X.Y.Z` too, so a soak on Kubernetes sets `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`.
 
 Only the highest final version becomes the repository's Latest release (`releases/latest` serves the
 installer) and moves `:latest`: a prerelease or a patch to an older line leaves both where they are.
@@ -129,14 +129,15 @@ nothing: no image push, GitHub Release or registry upload.
 gh workflow run release.yml --ref <branch> -f dry_run=true
 ```
 
-It runs at the version `server/__init__.py` names. Its images go to run artifacts instead of ghcr.io,
-without the provenance and SBOM attestations that only a registry keeps, and `docker-smoke` loads them
-from there. The `preflight` job reports each missing [prerequisite](#before-the-first-release) as a
-warning instead of failing. What only a published release exercises, a dry run does not: `docker-tag`
-(joining each image's two digests, the Latest decision, `:latest`), the GitHub Release, the
-registry publishes, the published-images check (`scripts/release/published_images.sh`) with the
-skipped-build path it selects, the candidate-order check (`prepare.py check-tag`, which a dry run of a branch
-skips with a notice), and the chart check when the version is already tagged on another commit.
+It runs at the version `server/__init__.py` names. Its images go to run artifacts instead of
+ghcr.io, without the provenance and SBOM attestations that only a registry keeps, and
+`docker-smoke` loads them from there. The `preflight` job reports each missing
+[prerequisite](#before-the-first-release) as a warning instead of failing. What only a published
+release exercises, a dry run does not: `docker-tag` (joining each image's two digests, the Latest
+decision, `:latest`), the GitHub Release, the registry publishes, the published-images check
+(`scripts/release/published_images.sh`) with the skipped-build path it selects, the
+candidate-order check (`prepare.py check-tag`, which a dry run of a branch skips with a notice),
+and the chart check when the version is already tagged on another commit.
 
 ## Before the first release
 

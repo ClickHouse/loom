@@ -484,7 +484,7 @@ def test_the_candidates_on_this_commit_are_listed_newest_first(tmp_path: Path) -
     _commit(tmp_path, "two")
     for tag in ("v1.2.0-rc.9", "v1.2.0-rc.10", "v1.2.0-rc.10-x"):
         git_repo.git(tmp_path, "tag", tag)
-    assert prepare.candidates_on_head("1.2.0", tmp_path) == ["v1.2.0-rc.10", "v1.2.0-rc.9"]
+    assert prepare.candidates_at("1.2.0", root=tmp_path) == ["v1.2.0-rc.10", "v1.2.0-rc.9"]
 
 
 def _chart_repo(root: Path, chart_text: str, tag: str) -> Path:
@@ -1074,7 +1074,7 @@ def test_an_older_candidate_run_after_its_final_is_not_told_to_delete_itself(
     git_repo.git(tmp_path, "tag", "v1.2.0")
     git_repo.git(tmp_path, "checkout", "-q", "v1.2.0-rc.1")
     error = prepare.check_tag("1.2.0-rc.1", tmp_path)
-    assert error == "v1.2.0-rc.1 is an older candidate of the released v1.2.0: nothing to run"
+    assert error == "v1.2.0-rc.1 is numbered below v1.2.0-rc.2, v1.2.0's candidate: nothing to run"
     git_repo.git(tmp_path, "checkout", "-q", "v1.2.0")
     assert prepare.check_tag("1.2.0", tmp_path) is None  # the final's runs still pass
 
@@ -1088,9 +1088,36 @@ def test_every_stray_above_the_finals_candidate_is_told_to_go(tmp_path: Path) ->
     for n in (3, 4):
         _commit(tmp_path, f"rc.{n}")
         git_repo.git(tmp_path, "tag", f"v1.2.0-rc.{n}")
-    git_repo.git(tmp_path, "checkout", "-q", "v1.2.0-rc.3")
-    error = prepare.check_tag("1.2.0-rc.3", tmp_path)
-    assert error and ":refs/tags/v1.2.0-rc.3" in error  # the stray tag to delete
+    for n in (3, 4):
+        git_repo.git(tmp_path, "checkout", "-q", f"v1.2.0-rc.{n}")
+        error = prepare.check_tag(f"1.2.0-rc.{n}", tmp_path)
+        assert error and f":refs/tags/v1.2.0-rc.{n}" in error  # the stray tag to delete
+
+
+def test_a_candidate_numbered_below_the_finals_is_not_called_released(tmp_path: Path) -> None:
+    """rc.1 pushed after the final on rc.2 looks like an older candidate: its tag stays."""
+    git_repo.git(tmp_path, "init", "-q")
+    _commit(tmp_path, "rc.2")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.2")
+    git_repo.git(tmp_path, "tag", "v1.2.0")
+    _commit(tmp_path, "later")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.1")
+    error = prepare.check_tag("1.2.0-rc.1", tmp_path)
+    assert error == "v1.2.0-rc.1 is numbered below v1.2.0-rc.2, v1.2.0's candidate: nothing to run"
+    git_repo.git(tmp_path, "checkout", "-q", "v1.2.0")
+    assert prepare.check_tag("1.2.0", tmp_path) is None
+
+
+def test_either_candidate_on_the_finals_commit_is_told_to_run_the_final(tmp_path: Path) -> None:
+    git_repo.git(tmp_path, "init", "-q")
+    _commit(tmp_path, "rc.2")
+    for tag in ("v1.2.0-rc.2", "v1.2.0-rc.3", "v1.2.0"):
+        git_repo.git(tmp_path, "tag", tag)
+    for n in (2, 3):
+        error = prepare.check_tag(f"1.2.0-rc.{n}", tmp_path)
+        assert (
+            error == f"v1.2.0-rc.{n} is on v1.2.0's commit, which is released: run v1.2.0 instead"
+        )
 
 
 def test_a_soaked_candidate_run_again_after_its_final_is_not_told_to_delete_itself(
