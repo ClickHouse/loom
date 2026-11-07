@@ -354,12 +354,12 @@ Pod Security level must allow it (`baseline` and `restricted` do not). Run
 
 ## Instance metadata service
 
-By default, and with `networkPolicy.enabled`, a NetworkPolicy keeps the Loom pods off
-`networkPolicy.egressExcept` (the instance metadata service), so repository code a pod
-runs cannot take the node's cloud role. With the policy off, `networkPolicy.guardMetadata`
-renders an egress-only NetworkPolicy whose one rule allows every pod and every address
-but those (none with `egressExcept: []`); the cluster needs a policy engine for it to
-hold. The policy's effects:
+By default, and with `networkPolicy.enabled`, a NetworkPolicy (enforced only where the
+cluster runs a policy engine) keeps the Loom pods off `networkPolicy.egressExcept` (the
+instance metadata service), so repository code a pod runs cannot take the node's cloud
+role. With the policy off, `networkPolicy.guardMetadata` renders an egress-only
+NetworkPolicy whose one rule allows every pod and every address but those (none with
+`egressExcept: []`). The policy's effects:
 
 - A pod has no cloud credentials from the metadata service: not the node's instance
   role, and not GKE Workload Identity on Dataplane V2. IRSA, and EKS Pod Identity on an
