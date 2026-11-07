@@ -491,3 +491,17 @@ def test_a_prose_name_that_starts_with_error_is_normalised_as_prose() -> None:
 
     assert canonical_entity_text("Error: the Thing's") == "error: the thing"  # as on main
     assert canonical_entity_text("error:Timeouts") == "error:timeouts"
+
+
+def test_a_wrapped_or_spaced_code_facet_name_is_the_bare_names_node() -> None:
+    from server.memory.domain.graph_quality import canonical_entity, canonical_entity_text
+
+    for written in (
+        "`error:Timeouts`",
+        '"error:Timeouts"',
+        "the error:Timeouts",
+        "error:Timeouts.",
+        " error:Timeouts ",
+    ):
+        assert canonical_entity_text(written) == "error:timeouts", written
+    assert canonical_entity("error:a \t b").entity_id == "error:a_b"

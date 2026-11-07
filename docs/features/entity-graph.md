@@ -38,7 +38,8 @@ edges of the entities its writer declared, never its text.
    `entity_extractor` worker (`LOOM_ENTITY_EXTRACT_ENABLED`, on) tags rows written without them, off the write path;
    it needs a real LLM provider. Entity text is canonicalised the same way on write and read (articles and
    possessives stripped, head noun singularised, first person mapped to `user`), so "The Billing Service's" and
-   "billing service" are one node. Pronouns, interjections, light verbs and two-character tokens are dropped, and so
+   "billing service" are one node. A `commit:<sha>` or `error:<name>` name is an identifier: it is only case-folded
+   and trimmed of wrapping quotes, brackets, a leading article and a closing dot, never singularised. Pronouns, interjections, light verbs and two-character tokens are dropped, and so
    is text longer than 256 characters as written or once normalised (NFKC turns `ﬁ` into `fi`), on write and in an
    `entity_filter`; a point write refuses such a fact subject or object instead.
 2. **Edges.** Every pair of a memory's entities becomes one observation row, at most 100 pairs per memory.

@@ -440,9 +440,18 @@ def _normalise(lowered: str) -> str:
 
 
 # A commit or error facet ("commit:<sha>", "error:<name>") names an identifier: it is
-# case-folded and kept whole, never singularised or stripped of punctuation. A blank
-# right after the colon reads as prose ("Error: the build failed"), normalised as usual.
+# case-folded with its blanks collapsed and its wrapping (quotes, brackets, a leading
+# article, a closing dot) trimmed, never singularised or stripped of inner punctuation.
+# A blank right after the colon reads as prose ("Error: the build failed"), normalised
+# as usual.
 _CODE_FACET_NAME = re.compile(r"(?:commit|error):\S")
+_WRAPPING = "`\"'“”‘’()[]{}<> ."
+
+
+def _code_facet_name(folded: str) -> str | None:
+    """`folded` as a commit or error facet name, or None when it is not one."""
+    text = _lead(_SPACE_RE.sub(" ", folded).strip(_WRAPPING)).strip(_WRAPPING)
+    return text if _CODE_FACET_NAME.match(text) else None
 
 
 def _capped_normal(original: str) -> str | None:
@@ -450,8 +459,7 @@ def _capped_normal(original: str) -> str | None:
     "\ufb01" is "fi") is longer than `MAX_ENTITY_CHARS`."""
     if len(original) > MAX_ENTITY_CHARS:
         return None
-    folded = fold_case(original)
-    text = folded if _CODE_FACET_NAME.match(folded) else _normalise(original.lower())
+    text = _code_facet_name(fold_case(original)) or _normalise(original.lower())
     return text if len(text) <= MAX_ENTITY_CHARS else None
 
 
@@ -480,7 +488,8 @@ def canonical_entity(raw: str) -> CanonicalEntity:
 def canonical_entity_text(raw: str) -> str:
     """The one entity normalizer for writes and reads: strips articles,
     possessives and punctuation and folds first-person forms to "user", so a
-    query seed and the stored node land on identical text. Idempotent."""
+    query seed and the stored node land on identical text; a "commit:" or "error:"
+    name is only case-folded and trimmed (`canonical_entity`). Idempotent."""
     return canonical_entity(raw).text
 
 
