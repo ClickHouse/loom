@@ -156,7 +156,7 @@ def _token_mint(client: TestClient, headers: dict[str, str], org: str) -> None:
     assert r.status_code == 200, r.text
 
 
-def _setup_mint(client: TestClient, headers: dict[str, str]) -> str:
+def _mint_default_token(client: TestClient, headers: dict[str, str]) -> str:
     r = client.post("/v1/me/service_accounts.create", json={}, headers=headers)
     assert r.status_code == 200, r.text
     [name] = _listed(client, headers)
@@ -177,7 +177,7 @@ def test_a_token_minted_by_token_mint_is_listed_and_revoked(
 def test_a_token_made_without_a_name_is_listed_and_revoked(
     client: TestClient, headers: dict[str, str]
 ) -> None:
-    _revoke_and_check(client, headers, _setup_mint(client, headers))
+    _revoke_and_check(client, headers, _mint_default_token(client, headers))
 
 
 def test_a_wildcard_token_names_the_default_namespace(
@@ -247,7 +247,7 @@ def test_a_bearers_token_mint_token_is_its_own_and_revoked_by_it(client: TestCli
 
 
 def test_a_bearers_unnamed_token_is_its_own_and_revoked_by_it(client: TestClient) -> None:
-    name = _setup_mint(client, _alice())
+    name = _mint_default_token(client, _alice())
     assert _listed(client, _alice())[name]["created_by"] == "alice"
     assert _listed(client, _alice())[name]["yours"] is True
     assert _listed(client, {}) == {}
@@ -257,7 +257,7 @@ def test_a_bearers_unnamed_token_is_its_own_and_revoked_by_it(client: TestClient
 def test_a_token_is_listed_and_revoked_under_another_spelling_of_its_maker(
     client: TestClient,
 ) -> None:
-    name = _setup_mint(client, _alice())
+    name = _mint_default_token(client, _alice())
     email = mint_token(
         subject="alice@acme.dev", org="acme", namespaces=["home"], roles=["writer"], ttl_seconds=300
     )
@@ -270,7 +270,7 @@ def test_a_token_is_its_makers_whatever_the_case_of_the_spelling(client: TestCli
     upper = mint_token(
         subject="Alice", org="acme", namespaces=["home"], roles=["writer"], ttl_seconds=300
     )
-    name = _setup_mint(client, {"Authorization": f"Bearer {upper}"})
+    name = _mint_default_token(client, {"Authorization": f"Bearer {upper}"})
     assert _listed(client, _alice())[name]["yours"] is True
     _revoke_and_check(client, _alice(), name)
 

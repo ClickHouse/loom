@@ -432,10 +432,10 @@ async def test_the_saved_row_is_the_token_list_row(
 
 
 @pytest.mark.asyncio
-async def test_the_label_needs_no_revocation_list_once_the_token_is_saved(
+async def test_saves_to_needs_no_revocation_list_once_the_token_is_saved(
     monkeypatch: pytest.MonkeyPatch, grants: dict
 ) -> None:
-    # The row is saved before the label is worked out; a revocation list not
+    # The row is saved before saves_to is worked out; a revocation list not
     # loaded (or stale) then must not fail the call and strand an unseen token.
     from server.auth import revocation
 
@@ -455,7 +455,7 @@ _SHAPES = [
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("requested", "scoped"), _SHAPES)
-async def test_the_label_identity_is_the_one_the_token_verifies_as(
+async def test_the_identity_saves_to_reads_is_the_one_the_token_verifies_as(
     monkeypatch: pytest.MonkeyPatch, grants: dict, requested: dict, scoped: bool
 ) -> None:
     grants[("o", "secret", "alice")] = Role.WRITER
@@ -480,7 +480,7 @@ async def test_the_label_identity_is_the_one_the_token_verifies_as(
 
 
 @pytest.mark.asyncio
-async def test_the_page_shows_the_expiry_the_saved_row_holds(
+async def test_the_answer_names_the_expiry_the_saved_row_holds(
     monkeypatch: pytest.MonkeyPatch, grants: dict
 ) -> None:
     # A clock that moves between reads: the response must not read it again.

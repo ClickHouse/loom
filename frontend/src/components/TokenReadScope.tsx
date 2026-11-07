@@ -83,7 +83,7 @@ export function TokenReadScopePanel({
                 <>
                   {" "}
                   <ExternalLink href={docsHref} size="sm">
-                    Why
+                    How restricted access works
                   </ExternalLink>
                 </>
               ) : null}

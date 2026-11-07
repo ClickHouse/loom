@@ -26,15 +26,9 @@ _CLAUDE_CODE_PROBE = {
     "linux": "~/.claude/settings.json",
     "win32": "%USERPROFILE%\\.claude\\settings.json",
 }
-# Per-client config file and the key its MCP servers sit under: the token mint's table,
-# so the dashboard and `loom install` name the same files.
-_INSTALL_CLIENTS: dict[str, dict[str, str]] = {
-    client: {
-        **(_CLAUDE_CODE_PROBE if client == "claude-code" else paths),
-        "section": config_key(client),
-    }
-    for client, paths in CONFIG_PATHS.items()
-}
+# Per-client config file: the token mint's table, so the dashboard and `loom install`
+# name the same files.
+_INSTALL_CLIENTS: dict[str, dict[str, str]] = {**CONFIG_PATHS, "claude-code": _CLAUDE_CODE_PROBE}
 
 
 def _resolve_install_path(client: str) -> Path:
@@ -392,8 +386,7 @@ def _install_one(
         return _install_codex_mcp(
             token=token, server_url=server_url, name=name, dry_run=dry_run, toolset=toolset
         )
-    spec = _INSTALL_CLIENTS[client]
-    section = spec["section"]
+    section = config_key(client)
     cfg_path = _resolve_install_path(client)
     mcp_url = _install_mcp_url(server_url, toolset)
     entry = _mcp_entry(client, mcp_url, token)

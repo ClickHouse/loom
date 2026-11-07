@@ -98,11 +98,9 @@ def _requested_roles(payload: dict[str, object]) -> dict[str, str | None]:
         requested_role[ns] = r
     if not requested_role:
         raise _invalid('namespaces must be "*" or a non-empty array')
-    if "*" in requested_role and default_role is not None:
-        # `*` reads through the caller's live grants, at the caller's role in each.
-        raise _invalid('role applies to a list without "*": a "*" token has your role everywhere')
     if "*" in requested_role and any(r is not None for r in requested_role.values()):
-        raise _invalid('a role per namespace needs a list without "*"')
+        # `*` reads through the caller's live grants, at the caller's role in each.
+        raise _invalid('a role needs a list without "*": a "*" token has your role everywhere')
     return requested_role
 
 
@@ -120,9 +118,9 @@ async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[
         for qa in tracker_namespaces_for(ns):  # every linked tracker
             if qa in out or qa in repos or ceiling_role(parent, org, qa) is None:
                 continue
-            if await namespace_classification.is_restricted(
-                org, qa
-            ) and await me_callers.caller_role_on(org, qa, subject):
+            if not await namespace_classification.is_restricted(org, qa):
+                continue
+            if await me_callers.caller_role_on(org, qa, subject):
                 out.append(qa)
     return out
 

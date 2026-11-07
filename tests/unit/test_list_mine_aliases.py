@@ -104,7 +104,7 @@ async def test_grants_under_the_email_are_listed_for_the_login_handle(
     assert rows["t-tenant-shared"].role == "viewer"
     assert not any(r.inherited for r in rows.values())
     # the membership read asked for both spellings at once
-    assert fake.subs[0] == [HANDLE, EMAIL]
+    assert fake.subs[0] == sorted([HANDLE, EMAIL])
 
 
 @pytest.mark.asyncio
@@ -154,5 +154,5 @@ async def test_visits_are_read_by_the_spellings_they_are_written_under() -> None
             return []
 
     await membership._membership_rows(_CH(), ORG, ["Kim@Acme.dev", "kim"])
-    assert seen["subs"] == ["kim@acme.dev", "kim"]
+    assert seen["subs"] == ["kim", "kim@acme.dev"]
     assert seen["visitors"] == ["Kim@Acme.dev", "kim"]

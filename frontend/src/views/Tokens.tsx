@@ -374,12 +374,13 @@ function TokenForm({
   // it is listed and ticked at once.
   const onCreateNamespace = async () => {
     const ns = newNs.trim();
-    if (!ns) return;
+    const owner = whoami?.subject;
+    if (!ns || !owner) return;
     setAddingNs(true);
     try {
       await registerNamespace(
         { org: identity.org, namespace: ns },
-        { owner_email: whoami?.subject || identity.namespace, description: "Namespace for a token" },
+        { owner_email: owner, description: "Namespace for a token" },
       );
       // The new admin grant must reach every reader of list_mine at once: the store's
       // copy and the shared cache.
@@ -582,7 +583,7 @@ function TokenForm({
               htmlType="button"
               iconLeft="plus"
               onClick={onCreateNamespace}
-              disabled={!newNs.trim()}
+              disabled={!newNs.trim() || !whoami?.subject}
               loading={addingNs}
             >
               Create namespace
