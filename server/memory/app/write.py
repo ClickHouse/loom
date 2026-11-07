@@ -684,6 +684,10 @@ async def _memory_set_once(input: MemorySetInput, *, embedder: Any = None) -> Me
         return _pin_refusal
 
     expires_at = await _set_expiry(input, existing, _cfg_task, resolved_memory_type)
+    # A type's retention stamped on a row with no live expiry is an expiry change too: a
+    # read_only lock refuses it, as it refuses a ttl_seconds and the sensitive window.
+    if existing is not None and expires_at is not None and expires_at != existing.expires_at:
+        _lock.assert_unlocked(existing, "expire", op="memory.set")
 
     w = _SetWrite(
         input=input,

@@ -234,6 +234,34 @@ async def test_set_refuses_a_changed_value_under_read_only(monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
+async def test_set_refuses_a_type_retention_on_a_read_only_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A restatement with new tags stamps the type's retention on a row with no expiry: that
+    # is an expiry change, which read_only refuses.
+    from types import SimpleNamespace
+
+    from server.memory.app import conflicts
+
+    async def retention(*_: Any) -> Any:
+        return SimpleNamespace(retention_days=30)
+
+    monkeypatch.setattr(conflicts, "type_config_for", retention)
+    _stub_repo(monkeypatch, _row(lock_mode="read_only", lock_reason="hold"))
+    with pytest.raises(HTTPException) as e:
+        await write_mod.handle_memory_set(
+            MemorySetInput(
+                **_ID,
+                memory_key="deploy_window",
+                value="Tue and Thu only",
+                tags=["ops"],
+                classify=False,
+            )
+        )
+    assert e.value.status_code == 423 and e.value.detail["refused_action"] == "expire"
+
+
+@pytest.mark.asyncio
 async def test_set_refuses_a_retention_window_on_a_read_only_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
