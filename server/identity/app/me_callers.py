@@ -36,7 +36,7 @@ async def caller_admin_of(org: str, namespace: str, subject: str) -> bool:
           AND {live}
         LIMIT 1
         """.replace("{live}", LIVE_GRANT),
-        params={"org": org, "ns": namespace, "sub": subject, "subs": subs},
+        params={"org": org, "ns": namespace, "subs": subs},
     )
     return row is not None
 
@@ -73,7 +73,7 @@ async def caller_role_on(org: str, namespace: str, subject: str) -> str | None:
         ORDER BY {rank} DESC
         LIMIT 1
         """.replace("{live}", LIVE_GRANT).replace("{rank}", GRANT_RANK_SQL),
-        params={"org": org, "ns": namespace, "sub": subject, "subs": subs},
+        params={"org": org, "ns": namespace, "subs": subs},
     )
     if row is None:
         return None
@@ -124,6 +124,11 @@ async def subject_aliases_of(org: str, subject: str) -> list[str]:
     return await subject_aliases(org, subject) if org and subject else [subject]
 
 
+async def made_by_caller(org: str, subject: str, created_by: str) -> bool:
+    """Whether `created_by` is the caller under any spelling of theirs."""
+    return created_by.lower() in await lowered_aliases(org, subject)
+
+
 async def lowered_aliases(org: str, subject: str) -> list[str]:
     """The caller's spellings in lower case, matched the way the gate matches a grant."""
     return lowered(await subject_aliases_of(org, subject))
@@ -166,6 +171,7 @@ __all__ = [
     "caller_identity",
     "caller_role_on",
     "lowered_aliases",
+    "made_by_caller",
     "parse_ns_roles",
     "remember_caller",
     "require_authed_caller",

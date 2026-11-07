@@ -206,7 +206,7 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
         GROUP BY agent, namespace
         ORDER BY writes + recalls DESC
         """,
-        params={"org": org, "sub": subject, "subs": subs, "wops": write_ops, "rops": recall_ops},
+        params={"org": org, "subs": subs, "wops": write_ops, "rops": recall_ops},
     )
     agents_payload, agent_namespaces_payload = _fold_sharing_agent_rows(agent_rows)
 
@@ -234,7 +234,7 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
     )
     my_grants = await ch.query_all(
         my_grants_sql,
-        params={"org": org, "sub": subject, "subs": subs},
+        params={"org": org, "subs": subs},
     )
     my_ns_set = [r["namespace"] for r in my_grants]
 

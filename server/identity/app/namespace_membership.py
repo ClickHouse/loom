@@ -489,11 +489,10 @@ async def _inherited_rows(ch: Any, org: str, caller: str, skip: set[str]) -> lis
         out: list[dict[str, Any]] = []
         for r in rows:
             ns = str(r.get("namespace") or "")
-            active = (r.get("status") or "active") == "active"
-            # The directory's restricted set, or a repository entry's own classification
-            # for one listed only in LOOM_CODE_REPOS_JSON.
-            config_restricted = config_classification(org, ns) == RESTRICTED
-            if not ns or ns in skip or ns in restricted or config_restricted or not active:
+            if not ns or ns in skip or (r.get("status") or "active") != "active":
+                continue
+            # Restricted by the directory, or by its own entry in the repository config.
+            if ns in restricted or config_classification(org, ns) == RESTRICTED:
                 continue
             skip.add(ns)
             out.append(r)

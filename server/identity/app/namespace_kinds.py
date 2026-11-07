@@ -8,8 +8,8 @@ Sweeping them would turn one `loom_search` over a few dozen namespaces into
 hundreds of ClickHouse statements and seconds of reads.
 
 Fail-open: an org whose directory cannot be read has no kinds but its configured
-repositories', and a namespace without a kind row counts as memory —
-the sweep can only narrow when the directory or the repository config says so. The cache mirrors
+repositories', and a namespace without a kind row counts as memory — the sweep can
+only narrow when the directory or the repository config says so. The cache mirrors
 `namespace_classification.restricted_set`: `_TTL_S` seconds per org.
 """
 

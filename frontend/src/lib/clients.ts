@@ -1,7 +1,7 @@
-// Single source of truth for the MCP-client list — the picker labels and the
-// config-block formatter. The first-run wizard and the setup view both import
-// from here, so adding a client is one edit. The server mirrors the list in
-// server/identity/app/token_clients.py (MCP_CLIENTS).
+// The MCP-client list — the picker labels and the config-block formatter. The
+// first-run wizard and the token dialog import from here;
+// server/identity/app/token_clients.py builds the same setups, held together by
+// clientSetups.fixture.json.
 
 export type ClientId = "claude-desktop" | "claude-code" | "codex" | "cursor" | "vscode" | "cline" | "windsurf" | "zed";
 

@@ -241,6 +241,14 @@ describe("the token form", () => {
     expect(screen.getByTestId("claude-code-recommended")).toBeInTheDocument();
   });
 
+  it("says so, and creates nothing, when your namespaces cannot be read", async () => {
+    vi.mocked(listMine).mockRejectedValue(new Error("down"));
+    render(<Setup />);
+    expect(await screen.findByText(/Could not load your namespaces/, undefined, WAIT)).toBeInTheDocument();
+    expect(screen.getByTestId("token-saves-loading")).toHaveTextContent("Unknown");
+    expect(screen.getByRole("button", { name: /Create token/ })).toBeDisabled();
+  });
+
   it("a read-only list token says so, and a script gets the export line and the Python snippet", async () => {
     vi.mocked(createToken).mockResolvedValueOnce(
       created({

@@ -284,6 +284,7 @@ function TokenForm({
   const [nsRole, setNsRole] = useState<Record<string, GrantRole>>({});
   const [newNs, setNewNs] = useState("");
   const [addingNs, setAddingNs] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   // Once per identity; an answer for an org or namespace the page has left is dropped.
   // The first answer ticks the page's namespace for "Only these" when nothing is ticked.
@@ -293,10 +294,11 @@ function TokenForm({
       try {
         all = await sharedMine(identity.org);
       } catch {
-        if (live()) setRows([]);
+        if (live()) setLoadFailed(true);
         return;
       }
       if (!live()) return;
+      setLoadFailed(false);
       setRows(all);
       const active = all.filter((r) => r.status !== "pending");
       const seed = active.find((r) => r.namespace === identity.namespace && r.kind !== "code");
@@ -431,7 +433,8 @@ function TokenForm({
   };
 
   const nothingListed = mine !== null && eligibleNs.length === 0 && eligibleRepos.length === 0;
-  const canCreate = reach === "everything" || selectedNs.length > 0;
+  // Not before the memberships load: the form would describe a token it cannot know.
+  const canCreate = rows !== null && (reach === "everything" || selectedNs.length > 0);
 
   return (
     <section
@@ -595,8 +598,16 @@ function TokenForm({
         </fieldset>
       )}
 
+      {loadFailed && (
+        <Alert state="danger" size="small" text="Could not load your namespaces. Reload the page to try again." />
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {savesNowhere ? (
+        {rows === null ? (
+          <div className="text-xs" data-testid="token-saves-loading">
+            <div className="font-medium text-text-muted mb-1">Saves memories to</div>
+            <div className="text-text-muted">{loadFailed ? "Unknown" : "Loading…"}</div>
+          </div>
+        ) : savesNowhere ? (
           <div className="text-xs" data-testid="token-saves-nowhere">
             <div className="font-medium text-text-muted mb-1">Saves memories to</div>
             <div className="text-text">Nowhere: it only reads.</div>

@@ -160,8 +160,7 @@ async def refuse_taken_name(org: str, name: str, subject: str) -> None:
     holder = await _name_holder(org, name)
     if holder is not None:
         # Names are one per org; whose token holds one is not the caller's to learn.
-        mine = set(await me_callers.lowered_aliases(org, subject))
-        yours = holder.lower() in mine
+        yours = await me_callers.made_by_caller(org, subject, holder)
         taken = f"your token {name!r} is live" if yours else "that name is in use"
         raise HTTPException(
             status_code=409,
@@ -547,8 +546,7 @@ async def me_service_accounts_revoke(
             )
 
         # Its maker under any spelling of theirs, as the list shows it.
-        mine = set(await me_callers.lowered_aliases(org, subject))
-        authorized = str(row["created_by"]).lower() in mine
+        authorized = await me_callers.made_by_caller(org, subject, str(row["created_by"]))
         if not authorized:
             for ns in row["namespaces"]:
                 if await me_callers.caller_admin_of(org, ns, subject):
