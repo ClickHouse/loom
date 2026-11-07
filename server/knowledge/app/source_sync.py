@@ -39,9 +39,10 @@ changes, once after each completed full listing, and on a full sync request.
 What fails for every file stays the turn's: the token exchange, the listing, a
 401, a rate limit, an extractor whose capabilities cannot be read.
 
-Before each write the source and the address are read again: a source removed or
-replaced during its turn stops the turn, which records nothing, and a document
-saved at the address during the fetch is left alone, the file counted `skipped`.
+The source and the address are read again before each write. A source removed or
+replaced during its turn stops the turn, which records nothing. A document another
+writer saved at the address during the fetch is left alone, and the file is counted
+`skipped`.
 
 A document is retired only on positive evidence that the source dropped it:
 absence from a complete full listing whose folders the account can still see,
@@ -1023,7 +1024,9 @@ async def write_document(
 async def retire(src: KnowledgeSource, uri: str) -> bool:
     """Retire one of the source's documents, with the audit row the transport would
     have written for `knowledge.delete`; False when it is no longer the source's."""
-    if not await _may_write(src, uri):
+    with sequential_reads():  # a replica behind a person's write would say still ours
+        ours = await _may_write(src, uri)
+    if not ours:
         return False
     pass_context.check_stop()
     out = await writes.handle_knowledge_delete(

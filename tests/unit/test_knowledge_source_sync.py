@@ -1373,6 +1373,30 @@ def test_the_write_time_owner_read_reads_with_sequential_consistency(
     assert sequential == [False, True]  # the check before the fetch, then the write's
 
 
+def test_the_retire_owner_read_reads_with_sequential_consistency(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A replica that has not seen a person's write at the address would answer the
+    document is still the source's, so the read before a retirement waits for every
+    insert."""
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    (uri,) = world.docs
+    world.files = []
+    fake = documents.get_one
+    sequential: list[bool] = []
+
+    async def _get_one(org: str, ns: str, at: str, **kw: Any) -> Any:
+        if at == uri:
+            sequential.append(sequential_reads_active())
+        return await fake(org, ns, at, **kw)
+
+    monkeypatch.setattr(documents, "get_one", _get_one)
+    result = asyncio.run(source_sync.run_sync(full=True))
+    assert result.removed == 1 and world.docs == {}
+    assert sequential == [True]
+
+
 def _timeout(request: httpx.Request) -> httpx.Response:
     raise httpx.ReadTimeout("timed out", request=request)
 
