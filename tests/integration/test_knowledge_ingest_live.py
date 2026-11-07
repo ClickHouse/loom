@@ -389,7 +389,7 @@ async def _catalog_rows(org: str, ns: str, uri: str) -> int:
     await ch.connect()
     try:
         row = await ch.query_one(
-            "SELECT count() AS n FROM loom.datasets WHERE org = {org:String}"
+            "SELECT count() AS n FROM loom.datasets FINAL WHERE org = {org:String}"
             " AND namespace = {ns:String} AND source_uri = {uri:String}",
             {"org": org, "ns": ns, "uri": uri},
         )
@@ -479,9 +479,12 @@ async def test_a_csv_table_is_a_typed_dataset_a_writer_approves_and_a_delete_rem
         await _op(c, "knowledge.delete", org=org, namespace=ns, source_uri=uri)
         gone = await _op(c, "knowledge.dataset_get", org=org, namespace=ns, source_uri=uri)
         assert gone == {"found": False, "revision": 0, "datasets": []}
-    # The delete does not wait for the rows to go: they go soon after.
+    # The delete does not wait for the rows to go: each table's delete is a mutation of
+    # its own, so both are read until both have run.
     for _ in range(50):
-        if not await _dataset_rows(org, ns, d["dataset_id"]):
+        if not await _dataset_rows(org, ns, d["dataset_id"]) and not await _catalog_rows(
+            org, ns, uri
+        ):
             break
         await asyncio.sleep(0.2)
     assert await _dataset_rows(org, ns, d["dataset_id"]) == []
@@ -605,10 +608,15 @@ async def test_a_bulk_delete_removes_each_sources_datasets_at_its_own_version(
             c, "knowledge.bulk_delete", org=org, namespace=ns,
             source_uris=["repo://a.csv", "repo://b.csv"],
         )  # fmt: skip
-    for _ in range(50):  # until the delete's rows are gone; the running ingest's stay
+    for _ in range(50):  # until both deletes have run; the running ingest's rows stay
         a_rows = await _dataset_rows(org, ns, ids["repo://a.csv"])
         b_rows = await _dataset_rows(org, ns, ids["repo://b.csv"])
-        if not b_rows and [r["snapshot_id"] for r in a_rows] == [running]:
+        if (
+            not b_rows
+            and [r["snapshot_id"] for r in a_rows] == [running]
+            and not await _catalog_rows(org, ns, "repo://b.csv")
+            and await _catalog_rows(org, ns, "repo://a.csv") == 1
+        ):
             break
         await asyncio.sleep(0.2)
     assert await _dataset_rows(org, ns, ids["repo://b.csv"]) == []
