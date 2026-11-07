@@ -120,6 +120,16 @@ def test_the_labelled_set_scores_as_measured() -> None:
         ("Planner sync notes 2026-09-24", ("Fallbacks",), "Talked about the fallback list."),
         ("Storage sync 2026-03-04", ("Scheduling",), "Next sync moves to Thursday 10:00."),
         ("Session store RFC", ("Open questions",), "- Keep sessions across it?\n- Who owns it?"),
+        # a running notes page that dates each meeting with its year
+        ("Storage weekly sync", ("Aug 13, 2026", "Cache"), "Talked about the TTL."),
+        # under a first heading with the title's words (an upload named by its file)
+        (
+            "Storage weekly sync.md",
+            ("Storage weekly sync", "Aug 13", "Cache"),
+            "Talked about the TTL.",
+        ),
+        ("Storage weekly sync", ("4 March 2026", "Cache"), "Talked about the TTL."),
+        ("Storage sync 2026-03-04", ("Coverage",), "We are lower than the target on coverage."),
     ],
 )
 def test_bookkeeping_and_discussion_without_a_decision_are_noise(
@@ -323,6 +333,210 @@ def test_bookkeeping_and_discussion_without_a_decision_are_noise(
 )
 def test_a_decision_or_design_text_is_content(title: str, path: tuple[str, ...], text: str) -> None:
     assert not is_noise(title, path, text)
+
+
+_RECORDED = "Planner sync - 2026/03/04 10:00 CET - Notes by Assistant"
+_TRANSCRIPT = "Planner sync — Transcript & notes — 2026-03-04 10.00.12 CET"
+
+
+@pytest.mark.parametrize(
+    ("title", "path", "text"),
+    [
+        (_RECORDED, ("Planner sync - Transcript", "00:12:30"), "**Ana:** uh so the cache is big"),
+        (_RECORDED, ("Transcript",), "**Tomas:** right, next one"),
+        (_RECORDED, ("Next steps",), "- [ ] [Ana] Task: check the bench by Friday"),
+        (_RECORDED, ("Suggested next steps",), "- [ ] [Ana] check it"),
+        (_RECORDED, ("Action items",), "- [ ] Ana: check the bench"),
+        (_RECORDED, ("Attendees",), "Ana, Tomas"),
+        (_RECORDED, (), "Invited [Ana](mailto:ana@example.com) [Tomas](mailto:t@example.com)"),
+        (_RECORDED, (), "Mar 4, 2026 [Ana](mailto:ana@example.com)"),
+        (_RECORDED, ("Planner sync",), "Mar 4, 2026\n[Ana](mailto:ana@example.com)"),
+        (
+            _RECORDED,
+            (),
+            "This editable transcript was computer generated and might contain errors.",
+        ),
+        (_RECORDED, ("Planner sync",), "Invited [Ana](mailto:ana@example.com)"),
+        (_RECORDED, ("Planner sync",), "Meeting records [Transcript](https://x.example)"),
+        (_RECORDED, (), "You should review Assistant's notes for accuracy."),
+        (_RECORDED, (), "You should review Assistant's notes to make sure they're accurate."),
+        (
+            _RECORDED,
+            (),
+            "*Please **rate the new notes tab** by taking a [short survey](https://x.example)\n##",
+        ),
+        (
+            _RECORDED,
+            ("Planner sync",),
+            "Invited [Ana](mailto:a@example.com)\nAttachments [Planner sync](https://x.example)",
+        ),
+        ("", ("Planner sync \\- Transcript \\- 2026-03-04 10:00 CET", "00:01:02"), "**Ana:** okay"),
+        (
+            "Planner sync - Mar 4, 2026 10:00 CET - Notes by Assistant",
+            ("Next steps",),
+            "- [ ] [Ana] bench",
+        ),
+        (_RECORDED, ("Transcription ended after 00:41:12",), "**Ana:** bye"),
+        (_TRANSCRIPT, ("Transcript", "00:01:02"), "**Ana:** okay let's start"),
+        (_RECORDED, ("Transcript", "00:12:30"), "**Ana:** I'll move on to the next slide"),
+        (_RECORDED, ("Transcript", "00:12:40"), "**Ana:** I'll raise that with Tomas"),
+        (_RECORDED, ("Transcript", "00:12:50"), "**Ana:** we'll raise that with the vendor"),
+        ("Release sync — Transcript — 2026-03-04 10.00.12 CET", ("00:01:02",), "**Ana:** hi"),
+        (_RECORDED, ("Planner sync \\- Transcript", "00:02:10"), "**Ana:** so, the numbers"),
+        (_TRANSCRIPT, (_TRANSCRIPT, "Transcript", "00:01:02"), "**Ana:** okay, next one"),
+        ("", (_TRANSCRIPT, "00:01:02"), "**Ana:** okay, next one"),
+    ],
+)
+def test_a_recorded_meetings_transcript_and_template_are_noise(
+    title: str, path: tuple[str, ...], text: str
+) -> None:
+    assert is_noise(title, path, text)
+
+
+@pytest.mark.parametrize(
+    ("title", "path", "text"),
+    [
+        # the tool's account of the meeting is content, a decision or not
+        (_RECORDED, ("Summary",), "The team reviewed the fallback list and the cache budget."),
+        (_RECORDED, ("Details",), "Ana walked through the cache budget per tenant."),
+        (_RECORDED, ("Cache budget per tenant",), "Ana showed the per-tenant numbers."),
+        (_RECORDED, ("Decisions", "Needs Further Discussion"), "- The TTL for cold tenants."),
+        # a decisions heading keeps every section under it
+        (_RECORDED, ("Decisions", "Aligned", "Suggested next steps"), "- [ ] [Ana] check it"),
+        (_TRANSCRIPT, ("Summary",), "The team reviewed the fallback list."),
+        (_TRANSCRIPT, (_TRANSCRIPT, "Summary"), "The team reviewed the fallback list."),
+        ("", (_TRANSCRIPT, "Summary"), "The team reviewed the fallback list."),
+        (_RECORDED, ("Transcript search latency",), "Ana showed the p99 numbers."),
+        (_RECORDED, ("Speaker labels in the transcript",), "Ana showed the labels."),
+        (_RECORDED, ("Details",), "Invited the vendor to demo the parser."),
+        (_RECORDED, ("Details",), "March 4, 2026 cutover: Ana walked through the steps."),
+        (_RECORDED, ("Details",), "You should review the cache numbers before Friday."),
+        (_RECORDED, ("Details",), "Please rate-limit the export API per tenant."),
+        (_RECORDED, ("Details",), "You should review the release notes before the cutover."),
+        # a person's incident notes keep their timeline and action items
+        (
+            "Incident 2026-03-04 14:00 UTC - notes by Ana",
+            ("Timeline", "14:05"),
+            "Errors passed 5%.",
+        ),
+        ("Incident 2026-03-04 14:00 UTC - notes by Ana", ("Action items",), "- Ana: add an alert"),
+        ("Outage 2026-03-04 14:00 UTC - notes by Ana", ("Timeline", "14:05"), "Errors passed 5%."),
+        # a design word keeps "notes by" a person's notes, beside a meeting word too
+        ("Incident sync 2026-03-04 14:00 UTC - notes by Ana", ("Timeline", "14:05"), "Errors 5%."),
+        ("Release sync - 2026-03-04 10:00 - Notes by Assistant", ("Summary",), "Ana led it."),
+        (_RECORDED, ("Action items for the parser",), "Ana showed the parse times."),
+        # a first heading that repeats the title with markdown escapes is the title
+        (
+            "Planner sync - 2026-03-04 10:00 CET - Transcript",
+            ("Planner sync \\- 2026-03-04 10:00 CET \\- Transcript", "Summary"),
+            "The team reviewed the fallback list.",
+        ),
+        (
+            "Customer call 2026-03-04 14:00 - notes by Ana",
+            ("Action items",),
+            "- Ana: send the quote",
+        ),
+        (_RECORDED, ("Next steps for the cache rollout",), "Ana showed the p99 numbers."),
+        (_RECORDED, ("Attendees API pagination",), "Ana showed the page sizes."),
+        (
+            "Incident 2026-03-04 14:00 UTC - transcript export failing",
+            ("Timeline", "14:05"),
+            "Errors passed 5%.",
+        ),
+        (_RECORDED, ("Details",), "Please rate the three vendors by cost before Friday."),
+        (_RECORDED, (), "Please rate the new notes tab."),
+        (_RECORDED, ("Planner sync",), "Mar 4, 2026\nThe team reviewed the fallback list."),
+        (_RECORDED, ("Cache budget",), "Ana shared [the budget sheet](https://x.example)."),
+        (
+            _RECORDED,
+            ("Resources",),
+            "- [Cache design doc](https://x.example)\n- [p99](https://y.example)",
+        ),
+        (
+            _RECORDED,
+            ("Details",),
+            "Invited [Ana](mailto:a@example.com) to walk through the cache budget: p99 is 12 ms.",
+        ),
+        (_RECORDED, ("Details",), "Mar 4, 2026 [cutover] Ana walked through the steps"),
+        (_RECORDED, ("Planner sync",), "Invited [Ana](mailto:a@example.com)\n```\nSELECT 1\n```"),
+        (
+            _RECORDED,
+            ("Summary",),
+            "Invited [Ana](mailto:a@example.com)\nThe team reviewed the cache.",
+        ),
+        (_RECORDED, ("Details",), "You should review Ana's notes on the cache budget first."),
+        (
+            _RECORDED,
+            ("Details",),
+            "Please rate the onboarding flow in the user survey before launch.",
+        ),
+        (
+            _RECORDED,
+            ("Details",),
+            "You should review Ana's notes to make sure the p99 numbers hold.",
+        ),
+        # a transcript segment that records a decision or a plan
+        (_RECORDED, ("Transcript", "00:14:10"), "**Ana:** so the plan is to drop the cache"),
+        (_RECORDED, ("Transcript", "00:15:02"), "**Ana:** I'm going to disallow warning alerts."),
+        (_RECORDED, ("Transcript", "00:15:40"), "**Ana:** we won't remove the old flag yet"),
+        # a hyphen-joined "transcript-..." word names a topic, not a transcript part
+        (
+            "Incident 2026-03-04 14:00 UTC - transcript-export failing",
+            ("Timeline", "14:05"),
+            "Errors passed 5%.",
+        ),
+        # a first heading that repeats the title in another case, spacing or dash is the title
+        (
+            "Planner sync - 2026-03-04 10:00 CET - Transcript",
+            ("planner sync -  2026-03-04 10:00 CET - transcript", "Summary"),
+            "The team reviewed the fallback list.",
+        ),
+        (
+            "Planner sync - 2026-03-04 10:00 CET - Transcript",
+            ("Planner sync \u2013 2026-03-04 10:00 CET \u2013 Transcript", "Summary"),
+            "The team reviewed the fallback list.",
+        ),
+        # an upload titled by its file name, and the "|" and ":" separators
+        (
+            "Planner sync - 2026-03-04 10:00 CET - Transcript.docx",
+            ("Summary",),
+            "The team reviewed the fallback list.",
+        ),
+        (
+            "Planner sync - 2026-03-04 10:00 CET - Transcript.docx",
+            ("Planner sync - 2026-03-04 10:00 CET - Transcript", "Summary"),
+            "The team reviewed the fallback list.",
+        ),
+        ("Planner sync | 2026-03-04 10:00 CET | Transcript", ("Summary",), "The team met."),
+        ("Planner sync 2026-03-04 10:00 CET: Transcript", ("Summary",), "The team met."),
+        # a person's dated sync notes signed with a clock time read as a recording: their
+        # discussion stays content (recall lost, nothing hidden)
+        ("Storage sync 2026-03-04 10:00 - notes by Ana", ("Cache",), "Talked about the TTL."),
+        # a clock time without a transcript or notes-by mark names no recording
+        ("Cutover 2026-03-04 10:00", ("Transcript",), "Ana walked through the steps."),
+    ],
+)
+def test_a_recorded_meetings_account_is_content(
+    title: str, path: tuple[str, ...], text: str
+) -> None:
+    assert not is_noise(title, path, text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "We'll enable the cache by default.",
+        "We are rolling out the new router on Monday.",
+        "The plan is to lower the alert to info.",
+        "I'll remove the old flag in the next release.",
+        "We're deprecating the v1 export API.",
+        "Let's disable the legacy exporter.",
+        "We're not going to remove the old flag.",
+        "We're not removing the v1 export API.",
+    ],
+)
+def test_a_stated_plan_is_a_decision_in_notes(text: str) -> None:
+    assert not is_noise("Storage sync 2026-03-04", ("Cache",), text)
 
 
 def _rows(chunks: list[Any], doc_format: str = "") -> list[Any]:
@@ -706,4 +920,11 @@ def test_a_long_line_is_judged_in_linear_time() -> None:
     is_noise("Storage sync 2026-03-04", ("X",), "Decision" + "*:" * 20_000 + "x")
     is_noise("Storage sync 2026-03-04", ("X",), "_" * 40_000 + "x")
     is_noise("Storage sync 2026-03-04", ("X",), "Decision: deferred to " + "x " * 20_000)
+    is_noise(_RECORDED, ("00:12:30",), "we " * 20_000)
+    is_noise("Jan 4, " * 20_000 + "notes by", ("X",), "x")
+    is_noise(_RECORDED, ("transcript " * 20_000,), "x")
+    is_noise(_RECORDED, ("Notes",), "Invited " + "a " * 20_000)
+    is_noise(_RECORDED, ("Notes",), "[" * 40_000 + "x")
+    is_noise(_RECORDED, ("Notes",), "[a](b)" + "[](" * 20_000)
+    is_noise(_RECORDED, ("Notes",), "Invited " + "[a](b) " * 20_000 + "x")
     assert time.perf_counter() - started < 5.0

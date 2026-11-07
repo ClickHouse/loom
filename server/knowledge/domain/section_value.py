@@ -20,13 +20,24 @@ A document is notes by its title, in one of three shapes:
   sync 2026-09-24", "Parser team status - week 31";
 - a date first and the meeting word last: "2026-03-04 Meeting notes", "2026-03-04
   Storage sync";
-- a meeting word in the title and a date as the top heading of each meeting (a running
-  notes page).
+- a meeting word in the title and a date, with or without its year (Aug 13, 2026), as
+  the top heading of each meeting (a running notes page); a first heading with the
+  title's words is the title.
 Without a date the same words name a topic as often ("Standup reminder bot", "Order
 sync 24/7"), and a title holding a design-document, release or incident word
-("Calendar sync design 2026-01-15", "Release notes 2026-03-04") is never notes. A
-document with no title is named by its first heading. Lines inside a fenced code block
-are code, never questions.
+("Calendar sync design 2026-01-15", "Release notes 2026-03-04") is never notes, unless
+it is a recording's transcript (below). A document with no title is named by its first
+heading. Lines inside a fenced code block are code, never questions.
+
+Notes a meeting tool writes from a recording carry the meeting's date and clock time and
+a transcript or notes-by mark in their title ("Planner sync - 2026/03/04 10:00 CET -
+Notes by ..."). A notes-by mark names a recording only beside a meeting word and none of
+the design-document words above; otherwise it signs a person's notes ("Outage 2026-03-04
+14:00 UTC - notes by Ana"), which keep the rule above. A recording's summary and topic
+sections are the tool's account of the meeting and stay content; the transcript (its
+clock-time segments), the template around it (the invite header, next steps, action
+items, attendees, the tool's footer) and unanswered open questions are noise, each
+unless it records a decision.
 """
 
 from __future__ import annotations
@@ -43,6 +54,10 @@ _CHOICE_VERB = (
     r"switch(?:ing)? to|move|moving|migrate|migrating|adopt|adopting|support|supporting|"
     r"ship|shipping|pick|choose|stick with|stay with|replace|replacing))"
 )
+# A plan to change something: "we'll enable", "I'm going to remove", "we're deprecating".
+# The plain verb only after a future ("we are lower than the target" states a status).
+_PLAN_VERB = r"(?:enable|disable|lower|remove|deprecate|disallow|roll out)\b"
+_PLAN_ING = r"(?:enabling|disabling|lowering|removing|deprecating|disallowing|rolling out)\b"
 _CHOSE = (
     r"(?:picked|chose|selected|switched to|moved to|migrated to|adopted|went with|dropped|"
     r"replaced|rejected|accepted)"
@@ -55,10 +70,14 @@ _DECISION = re.compile(
     r"conclusion:|outcome:|opted (?:for|to)|concluded|not supporting|"
     r"defaults? to|"
     rf"we(?:'re| are|'ll| will| won't| will not)(?: not)? {_CHOICE_VERB}|"
+    # A stated plan; for "I" only a plan ("I'll remove the old flag", not "I'll move on").
+    rf"(?:we(?:'ll| will| won't| will not|(?:'re| are)(?: not)? going to)|"
+    rf"i(?:'ll| will| won't| will not|(?:'m| am)(?: not)? going to))(?: not)? {_PLAN_VERB}|"
+    rf"let's (?:{_CHOICE_VERB}|{_PLAN_VERB})|we(?:'re| are)(?: not)? {_PLAN_ING}|"
+    r"the plan is to|"
     rf"(?:we|the team)(?:'ve| have| had)? {_CHOSE}|"
     r"(?:was|were|is|are) (?:picked|selected)|"
-    r"(?:option|proposal|approach)\b[^.;]{0,80}\b(?:accepted|rejected)\b|"
-    rf"let's {_CHOICE_VERB})",
+    r"(?:option|proposal|approach)\b[^.;]{0,80}\b(?:accepted|rejected)\b)",
     re.IGNORECASE,
 )
 # Wording that says a discussion reached no decision.
@@ -111,9 +130,55 @@ _NOTES_TITLE = re.compile(
 _MEETING_TITLE = re.compile(_MEETING, re.IGNORECASE)
 _DAY = (
     rf"(?:\d{{4}}[-/]\d{{2}}[-/]\d{{2}}|\d{{1,2}}/\d{{1,2}}/(?:\d{{4}}|\d{{2}})|"
-    rf"{_MONTH}\s+\d{{1,2}}|\d{{1,2}}\s+{_MONTH})"
+    rf"{_MONTH}\s+\d{{1,2}}(?:,?\s+\d{{4}})?|\d{{1,2}}\s+{_MONTH}(?:\s+\d{{4}})?)"
 )
 _DATE_HEADING = re.compile(rf"^\W*{_DAY}\b\W*$", re.IGNORECASE)
+# A recorded meeting's title: a date with a clock time, and a transcript or notes-by mark.
+_RECORDED_STAMP = re.compile(rf"\b{_DAY}\s+\d{{1,2}}[:.]\d{{2}}\b", re.IGNORECASE)
+# A transcript mark is a whole part of the title ("Planner sync — Transcript & notes — ...",
+# "... - Transcript", "... - Transcript.docx" as a file name); "Incident ... - transcript
+# export failing" names a topic.
+_TRANSCRIPT_MARK = re.compile(
+    # A hyphen separates only with a space beside it: "transcript-export" is one word.
+    r"(?:^|[\u2013\u2014|:]|\s-)\s*transcript(?:\s*&\s*notes)?"
+    r"(?:\s*(?:\.\w+)?$|\s*[\u2013\u2014|:]|\s+-)",
+    re.IGNORECASE,
+)
+_EXTENSION = re.compile(r"\.\w+$")
+_NOTES_BY_MARK = re.compile(r"\bnotes by\b", re.IGNORECASE)
+# A transcript's segment (a clock-time heading such as "00:12:30"), the transcript itself
+# ("Transcript", "Planner sync - Transcript", "Transcription ended after ...") and the
+# template's own sections; not a topic that names one ("Transcript search latency").
+_TRANSCRIPT_HEADING = re.compile(
+    r"^\W*\d{1,2}:\d{2}(?::\d{2})?\W*$|^\W*transcript\W*$|^\W*transcription ended\b"
+    r"|\s[-\u2013\u2014|:]\s*transcript\W*$"
+    r"|^\W*(?:suggested\s+)?(?:next\s+steps|action\s+items|attendees)\W*$",
+    re.IGNORECASE,
+)
+# Links and the separators between them; a separator never holds a "[", which keeps the
+# match linear.
+_LINK_RUN = r"(?:\[[^\]]*\]\([^)]*\)[^\w\[]*)+"
+_LONG_DATE = rf"{_MONTH}\s+\d{{1,2}},\s+\d{{4}}"
+# A line of the template: the invite header's labelled links ("Invited [Ana](...)",
+# "Attachments [Planner sync](...)", "Meeting records [Transcript](...)",
+# "Mar 4, 2026 [Ana](...)"), the meeting's date alone, the transcript's preamble,
+# the footer that asks for a rating or a review of the notes.
+# "Invited [Ana](...) to walk through the budget" is a topic's text.
+_TEMPLATE_TEXT = re.compile(
+    rf"^[^\w\[]*(?:invited|attachments|meeting\s+records|{_LONG_DATE})\s+{_LINK_RUN}$|"
+    rf"^\W*{_LONG_DATE}\W*$|"
+    # The footer ends at its survey link or its last word: "Please rate ... in the user
+    # survey before launch" and "... notes to make sure the p99 numbers hold" are topics.
+    r"^\W*(?:this editable transcript\b|"
+    r"please\W+rate\b[^.]{0,60}\bsurvey\b(?:\W*$|\]\([^)]*\)\W*$)|"
+    r"you should review\s+\S+'s\s+notes(?:\s+(?:for accuracy|to make sure "
+    r"(?:they(?:'re| are)|it(?:'s| is)) accurate))?\W*$)",
+    re.IGNORECASE,
+)
+# A line of links alone, the attendees the header goes on with; a line with no word in it
+# (an empty heading marker "##") carries nothing.
+_LINKS = re.compile(rf"^[^\w\[]*{_LINK_RUN}$")
+_WORD = re.compile(r"\w")
 _DESIGN_TITLE = re.compile(
     r"\b(?:design|rfc|proposal|spec|specification|architecture|adr|plan|runbook|release|"
     r"upgrade|migration|incident|postmortem|changelog)\b",
@@ -141,6 +206,8 @@ _SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
 _LINE_LEAD = re.compile(r"^\s*(?:[-+>|]|\*(?!\*)|\d{1,3}[.)])\s*")
 # Underscore emphasis ("__Agreed:__"), which `\b` cannot see past; snake_case stays.
 _UNDERSCORES = re.compile(r"(?<!\w)_{1,3}|_{1,3}(?!\w)")
+# A markdown escape: a backslash before punctuation.
+_ESCAPED = re.compile(r"\\([^\w\s])")
 # A table's separator row, an empty table row and a horizontal rule carry no text.
 _RULE = re.compile(r"^[\s|:\-=*_]*$")
 
@@ -151,11 +218,21 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
     headings = tuple(_plain(h) for h in section_path)
     # A document stored with no title is named by its first heading.
     name = _plain(title) if title else (headings[0] if headings else "")
+    below = _below_title(name, headings)
     dated = bool(_NOTES_TITLE.search(name)) or (
         bool(_MEETING_TITLE.search(name))
-        and bool(_DATE_HEADING.match(_top_heading(name, headings)))
+        # A running notes page dates each meeting in its top heading below the title.
+        and bool(below)
+        and bool(_DATE_HEADING.match(below[0]))
     )
-    notes = dated and not _DESIGN_TITLE.search(name)
+    # A transcript names a recording whatever else the title says; "notes by" also signs a
+    # person's notes, so it needs a meeting word and no design-document word.
+    design = bool(_DESIGN_TITLE.search(name))
+    recorded = bool(_RECORDED_STAMP.search(name)) and bool(
+        _TRANSCRIPT_MARK.search(name)
+        or (_NOTES_BY_MARK.search(name) and _MEETING_TITLE.search(name) and not design)
+    )
+    notes = recorded or (dated and not design)
     prose, code = _lines(text)
     # A heading is not in the section's text: a decision it states counts the same.
     # A heading that says no decision was reached is not one, in any document.
@@ -168,6 +245,19 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
         return False
     if _unanswered(headings, prose, code):
         return True
+    if recorded:
+        # The template fills its section: a summary after the meeting's date is content,
+        # and so is a list of links with no template line.
+        if any(_TRANSCRIPT_HEADING.search(h) for h in below):
+            return True
+        return (
+            not code
+            and any(_TEMPLATE_TEXT.match(line) for line in prose)
+            and all(
+                _TEMPLATE_TEXT.match(line) or _LINKS.match(line) or not _WORD.search(line)
+                for line in prose
+            )
+        )
     return notes
 
 
@@ -180,11 +270,21 @@ def _unanswered(section_path: tuple[str, ...], prose: list[str], code: int) -> b
     return bool(_QUESTIONS_HEADING.search(heading) or _CLOSING_QUESTION.match(" ".join(prose)))
 
 
-def _top_heading(name: str, section_path: tuple[str, ...]) -> str:
-    """The section's top heading below the document's own title (a first heading that
-    repeats the title is the title): a running notes page dates each meeting there."""
-    path = section_path[1:] if section_path and section_path[0] == name else section_path
-    return path[0] if path else ""
+def _below_title(name: str, section_path: tuple[str, ...]) -> tuple[str, ...]:
+    """The section's headings without a first heading that repeats the document's name."""
+    if section_path and _same(section_path[0], name):
+        return section_path[1:]
+    return section_path
+
+
+def _same(heading: str, name: str) -> bool:
+    # Words only: an export may turn the title's hyphens into dashes. An upload's title is
+    # its file name, whose extension the heading leaves out.
+    return _words(heading) in (_words(name), _words(_EXTENSION.sub("", name)))
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"\w+", text.casefold())
 
 
 def _decides(line: str, notes: bool) -> bool:
@@ -220,5 +320,6 @@ def _lines(text: str) -> tuple[list[str], int]:
 
 
 def _plain(text: str) -> str:
-    """`text` with curly apostrophes made straight and underscore emphasis dropped."""
-    return _UNDERSCORES.sub("", text.replace("\u2019", "'"))
+    """`text` with markdown escapes undone ("Planner sync \\- Transcript"), curly apostrophes
+    made straight and underscore emphasis dropped."""
+    return _UNDERSCORES.sub("", _ESCAPED.sub(r"\1", text).replace("\u2019", "'"))

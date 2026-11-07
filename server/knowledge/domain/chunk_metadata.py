@@ -31,8 +31,9 @@ class ChunkStructure:
     # For an extracted file's chunk: its blocks' type and its place in the source.
     block_type: str = ""
     locator: dict[str, Any] | None = None
-    # The section is noise (unanswered questions alone, or a dated meeting-notes or status
-    # document's section with no decision): ranked below close hits and left out of
+    # The section is noise (unanswered questions alone, a dated meeting-notes or status
+    # document's section with no decision, or a recorded meeting's transcript and template;
+    # `server.knowledge.domain.section_value`): ranked below close hits and left out of
     # context.pack and memory.stack. False for a chunk written before it was recorded.
     noise: bool = False
 
