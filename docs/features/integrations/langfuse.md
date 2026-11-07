@@ -118,8 +118,9 @@ is not pushed again.
 `POST /v1/admin/prompts.evaluate` (platform admin) reads Langfuse traces tagged
 `prompt:<name>:<version>` and returns a should-promote verdict from their rubric scores
 against a minimum count and threshold. It never writes to Langfuse, and answers 501
-`INTEGRATION_NOT_CONFIGURED` when Langfuse is not set up. It reads the trace list, which only
-Langfuse 3 serves: on Langfuse 4 it finds no traces and answers `should_promote: false`.
+`INTEGRATION_NOT_CONFIGURED` when Langfuse is not set up. It reads the trace list, which
+only Langfuse 3 serves: on Langfuse 4 it finds no traces and answers
+`should_promote: false`.
 
 ## Erasure
 
@@ -149,10 +150,10 @@ The step fails closed. A health answer with no version, a 5xx, a timeout, or a 4
 the delete endpoint (an older self-hosted build, or a proxy that forwards only GET and
 POST) raises, the saga records the request `failed`, and the `erasure_recovery` worker
 retries it. A re-run is idempotent, because deleting a trace already deleted succeeds; on
-Langfuse 4 it can find and delete again the traces still waiting to go. With
-Langfuse unconfigured, a stub backend logs the intent and reports 0.
-`LOOM_EXTERNAL_ERASURE_TIMEOUT_S` (30) bounds each call. See
-[retention and erasure](../memory/retention-and-erasure.md).
+Langfuse 4 it can find and delete again the traces still waiting to go. With Langfuse
+unconfigured, a stub backend logs the intent and reports 0.
+`LOOM_EXTERNAL_ERASURE_TIMEOUT_S` (30) bounds each call. See [retention and
+erasure](../memory/retention-and-erasure.md).
 
 ## Joining a request
 

@@ -207,13 +207,11 @@ async def test_langfuse_rerun_with_nothing_found_issues_no_delete(mock_server) -
 
     `erasure_recovery` re-runs failed sagas, so a repeat pass has to be safe. A
     re-run whose lookup finds no matching traces returns 0 without issuing a
-    delete at all; one that finds traces still being deleted deletes them again,
-    which the delete endpoint answers with 200.
+    delete at all.
 
-    It does NOT come from treating 404 on the delete as success, which would
-    fail open. The bulk endpoint
-    returns 200 even for ids that do not exist, so a 404 means the endpoint is
-    missing and nothing was deleted.
+    Idempotency does NOT come from treating 404 on the delete as success, which
+    would fail open. The bulk endpoint returns 200 even for ids that do not
+    exist, so a 404 means the endpoint is missing and nothing was deleted.
     """
     mock_server.trace_ids = []
     backend = LangfuseBackend("http://lf.local", "tok", 5.0)
