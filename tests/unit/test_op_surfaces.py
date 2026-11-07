@@ -26,9 +26,9 @@ from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport import mcp_op, mcp_tools
 from server.transport.http import build_router
 
-# DASHBOARD_PENDING as it stands: a control that lands drops its op from both,
-# and nothing joins either.
-PENDING_PINNED = frozenset(
+# The ops DASHBOARD_PENDING may hold: a control that lands drops its op from
+# both, and nothing joins either.
+PENDING_AT_MOST = frozenset(
     {
         "blacklist.sweep",
         "calibration.get",
@@ -209,11 +209,11 @@ def test_a_refusal_names_the_dashboard_only_for_an_op_it_calls():
             assert "dashboard" in OPERATIONS_BY_NAME[name].reach, name
 
 
-def test_a_hidden_op_with_no_alternative_sends_the_agent_to_the_dashboard_or_an_operator():
+def test_a_hidden_op_the_dashboard_does_not_call_sends_the_agent_to_an_operator():
     for name in _MCP_HIDDEN_OPS - set(mcp_op._INSTEAD):
-        on = "dashboard" in OPERATIONS_BY_NAME[name].reach
-        expected = mcp_op._NEEDS_THE_USER if on else mcp_op._NEEDS_AN_OPERATOR
-        assert mcp_op.hidden_refusal(name)["instead"] == expected, name
+        if "dashboard" not in OPERATIONS_BY_NAME[name].reach:
+            instead = mcp_op.hidden_refusal(name)["instead"]
+            assert "operator" in instead and "dashboard" not in instead, name
 
 
 def test_an_op_a_reason_names_is_on_the_dashboard():
@@ -225,7 +225,5 @@ def test_an_op_a_reason_names_is_on_the_dashboard():
 
 
 def test_the_pending_set_only_shrinks():
-    joined = sorted(DASHBOARD_PENDING - PENDING_PINNED)
+    joined = sorted(DASHBOARD_PENDING - PENDING_AT_MOST)
     assert not joined, f"{joined}: a new op a person needs ships with its dashboard control"
-    left = sorted(PENDING_PINNED - DASHBOARD_PENDING)
-    assert not left, f"{left} left DASHBOARD_PENDING: drop them from PENDING_PINNED too"

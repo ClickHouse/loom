@@ -146,8 +146,8 @@ _INSTEAD: dict[str, str] = {
     # An owner-only op names the person, never a route: naming the SDK/HTTP
     # op sends a model probing env vars and token files for a way around it.
     "memory.unlock": (
-        "only the user can unlock a memory: ask them to, leave the key as it is and say it "
-        "is locked. Don't look for another route, token or credential to unlock it yourself"
+        "only the user can unlock a memory: leave the key as it is and tell them it is "
+        "locked. Don't look for another route, token or credential to unlock it yourself"
     ),
     "memory.search": "call loom_search (memory, profile, knowledge and conversations in one call)",
     "knowledge.search": "call loom_search",
@@ -158,6 +158,7 @@ _INSTEAD: dict[str, str] = {
         "call memory.extraction_status_mine (loom_op) with the queue_id each deferred "
         "memory.set_from_messages returned"
     ),
+    "erasure.status": "call erasure.list (loom_op); each saga row carries its status",
     "memory.search_trace": (
         "call loom_search with explain=true; each memory hit carries its ranking terms"
     ),
@@ -186,8 +187,8 @@ _NEEDS_AN_OPERATOR = (
 
 
 def hidden_refusal(name: str) -> dict[str, Any] | None:
-    """The refusal for an op that exists but is kept off MCP: why, and what
-    to call instead. None when `name` is not a hidden op."""
+    """The refusal for an op that exists but is kept off MCP: that it is not on
+    MCP, and what to do instead. None when `name` is not a hidden op."""
     from server.operations.registry import OPERATIONS_BY_NAME
 
     op = OPERATIONS_BY_NAME.get(name)

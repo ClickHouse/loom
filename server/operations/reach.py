@@ -2,8 +2,7 @@
 
 An op that is declared, described, tested and migrated but reachable from no
 listed tool, no SDK method, no example, no plugin hook and no dashboard call
-site is dark, and dark
-ops go uncalled. This module derives, per op, the set of reach kinds:
+site is dark, and dark ops go uncalled. This module derives, per op, the set of reach kinds:
 
 ``mcp_core``     listed on the default ``core`` MCP toolset (or with the code
                  tools flag) — the chat loop sees it.
@@ -15,9 +14,8 @@ ops go uncalled. This module derives, per op, the set of reach kinds:
 ``sdk_example``  a shipped example (``examples/``) or operator script
                  (``dev/``, ``scripts/``) calls it, directly or through an
                  SDK method.
-``plugin_hook``  a first-party client that is neither the SDK nor an MCP
-                 listing names it: the Claude Code plugin hooks, the gateway
-                 and shim integrations (``integrations/``).
+``plugin_hook``  an integration names it: the Claude Code plugin hooks, the
+                 gateway and shim integrations (``integrations/``).
 ``dashboard``    the dashboard posts it: a quoted ``"/v1/<op>"`` call site in
                  ``frontend/src`` (tests and test helpers aside). An op without
                  it is in ``server.operations.dashboard``: ``NOT_IN_DASHBOARD``

@@ -11,8 +11,7 @@ maturity and, with ``--call-counts``, its call count from ``loom.agent_events``.
 ``--call-counts`` is the only mode that opens a connection: the ClickHouse
 the server CLI uses (``LOOM_ENV_FILE=/path/.env`` to name another dotenv).
 
-The gate (also ``tests/unit/test_op_reach_census.py`` and
-``tests/unit/test_op_surfaces.py``): every op has a reach path other than a raw
+The gate (also ``tests/unit/test_op_reach_census.py``): every op has a reach path other than a raw
 HTTP POST or is declared experimental; every op is on the dashboard or named in
 ``server.operations.dashboard`` with the reason it is not; the committed
 manifest is byte-identical to what ``--write-manifest`` writes. ``--owners``
@@ -68,8 +67,9 @@ _SDK_CALL = re.compile(r"\.([a-z_]+)\.([a-z_]+)\(")
 # a comment. A bare op name there is an audit label, not a call.
 _DASHBOARD_CALL = re.compile(r"""["'`]/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b""")
 # What a comment scan keeps (group 1: an escaped character, as in a regex literal's
-# `\/`, or a string, `'` and `"` ending at the line) and what it drops (`//` and
-# `/* */` comments). A lone `'` (JSX text's "can't") is code.
+# `\/`; a `'` or `"` string, ending at its line; a template literal, which may span
+# lines) and what it drops (`//` and `/* */` comments). A lone `'` (JSX text's
+# "can't") is code.
 _TS_KEEP_OR_COMMENT = re.compile(
     r"""(\\.|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)|//[^\n]*|/\*.*?\*/""",
     re.DOTALL,
@@ -86,8 +86,9 @@ def _files(root: Path, rel: str, suffixes: tuple[str, ...]) -> list[Path]:
     if not base.exists():
         return []
     # Excluded directories are matched below `base` only: a checkout that
-    # itself sits under a `tests` directory still scans every file. A test kept
-    # beside its source (the dashboard's `*.test.tsx`) is skipped by its name.
+    # itself sits under a `tests` directory still scans every file. `test` is
+    # the dashboard's helpers (`frontend/src/test`); a test kept beside its
+    # source (the dashboard's `*.test.tsx`) is skipped by its name.
     return sorted(
         p
         for p in base.rglob("*")
