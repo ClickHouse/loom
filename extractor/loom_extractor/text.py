@@ -323,6 +323,7 @@ _LAYOUT = {*_HEADINGS, "pre", "ul", "ol", "dl", "table"}
 _PARAGRAPHS = {"p", "blockquote"}
 _ROW_GROUPS = {"thead", "tbody", "tfoot"}
 _CELLS = {"td", "th"}
+_ENDS_CAPTION = {"caption", "tr", *_CELLS, *_ROW_GROUPS}  # what ends a caption left open
 _SPANS = {"colspan": 1_000, "rowspan": 65_534}  # HTML's own bounds
 _MAX_PLACING = 1_000_000  # the steps placing a table's cells may take; past it every cell is kept
 _DIGITS = re.compile(r"[\t\n\f\r ]*\+?0*([0-9]+)")  # HTML's integer: ASCII spacing, a sign
@@ -356,7 +357,7 @@ class _Held(NamedTuple):
     start: int
     end: int  # past the last column
     rows: int  # the rows below it still holds
-    text: bool  # whether the cell holds text
+    kept: bool  # whether the cell holds text, so what it carries down is kept
 
 
 def _grid(t: _Table, texts: list[list[str]]) -> list[list[_Placed]] | None:
@@ -377,7 +378,7 @@ def _grid(t: _Table, texts: list[list[str]]) -> list[list[_Placed]] | None:
         for cell, text in zip(row, row_texts, strict=True):
             while k < len(held) and held[k].start <= at:
                 if held[k].end > at:
-                    cells.append(_Placed(at, held[k].end - at, "", held[k].text))
+                    cells.append(_Placed(at, held[k].end - at, "", held[k].kept))
                     at = held[k].end
                 k += 1
             cells.append(_Placed(at, cell.colspan, text, bool(text)))
@@ -643,8 +644,7 @@ class _HTMLBlocks(HTMLParser):
         because it lays the table out (`_LAYOUT`, `_PARAGRAPHS`) or ends it (`_ENDS_TABLE`)."""
         line = self.getpos()[0]
         # A caption left open ends at the next caption, row group, row or cell.
-        ends_caption = {"caption", "tr", *_CELLS, *_ROW_GROUPS}
-        if t.caption is not None and (t.caption_tables or tag not in ends_caption):
+        if t.caption is not None and (t.caption_tables or tag not in _ENDS_CAPTION):
             if tag == "table":
                 t.caption_tables += 1
             t.separate(tag, line)
