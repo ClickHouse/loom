@@ -990,10 +990,11 @@ def test_a_heading_line_with_a_long_run_of_blanks_is_read_whole() -> None:
 def _cpu(fn: Any) -> float:
     """This process's CPU seconds `fn` takes, so a test running beside it does not count.
     The tracer is off while `fn` runs, so a coverage run times the parser, not itself:
-    every caller runs extractor code, which the unit job's coverage does not measure."""
+    every caller runs extractor code, which the unit job's coverage does not measure. The
+    garbage collector is off too, since a full pass walks every earlier test's heap."""
     previous = sys.gettrace()
     sys.settrace(None)
-    gc.collect()  # the collector off too: a full pass walks every earlier test's heap
+    gc.collect()
     gc.disable()
     try:
         start = time.process_time()
@@ -1188,7 +1189,8 @@ def test_one_line_sql_with_a_comment_after_every_semicolon_splits_in_linear_time
     from loom_extractor import sql
 
     sql._spans("SELECT 1;", "clickhouse")  # imports sqlglot and the dialect before timing
-    small = _cpu(lambda: sql._spans("SELECT 1; /* c */ " * 10_000, "clickhouse"))
+    small_text = "SELECT 1; /* c */ " * 10_000
+    small = _cpu(lambda: sql._spans(small_text, "clickhouse"))
     text = "SELECT 1; /* c */ " * 160_000
     out: list[list[Any]] = []
     large = _cpu(lambda: out.append(sql._spans(text, "clickhouse")))
