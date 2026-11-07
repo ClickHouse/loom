@@ -120,6 +120,7 @@ export const PASS_REASONS = Object.freeze([
   "file_list_grep", // tree-wide grep that lists files or counts matches: no matching lines to flood
   "cap_spent", // ranged read over the read-window cap, but this file's denial budget is spent
   "symbol_grep_spent", // single-file grep for a symbol, but this symbol's denial budget is spent
+  "budget_unrecorded", // a denial whose budget spend could not be written: passed rather than lock the agent out
 ]);
 
 // A grep whose pattern names one symbol is a symbol lookup —

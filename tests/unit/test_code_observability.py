@@ -269,6 +269,7 @@ def test_outcome_pass_reason_is_the_source_from_a_fixed_vocabulary() -> None:
         "file_list_grep",  # Tree-wide grep listing files or counts
         "cap_spent",  # Read-window cap budget spent
         "symbol_grep_spent",  # Single-file symbol grep budget spent
+        "budget_unrecorded",  # A denial budget's spend could not be written
     }
     # The plugin's vocabulary is the same list, in the same order of concern.
     plugin = (

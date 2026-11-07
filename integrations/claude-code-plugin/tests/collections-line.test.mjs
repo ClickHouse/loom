@@ -140,7 +140,7 @@ test("strips quote, bracket and backtick lookalikes and folds compatibility form
   ];
   const text = shown(`/loom-recalled-data ${lookalikes.join("")}`);
   assert.ok(!lookalikes.some((c) => text.includes(c)), text);
-  assert.match(text, /loom-recalled_data/, "the words stay, the tag name neutralised; only the marks go");
+  assert.match(text, /\[loom tag removed\]/, "the tag name is removed; only the marks go");
 });
 
 test("strips variation selectors, fillers and other default-ignorable characters", () => {

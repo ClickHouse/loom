@@ -246,23 +246,24 @@ plugin's five entries each declare `timeout: 10` so the last one is not cancelle
 
 ### Recalled content and local data
 
-The primer, the per-prompt recall, the file rules injected before an edit
-(`loom-file-context`) and the tracker items the code shunt quotes when it answers a GitHub
-issue search carry other people's writes: team file rules live in the repository's code
-namespace, where every member writes, and anyone who can file an issue writes its title.
-Loom escapes recalled text so a stored value cannot close its section, labels each item
-with its writer (`by=` in recall, the author on a team file rule), wraps the injected text
-in a `<loom-recalled-data>` block that says it is data and not instructions, rewriting any
-spelling of that tag name inside the text (any case, compatibility or fullwidth letters,
-zero-width characters) so no stored value can open or end the block, and injects only
-procedures the caller wrote (a teammate's still answers an explicit `procedure.match`). Loom cannot control what an agent
-then does: keeping tool authority independent of retrieved text is the client's job.
+The primer, the per-prompt recall, the saved-brief list, the file rules injected before an
+edit (`loom-file-context`) and the tracker items the code shunt quotes when it answers a
+GitHub issue search can carry other people's writes: team file rules live in the
+repository's code namespace, where every member writes, and anyone who can file an issue
+writes its title. Each item is labelled with its writer (`by=` in recall, the author on a
+team file rule), and the plugin wraps every one of these in a `<loom-recalled-data>` block
+that says it is data and not instructions. Inside every such block the plugin replaces any
+spelling of the tag name (any case, compatibility or lookalike letters, any separator or
+invisible character between them) with `[loom tag removed]`, so no stored value can open
+or end the block. Only procedures the caller wrote are injected (a teammate's still
+answers an explicit `procedure.match`). Loom cannot control what an agent then does:
+keeping tool authority independent of retrieved text is the client's job.
 
 The hooks' temp files (turn journal, cursors, stashes, flush jobs, and the code shunt's
-decision log, pending batch and denial counts) are created `0600`, never written through a
-symlink or into another user's file, and never read from a planted symlink, a hard link or
-another user's file; the turn journal and stashes are removed at SessionEnd. What the hooks redact before sending is in
-[data handling](#data-handling).
+decision log, pending batches and denial counts) are created `0600`, never written through
+a symlink or into another user's file, and never read from a planted symlink, a hard link
+or another user's file; the turn journal and stashes are removed at SessionEnd. What the
+hooks redact before sending is in [data handling](#data-handling).
 
 ### Tuning knobs
 
@@ -312,7 +313,7 @@ code map.
 
 Repository detection is cached ten minutes. A lookup that does not answer within
 `LOOM_SHUNT_RESOLVE_TIMEOUT_MS` (8 s) is retried after a minute rather than cached as
-"not indexed". Decisions are logged to `$TMPDIR/loom-shunt.log` (`LOOM_SHUNT_LOG=off`
+"not indexed". Decisions are logged to `$TMPDIR/loom-shunt-log-<hash of the uid>.log` (`LOOM_SHUNT_LOG=off`
 disables) and reported to the server as `code.outcome` rows (`LOOM_SHUNT_REPORT=off`
 disables). `LOOM_SHUNT_GREP=off` and `LOOM_SHUNT_BASH=off` exempt the Grep tool and the
 Bash tool respectively.

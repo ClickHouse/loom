@@ -373,8 +373,8 @@ class ClaudeCliDriver:
                 argv, cwd=cell.workdir, env=env, stdout=fo, stderr=fe, timeout_s=self.cfg.timeout_s
             )
         dur = time.monotonic() - t0
-        shunt_log = Path(env["TMPDIR"]) / "loom-shunt.log"
-        if shunt_log.exists():
+        # The shunt's per-user decision log, loom-shunt-log-<hash>.log (lib/tmp-state.mjs).
+        for shunt_log in sorted(Path(env["TMPDIR"]).glob("loom-shunt-log-*.log"))[:1]:
             shutil.copy2(shunt_log, cell.cell_dir / "shunt.log")
         cap_log = Path(env["TMPDIR"]) / "bench-read-cap.log"
         if cap_log.exists():
