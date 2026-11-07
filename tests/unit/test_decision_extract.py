@@ -3127,7 +3127,7 @@ def test_link_targets_are_removed_from_a_caption() -> None:
     ids=["img-tag", "image-alt", "image-target", "placeholder", "link-target"],
 )
 def test_unclosed_image_markup_is_read_in_linear_time(body: str) -> None:
-    # Each was a scan from every opener to the end of the text: seconds per document.
+    # A scan from every unclosed opener to the end of the text costs seconds per document.
     start = time.process_time()
     dx.image_only_sections(body)
     assert time.process_time() - start < 0.5

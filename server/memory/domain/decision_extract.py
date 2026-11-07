@@ -40,13 +40,12 @@ from server.memory.domain.decision_statement import (
 # Not a placeholder: link text `[image tiles](tiles.md)`, a reference link `[image][1]`,
 # a definition `[image]: x.png`, the label of `[the diagram][image]`, a shortcut link
 # `[image tiles]`, text such as `[images are in the appendix]`, or a word `[imagine]`.
-# Alt text and a placeholder stop at the next `[`, a tag at the next `<`, a target at
-# its first `)` but never past the next `](`: a scan from every unclosed opener to the
-# end of the text would cost quadratic time. A quoted title holds no `]`, so it never
-# reaches the next `](`; a title holding `]` is read piece by piece, its line ends
-# counted with the target's.
+# Alt text and a placeholder stop at the next `[`, a tag at the next `<`, and a target
+# never runs past the next `](`: a scan from every unclosed opener to the end of the text
+# would cost quadratic time.
 # One piece of a target `(...)`: none crosses a `)`, a line end outside a quoted title,
-# or a `](`.
+# or a `](`. A title holding `]` is read piece by piece, its line ends counted with the
+# target's.
 _TARGET_PIECE = r"""(?x:
     [^)\]\n"']++  # the destination and a title's text
   | \](?!\()      # a `]` that opens no target
