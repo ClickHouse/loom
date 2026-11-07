@@ -426,6 +426,7 @@ def _exposure_problems(settings: Any) -> list[Problem]:
     """A server others can reach (non-loopback LOOM_BIND_HOST) without its
     safeguards, and forwarded-header or CORS settings that trust everyone.
     The bind ones also stop the server at boot unless LOOM_ALLOW_INSECURE=1."""
+    from server.auth.keyring import weak_keys
     from server.auth.public_url import cors_origin_list, is_loopback_host
 
     out: list[Problem] = []
@@ -473,13 +474,11 @@ def _exposure_problems(settings: Any) -> list[Problem]:
                 "Set LOOM_MCP_AUTH_MODE=required or bind 127.0.0.1.",
             )
         )
-    from server.auth.keyring import weak_keys
-
     weak = weak_keys(settings) if reachable else []
     if weak:
         out.append(
             Problem(
-                "insecure_bind_weak_secret",
+                "insecure_bind_weak_key",
                 severity,
                 f"{', '.join(weak)} {'is' if len(weak) == 1 else 'are'} below the minimum key "
                 "size on a non-loopback bind "

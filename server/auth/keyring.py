@@ -249,9 +249,9 @@ def _pem_root(secret: str) -> SigningKey | None:
     return SigningKey(ROOT_KID, "RS256", secret, public, datetime.min)
 
 
-# The minimum key sizes of RFC 7518 sections 3.2 and 3.3, for every key that signs or
-# verifies tokens: an HMAC secret as long as the hash, an RSA modulus of 2048 bits. Only
-# the length is checked, not the randomness.
+# The minimum key sizes of RFC 7518 sections 3.2 and 3.3, for the root, gateway and
+# inline end-user keys: an HMAC secret as long as the hash, an RSA modulus of 2048 bits.
+# Only the length is checked, not the randomness.
 MIN_HMAC_BYTES = 32
 MIN_RSA_BITS = 2048
 
@@ -272,7 +272,7 @@ def weak_keys(cfg: Any = None) -> list[str]:
     (`end_user:<issuer>:<kid>`). A verifying RSA key's modulus is public, so one under
     2048 bits is as weak as a short root. Each key is loaded as the verifier loads it
     (PEM or OpenSSH); one it cannot load verifies nothing. A JWKS URL's keys arrive at
-    runtime; `end_user_keys` drops the weak ones when it fetches them."""
+    runtime and are not checked here, nor are machine-trust keys."""
     cfg = cfg or settings
     out = ["LOOM_JWT_SECRET"] if root_is_weak(cfg) else []
     for kid, pem in sorted(cfg.jwt_public_key_map().items()):

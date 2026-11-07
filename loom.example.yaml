@@ -734,8 +734,8 @@ settings:
   # `jwt_end_user_jwks_refresh_seconds`) and/or `keys`. A key here verifies only its own
   # issuer's tokens, and only as an end user (`sub: user:<id>`, one listed `org`, an
   # optional `agent: agent:<id>`), never any other token. Empty: no end-user tokens. A
-  # non-loopback bind refuses an inline RSA key under 2048 bits; one fetched from
-  # `jwks_url` is dropped. [restart]
+  # non-loopback bind refuses an inline RSA key under 2048 bits (a key fetched from
+  # `jwks_url` is not checked). [restart]
   # jwt_end_user_issuers_json: ""
 
   # The longest an end-user token may live, from its `iat` to its `exp`. [restart]

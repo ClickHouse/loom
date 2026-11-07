@@ -383,7 +383,7 @@ class AuthSettings(BaseModel):
     # here verifies only its own issuer's tokens, and only as an end user
     # (`sub: user:<id>`, one listed `org`, an optional `agent: agent:<id>`),
     # never any other token. Empty: no end-user tokens. A non-loopback bind refuses
-    # an inline RSA key under 2048 bits; one fetched from `jwks_url` is dropped.
+    # an inline RSA key under 2048 bits (a key fetched from `jwks_url` is not checked).
     jwt_end_user_issuers_json: str = ""
     # The longest an end-user token may live, from its `iat` to its `exp`.
     jwt_end_user_max_ttl_seconds: int = Field(default=300, ge=60, le=3600)

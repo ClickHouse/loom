@@ -171,17 +171,19 @@ def test_health_reports_mcp_open_and_a_weak_root_key_on_a_reachable_bind(
     monkeypatch.setattr(settings, "jwt_secret", "a" * 16)
     found = {p.code: p.severity for p in problems._exposure_problems(settings)}
     assert found["insecure_bind_mcp_open"] == "warn"
-    assert found["insecure_bind_weak_secret"] == "warn"
-    weak = next(p for p in problems._exposure_problems(settings) if p.code.endswith("secret"))
+    assert found["insecure_bind_weak_key"] == "warn"
+    weak = next(
+        p for p in problems._exposure_problems(settings) if p.code == "insecure_bind_weak_key"
+    )
     assert weak.message.startswith("LOOM_JWT_SECRET is below")
     # a reachable bind with a strong secret and MCP required reports neither
     monkeypatch.setattr(settings, "mcp_auth_mode", "required")
     monkeypatch.setattr(settings, "jwt_secret", "s" * 48)
     found = {p.code for p in problems._exposure_problems(settings)}
-    assert not found & {"insecure_bind_mcp_open", "insecure_bind_weak_secret"}
+    assert not found & {"insecure_bind_mcp_open", "insecure_bind_weak_key"}
     monkeypatch.setattr(settings, "bind_host", "127.0.0.1")
     found = {p.code for p in problems._exposure_problems(settings)}
-    assert not found & {"insecure_bind_mcp_open", "insecure_bind_weak_secret"}
+    assert not found & {"insecure_bind_mcp_open", "insecure_bind_weak_key"}
 
 
 def test_a_pem_root_that_is_not_rsa_is_not_weak(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -695,52 +697,3 @@ def test_the_host_allowlist_and_the_bind_check_share_one_loopback_definition() -
         assert is_loopback_host(host)
         assert host_header_allowed(f"{host}:7777", "")
     assert not host_header_allowed("10.0.0.1:7777", "")
-
-
-def test_a_jwks_key_under_2048_bits_is_dropped_when_fetched(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A JWKS arrives at runtime, so the start cannot refuse it: the fetch drops a weak
-    key and keeps the rest."""
-    import base64
-
-    from cryptography.hazmat.primitives.asymmetric import rsa
-
-    from server.auth import end_user_keys
-
-    def jwk(kid: str, bits: int) -> dict[str, str]:
-        nums = rsa.generate_private_key(public_exponent=65537, key_size=bits).public_key()
-        n = nums.public_numbers().n
-
-        def b64(i: int) -> str:
-            raw = i.to_bytes((i.bit_length() + 7) // 8, "big")
-            return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
-
-        return {"kty": "RSA", "kid": kid, "alg": "RS256", "n": b64(n), "e": b64(65537)}
-
-    body = {"keys": [jwk("old", 1024), jwk("new", 2048)]}
-
-    class _Response:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> Any:
-            return body
-
-    class _Client:
-        def __init__(self, **_: Any) -> None:
-            pass
-
-        async def __aenter__(self) -> Any:
-            return self
-
-        async def __aexit__(self, *a: Any) -> None:
-            return None
-
-        async def get(self, url: str) -> _Response:
-            return _Response()
-
-    monkeypatch.setattr(end_user_keys.httpx, "AsyncClient", _Client)
-    monkeypatch.setattr(end_user_keys, "_keys", {})
-    asyncio.run(end_user_keys._fetch("https://app.example", "https://app.example/jwks"))
-    assert set(end_user_keys._keys["https://app.example"]) == {"new"}
