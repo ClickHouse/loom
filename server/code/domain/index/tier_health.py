@@ -166,6 +166,9 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("submodule_url", re.compile(r"transport 'file' not allowed", re.IGNORECASE)),
     # A full disk also cuts a transfer short ("the remote end hung up"): before network.
     ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
+    # the C/C++ harness's CMake configure failed: CMake's own last lines come before
+    # its line, and can read as any later kind
+    ("cmake", re.compile(r"^>> cmake configure failed$", re.MULTILINE)),
     (
         "credential",
         re.compile(
@@ -318,6 +321,12 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
             "A Go module did not build: the error names it and why. The rest of the "
             "repository is indexed; the record clears on the next run that builds the "
             "modules it changes."
+        )
+    if kind == "cmake":
+        return (
+            "CMake could not configure the build tree, or the host has no clang: the "
+            "lines above `>> cmake configure failed` say which. The tier retries the "
+            "run: fix the build, or give the host what the configure needs."
         )
     if kind == "harness":
         return "The indexer failed: the error holds the tail of its output."

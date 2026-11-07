@@ -7,8 +7,14 @@ index to loom's versioned JSON delta, and uploading it chunked through
 `POST /v1/code.scip_ingest`. The `code_scip_apply` worker assembles and
 applies complete batches idempotently.
 
-Run it per merge or nightly; a CI job that already builds with clang can
-skip the cmake-configure step.
+Run it per merge or nightly. The C/C++ harness configures CMake (compile
+database only) when `build/compile_commands.json` or `build/CMakeCache.txt` is
+missing, or the cache was made in another directory or names a compiler the
+host no longer has, and reconfigures on the existing `build/` cache before a
+full index and for a window that adds a translation unit or edits a
+`CMakeLists.txt` or `.cmake` file; a configure that fails fails the run. A CI
+job that builds with clang can reuse its build tree only when it configured
+this checkout's own `build/` directory.
 
 ## Contract
 

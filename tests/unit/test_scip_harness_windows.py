@@ -1,7 +1,9 @@
-"""The Python, TypeScript and Go harnesses in the workers' output-file mode, over a real
-git window, a stub indexer and the real converter: a modified file is re-read, a
-deleted or renamed-away file is tombstoned, and a window with nothing for the tier
-writes no delta, and neither it nor a window with only deletions runs the indexer."""
+"""The tier harnesses in the workers' output-file mode, over a real git window, a stub
+indexer and the real converter: a modified file is re-read, a deleted or renamed-away
+file is tombstoned, and a window with nothing for the tier writes no delta, and neither
+it nor a window with only deletions runs the indexer. The C/C++ harness runs against a
+stub `cmake`: the tests check when it configures or reconfigures the compile database,
+and that a failed configure fails the run."""
 
 from __future__ import annotations
 
@@ -13,6 +15,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from server.code.domain.index.tier_health import classify
 
 _HARNESS = Path(__file__).resolve().parents[2] / "scripts" / "scip_harness"
 
@@ -193,10 +197,23 @@ while [[ $# -gt 0 ]]; do
 done
 """
 
+# stub cmake: logs its call, fails under CMAKE_FAIL, else lists every src/*.cpp, .cc and .cxx
+# in the compile database, as a configure over a glob does
+_FAKE_CMAKE = """#!/usr/bin/env bash
+echo "cmake $*" >>"$CMAKE_CALLS"
+[[ -n "${CMAKE_FAIL:-}" ]] && { echo "CMake Error: a package is missing" >&2; exit 1; }
+"$PYTHON" - <<'PYEOF'
+import json, pathlib
+root = pathlib.Path.cwd()
+compdb = [{"directory": str(root), "file": str(p), "command": "c++"} for p in sorted(root.glob("src/*.c[cpx]*"))]
+(root / "build" / "compile_commands.json").write_text(json.dumps(compdb))
+PYEOF
+"""
+
 
 class _CppWindow:
     """run_delta.sh over a checkout with a compile_commands.json already configured:
-    src/a.cpp and src/b.cpp, and b.cpp includes src/h.h."""
+    src/a.cpp and src/b.cpp, b.cpp includes src/h.h, and CMakeLists.txt builds them."""
 
     def __init__(self, tmp_path: Path) -> None:
         self.repo = tmp_path / "repo"
@@ -204,6 +221,7 @@ class _CppWindow:
         (self.repo / "src" / "a.cpp").write_text("int a() { return 1; }\n")
         (self.repo / "src" / "b.cpp").write_text('#include "h.h"\nint b() { return 2; }\n')
         (self.repo / "src" / "h.h").write_text("int h();\n")
+        (self.repo / "CMakeLists.txt").write_text("project(x)\n")
         (self.repo / ".gitignore").write_text("build/\n")
         (self.repo / "build").mkdir()
         compdb = [
@@ -211,13 +229,22 @@ class _CppWindow:
             for n in ("a.cpp", "b.cpp")
         ]
         (self.repo / "build" / "compile_commands.json").write_text(json.dumps(compdb))
+        # a cache made here, whose compilers the host has: the reconfigure tests keep it
+        (self.repo / "build" / "CMakeCache.txt").write_text(
+            f"CMAKE_CACHEFILE_DIR:INTERNAL={self.repo / 'build'}\n"
+            "CMAKE_GENERATOR:INTERNAL=Ninja\n"
+            "CMAKE_C_COMPILER:FILEPATH=/bin/sh\nCMAKE_CXX_COMPILER:FILEPATH=/bin/sh\n"
+        )
         _git(tmp_path, "init", "-q", str(self.repo))
         self.base = _commit(self.repo, "init")
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         (bin_dir / "scip-clang").write_text(_FAKE_SCIP_CLANG)
         (bin_dir / "scip-clang").chmod(0o755)
+        (bin_dir / "cmake").write_text(_FAKE_CMAKE)
+        (bin_dir / "cmake").chmod(0o755)
         self.calls = tmp_path / "calls"
+        self.cmake_calls = tmp_path / "cmake_calls"
         self.index = tmp_path / "fake.scip"
         self.delta = tmp_path / "delta.json"
         self.env = {
@@ -228,18 +255,33 @@ class _CppWindow:
             "PYTHON": sys.executable,
             "SCIP_CLANG": str(bin_dir / "scip-clang"),
             "JOBS": "1",
+            "CMAKE_CALLS": str(self.cmake_calls),
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
         }
 
     def run(self, head: str, index_docs: list[str]) -> dict | None:
-        _write_index(self.index, index_docs)
-        subprocess.run(
-            ["bash", str(_HARNESS / "run_delta.sh"), str(self.repo), self.base, head, "-"],
-            env=self.env,
-            check=True,
-            capture_output=True,
+        proc = self.run_unchecked(head, index_docs)
+        assert proc.returncode == 0, proc.stdout
+        return json.loads(self.delta.read_text()) if self.delta.exists() else None
+
+    def run_unchecked(
+        self, head: str = "", index_docs: list[str] | None = None, **env: str
+    ) -> subprocess.CompletedProcess[str]:
+        """One run, its output merged; no `head` is a full index."""
+        _write_index(self.index, index_docs or [])
+        window = [self.base, head] if head else ["--full", ""]
+        return subprocess.run(
+            ["bash", str(_HARNESS / "run_delta.sh"), str(self.repo), *window, "-"],
+            env={**self.env, **env},
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
         )
-        return json.loads(self.delta.read_text()) if self.delta.exists() else None
+
+    @property
+    def cmake_runs(self) -> list[str]:
+        return self.cmake_calls.read_text().splitlines() if self.cmake_calls.exists() else []
 
     @property
     def compdbs(self) -> list[list[str]]:
@@ -261,6 +303,164 @@ def test_a_changed_header_indexes_the_translation_units_that_include_it(tmp_path
     assert delta is not None and [f["path"] for f in delta["files"]] == ["src/b.cpp", "src/h.h"]
 
 
+def test_a_window_that_only_edits_a_translation_unit_keeps_the_compile_database(
+    tmp_path: Path,
+) -> None:
+    w = _CppWindow(tmp_path)
+    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
+    head = _commit(w.repo, "edit a")
+    w.run(head, ["src/a.cpp"])
+    assert w.cmake_runs == [] and w.compdbs == [["a.cpp"]]
+
+
+@pytest.mark.parametrize("name", ["c.cpp", "c.cc", "c.cxx"])
+def test_a_translation_unit_added_after_the_configure_is_indexed(tmp_path: Path, name: str) -> None:
+    """The compile database was configured before the file existed: the window that
+    adds it reconfigures on the existing cache, so it is indexed, not dropped."""
+    w = _CppWindow(tmp_path)
+    (w.repo / "src" / name).write_text("int c() { return 3; }\n")
+    head = _commit(w.repo, "add c")
+    delta = w.run(head, [f"src/{name}"])
+    assert w.cmake_runs == ["cmake -B build -S ."]
+    assert w.compdbs == [[name]]
+    assert delta is not None and [f["path"] for f in delta["files"]] == [f"src/{name}"]
+
+
+@pytest.mark.parametrize(
+    ("path", "content"),
+    [
+        ("CMakeLists.txt", "project(y)\n"),
+        ("CMakeLists.txt", None),
+        ("src/CMakeLists.txt", "set(X 1)\n"),
+        ("cmake/flags.cmake", "set(X 1)\n"),
+    ],
+    ids=["change CMakeLists.txt", "delete CMakeLists.txt", "add src/CMakeLists.txt", "add .cmake"],
+)
+def test_a_window_that_edits_the_build_reconfigures(
+    tmp_path: Path, path: str, content: str | None
+) -> None:
+    """`content` None deletes the file."""
+    w = _CppWindow(tmp_path)
+    if content is None:
+        _git(w.repo, "rm", "-q", path)
+    else:
+        (w.repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (w.repo / path).write_text(content)
+    w.run(_commit(w.repo, f"edit {path}"), [])
+    assert w.cmake_runs == ["cmake -B build -S ."]
+
+
+def test_a_failed_reconfigure_fails_the_run_with_cmakes_last_lines(tmp_path: Path) -> None:
+    """A build edit the host cannot configure fails the run, as a failed first configure
+    does: no delta, CMake's last lines in the output, classified `cmake`."""
+    w = _CppWindow(tmp_path)
+    (w.repo / "src" / "c.cpp").write_text("int c() { return 3; }\n")
+    proc = w.run_unchecked(_commit(w.repo, "add c"), CMAKE_FAIL="1")
+    assert proc.returncode == 1 and not w.delta.exists() and w.compdbs == []
+    assert "CMake Error: a package is missing" in proc.stdout
+    assert classify(f"harness exit 1: {proc.stdout[-2000:]}") == "cmake"
+
+
+def test_a_window_whose_configure_failed_indexes_what_it_adds_once_it_configures(
+    tmp_path: Path,
+) -> None:
+    """The failed run moved no watermark, so the retried window still adds c.cpp."""
+    w = _CppWindow(tmp_path)
+    (w.repo / "src" / "c.cpp").write_text("int c() { return 3; }\n")
+    head = _commit(w.repo, "add c")
+    assert w.run_unchecked(head, CMAKE_FAIL="1").returncode == 1
+    delta = w.run(head, ["src/c.cpp"])
+    assert w.compdbs == [["c.cpp"]]
+    assert delta is not None and [f["path"] for f in delta["files"]] == ["src/c.cpp"]
+
+
+def test_a_full_index_whose_reconfigure_fails_fails(tmp_path: Path) -> None:
+    w = _CppWindow(tmp_path)
+    proc = w.run_unchecked(CMAKE_FAIL="1")
+    assert proc.returncode == 1 and w.compdbs == []
+    assert "cmake configure failed" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    "cache",
+    [
+        None,
+        "CMAKE_C_COMPILER:FILEPATH=/bin/sh\nCMAKE_CXX_COMPILER:FILEPATH=/nonexistent/clang++-18\n",
+        "CMAKE_C_COMPILER:FILEPATH=/nonexistent/clang-18\nCMAKE_CXX_COMPILER:FILEPATH=/bin/sh\n",
+        "CMAKE_CACHEFILE_DIR:INTERNAL=/elsewhere/build\nCMAKE_CXX_COMPILER:FILEPATH=/bin/sh\n",
+    ],
+    ids=["no cache", "missing C++ compiler", "missing C compiler", "made elsewhere"],
+)
+def test_a_cache_that_cannot_be_reconfigured_is_configured_from_scratch(
+    tmp_path: Path, cache: str | None
+) -> None:
+    """No cache, or one made in another directory or naming a compiler the host no longer
+    has: the pinned first configure, not a reconfigure that would fail on every run."""
+    w = _CppWindow(tmp_path)
+    if cache is None:
+        (w.repo / "build" / "CMakeCache.txt").unlink()
+    else:
+        (w.repo / "build" / "CMakeCache.txt").write_text(cache)
+    assert (
+        w.run_unchecked(index_docs=["src/a.cpp", "src/b.cpp"], CC="cc", CXX="c++").returncode == 0
+    )
+    assert len(w.cmake_runs) == 1 and "-G Ninja" in w.cmake_runs[0]
+
+
+def test_a_first_configure_without_clang_on_path_fails_classified_cmake(tmp_path: Path) -> None:
+    """No CC/CXX and no clang on PATH: the run fails with the configure marker rather than
+    letting CMake fall back to another compiler."""
+    w = _CppWindow(tmp_path)
+    (w.repo / "build" / "CMakeCache.txt").unlink()
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    for d in ("/usr/bin", "/bin"):
+        for exe in Path(d).iterdir():
+            if not exe.name.startswith("clang") and not os.path.lexists(tools / exe.name):
+                (tools / exe.name).symlink_to(exe)
+    env = {k: v for k, v in w.env.items() if k not in ("CC", "CXX")}
+    env["PATH"] = f"{w.env['PATH'].split(os.pathsep)[0]}{os.pathsep}{tools}"
+    w.env = env
+    proc = w.run_unchecked()
+    assert proc.returncode == 1 and w.cmake_runs == []
+    assert "no clang on PATH" in proc.stdout
+    assert classify(f"harness exit 1: {proc.stdout[-2000:]}") == "cmake"
+
+
+def test_a_failed_configure_from_scratch_is_retried_on_the_next_run(tmp_path: Path) -> None:
+    """A failed configure still writes a cache; the old compile database is gone with the
+    old cache, so the next run, even of an edit-only window, configures again."""
+    w = _CppWindow(tmp_path)
+    (w.repo / "build" / "CMakeCache.txt").write_text(
+        "CMAKE_C_COMPILER:FILEPATH=/nonexistent/clang-18\nCMAKE_CXX_COMPILER:FILEPATH=/bin/sh\n"
+    )
+    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
+    head = _commit(w.repo, "edit a")
+    assert w.run_unchecked(head, CMAKE_FAIL="1", CC="cc", CXX="c++").returncode == 1
+    (w.repo / "build" / "CMakeCache.txt").write_text("CMAKE_CXX_COMPILER:FILEPATH=/bin/sh\n")
+    assert w.run_unchecked(head, ["src/a.cpp"], CC="cc", CXX="c++").returncode == 0
+    assert len(w.cmake_runs) == 2 and all("-G Ninja" in run for run in w.cmake_runs)
+
+
+def test_a_first_configure_is_not_followed_by_a_reconfigure(tmp_path: Path) -> None:
+    w = _CppWindow(tmp_path)
+    (w.repo / "build" / "compile_commands.json").unlink()
+    assert (
+        w.run_unchecked(index_docs=["src/a.cpp", "src/b.cpp"], CC="cc", CXX="c++").returncode == 0
+    )
+    assert len(w.cmake_runs) == 1 and "-G Ninja" in w.cmake_runs[0]
+    assert w.compdbs == [["a.cpp", "b.cpp"]]
+
+
+def test_a_full_index_reconfigures_before_it_reads_the_compile_database(tmp_path: Path) -> None:
+    w = _CppWindow(tmp_path)
+    (w.repo / "src" / "c.cpp").write_text("int c() { return 3; }\n")
+    _commit(w.repo, "add c")
+    assert w.run_unchecked(index_docs=["src/a.cpp", "src/b.cpp", "src/c.cpp"]).returncode == 0
+    assert w.cmake_runs == ["cmake -B build -S ."]
+    assert w.compdbs == [["a.cpp", "b.cpp", "c.cpp"]]
+
+
 def test_a_cpp_delete_only_window_tombstones_without_indexing(tmp_path: Path) -> None:
     w = _CppWindow(tmp_path)
     _git(w.repo, "rm", "-q", "src/a.cpp")
@@ -275,8 +475,9 @@ def test_a_cpp_rename_tombstones_the_old_path(tmp_path: Path) -> None:
     w = _CppWindow(tmp_path)
     _git(w.repo, "mv", "src/b.cpp", "src/c.cpp")
     head = _commit(w.repo, "rename b to c")
-    # the configured compile_commands.json still names b.cpp, not c.cpp
-    delta = w.run(head, [])
+    # the rename adds c.cpp, so the window reconfigures and indexes it
+    delta = w.run(head, ["src/c.cpp"])
+    assert w.cmake_runs == ["cmake -B build -S ."] and w.compdbs == [["c.cpp"]]
     assert delta is not None and delta["deleted_files"] == ["src/b.cpp"]
 
 

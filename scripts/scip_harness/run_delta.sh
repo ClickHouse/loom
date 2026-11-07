@@ -26,28 +26,79 @@ JOBS=${JOBS:-$(($(nproc) / 2 > 0 ? $(nproc) / 2 : 1))}
 cd "$CHECKOUT"
 HEAD_SHA=${HEAD_SHA:-$(git rev-parse HEAD)}
 
-# 1. compile_commands.json — cmake configure only (no build).
-if [[ ! -f build/compile_commands.json ]]; then
+# cmake_configure <cmake args...>: a configure that fails fails the run, with
+# CMake's last lines, its first error (last, so a cut record keeps it) and one
+# line the tier-health record classifies as `cmake`.
+cmake_configure() {
+  if ! cmake "$@" >"$WORK/cmake.log" 2>&1; then
+    tail -n 20 "$WORK/cmake.log"
+    grep -m1 -A2 "CMake Error" "$WORK/cmake.log" || true
+    configure_failed
+  fi
+}
+
+# configure_failed: the line the tier-health record classifies as `cmake`, then exit.
+configure_failed() {
+  echo ">> cmake configure failed" >&2
+  exit 1
+}
+
+# cache_unusable: the cache was made in another directory (CMake refuses it), or
+# names a C or C++ compiler the host no longer has.
+cache_unusable() {
+  local dir tool
+  dir=$(sed -n 's/^CMAKE_CACHEFILE_DIR:INTERNAL=//p' build/CMakeCache.txt)
+  if [[ -n "$dir" && "$(realpath -m "$dir")" != "$(realpath -m build)" ]]; then
+    return 0
+  fi
+  while IFS= read -r tool; do
+    [[ -z "$tool" ]] || command -v "$tool" >/dev/null || return 0
+  done < <(sed -n 's/^CMAKE_C\(XX\)\?_COMPILER:[A-Z]*=//p' build/CMakeCache.txt)
+  return 1
+}
+
+# 1. compile_commands.json — cmake configure only (no build). Without its cache,
+# or with a cache made elsewhere or naming a compiler the host no longer has, the
+# compile database cannot be reconfigured: start clean.
+CONFIGURED=
+if [[ ! -f build/compile_commands.json || ! -f build/CMakeCache.txt ]] || cache_unusable; then
   # ClickHouse's CMake refuses GCC ("Compiler GNU is not supported"), and a
   # fresh checkout has no cache to remember the compiler — pin clang
   # explicitly.
-  CC_BIN=${CC:-$(command -v clang-21 || command -v clang-18 || command -v clang)}
-  CXX_BIN=${CXX:-$(command -v clang++-21 || command -v clang++-18 || command -v clang++)}
+  CC_BIN=${CC:-$(command -v clang-21 || command -v clang-18 || command -v clang || true)}
+  CXX_BIN=${CXX:-$(command -v clang++-21 || command -v clang++-18 || command -v clang++ || true)}
+  if [[ -z "$CC_BIN" || -z "$CXX_BIN" ]]; then
+    echo "no clang on PATH ($PATH)"
+    configure_failed
+  fi
   echo ">> cmake configure (compile_commands.json) with $CXX_BIN…"
-  # No compile_commands.json but a cache present = a failed earlier configure.
   # CMake refuses to switch compilers on an existing cache ("You have changed
-  # variables that require your cache to be deleted"), so start clean.
-  rm -rf build/CMakeCache.txt build/CMakeFiles
-  cmake -B build -S . -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  # variables that require your cache to be deleted"), so start clean. The compile
+  # database goes too: a failed configure still writes a cache, and the next run
+  # must configure again rather than index the old database.
+  rm -rf build/CMakeCache.txt build/CMakeFiles build/compile_commands.json
+  cmake_configure -B build -S . -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DCMAKE_C_COMPILER="$CC_BIN" -DCMAKE_CXX_COMPILER="$CXX_BIN" \
-    -DCOMPILER_CACHE=disabled -DENABLE_RUST=0 >/dev/null
+    -DCOMPILER_CACHE=disabled -DENABLE_RUST=0
   # ^ the two gates a fresh checkout hits: cmake/ccache.cmake errors without ccache/sccache, and
   #   corrosion wants a Rust toolchain the indexer host does not have.
+  CONFIGURED=1
 fi
+
+# reconfigure: the compile database lists only the TUs of the tree it was
+# configured on, so a file added since then has no entry and is never indexed.
+# CMake reruns on the existing cache, which keeps its compiler and options.
+reconfigure() {
+  if [[ -z "$CONFIGURED" ]]; then
+    echo ">> cmake reconfigure (compile_commands.json): $1"
+    cmake_configure -B build -S .
+  fi
+}
 
 # 2. changed TU set: changed .cpp plus TUs including changed headers.
 if [[ "$BASE" == "--full" ]]; then
+  reconfigure "full index"
   echo ">> full-index mode: whole compile_commands.json"
   cp build/compile_commands.json "$WORK/compdb.json"
   git_paths ls-files 'src/*' 'base/*' 'programs/*' >"$WORK/changed.txt"
@@ -55,6 +106,14 @@ if [[ "$BASE" == "--full" ]]; then
 else
   require_base "$BASE"
   window_files "$WORK" "$BASE" "$HEAD_SHA"
+  # a window that adds a translation unit or edits the build changes what the
+  # compile database must list
+  git_paths diff --name-only --no-renames --diff-filter=A --end-of-options "$BASE" "$HEAD_SHA" \
+    >"$WORK/added.txt"
+  if grep -qE '\.(cpp|cc|cxx)$' "$WORK/added.txt" \
+    || grep -qE '(^|/)CMakeLists\.txt$|\.cmake$' "$WORK/changed.txt" "$WORK/deleted.txt"; then
+    reconfigure "the window adds a translation unit or edits the build"
+  fi
 
   grep -E '\.(cpp|cc|cxx)$' "$WORK/changed.txt" >"$WORK/tus.txt" || true
   # headers: every TU that includes them (text search on the checkout)
