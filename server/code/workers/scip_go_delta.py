@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING
 
 from server.code.app.index.compiler_tier import (
     BaseUnknown,
+    TierDegraded,
     checkout_fetch_args,
     compiler_target,
     git,
@@ -227,11 +228,12 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
     with tempfile.TemporaryDirectory(prefix="scip_go_delta_") as tmp:
         out_dir = Path(tmp)
         log = await _run_harness(checkout, scip_commit or "--full", target, out_dir, modules, cfg)
-        result.modules_skipped.extend(
-            f"{cfg.namespace}: {line[5:]}"
+        failed = [
+            line[5:]
             for line in log.splitlines()
             if line.startswith("skip ") and "go files)" not in line and "no Go change" not in line
-        )
+        ]
+        result.modules_skipped.extend(f"{cfg.namespace}: {line}" for line in failed)
         from server.code.app.index.scip_delta import ScipDelta, apply_delta
 
         paths = sorted(await asyncio.to_thread(lambda: list(out_dir.glob("*.json"))))
@@ -255,6 +257,8 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
         target[:8],
         len(paths),
     )
+    if failed:  # the rest is applied; the modules that would not build fail the tier
+        raise TierDegraded("; ".join(failed))
 
 
 def _bin_dirs() -> list[str]:

@@ -164,7 +164,10 @@ async def test_first_run_is_full_over_every_module_and_applies_each_delta(monkey
     assert git_calls[1] == ("checkout", "--force", "b" * 40)
     assert sorted(applied) == ["lib/a.go", "svc/a.go"]
     assert res.modules_skipped == ["code-go: experiments/broken: go mod download failed: x"]
-    repo.set_state.assert_awaited_with("org", "code-go", "scip_commit_go", "b" * 40)
+    repo.set_state.assert_any_await("org", "code-go", "scip_commit_go", "b" * 40)
+    # the module that would not build fails the tier's record; the pass is no error
+    _org, _ns, key, value = repo.set_state.await_args.args[:4]
+    assert key == "tier_health:go" and '"state": "failing"' in value
 
 
 @pytest.mark.asyncio

@@ -45,6 +45,11 @@ class BaseUnknown(RuntimeError):
     """The window's base commit is gone: the next run must index in full."""
 
 
+class TierDegraded(RuntimeError):
+    """The entry's run finished and moved its watermark, but part of it failed (a Go
+    module that would not build): the tier's record says failing, the pass is no error."""
+
+
 class TierResult(Protocol):
     """What every tier's pass result carries (its own dataclass adds counters)."""
 
@@ -98,6 +103,8 @@ async def run_tier[R: TierResult](
         except BaseUnknown as e:
             # Not a failure to report: the next run indexes in full.
             await restart_full(repo, cfg, watermark, e, result.errors)
+        except TierDegraded as e:
+            await tier_health.record(repo, cfg.org, cfg.namespace, tier, e)
         else:
             if ran and len(result.skipped) == skips:
                 await tier_health.record(repo, cfg.org, cfg.namespace, tier)

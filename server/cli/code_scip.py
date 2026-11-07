@@ -287,6 +287,11 @@ async def _record_tier(
     await tier_health.record(CodeRepo(), org, ns, tier, error)
 
 
+def _write_out(chunk: bytes) -> None:
+    sys.stdout.buffer.write(chunk)
+    sys.stdout.buffer.flush()
+
+
 async def _relay(proc: asyncio.subprocess.Process, tail: bytearray) -> int:
     """Copy the command's output to this process's stdout, keeping its end in `tail`,
     until the output closes and the command exits (a descendant that keeps the output
@@ -297,8 +302,8 @@ async def _relay(proc: asyncio.subprocess.Process, tail: bytearray) -> int:
     try:
         assert proc.stdout is not None
         while chunk := await proc.stdout.read(65536):
-            sys.stdout.buffer.write(chunk)
-            sys.stdout.buffer.flush()
+            # off the loop: a stalled reader must not stop the lease renewal beside it
+            await asyncio.to_thread(_write_out, chunk)
             tail.extend(chunk)
             del tail[:-_TAIL_BYTES]
         return await proc.wait()

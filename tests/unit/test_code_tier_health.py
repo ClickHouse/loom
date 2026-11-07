@@ -763,3 +763,13 @@ async def test_a_walk_step_that_fails_in_its_own_handler_records_the_ingest_tier
     await run(repo, _Cfg(), "a" * 40, result)  # logged, never raised
     ingest_pass._ingest_served(_Cfg(), result)
     assert result.tier_outcomes[("o", "code-x", "ingest")] == f"{step}: RuntimeError: boom"
+
+
+def test_an_ssh_remote_credential_fix_names_the_host_and_repository() -> None:
+    text = (
+        "fetch git@github.com:org/repo.git: git@github.com: Permission denied (publickey).\n"
+        "fatal: Could not read from remote repository."
+    )
+    record = tier_health.failed(None, "fetch", text, T0)
+    assert record.kind == "credential"
+    assert "(github.com/org/repo)" in record.fix and "ssh key" in record.fix

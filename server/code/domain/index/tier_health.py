@@ -215,6 +215,8 @@ def classify(text: str) -> str:
 
 
 _HOST_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://(?:[^/\s@]+@)?([A-Za-z0-9.-]+)(/[^\s'\"]*)?")
+# git's scp-like ssh remote: git@host:org/repo.git
+_SCP_RE = re.compile(r"\b[\w.-]+@([A-Za-z0-9.-]+\.[A-Za-z]+):([^\s'\":][^\s'\"]*)")
 # git names a submodule relative to the checkout ("Failed to clone 'contrib/x'") and,
 # in other lines, by its absolute path ("into submodule path '/srv/…/contrib/x'").
 _SUBMODULE_RE = re.compile(r"(?:submodule path|failed to clone) '([^']+)'", re.IGNORECASE)
@@ -228,6 +230,9 @@ def _where(text: str) -> str:
     urls = [
         (m.group(1), (m.group(2) or "").split("?", 1)[0].rstrip("/:.,;)").removesuffix(".git"))
         for m in _HOST_RE.finditer(text)
+    ] + [
+        (m.group(1), "/" + m.group(2).rstrip("/:.,;)").removesuffix(".git"))
+        for m in _SCP_RE.finditer(text)
     ]
     if urls:
         host, path = next(((h, p) for h, p in urls if p), urls[0])
