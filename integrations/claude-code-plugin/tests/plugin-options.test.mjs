@@ -1,5 +1,6 @@
 // Install-time options reach the hooks as env and are written
 // once to ~/.loom/config.json for the header helper.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

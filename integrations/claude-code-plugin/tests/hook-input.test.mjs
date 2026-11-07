@@ -1,4 +1,5 @@
 // The host payload and the environment, read at the boundary.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { envNumber, envSwitch, normalizePayload } from "../lib/loom-client.mjs";

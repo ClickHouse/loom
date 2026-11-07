@@ -1,6 +1,7 @@
 // The SessionStart primer says when the MCP header helper will send a
 // config token saved for another server than Claude Code's MCP entry calls:
 // in Claude Code only, and never for an agent, whose tools send its own token.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";

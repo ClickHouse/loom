@@ -1,3 +1,4 @@
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { blastSignature, decideEmit, renderBlast, blastPayload } from "../lib/blast-radius.mjs";

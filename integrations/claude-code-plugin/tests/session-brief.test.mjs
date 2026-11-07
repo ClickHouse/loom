@@ -1,3 +1,4 @@
+import "./temp-home.mjs";
 // The session brief hook: transcript → typed events, the
 // save bar, the body, the primer line, the CLI helpers, and the hook end to
 // end against a local server (the detached flusher's post, the optimistic

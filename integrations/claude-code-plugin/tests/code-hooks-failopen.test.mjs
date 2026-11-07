@@ -3,6 +3,7 @@
 // server that answers 401, a server that never answers, a re-entered Stop.
 // Every case exits 0 within its bound and says nothing, or only what local
 // policy decides without the server.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

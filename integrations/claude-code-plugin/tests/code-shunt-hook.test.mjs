@@ -2,6 +2,7 @@
 // the developer chose local-first. A throwaway git checkout, the repo entry
 // seeded in the shared cache (no code.repos call), the hook run as Claude
 // Code runs it, and a local server only where a call is expected.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

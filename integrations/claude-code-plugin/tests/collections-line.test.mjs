@@ -1,3 +1,4 @@
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MAX_NAMED, READ, listBody, renderCollectionsLine, toolsetAllows } from "../lib/collections-line.mjs";

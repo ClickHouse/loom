@@ -1,5 +1,6 @@
 // run.begin can answer another run id than the derived one; the run hook
 // keeps it in the session's run state and every later hook uses it.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";

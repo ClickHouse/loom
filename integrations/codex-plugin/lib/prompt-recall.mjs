@@ -95,8 +95,8 @@ export function neutraliseTagName(text) {
   return out + chars.slice(i).join("");
 }
 
-/** ~/.loom/recall-key: this install's secret for block ids. */
-export function recallKeyPath(home = os.homedir()) {
+/** $HOME/.loom/recall-key: this install's secret for block ids. */
+export function recallKeyPath(home = process.env.HOME || os.homedir()) {
   return path.join(home, ".loom", "recall-key");
 }
 

@@ -1,4 +1,5 @@
 // The validate gate — keys the session wrote, scoped report, one block.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {

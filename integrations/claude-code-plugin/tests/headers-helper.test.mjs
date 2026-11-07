@@ -1,6 +1,7 @@
 // The plugin's MCP block authenticates from the same places
 // its hooks do. The helper is run the way Claude Code runs it — as a process,
 // stdout is one JSON object — under each token source and under none.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";

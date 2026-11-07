@@ -3,6 +3,7 @@
 // bound, never echoes the bearer token, and prints either nothing or the
 // output shape its event allows. Each case runs the real script as the host
 // does (`node <script> <Event>`, payload on stdin) against a fake Loom.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";

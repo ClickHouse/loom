@@ -1,5 +1,6 @@
 // The file-context hook reads the repository's primary code
 // namespace (team file rules) beside the person's own, in one request.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";

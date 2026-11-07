@@ -1,5 +1,6 @@
 // The detached flusher keeps its cursor in a shared tmp dir: a symlink planted
 // at the cursor path is refused, and the file it points to stays as it was.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";

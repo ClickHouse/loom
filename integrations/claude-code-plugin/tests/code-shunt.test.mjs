@@ -1,3 +1,4 @@
+import "./temp-home.mjs";
 import { test } from "node:test";
 import path from "node:path";
 import os from "node:os";

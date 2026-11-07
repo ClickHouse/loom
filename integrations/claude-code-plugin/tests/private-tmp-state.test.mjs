@@ -2,6 +2,7 @@
 // SessionEnd leaves the journal its parallel hooks read, and SessionStart sweeps
 // stale state.
 
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";

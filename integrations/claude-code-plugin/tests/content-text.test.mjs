@@ -1,3 +1,4 @@
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { blockText, contentText, toolImageTurn, toolResultImageCount } from "../lib/loom-client.mjs";

@@ -1,6 +1,7 @@
 // bin/loom-node finds Node 18+ for the hooks and the MCP header helper when
 // the agent's PATH has none: each install layout in a temp HOME, a too-old
 // Node, none at all, paths with spaces, and every wiring going through it.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";

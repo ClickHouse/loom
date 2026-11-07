@@ -1,4 +1,5 @@
 // The one request path: bounds, headers, and what callers see on failure.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";

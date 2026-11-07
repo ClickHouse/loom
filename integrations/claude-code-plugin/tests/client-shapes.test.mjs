@@ -2,6 +2,7 @@
 // client is named by argv, shell tools fold onto "Bash", argv-array commands
 // read as text, apply_patch names its files, and the run-id prefix follows
 // the client.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {

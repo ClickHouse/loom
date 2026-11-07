@@ -1,4 +1,5 @@
 // The sensory filter on capture and the first-prompt recall mode.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
