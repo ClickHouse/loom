@@ -21,8 +21,9 @@ from __future__ import annotations
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
-from server.knowledge.store.ingestions import CANCELS, INGESTIONS, OPEN_STATES
+from server.knowledge.store.ingestions import CANCELS, INGESTIONS
 
 # The most format and scheme pairs the grouping returns.
 MAX_GROUPS = 1000  # not a setting: a bound on one report's rows, flagged when reached

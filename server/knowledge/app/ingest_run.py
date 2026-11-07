@@ -61,6 +61,7 @@ from server.knowledge.app.extractors import (
 from server.knowledge.domain.chunking import chunk_context, embedding_text
 from server.knowledge.domain.extract.artifact import Artifact
 from server.knowledge.domain.extract.structural import StructuralChunk, chunk_artifact
+from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.store import datasets as datasets_repo
 from server.knowledge.store import ingestions
 from server.settings import settings
@@ -618,7 +619,7 @@ async def take_and_run(job: dict[str, Any]) -> str | None:
             current = await ingestions.get_ingestion(
                 job["org"], job["namespace"], job["ingestion_id"]
             )
-            if current is None or current["state"] not in ingestions.OPEN_STATES:
+            if current is None or current["state"] not in OPEN_STATES:
                 return None
             # Its own publish first: a published revision stays published, even
             # if a cancel came after it.

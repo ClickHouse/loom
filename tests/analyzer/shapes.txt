@@ -2058,6 +2058,7 @@ fce198350da2	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)
 fd4b9de98c6f	SELECT count() AS live_docs, countIf(ifNull(c.live, ?) = ?) AS without_chunks, groupArrayIf(?)(d.source_uri, ifNull(c.live, ?) = ?) AS without_chunks_uris, countIf(ifNull(c.live, ?) = ? AND d.ingestio
 fd68c20c1c4c	SELECT content_sha256, count() AS doc_count, groupArray(?)((doc_id, source_uri, title, ingested_at)) AS docs FROM loom.documents FINAL WHERE org = {org:String} AND namespace = {ns:String} AND supersed
 fd6f4e8d47c8	SELECT path, scope, symbol_ids, start_line, end_line, content, shingles, uniqExact(path) OVER () AS admitted_files FROM ( SELECT path, scope, symbol_ids, start_line, end_line, content, chunk_id, array
+fd8bd0425be6	INSERT INTO loom.knowledge_ingest_cancels (org, namespace, ingestion_id, requested_at) SELECT org, namespace, ingestion_id, requested_at FROM loom.knowledge_ingest_cancels WHERE org = {org:String} AND
 fd95e7268232	ALTER TABLE loom.events DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 fdceada98fca	SELECT count() AS n FROM loom.procedure_runs WHERE org = {org:String} AND namespace = {ns:String} AND memory_key = {key:String}
 fdd4564b24c1	ALTER TABLE loom.shared UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND arrayExists(x -> splitByChar(?, x)[?] = {uid:String}, promoted_from)) AND ({erasur
