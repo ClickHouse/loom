@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -105,7 +105,7 @@ function RecordSchemas({ canRegister, canDecide }: { canRegister: boolean; canDe
   const identity = useIdentity();
   const { data, error, refresh } = useSection((signal) => listRecordSchemas(identity, { signal }));
   const [adding, setAdding] = useState(false);
-  const [records, setRecords] = useState<string | null>(null);
+  const [records, setRecords] = useState<RecordSchema | null>(null);
   const [deciding, setDeciding] = useState<string | null>(null);
 
   const decide = async (name: string, decision: "approve" | "reject") => {
@@ -170,7 +170,7 @@ function RecordSchemas({ canRegister, canDecide }: { canRegister: boolean; canDe
               </>
             )}
             {s.status === "active" && (
-              <Button type="empty" htmlType="button" onClick={() => setRecords(s.name)}>
+              <Button type="empty" htmlType="button" onClick={() => setRecords(s)}>
                 Records
               </Button>
             )}
@@ -313,60 +313,69 @@ function formatCell(v: unknown): string {
 
 /** The records of one schema as they stand, and the fields where a newer record disagreed
  *  with the one it superseded; a disagreement opens the superseded record's versions. */
-function RecordsDialog({ schema, onClose }: { schema: string; onClose: () => void }) {
+function RecordsDialog({ schema, onClose }: { schema: RecordSchema; onClose: () => void }) {
   const identity = useIdentity();
-  const [rows, setRows] = useState<{ rows: TypedRecord[]; truncated: boolean } | null>(null);
-  const [conflicts, setConflicts] = useState<{ rows: RecordConflict[]; truncated: boolean } | null>(null);
-  const [error, setError] = useState<unknown>(null);
+  const records = useSection((signal) => queryRecords(identity, schema.name, { signal }));
+  const conflicts = useSection((signal) => recordConflicts(identity, schema.name, { signal }));
   const [prior, setPrior] = useState<{ key: string; rows: TypedRecord[] } | null>(null);
-  // The prior record asked for last: an earlier answer that lands late is dropped.
-  const askedFor = useRef("");
-  useAbortableEffect(
-    (signal, live) => {
-      Promise.all([queryRecords(identity, schema, { signal }), recordConflicts(identity, schema, { signal })])
-        .then(([r, c]) => {
-          if (!live()) return;
-          setRows(r);
-          setConflicts(c);
-        })
-        .catch((e) => live() && setError(e));
-    },
-    [schema],
-  );
+  const [opening, setOpening] = useState(false);
+  // One prior record is read at a time (the buttons hold meanwhile); closing aborts it.
+  const priorRead = useRef<AbortController | null>(null);
+  useEffect(() => () => priorRead.current?.abort(), []);
   const openPrior = async (c: RecordConflict) => {
-    askedFor.current = c.prior_record_id;
+    const ctrl = new AbortController();
+    priorRead.current = ctrl;
+    setOpening(true);
     try {
-      const r = await recordHistory(identity, c.prior_record_id);
-      if (askedFor.current === c.prior_record_id) setPrior({ key: c.memory_key, rows: r.rows });
+      const r = await recordHistory(identity, c.prior_record_id, { signal: ctrl.signal });
+      if (!ctrl.signal.aborted) setPrior({ key: c.memory_key, rows: r.rows });
     } catch (e) {
-      toast(`Couldn't read the prior record: ${humanizeError(e)}`, "error");
+      if (!ctrl.signal.aborted) toast(`Couldn't read the prior record: ${humanizeError(e)}`, "error");
+    } finally {
+      if (!ctrl.signal.aborted) setOpening(false);
     }
   };
-  const columns = [...new Set((rows?.rows ?? []).flatMap((r) => Object.keys(r.record)))];
+  const rows = records.data;
+  const columns = schema.fields.map((f) => f.name);
   return (
-    <Modal open onOpenChange={(v) => !v && onClose()} title={`Records of ${schema}`} className="w-full max-w-[880px]">
-      {!!error && <Alert role="alert" state="danger" text={humanizeError(error)} />}
-      {!error && rows === null && <Loading label="Loading records" />}
+    <Modal
+      open
+      onOpenChange={(v) => !v && onClose()}
+      title={`Records of ${schema.name}`}
+      className="w-full max-w-[880px]"
+    >
+      <SectionState error={records.error} loading={rows === null} things="records" onRetry={records.refresh} />
       {rows?.rows.length === 0 && <p className="text-sm text-text-muted">No record yet.</p>}
       {!!rows?.rows.length && (
         <>
           <Table
-            aria-label={`Records of ${schema}`}
+            aria-label={`Records of ${schema.name}`}
             size="sm"
-            headers={columns.map((c) => ({ label: c }))}
+            headers={[{ label: "Key" }, ...columns.map((c) => ({ label: c }))]}
             rows={rows.rows.map((r) => ({
               id: r.record_id,
-              items: columns.map((c) => ({ label: <span className="text-xs">{formatCell(r.record[c])}</span> })),
+              items: [
+                { label: <span className="font-mono text-xs">{r.memory_key}</span> },
+                ...columns.map((c) => ({ label: <span className="text-xs">{formatCell(r.record[c])}</span> })),
+              ],
             }))}
           />
           {rows.truncated && <p className="mt-1 text-xs text-text-muted">The first {RECORD_LIMIT} records.</p>}
         </>
       )}
-      {!!conflicts?.rows.length && (
+      <div className="mt-4">
+        <SectionState
+          error={conflicts.error}
+          loading={conflicts.data === null}
+          things="disagreements"
+          onRetry={conflicts.refresh}
+        />
+      </div>
+      {!!conflicts.data?.rows.length && (
         <section className="mt-4">
-          <SectionHeading label="Disagreements" level={3} count={conflicts.rows.length} />
+          <SectionHeading label="Disagreements" level={3} count={conflicts.data.rows.length} />
           <ul className="mt-1 space-y-1 text-xs">
-            {conflicts.rows.map((c) => (
+            {conflicts.data.rows.map((c) => (
               <li key={`${c.incoming_record_id}-${c.field_name}`} className="flex flex-wrap items-center gap-2">
                 <span className="font-mono">{c.memory_key}</span>
                 <span>
@@ -376,6 +385,7 @@ function RecordsDialog({ schema, onClose }: { schema: string; onClose: () => voi
                 <Button
                   type="empty"
                   htmlType="button"
+                  disabled={opening}
                   aria-label={`Prior record of ${c.memory_key}`}
                   onClick={() => void openPrior(c)}
                 >
@@ -384,7 +394,9 @@ function RecordsDialog({ schema, onClose }: { schema: string; onClose: () => voi
               </li>
             ))}
           </ul>
-          {conflicts.truncated && <p className="mt-1 text-xs text-text-muted">The first {RECORD_LIMIT}.</p>}
+          {conflicts.data.truncated && (
+            <p className="mt-1 text-xs text-text-muted">The first {RECORD_LIMIT} disagreements.</p>
+          )}
         </section>
       )}
       {prior && (
@@ -426,7 +438,8 @@ function ProfileSchemaPanel({ canSet, canClear }: { canSet: boolean; canClear: b
   let parseError: string | null = null;
   if (draft !== null && draft.trim()) {
     try {
-      JSON.parse(draft);
+      const parsed: unknown = JSON.parse(draft);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) parseError = "Must be a JSON object";
     } catch {
       parseError = "Not valid JSON";
     }
@@ -434,6 +447,17 @@ function ProfileSchemaPanel({ canSet, canClear }: { canSet: boolean; canClear: b
 
   const save = async (clear: boolean) => {
     if (clear && !(await confirmAction({ title: "Remove the profile schema?", danger: true }))) return;
+    // A change to the properties leaves every user's profile out of date until rebuilt.
+    const replacing = !clear && data?.found;
+    if (
+      replacing &&
+      !(await confirmAction({
+        title: "Replace the profile schema?",
+        message: "A change to its properties leaves every user's profile out of date until it is rebuilt.",
+        confirmLabel: "Replace",
+      }))
+    )
+      return;
     setBusy(true);
     try {
       if (clear) await clearProfileSchema(identity);
@@ -604,13 +628,14 @@ function Categories({ canAdd }: { canAdd: boolean }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
-  // A category's id comes from its name, so adding a listed name updates that category.
-  const updates = data?.some((c) => c.name === name.trim()) ?? false;
+  // A category's id comes from its name and a registration replaces the whole row, so a
+  // listed name is not registered again.
+  const listed = data?.some((c) => c.name === name.trim()) ?? false;
   const add = async () => {
     setBusy(true);
     try {
       await registerCategory(identity, name.trim(), description.trim());
-      toast(`${updates ? "Updated" : "Added"} ${name.trim()}`, "ok");
+      toast(`Added ${name.trim()}`, "ok");
       setName("");
       setDescription("");
       refresh();
@@ -638,10 +663,21 @@ function Categories({ canAdd }: { canAdd: boolean }) {
       </ul>
       {canAdd && (
         <div className="mt-3 flex flex-wrap items-end gap-2">
-          <TextField id="category-name" label="Name" value={name} onChange={setName} />
+          <TextField
+            id="category-name"
+            label="Name"
+            value={name}
+            onChange={setName}
+            error={listed ? "Already listed" : undefined}
+          />
           <TextField id="category-description" label="Description" value={description} onChange={setDescription} />
-          <Button type="secondary" htmlType="button" disabled={busy || !name.trim()} onClick={() => void add()}>
-            {updates ? "Update category" : "Add category"}
+          <Button
+            type="secondary"
+            htmlType="button"
+            disabled={busy || !name.trim() || listed}
+            onClick={() => void add()}
+          >
+            Add category
           </Button>
         </div>
       )}

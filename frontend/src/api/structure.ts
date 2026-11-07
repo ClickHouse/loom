@@ -61,6 +61,8 @@ export interface TypedRecord {
   valid_to: string | null;
 }
 
+export const RECORD_LIMIT = 100;
+
 export async function queryRecords(
   id: Scope,
   schemaName: string,
@@ -68,8 +70,6 @@ export async function queryRecords(
 ): Promise<{ rows: TypedRecord[]; truncated: boolean }> {
   return post("/v1/memory.record.query", { ...scope(id), schema_name: schemaName, limit: RECORD_LIMIT }, opts.signal);
 }
-
-export const RECORD_LIMIT = 100;
 
 export async function recordHistory(
   id: Scope,
@@ -150,12 +150,21 @@ export async function listOntology(id: Scope, opts: RequestOpts = {}): Promise<O
 }
 
 /** POST /v1/namespace.register_ontology: a new term, or a pending one accepted. A
- *  registration replaces the whole entry, so an accepted term keeps its own fields. */
+ *  registration replaces the whole entry, so an accepted term keeps its own fields; only
+ *  the four fields the server takes are sent. */
 export async function registerOntologyTerm(
   id: Scope,
   term: Pick<OntologyEntry, "kind" | "name" | "description" | "cardinality">,
 ): Promise<{ registered: boolean }> {
-  return post("/v1/namespace.register_ontology", { ...scope(id), ...term, status: "accepted" });
+  const { kind, name, description, cardinality } = term;
+  return post("/v1/namespace.register_ontology", {
+    ...scope(id),
+    kind,
+    name,
+    description,
+    cardinality,
+    status: "accepted",
+  });
 }
 
 // ===== Categories =====
@@ -169,7 +178,7 @@ export interface Category {
 
 export async function listCategories(id: Scope, opts: RequestOpts = {}): Promise<Category[]> {
   const r = await post<{ categories: Category[] }>("/v1/namespace.list_categories", scope(id), opts.signal);
-  return r.categories ?? [];
+  return r.categories;
 }
 
 export async function registerCategory(id: Scope, name: string, description: string): Promise<{ category_id: string }> {

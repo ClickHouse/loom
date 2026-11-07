@@ -8,6 +8,7 @@ import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { StructureTab } from "./StructureTab";
 
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
+import { confirmAction } from "../components/ConfirmDialog";
 vi.mock("../components/Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
 vi.mock("../api/structure", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/structure")>();
@@ -174,7 +175,9 @@ describe("StructureTab", () => {
     render(<StructureTab />);
     await userEvent.click(await screen.findByRole("button", { name: "Records" }));
     await userEvent.click(await screen.findByRole("button", { name: "Prior record of inv/A-1" }));
-    await waitFor(() => expect(api.recordHistory).toHaveBeenCalledWith(expect.objectContaining(scope), "r-old"));
+    await waitFor(() =>
+      expect(api.recordHistory).toHaveBeenCalledWith(expect.objectContaining(scope), "r-old", expect.anything()),
+    );
     expect(await screen.findByText(/superseded · \{"amount":10\}/)).toBeInTheDocument();
   });
 
@@ -190,5 +193,88 @@ describe("StructureTab", () => {
     await userEvent.type(screen.getByLabelText("Name", { selector: "#ontology-name" }), "works_at");
     expect(screen.getByText("Already listed")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add term" })).toBeDisabled();
+  });
+
+  it("does not register a listed category again, since that would blank its description", async () => {
+    signIn("writer");
+    render(<StructureTab />);
+    await userEvent.type(await screen.findByLabelText("Name", { selector: "#category-name" }), "Billing");
+    expect(screen.getAllByText("Already listed").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Add category" })).toBeDisabled();
+  });
+
+  it("warns before a new schema replaces one of the same name, and drops a field row", async () => {
+    signIn("admin");
+    render(<StructureTab />);
+    await userEvent.click(await screen.findByRole("button", { name: "New schema" }));
+    const dialog = await screen.findByRole("dialog", { name: "New record schema" });
+    await userEvent.type(within(dialog).getByLabelText("Name"), "invoice");
+    expect(within(dialog).getByText("invoice exists: registering replaces its fields.")).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Add a field" }));
+    expect(within(dialog).getByLabelText("Field 2")).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove field 2" }));
+    expect(within(dialog).queryByLabelText("Field 2")).toBeNull();
+  });
+
+  it("adds an unlisted term with no description or cardinality, and clears the field", async () => {
+    signIn("admin");
+    render(<StructureTab />);
+    const field = await screen.findByLabelText("Name", { selector: "#ontology-name" });
+    await userEvent.type(field, "Vendor");
+    await userEvent.click(screen.getByRole("button", { name: "Add term" }));
+    await waitFor(() =>
+      expect(api.registerOntologyTerm).toHaveBeenCalledWith(expect.objectContaining(scope), {
+        kind: "entity_type",
+        name: "Vendor",
+        description: "",
+        cardinality: "",
+      }),
+    );
+    await waitFor(() => expect(field).toHaveValue(""));
+  });
+
+  it("asks before replacing a profile schema that exists, and refuses JSON that is not an object", async () => {
+    signIn("admin");
+    vi.mocked(api.getProfileSchema).mockResolvedValueOnce({
+      found: true,
+      json_schema: { type: "object", properties: {} },
+      updated_by: "a",
+      updated_at: null,
+    });
+    render(<StructureTab />);
+    const field = await screen.findByLabelText("JSON Schema");
+    await userEvent.clear(field);
+    await userEvent.click(field);
+    await userEvent.paste("[]");
+    expect(screen.getByText("Must be a JSON object")).toBeInTheDocument();
+    await userEvent.clear(field);
+    await userEvent.click(field);
+    await userEvent.paste('{"type": "object", "properties": {"a": {"type": "string", "description": "x"}}}');
+    await userEvent.click(screen.getByRole("button", { name: "Save schema" }));
+    await waitFor(() =>
+      expect(confirmAction).toHaveBeenCalledWith(expect.objectContaining({ title: "Replace the profile schema?" })),
+    );
+  });
+
+  it("holds the other prior records while one is read", async () => {
+    signIn("viewer");
+    const conflict = (key: string, prior: string) => ({
+      memory_key: key,
+      field_name: "amount",
+      prior_value: 1,
+      incoming_value: 2,
+      prior_record_id: prior,
+      incoming_record_id: `${prior}-new`,
+      detected_at: null,
+    });
+    vi.mocked(api.recordConflicts).mockResolvedValueOnce({
+      truncated: false,
+      rows: [conflict("inv/A-1", "r-a"), conflict("inv/B-2", "r-b")],
+    });
+    vi.mocked(api.recordHistory).mockImplementationOnce(() => new Promise(() => {}));
+    render(<StructureTab />);
+    await userEvent.click(await screen.findByRole("button", { name: "Records" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Prior record of inv/A-1" }));
+    expect(screen.getByRole("button", { name: "Prior record of inv/B-2" })).toBeDisabled();
   });
 });
