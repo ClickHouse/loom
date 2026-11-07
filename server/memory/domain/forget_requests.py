@@ -111,7 +111,8 @@ _FORGET_MSG_RE = re.compile(
 _FORGET_MSG_PRONOUNS = frozenset("it this that them those these everything anything all".split())
 # A longer sentence is not read as a request to forget.
 MAX_FORGET_SENTENCE_CHARS = 400  # not a setting: a request is one short clause
-# Each request costs a candidate read and a pass over the batch.
+# The requests of one window resolved by content: each costs a candidate read
+# and a pass over the candidates.
 MAX_FORGET_REQUESTS = 50  # not a setting: more than a person asks to forget in one window
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 
@@ -301,26 +302,22 @@ def forget_requests_from_messages(messages: list[dict[str, Any]]) -> list[dict[s
             if not sent or len(sent) > MAX_FORGET_SENTENCE_CHARS:
                 continue
             mt = _FORGET_MSG_RE.match(sent)
-            what = _request_clause(mt, seen) if mt else ""
-            if what:
-                out.append({"key": "", "value": what, "forget": True, "tags": ["forget"]})
-                if len(out) == MAX_FORGET_REQUESTS:
-                    return out
+            if not mt:
+                continue
+            what = split_replacement(mt.group("what"))[0].strip().rstrip(".!?,;: ").strip()
+            low = what.lower()
+            if not what or low.startswith("to ") or low.startswith("about to "):
+                continue
+            head = re.split(r"[,;:!.\s]+", low, maxsplit=1)[0]
+            if head in _FORGET_MSG_PRONOUNS:
+                continue
+            if not _content_tokens(what):
+                continue
+            if low in seen:
+                continue
+            seen.add(low)
+            out.append({"key": "", "value": what, "forget": True, "tags": ["forget"]})
     return out
-
-
-def _request_clause(mt: re.Match[str], seen: set[str]) -> str:
-    """The clause a forget match asks to drop, or "" when it names nothing new
-    to resolve (a pronoun, an action to do, no content word, one already seen)."""
-    what = split_replacement(mt.group("what"))[0].strip().rstrip(".!?,;: ").strip()
-    low = what.lower()
-    if not what or low.startswith("to ") or low.startswith("about to "):
-        return ""
-    head = re.split(r"[,;:!.\s]+", low, maxsplit=1)[0]
-    if head in _FORGET_MSG_PRONOUNS or not _content_tokens(what) or low in seen:
-        return ""
-    seen.add(low)
-    return what
 
 
 def forget_sentences(
@@ -332,12 +329,7 @@ def forget_sentences(
     A pronoun request ("forget that, I prefer coffee") counts here even though
     it names nothing to resolve: its message still carries the replacement."""
     out: dict[int, str] = {}
-    # counted as forget_requests_from_messages counts, so both stop at the same request
-    seen: set[str] = set()
-    full = False
     for i, m in enumerate(messages or []):
-        if full:
-            break
         if str(m.get("role") or "").lower() != "user":
             continue
         text = str(m.get("content") or "")
@@ -354,12 +346,6 @@ def forget_sentences(
                 continue
             mt = _FORGET_MSG_RE.match(sent)
             if mt:
-                _request_clause(mt, seen)
-                if len(seen) > MAX_FORGET_REQUESTS:
-                    # past the requests forget_requests_from_messages reads: this
-                    # request keeps no replacement, the message's other sentences do
-                    full = True
-                    continue
                 rests.append(split_replacement(mt.group("what"))[1])
             elif not same_sentence:
                 others.append(raw)

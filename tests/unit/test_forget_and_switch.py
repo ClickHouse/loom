@@ -30,6 +30,7 @@ async def _write(
     user_turns: list[tuple[str, str]],
     existing: list[dict[str, str]],
     extracted: list[dict[str, Any]],
+    fetched: list[int] | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     written: dict[str, str] = {}
     deleted: list[str] = []
@@ -44,6 +45,8 @@ async def _write(
         return _Out()
 
     async def _fetch(state: Any, requests: Any, *, limit: int = 10) -> list:
+        if fetched is not None:
+            fetched.append(len(requests))
         return []
 
     monkeypatch.setattr(bulk_set_mod, "handle_memory_bulk_set", _bulk)
@@ -404,3 +407,31 @@ async def test_a_replacement_key_no_row_holds_is_not_reported_forgotten(monkeypa
         ],
     )
     assert deleted == ["user_editor"]
+
+
+@pytest.mark.asyncio
+async def test_a_correction_past_the_forget_cap_keeps_its_replacement(monkeypatch) -> None:
+    """Past the requests resolved by content, the extractor's own forget entry
+    still retires the old row, and the message's replacement is still written."""
+    cap = forget.MAX_FORGET_REQUESTS
+    turns = [("user", f"forget jazz{i}.") for i in range(cap)]
+    turns.append(("user", "forget that I use Vim, I switched to Emacs."))
+    fetched: list[int] = []
+    written, deleted = await _write(
+        monkeypatch,
+        turns,
+        [{"memory_key": "user_editor", "value": "User uses Vim."}],
+        [
+            {
+                "key": "user_editor_forget",
+                "value": "User asked to forget that they use Vim.",
+                "forget": True,
+                "source_message_indices": [cap],
+            },
+            {"key": "user_editor", "value": "User uses Emacs.", "source_message_indices": [cap]},
+        ],
+        fetched,
+    )
+    assert written.get("user_editor") == "User uses Emacs."
+    assert "user_editor" in deleted
+    assert fetched == [cap]  # the per-request candidate reads stop at the cap
