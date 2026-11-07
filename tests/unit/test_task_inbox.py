@@ -1232,13 +1232,22 @@ async def test_an_inbox_owned_elsewhere_names_its_owner_only_to_its_readers(
         return ns in readable
 
     monkeypatch.setattr(authz, "row_in_scope", _scope)
-    for owner_readable, named in ((False, "another namespace"), (True, "namespace 'private'")):
-        readable.clear()
-        readable.update({"private"} if owner_readable else set())
-        with pytest.raises(HTTPException) as e:
-            await _register(fake, owner_ns="elsewhere")
-        assert e.value.status_code == 409 and named in str(e.value.detail)
-        assert owner_readable or "namespace 'private'" not in str(e.value.detail)
+    with pytest.raises(HTTPException) as e:
+        await _register(fake, owner_ns="elsewhere")
+    assert e.value.status_code == 409
+    assert e.value.detail == {
+        "code": "INBOX_OWNED_ELSEWHERE",
+        "message": "inbox 'private-bot' is owned by another namespace",
+    }
+
+    readable.add("private")
+    with pytest.raises(HTTPException) as e:
+        await _register(fake, owner_ns="elsewhere")
+    assert e.value.status_code == 409
+    assert e.value.detail == {
+        "code": "INBOX_OWNED_ELSEWHERE",
+        "message": "inbox 'private-bot' is owned by namespace 'private'",
+    }
 
 
 # ------------------------------------------------------------ sweeper

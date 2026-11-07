@@ -291,9 +291,8 @@ class CodeRepoSetSourceInput(BaseModel):
 
     org: str
     namespace: str
-    # Tracker namespaces of this org, primary first (duplicates dropped; [] unlinks all), each
-    # new link needing the tracker's admin, else AUTH_INSUFFICIENT to its reader and
-    # NOT_A_TRACKER_NAMESPACE to anyone else, as for a name that is not a tracker.
+    # Tracker namespaces of this org, primary first (duplicates dropped; [] unlinks all); a new
+    # link needs the tracker's admin.
     tracker_namespaces: list[str] = Field(max_length=8)
 
 

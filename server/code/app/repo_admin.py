@@ -664,8 +664,8 @@ async def handle_code_repo_set_source(input: Any) -> Any:
 async def _tracker_or_refuse(org: str, qa: str, *, new: bool) -> Any:
     """The tracker namespace `qa` names, or NOT_A_TRACKER_NAMESPACE. A `new` link also
     needs the caller to administer it, restricted or not: a linked standard tracker is
-    read by every reader of the repository. A reader of it is told so; anyone else gets
-    the missing-tracker answer."""
+    read by every reader of the repository. A reader of it gets 403; anyone else gets
+    NOT_A_TRACKER_NAMESPACE."""
     from server.auth.authz import row_in_scope
     from server.operations.base import Role
     from server.tracker.domain.namespaces import tracker_namespace
@@ -678,14 +678,18 @@ async def _tracker_or_refuse(org: str, qa: str, *, new: bool) -> Any:
 
         await registry_sources.refresh_db_sources(force=True)
     target = tracker_namespace(org, qa)
-    if target is not None and (not new or await row_in_scope(org, qa, Role.ADMIN)):
-        return target
-    if target is not None and await row_in_scope(org, qa, Role.VIEWER, hides_answer=False):
-        raise AuthInsufficientError(
-            f"linking {qa} needs an admin of it: this repository's own links do not hold it"
-        )
-    raise ValidationError(
+    not_a_tracker = ValidationError(
         f"{qa} is not a tracker namespace of {org} — register its source first "
         "(tracker.source.add)",
         code="NOT_A_TRACKER_NAMESPACE",
     )
+    if target is None:
+        raise not_a_tracker
+    if not new or await row_in_scope(org, qa, Role.ADMIN):
+        return target
+    if await row_in_scope(org, qa, Role.VIEWER, hides_answer=False):
+        raise AuthInsufficientError(
+            f"linking {qa} needs an admin of it: it is not among this repository's stored "
+            "links (a link from the deployment's map counts as new)"
+        )
+    raise not_a_tracker

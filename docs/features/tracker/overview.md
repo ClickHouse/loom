@@ -198,8 +198,9 @@ read every linked tracker and name the source of each result.
 
 A linked tracker is read by every reader of the repository, so linking one is a lasting
 delegation that only the tracker's admin makes, restricted or not. A reader of the tracker
-who is not its admin gets 403; anyone else gets `NOT_A_TRACKER_NAMESPACE`, as for a name
-that is not a tracker.
+who is not its admin gets 403; anyone else gets `NOT_A_TRACKER_NAMESPACE`. Once a tracker
+admin links a standard tracker, the repository's admins decide who reads it, including
+through a later `code.repo.set_access` join-policy change.
 
 ```bash
 LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON='{"code-widgets*": ["tracker-widgets", "tracker-helpdesk"]}'
