@@ -2,18 +2,19 @@
 
 Every op is served over HTTP, is in both generated SDKs and is reachable over
 MCP unless `toolsets._MCP_HIDDEN_OPS` keeps it for people and operators. The
-dashboard is the people's surface: an op reaches it when a quoted
-`"/v1/<op>"` call site sits in `frontend/src` (the `dashboard` reach kind,
+dashboard is the people's surface: an op reaches it when a quoted `"/v1/<op>"`
+call site sits in `frontend/src` (the `dashboard` reach kind,
 `server.operations.reach`). An op a person needs (to administer, review,
-inspect, configure, or to delete with a confirmation) has a control there; an
-op only an agent or a client program calls is named in `NOT_IN_DASHBOARD` with
-the reason. The census's `--check` (`tests/unit/test_op_reach_census.py`, through
-`dashboard_violations`) fails on an op with neither, on an op in both, and on an
-entry for an op the dashboard calls or that no longer exists.
+inspect, configure, or to delete with a confirmation) has a control there; an op
+only an agent or a client program calls, or one the dashboard serves through
+another op, is named in `NOT_IN_DASHBOARD` with the reason. The census's
+`--check` (`tests/unit/test_op_reach_census.py`, through `dashboard_violations`)
+fails on an op with neither, on an op in both, and on an entry for an op the
+dashboard calls or that no longer exists.
 
 `DASHBOARD_PENDING` holds the ops a person needs whose control is not built
-yet. `tests/unit/test_op_surfaces.py` pins it: an op leaves it when its control
-lands, and a new op ships with its control instead.
+yet. It only shrinks (`tests/unit/test_op_surfaces.py` holds its ceiling): an op
+leaves it when its control lands, and a new op ships with its control instead.
 """
 
 from __future__ import annotations

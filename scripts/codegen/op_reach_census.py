@@ -55,7 +55,7 @@ GROUP BY operation
 
 _SDK_DIR = "sdk/python/loom"
 _EXAMPLE_DIRS = ("examples", "dev", "scripts")
-_PLUGIN_DIRS = ("integrations",)
+_PLUGIN_DIR = "integrations"
 _PLUGIN_SUFFIXES = (".mjs", ".js", ".ts", ".tsx", ".sh", ".py", ".yaml", ".yml", ".json")
 _DASHBOARD_DIR = "frontend/src"
 _DASHBOARD_SUFFIXES = (".ts", ".tsx")
@@ -179,13 +179,12 @@ def derive_static_reach(root: Path | None = None) -> dict[str, tuple[str, ...]]:
 
     # plugin_hook: op names or /v1/<op> in the integrations (hooks, gateways,
     # shims).
-    for rel in _PLUGIN_DIRS:
-        for path in _files(root, rel, _PLUGIN_SUFFIXES):
-            text = path.read_text(encoding="utf-8", errors="replace")
-            for m in _V1.finditer(text):
-                hit(m.group(1), "plugin_hook")
-            for m in _QUOTED.finditer(text):
-                hit(m.group(1), "plugin_hook")
+    for path in _files(root, _PLUGIN_DIR, _PLUGIN_SUFFIXES):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for m in _V1.finditer(text):
+            hit(m.group(1), "plugin_hook")
+        for m in _QUOTED.finditer(text):
+            hit(m.group(1), "plugin_hook")
 
     # dashboard: a quoted /v1/<op> call site in the dashboard source.
     for path in _files(root, _DASHBOARD_DIR, _DASHBOARD_SUFFIXES):
@@ -254,18 +253,18 @@ def dashboard_violations(ops: list[Operation]) -> list[str]:
     names = {op.name for op in ops}
     for op in ops:
         called = "dashboard" in op.reach
-        skipped = op.name in NOT_IN_DASHBOARD
+        named = op.name in NOT_IN_DASHBOARD
         pending = op.name in DASHBOARD_PENDING
-        if not called and not skipped and not pending:
+        if not called and not named and not pending:
             out.append(
                 f"{op.name}: no dashboard call site; add its control, or name it in "
                 "NOT_IN_DASHBOARD with the reason"
             )
-        if called and (skipped or pending):
+        if called and (named or pending):
             out.append(
                 f"{op.name}: the dashboard calls it, so drop it from server/operations/dashboard.py"
             )
-        if skipped and pending:
+        if named and pending:
             out.append(f"{op.name}: in both NOT_IN_DASHBOARD and DASHBOARD_PENDING")
     for name in sorted((set(NOT_IN_DASHBOARD) | DASHBOARD_PENDING) - names):
         out.append(f"{name}: in server/operations/dashboard.py but no such op")

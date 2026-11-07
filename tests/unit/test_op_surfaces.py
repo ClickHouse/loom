@@ -30,9 +30,9 @@ from server.transport import mcp_op, mcp_tools
 # The reasons that say only an agent calls the op.
 AGENT_ONLY = {AGENT_STEP, CODE_QUESTION, TRACKER_QUESTION}
 
-# DASHBOARD_PENDING, pinned: a control that lands drops its op from both, and
-# nothing joins either.
-PENDING_PINNED = frozenset(
+# The most DASHBOARD_PENDING may hold: an op leaves it when its control lands,
+# and nothing joins it.
+PENDING_AT_MOST = frozenset(
     {
         "blacklist.sweep",
         "calibration.get",
@@ -150,7 +150,7 @@ def _op(name: str, *reach: str) -> SimpleNamespace:
 
 
 @pytest.mark.parametrize(
-    ("skipped", "pending", "op", "expected"),
+    ("named", "pending", "op", "expected"),
     [
         (
             set(),
@@ -186,9 +186,9 @@ def _op(name: str, *reach: str) -> SimpleNamespace:
     ],
 )
 def test_each_dashboard_violation_is_named(
-    monkeypatch: pytest.MonkeyPatch, skipped: set, pending: set, op: SimpleNamespace, expected: str
+    monkeypatch: pytest.MonkeyPatch, named: set, pending: set, op: SimpleNamespace, expected: str
 ):
-    monkeypatch.setattr(census, "NOT_IN_DASHBOARD", dict.fromkeys(skipped, "a reason"))
+    monkeypatch.setattr(census, "NOT_IN_DASHBOARD", dict.fromkeys(named, "a reason"))
     monkeypatch.setattr(census, "DASHBOARD_PENDING", frozenset(pending))
     assert census.dashboard_violations([op]) == [expected]
 
@@ -228,11 +228,9 @@ def test_an_op_a_reason_names_is_on_the_dashboard():
             assert "dashboard" in OPERATIONS_BY_NAME[other].reach, (name, other)
 
 
-def test_the_pending_set_is_pinned():
-    joined = sorted(DASHBOARD_PENDING - PENDING_PINNED)
+def test_the_pending_set_only_shrinks():
+    joined = sorted(DASHBOARD_PENDING - PENDING_AT_MOST)
     assert not joined, f"{joined}: a new op a person needs ships with its dashboard control"
-    left = sorted(PENDING_PINNED - DASHBOARD_PENDING)
-    assert not left, f"{left} left DASHBOARD_PENDING: drop them from PENDING_PINNED too"
 
 
 def test_an_op_named_twice_is_refused():

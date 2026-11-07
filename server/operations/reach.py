@@ -93,10 +93,9 @@ def has_reach(name: str) -> bool:
 
 
 def catalogue_facets(op: Operation) -> dict[str, Any]:
-    """The additive catalogue fields (``code.index_status``,
-    ``ops.capabilities``): ``maturity``, the sorted ``reach`` list, and
-    ``toolsets`` — every MCP toolset whose listing
-    carries the op (empty for a hidden op)."""
+    """The additive catalogue fields of ``code.index_status``: ``maturity``,
+    the sorted ``reach`` list, and ``toolsets`` — every MCP toolset whose
+    listing carries the op (empty for a hidden op)."""
     from server.operations.toolsets import op_toolsets
 
     return {

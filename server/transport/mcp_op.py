@@ -166,7 +166,10 @@ _INSTEAD: dict[str, str] = {
     # Ops a client program calls, not a person: the agent's nearest op, or nothing to call.
     "ui.vitals": "the dashboard posts its own paint timings; nothing to call",
     "code.outcome": "the plugin's hooks report what was done with a code answer; nothing to call",
-    "code.coverage.watch": "call code.index_status (loom_op) for what the index covers now",
+    "code.coverage.watch": (
+        "a bot's watch on its own inbox; for what the index covers now call "
+        "code.index_status (loom_op)"
+    ),
     "code.coverage.unwatch": "a bot's watch on its own inbox; nothing to call",
     "code.scip_ingest": "a CI job uploads the SCIP index; nothing to call",
     "code.scip_status": "a CI job uploads the SCIP index and polls its batch; nothing to call",
