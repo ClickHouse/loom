@@ -21,7 +21,8 @@ flowchart LR
     A["agent or script"] --> S["SDK / HTTP / MCP"]
     D --> B["Loom assistant bridge"]
     S --> B
-    B -->|"agents API, the service key<br/>+ a token delegated for this answer"| LC["LibreChat, headless<br/>(the Loom agent)"]
+    B -->|"agents API, the service key<br/>+ a token delegated for this answer"|
+    LC["LibreChat, headless<br/>(the Loom agent)"]
     LC -->|"MCP, that token"| T["assistant toolset"]
     T --> Q["insights.query"]
     Q --> U["ClickHouse user loom_analyst<br/>column grants + signed row policies"]
@@ -370,8 +371,19 @@ keeps:
   `distributed_ddl_output_mode = throw`, every step has reached every server before the
   next begins, and no answer is ever empty during a rotation: it is right or
   `ANALYSIS_UNAVAILABLE`. Where access replicates asynchronously (through Keeper, as on
-  ClickHouse Cloud), a server slower than the settle time could, once the row is stored, still hold the old policies: until it applies the changes, a statement it serves under the new key reads no rows (never another scope's rows), and a probe that reaches it answers `ANALYSIS_UNAVAILABLE`. The settle time is set above the deployment's access replication lag. A row a reseal puts back during a rotation signs in only until the
-  password changes. If a rotation stops after the password change and a reseal had put the row back, the row opens but its password fails: `loom doctor` maps that to `--live`, after checking again once the settle time has passed, since a server still applying a finished rotation looks the same for that long.
+  ClickHouse Cloud), a server slower than the settle time could, once the row is stored,
+  still hold the old policies: until it applies the changes, a statement it serves under
+  the new key reads no rows or fails to sign in (never another scope's rows), and a
+  probe that reaches it answers `ANALYSIS_UNAVAILABLE`. Until it applies the password
+  change, it also still accepts the old credentials, so after a leak the old row stays
+  usable there for as long as that server lags. The settle time is set above the lag the
+  deployment's ClickHouse shows for access changes; `loom doctor`, finding a canary
+  mismatch after the settle time, names a longer settle time before it names `--live`. A
+  row a reseal puts back during a rotation signs in only until the
+  password changes. If a rotation stops after the password change and a reseal had put
+  the row back, the row opens but its password fails: `loom doctor` maps that to
+  `--live`, after checking again once the settle time has passed, since a server still
+  applying a finished rotation looks the same for that long.
 
 - **The caps apart.** The caps are deployment settings, kept in a second profile of
   their own: a write holding the lease (a boot, `loom ch-setup`) writes them when the
@@ -543,12 +555,16 @@ viewer token. Each case must be refused or return no canary:
   and the printed insert, which answers the right rows or `ANALYSIS_UNAVAILABLE` (on one
   server, never an empty answer), and then the new key; a statement running when a
   rotation starts, which the `KILL QUERY` ends before the policies change and which
-  answers `ANALYSIS_UNAVAILABLE`; a statement whose key was read before the delete and
-  sent after the password change, and one signed from a row a reseal put back, each of
-  which answers `ANALYSIS_UNAVAILABLE`; a second ClickHouse server that applies access
+  answers `ANALYSIS_UNAVAILABLE`; on one server, a statement whose key was read before
+  the delete and sent after the password change, and one signed from a row a reseal put
+  back, each of which answers `ANALYSIS_UNAVAILABLE`, and on a server lagging the
+  password change, which reads the signed scope's own rows until it applies it; a second
+  ClickHouse server that applies access
   changes within the settle time, which answers no wrong row, and one slower than it,
-  where a statement it serves returns no rows and no other org's canary, and a probe
-  that reaches it answers `ANALYSIS_UNAVAILABLE`; and a rotation stopped after the
+  where a statement it serves returns no rows or fails to sign in, and a probe that
+  reaches it answers `ANALYSIS_UNAVAILABLE`; a finished rotation seen through a lagging
+  server, which `loom doctor` does not map to `--live` within the settle time, and a
+  probe that defers its canary repair for that long; and a rotation stopped after the
   password change with a row a reseal put back, which `loom doctor` maps to `--live`.
 
 The same file will show that a revoked token stops new calls and that an erased memory
