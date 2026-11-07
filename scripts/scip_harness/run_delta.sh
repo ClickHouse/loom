@@ -65,7 +65,6 @@ reconfigure() {
       touch "$STALE"
       echo ">> warning: cmake reconfigure failed; indexing with the last compile_commands.json" >&2
     fi
-    CONFIGURED=1
   fi
 }
 
