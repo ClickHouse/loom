@@ -41,7 +41,7 @@ def wire() -> None:
             code_repos=lambda: repos.configured_repos(),
             repos_config_errors=lambda: repos.config_error_count(),
             compiler_tiers=TIERS,
-            # the tiers the `code_tier_failing` problem reports, with its severity
+            # the tiers the `code_tier_failing` problem reports, each with its grade
             failing_code_tiers=lambda: tier_health.problem_rows() or (),
         )
     )

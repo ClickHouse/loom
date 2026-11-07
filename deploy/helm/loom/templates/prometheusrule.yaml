@@ -2,8 +2,8 @@
 # Alerts on the failing code-index tiers, for a deployment that exports Loom's
 # metrics over OTLP into Prometheus (the Prometheus Operator's PrometheusRule).
 # The gauge reports exactly the tiers the `code_tier_failing` health problem reports,
-# with its severity, so its thresholds are the LOOM_CODE_TIER_FAILING_* settings; the
-# fix is in /v1/health and code.repos. The rules group by entry and tier only: the
+# with each tier's severity as the problem grades it, so its thresholds are the
+# LOOM_CODE_TIER_FAILING_* settings; the fix is in /v1/health and code.repos. The rules group by entry and tier only: the
 # error kind and severity can change during a run of failures, and a new series would
 # restart each rule's `for`.
 apiVersion: monitoring.coreos.com/v1

@@ -790,9 +790,10 @@ def code_tier_series(
     rows: Sequence[Mapping[str, Any]],
 ) -> tuple[list[tuple[int, dict[str, str]]], list[tuple[int, dict[str, str]]]]:
     """(failing, lag) points, one per entry and tier the `code_tier_failing` problem
-    reports: its failed passes in a row, labelled with the error kind and the problem's
-    severity, and the commits it trails the fetched tip by (no point when unknown).
-    Labelled raw, as the other code-plane gauges are: the entries come from the config."""
+    reports: its failed passes in a row, labelled with the error kind and the tier's
+    severity as the problem grades it, and the commits it trails the fetched tip by
+    (no point when unknown). Labelled raw, as the other code-plane gauges are: the
+    entries come from the config."""
     failing: list[tuple[int, dict[str, str]]] = []
     lag: list[tuple[int, dict[str, str]]] = []
     for r in rows:
@@ -828,9 +829,9 @@ def _register_code_tier_gauges(meter: Any) -> None:
         callbacks=[_points("failing")],
         description=(
             "Failed passes in a row of a code-index tier the `code_tier_failing` health "
-            "problem reports, per namespace, `tier`, error `kind` and the problem's "
-            "`severity` (warn, error); a tier reports from the problem's warn threshold "
-            "until its next successful pass"
+            "problem reports, per namespace, `tier`, error `kind` and the tier's "
+            "`severity` as the problem grades it (warn, error); a tier reports from the "
+            "problem's warn threshold until its next successful pass"
         ),
         # an annotation unit: an OTLP-to-Prometheus export names it loom_code_tier_failing
         unit="{pass}",
