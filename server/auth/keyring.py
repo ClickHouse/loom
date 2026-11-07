@@ -257,11 +257,11 @@ MIN_RSA_BITS = 2048
 
 
 def root_is_weak(cfg: Any = None) -> bool:
-    """Whether LOOM_JWT_SECRET is below the minimum key size: an HMAC secret under 32
-    bytes or an RSA key under 2048 bits."""
+    """Whether LOOM_JWT_SECRET is below the minimum key size: an RSA private key under
+    2048 bits, or any other secret under 32 bytes (it seals stored keys)."""
     secret = str((cfg or settings).jwt_secret)
     key = _pem_root(secret)
-    if key is None:  # it also seals stored keys, so a secret PyJWT refuses for HMAC counts
+    if key is None:
         return len(secret.encode()) < MIN_HMAC_BYTES
     return weak_rsa(key.public_pem)
 
