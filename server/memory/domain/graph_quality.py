@@ -776,6 +776,15 @@ def restates_current(
     return [r.old_object for r in verdict] == [repair.new_object]
 
 
+def code_facet_node(concept: str) -> str:
+    """The node a code concept is stored as: a `commit:` or `error:` name folded but kept
+    whole, any other concept canonical; '' when the node would pass `MAX_ENTITY_CHARS`."""
+    folded = fold_case(concept.strip())
+    if folded.startswith(("commit:", "error:")):
+        return folded if len(folded) <= MAX_ENTITY_CHARS else ""
+    return canonical_entity_text(concept) or (folded if len(folded) <= MAX_ENTITY_CHARS else "")
+
+
 def names_only(values: list[str]) -> list[str]:
     """`values` without the text too long to be an entity name."""
     return [v for v in values if fits_entity(v)]
@@ -796,12 +805,9 @@ def facet_triples(
             canonical_entity_text(path) or path.lower(),
         )
     for concept in names_only(concepts):
-        lowered = concept.lower()
-        node = (
-            lowered
-            if lowered.startswith(("commit:", "error:"))
-            else (canonical_entity_text(concept) or lowered)
-        )
+        node = code_facet_node(concept)
+        if not node:
+            continue
         yield subject, code_facet_relation(classify_code_concept(concept), fact_verbs), node
     for topic in names_only(topics):
         yield subject, "about", canonical_entity_text(topic) or topic.lower()
