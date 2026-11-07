@@ -432,3 +432,27 @@ def test_the_deployments_own_errors_list_before_a_failing_tier(
         if p.severity == "error"
     ]
     assert errors.index("jwt_secret_empty") < errors.index("code_tier_failing")
+
+
+@pytest.mark.parametrize(
+    ("overrides", "want"),
+    [
+        ({}, None),  # 4 passes over 2 hours, under 10 passes and 3 hours: transient
+        ({"code_tier_failing_warn_passes": 4}, "error"),  # 413 behind, past 100
+        ({"code_tier_failing_warn_hours": 1.0}, "error"),
+        ({"code_tier_failing_warn_passes": 4, "code_tier_failing_error_lag_commits": 500}, "warn"),
+    ],
+)
+def test_problem_rows_grade_with_the_live_settings(
+    overrides: dict[str, float], want: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = {
+        "code_tier_failing_warn_passes": 10,
+        "code_tier_failing_warn_hours": 3.0,
+        "code_tier_failing_error_lag_commits": 100,
+    }
+    for name, value in {**base, **overrides}.items():
+        monkeypatch.setattr(settings, name, value)
+    recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413),)
+    rows = recorder.problem_rows(T0 + timedelta(hours=2)) or ()
+    assert (rows[0]["severity"] if rows else None) == want
