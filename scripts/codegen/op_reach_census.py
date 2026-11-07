@@ -175,8 +175,7 @@ def derive_static_reach(root: Path | None = None) -> dict[str, tuple[str, ...]]:
                 for op in classes.get(cls or "", {}).get(method, ()):
                     hit(op, "sdk_example")
 
-    # plugin_hook: op names or /v1/<op> in the integrations (hooks, gateways,
-    # shims).
+    # plugin_hook: op names or /v1/<op> in the integrations (hooks, gateways, shims).
     for path in _files(root, _PLUGIN_DIR, _PLUGIN_SUFFIXES):
         text = path.read_text(encoding="utf-8", errors="replace")
         for m in _V1.finditer(text):
