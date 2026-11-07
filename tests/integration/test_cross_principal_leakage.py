@@ -1310,20 +1310,22 @@ def test_a_namespace_admin_cannot_write_or_remove_a_wider_pattern(
         },
     )
     assert r.status_code == 200, r.text[:300]
-    # A regex pattern is bounded at add: a catastrophic shape is a 422, not a row.
-    r = _post(
-        control_plane_url,
-        tokens["b_admin"],
-        "blacklist.add",
-        {
-            "org": seed.org,
-            "namespace": seed.ns_b,
-            "pattern": "(a+)+$",
-            "pattern_type": "regex",
-        },
-    )
-    assert r.status_code == 422, r.text[:300]
-    assert "BLACKLIST_PATTERN_INVALID" in r.text
+    # A regex pattern is bounded at add: one RE2 cannot run in linear time (a
+    # backreference) or one whose program is past the cap is a 422, not a row.
+    for pattern in (r"(a+)\1", "[ab]{400}"):
+        r = _post(
+            control_plane_url,
+            tokens["b_admin"],
+            "blacklist.add",
+            {
+                "org": seed.org,
+                "namespace": seed.ns_b,
+                "pattern": pattern,
+                "pattern_type": "regex",
+            },
+        )
+        assert r.status_code == 422, f"{pattern}: {r.text[:300]}"
+        assert "BLACKLIST_PATTERN_INVALID" in r.text
     # remove by id from B: A's namespace pattern is hidden, not confirmed.
     r = _post(
         control_plane_url,

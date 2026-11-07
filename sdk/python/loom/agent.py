@@ -8,6 +8,7 @@ wraps this client behind a private event loop.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import sys
 import time
@@ -539,4 +540,13 @@ class Agent:
             if self.ambient_run is not None:
                 await self.ambient_run.complete(failed=failed)
         finally:
-            await self.transport.close()  # the pool closes even when the flush fails
+            try:
+                # Always: sets made while the ambient run completed, or while a cancelled
+                # close() was waiting, land too, up to one request's timeout, before the
+                # pool closes under them.
+                with contextlib.suppress(TimeoutError):
+                    # A Transport always has it; a stand-in without it waits unbounded.
+                    timeout_s = getattr(self.transport, "_timeout_s", None)
+                    await asyncio.wait_for(self.memory.flush_sets(), timeout_s)
+            finally:
+                await self.transport.close()  # even when the flush fails or is cancelled

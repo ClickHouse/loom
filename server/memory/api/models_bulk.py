@@ -225,7 +225,9 @@ class MemorySetFromMessagesInput(_Identity):
 class _RefusedFact(BaseModel):
     # The key of an extracted fact the write refused.
     memory_key: str
-    # Why: blacklisted | pinned | locked | rejected (close to a pinned row).
+    # Why: blacklisted | blacklist_unchecked (too long to check in this request's
+    # budget; retry in a smaller one, or shorten it) | pinned | locked | rejected
+    # (close to a pinned row).
     verdict: str
 
 
@@ -236,8 +238,8 @@ class MemorySetFromMessagesOutput(BaseModel):
 
     # Key and version of each extracted fact written; empty on a deferred call.
     written: list[_BulkSetResult] = Field(default_factory=list)
-    # The extracted facts the write refused (a blacklisted, pinned or locked key, or a
-    # pinned row close by), with the verdict; not in `written` or the counts.
+    # The extracted facts the write refused (a blacklisted or unchecked value, a pinned or
+    # locked key, or a pinned row close by), with the verdict; not in `written` or the counts.
     refused: list[_RefusedFact] = Field(default_factory=list)
     # Prompt tokens of the extraction LLM calls.
     tokens_in: int = 0
@@ -334,6 +336,11 @@ class MemorySetFromMessagesOutput(BaseModel):
 
 # The verdict of an entry the blacklist refused (memory.set answers 422 BLACKLISTED).
 BLACKLISTED = "blacklisted"
+# The verdict of an entry the blacklist could not check: the request's values are too long
+# for the regexes that apply (memory.set answers 422 BLACKLISTED with an empty
+# pattern_id); the same entry in a smaller request is checked, unless the value alone
+# is past the budget (its message then says to shorten it).
+UNCHECKED = "blacklist_unchecked"
 # The verdict of an entry skipped on a pinned key (memory.set answers 409 PINNED_CONFLICT).
 PINNED = "pinned"
 # The verdict of an entry skipped on a read_only key (memory.set answers 423 LOCKED).
@@ -343,7 +350,7 @@ REJECTED = "rejected"
 # The verdicts of an entry refused outright (version 0): the message produced no row,
 # so nothing it carries attaches to the stored one. A restatement of the stored value
 # is not among them.
-REFUSED = frozenset({BLACKLISTED, PINNED, LOCKED, REJECTED})
+REFUSED = frozenset({BLACKLISTED, UNCHECKED, PINNED, LOCKED, REJECTED})
 
 
 class _BulkSetResult(BaseModel):
@@ -353,8 +360,10 @@ class _BulkSetResult(BaseModel):
     memory_id: str = ""
     # The per-row verdict memory.set returns, so a caller of
     # bulk_set can act on one entry without decoding the aggregate lists, plus
-    # `blacklisted`, `pinned` or `locked` (refused, version 0; a restatement of a
-    # pinned or locked key's value is not).
+    # `blacklisted`, `blacklist_unchecked` (too long for this request's blacklist regexes:
+    # send it in a smaller one, or shorten it if it is too long alone; every later entry
+    # of its key is answered so too, to be sent again after it), `pinned` or
+    # `locked` (refused, version 0; a restatement of a pinned or locked key's value is not).
     # Empty when the entry was not checked (non-searchable, past the cap).
     conflict_verdict: str = ""
     peers: list[MemorySetPeer] = Field(default_factory=list)
@@ -383,8 +392,9 @@ class MemoryBulkSetOutput(BaseModel):
     # Keys whose live row is locked read_only: skipped (result version=0), where memory.set
     # would answer 423 LOCKED. Unlocking is the owner's act (memory.unlock).
     skipped_locked: list[str] = Field(default_factory=list)
-    # Keys whose entry the blacklist refused: not written (result version=0), where
-    # memory.set would answer 422 BLACKLISTED.
+    # Keys whose entry the blacklist refused or could not check in the request's budget:
+    # not written (result version=0), where memory.set would answer 422 BLACKLISTED. The
+    # result's conflict_verdict tells them apart: blacklist_unchecked may be retried smaller.
     skipped_blacklisted: list[str] = Field(default_factory=list)
     # Conflict verdicts, the same four memory.set produces:
     # canonical restatement of an existing row → not inserted, existing row

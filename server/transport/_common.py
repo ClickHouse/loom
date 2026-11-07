@@ -130,11 +130,13 @@ def begin_request() -> RequestWork:
     across requests on a long-lived task."""
     from server.auth import fail_closed
     from server.core import request_work
+    from server.memory.app.blacklist_guard import begin_request_budget
     from server.observability import cost_accumulator, degradations
 
     cost_accumulator.begin_op()
     degradations.begin()
     fail_closed.reset()
+    begin_request_budget()
     return request_work.begin()
 
 

@@ -697,11 +697,22 @@ limiter error admits the call and is counted. Sizing and the shared backend are 
 ## Refuse: the blacklist
 
 `blacklist.add` registers a `substring` or `regex` pattern at `global`, `org` or
-`namespace` scope (`server/memory/app/blacklist_guard.py`). A regex is length-capped, rejected if it nests
-quantifiers, and probed against a time budget, so it cannot stall writes. Matching writes
-get 422 `BLACKLISTED` on `memory.set` and the other write paths before anything is
-stored; `sweep=true` tombstones existing matches. Replicas invalidate their pattern
-caches from a one-row version watermark in `loom.blacklist_version`, checked every
+`namespace` scope (`server/memory/app/blacklist_guard.py`). A regex runs on RE2, in time
+linear in the value; its length, its compiled program and a scope's total program are
+capped, one request's regex work (bytes times instructions) is bounded, and it runs on the
+blacklist's own four threads per process, so no regex stalls the event loop. A substring
+check scans on the loop while the value's length times the substring patterns that apply
+stays within 1 MiB, and on those threads past it, where the loop gets its turn between
+patterns (one scan of 32 MB takes about 10 ms). One org holds at most two of those threads
+at once, so one busy org leaves half the threads to the others; a write that waits past 5
+seconds for one is refused with 503 `OVERLOADED` (fail closed). A value past the work
+budget is refused as `BLACKLISTED` with an empty `pattern_id`, and so is every later entry
+of its key in the same bulk write: a smaller request checks it, and a value past the
+budget alone must be shortened. The Python SDK sends the coalesced sets refused this way
+again, in order, in batches the size of what the last request checked. Matching writes get
+422 `BLACKLISTED` on `memory.set` and the other write paths before anything is stored;
+`sweep=true` tombstones existing matches. Replicas invalidate their pattern caches from a
+one-row version watermark in `loom.blacklist_version`, checked every
 `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS` (2 s).
 
 ## Prompt safety
@@ -756,8 +767,18 @@ the paths.
 ## Sensitivity
 
 `server/memory/domain/sensitivity.py` classifies a value with deterministic regexes. It is
-a lower bound: it recognises the label forms and shapes listed here, not every way a person
-can phrase a secret. The catch-all for extraction is an operator's extraction policy.
+a lower bound: it recognises the label forms and shapes listed here, not every way a
+person can phrase a secret. The catch-all for extraction is an operator's extraction
+policy. Once a request's values together pass 16 KiB, a write reads each in windows that
+overlap by at least 1,024 characters, with a turn for the event loop between them
+(`server/memory/app/sensitivity_level.py`), since the detector holds the GIL a worker
+thread would share. Every shape is found from its first 1,024 characters (a JWT in a
+window from its header and the start of its payload, since the edge may cut its signature
+off; a whole value needs all three parts) but three, which a window's edge can split: a
+stated PIN with about 1,000 characters of whitespace or qualifier words before its value,
+a `password=` assignment with about 1,000 characters of whitespace around its `=`, and a
+JWT whose header passes 1,000 characters. A cut with no whitespace near it can also make a
+shape at the edge read higher than the whole value.
 
 | Level    | Matches                                                                    |
 | -------- | -------------------------------------------------------------------------- |

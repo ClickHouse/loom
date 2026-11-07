@@ -204,7 +204,7 @@ _KNOWN_PROCESS_STATE_LEAKS: frozenset[str] = frozenset()
 _PYTEST_ENV = frozenset({"PYTEST_CURRENT_TEST"})
 # The session loop's default executor threads, and the document bucket's own pool
 # (`server.core.object_store`), outlive every test by design.
-_SHARED_THREAD_PREFIXES = ("asyncio_", "loom-object-store")
+_SHARED_THREAD_PREFIXES = ("asyncio_", "loom-object-store", "loom-blacklist")
 _THREAD_JOIN_SECONDS = 2.0
 
 

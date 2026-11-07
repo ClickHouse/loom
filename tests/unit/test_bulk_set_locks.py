@@ -214,3 +214,72 @@ async def test_a_refused_entry_carries_its_verdict_and_a_restatement_does_not(
     inp = _input("user_deploy_day").model_copy(update={"entries": entries})
     out = await mem_extract.handle_memory_bulk_set(inp)
     assert [(r.version, r.conflict_verdict) for r in out.written] == [(0, ""), (0, verdict)]
+
+
+@pytest.mark.asyncio
+async def test_an_entry_the_blacklist_could_not_check_says_so(
+    wire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An entry refused because the request's values are too long for the blacklist's
+    regexes is told apart from one a pattern matched: sent in a smaller request it is
+    checked."""
+    from server.memory.app import blacklist_guard as bl
+
+    wire(_StubCH([]))
+
+    async def _find(*, org: str, namespace: str, value: str) -> Any:
+        if "Friday" in value:
+            return bl._over_budget(org, namespace, "namespace", len(value), 300, alone=False)
+        if "Monday" in value:
+            return bl.BlacklistPattern("p1", org, namespace, "Monday", "substring", "namespace", "")
+        return None
+
+    monkeypatch.setattr("server.memory.app.blacklist_guard.find_match", _find)
+    entries = [
+        _BulkSetEntry(memory_key=k, memory_type="semantic", value=f"{k} is {day}")
+        for k, day in (("a", "Friday"), ("b", "Monday"), ("c", "Thursday"))
+    ]
+    inp = _input("a").model_copy(update={"entries": entries})
+    out = await mem_extract.handle_memory_bulk_set(inp)
+    verdicts = {r.memory_key: r.conflict_verdict for r in out.written}
+    assert verdicts["a"] == "blacklist_unchecked" and verdicts["b"] == "blacklisted"
+
+
+@pytest.mark.asyncio
+async def test_every_later_entry_of_an_unchecked_key_is_unchecked_too(
+    wire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once an entry of a key is answered blacklist_unchecked, a later entry of the key is
+    too, whether it would have been written (a changed value that fits the budget) or
+    skipped (a restatement of the live value), so a caller that sends them again in order
+    leaves the key at its last value. Another key's entry is still checked."""
+    from server.core.hashing import sha256_value
+    from server.memory.app import blacklist_guard as bl
+
+    same = sha256_value("user_deploy_day is Thursday")
+    wire(_StubCH([_live(content_sha256=same)]))
+
+    async def _find(*, org: str, namespace: str, value: str) -> Any:
+        if "Friday" in value:
+            return bl._over_budget(org, namespace, "namespace", len(value), 300, alone=False)
+        return None
+
+    monkeypatch.setattr("server.memory.app.blacklist_guard.find_match", _find)
+    entries = [
+        _BulkSetEntry(memory_key=k, memory_type="semantic", value=v)
+        for k, v in (
+            ("user_deploy_day", "user_deploy_day is Friday"),
+            ("other", "other is Monday"),
+            ("user_deploy_day", "user_deploy_day is Saturday"),
+            ("user_deploy_day", "user_deploy_day is Thursday"),
+        )
+    ]
+    inp = _input("user_deploy_day").model_copy(update={"entries": entries})
+    out = await mem_extract.handle_memory_bulk_set(inp)
+    assert [(r.memory_key, r.conflict_verdict) for r in out.written] == [
+        ("user_deploy_day", "blacklist_unchecked"),
+        ("other", ""),
+        ("user_deploy_day", "blacklist_unchecked"),
+        ("user_deploy_day", "blacklist_unchecked"),
+    ]
+    assert out.written[1].version > 0

@@ -19,7 +19,7 @@ Add a pattern that prevents matching content from being saved to memory.
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `pattern` | `str` | required | The text to refuse, matched case-sensitively against a stored value: as a substring, or as a regex of at most 256 characters. |
-| `pattern_type` | `Literal['substring', 'regex']` | `'substring'` | `substring` (plain text) or `regex` (bounded at add; the sweep runs it as RE2). |
+| `pattern_type` | `Literal['substring', 'regex']` | `'substring'` | `substring` (plain text) or `regex` (RE2, on writes and in the sweep; bounded at add). |
 | `scope` | `Literal['namespace', 'org', 'global']` | `'namespace'` | Reach: `namespace` (this one), `org` (every namespace; needs org admin) or `global` (every tenant; needs platform admin). |
 | `reason` | `str` | `''` | Why the pattern exists; stored and listed. |
 | `created_by` | `str` | `''` | Author recorded only when the call has no authenticated principal to stamp. |

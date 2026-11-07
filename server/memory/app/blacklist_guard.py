@@ -10,107 +10,101 @@ scope first, so a namespace pattern beats an org pattern beats a global one.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import HTTPException
 
+from server.core.caller_regex import compile_caller_regex
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now_seconds
+from server.core.errors import OverloadedError, ValidationError
 from server.memory.store import blacklist as _repo
 from server.settings import settings
 
 log = logging.getLogger(__name__)
 
-# A regex pattern runs on every write the scope covers — for a global
-# pattern, every tenant's — so its cost is bounded here, at add time and
-# again when the cache loads a row. Length, then shape,
-# then a timed probe; `re2` is not in the deployment, so Python `re` stays
-# and the pattern is proven cheap before it is stored.
+# A regex runs on every write its scope covers, on RE2: linear in the value. Its cost
+# per character still grows with the program (a counted class such as `[ab]{400}`
+# defeats RE2's DFA cache), so a pattern's program and a scope's total program are capped.
 REGEX_MAX_LENGTH = 256
-REGEX_PROBE_BUDGET_MS = 1.0
-# Probe input lengths, growing slowly at first: a stage that finishes under
-# the budget bounds the next — an exponential pattern with base b costs at
-# most b² more two characters later — so a catastrophic pattern is caught at
-# a few milliseconds, never at seconds.
-_PROBE_LENGTHS = (4, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32, 48, 64, 96, 128, 192, 256)
-# A quantifier directly after a group whose body ends in a quantified atom:
-# (a+)+, (a*)*, (.*)*, (a+){2,}, (?:a?){20}, (x+x+)+. Static shape check for
-# the textbook exponential form; a group with a mandatory separator after
-# the inner quantifier, (a+\\.)+, is not this shape and goes to the probe,
-# as does every alternation.
-_QUANTIFIER = r"(?:[*+?]|\{\d+(?:,\d*)?\})\??"
-_NESTED_QUANTIFIER_RE = re.compile(r"\((?:\?[:=!<P]?)?[^()]*" + _QUANTIFIER + r"\)" + _QUANTIFIER)
-_ESCAPE_RE = re.compile(r"\\.")
-_CLASS_RE = re.compile(r"\[(?:\\.|[^\]])*\]")
+REGEX_MAX_PROGRAM = 300  # not a setting: the bound that keeps a pattern cheap per character
+# RE2's memory for one pattern, its DFA cache included (8 MiB by default): a scope's
+# regexes hold a few dozen MB at most, and a DFA that runs out falls back to the NFA,
+# whose cost the work budget prices.
+REGEX_MAX_MEMORY = 256 * 1024  # not a setting: bounds what a writer's patterns hold resident
+# RE2 instructions the regexes of one scope may hold together: checked at add, and again
+# at cache load, which keeps the oldest when racing adds or an older build stored more.
+REGEX_PROGRAM_PER_SCOPE = 3_000  # not a setting: with the budget below, bounds one write
+# Bytes x RE2 instructions one request's regexes may scan (a bulk write's entries
+# together), about a second of a matcher thread at worst; a value past it is refused,
+# as if a pattern matched.
+REGEX_WORK_BUDGET = 250_000_000  # not a setting: what keeps one write from holding them
+# Regex matching runs on its own few threads per process (RE2 releases the GIL), so a
+# long value under many patterns waits for these, never the event loop or the shared pool.
+MATCHER_THREADS = 4
+_MATCHERS = ThreadPoolExecutor(max_workers=MATCHER_THREADS, thread_name_prefix="loom-blacklist")
+# Searches one org may run on them at once in a process: the rest of its requests wait
+# their turn, so another org's write finds a free thread. A search holds its turn until
+# its thread is done, even when its request is cancelled, since RE2 cannot be stopped.
+MATCHERS_PER_ORG = MATCHER_THREADS // 2
+# A turn on a thread per org, kept for the process's life: orgs come from verified
+# tokens, so they are few.
+_org_slots: dict[str, asyncio.Semaphore] = {}
+_thread_slots = asyncio.Semaphore(MATCHER_THREADS)
+# How long a search waits for its turn before the write is refused as overloaded: a few
+# times the longest search (the work budget, about a second), so a write waits out the
+# searches ahead of it but never queues without end.
+MATCHER_WAIT_S = 5.0  # not a setting: follows from the work budget's second
+# Bytes x substring patterns a check scans on the event loop. A substring scan holds the
+# GIL for one `in`, so past this it runs on the matcher threads, where the loop gets its
+# turn between patterns.
+SUBSTRINGS_ON_LOOP_BYTES = 1 << 20
+# Bytes x instructions this request's regexes scanned, a bulk write's entries together;
+# bound by the transports for each op. A worker binds none: there the budget is per value.
+_request_work: ContextVar[list[int] | None] = ContextVar("blacklist_regex_work", default=None)
 
 
-def _strip_atoms(pattern: str) -> str:
-    """Remove escapes and character classes so `_NESTED_QUANTIFIER_RE` sees
-    only the grouping structure (`[+*]` and `\\(` are not quantifiers or groups)."""
-    return _CLASS_RE.sub("x", _ESCAPE_RE.sub("x", pattern))
+def begin_request_budget() -> None:
+    """Start this request's regex work at zero (the transports, at each op)."""
+    _request_work.set([0])
 
 
-def _probe_inputs(pattern: str, n: int) -> list[str]:
-    """Inputs a backtracking engine dislikes: runs of the pattern's own
-    literal characters, with and without a trailing character that defeats
-    the match at the end."""
-    literals: list[str] = []
-    for ch in _strip_atoms(pattern):
-        if ch.isalnum() and ch not in literals:
-            literals.append(ch)
-        if len(literals) == 3:
-            break
-    if not literals:
-        literals = ["a"]
-    out: list[str] = []
-    for ch in literals:
-        out.append(ch * n)
-        out.append(ch * n + "!")
-    if len(literals) > 1:
-        mixed = "".join(literals) * (n // len(literals) + 1)
-        out.append(mixed[:n] + "!")
-    return out
-
-
-def validate_regex(pattern: str) -> str | None:
-    """Reason the pattern is refused, or None when it may be stored.
-
-    Refuses: over `REGEX_MAX_LENGTH`; a pattern `re` cannot compile; a
-    quantified group whose body is itself quantified or an alternation; and
-    a pattern whose search over any probe input exceeds
-    `REGEX_PROBE_BUDGET_MS`. The probe grows the input in small steps so the
-    check itself stays under a few tens of milliseconds for any pattern."""
+def compile_regex(pattern: str) -> Any:
+    """The RE2 pattern a regex row runs as, or ValidationError naming why it is
+    refused: over `REGEX_MAX_LENGTH`, not a regex RE2 can run (no backreferences
+    or lookaround), or a program over `REGEX_MAX_PROGRAM`."""
     if len(pattern) > REGEX_MAX_LENGTH:
-        return f"regex longer than {REGEX_MAX_LENGTH} characters ({len(pattern)})"
-    try:
-        compiled = re.compile(pattern)
-    except re.error as e:
-        return f"regex does not compile: {e}"
-    if _NESTED_QUANTIFIER_RE.search(_strip_atoms(pattern)):
-        return (
-            "regex nests a quantifier inside a quantified group (catastrophic backtracking shape)"
+        raise ValidationError(f"regex longer than {REGEX_MAX_LENGTH} characters ({len(pattern)})")
+    compiled = compile_caller_regex(pattern, dot_nl=True, match_only=True, max_mem=REGEX_MAX_MEMORY)
+    if compiled.programsize > REGEX_MAX_PROGRAM:
+        raise ValidationError(
+            f"regex compiles to {compiled.programsize} RE2 instructions (at most "
+            f"{REGEX_MAX_PROGRAM}): a counted repeat such as {{400}} or a long non-ASCII "
+            "literal (use pattern_type=substring for that)"
         )
-    budget_s = REGEX_PROBE_BUDGET_MS / 1000.0
-    for n in _PROBE_LENGTHS:
-        for text in _probe_inputs(pattern, n):
-            # Best of two: a scheduler hiccup must not refuse a cheap pattern.
-            spent = budget_s * 2
-            for _ in range(2):
-                t0 = time.perf_counter()
-                compiled.search(text)
-                spent = min(spent, time.perf_counter() - t0)
-                if spent <= budget_s:
-                    break
-            if spent > budget_s:
-                return (
-                    f"regex search took {spent * 1000:.2f} ms on a {len(text)}-character "
-                    f"probe (budget {REGEX_PROBE_BUDGET_MS:g} ms)"
-                )
-    return None
+    return compiled
+
+
+async def scope_program(scope: str, org: str, namespace: str) -> int:
+    """The RE2 instructions of the regexes stored at exactly this scope, read from
+    ClickHouse (an add decides on it); a stored one RE2 refuses counts nothing, as at
+    cache load. Two adds racing can still both pass: cache load keeps the oldest."""
+    with sequential_reads():
+        patterns = await _repo.scope_regexes(scope, org, namespace, ch=get_client())
+    total = 0
+    for pattern in patterns:
+        try:
+            total += compile_regex(pattern).programsize
+        except ValidationError:
+            continue
+    return total
 
 
 @dataclass(frozen=True)
@@ -122,7 +116,9 @@ class BlacklistPattern:
     pattern_type: str  # 'substring' | 'regex'
     scope: str  # 'namespace' | 'org' | 'global'
     reason: str
-    compiled: re.Pattern[str] | None = None  # set for regex patterns
+    compiled: Any = None  # the RE2 pattern, set for regex patterns
+    # What a token narrowed to one user is told; set for a refusal with no stored pattern.
+    narrowed_reason: str = ""
 
 
 # The first match wins, so the cache holds the most specific scope first; the
@@ -188,22 +184,32 @@ async def _refresh_cache() -> None:
         new_version = await _current_version()
         rows = await _repo.active_patterns(ch=get_client())
     new_cache: list[BlacklistPattern] = []
-    for r in rows:
+    program: dict[tuple[str, str, str], int] = {}
+    for r in rows:  # oldest first: past a scope's budget, the newest regexes are dropped
         pattern_type = r["pattern_type"]
-        compiled: re.Pattern[str] | None = None
+        compiled: Any = None
         if pattern_type == "regex":
             # A row written past add-time validation is dropped from the hot
             # path rather than run on every write; the refusal is logged so
             # the operator can remove it.
-            reason = validate_regex(r["pattern"])
-            if reason is not None:
+            try:
+                compiled = compile_regex(r["pattern"])
+            except ValidationError as e:
                 log.warning(
-                    "blacklist: dropping regex pattern %s from the cache: %s",
-                    r["pattern_id"],
-                    reason,
+                    "blacklist: dropping regex pattern %s from the cache: %s", r["pattern_id"], e
                 )
                 continue
-            compiled = re.compile(r["pattern"])
+            where = (r["scope"], r["org"], r["namespace"])
+            total = program.get(where, 0) + compiled.programsize
+            if total > REGEX_PROGRAM_PER_SCOPE:
+                log.warning(
+                    "blacklist: dropping regex pattern %s from the cache: its scope's regexes "
+                    "pass %d RE2 instructions",
+                    r["pattern_id"],
+                    REGEX_PROGRAM_PER_SCOPE,
+                )
+                continue
+            program[where] = total
         new_cache.append(
             BlacklistPattern(
                 pattern_id=str(r["pattern_id"]),
@@ -237,12 +243,6 @@ def _applies_to(p: BlacklistPattern, org: str, namespace: str) -> bool:
     return p.org == org and p.namespace == namespace
 
 
-def _matches(p: BlacklistPattern, value: str) -> bool:
-    if p.pattern_type == "regex":
-        return p.compiled is not None and bool(p.compiled.search(value))
-    return p.pattern in value
-
-
 async def find_match(
     *,
     org: str,
@@ -251,12 +251,122 @@ async def find_match(
 ) -> BlacklistPattern | None:
     """Return the first applicable + matching pattern, or None."""
     await _ensure_loaded()
-    for p in _cache:
-        if not _applies_to(p, org, namespace):
-            continue
-        if _matches(p, value):
-            return p
-    return None
+    applicable = [p for p in _cache if _applies_to(p, org, namespace)]
+    regexes = [p for p in applicable if p.compiled is not None]
+    if not regexes:
+        return await _substring_match(org, applicable, value)
+    # RE2 reads UTF-8 (a lone surrogate, an unpaired JSON escape, reads as `?`) and its
+    # cost is per byte.
+    data = value.encode("utf-8", "replace")
+    program = sum(p.compiled.programsize for p in regexes)
+    spent_box = _request_work.get()  # bound per request by the transports
+    spent = (spent_box[0] if spent_box is not None else 0) + len(data) * program
+    alone = len(data) * program > REGEX_WORK_BUDGET  # no smaller request checks it either
+    if spent > REGEX_WORK_BUDGET:
+        # A substring pattern costs no regex work: one that matches still names itself.
+        substrings = [p for p in applicable if p.compiled is None]
+        hit = await _substring_match(org, substrings, value)
+        if hit is not None:
+            return hit
+        widest = max(regexes, key=lambda p: _SCOPE_PRECEDENCE.get(p.scope, 0)).scope
+        return _over_budget(org, namespace, widest, len(data), program, alone=alone)
+    if spent_box is not None:
+        spent_box[0] = spent
+    return await _search(org, applicable, value, data)
+
+
+async def _substring_match(
+    org: str, substrings: list[BlacklistPattern], value: str
+) -> BlacklistPattern | None:
+    """The first of `substrings` in `value`: on the event loop when the scan is short,
+    else on the matcher threads."""
+    if len(value) * len(substrings) <= SUBSTRINGS_ON_LOOP_BYTES:
+        return _first_match(substrings, value, value)
+    return await _search(org, substrings, value, value)
+
+
+async def _search(
+    org: str, applicable: list[BlacklistPattern], value: str, data: str | bytes
+) -> BlacklistPattern | None:
+    """`_first_match` on a matcher thread, after one of `org`'s MATCHERS_PER_ORG turns
+    and a free thread; 503 OVERLOADED (the write refused) past `MATCHER_WAIT_S`."""
+    org_slots = _org_slots.get(org)
+    if org_slots is None:
+        org_slots = _org_slots[org] = asyncio.Semaphore(MATCHERS_PER_ORG)
+    held: list[asyncio.Semaphore] = []
+    try:
+        async with asyncio.timeout(MATCHER_WAIT_S):
+            for slots in (org_slots, _thread_slots):
+                await slots.acquire()
+                held.append(slots)
+    except BaseException as e:
+        for slots in held:
+            slots.release()
+        if isinstance(e, TimeoutError):
+            raise OverloadedError(
+                "every blacklist matcher this org may use is busy; retry shortly",
+                retry_after_s=1,
+            ) from None
+        raise
+
+    def _done(fut: asyncio.Future[BlacklistPattern | None]) -> None:
+        for slots in held:
+            slots.release()
+        if not fut.cancelled():
+            fut.exception()  # read, so a cancelled caller's failed search logs nothing
+
+    try:
+        fut = asyncio.get_running_loop().run_in_executor(
+            _MATCHERS, _first_match, applicable, value, data
+        )
+    except BaseException:
+        for slots in held:
+            slots.release()
+        raise
+    fut.add_done_callback(_done)
+    # The turns are released when the thread is done, not when this request is cancelled.
+    return await asyncio.shield(fut)
+
+
+def _first_match(
+    patterns: list[BlacklistPattern], value: str, data: str | bytes
+) -> BlacklistPattern | None:
+    """The first pattern that matches: a substring in `value`, a regex in `data` (the
+    value as UTF-8, which RE2 reads without copying it again per pattern)."""
+    return next(
+        (
+            p
+            for p in patterns
+            if (p.compiled.search(data) if p.compiled is not None else p.pattern in value)
+        ),
+        None,
+    )
+
+
+def _over_budget(
+    org: str, namespace: str, scope: str, size: int, program: int, *, alone: bool
+) -> BlacklistPattern:
+    """The refusal of a `size`-byte value too long for the regexes its scopes hold
+    (`program` RE2 instructions) to check: no stored pattern, so `pattern_id` is empty, and
+    `scope` is the widest that holds one. `alone` says the value by itself is past the
+    budget, so no smaller request checks it."""
+    advice = (
+        "shorten the value, or remove regex patterns"
+        if alone
+        else "send less in one request, or remove regex patterns"
+    )
+    head = "this request's values are too long to check against the blacklist regexes that apply"
+    return BlacklistPattern(
+        pattern_id="",
+        org=org,
+        namespace=namespace,
+        pattern="",
+        pattern_type="regex",
+        scope=scope,
+        reason=f"{head} ({size} bytes here, {program} RE2 instructions); {advice}",
+        # the instruction count sums other principals' patterns
+        narrowed_reason=f"{head}; {advice}",
+    )
 
 
 # Refusals per pattern since its last hit-count write, and when that was.
@@ -272,6 +382,8 @@ async def note_hit(pattern_id: str) -> None:
     """Count one refusal against `pattern_id`. The counter lands in
     loom.blacklist at most once per `_HIT_FLUSH_INTERVAL_S` per pattern;
     recording never blocks or fails the refusal it accompanies."""
+    if not pattern_id:  # a value over the regex budget: no stored pattern refused it
+        return
     with _lock:
         _pending_hits[pattern_id] = _pending_hits.get(pattern_id, 0) + 1
         now = time.monotonic()
@@ -321,8 +433,15 @@ async def enforce_on_insert(
     await note_hit(hit.pattern_id)
     from server.identity.app.request_scope import request_narrowed
 
+    if not hit.pattern_id:  # no stored pattern matched: the value is too long to check
+        detail = {
+            "code": "BLACKLISTED",
+            "message": hit.narrowed_reason if request_narrowed() else hit.reason,
+            "scope": hit.scope,
+            "pattern_id": "",
+        }
     # Under a narrowed token the pattern may be another user's: its id and reason are theirs.
-    if request_narrowed():
+    elif request_narrowed():
         detail = {
             "code": "BLACKLISTED",
             "message": f"value matches a blacklist pattern (scope={hit.scope})",

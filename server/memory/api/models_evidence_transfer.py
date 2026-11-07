@@ -112,3 +112,7 @@ class MemoryImportEvidenceOutput(BaseModel):
     edited: list[str] = Field(default_factory=list)
     # Items not written: empty, unembeddable, or refused by a blacklist pattern (Refuse).
     skipped: int = 0
+    # Of the skipped, those the blacklist could not check: the request's values are too
+    # long for its regexes; sent in a smaller request they are checked, unless one is
+    # too long alone, which must be shortened.
+    unchecked: int = 0

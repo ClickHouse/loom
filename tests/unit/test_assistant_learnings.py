@@ -273,29 +273,29 @@ class _Queue:
 
 @pytest.fixture(autouse=True)
 def blacklist(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """The namespace's substring blacklist patterns, matched by the guard's own
-    `_matches`; empty by default."""
+    """The blacklist's substring patterns, matched by the guard's own `find_match`
+    over a cache built from this list; empty by default."""
     patterns: list[str] = []
 
-    async def find_match(*, org: str, namespace: str, value: str) -> Any:
-        for text in patterns:
-            row = blacklist_guard.BlacklistPattern(
+    async def loaded() -> None:
+        blacklist_guard._cache = [
+            blacklist_guard.BlacklistPattern(
                 pattern_id=text,
-                org=org,
-                namespace=namespace,
+                org="",
+                namespace="",
                 pattern=text,
                 pattern_type="substring",
-                scope="namespace",
+                scope="global",
                 reason="",
             )
-            if blacklist_guard._matches(row, value):
-                return row
-        return None
+            for text in patterns
+        ]
 
     async def note_hit(pattern_id: str) -> None:
         pass
 
-    monkeypatch.setattr(blacklist_guard, "find_match", find_match)
+    monkeypatch.setattr(blacklist_guard, "_cache", [])
+    monkeypatch.setattr(blacklist_guard, "_ensure_loaded", loaded)
     monkeypatch.setattr(blacklist_guard, "note_hit", note_hit)
     return patterns
 

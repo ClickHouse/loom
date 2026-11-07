@@ -35,6 +35,7 @@ from __future__ import annotations
 import bisect
 import json
 import re
+import string
 from collections.abc import Callable, Hashable, Iterable, Iterator, Sequence
 from typing import Any, Final, Literal, TypeGuard, get_args
 
@@ -83,6 +84,17 @@ _ASSIGNMENT_STOP_CHARS = "\"',;"
 _ASSIGNMENT_VALUE_CHAR = rf"[^\s{re.escape(_ASSIGNMENT_STOP_CHARS)}]"
 _ASSIGNMENT_STOPS = str.maketrans(_ASSIGNMENT_STOP_CHARS, "_" * len(_ASSIGNMENT_STOP_CHARS))
 
+# A JWT: header, payload and signature. It starts where a run of its characters starts:
+# from `\b`, every `eyJ` after a `-` inside one long run was a start that scanned to the
+# run's end (quadratic).
+_JWT = re.compile(
+    r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+)
+# What a window of a long value reads as a JWT: a header of at most 1,000 characters and
+# the start of its payload, so a long token a window's edge cuts is found from its first
+# 1,017 characters (`SHAPE_SPAN`).
+_JWT_START = re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,1000}\.eyJ[A-Za-z0-9_-]{10}")
+
 _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsk-(?:proj-|ant-|lf-)?[A-Za-z0-9_-]{20,}"),  # OpenAI / Anthropic / Langfuse
     re.compile(r"\bpk-lf-[0-9a-fA-F-]{16,}"),
@@ -91,20 +103,39 @@ _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}\b"),
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),  # Slack
     _PRIVATE_KEY_BLOCK,
-    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),  # JWT
+    _JWT,
     re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),  # Google API key
     # `password=…`, `api_key: …`, `secret := …`, `access_token = …` followed by a token-shaped
     # value of 8+ characters; a space, quote, comma or semicolon ends it.
     re.compile(rf"(?i)\b(?:{ASSIGNMENT_WORDS})\b\s*[:=]\s*[\"']?{_ASSIGNMENT_VALUE_CHAR}{{8,}}"),
 )
 
-_MEDIUM_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),  # email
-    # Phone numbers: E.164 (+14155550123) or grouped national forms with at
-    # least 10 digits — separators allowed, so "415-555-0123" and
-    # "(415) 555 0123" match but a 4-digit year or a 6-digit count does not.
-    re.compile(r"(?<![\w.])(?:\+?\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?![\w.])"),
-)
+# An email is `<local>@<domain>`, its parts bounded by RFC 5321's lengths: a local part of
+# 1-64 of these characters that starts at a word boundary, a domain of at most 253 with a
+# 2-24 letter top level. It is found from its `@`: a regex starting at every word boundary
+# rescans up to 64 characters from each one, and its domain again from each start.
+_EMAIL_LOCAL_CHARS = string.ascii_letters + string.digits + "._%+-"
+_EMAIL_DOMAIN = re.compile(r"@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}\b")
+_WORD_BOUNDARY = re.compile(r"\b")
+
+
+def has_email(text: str) -> bool:
+    """Whether `text` holds an email address; reads each `@` with a domain once."""
+    for m in _EMAIL_DOMAIN.finditer(text):
+        at = m.start()
+        before = text[max(0, at - 64) : at]
+        local = len(before) - len(before.rstrip(_EMAIL_LOCAL_CHARS))
+        if local:
+            start = _WORD_BOUNDARY.search(text, at - local, at)
+            if start is not None and start.start() < at:
+                return True
+    return False
+
+
+# Phone numbers: E.164 (+14155550123) or grouped national forms with at least 10 digits —
+# separators allowed, so "415-555-0123" and "(415) 555 0123" match but a 4-digit year or a
+# 6-digit count does not.
+PHONE = re.compile(r"(?<![\w.])(?:\+?\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?![\w.])")
 
 # The patterns below are ASCII-only (`re.ASCII`), as RE2 is in the sweep's coarse filter,
 # so a row the write path labels is a row the sweep can select.
@@ -399,14 +430,20 @@ def detect_sensitivity(text: str) -> Sensitivity:
         return ""
     if _reads_high_text(text):
         return HIGH
-    if any(pat.search(text) for pat in _MEDIUM_PATTERNS) or _iban_spans(text):
+    if has_email(text) or PHONE.search(text) or _iban_spans(text):
         return MEDIUM
     return ""
 
 
+def detect_window_sensitivity(window: str) -> Sensitivity:
+    """`detect_sensitivity` of one window of a long value (`detection_windows`): a JWT
+    there is found from its start, since the window's edge may cut its signature off."""
+    return HIGH if _JWT_START.search(window) else detect_sensitivity(window)
+
+
 # A line no pattern matches across: `;` ends the assignment shape's token class, and the
 # phone shape allows only one space, dot or dash between its groups.
-_SCALAR_SEP = "\n;\n"
+SCALAR_SEP = "\n;\n"
 
 # Key words naming a PIN-like secret, and the label a value under them is stated with
 # (`{"pin_code": "4471"}` reads as `pin is 4471`), so the free-text grammar decides the
@@ -514,18 +551,23 @@ def _pair_secret(key: str, quoted: str | None, bare: str | None) -> str:
 def detector_text(value: Any) -> str:
     """Decoded text of a stored value for the detector: a JSON string is parsed, and each key
     and scalar is its own line, so a token after a newline keeps its word boundary. The lines
-    are joined by `_SCALAR_SEP`, which no pattern crosses, so two scalars never read as one
+    are joined by `SCALAR_SEP`, which no pattern crosses, so two scalars never read as one
     (`Password:` then the next key, or `256`, `512`, `1024` as a phone number). A key that
     names a PIN-like secret, an SSN or a credential adds its value's stated form
     (`_keyed_secret`), so `{"pin": "4471"}` reads as `pin is 4471` does; other keys label
     nothing. Iterative, so a deeply nested value cannot stop a worker pass."""
+    return SCALAR_SEP.join(detector_lines(value))
+
+
+def detector_lines(value: Any) -> Iterator[str]:
+    """The lines `detector_text` joins, one at a time, so a caller can pause between them."""
     if isinstance(value, str):
         text = value
         try:
             value = json.loads(text)
         except (ValueError, RecursionError):
-            return text
-    lines: list[str] = []
+            yield text
+            return
     stack: list[Any] = [value]
     while stack:
         v = stack.pop()
@@ -535,12 +577,11 @@ def detector_text(value: Any) -> str:
                 stack.append(str(k))
                 stated = _keyed_secret(str(k), x)
                 if stated:
-                    lines.append(stated)
+                    yield stated
         elif isinstance(v, list | tuple):
             stack.extend(reversed(v))
         elif v is not None:
-            lines.append(str(v))
-    return _SCALAR_SEP.join(lines)
+            yield str(v)
 
 
 def value_reads_high(value: Any) -> bool:
@@ -747,14 +788,61 @@ def listed_text(text: Any) -> str:
 def resolve_sensitivity(requested: str | None, text: str) -> Sensitivity:
     """The caller's explicit level wins; an unset level is detected from the
     value when `memory_sensitivity_autodetect` is on, else stays ''."""
+    level = caller_level(requested)
+    return detect_sensitivity(text or "") if level is None else level
+
+
+def caller_level(requested: str | None) -> Sensitivity | None:
+    """The level a write gets without reading its value: the caller's explicit level, or
+    '' when `memory_sensitivity_autodetect` is off; None when it is to be detected."""
     level = (requested or "").strip().lower()
     if level and is_level(level):
         return level
     from server.settings import settings
 
-    if not bool(settings.memory_sensitivity_autodetect):
-        return ""
-    return detect_sensitivity(text or "")
+    return None if bool(settings.memory_sensitivity_autodetect) else ""
+
+
+# The longest text a shape is read over, so a window of a long value holds each shape
+# whole: an email is at most 64 + 1 + 253 + 1 + 24 = 343 characters, a JWT in a window
+# is found from its first 1,017 (`_JWT_START`), and a key, a private key block, a card,
+# an SSN, a phone number or an IBAN from fewer. Three are not: a stated PIN with about
+# 1,000 characters of whitespace or qualifier words before its value, a `password=`
+# assignment with about 1,000 characters of whitespace around its `=`, and a JWT whose
+# header passes 1,000 characters. Across a window's edge, those read lower than the
+# whole value.
+SHAPE_SPAN = 1024
+# Where a window ends and the next begins: after whitespace that no digit or dash touches,
+# so no digit run (a card, a phone number, an SSN) is split, and each edge reads as the
+# whitespace it stands for. Without one in `_CUT_SEARCH` characters, the cut is where it
+# falls, and a shape at that edge can read where the whole value would not.
+_WINDOW_CUT = re.compile(r"(?<![\d-])\s(?![\d-])")
+_CUT_SEARCH = 256
+
+
+def _cut(text: str, at: int) -> int:
+    """The last window cut at or before `at`, within `_CUT_SEARCH` characters."""
+    last = at
+    for m in _WINDOW_CUT.finditer(text, max(0, at - _CUT_SEARCH), min(len(text), at + 1)):
+        if m.end() <= at:
+            last = m.end()
+    return last
+
+
+def detection_windows(text: str, size: int) -> Iterator[str]:
+    """`text` in windows of at most `size` characters (at least `4 * SHAPE_SPAN`, so each
+    window moves past the last), each overlapping the next by at least `SHAPE_SPAN`, so
+    every shape found from a prefix that long lies whole in one window. The largest level
+    of the windows is the level of `text`, but for the shapes `SHAPE_SPAN` names, and a
+    shape at a cut where no whitespace was near, which may read where the whole would not."""
+    if size < 4 * SHAPE_SPAN:
+        raise ValueError(f"a window holds at least {4 * SHAPE_SPAN} characters, not {size}")
+    start = 0
+    while len(text) - start > size:
+        end = _cut(text, start + size)
+        yield text[start:end]
+        start = _cut(text, end - SHAPE_SPAN)
+    yield text[start:]
 
 
 def max_sensitivity(levels: Iterable[str | None]) -> Sensitivity:

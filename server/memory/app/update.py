@@ -422,23 +422,19 @@ async def _revised_edges(
         await drop_undeclared_edges_beside(scope, {memory_id: int(memory_row["version"])}, op=op)
 
 
-def _update_sensitivity(
+async def _update_sensitivity(
     existing: MemoryRow, serialized_value: str, tags: list[str]
 ) -> tuple[str, list[str]]:
     """(the revised row's sensitivity, its tags with the `sensitivity:` tag): the
     level memory.set would give the new value (autodetected when the setting is on),
     never below the row's own label."""
-    from server.memory.domain.sensitivity import (
-        detector_text,
-        max_sensitivity,
-        resolve_sensitivity,
-        sensitivity_tags,
-    )
+    from server.memory.app.sensitivity_level import decoded_text, resolve_level
+    from server.memory.domain.sensitivity import max_sensitivity, sensitivity_tags
 
     level = max_sensitivity(
         [
             getattr(existing, "sensitivity", ""),
-            resolve_sensitivity("", detector_text(serialized_value)),
+            await resolve_level("", await decoded_text(serialized_value)),
         ]
     )
     return level, [*tags, *sensitivity_tags(level, tags)]
@@ -687,7 +683,7 @@ async def _write_revision(
     # embedding to compare) and when the flag is off.
     # The new value is labelled as memory.set labels one, never below the row's own
     # label: a value that now holds a high shape is 'high' and is not embedded.
-    sensitivity, new_tags = _update_sensitivity(existing, serialized_value, new_tags)
+    sensitivity, new_tags = await _update_sensitivity(existing, serialized_value, new_tags)
     searchable = is_embedded(existing.memory_type, sensitivity)
     embedder = get_embedder() if searchable else None
     if embedder is not None:
