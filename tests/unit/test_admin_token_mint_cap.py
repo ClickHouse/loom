@@ -116,6 +116,21 @@ def test_restricted_namespace_needs_the_callers_grant_at_the_role(client) -> Non
     assert _mint(client, _bearer(["org_admin"]), [PRIV], roles=["viewer"]).status_code == 200
 
 
+def test_a_mint_onto_a_restricted_namespace_writes_the_access_audit_row(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _grant_restricted(org, sa_subject, creator, ns_roles):
+        return [ns for ns in ns_roles if ns == PRIV]
+
+    monkeypatch.setattr(token_grants, "grant_restricted_to_token", _grant_restricted)
+    monkeypatch.setattr(settings, "restricted_audit_inline", True)
+    client.grants[(ORG, PRIV, "ops@x")] = Role.VIEWER
+    r = _mint(client, _bearer(["org_admin"]), ["clickgap-public", PRIV], roles=["viewer"])
+    assert r.status_code == 200, r.text
+    rows = [kw for e, kw in client.audit_rows if e == "namespace.restricted_access"]
+    assert [(kw["namespace"], kw["subject"]["op"]) for kw in rows] == [(PRIV, "admin.token.mint")]
+
+
 def test_other_org_is_refused_and_a_platform_admin_mints_only_in_its_own(client) -> None:
     assert _mint(client, _bearer(["org_admin"], org="acme"), ["clickgap-public"]).status_code == 403
     # a platform admin passes the gate for any org, but a child never changes org

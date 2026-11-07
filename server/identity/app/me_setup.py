@@ -19,6 +19,7 @@ from server.identity.app.me_service_accounts import (
     parse_ttl_days,
     save_token,
 )
+from server.identity.app.restricted_access import note_restricted_access
 from server.settings import settings
 
 router = APIRouter()
@@ -343,6 +344,10 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         delegated=delegated,
         restricted_names=restricted_names,
     )
+    for ns in restricted_names:
+        await note_restricted_access(
+            parent, op="me.setup.mcp_config", org=org, namespace=ns, transport="http"
+        )
     reads_everywhere = "*" in delegated.namespaces
     # The page names where this token's unaddressed MCP calls land: the MCP
     # transport's own resolver, asked about the token just minted.

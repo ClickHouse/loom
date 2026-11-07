@@ -23,6 +23,8 @@ from server.identity.app import claim_release as cr
 from server.identity.app import namespace_classification as nc
 from server.settings import settings
 
+_REAL_IS_RESTRICTED = nc.is_restricted
+
 _ROW: dict[str, Any] = {
     "org": "acme",
     "namespace": "repo-x",
@@ -163,9 +165,16 @@ def test_a_release_of_a_restricted_namespace_writes_the_access_audit_row(
 
     monkeypatch.setattr("server.observability.audit.emit", emit)
     monkeypatch.setattr(settings, "restricted_audit_inline", True)
-    # the snapshot the classification read fills (faked here, so seeded)
-    monkeypatch.setitem(nc._cache, "acme", (1e12, frozenset({"repo-x"})))
-    state["restricted"] = True
+
+    class _Directory:  # the classification read, which fills the snapshot the row reads
+        _client = object()
+
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, str]]:
+            return [{"namespace": "repo-x"}]
+
+    monkeypatch.setattr(nc, "is_restricted", _REAL_IS_RESTRICTED)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Directory())
+    monkeypatch.setattr(nc, "_cache", {})  # cold, and restored after the test
     assert _status(run, _tok(["org_admin"])) == 404
     assert rows == []  # refused: nothing was reached
     state["allows"] = True

@@ -97,9 +97,9 @@ async def knowledge_upload(
     sha256: str = "",
 ) -> Any:
     """Store one file for `knowledge.ingest`. Auth: bearer + WRITER on (org,
-    namespace), as the ops check it, and the restricted-access audit row an
-    op leaves. Answers the upload's id, sha256, size, detected format and
-    expiry."""
+    namespace), as the ops check it; an admitted upload to a restricted
+    namespace leaves the audit row an op leaves. Answers the upload's id,
+    sha256, size, detected format and expiry."""
     auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None and settings.auth_actually_required():
         raise missing_bearer()
