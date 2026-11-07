@@ -30,6 +30,10 @@ import { BusyButton } from "../../components/ui/BusyButton";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { PageContainer } from "../../layout/PageContainer";
 import { Alert, LoadingSkeleton, PageHeader, Stat, TabTrigger } from "../../components/ui";
+import { useNamespaceRole } from "../../lib/namespaceRole";
+import { NamespaceHealthPanel } from "./NamespaceHealth";
+import { ProjectionFailuresPanel } from "./ProjectionFailures";
+import { RepairsPanel } from "./Repairs";
 
 // Friendly label + blurb per worker; unknown workers fall through to
 // a default rendering (raw name + "background worker").
@@ -139,9 +143,12 @@ function parseWorkersStatus(d: unknown): { rows: WorkerRow[]; store: WorkersStor
   return { rows: parsed.filter((r): r is WorkerRow => r !== null), store };
 }
 
-type HealthTab = "workers" | "extraction" | "opmix" | "consolidations";
+type HealthTab = "workers" | "extraction" | "opmix" | "consolidations" | "namespace" | "repairs" | "projections";
 // One name per tab, for its trigger and the document title.
 const HEALTH_TABS: Record<HealthTab, string> = {
+  namespace: "Namespace",
+  repairs: "Repairs",
+  projections: "Projection failures",
   workers: "Workers",
   extraction: "Extraction quality",
   opmix: "Operation mix",
@@ -156,6 +163,11 @@ export function Health() {
   const whoami = useStore((s) => s.whoami);
   const seesWorkers = hasAdminClaim(whoami);
   const seesOpMix = hasOrgAdminClaim(whoami);
+  // Namespace reads memory.health (VIEWER); Repairs holds ADMIN-only writes and reads
+  // nothing on open; Projection failures is ORG_ADMIN, like Operation mix.
+  const role = useNamespaceRole(identity.namespace);
+  const seesNamespace = canCall("memory.health", role, whoami);
+  const seesRepairs = canCall("memory.sweep_expired", role, whoami);
   const [tab, setTab] = useState<HealthTab>(seesWorkers ? "workers" : "extraction");
 
   // Drop the consolidations sub-tab entirely until a run has landed.
@@ -204,6 +216,21 @@ export function Health() {
               {HEALTH_TABS.consolidations}
             </TabTrigger>
           )}
+          {seesNamespace && (
+            <TabTrigger value="namespace" icon="database">
+              {HEALTH_TABS.namespace}
+            </TabTrigger>
+          )}
+          {seesRepairs && (
+            <TabTrigger value="repairs" icon="settings">
+              {HEALTH_TABS.repairs}
+            </TabTrigger>
+          )}
+          {seesOpMix && (
+            <TabTrigger value="projections" icon="warning">
+              {HEALTH_TABS.projections}
+            </TabTrigger>
+          )}
         </Tabs.TriggersList>
         {seesWorkers && (
           <Tabs.Content value="workers">
@@ -221,6 +248,21 @@ export function Health() {
         {hasConsolidations && (
           <Tabs.Content value="consolidations">
             <ConsolidationsPanel />
+          </Tabs.Content>
+        )}
+        {seesNamespace && (
+          <Tabs.Content value="namespace">
+            <NamespaceHealthPanel />
+          </Tabs.Content>
+        )}
+        {seesRepairs && (
+          <Tabs.Content value="repairs">
+            <RepairsPanel />
+          </Tabs.Content>
+        )}
+        {seesOpMix && (
+          <Tabs.Content value="projections">
+            <ProjectionFailuresPanel />
           </Tabs.Content>
         )}
       </Tabs>

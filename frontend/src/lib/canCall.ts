@@ -125,6 +125,9 @@ export const OP_MIN_ROLE = {
   "learnings.list": VIEWER,
   "policy.decisions": VIEWER,
   "consolidations.list": VIEWER,
+  // Health's Namespace tab reads on open; its Repairs tab is shown to an admin.
+  "memory.health": VIEWER,
+  "memory.sweep_expired": ADMIN,
   "conflicts.allowlist_list": VIEWER,
   // The Review queue's Duplicates tab.
   "memory.dedup_list": ADMIN,
