@@ -190,7 +190,7 @@ type SourceKind = (typeof SOURCE_KINDS)[number];
 export const KIND_FORM: Record<SourceKind, { about: string; reads: string; noCredential: string }> = {
   gdrive: {
     about:
-      "A shared folder of documents, presentations, PDFs and Word documents. Share it read-only with a service account and paste the account's key; Loom checks the key and the folders before anything is stored.",
+      "A shared folder of docs, slides, decks, Word documents and PDFs. Share it read-only with a service account and paste the account's key; Loom checks the key and the folders before anything is stored.",
     reads: "The key reads the folders",
     noCredential: "Paste the service account's key.",
   },
