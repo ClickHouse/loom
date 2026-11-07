@@ -239,9 +239,11 @@ a tree. It runs the configure again on the existing cache before a full index an
 a delta whose window adds a `.cpp`, `.cc` or `.cxx` file or adds, changes or deletes a
 `CMakeLists.txt` or `.cmake` file, because the compile database lists only the
 translation units of the tree it was configured on. When that configure fails, the
-harness logs a warning and indexes with the last compile database. A worker whose project prerequisites are absent records a skip in
-`workers.status`; the Tree-sitter tier remains available. TypeScript projects have
-their dependencies installed automatically in their checkout.
+harness indexes with the last compile database, and the pass records the skip
+`cmake reconfigure failed; compile database stale` for the entry. A worker whose
+project prerequisites are absent records a skip in `workers.status`; the Tree-sitter
+tier remains available. TypeScript projects have their dependencies installed
+automatically in their checkout.
 
 A large C++ tree is the heavy case: a ClickHouse-sized checkout with its submodules
 and build tree is about 30 GB beside the mirror, and scip-clang holds a translation

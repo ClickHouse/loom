@@ -127,6 +127,35 @@ async def test_fetch_does_not_recurse_submodules(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_delta_on_a_stale_compile_database_is_a_skip_on_the_pass(monkeypatch, tmp_path):
+    """The harness warns and exits 0 when CMake cannot reconfigure; the pass names the
+    entry, since translation units added since the last configure are not indexed."""
+    from server.code.app.index.sandbox import JobResult
+    from server.code.workers import scip_delta as w
+    from server.settings import settings
+
+    for name in ("checkout", "bare.git"):
+        (tmp_path / name).mkdir()
+    (tmp_path / "scip-clang").touch()
+    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(tmp_path / "checkout"))
+    monkeypatch.setattr(settings, "code_git_dir", str(tmp_path / "bare.git"))
+    monkeypatch.setattr(settings, "code_scip_clang_path", str(tmp_path / "scip-clang"))
+    monkeypatch.setattr(w, "git", AsyncMock())
+    warning = (
+        b">> warning: cmake reconfigure failed; indexing with the last compile_commands.json\n"
+    )
+    harness = AsyncMock(return_value=JobResult(0, warning, b""))
+    with (
+        patch("server.code.store.index.CodeRepo", return_value=_repo("a" * 40, "b" * 40)),
+        patch("server.code.domain.index.repos.configured_repos", return_value=[_Cfg()]),
+        patch("server.code.app.index.compiler_tier.run_job", harness),
+    ):
+        res = await run_pass()
+    assert not res.errors
+    assert res.skipped == ["code-clickhouse: cmake reconfigure failed; compile database stale"]
+
+
+@pytest.mark.asyncio
 async def test_missing_checkout_skips(monkeypatch):
     from server.settings import settings
 

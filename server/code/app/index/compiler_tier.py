@@ -225,6 +225,21 @@ def harness_failure(returncode: int | None, tail: str) -> RuntimeError:
     return RuntimeError(f"harness exit {returncode}: {tail}")
 
 
+# run_delta.sh prints this when CMake cannot reconfigure and it indexes with the
+# last compile database
+STALE_COMPDB_WARNING = "cmake reconfigure failed"
+
+
+def note_stale_compdb(worker: str, cfg: RepoConfig, out: str, skipped: list[str]) -> None:
+    """A harness run that indexed with a stale compile database succeeds, but a
+    translation unit added since the last configure is missing from it: record a
+    skip, so the pass's outcome in workers.status names the entry."""
+    if STALE_COMPDB_WARNING in out:
+        reason = f"{cfg.namespace}: cmake reconfigure failed; compile database stale"
+        logger.warning("%s: %s", worker, reason)
+        skipped.append(reason)
+
+
 async def restart_full(
     repo: CodeRepo, cfg: RepoConfig, watermark_key: str, err: BaseUnknown, errors: list[str]
 ) -> None:

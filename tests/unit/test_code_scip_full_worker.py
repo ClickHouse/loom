@@ -49,13 +49,13 @@ def _repo(state: dict[tuple[str, str], str]) -> AsyncMock:
     return repo
 
 
-async def _full_pass(tmp_path, monkeypatch, state, cfgs) -> tuple[Any, AsyncMock]:
+async def _full_pass(tmp_path, monkeypatch, state, cfgs, out: str = "") -> tuple[Any, AsyncMock]:
     from server.settings import settings
 
     clang = tmp_path / "scip-clang"
     clang.touch()
     monkeypatch.setattr(settings, "code_scip_clang_path", str(clang))
-    run = AsyncMock(return_value=(ScipApplyStats(), ""))
+    run = AsyncMock(return_value=(ScipApplyStats(), out))
     monkeypatch.setattr(scip_full, "full_index", run)
     with (
         patch("server.code.store.index.CodeRepo", return_value=_repo(state)),
@@ -71,6 +71,17 @@ async def test_an_unseeded_entry_gets_its_first_index_and_a_checkout(tmp_path, m
     assert res.deltas_applied == 1 and not res.errors
     assert (tmp_path / "checkout-code-a" / ".git").is_dir()
     assert run.await_args.args[5] == "a" * 40
+
+
+@pytest.mark.asyncio
+async def test_a_full_run_on_a_stale_compile_database_is_a_skip_on_the_pass(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, "code-a")
+    out = ">> warning: cmake reconfigure failed; indexing with the last compile_commands.json\n"
+    res, _ = await _full_pass(
+        tmp_path, monkeypatch, {("code-a", "git_head"): "a" * 40}, [cfg], out=out
+    )
+    assert res.deltas_applied == 1 and not res.errors
+    assert res.skipped == ["code-a: cmake reconfigure failed; compile database stale"]
 
 
 @pytest.mark.asyncio

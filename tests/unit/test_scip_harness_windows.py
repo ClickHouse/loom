@@ -193,8 +193,8 @@ while [[ $# -gt 0 ]]; do
 done
 """
 
-# the stub cmake logs its call, fails when CMAKE_FAIL is set, and otherwise lists every src/*.cpp of the tree in the compile
-# database, as a configure over a glob does
+# stub cmake: logs its call, fails under CMAKE_FAIL, else lists every src/*.cpp
+# in the compile database, as a configure over a glob does
 _FAKE_CMAKE = """#!/usr/bin/env bash
 echo "cmake $*" >>"$CMAKE_CALLS"
 [[ -n "${CMAKE_FAIL:-}" ]] && exit 1
