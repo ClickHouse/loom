@@ -539,6 +539,14 @@ def test_a_cell_a_rowspan_carries_down_holds_its_column_in_the_rows_below() -> N
     a = extract(page, "r.html")
     # each value stays under its header, as a DOCX merged cell keeps its place
     assert [b.text for b in a.blocks] == ["Region | Team | Owner\nEMEA | Ops | Ann\n | Data | Bob"]
+    # so does one spanning columns too, under a header that spans them
+    wide = (
+        b"<table><tr><th colspan=2>Region<th>Owner"
+        b"<tr><td colspan=2 rowspan=2>EMEA<td>Ann<tr><td>Bob</table>"
+    )
+    assert [b.text for b in extract(wide, "w.html").blocks] == [
+        "Region | Owner\nEMEA | Ann\n | Bob"
+    ]
     # a rowspan ends with its row group, and one of 0 reaches to the group's end
     groups = (
         b"<table><tbody><tr><td rowspan=5>EMEA<td>Ops</tbody>"

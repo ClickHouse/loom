@@ -180,20 +180,21 @@ read, with a failure naming the open elements.
 
 **HTML tables.** A `<table>` is one block, a row per line with its cells joined by a pipe and `attrs.table` its `rows`
 and `columns`, as a DOCX table is, but for its rows with no text, which are dropped. A cell after a row's end starts the
-next row. A row group's start or end (`thead`, `tbody`, `tfoot`) ends the open row. A column no cell of its own fills (a
-spacer; a cell spanning columns, `colspan`, fills none of its own, and a cell a `rowspan` carries down holds its columns
-in the rows below, as an empty cell there, until its row group ends, as HTML places cells; a span is read as its leading
-digits) is dropped (a table whose cells take more than a million steps to place keeps every cell), and a table left with
-one column holds no grid: its rows are one paragraph without `attrs.table`, as a page wrapped in a table (an email) is.
-Its captions, with any heading or list inside them, and its text in no cell (between rows) are paragraphs before it, in
-their order, as a browser shows them apart. A table whose cell holds a heading, a list, a `pre`, a table or a second
-paragraph lays out a page instead (an email, a page set in a table's cells): its cells, captions and text in no cell are
-read as the blocks they hold, in order, and a table inside one is a table. A heading, list, list item, definition, `pre`
-or table in no cell ends the table, its `</table>` left out or not, and rows after it are read as paragraphs, so a table
-left open does not hold the rest of the page. The end of an element the table is inside is no end of it, as HTML holds a
-table as a scope of its own: what follows in no cell is shown before the table, as a browser shows it, and a caption
-left open holds it. Each paragraph or container's text in no cell is its own. A table inside a caption, like a heading
-or list there, is read as the caption's text.
+next row. A row group's start or end (`thead`, `tbody`, `tfoot`) ends the open row. Cells are placed as HTML places
+them. A cell spanning columns (`colspan`) fills none of its own. A cell a `rowspan` carries down holds its columns in
+the rows below, as an empty cell there, until its row group ends. A span is read as HTML reads an integer. A column no
+cell of its own fills (a spacer) is dropped, unless a cell with text is carried down into it. A table whose cells take
+more than a million steps to place keeps every cell. A table left with one column holds no grid: its rows are one
+paragraph without `attrs.table`, as a page wrapped in a table (an email) is. Its captions, with any heading or list
+inside them, and its text in no cell (between rows) are paragraphs before it, in their order, as a browser shows them
+apart. A table whose cell holds a heading, a list, a `pre`, a table or a second paragraph lays out a page instead (an
+email, a page set in a table's cells): its cells, captions and text in no cell are read as the blocks they hold, in
+order, and a table inside one is a table. A heading, list, list item, definition, `pre` or table in no cell ends the
+table, its `</table>` left out or not, and rows after it are read as paragraphs, so a table left open does not hold the
+rest of the page. The end of an element the table is inside is no end of it, as HTML holds a table as a scope of its
+own: what follows in no cell is shown before the table, as a browser shows it, and a caption left open holds it. Each
+paragraph or container's text in no cell is its own. A table inside a caption, like a heading or list there, is read as
+the caption's text.
 
 **SQL statements.** A statement is split on the dialect's tokens, so a `;` in a string or comment does not end it. A
 client's own command lines (`GO`, a lone `/`, `DELIMITER ;;`, backslash commands) are not SQL: a script that holds

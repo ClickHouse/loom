@@ -339,8 +339,10 @@ def _span(attrs: list[tuple[str, str | None]], name: str) -> int:
     return _SPANS[name] if n == 0 and name == "rowspan" else min(max(n, 1), _SPANS[name])
 
 
-# A placed cell: the first column it fills, the columns it spans, and its text.
-_Placed = tuple[int, int, str]
+# A placed cell: the first column it fills, the columns it spans, its text, and
+# whether it is kept whatever its columns (it, or the cell carried down into it,
+# holds text).
+_Placed = tuple[int, int, str, bool]
 
 
 def _grid(t: _Table, texts: list[list[str]]) -> list[list[_Placed]] | None:
@@ -348,7 +350,8 @@ def _grid(t: _Table, texts: list[list[str]]) -> list[list[_Placed]] | None:
     carries down holds its columns in the rows below, as an empty cell there, until
     its row group ends. None past `_MAX_PLACING` steps, for a table built to cost
     more."""
-    held: list[tuple[int, int, int]] = []  # (first column, past the last, rows held)
+    # (first column, past the last, rows held, whether the cell holds text)
+    held: list[tuple[int, int, int, bool]] = []
     out: list[list[_Placed]] = []
     steps = 0
     for i, (row, row_texts) in enumerate(zip(t.rows, texts, strict=True)):
@@ -357,22 +360,22 @@ def _grid(t: _Table, texts: list[list[str]]) -> list[list[_Placed]] | None:
         held.sort()
         at, k = 0, 0
         cells: list[_Placed] = []
-        below: list[tuple[int, int, int]] = []
+        below: list[tuple[int, int, int, bool]] = []
         for cell, text in zip(row, row_texts, strict=True):
             while k < len(held) and held[k][0] <= at:
                 if held[k][1] > at:
-                    cells.append((at, held[k][1] - at, ""))
+                    cells.append((at, held[k][1] - at, "", held[k][3]))
                     at = held[k][1]
                 k += 1
-            cells.append((at, cell.colspan, text))
+            cells.append((at, cell.colspan, text, bool(text)))
             if cell.rowspan > 1:
-                below.append((at, at + cell.colspan, cell.rowspan - 1))
+                below.append((at, at + cell.colspan, cell.rowspan - 1, bool(text)))
             at += cell.colspan
         steps += len(held) + len(row)
         if steps > _MAX_PLACING:
             return None
         out.append(cells)
-        held = [(a, b, n - 1) for a, b, n in held if n > 1] + below
+        held = [(a, b, n - 1, kept) for a, b, n, kept in held if n > 1] + below
     return out
 
 
@@ -423,8 +426,7 @@ class _Table:
 
     def open_caption(self, line: int) -> None:
         """A caption, which ends one still open (as HTML ends it)."""
-        self.end_cell_or_caption()
-        self.row_open = False  # a caption ends the open row, as HTML ends it
+        self.end_row()  # a caption ends the open row, as HTML ends it
         self.loose, self.caption = None, _Open("caption", line)
         self.order.append(self.caption)
 
@@ -514,11 +516,11 @@ class _HTMLBlocks(HTMLParser):
         if grid is None:
             rows = [r for r in texts if any(r)]
         else:
-            own = sorted({at for r in grid for at, span, text in r if text and span == 1})
+            own = sorted({at for r in grid for at, span, text, _ in r if text and span == 1})
             rows = [
-                [text for at, span, text in r if text or _holds_own(own, at, span)]
+                [text for at, span, text, kept in r if kept or _holds_own(own, at, span)]
                 for r in grid
-                if any(text for _, _, text in r)
+                if any(text for _, _, text, _ in r)
             ]
         self.separators += sum(len(r) - 1 for r in rows)
         first, last = min(c.first_line for c in cells), max(c.last_line for c in cells)
