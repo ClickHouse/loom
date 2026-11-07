@@ -165,6 +165,7 @@ __all__ = [
     "caller_admin_of",
     "caller_identity",
     "caller_role_on",
+    "lowered_aliases",
     "parse_ns_roles",
     "remember_caller",
     "require_authed_caller",

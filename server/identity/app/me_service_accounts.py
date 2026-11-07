@@ -111,21 +111,18 @@ def _invalid(message: str) -> HTTPException:
     return HTTPException(status_code=422, detail={"code": "VALIDATION_FAILED", "message": message})
 
 
-async def _with_bound_tracker(org: str, subject: str, names: list[str]) -> list[str]:
-    """`names` plus each named repository's bound tracker record that is restricted and
-    that the caller holds a grant on; the history code ops read issues and PRs there."""
+async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[str]) -> list[str]:
+    """The restricted tracker records bound to `repos` that the caller holds a grant on and
+    the parent token reaches; the history code ops read issues and PRs there."""
     from server.tracker.app.binding import tracker_namespaces_for
 
-    out = list(names)
-    for ns in names:
+    out: list[str] = []
+    for ns in repos:
         for qa in tracker_namespaces_for(ns):  # every linked tracker
-            if qa in out:
+            if qa in out or qa in repos or ceiling_role(parent, org, qa) is None:
                 continue
-            if not await is_restricted(org, qa):
-                continue
-            if await me_callers.caller_role_on(org, qa, subject) is None:
-                continue
-            out.append(qa)
+            if await is_restricted(org, qa) and await me_callers.caller_role_on(org, qa, subject):
+                out.append(qa)
     return out
 
 
@@ -148,7 +145,7 @@ def token_name(raw: object) -> str:
     """A new token's name in its owner's token list; 422 for one off its shape."""
     name = str(raw or "").strip()
     if not 1 <= len(name) <= 64:
-        raise _invalid("name required, 1-64 chars")
+        raise _invalid("name must be 1-64 chars")
     if "\x00" in name:  # reserved: revocation cutoffs key on a NUL (mint_token refuses it)
         raise _invalid("name cannot hold a NUL character")
     if ":" in name:  # reserved: `sa:<trust>:<agent>` is a machine trust's agent (auth.agents)
@@ -326,17 +323,15 @@ async def me_service_accounts_create(
         parent = dev_parent(request, payload)
     subject, org = parent.subject, parent.org
 
-    raw_name = str(payload.get("name") or "").strip()
-    name = token_name(raw_name) if raw_name else generated_name(naive_utc_now_seconds())
+    blank = not str(payload.get("name") or "").strip()
+    name = token_name(generated_name(naive_utc_now_seconds()) if blank else payload["name"])
     requested_role = _requested_roles(payload)
     ttl_seconds = parse_ttl_days(payload.get("ttl_days"))
     everything = "*" in requested_role
     # A restricted repository's bound tracker record is named beside it, read-only.
     named = [ns for ns in requested_role if ns != "*" and await is_restricted(org, ns)]
-    for ns in await _with_bound_tracker(org, subject, named):
-        # Only where the parent token reaches it, or the bound record would refuse the mint.
-        if ns not in requested_role and ceiling_role(parent, org, ns) is not None:
-            requested_role[ns] = None if everything else "viewer"
+    for qa in await _bound_trackers(org, subject, parent, named):
+        requested_role.setdefault(qa, None if everything else "viewer")
 
     from server.auth.grant_claims import service_account_change
 
@@ -392,6 +387,8 @@ async def me_service_accounts_create(
         # A `*` asked under a narrower sign-in becomes that sign-in's list.
         "namespaces": delegated.namespaces,
         "ns_roles": delegated.ns_roles or {},
+        # The one role of a token without `ns_roles`; [] for a list with a role each.
+        "roles": delegated.roles,
         "reads_everything": "*" in delegated.namespaces,
         # Where calls that name no namespace save; "": none, each call names one;
         # null: not readable now.

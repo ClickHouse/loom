@@ -96,6 +96,7 @@ async def test_the_default_token_follows_live_grants_and_drops_org_wide_roles(
     assert token.expires_at is not None
     assert token.expires_at - time.time() > (delegation.DEFAULT_TTL_DAYS - 1) * 86400
     assert out["reads_everything"] and out["namespaces"] == ["*"] and out["ns_roles"] == {}
+    assert out["roles"] == ["admin"]
     assert out["name"].startswith("token-") and out["mcp_url"] == "https://loom.example/mcp"
     assert set(out["clients"]) == {
         "claude-desktop",

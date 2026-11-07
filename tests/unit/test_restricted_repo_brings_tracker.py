@@ -9,8 +9,10 @@ import pytest
 
 import server.identity.app.me_service_accounts as me
 import server.identity.app.token_grants as tg
+from server.auth.jwt import AuthInfo
 from server.identity.app import me_callers
 from server.identity.store import grants as grants_repo
+from server.operations.base import Role
 
 ORG = "clickhouse"
 
@@ -54,20 +56,36 @@ def wired(monkeypatch: pytest.MonkeyPatch):
     return state
 
 
+# A sign-in token: it reaches every namespace its owner's grants do.
+PARENT = AuthInfo(
+    subject="alice", org=ORG, namespaces=("*",), roles=(Role.WRITER,), is_service_account=False
+)
+
+
 @pytest.mark.asyncio
-async def test_the_bound_restricted_tracker_record_is_appended_once(wired) -> None:
-    out = await me._with_bound_tracker(ORG, "alice", ["code-private", "code-private-26-8"])
-    assert out == ["code-private", "code-private-26-8", "tracker-private"]
+async def test_the_bound_restricted_tracker_record_is_added_once(wired) -> None:
+    out = await me._bound_trackers(ORG, "alice", PARENT, ["code-private", "code-private-26-8"])
+    assert out == ["tracker-private"]
+    # A delegated parent whose claim does not reach the record brings none.
+    narrow = AuthInfo(
+        subject="sa:ci",
+        org=ORG,
+        namespaces=("code-private",),
+        roles=(Role.VIEWER,),
+        is_service_account=True,
+        creator="alice",
+    )
+    assert await me._bound_trackers(ORG, "alice", narrow, ["code-private"]) == []
 
 
 @pytest.mark.asyncio
 async def test_a_standard_tracker_record_and_an_ungranted_one_are_not_added(wired) -> None:
     # tracker-public is not restricted: read through the repository, nothing to name
-    assert await me._with_bound_tracker(ORG, "alice", ["code-lumen"]) == ["code-lumen"]
+    assert await me._bound_trackers(ORG, "alice", PARENT, ["code-lumen"]) == []
     # no direct grant on the record: skipped, never a 403 — the repository still lands
     wired["grants"].pop("tracker-private")
-    assert await me._with_bound_tracker(ORG, "alice", ["code-private"]) == ["code-private"]
-    assert await me._with_bound_tracker(ORG, "alice", []) == []
+    assert await me._bound_trackers(ORG, "alice", PARENT, ["code-private"]) == []
+    assert await me._bound_trackers(ORG, "alice", PARENT, []) == []
 
 
 @pytest.mark.asyncio

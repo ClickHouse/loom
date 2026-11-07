@@ -422,7 +422,13 @@ async def test_a_token_naming_the_repository_brings_every_restricted_linked_trac
     monkeypatch.setattr("server.identity.app.namespace_classification.is_restricted", _restricted)
     monkeypatch.setattr(me, "is_restricted", _restricted)
     monkeypatch.setattr(me_callers, "caller_role_on", _role)
-    assert await me._with_bound_tracker(ORG, "alice", [CODE]) == [CODE, PRIV]
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+
+    parent = AuthInfo(
+        subject="alice", org=ORG, namespaces=("*",), roles=(Role.WRITER,), is_service_account=False
+    )
+    assert await me._bound_trackers(ORG, "alice", parent, [CODE]) == [PRIV]
 
 
 @pytest.mark.asyncio

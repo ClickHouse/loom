@@ -288,8 +288,7 @@ def reads_check(
 ) -> Check:
     """What the token reads, in the words the dashboard's token form uses: every namespace
     the token's creator belongs to, the repositories among them grouped by repository, and the
-    restricted repositories it still cannot read — a client token runs under its own `sa:`
-    subject with no direct grant, so the restricted-namespace gate refuses it there.
+    restricted repositories it does not name, which the restricted-namespace gate refuses.
     `code.repos` is asked only when the membership list holds a repository row."""
     name = "client:reads"
     if not token or not auth_ok:

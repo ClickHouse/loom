@@ -387,7 +387,7 @@ def test_a_mint_without_a_name_says_which_field_to_send(client) -> None:
     assert r.status_code == 422, r.text
     assert r.json()["detail"] == {
         "code": "VALIDATION_FAILED",
-        "message": "name required, 1-64 chars",
+        "message": "name must be 1-64 chars",
     }
     assert client.saved == []
 

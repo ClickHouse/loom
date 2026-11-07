@@ -17,6 +17,7 @@ const created = (over: Partial<TokenCreated> = {}): TokenCreated => ({
   org: "dev",
   namespaces: ["ns-a", "*"],
   ns_roles: {},
+  roles: ["writer"],
   reads_everything: true,
   saves_to: "ns-a",
   created_at: "2026-01-01T00:00:00",
@@ -276,6 +277,16 @@ describe("the token form", () => {
     await waitFor(() => expect(savesTo()).toHaveTextContent(/^ns-a/), WAIT);
     await create();
     expect(await screen.findByText(/namespace="ns-c"/, undefined, WAIT)).toBeInTheDocument();
+  });
+
+  it("a token that reads everything with a viewer role of its own is read-only", async () => {
+    vi.mocked(createToken).mockResolvedValueOnce(created({ roles: ["viewer"] }));
+    render(<Setup />);
+    await waitFor(() => expect(savesTo()).toHaveTextContent(/^ns-a/), WAIT);
+    await create();
+    expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(
+      "Read-only; calls that name no namespace read ns-a.",
+    );
   });
 
   it("a token that reads everything of someone who writes nowhere is read-only", async () => {

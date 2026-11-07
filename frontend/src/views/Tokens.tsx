@@ -683,7 +683,10 @@ function createdScope(c: TokenCreated, writesAnywhere: boolean, label: (ns: stri
       }.`
     : `Reads only ${named.join(", ")}.`;
   const roles = Object.values(c.ns_roles);
-  const readOnly = c.reads_everything ? !writesAnywhere : roles.length > 0 && roles.every((r) => r === "viewer");
+  // A `*` token writes only with a writing role of its own and a namespace its owner writes.
+  const readOnly = c.reads_everything
+    ? !writesAnywhere || !c.roles.some((r) => r !== "viewer")
+    : roles.length > 0 && roles.every((r) => r === "viewer");
   const saves =
     c.saves_to === null
       ? "Where it saves is worked out on each call."

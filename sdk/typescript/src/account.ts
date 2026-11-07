@@ -49,6 +49,8 @@ export interface TokenCreated {
   namespaces: string[];
   /** The role per namespace of a list token; `{}` for a `*` token. */
   ns_roles: Record<string, GrantRole>;
+  /** The one role of a token without `ns_roles`; `[]` for a list with a role each. */
+  roles: GrantRole[];
   reads_everything: boolean;
   /** Where calls that name no namespace save; `""` none; `null` not readable now. */
   saves_to: string | null;

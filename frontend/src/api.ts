@@ -1317,6 +1317,8 @@ export interface TokenCreated {
   /** The claim as minted: `*` and what is named beside it, or the list it reads. */
   namespaces: string[];
   ns_roles: Record<string, string>;
+  /** The one role of a token without `ns_roles`; [] for a list with a role each. */
+  roles: string[];
   reads_everything: boolean;
   /** Where calls that name no namespace save; "" none; null not readable now. */
   saves_to: string | null;
@@ -1349,6 +1351,7 @@ export async function createToken(opts: {
     sa_subject: "",
     org: "",
     ns_roles: {},
+    roles: [],
     created_at: "",
     expires_at: null,
     restricted_namespaces: [],

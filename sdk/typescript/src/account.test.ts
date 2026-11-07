@@ -75,6 +75,7 @@ describe("AccountClient", () => {
       org: "acme",
       namespaces: ["support", "docs"],
       ns_roles: { support: "writer", docs: "viewer" },
+      roles: [],
       reads_everything: false,
       saves_to: "support",
       created_at: "2026-10-01T00:00:00",

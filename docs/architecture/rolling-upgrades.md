@@ -401,9 +401,9 @@ schema. These rules keep that safe. The operator procedure is in
       `/v1/me/setup/mcp_config`, which N-1's dashboard calls. A retry once the rollout
       ends works.
     - _A mint N-1 accepts._ A named list mint is saved by N-1, which answers without
-      `saves_to`, `mcp_url`, `reads_everything` and `clients`; N's dashboard fills those
-      from the page (its own `/mcp`, the claim) and shows the token. A list token N-1
-      mints gets no bound tracker record.
+      `saves_to`, `mcp_url`, `reads_everything`, `roles` and `clients`; N's dashboard
+      fills those from the page (its own `/mcp`, the claim) and shows the token. A list
+      token N-1 mints gets no bound tracker record.
     - _The list._ N-1 matches a token's maker by the exact subject, so a person signed in
       under another spelling of theirs neither sees nor revokes there a token made under
       the first, and N-1's dashboard lists a `*` token N minted by the names in its claim
