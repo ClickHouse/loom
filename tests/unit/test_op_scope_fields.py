@@ -6,7 +6,8 @@ naming another one (`namespaces`, `to_namespace`, `inbox`, ...) reaches the
 handler unchecked, so each is declared here with the function that checks it;
 a new such field fails this test until it is declared, and the function must
 exist (by name: that the handler calls it is the reviewer's to read). A
-one-entry list counts too.
+`namespaces` field is declared even when its handler rewrites a one-entry list
+into `namespace`.
 
 Out of this pattern: names that resolve to a namespace indirectly (`code.repos`'
 `repo` / `repos`, filtered by readability), `namespace_scope` (the `all_mine`

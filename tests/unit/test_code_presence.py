@@ -243,7 +243,7 @@ def test_a_one_entry_list_naming_an_unreadable_namespace_is_refused_on_both_ops(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The gate checks `namespace`, not the list: a one-entry list is authorized as each
-    entry of a longer one, through the handler, before anything runs."""
+    entry of a longer one, through the handler."""
     checked: list[str] = []
 
     async def _scope(org: str, ns: str, role: Any = None, *, hides_answer=True) -> bool:
