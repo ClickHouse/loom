@@ -12,7 +12,7 @@ python3 without the project's environment, need only the standard library:
     python3 scripts/release/prepare.py check-tag 1.2.0-rc.1  # candidate order
     python3 scripts/release/prepare.py check-chart 1.2.0     # the chart moved
     python3 scripts/release/prepare.py previous 1.2.0-rc.1   # the notes' base tag
-    python3 scripts/release/prepare.py candidates-on-head 1.2.0  # rc tags on this commit
+    python3 scripts/release/prepare.py candidates-on-head 1.2.0  # its candidates on this commit
 
 What each file carries, the chart rule, the release candidates and the notes:
 docs/development/release-process.md.
