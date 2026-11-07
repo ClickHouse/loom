@@ -9,6 +9,7 @@ left does not read as failing for ever. Recording never fails the pass it descri
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -141,8 +142,6 @@ def _published_lag(state: IndexState, tier: str) -> int:
     status was last published, while that watermark has not moved since: a lower bound
     of the lag now (the tip only advances), enough for the error threshold. -1 for the
     fetch tier or when unknown."""
-    import json
-
     from server.code.app.index_status import STATUS_SNAPSHOT_KEY, published_lags
 
     key = tier_health.WATERMARK_FOR_TIER.get(tier, "")

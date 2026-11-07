@@ -1082,7 +1082,8 @@ settings:
   # code_tier_failing_warn_hours: 3.0
 
   # A `code_tier_failing` health problem is an error when the failing tier is also this
-  # many commits behind the fetched tip. [live]
+  # many commits behind the fetched tip; the fetch tier, whose lag is unknown, stays a
+  # warn. [live]
   # code_tier_failing_error_lag_commits: 100
 
   # --- code.callers ---

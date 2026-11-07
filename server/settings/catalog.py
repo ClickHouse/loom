@@ -953,7 +953,8 @@ class CodeSettings(BaseModel):
     # problem (warn), however few passes ran in that time.
     code_tier_failing_warn_hours: Annotated[float, LIVE] = Field(default=3.0, gt=0)
     # A `code_tier_failing` health problem is an error when the failing tier is also
-    # this many commits behind the fetched tip.
+    # this many commits behind the fetched tip; the fetch tier, whose lag is unknown,
+    # stays a warn.
     code_tier_failing_error_lag_commits: Annotated[int, LIVE] = Field(default=100, ge=1)
     # --- code.callers ---
     # code.callers/callees: a bare name with more distinct definitions than
