@@ -31,6 +31,7 @@ async def _write(
     existing: list[dict[str, str]],
     extracted: list[dict[str, Any]],
     fetched: list[list[str]] | None = None,
+    states: list[Any] | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     written: dict[str, str] = {}
     deleted: list[str] = []
@@ -61,6 +62,8 @@ async def _write(
         extracted_facts=extracted,
     )
     await mp._step_bulk_write(state, {})
+    if states is not None:
+        states.append(state)
     return written, sorted(deleted)
 
 
@@ -417,6 +420,7 @@ async def test_a_correction_past_the_forget_cap_keeps_its_replacement(monkeypatc
     turns = [("user", "forget that I use Vim, I switched to Emacs.")]
     turns += [("user", f"forget jazz{i}.") for i in range(cap)]
     fetched: list[list[str]] = []
+    states: list[Any] = []
     written, deleted = await _write(
         monkeypatch,
         turns,
@@ -434,12 +438,14 @@ async def test_a_correction_past_the_forget_cap_keeps_its_replacement(monkeypatc
             {"key": "user_vim", "value": "use Vim", "source_message_indices": [0]},
         ],
         fetched,
+        states,
     )
     assert "user_vim" not in written
     assert written.get("user_editor") == "User uses Emacs."
     assert "user_editor" in deleted
     # the per-request candidate reads stop at the cap, on the latest requests
     assert len(fetched[0]) == cap and "I use Vim" not in fetched[0]
+    assert states[0].forget_requests == cap  # the result counts the resolved ones
 
 
 @pytest.mark.asyncio
