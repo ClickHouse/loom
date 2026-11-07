@@ -122,7 +122,8 @@ built from it is right.
 - **`beir_knowledge.py`** — BEIR passage retrieval through `knowledge.search`:
   nDCG@10, recall@10/100 and MRR@10 against the dataset's graded judgements;
   `--fetch` pulls one small dataset (checked against its published MD5) into
-  `bench/datasets/beir/`, `--param KEY=VALUE` sets a ranking knob, as for `knowledge_retrieval.py`.
+  `bench/datasets/beir/`; `--param KEY=VALUE` sets a ranking knob as for
+  `knowledge_retrieval.py`, except section collapse.
 - **`narrativeqa.py`** — NarrativeQA through the knowledge plane:
   long-document QA with F1 / ROUGE-L, build time and tokens per question.
 - **`time_dialog.py`** — Time-Dialog temporal reasoning over multi-session

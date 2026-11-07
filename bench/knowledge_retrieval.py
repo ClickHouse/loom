@@ -29,10 +29,10 @@ fake embedder.
 `--param KEY=VALUE` (JSON value, or a plain string) sets one of the ranking
 knobs of `knowledge.search` (`SEARCH_FIELDS`), so two arms differ by one flag;
 the depth, scope and filters the harness fixes (`FIXED_FIELDS`) and any other
-key are refused, and a search over a
-namespace that does not hold exactly the fixture's documents fails the run. An
-arm that names no reranker runs with `rerank="none"`, whatever the deployment
-default, and an arm whose reranker did not run as it says fails (`check_reranked`).
+key are refused, and a search over a namespace that does not hold exactly the
+fixture's documents fails the run. An arm that names no reranker runs with
+`rerank="none"`, whatever the deployment default, and an arm whose reranker did
+not run as it says fails (`check_reranked`).
 
 Reports recall@1/5/10 (a query counts when any relevant passage is in the top k,
 so a query listing two accepted passages counts either), MRR, all-gold recall@10

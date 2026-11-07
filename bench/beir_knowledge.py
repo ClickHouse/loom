@@ -26,8 +26,9 @@ A named namespace must start with `beir-` (and not `beir-run-`, a run's own), as
 the namespace does not hold yet, so a failed one is resumed by running it again.
 A search over a namespace that does not hold exactly this corpus, embedded with
 the server's current model, fails the run, and so does one that finds nothing.
-`--param KEY=VALUE` sets any `knowledge.search` field but the depth, scope,
-filters and `collapse_sections`; an arm that names no reranker runs with
+`--param KEY=VALUE` sets one ranking knob of `knowledge.search`, as
+`knowledge_retrieval.py` does, except `collapse_sections`, which the harness
+fixes; filters, scope and depth are refused. An arm that names no reranker runs with
 `rerank="none"`, whatever the deployment default. A run records the server's
 embedding model and build and the corpus, queries and judgements it scored, and
 refuses a fake embedder; a hybrid or lexical arm whose lexical leg never fired,
