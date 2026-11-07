@@ -4794,9 +4794,11 @@ async def test_a_finding_never_cites_a_row_the_authority_moved_past(
         await pg_memory.commit_versions([newer], [audit_row_for(newer, request_id="", writer="")])
     finally:
         await pg.close_pool()
-    # Parked by hand: no barrier waits for it and no worker claims it.
+    # Parked by hand, as `pg_memory.record_failure` parks one: no barrier waits for it
+    # and no worker claims it.
     await pg_conn.execute(
-        "UPDATE loom.memory_deliveries SET lease_until = 'infinity' "
+        "UPDATE loom.memory_deliveries "
+        "SET fenced_until = LEAST(lease_until, now()), lease_until = 'infinity' "
         "WHERE org = $1 AND namespace = $2 AND targets <> 0",
         org,
         ns,
