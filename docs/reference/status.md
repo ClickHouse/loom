@@ -11,9 +11,9 @@ boolean setting that loads false. Both tables are generated from the code: each 
   one hidden from MCP must be reached by an SDK method, an example, a plugin hook or the
   dashboard (the reach census fails it otherwise). They are meant to have production
   callers.
-- **Experimental** ops may have no reach path besides a raw HTTP POST, and no production
-  callers yet. One on the core or atomic roster is still listed on those toolsets and under
-  `all` ([MCP toolsets](./mcp.md#toolsets)), so an agent may already call it.
+- **Experimental** ops may have no production callers yet. One not hidden from MCP is still
+  callable by name, and one a toolset names is listed on it (on core or atomic, also under
+  `all`; [MCP toolsets](./mcp.md#toolsets)).
 
 The label is set by hand from what the 30-day reach census reports. What it decides is in
 the [operations reference](./operations.md#mcp-all-listing), and which ops each MCP toolset
