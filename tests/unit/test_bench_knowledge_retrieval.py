@@ -12,6 +12,7 @@ from bench.bench_namespaces import erase_on_exit_sync
 from bench.knowledge_retrieval import (
     FIXED_FIELDS,
     FIXTURE,
+    SEARCH_FIELDS,
     check_corpus,
     fixture_tag,
     ingest,
@@ -24,6 +25,7 @@ from bench.knowledge_retrieval import (
     score_query,
     search,
 )
+from server.knowledge.api.models_knowledge import KnowledgeSearchInput
 from server.knowledge.app.writes import _chunk_text
 
 
@@ -95,6 +97,18 @@ def test_params_take_json_values_or_plain_strings() -> None:
 def test_the_fields_that_define_the_measurement_are_refused(field: str) -> None:
     with pytest.raises(SystemExit, match=f"--param {field} is refused: the harness fixes"):
         parse_params([f"{field}=x"])
+
+
+@pytest.mark.parametrize("pair", ['block_types=["paragraph"]', 'formats=["markdown"]'])
+def test_a_filter_on_what_is_searched_is_refused(pair: str) -> None:
+    with pytest.raises(SystemExit, match="the harness fixes"):
+        parse_params([pair])
+
+
+def test_every_search_field_is_either_a_knob_or_fixed() -> None:
+    """A field added to knowledge.search is refused until it is named in one list."""
+    assert not SEARCH_FIELDS & set(FIXED_FIELDS)
+    assert SEARCH_FIELDS | set(FIXED_FIELDS) == set(KnowledgeSearchInput.model_fields)
 
 
 def test_a_param_without_a_value_is_refused() -> None:

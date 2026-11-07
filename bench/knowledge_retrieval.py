@@ -26,9 +26,10 @@ run's own fresh namespace (`knowledge-retrieval-run-…`) cannot be named. A
 run records the server's embedding model and build (`instrument`) and refuses a
 fake embedder.
 
-`--param KEY=VALUE` (JSON value, or a plain string) sets any `knowledge.search`
-field but the depth, scope and filters the harness fixes (`FIXED_FIELDS`), so
-two arms differ by one flag; any other key is refused, and a search over a
+`--param KEY=VALUE` (JSON value, or a plain string) sets one of the ranking
+knobs of `knowledge.search` (`SEARCH_FIELDS`), so two arms differ by one flag;
+the depth, scope and filters the harness fixes (`FIXED_FIELDS`) and any other
+key are refused, and a search over a
 namespace that does not hold exactly the fixture's documents fails the run. An
 arm that names no reranker runs with `rerank="none"`, whatever the deployment
 default, and an arm whose reranker did not run as it says fails (`check_reranked`).
@@ -157,8 +158,14 @@ FIXED_FIELDS = (
     "since_seconds",
     "session_ids",
     "source_classes",
+    "formats",
+    "block_types",
 )
-SEARCH_FIELDS = frozenset(KnowledgeSearchInput.model_fields) - set(FIXED_FIELDS)
+# The ranking knobs an arm may set. An allow-list, so a field added to knowledge.search
+# later is refused until it is named here or in FIXED_FIELDS.
+SEARCH_FIELDS = frozenset(
+    ("search_mode", "lexical_weight", "narrow_spans", "collapse_sections", "rerank")
+)
 
 
 def parse_params(pairs: list[str]) -> dict:
