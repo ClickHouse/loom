@@ -319,7 +319,9 @@ test("server unreachable, answering 401, or hanging: every hook stays within its
       cases.push({ ...h, label: "hang", stdin, env: env(hang.url) });
     }
     // A hanging server costs a hook at most a few request bounds (700 ms
-    // here) plus node start-up; far below any host timeout.
+    // here, and the shunt's lookup at its 1000 ms floor) plus node start-up;
+    // far below any host timeout. The shunt's shipped lookup bound (8 s, a
+    // 12 s deadline) is not run here.
     assertContract(await runAll(cases), 8000);
   } finally {
     await unauthorized.close();
