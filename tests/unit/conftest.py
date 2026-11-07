@@ -612,28 +612,26 @@ def _provider_clients_left_as_found() -> Iterator[None]:
 def _server_modules_since(modules_before: set[str]) -> list[str]:
     """The server modules imported since `modules_before`, skipping the `None` entries a
     test sets in `sys.modules` to block an import."""
-    return sorted(
+    return [
         name
         for name in sys.modules.keys() - modules_before
         if name.startswith("server.") and sys.modules.get(name) is not None
-    )
+    ]
 
 
-def _doubles_bound_at_import(modules_before: set[str]) -> list[str]:
-    """`module.name` for each name a server module imported since `modules_before`
-    still holds a test double for.
+def _double_bound_at_import(modules_before: set[str]) -> bool:
+    """Whether a server module imported since `modules_before` holds a test double.
 
     A module that runs `from pkg import Name` binds whatever `pkg.Name` is at that
     moment. When its first import in the process happens while a test patches
     `pkg.Name`, the module keeps the double after the patch ends, and every later
     test that uses it sees the double (an `isinstance(x, Name)` raises TypeError).
     """
-    return [
-        f"{name}.{attr}"
+    return any(
+        _is_test_double(value)
         for name in _server_modules_since(modules_before)
-        for attr, value in vars(sys.modules[name]).items()
-        if _is_test_double(value)
-    ]
+        for value in vars(sys.modules[name]).values()
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -647,7 +645,7 @@ def _test_double_bound_at_import_dropped() -> Iterator[None]:
     double."""
     before = set(sys.modules)
     yield
-    if not _doubles_bound_at_import(before):
+    if not _double_bound_at_import(before):
         return
     for name in _server_modules_since(before):
         module = sys.modules.pop(name)

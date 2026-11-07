@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from server.code.store.index import CodeRepo
-from tests.unit.conftest import _doubles_bound_at_import
+from tests.unit.conftest import _double_bound_at_import
 
 pytest_plugins = ["pytester"]
 
@@ -35,33 +35,33 @@ def _fake_first_import(module: types.ModuleType, **names: object) -> set[str]:
     return before
 
 
-def test_a_mock_bound_at_first_import_is_named(probe) -> None:
+def test_a_mock_bound_at_first_import_is_found(probe) -> None:
     before = _fake_first_import(probe, CodeRepo=MagicMock(return_value=object()))
-    assert _doubles_bound_at_import(before) == [f"{_PROBE}.CodeRepo"]
+    assert _double_bound_at_import(before)
 
 
-def test_a_lambda_the_test_defined_is_named(probe) -> None:
+def test_a_lambda_the_test_defined_is_found(probe) -> None:
     before = _fake_first_import(probe, CodeRepo=lambda: object())
-    assert _doubles_bound_at_import(before) == [f"{_PROBE}.CodeRepo"]
+    assert _double_bound_at_import(before)
 
 
-def test_the_real_class_is_not_named(probe) -> None:
+def test_the_real_class_is_not_found(probe) -> None:
     before = _fake_first_import(probe, CodeRepo=CodeRepo)
-    assert _doubles_bound_at_import(before) == []
+    assert not _double_bound_at_import(before)
 
 
 def test_a_blocked_import_is_skipped() -> None:
     before = set(sys.modules)
     sys.modules[_PROBE] = None  # type: ignore[assignment]
     try:
-        assert _doubles_bound_at_import(before) == []
+        assert not _double_bound_at_import(before)
     finally:
         sys.modules.pop(_PROBE, None)
 
 
 def test_a_module_imported_before_the_test_is_not_checked(probe) -> None:
     before = _fake_first_import(probe, CodeRepo=MagicMock()) | {_PROBE}
-    assert _doubles_bound_at_import(before) == []
+    assert not _double_bound_at_import(before)
 
 
 # The fixture itself, in a fresh process: scip_delta binds CodeRepo when first imported,
