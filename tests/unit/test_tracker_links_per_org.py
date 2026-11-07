@@ -311,3 +311,22 @@ def test_every_reader_of_the_links_sees_a_branch_from_an_empty_snapshot(
 
         got = asyncio.run(me_setup._with_bound_tracker(ORG_X, "alice", [branch]))
         assert got == [branch, "tracker-widgets"]
+
+
+def test_a_link_set_on_an_operator_repository_later_reaches_its_branches(monkeypatch) -> None:
+    """The contract the tracker overview states: a branch reads its operator repository's
+    links when read, so a link a tracker admin sets on the repository after the branch
+    was added reaches the branch's readers too."""
+    monkeypatch.setattr(settings, "tracker_code_namespace_bindings_json", "")
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        json.dumps([{"org": ORG_X, "namespace": CODE, "repo": "Acme/widgets"}]),
+    )
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    branch = "code-widgets-26-8"
+    _set_registry(monkeypatch, [_entry(ORG_X, branch)])
+    binding.reset_overrides_for_tests(branches={(ORG_X, branch): CODE})
+    assert binding.tracker_namespaces_for(ORG_X, branch) == []
+    binding.reset_overrides_for_tests({(ORG_X, CODE): "tracker-later"}, {(ORG_X, branch): CODE})
+    assert binding.tracker_namespaces_for(ORG_X, branch) == ["tracker-later"]

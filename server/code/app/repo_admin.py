@@ -754,6 +754,7 @@ async def _tracker_or_refuse(org: str, qa: str, *, new: bool) -> Any:
     if await row_in_scope(org, qa, Role.VIEWER, hides_answer=False):
         raise AuthInsufficientError(
             f"linking {qa} needs an admin of it: it is not among this repository's stored "
-            "links (a link from the deployment's map counts as new)"
+            "links (a link from the deployment's map counts as new); a link on an operator "
+            "repository is also read by the readers of its code.repo.add_branch branches"
         )
     raise not_a_tracker

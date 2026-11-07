@@ -200,7 +200,10 @@ A linked standard tracker is read by every reader of the repository, so linking 
 lasting delegation; a new link needs the tracker's admin, restricted or not. A reader of
 the tracker who is not its admin gets 403; anyone else gets `NOT_A_TRACKER_NAMESPACE`.
 Once a tracker admin links a standard tracker, the repository's admins decide who reads
-it, including through a later `code.repo.set_access` join-policy change.
+it, including through a later `code.repo.set_access` join-policy change. A link on an
+operator repository, set before or after a branch is added, is also read by the readers
+of each branch added from it with `code.repo.add_branch`, and each branch's admins
+decide who joins that branch.
 
 ```bash
 LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON='{"code-widgets*": ["tracker-widgets", "tracker-helpdesk"]}'
