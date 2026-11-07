@@ -95,8 +95,10 @@ def test_status_ops_lists_each_experimental_op_once_and_counts_the_rest() -> Non
     from server.operations import registry
 
     groups = gen._op_groups()
+    rendered = gen.render_status_ops().splitlines()
+    total = len(registry.ALL_OPERATIONS)
     rows = {}
-    for line in gen.render_status_ops().splitlines():
+    for line in rendered:
         m = re.match(r"\| `([a-z_]+)` \| (\d+) \| (.*) \|$", line)
         if m:
             rows[m.group(1)] = (int(m.group(2)), re.findall(r"\[`([^`]+)`\]", m.group(3)))
@@ -106,7 +108,5 @@ def test_status_ops_lists_each_experimental_op_once_and_counts_the_rest() -> Non
         assert experimental == want, group
         assert stable == len(groups[group]) - len(want), group
     listed = [name for _, names in rows.values() for name in names]
-    assert sum(stable for stable, _ in rows.values()) + len(listed) == len(registry.ALL_OPERATIONS)
-    total = len(registry.ALL_OPERATIONS)
-    headline = f"{total} operations, {len(listed)} of them experimental."
-    assert gen.render_status_ops().splitlines()[0] == headline
+    assert sum(stable for stable, _ in rows.values()) + len(listed) == total
+    assert rendered[0] == f"{total} operations, {len(listed)} of them experimental."

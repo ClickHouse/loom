@@ -166,8 +166,6 @@ def render_operations() -> str:
 def render_status_ops() -> str:
     """How many of each op group's ops are stable (`Operation.maturity`), and each
     experimental op linked to its field reference."""
-    from server.operations import registry
-
     groups = _op_groups()
     rows: list[str] = []
     experimental_total = 0
@@ -178,7 +176,7 @@ def render_status_ops() -> str:
             f"[`{op.name}`](operations/{group}.md#{_op_anchor(op.name)})" for op in experimental
         )
         rows.append(f"| `{group}` | {len(ops) - len(experimental)} | {links} |")
-    total = len(registry.ALL_OPERATIONS)
+    total = sum(len(ops) for ops in groups.values())
     return "\n".join(
         [
             f"{total} operations, {experimental_total} of them experimental.\n",
@@ -191,8 +189,9 @@ def render_status_ops() -> str:
 
 @functools.cache
 def _loaded_defaults() -> Settings:
-    """Settings built from defaults alone with a real LLM provider, so load-time validators
-    (the conflict resolver) resolve as they run."""
+    """Settings built from defaults alone with a real LLM provider (`openai`; any provider
+    but `fake` resolves the same), so load-time validators (the conflict resolver) resolve
+    as they run."""
     from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
     from server.settings import Settings

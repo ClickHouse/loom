@@ -13,20 +13,20 @@ an `ops*.py` module in its domain's `api/` package (`server/memory/api/ops_memor
 `_OPERATION_MODULES` into `ALL_OPERATIONS`, which the transports iterate. An `Operation`
 carries:
 
-| Field                                   | Meaning                                                                                                                                                              |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                                  | Dotted `<group>.<verb>`. The group is the text before the first dot.                                                                                                 |
-| `input_model`, `output_model`           | Pydantic models: the request body and the 200 response.                                                                                                              |
-| `handler`                               | The async function that runs the op, in its domain's `app/` package (`server/<domain>/app/`).                                                                        |
-| `required_role`                         | The minimum role the caller's token must hold on the namespace.                                                                                                      |
-| `idempotent`                            | Safe to retry. Idempotent ops accept an idempotency key; see [HTTP API](./http-api.md#idempotency).                                                                  |
-| `audit`                                 | A successful call writes a row to `loom.audit_log`.                                                                                                                  |
-| `writes`                                | Set on the few viewer-callable, idempotent ops that still change stored state (a feedback row, a watch), so they are not read-only.                                  |
+| Field                                   | Meaning                                                                                                                                                                         |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                                  | Dotted `<group>.<verb>`. The group is the text before the first dot.                                                                                                            |
+| `input_model`, `output_model`           | Pydantic models: the request body and the 200 response.                                                                                                                         |
+| `handler`                               | The async function that runs the op, in its domain's `app/` package (`server/<domain>/app/`).                                                                                   |
+| `required_role`                         | The minimum role the caller's token must hold on the namespace.                                                                                                                 |
+| `idempotent`                            | Safe to retry. Idempotent ops accept an idempotency key; see [HTTP API](./http-api.md#idempotency).                                                                             |
+| `audit`                                 | A successful call writes a row to `loom.audit_log`.                                                                                                                             |
+| `writes`                                | Set on the few viewer-callable, idempotent ops that still change stored state (a feedback row, a watch), so they are not read-only.                                             |
 | `maturity`                              | `stable` or `experimental`. It decides the [MCP `all` listing](#mcp-all-listing), and `op_reach_census.py --check` fails a stable op hidden from MCP that nothing else reaches. |
-| `budget_p99_ms`, `shape_budgets_p99_ms` | The target p99 latency, overall and per request shape. A successful call over budget emits a `budget.violated` event.                                                |
-| `skip_namespace_authz`                  | The op acts _on_ a namespace (join, leave, register) rather than in one; the handler checks membership. The role check still runs.                                   |
-| `deployment_scoped`                     | The op reads facts about the deployment (build, registry), not tenant data; a namespace-scoped token passes with its best role.                                      |
-| `row_scoped`                            | The op is addressed by an org-wide id (`memory_id`, `erasure_id`). The handler authorizes the row's namespace and hides a foreign row.                               |
+| `budget_p99_ms`, `shape_budgets_p99_ms` | The target p99 latency, overall and per request shape. A successful call over budget emits a `budget.violated` event.                                                           |
+| `skip_namespace_authz`                  | The op acts _on_ a namespace (join, leave, register) rather than in one; the handler checks membership. The role check still runs.                                              |
+| `deployment_scoped`                     | The op reads facts about the deployment (build, registry), not tenant data; a namespace-scoped token passes with its best role.                                                 |
+| `row_scoped`                            | The op is addressed by an org-wide id (`memory_id`, `erasure_id`). The handler authorizes the row's namespace and hides a foreign row.                                          |
 
 [Adding an operation](../development/adding-an-operation.md) walks through declaring one.
 
