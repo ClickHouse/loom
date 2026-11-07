@@ -25,14 +25,14 @@ Marks must be registered (`strict_markers`). An unknown mark fails collection.
 
 ## Rules every test keeps
 
-- **Order-independent and parallel-safe.** The unit job runs under pytest-randomly with a printed seed, one pytest-xdist worker per core. A test writes only under `tmp_path` and listens only on port 0, since another test runs beside it. To reproduce a failure:
+- **Order-independent and parallel-safe.** The unit job runs in parts on separate runners (`LOOM_TEST_SHARD`, `tests/_shards.py`), each under pytest-randomly with a printed seed and one pytest-xdist worker per core. A test writes only under `tmp_path` and listens only on port 0, since another test runs beside it. To reproduce a failure in part k of n, prefix the commands that name `tests/unit` with `LOOM_TEST_SHARD=k/n`, so they shuffle the same files the part did (in a checkout with no untracked test files, which would join the split); run the ones that name test ids without it, since the split is worked out from the paths on the command line:
   - the seed's order: `pytest tests/unit -p randomly --randomly-seed=<seed>`, without `-n`. The seed fixes the order, but xdist hands tests to workers as they free up, so only a run without `-n` repeats it exactly;
   - a neighbour that breaks it: `pytest -p randomly --randomly-seed=<seed> --randomly-dont-reorganize <earlier ids> <failing id>`, which runs the ids in the order given with the same per-test random seeds as CI. The CI log does not say which tests shared the failing test's worker; the earlier ids are the ones before the failing test in `pytest tests/unit -p randomly --randomly-seed=<seed> --collect-only -q`. Start with those from its own file, and halve them until one is left;
   - two tests colliding while they run at once: the same with `-n 2` and the two ids.
 - **Collection is deterministic.** Every xdist worker collects the suite and must get the same test ids, so a parametrize id never comes from `uuid4()`, the clock or a random draw.
 - **State goes back as it was found.** `tests/unit/conftest.py` holds autouse guards. Each one resets its state and fails the test that leaked it:
   - settings fields: use the `settings_override` fixture or `monkeypatch.setattr(settings, ...)`;
-  - the auth principal and the query tag;
+  - the auth principal; the query tag and the cost accumulator (reset, not failed);
   - environment variables, the working directory, `logging.disable` and non-daemon threads left running: use `monkeypatch`, and join what you start. The root logger (handlers, level and the CLI's logging latch) is reset after every test without failing it. `sys.path` is not checked, because bench modules insert their directory on first import;
   - pending tasks on the session loop;
   - the LLM and embedder singletons. A test double left in either cache fails the test, and the embedding cache is emptied after every test.

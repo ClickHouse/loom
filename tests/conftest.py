@@ -1,4 +1,5 @@
-"""Fixtures shared by the integration and analyzer suites.
+"""Fixtures shared by the integration and analyzer suites, and the
+LOOM_TEST_SHARD split a run can ask for (`_shards`).
 
 They need a control plane at $LOOM_BASE_URL (tests that ask for it skip
 without one), its ClickHouse at $LOOM_CH_* (default localhost:8123), and the
@@ -52,13 +53,18 @@ def _clickhouse_target() -> str | None:
     return None
 
 
+def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool | None:
+    """LOOM_TEST_SHARD=k/n: collect only the test files of the k-th part (`_shards`)."""
+    return _shards.ignored(collection_path, config)
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Integration tests talk to ClickHouse, through the server or their own
     client, and the server's default target is localhost:8123. Without an
     explicit LOOM_CH_HOST they skip, so an unconfigured run never writes into
     whatever ClickHouse happens to listen there (a developer's own stack).
-    LOOM_TEST_SHARD=k/n first keeps one part of what was collected (`_shards`)."""
-    _shards.keep(config, items)
+    Under LOOM_TEST_SHARD it first drops the other parts' items (`_shards`)."""
+    _shards.deselect(config, items)
     if _clickhouse_target():
         return
     skip = pytest.mark.skip(

@@ -94,13 +94,13 @@ async def test_search_fallback_appends_every_rendered_unit(code_plane, monkeypat
 
 
 async def test_exact_symbol_leads_and_the_search_fills_concurrently(code_plane) -> None:
-    code_plane.delay = 0.05
+    code_plane.delay = 0.2
     t0 = time.perf_counter()
     hits = await g._inject_code_context("what does FooBar do", _input(), _settings())
     wall = time.perf_counter() - t0
     # One symbol lookup and the search: both started before either finished.
     assert code_plane.symbol_calls == ["FooBar"] and code_plane.search_calls == 1
-    assert wall < 0.09, wall
+    assert wall < 0.36, wall  # one delay, not two
     kinds = [k for k, _t in code_plane.span]
     assert set(kinds) == {"symbol", "search"}
     # The definition leads, the search fills the two remaining slots.
@@ -129,7 +129,7 @@ async def test_apply_runs_two_concurrent_rounds_in_the_fixed_order(monkeypatch) 
             if pool_arg is not None:
                 seen_pools[name] = [m.memory_key for m in a[pool_arg]]
             timeline.append((name, "start", time.perf_counter()))
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.2)
             timeline.append((name, "end", time.perf_counter()))
             return result(a) if callable(result) else result
 
@@ -144,8 +144,8 @@ async def test_apply_runs_two_concurrent_rounds_in_the_fixed_order(monkeypatch) 
     out = await g.apply_code_grounding("q", _input(), pool, _settings())
     wall = time.perf_counter() - t0
 
-    # Two rounds of ~50 ms, not four.
-    assert wall < 0.16, wall
+    # Two rounds of ~200 ms, not four.
+    assert wall < 0.64, wall
     starts = {n: t for n, ev, t in timeline if ev == "start"}
     ends = {n: t for n, ev, t in timeline if ev == "end"}
     assert starts["ctx"] < ends["gate"] and starts["gate"] < ends["ctx"]

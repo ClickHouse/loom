@@ -106,11 +106,20 @@ jobs:
       - name: no committed secrets
         run: python scripts/gates/check_no_secrets.py
 
+  # The unit suite in parts, each on its own runner (LOOM_TEST_SHARD, whole files:
+  # tests/_shards.py) and over that runner's cores; unit-coverage combines their
+  # coverage data and applies the floors.
   unit:
-    name: pytest unit + coverage
+    name: pytest unit part ${{ matrix.part }}
     needs: clickhouse
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The part count, 6, is also in docs/development/testing.md's unit row and
+        # the loom-investigate-ci row.
+        part: [1, 2, 3, 4, 5, 6]
     env:
       LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
     # No ClickHouse service: unit tests skip cleanly when env config is absent.
@@ -150,15 +159,72 @@ jobs:
           clickhouse local --query "SELECT version()"
       # Random order over one worker per core, so a test that depends on another
       # fails here; reproduce a failure as tests/README.md describes.
-      - name: pytest unit + coverage (random order)
+      - name: pytest unit (this part, random order)
+        env:
+          LOOM_TEST_SHARD: ${{ matrix.part }}/${{ strategy.job-total }}
+          COVERAGE_FILE: .coverage.unit-${{ matrix.part }}
         run: |
           SEED="${{ github.run_id }}${{ github.run_attempt }}"
           echo "pytest-randomly seed: $SEED"
-          pytest tests/unit -q -n auto -p randomly --randomly-seed="$SEED" --durations=30 \
-            --cov=server --cov=sdk/python/loom --cov-branch \
-            --cov-report=term-missing --cov-report=xml \
-            --cov-report=json:coverage.json \
-            --cov-fail-under=40
+          pytest tests/unit -q -n auto -p randomly --randomly-seed="$SEED" --durations=15 \
+            --cov=server --cov=sdk/python/loom --cov-branch --cov-report= \
+            --junitxml=junit-unit-${{ matrix.part }}.xml
+      # Also after a failure: the failing part's test times are what a reader needs.
+      - name: Upload this part's coverage data and test times
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-unit-${{ matrix.part }}
+          path: |
+            .coverage.unit-${{ matrix.part }}
+            junit-unit-${{ matrix.part }}.xml
+          include-hidden-files: true
+          if-no-files-found: warn
+          # A re-run of one failed part replaces the data its first attempt uploaded.
+          overwrite: true
+
+  unit-coverage:
+    name: pytest unit coverage, floors and bench
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        id: python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Loom from uv.lock (dev, code extras)
+        run: |
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Download the parts' coverage data and test times
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-unit-*
+          merge-multiple: true
+      # This run's seconds per test file, the weights the next split balances by
+      # when committed as tests/shard_weights.json (tests/_shards.py).
+      - name: Shard weights from this run
+        run: python -m tests._shards junit-unit-*.xml
+      - name: Upload shard weights
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shard-weights
+          path: tests/shard_weights.json
+      # One data file per part, measured in the same checkout path, so they combine
+      # into the totals one run over the whole suite measures.
+      - name: Combine coverage (floor 40%)
+        run: |
+          coverage combine .coverage.unit-*
+          coverage report --fail-under=40
+          coverage xml
+          coverage json -o coverage.json
       # Per-module branch floors for the auth, write-path, erasure, migration
       # and supervisor modules (tests/inventory/coverage_floors.toml).
       - name: branch-coverage floors

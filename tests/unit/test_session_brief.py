@@ -1062,8 +1062,10 @@ _CARD = "My card number is 4111 1111 1111 1111."
 
 
 def _stored_content(row: dict[str, Any]) -> str:
-    """Version timestamps can contain the card's digits by chance."""
-    return json.dumps({k: v for k, v in row.items() if k != "version"}, default=str)
+    """The row without its version and `*_at` timestamps, which can contain the
+    card's digits by chance."""
+    kept = {k: v for k, v in row.items() if k != "version" and not k.endswith("_at")}
+    return json.dumps(kept, default=str)
 
 
 def _policy(text: str) -> None:

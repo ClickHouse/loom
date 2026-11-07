@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import patch
 
 from server.code.app import search as cs
+from server.code.app.index import corpus_stats
 from server.settings import settings
 
 _UNIT = dict(
@@ -29,6 +30,11 @@ def _lex(cid: str, score: float) -> dict[str, Any]:
 
 def _vec(cid: str, distance: float) -> dict[str, Any]:
     return {"chunk_id": cid, "distance": distance, "path": f"src/{cid}.cpp", **_UNIT}
+
+
+# Each fake read or embed sleeps this long. The wall-clock bounds allow 3.4 sleeps,
+# under the four a serial run takes, with room for a loaded runner's scheduling.
+_SLEEP = 0.2
 
 
 class _Repo:
@@ -91,8 +97,18 @@ def _search(repo: _Repo, embedder: _Embedder | None) -> Any:
         )
 
 
+def _warm_up() -> None:
+    """Pay the first search's one-off cost before a timed one. The first search in a
+    process imports the tracing modules on the event loop, which can hold the vector
+    chain back a whole sleep; emptying the corpus-stats cache this search filled keeps
+    the timed lexical chain at stats then lexical."""
+    _search(_Repo(), _Embedder())
+    corpus_stats.reset_for_tests()
+
+
 def test_lexical_and_vector_legs_run_side_by_side() -> None:
-    repo, emb = _Repo(delay=0.05), _Embedder(delay=0.05)
+    _warm_up()
+    repo, emb = _Repo(delay=_SLEEP), _Embedder(delay=_SLEEP)
     t0 = time.perf_counter()
     res = _search(repo, emb)
     wall = time.perf_counter() - t0
@@ -103,7 +119,7 @@ def test_lexical_and_vector_legs_run_side_by_side() -> None:
     # read: the whole thing takes ~two sleeps, not four.
     assert starts["vector"] < ends["lexical"] and starts["lexical"] < ends["vector"]
     assert starts["lexical"] >= ends["stats"]
-    assert wall < 0.17, wall
+    assert wall < 3.4 * _SLEEP, wall
     assert emb.calls == 1
     # Fused as before: both legs present, the shared chunk ranks first.
     ids = [u.unit_id for u in res.units]
@@ -179,14 +195,15 @@ def _search_identifier(repo: _Repo, embedder: _Embedder | None) -> Any:
 def test_the_fuzzy_symbol_vote_runs_beside_the_legs() -> None:
     """The vote needs the query alone, so its scan
     starts with the legs instead of after the slowest one has returned."""
-    repo, emb = _FuzzyRepo(delay=0.05), _Embedder(delay=0.05)
+    _warm_up()
+    repo, emb = _FuzzyRepo(delay=_SLEEP), _Embedder(delay=_SLEEP)
     t0 = time.perf_counter()
     res = _search_identifier(repo, emb)
     wall = time.perf_counter() - t0
     starts = {n: t for n, ev, t in repo.span if ev == "start"}
     ends = {n: t for n, ev, t in repo.span if ev == "end"}
     assert starts["fuzzy"] < ends["vector"] and starts["fuzzy"] < ends["lexical"]
-    assert wall < 0.17, wall
+    assert wall < 3.4 * _SLEEP, wall
     assert res.retrieval_work["symbol_queries"] == 1
     assert set(u.unit_id for u in res.units) == {"a", "b", "c"}
 

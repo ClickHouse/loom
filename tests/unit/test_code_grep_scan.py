@@ -372,14 +372,14 @@ def test_as_of_runs_beside_the_chunk_read(monkeypatch) -> None:
 
     async def slow_as_of(*a, **k):
         events.append("as_of:start")
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.2)
         events.append("as_of:end")
         return {"commit": "c"}
 
     class _Repo(CodeRepo):
         async def grep_chunks(self, *a, **k):
             events.append("chunks:start")
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.2)
             events.append("chunks:end")
             return [
                 {
@@ -406,4 +406,4 @@ def test_as_of_runs_beside_the_chunk_read(monkeypatch) -> None:
     out, took = asyncio.run(go())
     assert out.as_of == {"commit": "c"} and len(out.matches) == 1
     assert events.index("as_of:start") < events.index("chunks:end")
-    assert took < 0.095  # overlapped, not 0.05 + 0.05
+    assert took < 0.38  # overlapped, not 0.2 + 0.2

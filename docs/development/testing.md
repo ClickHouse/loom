@@ -4,18 +4,18 @@ Which suite a test belongs in, what each suite needs to run, how tests skip when
 
 ## The suites
 
-| Suite                | Path                                                                 | Needs                                              | Run locally                                                    | In CI                                |
-| -------------------- | -------------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------ |
-| Unit                 | `tests/unit/`                                                        | nothing external; no ClickHouse                    | `make test-unit` (also runs `pytest bench -q`)                 | `unit`, random order, coverage ≥ 40% |
-| Bench harnesses      | `bench/` (its `test_*` files)                                        | nothing external                                   | `pytest bench -q`                                              | `unit`                               |
-| Integration          | `tests/integration/`                                                 | a migrated ClickHouse and a running server         | `make test-integration` with `LOOM_BASE_URL`                   | `integration`                        |
-| Analyzer corpus      | `tests/analyzer/`                                                    | a migrated ClickHouse (no server)                  | `pytest tests/analyzer -q`                                     | `integration`                        |
-| Code lanes corpus    | `tests/code_lanes/`, gated by `tests/unit/test_code_lanes_corpus.py` | nothing external                                   | `python -m tests.code_lanes.corpus`                            | `unit`                               |
-| Dashboard            | `frontend/src/**/*.test.tsx`                                         | Node                                               | `npm --prefix frontend run test` (vitest, with axe)            | `frontend-vitest`                    |
-| Dashboard end to end | `frontend/e2e/*.spec.ts`                                             | Node, Chromium (`npx playwright install chromium`) | `npm --prefix frontend run e2e`                                | `frontend-e2e`                       |
-| Plugin hooks         | `integrations/*/tests/*.test.mjs`                                    | Node                                               | `node --test integrations/claude-code-plugin/tests/*.test.mjs` | `agent-plugins`                      |
-| TypeScript SDK       | `sdk/typescript/`                                                    | Node                                               | `npm --prefix sdk/typescript run check`                        | `sdk-typescript`                     |
-| Benchmarks and gates | `bench/*.py`, `make bench-*`                                         | a server with **real** providers                   | [running benchmarks](../benchmarks/running.md)                 | never (the CI embedder is fake)      |
+| Suite                | Path                                                                 | Needs                                              | Run locally                                                    | In CI                                                          |
+| -------------------- | -------------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------- |
+| Unit                 | `tests/unit/`                                                        | nothing external; no ClickHouse                    | `make test-unit` (also runs `pytest bench -q`)                 | `unit` in parts, random order; `unit-coverage`, coverage ≥ 40% |
+| Bench harnesses      | `bench/` (its `test_*` files)                                        | nothing external                                   | `pytest bench -q`                                              | `unit-coverage`                                                |
+| Integration          | `tests/integration/`                                                 | a migrated ClickHouse and a running server         | `make test-integration` with `LOOM_BASE_URL`                   | `integration`                                                  |
+| Analyzer corpus      | `tests/analyzer/`                                                    | a migrated ClickHouse (no server)                  | `pytest tests/analyzer -q`                                     | `integration`                                                  |
+| Code lanes corpus    | `tests/code_lanes/`, gated by `tests/unit/test_code_lanes_corpus.py` | nothing external                                   | `python -m tests.code_lanes.corpus`                            | `unit`                                                         |
+| Dashboard            | `frontend/src/**/*.test.tsx`                                         | Node                                               | `npm --prefix frontend run test` (vitest, with axe)            | `frontend-vitest`                                              |
+| Dashboard end to end | `frontend/e2e/*.spec.ts`                                             | Node, Chromium (`npx playwright install chromium`) | `npm --prefix frontend run e2e`                                | `frontend-e2e`                                                 |
+| Plugin hooks         | `integrations/*/tests/*.test.mjs`                                    | Node                                               | `node --test integrations/claude-code-plugin/tests/*.test.mjs` | `agent-plugins`                                                |
+| TypeScript SDK       | `sdk/typescript/`                                                    | Node                                               | `npm --prefix sdk/typescript run check`                        | `sdk-typescript`                                               |
+| Benchmarks and gates | `bench/*.py`, `make bench-*`                                         | a server with **real** providers                   | [running benchmarks](../benchmarks/running.md)                 | never (the CI embedder is fake)                                |
 
 **Why benchmarks stay out of CI.** CI runs with `LOOM_EMBEDDING_MODEL=fake-ngram-1024`
 and `LOOM_LLM_PROVIDER=fake`, so a recall number there measures nothing about real
@@ -81,9 +81,12 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
   `destructive` stops merges, runs `OPTIMIZE` or deletes whole scopes, `provider` needs a
   real embedder or LLM and skips on the fakes, `recovery` drives a failure and the path
   back from it.
-- **Parts.** `LOOM_TEST_SHARD=k/n` runs the k-th of n parts of the collected tests. A part
-  holds whole files, dealt by test count (`tests/_shards.py`), so a module fixture is
-  built in one part only. CI splits the suite into four parts, each on its own stack, beside
+- **Parts.** `LOOM_TEST_SHARD=k/n` collects only the test files of the k-th of n parts. A
+  part holds whole files, so a module fixture is built in one part only. Files are dealt
+  by the seconds `tests/shard_weights.json` records for each, and a file it does not list
+  by its count of test functions times the recorded seconds per test function, or one
+  second each when nothing is recorded, as for every integration file
+  (`tests/_shards.py`). CI splits the suite into four parts, each on its own stack, beside
   the isolation gates part; a failure in part k reproduces with
   `LOOM_TEST_SHARD=k/4 make test-integration`.
 - **Failure diagnostics.** A failing test's report carries its last 25 Loom requests
@@ -178,7 +181,8 @@ workflow grants its jobs read-only repository access (`permissions: contents: re
 | Job                    | Runs                                                                                                                                                                                                                                                                             |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `lint`                 | `ruff check`, `ruff format --check`, the `--check` of `sdk_py_gen.py`, `sdk_py_client_gen.py`, `agent_plugin_sync.py`, `settings_reference.py`, `docs_reference.py` and `op_reach_census.py`, `mypy --strict` on the SDK, the mypy ratchet, the function-length and secret gates |
-| `unit`                 | `pytest tests/unit` in random order on every core with coverage (floor 40%), then `pytest bench`                                                                                                                                                                                 |
+| `unit`                 | `pytest tests/unit` in six parts (`LOOM_TEST_SHARD`), each on its own runner, in random order on every core with coverage                                                                                                                                                        |
+| `unit-coverage`        | the parts' coverage combined (floor 40%) and the per-module floors, then `pytest bench`; its `shard-weights` artifact is the run's seconds per unit file, to commit as `tests/shard_weights.json` when the parts drift apart                                                     |
 | `schema-check`         | a fresh ClickHouse (`dev/ci_start_clickhouse.sh`), every migration, the strict dry run, `make schema-check`                                                                                                                                                                      |
 | `ts-typecheck`         | the dashboard build (`tsc -b` + Vite) and its bundle budget (`npm run budget`)                                                                                                                                                                                                   |
 | `format`               | Biome, Prettier, Taplo and shfmt checks at pinned versions                                                                                                                                                                                                                       |

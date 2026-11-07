@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from typing import Any
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -45,52 +48,155 @@ def test_the_split_depends_only_on_the_files_and_their_weights() -> None:
     )
 
 
-class _Config:
-    def __init__(self) -> None:
-        self.deselected: list[Any] = []
-        self.hook = SimpleNamespace(pytest_deselected=lambda items: self.deselected.extend(items))
+def test_a_file_weighs_its_recorded_seconds_else_its_tests_at_the_recorded_rate() -> None:
+    files = {
+        "a.py": "def test_one(): ...\nasync def test_two(): ...\n",
+        "b.py": "def test_one(): ...\n",
+        "c.py": "def test_one(): ...\ndef test_two(): ...\ndef test_three(): ...\n",
+        "d.py": "def helper(): ...\n",
+    }
+    # 12 s over a.py's and b.py's three tests: 4 s a test for the files with no record.
+    weights = _shards.weigh(files, {"a.py": 10.0, "b.py": 2.0})
+    assert weights == {"a.py": 10.0, "b.py": 2.0, "c.py": 12.0, "d.py": 4.0}
 
 
-def _items(*nodeids: str) -> list[Any]:
-    return [SimpleNamespace(nodeid=n) for n in nodeids]
+def test_with_nothing_recorded_a_file_weighs_its_test_count() -> None:
+    files = {"a.py": "def test_one(): ...\ndef test_two(): ...\n", "b.py": "x = 1\n"}
+    assert _shards.weigh(files, {}) == {"a.py": 2.0, "b.py": 1.0}
 
 
-def test_keep_deselects_every_file_outside_the_part(monkeypatch: pytest.MonkeyPatch) -> None:
-    items = _items("a.py::t1", "a.py::t2", "a.py::t3", "b.py::t1", "c.py::t1", "c.py::t2")
-    config = _Config()
-    monkeypatch.setenv("LOOM_TEST_SHARD", "2/2")
-    kept = list(items)
-    _shards.keep(config, kept)  # type: ignore[arg-type]
-    # a.py (3 tests) goes to part 1, c.py (2) to part 2, then b.py (1) to part 2.
-    assert [i.nodeid for i in kept] == ["b.py::t1", "c.py::t1", "c.py::t2"]
-    assert [i.nodeid for i in config.deselected] == ["a.py::t1", "a.py::t2", "a.py::t3"]
+def _tree(root: Path) -> list[Path]:
+    names = [
+        "test_a.py",
+        "test_b.py",
+        "sub/test_c.py",
+        "sub/c_test.py",
+        "helper.py",
+        "__pycache__/test_old.py",
+        ".hidden/test_h.py",
+    ]
+    for name in names:
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("def test_one(): ...\n")
+    return [root / n for n in names]
 
 
-def test_keep_leaves_the_run_whole_without_a_shard(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("LOOM_TEST_SHARD", raising=False)
-    items = _items("a.py::t1", "b.py::t1")
-    config = _Config()
-    _shards.keep(config, items)  # type: ignore[arg-type]
-    assert [i.nodeid for i in items] == ["a.py::t1", "b.py::t1"]
-    assert config.deselected == []
-
-
-def test_keep_refuses_a_bad_shard_as_a_usage_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LOOM_TEST_SHARD", "5/4")
-    with pytest.raises(pytest.UsageError, match="LOOM_TEST_SHARD"):
-        _shards.keep(_Config(), _items("a.py::t1"))  # type: ignore[arg-type]
+def test_the_walk_finds_the_test_modules_pytest_collects(tmp_path: Path) -> None:
+    _tree(tmp_path)
+    found = {p.relative_to(tmp_path).as_posix() for p in _shards.test_files([tmp_path])}
+    assert found == {"test_a.py", "test_b.py", "sub/test_c.py", "sub/c_test.py"}
 
 
 @pytest.mark.parametrize("n", [1, 2, 3, 4])
-def test_the_parts_keep_every_collected_test_exactly_once(
-    monkeypatch: pytest.MonkeyPatch, n: int
-) -> None:
-    nodeids = [f"tests/test_{f}.py::t{t}" for f in range(9) for t in range(f % 4 + 1)]
-    kept: list[str] = []
+def test_the_parts_collect_every_test_file_exactly_once(tmp_path: Path, n: int) -> None:
+    _tree(tmp_path)
+    files = _shards.test_files([tmp_path])
+    kept: list[Path] = []
     for k in range(1, n + 1):
-        monkeypatch.setenv("LOOM_TEST_SHARD", f"{k}/{n}")
-        items, config = _items(*nodeids), _Config()
-        _shards.keep(config, items)  # type: ignore[arg-type]
-        assert sorted(i.nodeid for i in items + config.deselected) == sorted(nodeids)
-        kept += [i.nodeid for i in items]
-    assert sorted(kept) == sorted(nodeids)
+        split = _shards.Split(k, n, [tmp_path])
+        kept += [f for f in files if not split.ignores(f)]
+    assert sorted(kept) == sorted(files)
+
+
+def test_a_test_file_the_walk_missed_runs_in_part_one(tmp_path: Path) -> None:
+    _tree(tmp_path / "tree")
+    stray = tmp_path / "elsewhere" / "test_stray.py"
+    stray.parent.mkdir()
+    stray.write_text("def test_one(): ...\n")
+    assert [_shards.Split(k, 3, [tmp_path / "tree"]).ignores(stray) for k in (1, 2, 3)] == [
+        False,
+        True,
+        True,
+    ]
+
+
+def test_a_module_that_is_not_a_test_file_is_never_ignored(tmp_path: Path) -> None:
+    _tree(tmp_path)
+    split = _shards.Split(2, 2, [tmp_path])
+    assert not split.ignores(tmp_path / "helper.py")
+    assert not split.ignores(tmp_path / "sub")
+
+
+def test_a_bad_shard_spec_is_a_usage_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOOM_TEST_SHARD", "5/4")
+    with pytest.raises(pytest.UsageError, match="LOOM_TEST_SHARD"):
+        _shards.ignored(Path("tests/unit/test_x.py"), None)  # type: ignore[arg-type]
+
+
+def test_without_a_shard_nothing_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LOOM_TEST_SHARD", raising=False)
+    assert _shards.ignored(Path("tests/unit/test_x.py"), None) is None  # type: ignore[arg-type]
+
+
+def test_the_weights_are_seconds_per_file_from_junit_reports(tmp_path: Path) -> None:
+    report = tmp_path / "unit.xml"
+    report.write_text(
+        '<testsuites><testsuite name="pytest">'
+        '<testcase classname="tests.unit.test_test_shards" name="a" time="1.5"/>'
+        '<testcase classname="tests.unit.test_test_shards" name="b" time="0.25"/>'
+        '<testcase classname="tests.unit.test_test_shards.TestK" name="c" time="2"/>'
+        '<testcase classname="tests.unit.no_such_file" name="d" time="9"/>'
+        "</testsuite></testsuites>"
+    )
+    assert _shards.record([report]) == {"tests/unit/test_test_shards.py": 3.75}
+
+
+def _collect(*args: str, shard: str | None, deselect_free: bool = False) -> list[str]:
+    env = {k: v for k, v in os.environ.items() if k != "LOOM_TEST_SHARD"}
+    if shard:
+        env["LOOM_TEST_SHARD"] = shard
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--co",
+            "-q",
+            "-p",
+            "no:randomly",
+            "-p",
+            "no:cacheprovider",
+            *args,
+        ],
+        cwd=_shards.ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    # 5: the part holds no test of these paths.
+    assert done.returncode in (0, 5), done.stdout[-2000:] + done.stderr[-2000:]
+    if deselect_free:
+        assert "deselected" not in done.stdout, done.stdout[-500:]
+    return [line for line in done.stdout.splitlines() if "::" in line]
+
+
+def test_files_and_node_ids_named_on_the_command_line_run_in_one_part_each() -> None:
+    """pytest asks `pytest_ignore_collect` only about paths it walks to, so the
+    conftest also deselects what an argument brought in from another part."""
+    args = (
+        "tests/unit/test_request_ids.py",
+        "tests/unit/test_lemmatize.py",
+        "tests/unit/test_test_shards.py::test_a_shard_spec_reads_as_index_and_count",
+    )
+    whole = _collect(*args, shard=None)
+    parts = [_collect(*args, shard=f"{k}/2") for k in (1, 2)]
+    assert sorted(parts[0] + parts[1]) == sorted(whole)
+    assert parts[0] and parts[1]
+
+
+def test_a_directory_argument_skips_the_other_parts_files_before_collecting_them() -> None:
+    """Under a directory, `pytest_ignore_collect` keeps another part's files from being
+    imported at all: nothing is collected only to be deselected."""
+    tree = "tests/integration/same_key"
+    whole = _collect(tree, shard=None)
+    parts = [_collect(tree, shard=f"{k}/2", deselect_free=True) for k in (1, 2)]
+    assert whole and parts[0] and parts[1]
+    assert sorted(parts[0] + parts[1]) == sorted(whole)
+
+
+def test_the_committed_weights_are_seconds_per_test_file() -> None:
+    weights = json.loads(_shards.WEIGHTS.read_text())
+    assert weights, "regenerate with python -m tests._shards <junit xml>..."
+    assert all(name.startswith("tests/") and name.endswith(".py") for name in weights)
+    assert all(isinstance(s, int | float) and s >= 0 for s in weights.values())

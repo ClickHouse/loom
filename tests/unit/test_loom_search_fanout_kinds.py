@@ -16,6 +16,7 @@ import server.auth.fanout as fanout_mod
 import server.identity.app.namespace_kinds as nk
 from server.memory.app.loom_search import fanout as loom_search_fanout
 from server.transport import lean_results
+from tests.unit.clock_fake import ManualClock
 
 ORG = "clickhouse"
 MINE = [
@@ -86,6 +87,49 @@ def test_kind_map_fails_open_without_a_connection(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(ch, "get_client", lambda: _Never())
     nk.reset_cache()
+    assert asyncio.run(nk.kind_map(ORG)) == {}
+
+
+class _Directory:
+    """A client whose `query_all` answers `KINDS` until `fail` is set."""
+
+    _client = object()
+
+    def __init__(self) -> None:
+        self.fail = False
+        self.reads = 0
+
+    async def query_all(self, sql: str, params: dict[str, str]) -> list[dict[str, str]]:
+        self.reads += 1
+        if self.fail:
+            raise ConnectionError("ClickHouse went away")
+        return [{"namespace": ns, "kind": kind} for ns, kind in KINDS.items()]
+
+
+def test_a_failed_read_after_the_ttl_serves_the_last_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.core.ch as ch
+
+    directory = _Directory()
+    clock = ManualClock(t=1000.0)
+    monkeypatch.setattr(ch, "get_client", lambda: directory)
+    monkeypatch.setattr(nk, "_cache", {})
+    monkeypatch.setattr(nk.time, "monotonic", clock.monotonic)
+    assert asyncio.run(nk.kind_map(ORG)) == KINDS
+    clock.advance(nk._TTL_S + 1)
+    directory.fail = True
+    assert asyncio.run(nk.kind_map(ORG)) == KINDS
+    assert directory.reads == 2  # the TTL ran out, so the second call read and failed
+
+
+def test_a_failed_read_with_no_snapshot_narrows_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import server.core.ch as ch
+
+    directory = _Directory()
+    directory.fail = True
+    monkeypatch.setattr(ch, "get_client", lambda: directory)
+    monkeypatch.setattr(nk, "_cache", {})
     assert asyncio.run(nk.kind_map(ORG)) == {}
 
 
