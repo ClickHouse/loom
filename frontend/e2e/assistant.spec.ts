@@ -590,6 +590,8 @@ async function openWithEveryPanel(page: Page) {
   await expect(page.getByTestId("assistant-documents")).toBeVisible();
   // The longest user id, picked from the overview: no typing. Its name is cut, and the tip
   // shows it whole.
+  // The browser's own name for a pick, which its flex label must not run together.
+  await expect(page.getByRole("button", { name: "ada 3 memories", exact: true })).toBeVisible();
   await page.getByTestId("pick-user").first().hover();
   await expect(page.getByRole("tooltip")).toContainText(LONG_ID);
   await page.getByTestId("pick-user").first().click();

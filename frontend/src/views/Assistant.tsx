@@ -46,11 +46,11 @@ const SUBJECTS: Array<{ value: InspectSubject; label: string }> = [
 ];
 
 // The id field's label for each subject, and the Inspect button's reason while the field
-// is empty: `pick` when the overview suggests names, else `empty`.
-const SUBJECT_COPY: Record<InspectSubject, { field: string; empty: string; pick: string }> = {
+// is empty: `pick` when the overview suggests names, else `empty`. No session is suggested.
+const SUBJECT_COPY: Record<InspectSubject, { field: string; empty: string; pick?: string }> = {
   user: { field: "User id", empty: "Type a user id.", pick: "Pick a user above or type an id." },
   agent: { field: "Agent name", empty: "Type an agent name.", pick: "Pick an agent above or type its name." },
-  session: { field: "Session id", empty: "Type a session id.", pick: "Type a session id." },
+  session: { field: "Session id", empty: "Type a session id." },
 };
 
 export function Assistant() {
@@ -69,12 +69,11 @@ export function Assistant() {
   const [subjectId, setSubjectId] = useState("");
   const [entity, setEntity] = useState("");
 
-  // Each read is gated on its own op. All four are VIEWER, which every namespace role
-  // reaches, so a canCall refusal means the role is unknown (list_mine failed, or has no row
-  // for the namespace); while list_mine is still being read, the reason says so. The server refuses memory.inspect and namespace.tune to a
-  // token pinned to one user or session (neither is a scoped op); namespace.inventory and
-  // knowledge.inspect are scoped and answer it. The token's claims say so up front; for an
-  // end-user token, or behind a proxy (no token here), only the inventory's answer does.
+  // Each read is gated on its own op. All four are VIEWER, so a canCall refusal means the role
+  // is unknown. The server refuses memory.inspect and namespace.tune to a token pinned to one
+  // user or session; namespace.inventory and knowledge.inspect are scoped and answer it. The
+  // token's claims say so up front; for an end-user token, or behind a proxy (no token here),
+  // only the inventory's answer does.
   const narrowed =
     tokenScope?.readScope != null || (inventory.data !== null && inventory.data.scope.read_scope !== "namespace");
   // A scoped read under `own_session`, or under `own_user` with no `read_user_id`, needs the
@@ -96,7 +95,7 @@ export function Assistant() {
   const tuneGate = gate("namespace.tune");
   const copy = SUBJECT_COPY[subject];
   const suggestions = inventory.data?.populations.find((p) => SUBJECT_OF[p.population] === subject)?.top ?? [];
-  const emptyReason = suggestions.length > 0 ? copy.pick : copy.empty;
+  const emptyReason = suggestions.length > 0 && copy.pick ? copy.pick : copy.empty;
   const inspectBlocked = memoryGate ?? (subjectId.trim() ? null : emptyReason);
 
   const org = identity?.org ?? "";

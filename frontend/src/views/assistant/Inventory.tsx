@@ -1,10 +1,15 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
-import type { InspectSubject, InventoryPlane, InventoryPopulationName, NamespaceInventory } from "../../api";
+import type {
+  InspectSubject,
+  InventoryPlane,
+  InventoryPopulationName,
+  InventorySection,
+  NamespaceInventory,
+} from "../../api";
 import { NameBadge } from "../../components/AgentBadge";
 import { Stat, Unavailable } from "../../components/ui";
 import { useClamped } from "../../components/ui/TextClamp";
-import { Tip } from "../../components/ui/Tooltip";
 import { ListTime } from "../../components/ui/ListTime";
 import { displayAgent, fmtInt } from "../../lib/format";
 
@@ -27,19 +32,7 @@ export function InventorySections({ inventory }: { inventory: NamespaceInventory
             <Stat
               label={PLANE_LABEL[s.plane] ?? s.plane}
               value={s.count === null ? "—" : fmtInt(s.count)}
-              hint={
-                !s.complete ? (
-                  <span className="break-words" data-testid="inventory-incomplete">
-                    Not counted: {s.reason || "no reason given"}
-                  </span>
-                ) : (
-                  s.latest_at && (
-                    <>
-                      Newest <ListTime time={s.latest_at} />
-                    </>
-                  )
-                )
-              }
+              hint={planeHint(s)}
             />
           </div>
         ))}
@@ -50,6 +43,22 @@ export function InventorySections({ inventory }: { inventory: NamespaceInventory
           .join(" · ")}
       </p>
     </div>
+  );
+}
+
+/** Under a count: why it was not counted, else when the newest row was written. */
+function planeHint(s: InventorySection): ReactNode {
+  if (!s.complete)
+    return (
+      <span className="break-words" data-testid="inventory-incomplete">
+        Not counted: {s.reason || "no reason given"}
+      </span>
+    );
+  if (!s.latest_at) return null;
+  return (
+    <>
+      Newest <ListTime time={s.latest_at} />
+    </>
   );
 }
 
@@ -131,8 +140,8 @@ export function InventoryPopulations({
   );
 }
 
-/** One user or agent to inspect. Its name is cut at the badges' 180 px, with the whole id in
- *  the tip when cut: the plain tip on an open pick, after the reason on a blocked one. */
+/** One user or agent to inspect. Its name is cut at the badges' width, with the whole id in
+ *  the tip when cut: alone on an open pick, after the reason on a blocked one. */
 function PickButton({
   subject,
   name,
@@ -149,21 +158,22 @@ function PickButton({
   const [label, setLabel] = useState<HTMLSpanElement | null>(null);
   const shown = subject === "agent" ? displayAgent(name) : name;
   const cut = useClamped(label, shown);
-  const button = (
-    <Button type="secondary" htmlType="button" onClick={onPick} data-testid={`pick-${subject}`}>
-      <span ref={setLabel} className="truncate max-w-[180px]">
-        {shown}
-      </span>{" "}
-      <span className="text-text-muted tabular">
-        {fmtInt(rows)} <span className="sr-only">memories</span>
-      </span>
-    </Button>
-  );
-  if (blocked) return <Unavailable reason={cut ? `${blocked} (${name})` : blocked}>{button}</Unavailable>;
   return (
-    <Tip content={name} disabled={!cut}>
-      {button}
-    </Tip>
+    <Unavailable reason={blocked && (cut ? `${blocked} (${name})` : blocked)} tip={cut ? name : undefined}>
+      {/* The label is a flex row, which drops a space between its parts: the name is set here. */}
+      <Button
+        type="secondary"
+        htmlType="button"
+        onClick={onPick}
+        data-testid={`pick-${subject}`}
+        aria-label={`${shown} ${fmtInt(rows)} memories`}
+      >
+        <span ref={setLabel} className="agent-badge truncate">
+          {shown}
+        </span>
+        <span className="ml-1.5 text-text-muted tabular">{fmtInt(rows)}</span>
+      </Button>
+    </Unavailable>
   );
 }
 

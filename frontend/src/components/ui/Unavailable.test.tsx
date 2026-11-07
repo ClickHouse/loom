@@ -31,4 +31,22 @@ describe("Unavailable", () => {
     );
     expect(screen.getByRole("button", { name: "Add" })).not.toHaveAttribute("data-unavailable");
   });
+
+  it("keeps a focused child focused as its reason comes and goes", () => {
+    const { rerender } = render(
+      <Unavailable reason="Loading">
+        <Button htmlType="button" label="Draft" />
+      </Unavailable>,
+    );
+    const button = screen.getByRole("button", { name: "Draft" });
+    button.focus();
+    rerender(
+      <Unavailable reason={null}>
+        <Button htmlType="button" label="Draft" />
+      </Unavailable>,
+    );
+    expect(screen.getByRole("button", { name: "Draft" })).toBe(button);
+    expect(button).toHaveFocus();
+    expect(button).not.toHaveAttribute("aria-disabled");
+  });
 });

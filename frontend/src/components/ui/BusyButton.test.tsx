@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "../../test/rtl";
+import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { BusyButton } from "./BusyButton";
 
@@ -26,5 +27,18 @@ describe("BusyButton", () => {
     expect(button).toHaveAttribute("aria-busy", "true");
     fireEvent.click(button);
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards its ref, and keeps an aria-disabled given to it while idle", () => {
+    const ref = createRef<HTMLButtonElement>();
+    const onClick = vi.fn();
+    render(
+      <BusyButton ref={ref} busy={false} type="secondary" htmlType="button" aria-disabled="true" onClick={onClick}>
+        Save
+      </BusyButton>,
+    );
+    const button = screen.getByRole("button", { name: "Save" });
+    expect(ref.current).toBe(button);
+    expect(button).toHaveAttribute("aria-disabled", "true");
   });
 });

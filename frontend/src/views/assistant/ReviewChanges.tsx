@@ -84,8 +84,7 @@ const roleName = (role: string) => role.replaceAll("_", " ");
 /** Who makes the change and how, since this page applies no draft. */
 function howToApply(p: TuneProposal): string {
   const a = p.apply;
-  const role = roleName(a.required_role);
-  const who = `${/^[aeiou]/i.test(role) ? "An" : "A"} ${role}`;
+  const who = `A ${roleName(a.required_role)}`;
   if (a.via === "environment")
     return `${who} sets the variable below in the deployment; it takes effect once each server and worker restarts.`;
   if (a.via === "admin_route") return `${who} sends the admin request below.`;

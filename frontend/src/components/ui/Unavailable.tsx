@@ -7,16 +7,24 @@ import { Tip } from "./Tooltip";
  * no hover or focus, so the reason would be unreachable), its click does nothing, and the
  * reason is its tooltip and accessible description. Without one, the child renders as is,
  * inside the same tooltip turned off: a reason that comes and goes never remounts the child,
- * so a focused control keeps its focus.
+ * so a focused control keeps its focus. `tip` is the tooltip while it has no reason.
  *
  * The child is a Click UI Button. `data-unavailable` carries its `type` so styles.css can
  * give it the disabled look Click UI only gives `:disabled`.
  */
-export function Unavailable({ reason, children }: { reason?: string | null; children: ReactElement }) {
+export function Unavailable({
+  reason,
+  tip,
+  children,
+}: {
+  reason?: string | null;
+  tip?: string;
+  children: ReactElement;
+}) {
   const id = useId();
   return (
     <>
-      <Tip content={reason} disabled={!reason}>
+      <Tip content={reason || tip} disabled={!reason && !tip}>
         {reason
           ? cloneElement(children, {
               "aria-disabled": "true",
