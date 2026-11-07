@@ -1020,7 +1020,7 @@ describe("RepositoryCard: a failing tier", () => {
     expect(branchHealth(b).detail).toContain("12 failed passes, 413 commits behind (no credential)");
     const { container } = mount([b], []);
     const list = screen.getByTestId("repo-tier-failures");
-    expect(list).toHaveTextContent("master: 12 failed passes, 413 commits behind (no credential) since");
+    expect(list).toHaveTextContent("master: 12 failed passes, 413 commits behind (no credential), first failed 5h ago");
     expect(list).toHaveTextContent("Fix: No credential with access (github.com/o/private)");
     expect(within(list).queryByText("Mirror fetch")).toBeNull();
     expect(await axeViolations(container)).toEqual([]);

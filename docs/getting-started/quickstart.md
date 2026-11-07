@@ -227,7 +227,7 @@ docker compose --project-directory "$HOME/.loom" exec loom loom doctor
 ```
 
 - `/v1/health` says `status: ok` when ClickHouse is reachable and no problem is an
-  error. `fake_embedding`, `fake_llm` and `providers_degraded` say which mode you are in;
+  error, but a repository's failing code-index tier (`code_tier_failing`). `fake_embedding`, `fake_llm` and `providers_degraded` say which mode you are in;
   `problems` lists each issue with its fix; `schema.pending` lists unapplied migrations.
 - `loom doctor` prints one line per server-side check. `--json` gives JSON. From a source
   checkout stack, run `docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml exec loom loom doctor`.

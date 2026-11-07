@@ -319,6 +319,7 @@ def test_degraded_server_warns_with_the_error_codes() -> None:
                 "problems": [
                     {"code": "fake_llm", "severity": "error"},
                     {"code": "x", "severity": "warn"},
+                    {"code": "code_tier_failing", "severity": "error"},
                 ],
             },
         )
@@ -328,6 +329,7 @@ def test_degraded_server_warns_with_the_error_codes() -> None:
         grade == "WARN"
         and "fake_llm" in detail
         and "x" not in detail.split("reports")[1].split(".")[0].replace("fake_llm", "")
+        and "code_tier_failing" not in detail
     )
 
 

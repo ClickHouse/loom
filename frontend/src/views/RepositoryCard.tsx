@@ -116,7 +116,9 @@ export function branchHealth(b: CodeRepoSummary): Health {
       state: "warning",
       rank: 6,
       detail: failing
-        .map((t) => `${tierName(t.tier)}: ${failureSummary(t)} since ${listTime(t.failing_since)}. Fix: ${t.fix}`)
+        .map(
+          (t) => `${tierName(t.tier)}: ${failureSummary(t)}, first failed ${listTime(t.failing_since)}. Fix: ${t.fix}`,
+        )
         .join(" "),
     };
   }
@@ -441,7 +443,7 @@ function TierFailures({ facet }: { facet: CodeFacet }) {
       {rows.map(({ b, t }) => (
         <li key={`${b.namespace}:${t.tier}`} className="text-xs">
           <Badge text={tierName(t.tier)} state="warning" size="sm" className="mr-1.5" />
-          <span className="font-mono">{b.branch}</span>: {failureSummary(t)} since{" "}
+          <span className="font-mono">{b.branch}</span>: {failureSummary(t)}, first failed{" "}
           <ListTime time={t.failing_since} quiet />. <span className="text-text-muted">Fix: </span>
           <span className="break-words">{t.fix}</span>
         </li>
