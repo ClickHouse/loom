@@ -10,7 +10,9 @@ import {
   repairOrphanDuplicates,
   resolveMemoryDuplicate,
   retireDocumentDuplicate,
+  COLLAPSE_PAIRS,
   DUPLICATE_LIST_LIMIT,
+  type Scope,
   type DocumentDuplicateCluster,
   type MemoryDuplicateCluster,
   type MemoryDuplicateDecision,
@@ -23,8 +25,6 @@ import { toast } from "../../components/Toast";
 import { ListState } from "../../components/ui/ListState";
 import { RowMenu } from "../../components/ui/RowMenu";
 import { Loading, Panel, SectionHeading } from "../../components/ui";
-
-type Scope = { org: string; namespace: string };
 
 /**
  * Duplicates — the pairs the dedup worker flagged, memories and documents, each settled
@@ -100,7 +100,7 @@ function MemoryDuplicates({ scope, reload, onDone }: { scope: Scope; reload: num
         <>
           <ul className="space-y-3">
             {list.rows.map((c) => (
-              <MemoryCluster key={c.canonical_id} scope={scope} cluster={c} onDone={settled} />
+              <MemoryCluster key={c.canonical_id} scope={scope} cluster={c} held={list.busy} onDone={settled} />
             ))}
           </ul>
           <CapNote shown={list.rows.length} things="clusters" />
@@ -113,13 +113,17 @@ function MemoryDuplicates({ scope, reload, onDone }: { scope: Scope; reload: num
 function MemoryCluster({
   scope,
   cluster,
+  held,
   onDone,
 }: {
   scope: Scope;
   cluster: MemoryDuplicateCluster;
+  /** The list is being read again: a decided pair's buttons stay off until it answers. */
+  held: boolean;
   onDone: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
+  const [working, setBusy] = useState(false);
+  const busy = working || held;
   // The canonical was deleted: its duplicates point at nothing and no pair can be settled.
   if (!cluster.canonical_key) {
     return (
@@ -135,14 +139,14 @@ function MemoryCluster({
     );
   }
 
-  const others = cluster.duplicates.length - 1;
+  const others = cluster.dup_count - 1;
   const decide = async (duplicateId: string, duplicateKey: string, decision: MemoryDuplicateDecision) => {
     // Keeping one of the two deletes the other; it can be restored for 14 days.
     if (decision !== "keep_both") {
       const keepsDuplicate = decision === "keep_duplicate";
       const orphaned =
         keepsDuplicate && others > 0
-          ? ` The other ${others} duplicate${others === 1 ? "" : "s"} of it lose their canonical; Repair orphaned duplicates brings them back.`
+          ? ` ${others === 1 ? "The other duplicate of it loses its" : `The other ${others} duplicates of it lose their`} canonical; Repair orphaned duplicates brings them back.`
           : "";
       const ok = await confirmAction({
         title: `Delete ${keepsDuplicate ? cluster.canonical_key : duplicateKey}?`,
@@ -168,6 +172,8 @@ function MemoryCluster({
       <Panel>
         <p className="text-xs text-text-muted">
           Canonical <span className="font-mono text-text">{cluster.canonical_key}</span> · {cluster.canonical_agent}
+          {cluster.dup_count > cluster.duplicates.length &&
+            ` · ${cluster.duplicates.length} of its ${cluster.dup_count} duplicates shown`}
         </p>
         <ul className="mt-2 space-y-2">
           {cluster.duplicates.map((d) => (
@@ -230,7 +236,7 @@ function DocumentDuplicates({ scope, reload, onDone }: { scope: Scope; reload: n
         <>
           <ul className="space-y-3">
             {list.rows.map((c) => (
-              <DocumentCluster key={c.content_sha256} scope={scope} cluster={c} onDone={settled} />
+              <DocumentCluster key={c.content_sha256} scope={scope} cluster={c} held={list.busy} onDone={settled} />
             ))}
           </ul>
           <CapNote shown={list.rows.length} things="clusters" />
@@ -252,14 +258,17 @@ export function keptAndCopies(docs: DocumentDuplicateCluster["docs"]) {
 function DocumentCluster({
   scope,
   cluster,
+  held,
   onDone,
 }: {
   scope: Scope;
   cluster: DocumentDuplicateCluster;
+  held: boolean;
   onDone: () => void;
 }) {
   const { keep, copies } = keptAndCopies(cluster.docs);
-  const [busy, setBusy] = useState(false);
+  const [working, setBusy] = useState(false);
+  const busy = working || held;
   const retire = async (uri: string) => {
     const ok = await confirmAction({
       title: `Retire ${uri}?`,
@@ -284,6 +293,8 @@ function DocumentCluster({
       <Panel>
         <p className="text-xs text-text-muted">
           Kept <span className="font-mono text-text">{keep.title || keep.source_uri}</span>
+          {cluster.doc_count > cluster.docs.length &&
+            `, the oldest of the ${cluster.docs.length} of its ${cluster.doc_count} documents listed`}
         </p>
         <ul className="mt-2 space-y-2">
           {copies.map((d) => (
@@ -309,24 +320,31 @@ function DocumentCluster({
 /** The namespace-wide repairs. Each asks before it writes. */
 function Repairs({ scope, onDone }: { scope: Scope; onDone: () => void }) {
   const [agents, setAgents] = useState<string[]>([]);
+  const [agentsFailed, setAgentsFailed] = useState(false);
   const [agent, setAgent] = useState("");
   const [busy, setBusy] = useState(false);
   useAbortableEffect(
     (signal, live) => {
+      setAgentsFailed(false);
       listMemoryAgents(scope, { signal })
         .then((a) => live() && setAgents(a.filter((x) => x !== "-")))
-        .catch(() => live() && setAgents([]));
+        .catch(() => {
+          if (!live()) return;
+          setAgents([]);
+          setAgentsFailed(true);
+        });
     },
     [scope.org, scope.namespace],
   );
 
   /** `ask` answers the confirmation's title, or null after saying there is nothing to do. */
-  const run = async (ask: () => Promise<string | null>, apply: () => Promise<string>) => {
+  type Question = { title: string; message?: string; confirmLabel?: string; danger?: boolean };
+  const run = async (ask: () => Promise<Question | null>, apply: () => Promise<string>) => {
     setBusy(true);
     try {
       const question = await ask();
       if (question === null) return;
-      if (!(await confirmAction({ title: question, confirmLabel: "Run" }))) return;
+      if (!(await confirmAction({ confirmLabel: "Run", ...question }))) return;
       toast(await apply(), "ok");
       onDone();
     } catch (e) {
@@ -344,13 +362,19 @@ function Repairs({ scope, onDone }: { scope: Scope; onDone: () => void }) {
     run(
       async () => {
         const r = await collapseMemoryDuplicates(scope, true);
-        if (r.mirror_stale === 0) return nothingToDo("Search already skips every duplicate.");
-        return `Mark ${r.mirror_stale} search row${r.mirror_stale === 1 ? "" : "s"} of duplicates so search skips them?`;
+        // The op reads the same first pairs every call: past them, nothing is known.
+        const among = r.truncated ? ` among the first ${COLLAPSE_PAIRS.toLocaleString()} duplicate pairs` : "";
+        if (r.mirror_stale === 0)
+          return nothingToDo(
+            r.truncated ? `No search row needs marking${among}.` : "Search already skips every duplicate.",
+          );
+        return {
+          title: `Mark ${r.mirror_stale} search row${r.mirror_stale === 1 ? "" : "s"} of duplicates${among} so search skips them?`,
+        };
       },
       async () => {
         const r = await collapseMemoryDuplicates(scope, false);
-        const more = r.truncated ? " More duplicates remain: run it again." : "";
-        return `Marked ${r.restamped} search row${r.restamped === 1 ? "" : "s"}.${more}`;
+        return `Marked ${r.restamped} search row${r.restamped === 1 ? "" : "s"}.`;
       },
     );
   const repair = () =>
@@ -358,14 +382,25 @@ function Repairs({ scope, onDone }: { scope: Scope; onDone: () => void }) {
       async () => {
         const r = await repairOrphanDuplicates(scope, true);
         if (r.candidates === 0) return nothingToDo("No duplicate has lost its canonical.");
-        return `Bring back ${r.candidates} duplicate${r.candidates === 1 ? "" : "s"} whose canonical is gone?`;
+        return {
+          title: `Bring back ${r.candidates} duplicate${r.candidates === 1 ? "" : "s"} whose canonical is gone?`,
+        };
       },
-      async () => `Brought back ${(await repairOrphanDuplicates(scope, false)).reactivated}`,
+      async () => {
+        const n = (await repairOrphanDuplicates(scope, false)).reactivated;
+        return `Brought back ${n} duplicate${n === 1 ? "" : "s"}.`;
+      },
     );
   // No dry run first: it makes the same model calls and only skips the write.
   const consolidate = () =>
     run(
-      async () => `Merge near-duplicates among ${agent}'s memories? Each cluster found costs one model call.`,
+      async () => ({
+        title: `Merge near-duplicates among ${agent}'s memories?`,
+        message:
+          "Each cluster found becomes one merged memory, and the memories merged into it are deleted. Each cluster costs one model call.",
+        confirmLabel: "Merge",
+        danger: true,
+      }),
       async () => {
         const r = await consolidateMemories(scope, agent);
         if (r.clusters_found === 0) return `No near-duplicates among ${r.examined} memories of ${agent}.`;
@@ -392,7 +427,13 @@ function Repairs({ scope, onDone }: { scope: Scope; onDone: () => void }) {
             label="Agent"
             value={agent || undefined}
             onSelect={setAgent}
-            placeholder={agents.length === 0 ? "No agent has written here" : "Pick an agent"}
+            placeholder={
+              agentsFailed
+                ? "Couldn't load the agents"
+                : agents.length === 0
+                  ? "No agent has written here"
+                  : "Pick an agent"
+            }
             disabled={agents.length === 0}
           >
             {agents.map((a) => (

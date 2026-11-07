@@ -118,12 +118,12 @@ export function ReviewQueue() {
   // A probe seeds its panel's first view once: a panel opened again (the tabs unmount an
   // inactive one) reads afresh, so a learning promoted or an exception removed since does
   // not come back from the probe.
-  const [seedsUsed, setSeedsUsed] = useState({ learnings: false, exceptions: false });
+  const [seedsUsed, setSeedsUsed] = useState({ learnings: false, exceptions: false, proposals: false });
   useAbortableEffect(
     (signal, live) => {
       setProbedLearnings(null);
       setProbedExceptions(null);
-      setSeedsUsed({ learnings: false, exceptions: false });
+      setSeedsUsed({ learnings: false, exceptions: false, proposals: false });
       setTab("conflicts");
       setAutoOpened(false);
       listLearnings({ org: identity.org, namespace: identity.namespace }, "pending", LEARNINGS_READ, { signal })
@@ -255,7 +255,10 @@ export function ReviewQueue() {
         )}
         {hasProposals && (
           <Tabs.Content value="proposals">
-            <ProposalsPanel initial={probedProposals} />
+            <ProposalsPanel
+              initial={seedsUsed.proposals ? null : probedProposals}
+              onSeedUsed={() => setSeedsUsed((u) => ({ ...u, proposals: true }))}
+            />
           </Tabs.Content>
         )}
         {hasDuplicates && (
@@ -531,6 +534,7 @@ function ConflictsPanel() {
           placeholder="Optional — recorded in the audit trail"
           rows={3}
         />
+        <RevisionHint key={current.memory_id} memoryId={current.memory_id} />
         <div className="mt-4 flex items-center justify-end gap-2 flex-wrap">
           <Button
             type="empty"
@@ -557,7 +561,6 @@ function ConflictsPanel() {
             Keep A
           </Button>
         </div>
-        <RevisionHint key={current.memory_id} memoryId={current.memory_id} />
       </Panel>
 
       <SectionHeading
@@ -595,41 +598,42 @@ const SUGGESTION_LABEL: Record<RevisionSuggestion["decision"], string> = {
   allow: "Allow both",
 };
 
-/** conflicts.propose_revision for the conflict on screen, read when asked: which of the
- *  three decisions fits and why. It weighs every peer, as the buttons act on every peer, and
- *  changes nothing. */
+/** conflicts.propose_revision, read when asked: which decision fits the conflict, over
+ *  every peer. It changes nothing. */
 function RevisionHint({ memoryId }: { memoryId: string }) {
   const identity = useIdentity();
   const [hint, setHint] = useState<RevisionSuggestion[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const region = useRef<HTMLDivElement>(null);
   const ask = async () => {
     setBusy(true);
     try {
       const r = await proposeRevision({ org: identity.org, namespace: identity.namespace }, memoryId);
-      setHint(r.suggestions ?? []);
+      setHint(r.suggestions);
+      // The link that had focus is gone; the answer takes it.
+      region.current?.focus();
     } catch (e) {
       toast(`Couldn't read a suggestion: ${humanizeError(e)}`, "error");
     } finally {
       setBusy(false);
     }
   };
-  if (hint === null)
-    return (
-      <div className="mt-3">
+  return (
+    <div className="mt-3 text-sm">
+      {hint === null && (
         <Link component="button" size="sm" onClick={() => void ask()} disabled={busy}>
           Suggest a decision
         </Link>
+      )}
+      {/* Mounted empty, so the answer is announced when it fills in. */}
+      <div ref={region} role="status" tabIndex={-1} className="outline-none">
+        {hint?.length === 0 && "No suggestion for this conflict."}
+        {hint?.map((s) => (
+          <p key={s.decision}>
+            <strong>{SUGGESTION_LABEL[s.decision]}</strong>: {s.rationale}
+          </p>
+        ))}
       </div>
-    );
-  return (
-    <div className="mt-3 text-sm" role="status">
-      {hint.length === 0
-        ? "No suggestion for this conflict."
-        : hint.map((s) => (
-            <p key={s.decision}>
-              <strong>{SUGGESTION_LABEL[s.decision]}</strong>: {s.rationale}
-            </p>
-          ))}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Table } from "@clickhouse/click-ui/Table";
@@ -25,7 +25,13 @@ const HEADERS = [
 
 /** Facts on trial (written with `proposed=true`) and how the runs that relied on each
  *  went: accept one to serve it by default, reject it to retire it. */
-export function ProposalsPanel({ initial }: { initial: { rows: MemoryProposal[]; total: number } | null }) {
+export function ProposalsPanel({
+  initial,
+  onSeedUsed,
+}: {
+  initial: { rows: MemoryProposal[]; total: number } | null;
+  onSeedUsed: () => void;
+}) {
   const identity = useIdentity();
   const scope = { org: identity.org, namespace: identity.namespace };
   const [rows, setRows] = useState<MemoryProposal[] | null>(initial?.rows ?? null);
@@ -38,17 +44,25 @@ export function ProposalsPanel({ initial }: { initial: { rows: MemoryProposal[];
   const role = useNamespaceRole(identity.namespace);
   const canDecide = canCall("memory.proposal_decide", role, whoami);
 
+  // The probe's rows seed the first view only; a panel opened again reads afresh.
+  useEffect(() => {
+    if (initial) onSeedUsed();
+  }, []);
+  // A decision holds every row until the list is read again.
+  const [reading, setReading] = useState(false);
   useAbortableEffect(
     (signal, live) => {
       if (reload === 0 && initial) return;
       setError(null);
+      setReading(true);
       listProposals(scope, { signal })
         .then((r) => {
           if (!live()) return;
-          setRows(r.proposals ?? []);
-          setTotal(r.total ?? 0);
+          setRows(r.proposals);
+          setTotal(r.total);
         })
-        .catch((e) => live() && setError(e));
+        .catch((e) => live() && setError(e))
+        .finally(() => live() && setReading(false));
     },
     [identity.org, identity.namespace, reload],
   );
@@ -66,83 +80,87 @@ export function ProposalsPanel({ initial }: { initial: { rows: MemoryProposal[];
       setBusy(false);
     }
     // The decided row unmounts; focus goes to the panel, and the list is read again.
+    setReading(true);
     panel.current?.focus();
     setReload((n) => n + 1);
   };
+  const held = busy || reading;
 
-  if (error) return <ListState kind="error" things="proposals" error={error} onRetry={() => setReload((n) => n + 1)} />;
-  if (rows?.length === 0)
-    return (
-      <ListState
-        kind="empty"
-        icon="check-in-circle"
-        title="No proposals"
-        description="A fact an agent writes as proposed waits here until it is accepted or rejected."
-      />
-    );
+  // One wrapper in every state, so the focus a decision gives it survives an empty answer.
   return (
     <div ref={panel} tabIndex={-1} className="outline-none">
-      <Table
-        aria-label="Proposals"
-        aria-busy={rows === null || undefined}
-        noDataMessage={rows === null ? <TableSkeleton label="Loading proposals" /> : undefined}
-        size="sm"
-        headers={HEADERS}
-        rows={(rows ?? []).map((p) => ({
-          id: p.memory_id,
-          items: [
-            {
-              label: (
-                <div className="min-w-0">
-                  <div className="font-mono text-xs">{p.memory_key}</div>
-                  {p.sensitivity === "high" ? (
-                    <Badge text="sensitive" state="neutral" size="sm" />
-                  ) : (
-                    <div className="text-sm line-clamp-2">{p.value_preview}</div>
-                  )}
-                </div>
-              ),
-              overflowMode: "wrap",
-            },
-            { label: <AgentBadge agent={p.agent} /> },
-            {
-              label: (
-                <span className="inline-flex items-center gap-1.5 tabular">
-                  {p.graded_passes} passed · {p.graded_fails} failed
-                  {p.ready && <Badge text={`ready to ${p.ready}`} state="info" size="sm" />}
-                </span>
-              ),
-            },
-            { label: <ListTime time={p.created_at} quiet /> },
-            {
-              label: canDecide && (
-                <span className="inline-flex items-center gap-2">
-                  <Button
-                    type="secondary"
-                    htmlType="button"
-                    disabled={busy}
-                    aria-label={`Accept ${p.memory_key}`}
-                    onClick={() => void decide(p.memory_key, "accept")}
-                  >
-                    Accept
-                  </Button>
-                  <RowMenu
-                    name={p.memory_key}
-                    items={[
-                      {
-                        label: "Reject",
-                        danger: true,
-                        disabled: busy,
-                        onSelect: () => void decide(p.memory_key, "reject"),
-                      },
-                    ]}
-                  />
-                </span>
-              ),
-            },
-          ],
-        }))}
-      />
+      {error ? (
+        <ListState kind="error" things="proposals" error={error} onRetry={() => setReload((n) => n + 1)} />
+      ) : rows?.length === 0 ? (
+        <ListState
+          kind="empty"
+          icon="check-in-circle"
+          title="No proposals"
+          description="A fact an agent writes as proposed waits here until it is accepted or rejected."
+        />
+      ) : (
+        <Table
+          aria-label="Proposals"
+          aria-busy={rows === null || reading || undefined}
+          noDataMessage={rows === null ? <TableSkeleton label="Loading proposals" /> : undefined}
+          size="sm"
+          headers={HEADERS}
+          rows={(rows ?? []).map((p) => ({
+            id: p.memory_id,
+            items: [
+              {
+                label: (
+                  <div className="min-w-0">
+                    <div className="font-mono text-xs">{p.memory_key}</div>
+                    {p.sensitivity === "high" ? (
+                      <Badge text="sensitive" state="neutral" size="sm" />
+                    ) : (
+                      <div className="text-sm line-clamp-2">{p.value_preview}</div>
+                    )}
+                  </div>
+                ),
+                overflowMode: "wrap",
+              },
+              { label: <AgentBadge agent={p.agent} /> },
+              {
+                label: (
+                  <span className="inline-flex items-center gap-1.5 tabular">
+                    {p.graded_passes} passed · {p.graded_fails} failed
+                    {p.ready && <Badge text={`ready to ${p.ready}`} state="info" size="sm" />}
+                  </span>
+                ),
+              },
+              { label: <ListTime time={p.created_at} quiet /> },
+              {
+                label: canDecide && (
+                  <span className="inline-flex items-center gap-2">
+                    <Button
+                      type="secondary"
+                      htmlType="button"
+                      disabled={held}
+                      aria-label={`Accept ${p.memory_key}`}
+                      onClick={() => void decide(p.memory_key, "accept")}
+                    >
+                      Accept
+                    </Button>
+                    <RowMenu
+                      name={p.memory_key}
+                      items={[
+                        {
+                          label: "Reject",
+                          danger: true,
+                          disabled: held,
+                          onSelect: () => void decide(p.memory_key, "reject"),
+                        },
+                      ]}
+                    />
+                  </span>
+                ),
+              },
+            ],
+          }))}
+        />
+      )}
       {rows !== null && total > rows.length && (
         <p className="mt-2 text-xs text-text-muted">
           The newest {rows.length} of {total} proposals; decide some to see the rest.

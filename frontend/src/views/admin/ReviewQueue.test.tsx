@@ -55,6 +55,7 @@ import {
   listAutoResolved,
   listConflicts,
   listLearnings,
+  listProposals,
   listUnsuperseded,
   proposeRevision,
   resolveConflict,
@@ -180,6 +181,59 @@ describe("ReviewQueue", () => {
   afterEach(() => {
     cleanup();
     useStore.setState({ whoami: null, myNamespaces: null });
+  });
+
+  it("shows Duplicates to an admin only, Proposals only when one waits, and reads none for an unknown role", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    vi.mocked(listProposals).mockClear();
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of city", {}, WAIT);
+    expect(listProposals).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tab", { name: /Duplicates/ })).toBeNull();
+    cleanup();
+
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await screen.findByText("value of city", {}, WAIT);
+    await waitFor(() => expect(listProposals).toHaveBeenCalled());
+    expect(screen.queryByRole("tab", { name: /Proposals/ })).toBeNull();
+    expect(screen.queryByRole("tab", { name: /Duplicates/ })).toBeNull();
+    cleanup();
+
+    seed("ns-a", "admin");
+    render(<ReviewQueue />);
+    expect(await screen.findByRole("tab", { name: /Duplicates/ }, WAIT)).toBeInTheDocument();
+  });
+
+  it("reads proposals afresh when the tab opens again, so a decided one does not come back", async () => {
+    const P = {
+      memory_key: "deploy_window",
+      memory_id: "m1",
+      agent: "a",
+      value_preview: "Tuesdays",
+      sensitivity: "" as const,
+      created_at: "2000-01-01 00:00:00",
+      graded_passes: 1,
+      graded_fails: 0,
+      used_count: 1,
+      harm_count: 0,
+      ready: "" as const,
+    };
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    vi.mocked(listProposals).mockClear();
+    vi.mocked(listProposals).mockResolvedValueOnce({ proposals: [P], total: 1 });
+    seed("ns-a", "writer");
+    const user = userEvent.setup();
+    render(<ReviewQueue />);
+    await user.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    expect(await screen.findByText("Tuesdays")).toBeInTheDocument();
+    expect(listProposals).toHaveBeenCalledTimes(1);
+    vi.mocked(listProposals).mockResolvedValue({ proposals: [], total: 0 });
+    await user.click(screen.getByRole("tab", { name: /Conflicts/ }));
+    await user.click(screen.getByRole("tab", { name: /Proposals/ }));
+    expect(await screen.findByText("No proposals")).toBeInTheDocument();
+    expect(listProposals).toHaveBeenCalledTimes(2);
   });
 
   it("suggests a decision over every peer, in the words of the buttons", async () => {
@@ -1463,8 +1517,9 @@ describe("ReviewQueue", () => {
     const reason = screen.getByRole("textbox", { name: "Reason for the decision" });
     reason.focus();
     await user.keyboard("dup");
-    // The footer reads secondary first, primary last: Skip, Allow both, Drop A, Keep A.
-    for (const name of [/Skip/, /Allow both/, /Drop A/, /Keep A/]) {
+    // The suggestion comes before the decisions; the footer reads secondary first, primary
+    // last: Skip, Allow both, Drop A, Keep A.
+    for (const name of [/Suggest a decision/, /Skip/, /Allow both/, /Drop A/, /Keep A/]) {
       await user.tab();
       expect(document.activeElement).toBe(screen.getByRole("button", { name }));
     }

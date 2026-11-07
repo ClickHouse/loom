@@ -1,8 +1,8 @@
 // The Review queue's duplicate, proposal and revision reads and decisions.
-import { post } from "../api";
+import { LONG_CALL_MS, post } from "../api";
 import type { Identity, RequestOpts } from "../api";
 
-type Scope = Pick<Identity, "org" | "namespace">;
+export type Scope = Pick<Identity, "org" | "namespace">;
 
 // ===== Duplicate memories (the dedup worker's pairs) =====
 
@@ -51,18 +51,25 @@ export async function resolveMemoryDuplicate(
 
 /** Mirrors `server/memory/api/models_graph.py::MemoryDedupCollapseOutput`. */
 export interface DuplicateCollapse {
-  pairs: number;
   /** Search rows of duplicates still marked as live; a run marks them `duplicate`. */
   mirror_stale: number;
   restamped: number;
   truncated: boolean;
-  sample: { duplicate_key: string; canonical_key: string }[];
 }
+
+/** The most duplicate pairs one `memory.dedup_collapse` reads (the op's own maximum); it
+ *  reads the same first pairs every call. */
+export const COLLAPSE_PAIRS = 5000;
 
 /** POST /v1/memory.dedup_collapse: marks the search rows of duplicates `duplicate`, so search
  *  skips them; no model call, and no value, key or memory changes. `dryRun` counts them. */
 export async function collapseMemoryDuplicates(id: Scope, dryRun: boolean): Promise<DuplicateCollapse> {
-  return post("/v1/memory.dedup_collapse", { org: id.org, namespace: id.namespace, dry_run: dryRun });
+  return post("/v1/memory.dedup_collapse", {
+    org: id.org,
+    namespace: id.namespace,
+    dry_run: dryRun,
+    limit: COLLAPSE_PAIRS,
+  });
 }
 
 /** POST /v1/memory.resolve_orphan_duplicates: duplicates whose canonical is gone come back. */
@@ -73,27 +80,26 @@ export async function repairOrphanDuplicates(
   return post("/v1/memory.resolve_orphan_duplicates", { org: id.org, namespace: id.namespace, dry_run: dryRun });
 }
 
-/** Mirrors `server/memory/api/models_admin.py::MemoryConsolidateResult`. */
-export interface ConsolidatedCluster {
-  canonical_key: string;
-  canonical_value: string;
-  merged_keys: string[];
-  cluster_size: number;
-}
-
 /** POST /v1/memory.consolidate: one model call per cluster of near-duplicate memories of
  *  one agent (those of no user), merged into one each. */
 export async function consolidateMemories(
   id: Scope,
   agent: string,
 ): Promise<{
-  consolidated: ConsolidatedCluster[];
+  /** One entry per cluster merged. */
+  consolidated: unknown[];
   examined: number;
   clusters_found: number;
   clusters_failed: number;
   clusters_refused_lossy: number;
 }> {
-  return post("/v1/memory.consolidate", { org: id.org, namespace: id.namespace, agent });
+  // One model call per cluster runs inside the call: the long bound, so a slow merge is
+  // not reported as failed while it goes on.
+  return post(
+    "/v1/memory.consolidate",
+    { org: id.org, namespace: id.namespace, agent },
+    AbortSignal.timeout(LONG_CALL_MS),
+  );
 }
 
 /** POST /v1/memory.agents_list: the agents that wrote into the namespace. */

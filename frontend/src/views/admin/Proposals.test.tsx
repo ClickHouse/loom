@@ -48,7 +48,7 @@ afterEach(() => {
 describe("ProposalsPanel", () => {
   it("shows the probe's rows without reading again, and accepts one", async () => {
     vi.mocked(api.listProposals).mockResolvedValue({ proposals: [], total: 0 });
-    render(<ProposalsPanel initial={{ rows: [P], total: 1 }} />);
+    render(<ProposalsPanel initial={{ rows: [P], total: 1 }} onSeedUsed={() => {}} />);
     expect(screen.getByText("Deploys run on Tuesdays")).toBeInTheDocument();
     expect(screen.getByText("ready to accept")).toBeInTheDocument();
     expect(api.listProposals).not.toHaveBeenCalled();
@@ -61,7 +61,7 @@ describe("ProposalsPanel", () => {
 
   it("offers a viewer the proposals and no decision", async () => {
     signIn("viewer");
-    render(<ProposalsPanel initial={{ rows: [P], total: 1 }} />);
+    render(<ProposalsPanel initial={{ rows: [P], total: 1 }} onSeedUsed={() => {}} />);
     expect(screen.getByText("Deploys run on Tuesdays")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Accept deploy_window" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Actions for deploy_window" })).toBeNull();
@@ -73,7 +73,7 @@ describe("ProposalsPanel", () => {
       results: [{ memory_key: "deploy_window", decided: false, reason: "already accepted" }],
     });
     vi.mocked(api.listProposals).mockResolvedValue({ proposals: [], total: 0 });
-    render(<ProposalsPanel initial={{ rows: [P], total: 1 }} />);
+    render(<ProposalsPanel initial={{ rows: [P], total: 1 }} onSeedUsed={() => {}} />);
     await userEvent.click(screen.getByRole("button", { name: "Actions for deploy_window" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Reject" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Not decided: already accepted", "info"));
@@ -82,7 +82,7 @@ describe("ProposalsPanel", () => {
 
   it("keeps two agents' proposals of one key apart, shows a high one as sensitive, and says the list is cut", async () => {
     const other = { ...P, memory_id: "m2", agent: "cursor", value_preview: "", sensitivity: "high" as const };
-    render(<ProposalsPanel initial={{ rows: [P, other], total: 140 }} />);
+    render(<ProposalsPanel initial={{ rows: [P, other], total: 140 }} onSeedUsed={() => {}} />);
     expect(screen.getAllByText("deploy_window")).toHaveLength(2);
     expect(screen.getByText("sensitive")).toBeInTheDocument();
     expect(screen.getByText("The newest 2 of 140 proposals; decide some to see the rest.")).toBeInTheDocument();

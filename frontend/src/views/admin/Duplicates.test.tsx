@@ -40,11 +40,9 @@ vi.mock("../../api", async (importOriginal) => {
     resolveMemoryDuplicate: vi.fn(async () => ({})),
     retireDocumentDuplicate: vi.fn(async () => ({})),
     collapseMemoryDuplicates: vi.fn(async (_id: unknown, dry: boolean) => ({
-      pairs: 3,
       mirror_stale: 2,
       restamped: dry ? 0 : 2,
       truncated: false,
-      sample: [],
     })),
     repairOrphanDuplicates: vi.fn(async () => ({ candidates: 0, reactivated: 0 })),
     consolidateMemories: vi.fn(async () => ({
@@ -112,26 +110,33 @@ describe("DuplicatesPanel", () => {
     expect(toast).toHaveBeenCalledWith("Marked 2 search rows.", "ok");
   });
 
-  it("asks nothing when pairs wait but search already skips them, and says when more remain", async () => {
+  it("asks nothing when search already skips the pairs, and says a cut read covers only the first pairs", async () => {
     vi.mocked(api.collapseMemoryDuplicates).mockResolvedValueOnce({
-      pairs: 3,
       mirror_stale: 0,
       restamped: 0,
       truncated: false,
-      sample: [],
     });
     render(<DuplicatesPanel />);
     await userEvent.click(await screen.findByRole("button", { name: "Hide duplicates from search" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Search already skips every duplicate.", "info"));
     expect(confirmAction).not.toHaveBeenCalled();
 
-    vi.mocked(api.collapseMemoryDuplicates)
-      .mockResolvedValueOnce({ pairs: 500, mirror_stale: 1, restamped: 0, truncated: true, sample: [] })
-      .mockResolvedValueOnce({ pairs: 500, mirror_stale: 1, restamped: 1, truncated: true, sample: [] });
+    vi.mocked(api.collapseMemoryDuplicates).mockResolvedValueOnce({ mirror_stale: 0, restamped: 0, truncated: true });
     await userEvent.click(screen.getByRole("button", { name: "Hide duplicates from search" }));
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith("Marked 1 search row. More duplicates remain: run it again.", "ok"),
+      expect(toast).toHaveBeenCalledWith("No search row needs marking among the first 5,000 duplicate pairs.", "info"),
     );
+
+    vi.mocked(api.collapseMemoryDuplicates)
+      .mockResolvedValueOnce({ mirror_stale: 1, restamped: 0, truncated: true })
+      .mockResolvedValueOnce({ mirror_stale: 1, restamped: 1, truncated: true });
+    await userEvent.click(screen.getByRole("button", { name: "Hide duplicates from search" }));
+    await waitFor(() =>
+      expect(confirmAction).toHaveBeenCalledWith(
+        expect.objectContaining({ title: expect.stringContaining("among the first 5,000 duplicate pairs") }),
+      ),
+    );
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Marked 1 search row.", "ok"));
   });
 
   it("offers no decision on a cluster whose canonical is gone, and warns of the siblings a keep orphans", async () => {
@@ -163,7 +168,7 @@ describe("DuplicatesPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Actions for home_1" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Keep this one, delete home" }));
     expect(confirmAction).toHaveBeenCalledWith(
-      expect.objectContaining({ message: expect.stringContaining("The other 1 duplicate of it lose their canonical") }),
+      expect.objectContaining({ message: expect.stringContaining("The other duplicate of it loses its canonical") }),
     );
   });
 
@@ -219,5 +224,7 @@ describe("DuplicatesPanel", () => {
       "Merged 1 of 2 clusters; 1 left as they were, 1 because the merge lost a detail",
       "ok",
     );
+    // It deletes the merged memories, so it asks as a deletion does.
+    expect(confirmAction).toHaveBeenCalledWith(expect.objectContaining({ danger: true, confirmLabel: "Merge" }));
   });
 });
