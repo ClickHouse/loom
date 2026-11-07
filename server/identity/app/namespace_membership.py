@@ -397,10 +397,11 @@ _MEMBERSHIP_SQL = """
         LEFT JOIN (SELECT * FROM loom.namespaces FINAL) AS n
             ON n.org = g.org AND n.namespace = g.namespace
         LEFT JOIN (
-            -- a visit under any of the person's spellings clears `is_new`
+            -- a visit under any of the person's spellings clears `is_new`; visits are
+            -- written as signed in, so the exact spellings find them and keep the key prune
             SELECT org, namespace, max(last_seen_at) AS last_seen_at
             FROM loom.namespace_visits FINAL
-            WHERE org = {org:String} AND lower(subject) IN {subs:Array(String)}
+            WHERE org = {org:String} AND subject IN {visitors:Array(String)}
             GROUP BY org, namespace
         ) AS v
             ON v.org = g.org AND v.namespace = g.namespace
@@ -431,7 +432,10 @@ async def _membership_rows(ch: Any, org: str, subjects: list[str]) -> list[dict[
     # Any case, as the gate matches a grant's subject (`authz.grant_role_for`).
     subs = list(dict.fromkeys(s.lower() for s in subjects))
     rows: list[dict[str, Any]] = list(
-        await ch.query_all(_MEMBERSHIP_SQL, params={"org": org, "subs": subs})
+        await ch.query_all(
+            _MEMBERSHIP_SQL,
+            params={"org": org, "subs": subs, "visitors": list(dict.fromkeys(subjects))},
+        )
     )
     return rows
 

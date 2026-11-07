@@ -141,13 +141,3 @@ async def test_a_subject_with_no_aliases_lists_its_own_rows_only(
     rows = await _list_mine(monkeypatch, fake)
     assert set(rows) == {other}
     assert fake.subs[0] == [other]
-
-
-def test_the_visits_join_folds_the_same_spellings_as_the_grants() -> None:
-    """`is_new` clears on a visit under any of the person's spellings: the
-    visits side of the SQL filters by the same `subs` the grants side does,
-    not by equality with the grant row's own subject."""
-    sql = membership._MEMBERSHIP_SQL
-    visits = sql.split("loom.namespace_visits", 1)[1]
-    assert "lower(subject) IN {subs:Array(String)}" in visits
-    assert "v.subject = g.subject" not in sql

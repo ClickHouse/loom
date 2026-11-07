@@ -211,27 +211,6 @@ def test_the_token_mint_client_table_names_codex() -> None:
         assert f'"{cid}"' in ts, f"frontend client list lacks {cid}"
 
 
-def test_the_mint_builds_the_entries_the_dashboard_prints() -> None:
-    """The server's `clients` and the dashboard's snippets come from two builders. Both
-    are checked against one fixture of every client's setup: this test for the server,
-    frontend/src/lib/clients.test.ts for the dashboard."""
-    from server.identity.app import token_clients
-
-    fixture = ROOT / "frontend" / "src" / "lib" / "clientSetups.fixture.json"
-    expected = json.loads(fixture.read_text())
-    assert set(expected) == set(token_clients.MCP_CLIENTS)
-    for client, want in expected.items():
-        got = token_clients.client_config(client, "http://x/mcp", "T")
-        assert {k: got[k] for k in want} == want, client
-
-
-def test_the_coding_toolset_joins_a_url_that_has_a_query() -> None:
-    from server.identity.app import token_clients
-
-    got = token_clients.client_config("cursor", "http://x/mcp?a=1", "T")
-    assert got["config"]["mcpServers"]["loom"]["url"] == "http://x/mcp?a=1&toolset=coding"
-
-
 def test_codex_plugin_bundles_its_mcp_entry() -> None:
     """The Codex plugin carries its own MCP entry, so install
     is `codex plugin add` alone — no `codex mcp add`, no LOOM_API_KEY."""

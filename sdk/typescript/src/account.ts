@@ -93,7 +93,7 @@ export interface TokenRevoked {
 export class AccountClient {
   constructor(private readonly transport: Transport) {}
 
-  /** The tokens you made, and other people's that reach a namespace you administer, newest
+  /** The tokens you made, and other people's that name a namespace you administer, newest
    *  first; each row's `yours` marks your own. */
   async tokens(opts?: CallOptions): Promise<TokenRow[]> {
     return (await this.transport.get<{ rows: TokenRow[] }>("me/service_accounts", opts)).rows;

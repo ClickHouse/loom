@@ -27,7 +27,7 @@ class AccountClient:
         return await self._agent.transport.request_json("POST", path, json=body)
 
     async def tokens(self) -> list[dict[str, Any]]:
-        """The tokens you made, and other people's that reach a namespace you
+        """The tokens you made, and other people's that name a namespace you
         administer, newest first; each row's `yours` marks your own."""
         rows: list[dict[str, Any]] = (await self._get("/v1/me/service_accounts"))["rows"]
         return rows

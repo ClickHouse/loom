@@ -83,7 +83,8 @@ interface FormattedMcpConfig {
  *  `clients` the server's token mint returns for API callers. The dashboard builds
  *  it here because the checklist's connect line and the result dialog need only the
  *  token and the URL (which an answer from the previous build's replica lacks the
- *  `clients` of), and a parity test (`test_codex_plugin.py`) keeps the two alike.
+ *  `clients` of), and one fixture, `clientSetups.fixture.json`, checked from both
+ *  sides, keeps the two alike.
  *  For Claude Code the block is the project-scoped `.mcp.json` form and
  *  `command` is the `claude mcp add` one-liner (user scope) — the two places
  *  Claude Code actually reads. For Codex the block is `[mcp_servers.loom]`,

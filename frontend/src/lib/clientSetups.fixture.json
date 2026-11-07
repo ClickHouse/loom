@@ -1,126 +1,410 @@
-{
-  "claude-desktop": {
-    "config_key": "mcpServers",
-    "config": {
-      "mcpServers": {
-        "loom": {
-          "command": "npx",
-          "args": ["-y", "mcp-remote", "http://x/mcp", "--allow-http", "--header", "Authorization: Bearer T"]
+[
+  {
+    "mcp_url": "http://x/mcp",
+    "setups": {
+      "claude-desktop": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "command": "npx",
+              "args": ["-y", "mcp-remote", "http://x/mcp", "--allow-http", "--header", "Authorization: Bearer T"]
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "claude-code": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "url": "http://x/mcp?toolset=coding",
+              "headers": {
+                "Authorization": "Bearer T"
+              },
+              "type": "http"
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "claude mcp add --transport http loom \"http://x/mcp?toolset=coding\" -H \"Authorization: Bearer T\" -s user",
+        "env": {}
+      },
+      "codex": {
+        "config_key": "mcp_servers",
+        "config": {
+          "mcp_servers": {
+            "loom": {
+              "url": "http://x/mcp?toolset=coding",
+              "bearer_token_env_var": "LOOM_API_KEY"
+            }
+          }
+        },
+        "config_toml": "[mcp_servers.loom]\nurl = \"http://x/mcp?toolset=coding\"\nbearer_token_env_var = \"LOOM_API_KEY\"\n",
+        "command": "codex mcp add loom --url \"http://x/mcp?toolset=coding\" --bearer-token-env-var LOOM_API_KEY",
+        "env": {
+          "LOOM_API_KEY": "T"
         }
+      },
+      "cursor": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "url": "http://x/mcp?toolset=coding",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "vscode": {
+        "config_key": "servers",
+        "config": {
+          "servers": {
+            "loom": {
+              "url": "http://x/mcp",
+              "headers": {
+                "Authorization": "Bearer T"
+              },
+              "type": "http"
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "cline": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "command": "npx",
+              "args": ["-y", "mcp-remote", "http://x/mcp", "--allow-http", "--header", "Authorization: Bearer T"]
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "windsurf": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "url": "http://x/mcp",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "zed": {
+        "config_key": "context_servers",
+        "config": {
+          "context_servers": {
+            "loom": {
+              "command": "npx",
+              "args": ["-y", "mcp-remote", "http://x/mcp", "--allow-http", "--header", "Authorization: Bearer T"]
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
       }
-    },
-    "config_toml": "",
-    "command": "",
-    "env": {}
-  },
-  "claude-code": {
-    "config_key": "mcpServers",
-    "config": {
-      "mcpServers": {
-        "loom": {
-          "url": "http://x/mcp?toolset=coding",
-          "headers": {
-            "Authorization": "Bearer T"
-          },
-          "type": "http"
-        }
-      }
-    },
-    "config_toml": "",
-    "command": "claude mcp add --transport http loom \"http://x/mcp?toolset=coding\" -H \"Authorization: Bearer T\" -s user",
-    "env": {}
-  },
-  "codex": {
-    "config_key": "mcp_servers",
-    "config": {
-      "mcp_servers": {
-        "loom": {
-          "url": "http://x/mcp?toolset=coding",
-          "bearer_token_env_var": "LOOM_API_KEY"
-        }
-      }
-    },
-    "config_toml": "[mcp_servers.loom]\nurl = \"http://x/mcp?toolset=coding\"\nbearer_token_env_var = \"LOOM_API_KEY\"\n",
-    "command": "codex mcp add loom --url \"http://x/mcp?toolset=coding\" --bearer-token-env-var LOOM_API_KEY",
-    "env": {
-      "LOOM_API_KEY": "T"
     }
   },
-  "cursor": {
-    "config_key": "mcpServers",
-    "config": {
-      "mcpServers": {
-        "loom": {
-          "url": "http://x/mcp?toolset=coding",
-          "headers": {
-            "Authorization": "Bearer T"
+  {
+    "mcp_url": "http://x/mcp?a=1",
+    "setups": {
+      "claude-desktop": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "command": "npx",
+              "args": ["-y", "mcp-remote", "http://x/mcp?a=1", "--allow-http", "--header", "Authorization: Bearer T"]
+            }
           }
-        }
-      }
-    },
-    "config_toml": "",
-    "command": "",
-    "env": {}
-  },
-  "vscode": {
-    "config_key": "servers",
-    "config": {
-      "servers": {
-        "loom": {
-          "url": "http://x/mcp",
-          "headers": {
-            "Authorization": "Bearer T"
-          },
-          "type": "http"
-        }
-      }
-    },
-    "config_toml": "",
-    "command": "",
-    "env": {}
-  },
-  "cline": {
-    "config_key": "mcpServers",
-    "config": {
-      "mcpServers": {
-        "loom": {
-          "command": "npx",
-          "args": ["-y", "mcp-remote", "http://x/mcp", "--allow-http", "--header", "Authorization: Bearer T"]
-        }
-      }
-    },
-    "config_toml": "",
-    "command": "",
-    "env": {}
-  },
-  "windsurf": {
-    "config_key": "mcpServers",
-    "config": {
-      "mcpServers": {
-        "loom": {
-          "url": "http://x/mcp",
-          "headers": {
-            "Authorization": "Bearer T"
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "claude-code": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "url": "http://x/mcp?a=1&toolset=coding",
+              "headers": {
+                "Authorization": "Bearer T"
+              },
+              "type": "http"
+            }
           }
+        },
+        "config_toml": "",
+        "command": "claude mcp add --transport http loom \"http://x/mcp?a=1&toolset=coding\" -H \"Authorization: Bearer T\" -s user",
+        "env": {}
+      },
+      "codex": {
+        "config_key": "mcp_servers",
+        "config": {
+          "mcp_servers": {
+            "loom": {
+              "url": "http://x/mcp?a=1&toolset=coding",
+              "bearer_token_env_var": "LOOM_API_KEY"
+            }
+          }
+        },
+        "config_toml": "[mcp_servers.loom]\nurl = \"http://x/mcp?a=1&toolset=coding\"\nbearer_token_env_var = \"LOOM_API_KEY\"\n",
+        "command": "codex mcp add loom --url \"http://x/mcp?a=1&toolset=coding\" --bearer-token-env-var LOOM_API_KEY",
+        "env": {
+          "LOOM_API_KEY": "T"
         }
+      },
+      "cursor": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "url": "http://x/mcp?a=1&toolset=coding",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "vscode": {
+        "config_key": "servers",
+        "config": {
+          "servers": {
+            "loom": {
+              "url": "http://x/mcp?a=1",
+              "headers": {
+                "Authorization": "Bearer T"
+              },
+              "type": "http"
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "cline": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "command": "npx",
+              "args": ["-y", "mcp-remote", "http://x/mcp?a=1", "--allow-http", "--header", "Authorization: Bearer T"]
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "windsurf": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "url": "http://x/mcp?a=1",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "zed": {
+        "config_key": "context_servers",
+        "config": {
+          "context_servers": {
+            "loom": {
+              "command": "npx",
+              "args": ["-y", "mcp-remote", "http://x/mcp?a=1", "--allow-http", "--header", "Authorization: Bearer T"]
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
       }
-    },
-    "config_toml": "",
-    "command": "",
-    "env": {}
+    }
   },
-  "zed": {
-    "config_key": "context_servers",
-    "config": {
-      "context_servers": {
-        "loom": {
-          "command": "npx",
-          "args": ["-y", "mcp-remote", "http://x/mcp", "--allow-http", "--header", "Authorization: Bearer T"]
+  {
+    "mcp_url": "http://x/mcp?mytoolset=x",
+    "setups": {
+      "claude-desktop": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "command": "npx",
+              "args": [
+                "-y",
+                "mcp-remote",
+                "http://x/mcp?mytoolset=x",
+                "--allow-http",
+                "--header",
+                "Authorization: Bearer T"
+              ]
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "claude-code": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "url": "http://x/mcp?mytoolset=x&toolset=coding",
+              "headers": {
+                "Authorization": "Bearer T"
+              },
+              "type": "http"
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "claude mcp add --transport http loom \"http://x/mcp?mytoolset=x&toolset=coding\" -H \"Authorization: Bearer T\" -s user",
+        "env": {}
+      },
+      "codex": {
+        "config_key": "mcp_servers",
+        "config": {
+          "mcp_servers": {
+            "loom": {
+              "url": "http://x/mcp?mytoolset=x&toolset=coding",
+              "bearer_token_env_var": "LOOM_API_KEY"
+            }
+          }
+        },
+        "config_toml": "[mcp_servers.loom]\nurl = \"http://x/mcp?mytoolset=x&toolset=coding\"\nbearer_token_env_var = \"LOOM_API_KEY\"\n",
+        "command": "codex mcp add loom --url \"http://x/mcp?mytoolset=x&toolset=coding\" --bearer-token-env-var LOOM_API_KEY",
+        "env": {
+          "LOOM_API_KEY": "T"
         }
+      },
+      "cursor": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "url": "http://x/mcp?mytoolset=x&toolset=coding",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "vscode": {
+        "config_key": "servers",
+        "config": {
+          "servers": {
+            "loom": {
+              "url": "http://x/mcp?mytoolset=x",
+              "headers": {
+                "Authorization": "Bearer T"
+              },
+              "type": "http"
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "cline": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "command": "npx",
+              "args": [
+                "-y",
+                "mcp-remote",
+                "http://x/mcp?mytoolset=x",
+                "--allow-http",
+                "--header",
+                "Authorization: Bearer T"
+              ]
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "windsurf": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "url": "http://x/mcp?mytoolset=x",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "zed": {
+        "config_key": "context_servers",
+        "config": {
+          "context_servers": {
+            "loom": {
+              "command": "npx",
+              "args": [
+                "-y",
+                "mcp-remote",
+                "http://x/mcp?mytoolset=x",
+                "--allow-http",
+                "--header",
+                "Authorization: Bearer T"
+              ]
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
       }
-    },
-    "config_toml": "",
-    "command": "",
-    "env": {}
+    }
   }
-}
+]

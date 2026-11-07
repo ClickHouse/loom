@@ -1,8 +1,8 @@
 """A grant on a namespace with no directory row, such as a repository listed only in
 LOOM_CODE_REPOS_JSON, is still a membership: `namespace.list_mine` lists it, as a code
 namespace, so the token form can offer that repository by name and branch. The join's
-missing side reads NULL, not ClickHouse's defaults (`active = false`), which used to drop
-the row."""
+missing side reads NULL, not ClickHouse's defaults (`active = false`), which drop the
+row."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ import pytest
 import server.identity.app.namespace_membership as membership
 from server.settings import settings
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+
+_PARAMS = {"org": "acme", "subs": ["kim", "kim@acme.dev"], "visitors": ["kim", "kim@acme.dev"]}
 
 
 def _grant(namespace: str, role: str) -> str:
@@ -36,13 +38,41 @@ def test_a_grant_on_a_namespace_without_a_directory_row_is_listed() -> None:
         "('acme', 'team-private', 'kim@acme.dev', true, 'memory'), "
         "('acme', 'retired', 'kim@acme.dev', false, 'memory')",
     ]
-    rows = run(setup, membership._MEMBERSHIP_SQL, {"org": "acme", "subs": ["kim@acme.dev"]})
+    rows = run(setup, membership._MEMBERSHIP_SQL, _PARAMS)
     by_ns = {r["namespace"]: r for r in rows}
     # The deactivated namespace stays out; the one with no directory row is in.
     assert set(by_ns) == {"team-private", "code-acme-private"}
     assert by_ns["team-private"]["kind"] == "memory"
     assert by_ns["code-acme-private"]["kind"] == ""  # no row: `_kind` decides
     assert by_ns["code-acme-private"]["visibility"] == "private"
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
+def test_without_join_use_nulls_the_grant_is_dropped() -> None:
+    setup = [ddl("namespace_grants"), ddl("namespaces"), ddl("namespace_visits")]
+    setup.append(_grant("code-acme-private", "viewer"))
+    plain = membership._MEMBERSHIP_SQL.replace("SETTINGS join_use_nulls = 1", "")
+    assert run(setup, plain, _PARAMS) == []
+    assert [r["namespace"] for r in run(setup, membership._MEMBERSHIP_SQL, _PARAMS)] == [
+        "code-acme-private"
+    ]
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
+def test_a_visit_under_another_spelling_clears_is_new() -> None:
+    setup = [
+        ddl("namespace_grants"),
+        ddl("namespaces"),
+        ddl("namespace_visits"),
+        "INSERT INTO loom.namespace_grants (org, namespace, subject, role, granted_at, "
+        "granted_by, version, status) VALUES "
+        "('acme', 'team-a', 'kim@acme.dev', 'viewer', now() - 60, 'op', 1, 'active'), "
+        "('acme', 'team-b', 'kim@acme.dev', 'viewer', now() - 60, 'op', 1, 'active')",
+        "INSERT INTO loom.namespace_visits (org, namespace, subject, last_seen_at) VALUES "
+        "('acme', 'team-a', 'kim', now())",
+    ]
+    rows = {r["namespace"]: r["is_new"] for r in run(setup, membership._MEMBERSHIP_SQL, _PARAMS)}
+    assert rows == {"team-a": 0, "team-b": 1}
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
@@ -55,7 +85,7 @@ def test_a_grant_stored_in_another_case_is_listed() -> None:
         "granted_by, version, status) VALUES "
         "('acme', 'team-public', 'Kim@Acme.dev', 'viewer', now(), 'op', 1, 'active')",
     ]
-    rows = run(setup, membership._MEMBERSHIP_SQL, {"org": "acme", "subs": ["kim@acme.dev"]})
+    rows = run(setup, membership._MEMBERSHIP_SQL, _PARAMS)
     assert [r["namespace"] for r in rows] == ["team-public"]
 
 

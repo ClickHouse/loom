@@ -3,6 +3,8 @@ one config entry per supported client, built from the token and the server's MCP
 
 from __future__ import annotations
 
+import re
+
 # stdio-only clients need the `mcp-remote` npx shim to reach a remote HTTP MCP server;
 # the rest speak remote MCP natively (URL + headers, with `type: "http"` for
 # claude-code / vscode). When a client gains native HTTP support, drop it from here.
@@ -72,65 +74,44 @@ def config_key(client: str) -> str:
 
 
 def _coding_url(mcp_url: str) -> str:
-    if "toolset=" in mcp_url:
+    if re.search(r"[?&]toolset=", mcp_url):
         return mcp_url
     return f"{mcp_url}{'&' if '?' in mcp_url else '?'}toolset=coding"
 
 
 def client_config(client: str, mcp_url: str, minted: str) -> dict[str, object]:
     """One MCP client's setup for a token: the config-file key, the server entry
-    (URL + bearer, the `mcp-remote` bridge for stdio clients,
-    `bearer_token_env_var` for Codex), the file's own text when it is not JSON,
-    the one-line registration command, the variables to export before the client
-    starts (Codex reads the token from `LOOM_API_KEY`), and the file's path per
-    platform."""
-    key = config_key(client)
-    auth_header = f"Authorization: Bearer {minted}"
-    if client in _STDIO_VIA_NPX:
-        entry: dict[str, object] = {
-            "command": "npx",
-            "args": [
-                "-y",
-                "mcp-remote",
-                mcp_url,
-                "--allow-http",
-                "--header",
-                auth_header,
-            ],
-        }
-    elif client == "codex":
-        # Codex names the env var the bearer lives in; the token itself never sits in
-        # config.toml.
-        entry = {"url": _coding_url(mcp_url), "bearer_token_env_var": "LOOM_API_KEY"}
-    else:
+    (URL + bearer, the `mcp-remote` bridge for stdio clients), the file's own text
+    when it is not JSON, the one-line registration command, the variables to export
+    before the client starts, and the file's path per platform."""
+    url = _coding_url(mcp_url) if client in _CODING_CLIENTS else mcp_url
+    bearer = f"Bearer {minted}"
+    auth_header = f"Authorization: {bearer}"
+    toml, command, env = "", "", {}
+    if client == "codex":
+        # Codex reads the bearer from an env var; the token never sits in config.toml.
+        entry: dict[str, object] = {"url": url, "bearer_token_env_var": "LOOM_API_KEY"}
+        toml = f'[mcp_servers.loom]\nurl = "{url}"\nbearer_token_env_var = "LOOM_API_KEY"\n'
+        command = f'codex mcp add loom --url "{url}" --bearer-token-env-var LOOM_API_KEY'
+        env = {"LOOM_API_KEY": minted}
+    elif client in _STDIO_VIA_NPX:
         entry = {
-            "url": _coding_url(mcp_url) if client in _CODING_CLIENTS else mcp_url,
-            "headers": {"Authorization": f"Bearer {minted}"},
+            "command": "npx",
+            "args": ["-y", "mcp-remote", url, "--allow-http", "--header", auth_header],
         }
+    else:
+        entry = {"url": url, "headers": {"Authorization": bearer}}
         if client in {"claude-code", "vscode"}:
             entry["type"] = "http"
-    config_block = {key: {"loom": entry}}
-    config_toml = (
-        f'[mcp_servers.loom]\nurl = "{entry["url"]}"\nbearer_token_env_var = "LOOM_API_KEY"\n'
-        if client == "codex"
-        else ""
-    )
-    if client == "codex":
-        command = f'codex mcp add loom --url "{entry["url"]}" --bearer-token-env-var LOOM_API_KEY'
-    elif client == "claude-code":
+    if client == "claude-code":
         # User scope, kept in ~/.claude.json; the dashboard prints the same line.
-        command = (
-            f'claude mcp add --transport http loom "{entry["url"]}" -H "{auth_header}" -s user'
-        )
-    else:
-        command = ""
-
+        command = f'claude mcp add --transport http loom "{url}" -H "{auth_header}" -s user'
     return {
-        "config_key": key,
-        "config": config_block,
-        "config_toml": config_toml,
+        "config_key": config_key(client),
+        "config": {config_key(client): {"loom": entry}},
+        "config_toml": toml,
         "command": command,
-        "env": {"LOOM_API_KEY": minted} if client == "codex" else {},
+        "env": env,
         "config_path": CONFIG_PATHS[client],
     }
 

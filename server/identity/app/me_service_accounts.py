@@ -112,13 +112,8 @@ def _invalid(message: str) -> HTTPException:
 
 
 async def _with_bound_tracker(org: str, subject: str, names: list[str]) -> list[str]:
-    """A repository named on a token brings its bound tracker record when that
-    record is itself restricted and the caller holds a direct grant on it. The
-    history-shaped code ops (blame, bisect, backport gaps, first build, symbol history) read
-    issues and PRs from that record through the tracker namespace's own two-factor gate, so
-    a token naming the repository but not the record would answer without them, silently.
-    A standard record needs nothing: it is read by whoever reads the repository. Order is
-    kept; nothing is removed."""
+    """`names` plus each named repository's bound tracker record that is restricted and
+    that the caller holds a grant on; the history code ops read issues and PRs there."""
     from server.tracker.app.binding import tracker_namespaces_for
 
     out = list(names)
@@ -494,7 +489,7 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
                 "client": r.get("client") or "",
                 "ns_roles": me_callers.parse_ns_roles(r.get("ns_roles")),
                 # Made by the caller under any spelling of theirs, not by another person
-                # whose token reaches a namespace the caller administers.
+                # whose token names a namespace the caller administers.
                 "yours": str(r["created_by"]).lower() in subs,
             }
             for r in rows
