@@ -2,9 +2,9 @@ import type { InspectSubject, InventoryPopulationName } from "../../api";
 import { displayAgent } from "../../lib/format";
 
 // What the page calls each subject: its toggle label, its id field's label, and the Inspect
-// button's reason while the field is empty, with names suggested above it (`pick`) and
-// without (`empty`). A session is never suggested, so its two are the same.
-export const SUBJECT_COPY: Record<InspectSubject, { label: string; field: string; empty: string; pick: string }> = {
+// button's reason while the field is empty: `pick` when the overview suggests names, else
+// `empty`. A session is never suggested, so it has no `pick`.
+export const SUBJECT_COPY: Record<InspectSubject, { label: string; field: string; empty: string; pick?: string }> = {
   user: { label: "User", field: "User id", empty: "Type a user id.", pick: "Pick a user above or type an id." },
   agent: {
     label: "Agent",
@@ -12,7 +12,7 @@ export const SUBJECT_COPY: Record<InspectSubject, { label: string; field: string
     empty: "Type an agent name.",
     pick: "Pick an agent above or type its name.",
   },
-  session: { label: "Session", field: "Session id", empty: "Type a session id.", pick: "Type a session id." },
+  session: { label: "Session", field: "Session id", empty: "Type a session id." },
 };
 
 // The subject each listed population is inspected as; sessions are not listed.

@@ -85,8 +85,8 @@ export function Assistant() {
   const copy = SUBJECT_COPY[subject];
   const suggestions = inventory.data?.populations.find((p) => INSPECTED_AS[p.population] === subject)?.top ?? [];
   const suggest = suggestions.length > 0;
-  const emptyReason = suggest ? copy.pick : copy.empty;
-  // Whether the overview lists anyone to pick.
+  const emptyReason = suggest && copy.pick ? copy.pick : copy.empty;
+  // Only users and agents are picked; authors and members are listed, not inspected.
   const pickable = inventory.data?.populations.some((p) => INSPECTED_AS[p.population] && p.top.length > 0) ?? false;
   const inspectBlocked = memoryGate ?? (subjectId.trim() ? null : emptyReason);
 
@@ -102,10 +102,12 @@ export function Assistant() {
   useEffect(() => {
     if (org && overviewGate === null) readOverview();
   }, [org, overviewGate, readOverview]);
-  // An id or entity picked or typed in one namespace is not meant for the next one.
-  const [idFor, setIdFor] = useState(`${org}/${namespace}`);
-  if (idFor !== `${org}/${namespace}`) {
-    setIdFor(`${org}/${namespace}`);
+  // An id or entity picked or typed in one namespace is not meant for the next one. A new
+  // token on the same namespace drops the answers (they are keyed by scope) but keeps what
+  // was typed: it still names someone in this namespace.
+  const [formNamespace, setFormNamespace] = useState(`${org}/${namespace}`);
+  if (formNamespace !== `${org}/${namespace}`) {
+    setFormNamespace(`${org}/${namespace}`);
     setSubjectId("");
     setEntity("");
   }

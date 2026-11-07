@@ -1050,14 +1050,19 @@ describe("Assistant: overview", () => {
   it("says a population lists only its largest identities", async () => {
     namespaceInventory.mockResolvedValueOnce({
       ...INVENTORY,
-      populations: INVENTORY.populations.map((p) => (p.population === "subjects" ? { ...p, total: 340 } : p)),
+      // As the server sends it: the top 20 of 340.
+      populations: INVENTORY.populations.map((p) =>
+        p.population === "subjects"
+          ? { ...p, total: 340, top: Array.from({ length: 20 }, (_, n) => ({ name: `user-${n}`, rows: 40 - n })) }
+          : p,
+      ),
     });
     render(<Assistant />);
     const list = await screen.findByTestId("assistant-populations");
     const subjects = within(list)
       .getAllByRole("listitem")
       .find((li) => li.getAttribute("data-population") === "subjects");
-    expect(subjects).toHaveTextContent("The 1 with the most memories are shown.");
+    expect(subjects).toHaveTextContent("The 20 with the most memories are shown.");
   });
 
   it("says the counts are bound to the user the token is pinned to", async () => {
