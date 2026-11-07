@@ -243,14 +243,6 @@ A large C++ tree is the heavy case: a ClickHouse-sized checkout with its submodu
 and build tree is about 30 GB beside the mirror, and scip-clang holds a translation
 unit's AST per job (a few GB each), so `LOOM_CODE_SCIP_CLANG_JOBS` should fit the
 memory the workers process has. The full index of such a tree takes about an hour.
-The C/C++ tier fetches submodule pins with the entry's access token, so a private
-submodule whose `.gitmodules` URL is an absolute https URL under the remote's owner
-needs no other credential. The owner is matched as written, case included, so an
-owner spelled in another case is fetched without the token. A relative URL resolves
-to a local path in the checkout, which has no remote; the tier refuses the `file`
-transport, so that submodule update fails. Whoever can commit to the repository's
-`.gitmodules` can point a submodule at any repository of that owner the token reads,
-so give an entry a token scoped to the repositories its submodules need.
 
 - **C/C++ delta cap.** The worker indexes changed translation units, including those
   that include a changed header, up to `LOOM_CODE_SCIP_DELTA_MAX_TUS` (200); above the
@@ -266,6 +258,15 @@ so give an entry a token scoped to the repositories its submodules need.
   `loom code scip-full` runs the same index by hand (`--keep-delta` saves the delta so an
   interrupted apply can be re-run with `--apply-delta`), and `loom code scip-delta` one
   delta pass, which prints a `RESULT:` line.
+- **C/C++ submodules.** The tier fetches submodule pins with the entry's access
+  token, so a private submodule whose `.gitmodules` URL is an absolute https URL under
+  the remote's owner needs no other credential. The owner is matched as written, case
+  included, so an owner spelled in another case is fetched without the token. A
+  relative URL resolves to a local path in the checkout, which has no remote; the tier
+  refuses the `file` transport, so that submodule update fails. Whoever can commit to
+  the repository's `.gitmodules` can point a submodule at any repository of that owner
+  the token reads, so give an entry a token scoped to the repositories its submodules
+  need.
 - **SQL ↔ C++ crossref.** `code_crossref` rebuilds `code_test_map`'s content-reference
   rows (test queries to the files that register the functions and settings they use)
   for each C/C++ entry whose `git_head` moved since its last run. It reads the parser
