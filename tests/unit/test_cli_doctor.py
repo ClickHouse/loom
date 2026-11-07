@@ -14,13 +14,6 @@ import re
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def _no_tier_read(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The tier-health read goes through the server's ClickHouse client, not the
-    `httpx` probes these tests stub: it reads nothing here."""
-    monkeypatch.setattr("server.cli.doctor._doctor_tier_failures", lambda: None)
-
-
 def test_a_failing_code_tier_is_a_doctor_problem(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.cli import doctor
 

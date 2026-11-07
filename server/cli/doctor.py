@@ -512,11 +512,16 @@ def _doctor_problems() -> list[Any]:
 def _problem_checks(problems: list[Any]) -> list[tuple[str, str, str]]:
     """Render problems as doctor lines: `problem:<code>`, graded error→FAIL,
     warn→WARN, info→PASS, detail `message Fix: …` — the same list `/v1/health`
-    carries, so the two surfaces cannot disagree."""
-    return [
-        (f"problem:{p.code}", _GRADE_BY_SEVERITY.get(p.severity, WARN), f"{p.message} Fix: {p.fix}")
-        for p in problems
-    ]
+    carries, so the two surfaces cannot disagree. A problem about the data a deployment
+    holds (`NOT_DEPLOYMENT_FAULTS`) is at most WARN, as it never degrades `status`: the
+    doctor's exit code is a deployment gate too."""
+    from server.observability.problems import NOT_DEPLOYMENT_FAULTS
+
+    def grade(p: Any) -> str:
+        g = _GRADE_BY_SEVERITY.get(p.severity, WARN)
+        return WARN if g == FAIL and p.code in NOT_DEPLOYMENT_FAULTS else g
+
+    return [(f"problem:{p.code}", grade(p), f"{p.message} Fix: {p.fix}") for p in problems]
 
 
 def _run_doctor_checks() -> list[tuple[str, str, str]]:

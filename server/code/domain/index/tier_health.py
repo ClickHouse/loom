@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 
 from server.code.domain.index.compiler_tiers import TIERS as COMPILER_TIER_SPECS
 from server.code.domain.index.state import IndexState
+from server.core.datetimes import parse_iso_dt
 
 STATE_PREFIX = "tier_health:"
 # The compiler tiers by producer; `clang_full` is the weekly C++ full re-index, kept apart
@@ -336,16 +337,9 @@ def severity(
     `error_lag_commits` or more behind (-1 lag is unknown, never an error)."""
     if not health.failing:
         return ""
-    since = _parse_iso(health.failing_since)
-    hours = (now - since).total_seconds() / 3600 if since else 0.0
+    since = parse_iso_dt(health.failing_since)  # naive UTC, as `_iso` writes it
+    at = now.astimezone(UTC).replace(tzinfo=None)
+    hours = (at - since).total_seconds() / 3600 if since else 0.0
     if health.failed_passes < warn_passes and hours < warn_hours:
         return ""
     return "error" if lag_commits >= error_lag_commits else "warn"
-
-
-def _parse_iso(text: str) -> datetime | None:
-    try:
-        ts = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    return ts if ts.tzinfo else ts.replace(tzinfo=UTC)

@@ -38,10 +38,15 @@ def _level(health: tier_health.TierHealth, lag: int, now: datetime) -> str:
 
 @pytest.fixture(autouse=True)
 def _fresh_snapshot() -> Any:
-    """The snapshot is process-wide: each test starts and leaves it unread."""
+    """The snapshot and the doctor's cached read are process-wide: each test starts and
+    leaves both unread."""
+    from server.cli import doctor
+
     recorder.reset_for_tests()
+    getattr(doctor._doctor_tier_failures, "cache_clear", lambda: None)()
     yield
     recorder.reset_for_tests()
+    getattr(doctor._doctor_tier_failures, "cache_clear", lambda: None)()
 
 
 def test_one_or_two_failures_are_transient_and_raise_nothing() -> None:
@@ -219,6 +224,7 @@ class _Client:
         self.connected = False
 
 
+@pytest.mark.doctor_tier_read
 @pytest.mark.parametrize("down", [False, True])
 def test_the_doctor_reads_the_failing_tiers_once_and_none_when_clickhouse_is_down(
     down: bool, monkeypatch: pytest.MonkeyPatch
@@ -243,7 +249,6 @@ def test_the_doctor_reads_the_failing_tiers_once_and_none_when_clickhouse_is_dow
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
     monkeypatch.setattr(repo_registry, "refresh_db_repos", registry)
     monkeypatch.setattr(recorder, "refresh_failing", refresh)
-    doctor._doctor_tier_failures.cache_clear()
     rows = doctor._doctor_tier_failures()
     if down:
         assert rows is None and calls == []
@@ -292,6 +297,7 @@ async def test_with_code_intelligence_off_no_record_is_a_problem(
     assert recorder.problem_rows() == ()
 
 
+@pytest.mark.doctor_tier_read
 @pytest.mark.parametrize("why", ["intel_off", "unreachable"])
 def test_the_doctor_skips_the_tier_read_when_nothing_could_answer(
     why: str, monkeypatch: pytest.MonkeyPatch
@@ -306,7 +312,6 @@ def test_the_doctor_skips_the_tier_read_when_nothing_could_answer(
         raise AssertionError("no client is made")
 
     monkeypatch.setattr("server.core.ch.get_client", never)
-    doctor._doctor_tier_failures.cache_clear()
     assert doctor._doctor_tier_failures() is None
 
 
@@ -316,3 +321,28 @@ def test_a_failing_tier_never_makes_the_deployment_degraded() -> None:
     tier = Problem("code_tier_failing", "error", "m", "f", source="workers")
     assert derive_status(True, [tier]) == "ok"
     assert derive_status(True, [tier, Problem("jwt_secret_empty", "error", "m", "f")]) == "degraded"
+
+
+def test_problem_rows_put_the_errors_first() -> None:
+    recorder._FAILING = (
+        recorder.FailingTier("o", "code-a", _failing(4), 5),  # warn: not far behind
+        recorder.FailingTier("o", "code-b", _failing(4), 413),  # error
+    )
+    rows = recorder.problem_rows(T0 + timedelta(hours=3)) or ()
+    assert [(r["namespace"], r["severity"]) for r in rows] == [
+        ("code-b", "error"),
+        ("code-a", "warn"),
+    ]
+
+
+def test_the_doctor_grades_a_failing_tier_at_most_warn() -> None:
+    from server.cli import doctor
+    from server.observability.problems import Problem
+
+    tier = Problem("code_tier_failing", "error", "m", "f", source="workers")
+    other = Problem("jwt_secret_empty", "error", "m", "f")
+    grades = {name: g for name, g, _ in doctor._problem_checks([tier, other])}
+    assert grades == {
+        "problem:code_tier_failing": doctor.WARN,
+        "problem:jwt_secret_empty": doctor.FAIL,
+    }

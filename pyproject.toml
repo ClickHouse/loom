@@ -201,6 +201,7 @@ markers = [
   "provider: calls a real LLM or embedding provider; skips without its key",
   "recovery: kills, restarts or resumes a worker, saga or migration mid-flight",
   "copy_head_check: a unit test that runs the post-copy head re-check (off by default in unit)",
+  "doctor_tier_read: a unit test that runs loom doctor's read of the failing code-index tiers (off by default in unit)",
   "claim_cap: a unit test that runs the namespace gate's claim cap (off by default in unit)",
 ]
 

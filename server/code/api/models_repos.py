@@ -36,7 +36,8 @@ class CodeReposInput(_CodeIdentity):
     # (`matched_via`).
     repos: list[str] = Field(default_factory=list, max_length=8)
     # The output fields the caller reads (a whitelist resolved against the row model; an
-    # unknown name is a 422); unset, every field. Every list operation is projectable.
+    # unknown name is a 422); unset, every field. `namespace` and `tier_health` are always
+    # returned. Every list operation is projectable.
     fields: list[str] | None = None
 
     @field_validator("repos")
