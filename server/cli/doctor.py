@@ -455,6 +455,7 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
     import asyncio
 
     from server.code.app.index import repo_registry, tier_health
+    from server.core import settings_overrides
     from server.core.ch import get_client
     from server.settings import settings
 
@@ -470,6 +471,7 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
             await repo_registry.refresh_db_repos(force=True)  # the self-service entries too
             if not repo_registry.registry_read():
                 return None  # which entries are configured is unknown: say nothing
+            await settings_overrides.refresh()  # the thresholds `/v1/health` grades with
             await tier_health.refresh_failing()
             return tier_health.problem_rows()
         finally:

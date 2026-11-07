@@ -182,7 +182,7 @@ def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | No
                     "failed_passes": f.health.failed_passes,
                     "lag_commits": f.lag_commits,
                     # the kind's fix without the repository it names: the problem is public
-                    "fix": tier_health.fix_for(f.health.kind, ""),
+                    "fix": tier_health.fix_for(f.health.kind, f.health.error, name_where=False),
                     "severity": level,
                 }
             )

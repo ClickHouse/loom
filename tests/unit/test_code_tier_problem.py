@@ -250,12 +250,19 @@ def test_the_doctor_reads_the_failing_tiers_once_and_none_when_clickhouse_is_dow
     monkeypatch.setattr(repo_registry, "refresh_db_repos", registry)
     monkeypatch.setattr(repo_registry, "registry_read", lambda: True)
     monkeypatch.setattr(recorder, "refresh_failing", refresh)
+
+    async def overrides(**_: Any) -> None:
+        calls.append("overrides")
+
+    monkeypatch.setattr("server.core.settings_overrides.refresh", overrides)
     rows = doctor._doctor_tier_failures()
     if down:
         assert rows is None and calls == []
     else:
         assert rows is not None and [r["namespace"] for r in rows] == ["code-a"]
-        assert calls == ["registry", "tiers"] and not client.connected
+        assert calls == ["registry", "overrides", "tiers"] and not client.connected
+        assert doctor._doctor_tier_failures() == rows  # `--json` asks twice: one read
+        assert calls == ["registry", "overrides", "tiers"]
 
 
 @pytest.mark.asyncio
@@ -370,3 +377,17 @@ def test_the_doctor_says_nothing_when_the_registry_cannot_be_read(
     monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
     monkeypatch.setattr(recorder, "refresh_failing", refresh)
     assert doctor._doctor_tier_failures() is None
+
+
+def test_a_refused_ssh_key_gets_the_ssh_fix_without_the_repository() -> None:
+    error = "fetch git@github.com:o/private.git: git@github.com: Permission denied (publickey)."
+    recorder._FAILING = (
+        recorder.FailingTier("o", "code-a", tier_health.failed(None, "fetch", error, T0), -1),
+    )
+    for _ in range(3):
+        health = recorder._FAILING[0].health
+        recorder._FAILING = (
+            recorder.FailingTier("o", "code-a", tier_health.failed(health, "fetch", error, T0), -1),
+        )
+    (row,) = recorder.problem_rows(T0) or ()
+    assert row["fix"].startswith("The ssh key was refused:") and "private" not in row["fix"]

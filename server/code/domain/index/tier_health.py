@@ -271,9 +271,10 @@ def _where(text: str) -> str:
     return ", ".join(parts)
 
 
-def fix_for(kind: str, text: str) -> str:
-    """The one fix for a failure of `kind`, naming what the error names."""
-    where = _where(text)
+def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
+    """The one fix for a failure of `kind`, naming what the error names; with
+    `name_where=False` the same fix without the host, repository or submodule."""
+    where = _where(text) if name_where else ""
     at = f" ({where})" if where else ""
     if kind == "credential" and "publickey" in text.lower():
         return (
