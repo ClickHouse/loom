@@ -547,7 +547,10 @@ async def _inherit_tracker_links(
     org: str, source_ns: str, namespace: str, *, operator_source: bool
 ) -> None:
     """Follow an operator root (`qa_branch_of`), copy any other source's own row;
-    `qa_branch_of` last, so a failure follows nothing (code-index-architecture.md)."""
+    `qa_branch_of` last, so a failure follows nothing (code-index-architecture.md). The
+    row is written only for a root that is an operator entry now: one written for a
+    self-service root would start following the operator's map if the operator later
+    configured that name."""
     from server.code.store.index import CodeRepo
     from server.tracker.app import binding
 
@@ -569,9 +572,10 @@ async def _inherit_tracker_links(
                 binding.encode_binding(binding.parse_binding(own)),
                 detail=f"tracker links of {source_ns}",
             )
-        await repo.set_state(
-            org, namespace, binding.BRANCH_OF_KEY, root, detail=f"branch of {root}"
-        )
+        if (org, root) in binding.operator_repositories():
+            await repo.set_state(
+                org, namespace, binding.BRANCH_OF_KEY, root, detail=f"branch of {root}"
+            )
     except Exception as e:  # noqa: BLE001 — the branch is registered; its links can be set by hand
         logger.warning(
             "code.repo.add_branch: tracker links of %s/%s not copied: %s", org, namespace, e

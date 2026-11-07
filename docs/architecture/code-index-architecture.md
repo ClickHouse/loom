@@ -386,7 +386,9 @@ a restricted namespace's rows never land under a standard one. The record contra
 [tracker record contract](../features/tracker/record-contract.md).
 
 `code.repo.add_branch` writes the new branch's `qa_branch_of` row naming the root
-repository (the source, or the source's own root when the source is a branch). A
+repository (the source, or the source's own root when the source is a branch) when that
+root is an operator repository, so a self-service root's branch never starts reading the
+map if the operator later configures the root's name. A
 registered branch whose root is an operator repository follows that repository's links at
 read time, the glob included; a `qa_branch_of` row with no self-service entry beside it is
 not followed. A source that is not an operator repository has its own `qa_binding` row

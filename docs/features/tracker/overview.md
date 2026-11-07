@@ -206,7 +206,7 @@ it, including through a later `code.repo.set_access` join-policy change.
 LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON='{"code-widgets*": ["tracker-widgets", "tracker-helpdesk"]}'
 ```
 
-A branch added with `code.repo.add_branch` records the repository it came from. A branch
+A branch added with `code.repo.add_branch` from an operator repository records it. A branch
 of an operator repository with no links of its own reads that repository's links, so a
 glob the operator changes, or a link set on the repository, reaches it. A maintainer's
 link on a self-service repository is copied to a new branch; a link set on that repository

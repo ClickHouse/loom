@@ -473,8 +473,34 @@ async def test_a_branch_copies_its_self_service_source_s_maintainer_link(plane, 
     )
     assert _link_rows(plane) == [
         (ORG, "code-widgets-release-1-2", links.OVERRIDE_KEY, "tracker-w,tracker-desk"),
-        (ORG, "code-widgets-release-1-2", links.BRANCH_OF_KEY, "code-widgets"),
-    ]
+    ]  # no `qa_branch_of`: a self-service root is never followed
+
+
+@pytest.mark.asyncio
+async def test_a_branch_of_a_self_service_source_ignores_an_operator_entry_of_its_name(
+    plane, links, monkeypatch
+) -> None:
+    """The operator may later configure the self-service source's name; its branch, whose
+    admin never needed the operator entry's admin, must not start reading the map."""
+    from server.settings import settings
+
+    await admin.handle_code_repo_add(
+        CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main", join_policy="open")
+    )
+    await admin.handle_code_repo_add_branch(
+        CodeRepoAddBranchInput(org=ORG, namespace="code-widgets", branch="release/1.2")
+    )
+    assert _link_rows(plane) == []
+    monkeypatch.setattr(
+        settings, "tracker_code_namespace_bindings_json", '{"code-widgets*": "tracker-w"}'
+    )
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        json.dumps([{"org": ORG, "namespace": "code-widgets", "repo": "acme/widgets"}]),
+    )
+    assert links.tracker_namespaces_for(ORG, "code-widgets") == ["tracker-w"]
+    assert links.tracker_namespaces_for(ORG, "code-widgets-release-1-2") == []
 
 
 @pytest.mark.asyncio
@@ -558,8 +584,7 @@ async def test_a_cleared_self_service_source_copies_its_empty_row(plane, links) 
     )
     assert _link_rows(plane) == [
         (ORG, "code-widgets-release-1-2", links.OVERRIDE_KEY, ""),
-        (ORG, "code-widgets-release-1-2", links.BRANCH_OF_KEY, "code-widgets"),
-    ]
+    ]  # no `qa_branch_of`: a self-service root is never followed
 
 
 @pytest.mark.asyncio

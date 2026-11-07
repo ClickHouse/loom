@@ -34,6 +34,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import logging
+import math
 import time
 from collections.abc import Collection
 from typing import Any
@@ -91,7 +92,7 @@ _OVERRIDES: dict[tuple[str, str], str] = {}
 # `qa_branch_of` state row of the branch's namespace.
 BRANCH_OF_KEY = "qa_branch_of"  # storage key
 _BRANCH_OF: dict[tuple[str, str], str] = {}
-_OVERRIDES_AT = 0.0
+_OVERRIDES_AT = -math.inf  # the first call reads
 # Bumped by `forget_links`: a refresh whose read started before it may hold the rows
 # just emptied, so it keeps nothing.
 _FORGOTTEN = 0
@@ -114,7 +115,7 @@ async def refresh_overrides(*, force: bool = False) -> None:
         forgotten = _FORGOTTEN
         rows = await code_index().state_values_for_keys([OVERRIDE_KEY, BRANCH_OF_KEY])
         if forgotten != _FORGOTTEN:
-            _OVERRIDES_AT = 0.0  # the next call reads again
+            _OVERRIDES_AT = -math.inf  # the next call reads again
             return
         _OVERRIDES, _BRANCH_OF = rows[OVERRIDE_KEY], rows[BRANCH_OF_KEY]
         _OVERRIDES_AT = now
@@ -144,7 +145,7 @@ def reset_overrides_for_tests(
     global _OVERRIDES, _BRANCH_OF, _OVERRIDES_AT
     _OVERRIDES = dict(rows or {})
     _BRANCH_OF = dict(branches or {})
-    _OVERRIDES_AT = 0.0
+    _OVERRIDES_AT = -math.inf
 
 
 def operator_repositories() -> frozenset[tuple[str, str]]:
