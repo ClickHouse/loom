@@ -4,7 +4,7 @@ Two modes, each naming the write classes it refuses:
 
     read_only  — value, expiry and deletion are all refused
     no_delete  — the value may change; tombstone / redact / clear /
-                 consolidate-away are refused
+                 consolidate-away / reject are refused
 
 Every write handler fetches the head row before it writes; `assert_unlocked`
 reads the lock columns off that same row, so the check costs no extra
@@ -54,9 +54,7 @@ def effective_mode(row: Any, *, now: datetime | None = None) -> str:
 
 
 def refuses_retirement(row: Any) -> bool:
-    """A row another write may not supersede (the refines / newest_wins /
-    repair retirements): both modes refuse it — `read_only` refuses any
-    change, `no_delete` refuses consolidate-away."""
+    """A row no other write may retire: both lock modes refuse it."""
     return bool(effective_mode(row))
 
 

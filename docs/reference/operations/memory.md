@@ -1239,7 +1239,7 @@ Lock one row against a class of writes.
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `memory_key` | `str` | required | The key to lock, under this exact identity (a miss answers `locked: false`). |
-| `mode` | `Literal['read_only', 'no_delete']` | `'read_only'` | `read_only` refuses a changed value, a changed expiry and deletion; `no_delete` lets the value change but refuses tombstone, redact, clear and consolidation. |
+| `mode` | `Literal['read_only', 'no_delete']` | `'read_only'` | `read_only` refuses a changed value, a changed expiry and deletion; `no_delete` lets the value change but refuses tombstone, redact, clear, consolidation and reject. |
 | `reason` | `str` | required | Why the row is locked (1..512 chars); a refused write's 423 quotes it. |
 | `until` | `datetime \| None` | `None` | When the lock lapses (must be in the future); None and no `ttl_seconds` = open-ended. |
 | `ttl_seconds` | `int \| None` | `None` | Lock for this many seconds from now; wins over `until` when both are sent. |
@@ -1318,7 +1318,7 @@ External outcome signal for a memory row.
 | --- | --- | --- |
 | `recorded` | `bool` | False when the row was not found or the usage write failed. |
 | `evidence_count_after` | `int` | evidence_count after the bump (0 if unknown) |
-| `quarantined` | `bool` | Set when a negative outcome crossed memory_negative_demote_threshold and the memory was auto-quarantined (status -> 'rejected'). |
+| `quarantined` | `bool` | Set when a negative outcome crossed memory_negative_demote_threshold and the memory was auto-quarantined (status -> 'rejected'); a locked memory is not. |
 
 ## `memory.outcome_run`
 
@@ -1741,7 +1741,7 @@ Mark a memory as explicitly rejected (extractor / user review decided the candid
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `rejected` | `bool` | Always True, also when no live row matched (nothing is written then). |
+| `rejected` | `bool` | True on every 200 answer, also when no live row matched (nothing is written then); a locked row in any session refuses the whole reject with 423 LOCKED. |
 | `rejected_at` | `datetime \| None` | The server time of the reject. |
 
 ## `memory.related`

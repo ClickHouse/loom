@@ -83,12 +83,16 @@ def test_lock_is_refused_at_the_write(writer: httpx.Client, admin: httpx.Client,
             _ident(ns, memory_key=key, value="Fridays too", memory_type="semantic", classify=False),
         ),
         ("memory.update_by_id", {"org": ORG, "memory_id": mid, "value": "Fridays too"}),
+        ("memory.reject", _ident(ns, memory_key=key, rejection_reason="wrong")),
     ):
         r = _post(writer, op, body)
         assert r.status_code == 423, (op, r.text)
         d = r.json()["detail"]
         assert d["code"] == "LOCKED" and d["lock_mode"] == "read_only"
         assert d["memory_key"] == key and d["unlock_via"]
+    # the refused reject wrote nothing: the row reads back live
+    got = _post(writer, "memory.get", _ident(ns, memory_key=key)).json()
+    assert got["found"] and got["status"] == "active", got
 
     # an identical restatement is reinforcement, not a write of the value
     r = _post(
@@ -142,13 +146,12 @@ def test_no_delete_and_a_lapsing_lock(writer: httpx.Client, ns: str) -> None:
         "memory.set",
         _ident(ns, memory_key=key, value="v1", memory_type="semantic", classify=False),
     )
-    # 3 s, not 1: the 423 below is asserted only while the lock still holds,
-    # and on a slow runner the get→delete pair alone can take longer than a 1 s
-    # lock.
+    # 5 s, not 1: the 423s below are asserted only while the lock still holds, and on
+    # a slow runner the get, delete and reject alone can take longer than a 1 s lock.
     r = _post(
         writer,
         "memory.lock",
-        _ident(ns, memory_key=key, mode="no_delete", reason="keep", ttl_seconds=3),
+        _ident(ns, memory_key=key, mode="no_delete", reason="keep", ttl_seconds=5),
     )
     assert r.status_code == 200 and r.json()["lock_until"]
     # the value may change under no_delete
@@ -162,14 +165,15 @@ def test_no_delete_and_a_lapsing_lock(writer: httpx.Client, ns: str) -> None:
     got = _post(writer, "memory.get", _ident(ns, memory_key=key)).json()
     assert got["value"] == "v2"
     if got["lock_mode"]:  # not yet lapsed
-        r = _post(writer, "memory.delete", _ident(ns, memory_key=key))
-        assert r.status_code == 423
+        for op in ("memory.delete", "memory.reject"):
+            r = _post(writer, op, _ident(ns, memory_key=key))
+            assert r.status_code == 423, (op, r.text)
     # lapsed = no lock; poll the lapse rather than sleeping past the TTL
     wait_until(
         lambda: _post(writer, "memory.get", _ident(ns, memory_key=key)).json()["lock_mode"] == "",
         max_wait=15,
         interval=0.25,
-        description="the 3 s lock to lapse",
+        description="the 5 s lock to lapse",
     )
     r = _post(writer, "memory.delete", _ident(ns, memory_key=key))
     assert r.status_code == 200 and r.json()["tombstoned"] is True
