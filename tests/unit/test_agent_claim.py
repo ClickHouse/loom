@@ -93,12 +93,35 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
     async def no_restricted(subject: str, org: str, names: list[str]) -> list[str]:
         return list(names)
 
+    from contextlib import asynccontextmanager
+
+    from server.auth import attempts
+
     hashed: list[str] = []
-    real_hash = agent_claim.hash_password_off_loop
+    real_hash, real_slot, in_slot = agent_claim.hash_password_off_loop, attempts.slot, [False]
+    hashed_in_slot: list[bool] = []
+
+    @asynccontextmanager
+    async def slot() -> Any:
+        async with real_slot():
+            in_slot[0] = True
+            try:
+                yield
+            finally:
+                in_slot[0] = False
 
     async def counted_hash(password: str) -> str:
         hashed.append(password)
+        hashed_in_slot.append(in_slot[0])
         return await real_hash(password)
+
+    skew_waits: list[bool] = []
+
+    async def skew_wait() -> None:
+        skew_waits.append(True)
+
+    monkeypatch.setattr(attempts, "slot", slot)
+    monkeypatch.setattr(agent_claim, "_skew_wait", skew_wait)
 
     monkeypatch.setattr(agent_claim.audit, "emit", emit)
     monkeypatch.setattr(agent_claim, "hash_password_off_loop", counted_hash)
@@ -140,6 +163,8 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
         "legacy_code": legacy_code,
         "events": events,
         "hashed": hashed,
+        "hashed_in_slot": hashed_in_slot,
+        "skew_waits": skew_waits,
     }
 
 
@@ -183,6 +208,8 @@ def test_the_code_claims_once_and_the_claimer_signs_in_with_their_password(world
 
     r = _claim(c, world["code"], "correct horse")
     assert r.status_code == 200 and _NS in r.text
+    # The sign-in slot is held for the code's check only, not for the hash.
+    assert world["hashed_in_slot"] == [False]
     row = _row(world, _NS)
     assert row["password_hash"].startswith("$argon2")
     assert passwords.verify_password(row["password_hash"], "correct horse")
@@ -338,7 +365,11 @@ def test_the_cutoff_waited_out_follows_the_password_write(world, monkeypatch) ->
         steps.append(("read", sequential_reads_active()))
         return await fetch_row(org, namespace)
 
+    async def skew_wait() -> None:
+        steps.append("skew")
+
     monkeypatch.setattr(agent_claim.namespaces, "fetch_row", read)
+    monkeypatch.setattr(agent_claim, "_skew_wait", skew_wait)
 
     monkeypatch.setattr(ch, "insert", slow_insert)
     assert (
@@ -347,32 +378,41 @@ def test_the_cutoff_waited_out_follows_the_password_write(world, monkeypatch) ->
     [write] = written
     [cutoff] = world["waited"]
     assert cutoff >= write
-    # The last cutoff follows a sequentially consistent read of the write.
-    assert steps[-3:] == ["write", ("read", True), "cutoff"]
+    # The last cutoff follows a sequentially consistent read of the write and a
+    # wait of the clock-skew margin, so a replica whose clock leads by up to that
+    # margin still has its full CLOCK_SKEW_S + 1 seconds ended.
+    assert steps[-4:] == ["write", ("read", True), "skew", "cutoff"]
     # The claim is audited when it lands, not after the wait.
     assert world["audited_before_wait"] == [1]
 
 
-def test_a_cutoff_that_fails_after_the_write_leaves_the_claim_audited(world, monkeypatch) -> None:
+@pytest.mark.parametrize("failing", ["read_back", "second_cutoff"])
+def test_a_failure_after_the_write_still_answers_claimed(world, monkeypatch, failing) -> None:
+    # The claim is written and audited; the first cutoff still holds and is the
+    # one waited out.
     from server.identity.app import account_admin
 
-    real, calls = account_admin.end_tokens, []
+    real_end, real_fetch, cutoffs = account_admin.end_tokens, namespaces.fetch_row, []
+    fetches = [0]
 
-    async def second_fails(subject: str, *, by: str, reason: str) -> Any:
-        calls.append(subject)
-        if len(calls) == 2:
+    async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
+        if failing == "second_cutoff" and cutoffs:
             raise RuntimeError("revocation store away")
-        return await real(subject, by=by, reason=reason)
+        cutoffs.append(await real_end(subject, by=by, reason=reason))
+        return cutoffs[-1]
 
-    monkeypatch.setattr(account_admin, "end_tokens", second_fails)
-    from fastapi import FastAPI
+    async def fetch_row(org: str, namespace: str) -> Any:
+        fetches[0] += 1
+        if failing == "read_back" and fetches[0] == 2:  # the one after the write
+            raise RuntimeError("ClickHouse away")
+        return await real_fetch(org, namespace)
 
-    app = FastAPI()
-    app.include_router(agent_claim.router)
-    c = TestClient(app, raise_server_exceptions=False)
-    r = _claim(c, world["legacy_code"], "correct horse", namespace=_LEGACY)
-    assert r.status_code == 500 and len(calls) == 2
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+    monkeypatch.setattr(agent_claim.namespaces, "fetch_row", fetch_row)
+    r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
+    assert r.status_code == 200 and "Claimed" in r.text
     assert [e for e, _ in world["events"]] == ["auth.agent_claimed"]
+    assert world["waited"] == cutoffs[:1]
     assert passwords.verify_password(_row(world, _LEGACY)["password_hash"], "correct horse")
 
 

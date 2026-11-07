@@ -11,6 +11,7 @@ whoever held it. The agent's own token is a separate subject and keeps working.
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 from datetime import UTC, datetime
@@ -153,7 +154,7 @@ async def _replace_code(
         # never a spent code and live tokens. A subject cutoff also ends every
         # OAuth and device session the code started (`oauth.issue_tokens`).
         subject = str(row["owner_email"])
-        await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
+        first = await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         # Insert-as-replace carrying every other column forward.
         await get_client().insert(
@@ -171,14 +172,28 @@ async def _replace_code(
         await audit.emit(
             "auth.agent_claimed", org=org, namespace=namespace, actor=namespace, subject={}
         )
-        # Again once the write reads back: a replica of the build before signs in
-        # with a plain-hash code, reading without sequential consistency, until its
-        # ClickHouse replica has the write, and the first cutoff predates it.
+    # Again once the write reads back: a replica of the build before signs in with
+    # a plain-hash code, reading without sequential consistency, until its
+    # ClickHouse replica has the write, and the first cutoff predates it.
+    try:
         with own_write_reads():
             landed = await namespaces.fetch_row(org, namespace)
         if (landed or {}).get("password_hash") != password_hash:
             log.warning("agent claim of %s/%s: the write does not read back yet", org, namespace)
+        # A replica whose clock runs up to CLOCK_SKEW_S ahead stamps later `iat`s:
+        # after this wait the cutoff still ends what any replica issues for
+        # CLOCK_SKEW_S + 1 seconds after the read back.
+        await _skew_wait()
         return await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
+    except Exception as e:  # noqa: BLE001 — the claim is written; the first cutoff still holds
+        log.warning(
+            "agent claim of %s/%s: the cutoff after the write failed: %r", org, namespace, e
+        )
+        return first
+
+
+async def _skew_wait() -> None:
+    await asyncio.sleep(revocation.CLOCK_SKEW_S)
 
 
 def attach(app: Any) -> None:

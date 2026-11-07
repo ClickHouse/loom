@@ -325,31 +325,34 @@ shape (an `agent-` name that is its own owner, with no email) without the claim'
 sign-up writes that shape, no settings write changes the owner, the email or the password, and
 every other account with a password names an email. Linking an account to an SSO email (`loom
 sso link`, the one operator step that writes an email on a password account) refuses an
-unclaimed one (`is_unclaimed`, the same rule on a row already read); since the claim page is
-closed under SSO, such an account is claimed before SSO is turned on, or released with `loom
-claim-release`. No password sign-in (`/v1/auth/login`, the OAuth authorize form, the device
-grant) accepts an unclaimed account.
+unclaimed one (`is_unclaimed`, the same rule on a row already read); the claim page is closed
+under SSO, so such an account is claimed with SSO off, or released with `loom claim-release`.
+No password sign-in (`/v1/auth/login`, the OAuth authorize form, the device grant) accepts an
+unclaimed account.
 
 The claim page (`server/identity/app/agent_claim.py`) checks the code under the password
 sign-in limits and hashes the new password only once the code is proven. Holding the account
 from read to write, it cuts off every token the namespace's subject was issued before
 (`account_admin.end_tokens`, which also ends each OAuth and device session at its next
 refresh), replaces the code with the claimer's own password, adds the tag
-`machine:agent-signup:claimed` and audits `auth.agent_claimed`. It then reads the row back with
-sequential consistency and cuts off once more, for a sign-in with a plain-hash code on an older
-replica while the write was landing. `namespace.register` carries a `machine:` tag forward from
-the row and drops one from a form, on this build and the one before it, and a trust's name
-never holds `:`. On this build the claim's tag does not bind the namespace's owner as a trust's
-tag does; the build before binds it, which keeps a claimed namespace's owner as the claim left
-it. The page answers once every replica's clock is past the later cutoff, so the claimer's next
-sign-in is not ended by it. A second claim finds no code and is refused, so whoever kept a copy
-of the code cannot sign in as the namespace afterwards, nor keep a session it started with the
-code. An account claimed by signing in with its code before the claim page existed is unclaimed
-by this rule: its owner claims it again with the same code, and the first claim wins.
+`machine:agent-signup:claimed` and audits `auth.agent_claimed`. Once the account is released it
+reads the row back with sequential consistency, waits `CLOCK_SKEW_S` (5 s), and cuts off once
+more, for a sign-in with a plain-hash code on an older replica while the write was landing. A
+failure in these last steps is logged and the claim stands, with the first cutoff.
+`namespace.register` carries a `machine:` tag forward from the row and drops one from a form,
+on this build and the one before it, and a trust's name never holds `:`. On this build the
+claim's tag does not bind the namespace's owner as a trust's tag does; the build before binds
+it, which keeps a claimed namespace's owner as the claim left it. The page answers once every
+replica's clock is past the later cutoff, so the claimer's next sign-in is not ended by it. A
+second claim finds no code and is refused, so whoever kept a copy of the code cannot sign in as
+the namespace afterwards, nor keep a session it started with the code. An account claimed by
+signing in with its code before the claim page existed is unclaimed by this rule: its owner
+claims it again with the same code, and the first claim wins.
 
 During a rolling upgrade a replica of the build before still signs in with a plain-hash code,
-and its sign-in reads `loom.namespaces` without sequential consistency. The later cutoff ends
-every token issued up to `CLOCK_SKEW_S` + 1 seconds after the write read back. On a single
+and its sign-in reads `loom.namespaces` without sequential consistency. After the wait, the
+later cutoff ends every token any replica issues up to `CLOCK_SKEW_S` + 1 seconds (6 s) after
+the write read back, for a replica whose clock leads by up to `CLOCK_SKEW_S`. On a single
 server the write is visible to every read at once. On ClickHouse Cloud a read without
 sequential consistency on a replica that trails the write by more than that margin can still
 find the code and issue a token the claim does not end; that window closes when no replica of
