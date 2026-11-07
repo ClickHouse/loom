@@ -81,6 +81,8 @@ def test_the_labelled_set_scores_as_measured() -> None:
         ("Storage weekly sync", ("2026-03-04", "Cache"), "Talked about the TTL."),
         ("Storage weekly sync", ("Storage weekly sync", "2026-03-04", "Cache"), "Talked."),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: TBD"),
+        ("Storage sync 2026-03-04", ("Decision: TBD",), "- Redis or Memcached, revisit."),
+        ("Storage sync 2026-03-04", ("Decisions pending", "Cache"), "- Revisit next week."),
         ("Vector search design", ("Open questions",), "- Are we going with Redis?"),
         # no title: the first heading names the document
         ("", ("Storage sync 2026-03-04", "Cache"), "Talked about the TTL."),

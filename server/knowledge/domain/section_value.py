@@ -112,7 +112,8 @@ _QUESTIONS_HEADING = re.compile(
     re.IGNORECASE,
 )
 _CLOSING_QUESTION = re.compile(r"^(?:any\s+)?questions\s*\?+$", re.IGNORECASE)
-# A heading that lists decisions: content whatever its lines say, and the sections under it.
+# A heading that lists decisions: content whatever its lines say, and the sections under it,
+# unless it says none was reached ("Decision: TBD").
 _DECISIONS_HEADING = re.compile(
     r"^\W*(?:slide\s+\d+\s*:\s*)?(?:decisions?|decided|agreed|outcomes?)\b", re.IGNORECASE
 )
@@ -141,7 +142,7 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
     headings = [h.replace("\u2019", "'") for h in section_path]
     if any(_decides(line, notes) for line in (*prose, *headings)):
         return False
-    if any(_DECISIONS_HEADING.match(h) for h in section_path):
+    if any(_DECISIONS_HEADING.match(h) and not _UNDECIDED.search(h) for h in headings):
         return False
     if not prose and not code:
         # A heading with no body under it (a deck's title slide) has nothing to hide.
