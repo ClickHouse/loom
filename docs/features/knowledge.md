@@ -183,11 +183,12 @@ No op changes a stored source's `config`: a `gdrive` source lists only the kinds
 stored `include` names. To take in a kind it leaves out, add a second source on the same
 folders with only that kind in its `include`: it writes those files, whose addresses no
 source holds yet, and the first source's documents are not touched. To drop a kind, or
-to have one source hold them all, `remove` the source, and any second source on the
-same folders, with `delete_documents`, wait for the sync worker to retire their
-documents (`add` answers `SOURCE_DELETE_PENDING` until then), and add the one source
-again: a document another source still holds is skipped, never taken over. Every
-document is then written, embedded and mined for decisions again.
+to have one source hold them all, `remove` the source, and any second source on the same
+folders, with `delete_documents`, wait for the sync worker to retire their documents (an
+`add` of a removed source's name answers `SOURCE_DELETE_PENDING` until that source's
+documents are gone), and add the one source again: a document another source still holds
+is skipped, never taken over. Every document is then written, embedded and mined for
+decisions again.
 
 | Code                    | When                                                                                                                                                                                                                         |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
