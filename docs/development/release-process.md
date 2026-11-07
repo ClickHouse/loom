@@ -197,7 +197,8 @@ the package's visibility to public in its settings, then re-run the failed jobs.
 7. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
    names, on amd64 and arm64;
 8. `github-release` creates the GitHub Release only after both images exist, with notes
-   generated from the commits since the previous tag, or updates it on a re-run, keeping
+   generated from the commits since the previous final release (`prepare.py previous`, an
+   output of `version`; a candidate's notes start there too), or updates it on a re-run, keeping
    its notes as they are, and attaches the verified files. A bundle the release already
    carries is kept, and so is its checksum (one the release lost is written again from
    it): replacing an asset deletes it first, and a failed upload would leave an installed

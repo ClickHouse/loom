@@ -58,7 +58,7 @@ Each helper is narrow, typed and has its own test. A helper builds the input or 
 | `tests/unit/schema_ddl.py`         | one object's DDL and columns from `schemas/schema.sql`                               |
 | `tests/unit/_tracker_config.py`    | the tracker source and credential JSON, the way a deploy sets them                   |
 | `tests/unit/_memory_search_pkg.py` | patching a name every module of `server/memory/app/search/` binds                    |
-| `tests/unit/git_repo.py`           | `git(repo, ...)`: git in a repository the test made, signing no commit or tag        |
+| `tests/unit/git_repo.py`           | `git(repo, ...)`: git in a repository the test made, no signing, no hooks            |
 
 A new shared helper earns its place when several independent files need the same stable boundary. Don't create a catch-all utils module.
 

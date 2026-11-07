@@ -32,6 +32,7 @@ def _module():
 
 prepare = _module()
 PLANNED_CHART = prepare.planned_chart  # before a fixture replaces it
+VALIDATE = prepare.validate
 
 TEMPLATE = (ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md").read_text()
 
@@ -789,8 +790,8 @@ def test_a_chart_that_cannot_be_planned_stops_before_the_notes(
     root = _copy(tmp_path)
     chart = root / prepare.CHART.path
     chart.write_text(re.sub(r"^version: .*$", 'version: "0.2.0"', chart.read_text(), flags=re.M))
-    # The real planned_chart, on a working tree whose chart version is quoted.
-    monkeypatch.setattr(prepare, "planned_chart", lambda *args: PLANNED_CHART(*args, root=root))
+    # The real validate, on a working tree whose chart version is quoted.
+    monkeypatch.setattr(prepare, "validate", lambda version: VALIDATE(version, root))
     monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "1.2.0"])
     with pytest.raises(
         SystemExit, match="^deploy/helm/loom/Chart.yaml: '\"0.2.0\"' is not a SemVer"
@@ -888,7 +889,7 @@ def test_a_tag_whose_files_name_another_release_is_an_error_on_the_server_file(
     version = prepare.read(prepare.SERVER, root)
     assert prepare.check(root, tag_version=f"{version}-rc.1") == []  # a candidate of it
     assert prepare.check(root, tag_version="0.0.1") == [
-        ("server/__init__.py", f"server/__init__.py names {version}, the tag v0.0.1")
+        ("server/__init__.py", f"server/__init__.py names {version}, not 0.0.1 (the tag v0.0.1)")
     ]
 
 

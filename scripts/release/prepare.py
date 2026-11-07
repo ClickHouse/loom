@@ -9,6 +9,7 @@ Run with the project's environment (the notes import the server's registry):
     .venv/bin/python scripts/release/prepare.py check 1.2.0      # one version everywhere
     .venv/bin/python scripts/release/prepare.py check-chart 1.2.0       # the chart moved
     .venv/bin/python scripts/release/prepare.py check-tag 1.2.0-rc.1    # candidate order
+    .venv/bin/python scripts/release/prepare.py previous 1.2.0-rc.1     # the notes' base tag
 
 What each file carries, the chart rule, the release candidates and the notes:
 docs/development/release-process.md.
@@ -106,7 +107,7 @@ def next_chart_version(version: str, previous_version: str, previous_chart: str)
     return f"{major}.{minor + 1}.0"
 
 
-def check(root: Path = ROOT, tag_version: str = "") -> list[tuple[str, str]]:
+def check(root: Path = ROOT, tag_version: str | None = None) -> list[tuple[str, str]]:
     """(file, error) for every pin that does not carry the server's version, and
     for the server's version when it is not the final `tag_version` names."""
     try:
@@ -115,7 +116,10 @@ def check(root: Path = ROOT, tag_version: str = "") -> list[tuple[str, str]]:
         return [(SERVER.path, str(e))]
     errors = []
     if tag_version and want != final_of(tag_version):
-        errors.append((SERVER.path, f"{SERVER.path} names {want}, the tag v{tag_version}"))
+        final = final_of(tag_version)
+        errors.append(
+            (SERVER.path, f"{SERVER.path} names {want}, not {final} (the tag v{tag_version})")
+        )
     for pin in FOLLOWERS:
         try:
             got = read(pin, root)
@@ -123,7 +127,7 @@ def check(root: Path = ROOT, tag_version: str = "") -> list[tuple[str, str]]:
             errors.append((pin.path, str(e)))
             continue
         if got != want:
-            errors.append((pin.path, f"{pin.path} names {got}, server/__init__.py {want}"))
+            errors.append((pin.path, f"{pin.path} names {got}, {SERVER.path} {want}"))
     return errors
 
 
@@ -240,8 +244,13 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
 def validate(version: str, root: Path = ROOT) -> None:
     """Refuse a final version the files cannot take, before any `gh` call or
     write: every pin is found once, and the version is not below the current one."""
-    for pin in [*FOLLOWERS, CHART]:
+    for pin in FOLLOWERS:
         read(pin, root)
+    chart = read(CHART, root)
+    try:
+        parse(chart)
+    except ValueError as e:  # the next chart version is planned from it
+        raise ValueError(f"{CHART.path}: {e}") from None
     current = read(SERVER, root)
     if parse(version) < parse(current):
         raise ValueError(f"{version} is below the current version {current}")
@@ -507,10 +516,7 @@ def _bump(args: argparse.Namespace) -> None:
     previous = previous_release(version)
     # Every refusal before the notes' gh call.
     released = released_chart(previous)  # names the tag when its chart is bad
-    try:
-        chart = planned_chart(version, previous[1:], released)
-    except ValueError as e:  # the working tree's chart version is not X.Y.Z
-        raise ValueError(f"{CHART.path}: {e}") from None
+    chart = planned_chart(version, previous[1:], released)
     NOTES_FILE.write_text(release_notes(version, previous), encoding="utf-8")
     bump(version, chart)
     print(f"Bumped to {version}; the release notes are in {NOTES_FILE}")
@@ -526,31 +532,22 @@ def _one_line(e: Exception) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    tag_version = {"help": "the tag's version, X.Y.Z or X.Y.Z-rc.N"}
     bump_cmd = commands.add_parser("bump", help="write the release notes, then bump")
     bump_cmd.add_argument("version", help="the release, X.Y.Z")
     bump_cmd.set_defaults(run=_bump)
     notes_cmd = commands.add_parser("notes", help="only print the release notes")
     notes_cmd.add_argument("version", help="the release, X.Y.Z")
     notes_cmd.set_defaults(run=_notes)
-    check_cmd = commands.add_parser("check", help="every file names the tag's final version")
-    check_cmd.add_argument("tag_version", **tag_version)
-    check_cmd.set_defaults(run=_check)
-    chart_cmd = commands.add_parser(
-        "check-chart", help="the chart's version is above the previous release's"
-    )
-    chart_cmd.add_argument("tag_version", **tag_version)
-    chart_cmd.set_defaults(run=_check_chart)
-    tag_cmd = commands.add_parser(
-        "check-tag", help="a candidate before its final, the final on its last candidate's commit"
-    )
-    tag_cmd.add_argument("tag_version", **tag_version)
-    tag_cmd.set_defaults(run=_check_tag)
-    previous_cmd = commands.add_parser(
-        "previous", help="the highest final release tag below the tag's version"
-    )
-    previous_cmd.add_argument("tag_version", **tag_version)
-    previous_cmd.set_defaults(run=_previous)
+    for name, help_text, run in (
+        ("check", "every file names the tag's final version", _check),
+        ("check-chart", "the chart's version is above the previous release's", _check_chart),
+        ("check-tag", "a candidate before its final, the final on its last candidate's commit",
+         _check_tag),
+        ("previous", "the highest final release tag below the tag's version", _previous),
+    ):  # fmt: skip
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("tag_version", help="the tag's version, X.Y.Z or X.Y.Z-rc.N")
+        command.set_defaults(run=run)
     args = parser.parse_args()
     try:
         args.run(args)
