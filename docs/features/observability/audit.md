@@ -52,8 +52,8 @@ field's name: `memory.cross_promote`'s and `memory.copy_to`'s `rationale`,
 `memory.proposal_accept`'s and `memory.proposal_reject`'s `reason` (a decision the
 owner's policy makes records the policy's mode and thresholds instead), and
 `triple.follows_row_supersession`'s `closed`, whose actor is the writing principal or
-`process:loom`. A hash of a short value can be recovered by guessing; the rule keeps long text out of the trail, not
-every word. An op whose input carries a credential (a tracker source's password, a
+`process:loom`. A hash of a short value can be recovered by guessing; the rule keeps long
+text out of the trail, not every word. An op whose input carries a credential (a tracker source's password, a
 repository's access token) declares an `audit_subject` that leaves it out. Grant
 `loom.audit_log` like the data it describes.
 
