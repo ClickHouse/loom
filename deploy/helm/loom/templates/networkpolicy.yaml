@@ -81,7 +81,7 @@ spec:
     {{- toYaml . | nindent 4 }}
     {{- end }}
 {{- /* A missing key counts as on: `helm upgrade --reuse-values` keeps the old values. */}}
-{{- else if and (ne .Values.networkPolicy.guardMetadata false) .Values.networkPolicy.egressExcept }}
+{{- else if and (ne $guard false) .Values.networkPolicy.egressExcept }}
 {{- /* Off, the Loom pods still never reach `egressExcept` (the metadata service);
 a pod peer is listed because engines differ on matching pod IPs by range. */}}
 apiVersion: networking.k8s.io/v1

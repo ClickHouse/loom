@@ -353,8 +353,8 @@ Pod Security level must allow it (`baseline` and `restricted` do not). Run
 `dev/sandbox_probe.sh` in a pod to check the result before setting `sandbox.required: true`.
 
 By default, and with `networkPolicy.enabled`, a NetworkPolicy keeps the Loom pods off
-`networkPolicy.egressExcept` (the instance metadata service), so that code cannot take
-the node's cloud role. Off, `networkPolicy.guardMetadata` renders an egress-only
+`networkPolicy.egressExcept` (the instance metadata service), so repository code a pod
+runs cannot take the node's cloud role. Off, `networkPolicy.guardMetadata` renders an egress-only
 NetworkPolicy whose one rule allows every pod and every address but those (none with
 `egressExcept: []`); the cluster needs a policy engine for it to hold. What changes:
 
@@ -366,6 +366,9 @@ NetworkPolicy whose one rule allows every pod and every address but those (none 
   that address, which the engine may check instead. One that serves only the pod's own
   identity (GKE's metadata server without Dataplane V2) needs nothing; add the address of
   one that passes node credentials through to `egressExcept`.
+- A service in the cluster that fetches URLs for its callers (a forward proxy, a
+  ClickHouse whose `url()` reaches any host, such as the test-only dev ClickHouse) reaches
+  `egressExcept` for them: deny those addresses in its own policy.
 - NetworkPolicies add up: where your own policies limit the pods' egress, this one
   would let them reach everything else. Set `guardMetadata: false` and deny the
   metadata addresses in your own policy.
