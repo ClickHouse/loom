@@ -118,7 +118,6 @@ memory_stack = Operation(
     maturity="experimental",
     input_model=MemoryStackInput,
     output_model=MemoryStackOutput,
-    # The keys its answer returns are recorded as `served` (server/memory/app/served_reads.py).
     handler=records_served(stack_keys)(handle_memory_stack),
     idempotent=True,
     required_role=Role.VIEWER,

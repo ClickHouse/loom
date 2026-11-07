@@ -49,7 +49,6 @@ procedure_match = Operation(
     name="procedure.match",
     input_model=ProcedureMatchInput,
     output_model=ProcedureMatchOutput,
-    # The keys its answer returns are recorded as `served` (server/memory/app/served_reads.py).
     handler=records_served(procedure_keys)(handle_procedure_match),
     idempotent=True,
     required_role=Role.VIEWER,

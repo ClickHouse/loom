@@ -494,7 +494,7 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
 
 
 async def _pack_decisions_from_hits(
-    st: _PackState, decision_hits: list[Any], actors: _KeyWriters
+    st: _PackState, decision_hits: list[Any], actors: _KeyWriters, *, abstained: bool = False
 ) -> None:
     """Decision-typed hits leave the memories block and render as their
     own tagged section with the structured record (scenario, outcome,
@@ -548,7 +548,11 @@ async def _pack_decisions_from_hits(
         "decisions",
         "\n".join(lines),
         citations=citations,
-        rows=[(h.namespace or input.namespace, str(h.memory_key)) for h in decision_hits],
+        # An abstaining search's rows are no answer: the answer marks them so, and a
+        # client drops them (the prompt-recall hook does), so none counts as served.
+        rows=None
+        if abstained
+        else [(h.namespace or input.namespace, str(h.memory_key)) for h in decision_hits],
         source_count=len(decision_hits),
     )
 
@@ -610,7 +614,7 @@ async def _pack_memories(st: _PackState) -> None:
         if decision_hits:
             dec_ids = {id(h) for h in decision_hits}
             hits = [h for h in hits if id(h) not in dec_ids]
-            await _pack_decisions_from_hits(st, decision_hits, actors)
+            await _pack_decisions_from_hits(st, decision_hits, actors, abstained=out.abstain)
     if hits:
         evidence: list[EvidenceItem] = []
         row_of: dict[str, tuple[str, str]] = {}
@@ -657,7 +661,8 @@ async def _pack_memories(st: _PackState) -> None:
             "memories",
             packed.rendered,
             citations=packed.citations,
-            rows=[row_of[c] for c in packed.citations],
+            # see _pack_decisions_from_hits: an abstaining search shows no answer
+            rows=None if out.abstain else [row_of[c] for c in packed.citations],
             source_count=packed.source_count,
             extra_meta={
                 "evidence_groups": packed.groups,

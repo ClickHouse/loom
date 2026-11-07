@@ -29,7 +29,6 @@ memory_search = Operation(
     name="memory.search",
     input_model=MemorySearchInput,
     output_model=MemorySearchOutput,
-    # The keys its answer returns are recorded as `served` (server/memory/app/served_reads.py).
     handler=records_served(search_keys)(handle_memory_search),
     idempotent=True,
     required_role=Role.VIEWER,

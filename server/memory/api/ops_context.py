@@ -11,7 +11,6 @@ context_pack = Operation(
     name="context.pack",
     input_model=ContextPackInput,
     output_model=ContextPackOutput,
-    # The keys its answer returns are recorded as `served` (server/memory/app/served_reads.py).
     handler=records_served(pack_keys)(handle_context_pack),
     idempotent=True,
     required_role=Role.VIEWER,

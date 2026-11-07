@@ -13,7 +13,6 @@ search = Operation(
     mcp_tool="loom_search",
     input_model=SearchInput,
     output_model=SearchOutput,
-    # The keys its answer returns are recorded as `served` (server/memory/app/served_reads.py).
     handler=records_served(search_query_keys)(handle_search),
     idempotent=True,
     required_role=Role.VIEWER,

@@ -194,3 +194,52 @@ def test_a_pack_cut_to_its_budget_records_nothing_past_the_cut(
     assert "cut_off" not in kept
     assert kept and all(f"[pinned/{k} by=" in out.rendered for k in kept)
     assert len(kept) < 8
+
+
+def test_a_pack_whose_search_abstained_records_none_of_its_hits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The answer marks an abstaining memories section as no answer, and a client drops
+    it (the prompt-recall hook does), so its rows, and the decisions among them, are not
+    recorded; the stack beside it still is."""
+    _stub_all_but_the_stack(monkeypatch, [_entry("pinned", "pin", 20)])
+
+    async def _search(*a: Any, **k: Any) -> Any:
+        def hit(key: str, kind: str) -> NS:
+            return NS(
+                namespace="ns",
+                memory_key=key,
+                parent_memory_key="",
+                content_excerpt=f"weak match {key}",
+                source="fact",
+                source_resource_id="",
+                rank_score=0.2,
+                temporal_anchor="",
+                valid_at="",
+                memory_type=kind,
+            )
+
+        return NS(
+            results=[hit("weak", "semantic"), hit("dec", "decision")],
+            abstain=True,
+            abstain_reason="low_confidence",
+            retrieval_confidence=0.1,
+            retrieval_risk="high",
+            route_agreement=0.0,
+        )
+
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
+    monkeypatch.setattr(
+        "server.memory.app.context_pack._decision_records", _no_records, raising=False
+    )
+    out = asyncio.run(
+        handle_context_pack(
+            ContextPackInput(org="o", namespace="ns", agent="a", query="q", token_budget=4000)
+        )
+    )
+    assert "weak match weak" in out.rendered
+    assert out._served_rows == [("ns", "pin")]
+
+
+async def _no_records(*a: Any, **k: Any) -> dict[str, Any]:
+    return {}

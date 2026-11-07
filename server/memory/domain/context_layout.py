@@ -275,9 +275,11 @@ def served_rows(
     section_names: list[str],
     item_rows: dict[str, list[tuple[str, str] | None]],
 ) -> list[tuple[str, str]]:
-    """The stored rows the rendered pack shows: what every caller gets (MCP and the
-    plugins read `rendered` alone; `sections` and `blocks` keep lines the pack's own
-    budget cut). Each section's item lines start with `- ` (`one_item` indents a
+    """The stored rows the rendered pack shows. `rendered` is the answer every caller
+    gets (MCP's lean pack carries it alone); `sections` and `blocks` keep lines the pack's
+    own budget cut, so a row counts only where `rendered` holds it. What a client then
+    discards is its own; a section the answer marks as no answer records no rows (see
+    `_pack_memories`). Each section's item lines start with `- ` (`one_item` indents a
     continuation), in the order of its `item_rows`; a trim keeps a prefix, so the first n
     rows of a section whose n item lines `rendered` still holds were shown, a cut one
     included. `section_names` are the present sections in pack order."""

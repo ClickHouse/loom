@@ -11,7 +11,6 @@ memory_ask = Operation(
     name="memory.ask",
     input_model=MemoryAskInput,
     output_model=MemoryAskOutput,
-    # The keys its answer returns are recorded as `served` (server/memory/app/served_reads.py).
     handler=records_served(ask_keys)(handle_memory_ask),
     idempotent=True,
     required_role=Role.VIEWER,
