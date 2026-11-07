@@ -29,7 +29,7 @@ import { ListState } from "../../components/ui/ListState";
 export const PRIVACY_FILTERS_MANAGED_BY_ADMIN = "Refusal patterns are managed by an admin of this space.";
 /** A viewer who may list but not add. */
 export const PRIVACY_FILTERS_READ_ONLY =
-  "You can see the patterns here but not change them — a writer adds and deletes a namespace pattern's matches, an admin removes.";
+  "You can see the patterns here but not change them: a writer adds patterns and deletes a namespace pattern's stored matches; an admin removes patterns.";
 
 const SCOPES: readonly BlacklistScope[] = ["namespace", "org", "global"];
 const SCOPE_LABELS: Record<BlacklistScope, string> = { namespace: "Namespace", org: "Org", global: "Global" };

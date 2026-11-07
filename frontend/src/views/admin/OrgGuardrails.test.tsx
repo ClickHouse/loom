@@ -21,7 +21,7 @@ vi.mock("../../api/guardrails", async (importOriginal) => {
   };
 });
 
-const policy = (_scope: "org" | "namespace", text: string): ExtractionPolicy => ({
+const policy = (text: string): ExtractionPolicy => ({
   policy: text,
   updated_by: text ? "alice" : "",
   updated_at: null,
@@ -39,7 +39,7 @@ const scope = { org: "acme", namespace: "team" };
 beforeEach(() => {
   useStore.setState({ identity: { ...scope, agent: "loom-ui" } });
   vi.mocked(api.getExtractionPolicy).mockImplementation(async (_id, s) =>
-    policy(s, s === "org" ? "Never store card numbers." : ""),
+    policy(s === "org" ? "Never store card numbers." : ""),
   );
   vi.mocked(api.getOrgModelCalls).mockResolvedValue(CALLS);
 });
@@ -51,8 +51,8 @@ afterEach(() => {
 
 describe("OrgGuardrails", () => {
   it("saves the namespace's rules and removes the org's", async () => {
-    vi.mocked(api.setExtractionPolicy).mockResolvedValue(policy("namespace", "No health data."));
-    vi.mocked(api.clearExtractionPolicy).mockResolvedValue(policy("org", ""));
+    vi.mocked(api.setExtractionPolicy).mockResolvedValue(policy("No health data."));
+    vi.mocked(api.clearExtractionPolicy).mockResolvedValue(policy(""));
     render(<OrgGuardrails />);
     const fields = await screen.findAllByLabelText(/^Rules for/);
     expect(fields[0]).toHaveValue("Never store card numbers.");
@@ -88,12 +88,11 @@ describe("OrgGuardrails", () => {
     await userEvent.type(field, "No health data.");
     await userEvent.click(screen.getAllByRole("button", { name: "Save rules" })[1]);
     vi.mocked(api.getExtractionPolicy).mockImplementation(async (_id, s) =>
-      policy(s, s === "org" ? "Never store card numbers." : "Other team's rule."),
+      policy(s === "org" ? "Never store card numbers." : "Other team's rule."),
     );
     act(() => useStore.setState({ identity: { ...scope, namespace: "other", agent: "loom-ui" } }));
     expect(await screen.findByLabelText("Rules for other")).toHaveValue("Other team's rule.");
-    act(() => answer(policy("namespace", "No health data.")));
-    await new Promise((r) => setTimeout(r, 0));
+    await act(async () => answer(policy("No health data.")));
     expect(screen.getByLabelText("Rules for other")).toHaveValue("Other team's rule.");
   });
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Switch } from "@clickhouse/click-ui/Switch";
@@ -35,49 +35,48 @@ const MAX_REASON_CHARS = 500;
  * Both ops are ORG_ADMIN, so the page shows these panels to an org admin claim only.
  */
 export function OrgGuardrails() {
+  const identity = useIdentity();
+  // Each panel is keyed by the scope it reads: a switch mounts a new one, so nothing a panel
+  // holds (a draft, a busy save, a late answer) reaches another scope.
   return (
     <div className="mt-8 space-y-6">
-      <ModelCallsPanel />
-      <ExtractionRules scope="org" />
-      <ExtractionRules scope="namespace" />
+      <ModelCallsPanel key={identity.org} />
+      <ExtractionRules key={identity.org} scope="org" />
+      <ExtractionRules key={`${identity.org}/${identity.namespace}`} scope="namespace" />
     </div>
   );
 }
 
 function ExtractionRules({ scope }: { scope: PolicyScope }) {
   const identity = useIdentity();
-  // Kept with the org and namespace it was read for, so an answer that lands after a
-  // switch is not shown under the new one.
-  const scopeKey = `${identity.org}/${scope === "namespace" ? identity.namespace : ""}`;
-  const [loaded, setLoaded] = useState<{ scope: string; policy: ExtractionPolicy } | null>(null);
-  const policy = loaded?.scope === scopeKey ? loaded.policy : null;
+  const [policy, setPolicy] = useState<ExtractionPolicy | null>(null);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (policy) setDraft(policy.policy);
-  }, [policy]);
 
   useAbortableEffect(
     (signal, live) => {
       setError(null);
       getExtractionPolicy(identity, scope, { signal })
-        .then((p) => live() && setLoaded({ scope: scopeKey, policy: p }))
+        .then((p) => {
+          if (!live()) return;
+          setPolicy(p);
+          setDraft(p.policy);
+        })
         .catch((e) => live() && setError(e));
     },
-    [scopeKey, reload],
+    [reload],
   );
 
   const save = async (clear: boolean) => {
-    const mine = scopeKey;
     setBusy(true);
     try {
       const p = clear
         ? await clearExtractionPolicy(identity, scope)
         : await setExtractionPolicy(identity, scope, draft.trim());
-      // A save that lands after a switch leaves the new scope's rules alone.
-      setLoaded((cur) => (cur && cur.scope !== mine ? cur : { scope: mine, policy: p }));
+      setPolicy(p);
+      setDraft(p.policy);
       toast(clear ? "Rules removed" : "Rules saved", "ok");
     } catch (e) {
       toast(`Save failed: ${humanizeError(e)}`, "error");
@@ -162,9 +161,7 @@ function ExtractionRules({ scope }: { scope: PolicyScope }) {
 function ModelCallsPanel() {
   const identity = useIdentity();
   const platformAdmin = useStore((s) => hasPlatformAdminClaim(s.whoami));
-  // Kept with the org it was read for, as the extraction rules are.
-  const [loaded, setLoaded] = useState<{ org: string; calls: OrgModelCalls } | null>(null);
-  const state = loaded?.org === identity.org ? loaded.calls : null;
+  const [state, setState] = useState<OrgModelCalls | null>(null);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
@@ -174,10 +171,10 @@ function ModelCallsPanel() {
     (signal, live) => {
       setError(null);
       getOrgModelCalls(identity.org, { signal })
-        .then((calls) => live() && setLoaded({ org: identity.org, calls }))
+        .then((calls) => live() && setState(calls))
         .catch((e) => live() && setError(e));
     },
-    [identity.org, reload],
+    [reload],
   );
 
   const flip = async (enabled: boolean) => {
@@ -194,9 +191,7 @@ function ModelCallsPanel() {
       return;
     setBusy(true);
     try {
-      const org = identity.org;
-      const calls = await setOrgModelCalls(org, enabled, reason.trim());
-      setLoaded((cur) => (cur && cur.org !== org ? cur : { org, calls }));
+      setState(await setOrgModelCalls(identity.org, enabled, reason.trim()));
       setReason("");
       toast(enabled ? "Model calls on" : "Model calls off", "ok");
     } catch (e) {

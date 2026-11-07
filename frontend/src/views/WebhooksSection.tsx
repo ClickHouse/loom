@@ -24,7 +24,7 @@ import { toast } from "../components/Toast";
 import { RowMenu } from "../components/ui/RowMenu";
 import { ListState } from "../components/ui/ListState";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { Alert, ListTime, Loading, Tip } from "../components/ui";
+import { Alert, ListTime, Loading } from "../components/ui";
 
 /**
  * The namespace's memory webhooks: a URL told of every memory write, revision, delete,
@@ -247,11 +247,8 @@ function DeliveriesDialog({ hook, onClose }: { hook: Webhook; onClose: () => voi
                 {
                   label: (
                     <span className="inline-flex items-center gap-1.5">
-                      <Tip content={failure} disabled={!failure}>
-                        <span>
-                          <Badge text={d.status} state={DELIVERY_STATE[d.status]} size="sm" />
-                        </span>
-                      </Tip>
+                      <Badge text={d.status} state={DELIVERY_STATE[d.status]} size="sm" />
+                      {failure && <span className="text-xs text-text-muted">{failure}</span>}
                       {d.attempts > 0 && (
                         <span className="text-xs text-text-muted tabular">
                           {d.attempts} {d.attempts === 1 ? "try" : "tries"}

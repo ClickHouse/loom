@@ -106,18 +106,42 @@ describe("WebhooksSection", () => {
     await waitFor(() => expect(api.removeWebhook).toHaveBeenCalledWith(expect.objectContaining(scope), "w1"));
   });
 
-  it("removes nothing when the confirmation is declined, and says when the webhook was already gone", async () => {
+  it("removes nothing when the confirmation is declined", async () => {
     vi.mocked(confirmAction).mockResolvedValueOnce(false);
     render(<WebhooksSection />);
     await userEvent.click(await screen.findByRole("button", { name: `Actions for ${HOOK.url}` }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
     await waitFor(() => expect(confirmAction).toHaveBeenCalled());
     expect(api.removeWebhook).not.toHaveBeenCalled();
+  });
 
+  it("says when the webhook was already removed", async () => {
     vi.mocked(api.removeWebhook).mockResolvedValueOnce({ removed: false });
-    await userEvent.click(screen.getByRole("button", { name: `Actions for ${HOOK.url}` }));
+    render(<WebhooksSection />);
+    await userEvent.click(await screen.findByRole("button", { name: `Actions for ${HOOK.url}` }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("This webhook was already removed", "info"));
+  });
+
+  it("says why each delivery did not arrive, and nothing for one that did", async () => {
+    const d = (event_id: string, status: "delivered" | "dead", last_status: number, last_error: string) => ({
+      event_id,
+      event_type: "memory.written",
+      memory_key: `k-${event_id}`,
+      occurred_at: "2000-01-01 00:00:00",
+      status,
+      attempts: 1,
+      last_status,
+      last_error,
+    });
+    vi.mocked(api.listWebhookDeliveries).mockResolvedValueOnce({
+      deliveries: [d("e1", "delivered", 200, ""), d("e2", "dead", 0, "connection refused")],
+    });
+    render(<WebhooksSection />);
+    await userEvent.click(await screen.findByRole("button", { name: "Deliveries" }));
+    const dialog = await screen.findByRole("dialog", { name: "Deliveries" });
+    expect(await within(dialog).findByText("connection refused")).toBeInTheDocument();
+    expect(within(dialog).queryByText("HTTP 200")).toBeNull();
   });
 
   it("drops the previous namespace's webhooks on a switch", async () => {
@@ -148,7 +172,6 @@ describe("WebhooksSection", () => {
     expect(within(dialog).getByText("dead")).toBeInTheDocument();
     expect(within(dialog).getByText("6 tries")).toBeInTheDocument();
     // The receiver's answer is why it died.
-    await userEvent.hover(within(dialog).getByText("dead"));
-    expect((await screen.findAllByText("HTTP 500")).length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("HTTP 500")).toBeInTheDocument();
   });
 });
