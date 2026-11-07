@@ -769,10 +769,9 @@ def steps_to_reopen(residue: Mapping[str, Any] | str | None, scope_type: str) ->
         return set()
     reopen = {_OBJECT_OWNER} if OBJECT_RESIDUE in hot else set()
     hot |= {"loom." + t for t in hot if not t.startswith(("loom.", "pg:"))}
-    reopen |= {
+    return reopen | {
         step for step, tables in step_owners(scope_type).items() if any(t in hot for t in tables)
     }
-    return reopen
 
 
 async def residue_census(
