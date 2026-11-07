@@ -200,11 +200,11 @@ const DELIVERY_STATE: Record<WebhookDelivery["status"], BadgeState> = {
   dead: "danger",
 };
 
-/** Why a delivery has not arrived: the worker's reason when it gave one, else the
- *  receiver's last HTTP status; "" once it arrived. */
+/** Why a delivery has not arrived: the worker's reason and the receiver's last HTTP
+ *  status, either or both; "" once it arrived. */
 function deliveryFailure(d: WebhookDelivery): string {
   if (d.status === "delivered") return "";
-  return d.last_error || (d.last_status ? `HTTP ${d.last_status}` : "");
+  return [d.last_error, d.last_status ? `HTTP ${d.last_status}` : ""].filter(Boolean).join(" · ");
 }
 
 /** The webhook's newest events of the last three days and whether each arrived. */

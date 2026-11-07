@@ -135,12 +135,18 @@ describe("WebhooksSection", () => {
       last_error,
     });
     vi.mocked(api.listWebhookDeliveries).mockResolvedValueOnce({
-      deliveries: [d("e1", "delivered", 200, ""), d("e2", "dead", 0, "connection refused")],
+      deliveries: [
+        d("e1", "delivered", 200, ""),
+        d("e2", "dead", 0, "no answer: ConnectError"),
+        d("e3", "dead", 503, "the webhook was removed"),
+      ],
     });
     render(<WebhooksSection />);
     await userEvent.click(await screen.findByRole("button", { name: "Deliveries" }));
     const dialog = await screen.findByRole("dialog", { name: "Deliveries" });
-    expect(await within(dialog).findByText("connection refused")).toBeInTheDocument();
+    expect(await within(dialog).findByText("no answer: ConnectError")).toBeInTheDocument();
+    // The worker's reason and the receiver's status, both.
+    expect(within(dialog).getByText("the webhook was removed · HTTP 503")).toBeInTheDocument();
     expect(within(dialog).queryByText("HTTP 200")).toBeNull();
   });
 

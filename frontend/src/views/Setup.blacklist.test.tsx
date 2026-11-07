@@ -207,6 +207,12 @@ describe("Setup's 'Never save' panel", () => {
     vi.mocked(listWebhooks).mockImplementationOnce(() => new Promise(() => {}));
     act(() => useStore.setState({ identity: { org: ORG, namespace: "other-ns", agent: "loom-ui" } }));
     await waitFor(() => expect(screen.queryByText(hook.url)).toBeNull(), WAIT);
+    // A fresh section for the new namespace, with no Remove from the old one.
+    expect(listWebhooks).toHaveBeenLastCalledWith(
+      expect.objectContaining({ namespace: "other-ns" }),
+      expect.anything(),
+    );
+    expect(screen.queryByRole("button", { name: `Actions for ${hook.url}` })).toBeNull();
   });
 });
 

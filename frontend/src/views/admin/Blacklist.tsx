@@ -176,7 +176,7 @@ export function PrivacyFilters({
     try {
       const s = await sweepBlacklistPattern(identity, r.pattern_id);
       if (s.error) throw new Error(s.error);
-      // Where the sweep ran, said in its answer: the page may have moved since.
+      // Name the scope the sweep ran in: the page may have moved on before it answers.
       const where = inNamespace ? identity.namespace : identity.org;
       if (s.matched === 0) {
         toast(`No stored memory in ${where} matches this pattern`, "info");

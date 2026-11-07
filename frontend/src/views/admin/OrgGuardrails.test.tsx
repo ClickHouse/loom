@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api/guardrails";
 import type { ExtractionPolicy, OrgModelCalls } from "../../api/guardrails";
 import { confirmAction } from "../../components/ConfirmDialog";
+import { toast } from "../../components/Toast";
 import { useStore } from "../../lib/state";
 import { OrgGuardrails } from "./OrgGuardrails";
 
@@ -69,6 +70,7 @@ describe("OrgGuardrails", () => {
     await userEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
     expect(confirmAction).toHaveBeenCalledWith(expect.objectContaining({ confirmLabel: "Remove", danger: true }));
     await waitFor(() => expect(api.clearExtractionPolicy).toHaveBeenCalledWith(expect.objectContaining(scope), "org"));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Rules removed for acme", "ok"));
   });
 
   it("removes no rules when the confirmation is declined", async () => {
@@ -93,6 +95,8 @@ describe("OrgGuardrails", () => {
     act(() => useStore.setState({ identity: { ...scope, namespace: "other", agent: "loom-ui" } }));
     expect(await screen.findByLabelText("Rules for other")).toHaveValue("Other team's rule.");
     await act(async () => answer(policy("No health data.")));
+    // The late answer names where it landed.
+    expect(toast).toHaveBeenCalledWith("Rules saved for team", "ok");
     expect(screen.getByLabelText("Rules for other")).toHaveValue("Other team's rule.");
   });
 

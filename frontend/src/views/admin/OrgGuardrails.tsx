@@ -77,7 +77,7 @@ function ExtractionRules({ scope }: { scope: PolicyScope }) {
         : await setExtractionPolicy(identity, scope, draft.trim());
       setPolicy(p);
       setDraft(p.policy);
-      // The panel's own scope: a save that answers after a switch names where it landed.
+      // Name the panel's scope: a save can answer after a switch.
       const where = scope === "org" ? identity.org : identity.namespace;
       toast(`Rules ${clear ? "removed" : "saved"} for ${where}`, "ok");
     } catch (e) {
@@ -195,7 +195,7 @@ function ModelCallsPanel() {
     try {
       setState(await setOrgModelCalls(identity.org, enabled, reason.trim()));
       setReason("");
-      toast(enabled ? "Model calls on" : "Model calls off", "ok");
+      toast(`Model calls ${enabled ? "on" : "off"} for ${identity.org}`, "ok");
     } catch (e) {
       toast(`Change failed: ${humanizeError(e)}`, "error");
     } finally {
