@@ -20,8 +20,9 @@ A document is notes by its title, in one of three shapes:
   sync 2026-09-24", "Parser team status - week 31";
 - a date first and the meeting word last: "2026-03-04 Meeting notes", "2026-03-04
   Storage sync";
-- a meeting word in the title and a date as the top heading of each meeting (a running
-  notes page).
+- a meeting word in the title and a date, with or without its year (Aug 13, 2026), as
+  the top heading of each meeting (a running notes page); a first heading with the
+  title's words is the title.
 Without a date the same words name a topic as often ("Standup reminder bot", "Order
 sync 24/7"), and a title holding a design-document, release or incident word
 ("Calendar sync design 2026-01-15", "Release notes 2026-03-04") is never notes, unless
@@ -213,7 +214,6 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
     headings = tuple(_plain(h) for h in section_path)
     # A document stored with no title is named by its first heading.
     name = _plain(title) if title else (headings[0] if headings else "")
-    # The headings below a first heading that repeats the title.
     below = _below_title(name, headings)
     dated = bool(_NOTES_TITLE.search(name)) or (
         bool(_MEETING_TITLE.search(name))
