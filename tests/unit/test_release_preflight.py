@@ -1,5 +1,6 @@
-"""scripts/release/preflight.sh and make_latest.py: the release's owner-granted
-prerequisites, and which release becomes Latest."""
+"""The release workflow's scripts and wiring: preflight.sh (the owner-granted
+prerequisites), published_images.sh (a run on a published tag builds nothing),
+make_latest.py (which release becomes Latest), and how release.yml calls them."""
 
 from __future__ import annotations
 
@@ -134,6 +135,37 @@ def test_a_package_never_pushed_warns_without_failing_the_release(tmp_path: Path
     (warning,) = [line for line in result.stdout.splitlines() if line.startswith("::warning::")]
     assert "loom-extractor does not exist yet" in warning
     assert "re-run the failed jobs" in warning
+
+
+def test_a_missing_push_token_is_named_apart_from_a_missing_grant(tmp_path: Path) -> None:
+    both = "clickhouse/loom clickhouse/loom-extractor"
+    result = _preflight(
+        tmp_path, "strict", private="false", writable=both, public=both, NO_TOKEN="1"
+    )
+    assert result.returncode == 1
+    assert result.stdout.count("gave this workflow no push token") == 2
+    assert "Write role" not in result.stdout
+    assert "-X POST" not in (tmp_path / "calls").read_text()
+
+
+# preflight.sh against a registry that answers 503: an outage is never reported
+# as a setting for the owner to change.
+OUTAGE_CURL = r"""#!/usr/bin/env bash
+case "$*" in
+  *" -u "*) echo '{"token":"t"}' ;;
+  *"-X POST"*) printf 'HTTP/2 503\r\n\r\n' ;;
+  *"-X DELETE"*) ;;
+  *) echo 503 ;;
+esac
+"""
+
+
+def test_a_registry_outage_is_not_reported_as_a_missing_grant(tmp_path: Path) -> None:
+    result = _preflight(tmp_path, "strict", private="false", curl=OUTAGE_CURL)
+    assert result.returncode == 1
+    assert result.stdout.count("(an outage), so its Write access is unknown") == 2
+    assert result.stdout.count("(an outage), so its visibility is unknown") == 2
+    assert "Write role" not in result.stdout and "Danger Zone" not in result.stdout
 
 
 def test_the_workflow_runs_the_preflight_before_any_build() -> None:
@@ -396,34 +428,3 @@ def test_the_registries_publish_after_a_release_that_skipped_its_image_jobs(name
     condition = job["if"]
     assert condition.startswith("${{ !cancelled() && needs.github-release.result == 'success' && ")
     assert "github.event_name == 'workflow_dispatch'" in condition
-
-
-def test_a_missing_push_token_is_named_apart_from_a_missing_grant(tmp_path: Path) -> None:
-    both = "clickhouse/loom clickhouse/loom-extractor"
-    result = _preflight(
-        tmp_path, "strict", private="false", writable=both, public=both, NO_TOKEN="1"
-    )
-    assert result.returncode == 1
-    assert result.stdout.count("gave this workflow no push token") == 2
-    assert "Write role" not in result.stdout
-    assert "-X POST" not in (tmp_path / "calls").read_text()
-
-
-# preflight.sh against a registry that answers 503: an outage is never reported
-# as a setting for the owner to change.
-OUTAGE_CURL = r"""#!/usr/bin/env bash
-case "$*" in
-  *" -u "*) echo '{"token":"t"}' ;;
-  *"-X POST"*) printf 'HTTP/2 503\r\n\r\n' ;;
-  *"-X DELETE"*) ;;
-  *) echo 503 ;;
-esac
-"""
-
-
-def test_a_registry_outage_is_not_reported_as_a_missing_grant(tmp_path: Path) -> None:
-    result = _preflight(tmp_path, "strict", private="false", curl=OUTAGE_CURL)
-    assert result.returncode == 1
-    assert result.stdout.count("(an outage), so its Write access is unknown") == 2
-    assert result.stdout.count("(an outage), so its visibility is unknown") == 2
-    assert "Write role" not in result.stdout and "Danger Zone" not in result.stdout
