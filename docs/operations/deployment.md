@@ -827,7 +827,8 @@ Agents sign themselves up with `loom init --agent <name>`, which returns a claim
 person later enters once at `/oauth/agent-claim`, with a password of their own, to take ownership.
 An agent account whose password is a plain hash of its code and that has no claim tag is
 unclaimed even when a person has signed in with that code: its owner claims it at that page
-with the same code at once, since whoever holds the code and claims first wins. See
+with the same code at once, since whoever holds the code and claims first wins. The claim
+ends every token minted under the account before it; mint those again. See
 [agent claims](../architecture/security.md#identity-modes).
 
 There is no email verification and no self-serve password reset. For a lost account the
