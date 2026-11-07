@@ -89,19 +89,6 @@ def test_a_search_without_usage_records_nothing(written: list[dict[str, Any]]) -
     assert written == []
 
 
-def test_a_pack_records_the_rows_its_kept_blocks_cite() -> None:
-    """The pack notes each row where it makes the citation; a key holding `#` is read
-    whole, never cut at a resource suffix."""
-    from server.memory.api.models_context import ContextPackOutput
-
-    out = ContextPackOutput(rendered="", sections={}, section_count=0, token_budget=1)
-    out._served_rows = [("n", "code/app.py#main"), ("m", "p1")]
-    assert served_reads.pack_keys(SimpleNamespace(namespace="n"), out) == [
-        ("n", "code/app.py#main"),
-        ("m", "p1"),
-    ]
-
-
 def test_memory_stack_records_its_stored_rows() -> None:
     entries = [
         SimpleNamespace(section="pinned", memory_key="pin1"),

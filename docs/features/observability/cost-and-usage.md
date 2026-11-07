@@ -167,16 +167,17 @@ citations by `LOOM_MEMORY_USED_CITED_REINFORCEMENT_WEIGHT`, and harm subtracts w
 
 `recall_count` counts **recall credits** only: a `memory.search` from a reader that closes
 the loop (`server/memory/app/recall_credit.py`). How often agents were shown a memory is
-kept apart, in `loom.memory_served_daily` (`server/memory/app/served_reads.py`): every
-agent read that returns memory, credited or not, adds one row per key its answer returned.
-That is `memory.search`, `search.query`, `context.pack` (the stored rows whose item lines its rendered
-answer still holds, the memory stack's included), `memory.stack`, `memory.ask` and `procedure.match`. A hit the op
-trims before answering is not counted. Neither is a `memory.search` sent with
-`auto_touch: false` or a `memory.ask` with `reinforce: false`, a read by the dashboard or
-the assistant, a measurement read (a bench label, or the `*` / `-` agent with no named
-consumer), or an op that runs a search for its own use (`decision.precedents`,
-`memory.apply`, the workers' passes). The table is a `SummingMergeTree` per memory, agent
-and day; nothing ranks on it and `usage_fold` never reads it.
+kept apart, in `loom.memory_served_daily` (`server/memory/app/served_reads.py`): every agent
+read that returns memory, credited or not, adds one row per key its answer returned. That is
+`memory.search`, `search.query`, `context.pack` (the stored rows whose item lines its
+section bodies still hold after each section's budget, the memory stack's included),
+`memory.stack`, `memory.ask` and `procedure.match`. A hit the op trims before answering is
+not counted. Neither is a `memory.search` sent with `auto_touch: false` or a `memory.ask`
+with `reinforce: false`, a read by the dashboard or the assistant, a measurement read (a
+bench label, or the `*` / `-` agent with no named consumer), or an op that runs a search for
+its own use (`decision.precedents`, `memory.apply`, the workers' passes). The table is a
+`SummingMergeTree` per memory, agent and day; nothing ranks on it and `usage_fold` never
+reads it.
 
 A read lands on the newest live row of the key inside the reading request's scope: for a
 namespace-wide reader, whichever user or session wrote it; for a token narrowed to one user

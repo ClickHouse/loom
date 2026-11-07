@@ -20,7 +20,7 @@ from __future__ import annotations
 import functools
 import logging
 from collections.abc import Awaitable, Callable, Iterable
-from typing import Any
+from typing import Any, Protocol
 
 from server.memory.app import after_write
 
@@ -64,10 +64,20 @@ def schedule_served(org: str, agent: str, keys: Iterable[tuple[str, str]]) -> No
     after_write.schedule(_write(), name="memory.served")
 
 
-def records_served[I, O](
+class _AgentRead(Protocol):
+    """The input of an agent read op: whose read it is."""
+
+    @property
+    def org(self) -> str: ...
+
+    @property
+    def agent(self) -> str: ...
+
+
+def records_served[I: _AgentRead, O](
     keys_of: Callable[[I, O], Keys],
 ) -> Callable[[Callable[[I], Awaitable[O]]], Callable[[I], Awaitable[O]]]:
-    """Wrap an op's handler so its answer's keys (`keys_of`) are recorded as `served`."""
+    """Wrap an op's handler so its answer's keys (`keys_of`) are recorded as served."""
 
     def wrap(handler: Callable[[I], Awaitable[O]]) -> Callable[[I], Awaitable[O]]:
         @functools.wraps(handler)
@@ -76,8 +86,7 @@ def records_served[I, O](
             try:
                 keys = keys_of(input, out)
                 if keys:
-                    i: Any = input
-                    schedule_served(str(i.org), str(i.agent or ""), keys)
+                    schedule_served(input.org, input.agent or "", keys)
             except Exception as e:  # noqa: BLE001 — a served row must not fail the read
                 log.warning("served keys of %s failed (non-fatal): %s", handler.__name__, e)
             return out
@@ -114,8 +123,8 @@ def procedure_keys(input: Any, out: Any) -> Keys:
 
 
 def pack_keys(input: Any, out: Any) -> Keys:
-    """context.pack: the stored rows whose item lines its rendered answer still holds,
-    after every section and pack budget (`context_layout.served_rows`)."""
+    """context.pack: the stored rows whose item lines its answer's section bodies still
+    hold after each section's budget (`context_layout.served_rows`)."""
     return list(out._served_rows)
 
 

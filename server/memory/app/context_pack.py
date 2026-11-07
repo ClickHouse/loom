@@ -187,8 +187,8 @@ class _PackState:
     shown_procedures: list[str] = field(default_factory=list)
     withheld_procedures: list[str] = field(default_factory=list)
     # Per section, the stored row (namespace, memory_key) behind each item line, in line
-    # order; None for an item that is no stored row. The rows whose line the rendered pack
-    # still holds are what the op records as served (`served_rows`).
+    # order; None for an item that is no stored row. The rows whose line the section's body
+    # still holds after its trim are what the op records as served (`served_rows`).
     item_rows: dict[str, list[tuple[str, str] | None]] = field(default_factory=dict)
 
     def put(
@@ -984,7 +984,7 @@ async def handle_context_pack(input: ContextPackInput) -> ContextPackOutput:
         stable_prefix_chars=prefix_len,
         stable_hash=stable_hash,
     )
-    out._served_rows = served_rows(rendered, [name for name, _ in present], st.item_rows)
+    out._served_rows = served_rows(sections, st.item_rows)
     return out
 
 
