@@ -133,6 +133,8 @@ _LEASE_TTL_S = 120.0  # not a setting: the entry-lease shape
 # the default interval, past a restart or a redeploy of the service it needs, and
 # short enough that one file cannot hold a source's stamp for good.
 _WAIT_PASSES = 3  # not a setting: a bound on how long one file may stall a stamp
+# The sync-state key of the files the picture check flagged but found unchanged.
+_PICTURES_CHECKED = "pictures_checked"
 # How far behind the listing's start the stamp stays: a file the store stamps just
 # before the listing but indexes just after it is listed again next turn.
 _STAMP_SKEW_S = 60.0  # not a setting: a margin on the store's own indexing delay
@@ -415,6 +417,10 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     turn = TurnResult()
     turn.full = bool(detail.get("full")) or not valid_stamp(stamp) or full_due(detail)
     start_waits(turn, detail)
+    # Files whose stored copy the picture check flags but whose conversion changes
+    # nothing (a definition in a code sample): file id -> the revision checked.
+    checked = detail.get(_PICTURES_CHECKED)
+    turn.kind_state[_PICTURES_CHECKED] = dict(checked) if isinstance(checked, dict) else {}
     credential = unseal("knowledge_sources.credential", src.credential_enc)
     if not credential:
         # Fail closed: a credential that no longer opens is never read as "no auth".
@@ -454,6 +460,9 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     if trusted:
         listed_ids = {str(f["id"]) for f in files}
         turn.waits = {k: v for k, v in turn.waits.items() if k in listed_ids}
+        turn.kind_state[_PICTURES_CHECKED] = {
+            k: v for k, v in turn.kind_state[_PICTURES_CHECKED].items() if k in listed_ids
+        }
     # Only a full listing lists an unchanged file, so only it asks for the pictures.
     revisions = await store.source_revisions(src.org, src.namespace, src.name, pictures=turn.full)
     stored = {d["file_id"]: d for d in revisions}
@@ -700,11 +709,14 @@ async def _sync_file(
     conversion's) is fetched and converted again at its same revision when a full
     listing lists it."""
     uri = source_uri_of(f)
+    revision = str(f.get("modifiedTime") or "")
     reconvert = bool(
         prior
         and f.get("mimeType") == GDRIVE_MIME_TYPES["docs"]
         and prior.get("inline_pictures")
-        and prior["source_revision"] == str(f.get("modifiedTime") or "")
+        and prior["source_revision"] == revision
+        # Checked at this revision already: its conversion changed nothing.
+        and turn.kind_state.get(_PICTURES_CHECKED, {}).get(str(f["id"])) != revision
     )
     if reconvert and _given_up(turn, f):
         # Its older copy is still served: not counted unconverted; the waits say when
@@ -713,7 +725,9 @@ async def _sync_file(
     before_fetch = functools.partial(_fetchable, f, run, turn)
     # The stored text's hash, from the full listing's read: set for a reconversion at the
     # stored address only; a moved file takes the ordinary write-and-retire path.
-    stored_sha = prior["text_hash"] if reconvert and prior and prior["source_uri"] == uri else ""
+    stored_sha = ""
+    if reconvert and prior is not None and prior["source_uri"] == uri:  # `prior` for mypy
+        stored_sha = prior["text_hash"]
     fetch_and_write = functools.partial(
         _fetch_and_write, src, token, f, uri, turn, stored_sha=stored_sha
     )
@@ -793,7 +807,9 @@ async def _fetch_and_write(
     if stored_sha:  # a reconversion of a stored copy that held its pictures' bytes
         if sha256_text(fetched.content) == stored_sha:
             # The stored text only shows a definition (in a code sample, say): nothing
-            # to write, mine or embed again.
+            # to write, mine or embed again, and not fetched again at this revision.
+            checked = turn.kind_state.setdefault(_PICTURES_CHECKED, {})
+            checked[str(f["id"])] = str(f.get("modifiedTime") or "")
             return "unchanged"
         # The mining step keys a document that carries a text hash by its revision and
         # that hash, so the converted text, written at the same revision, is mined again

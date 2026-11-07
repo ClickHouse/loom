@@ -500,6 +500,27 @@ def test_a_flagged_copy_whose_address_moved_is_written_at_the_new_one(world: _Wo
     assert "data:" not in world.docs[new]["content"]
 
 
+def test_unchanged_flagged_copies_do_not_hold_a_full_listing_at_the_pass_bound(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 2)
+    sample = "# Export\n\n```md\n[image1]: <data:image/png;base64,AAAA>\n```\n"
+    world.files = [_file(f"doc{i}", DOCS, REV1) for i in (1, 2)]
+    world.files.append(_file("doc3", DOCS, "2026-01-02T00:00:00.000Z"))
+    for i in (1, 2):
+        world.file_answers[f"doc{i}"] = httpx.Response(200, text=sample)
+        _stored(world, f"doc{i}", DOCS, sample)
+    for _ in range(3):
+        asyncio.run(source_sync.run_sync(full=True))
+    # The two were exported once each at their revision; the file after them was written.
+    exports = [r for r in world.requests if r.url.path.endswith("/export")]
+    assert sorted(r.url.path for r in exports if "doc3" not in r.url.path) == [
+        "/drive/v3/files/doc1/export",
+        "/drive/v3/files/doc2/export",
+    ]
+    assert _uri("doc3") in world.docs and _detail(world)["status"] == "ok"
+
+
 def test_a_document_stored_without_pictures_bytes_is_not_fetched_again(world: _World) -> None:
     world.files = [_file("doc1", DOCS, REV1)]
     _stored(world, "doc1", DOCS, "# Design\n\nText only.\n")
@@ -607,6 +628,8 @@ def test_a_document_export_keeps_its_text_and_marks_its_inlined_pictures() -> No
     )
     tilde = "~~~\n![][image1]\n~~~\n``` x ` ```\n\n[image1]: <data:image/png;base64,AAAA>\n"
     assert convert.exported_markdown(tilde) == "~~~\n![][image1]\n~~~\n``` x ` ```\n"
+    bracketed = "see (![Fig][image1]) here\n\n[image1]: <data:a>\n"
+    assert convert.exported_markdown(bracketed) == "see (Fig) here\n"
     ended = "The flow is ![][image1]. Then ![Flow][image1], done.\n\n[image1]: <data:a>\n"
     assert convert.exported_markdown(ended) == "The flow is. Then Flow, done.\n"
     spaced = "see![][image1] next\n\n[image1]: <data:image/png;base64,AAAA>\n"

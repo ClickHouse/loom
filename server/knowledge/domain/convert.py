@@ -457,9 +457,14 @@ def _lead(line: str) -> str:
 
 
 def _edge(text: str, m: re.Match[str]) -> bool:
-    """Whether a removed picture's padding sits at an end of `text` or before
-    punctuation, where no space belongs."""
-    return m.start() == 0 or m.end() == len(text) or text[m.end()] in ".,;:!?)]}"
+    """Whether a removed picture's padding sits at an end of `text`, after an opening
+    bracket or before punctuation, where no space belongs."""
+    return (
+        m.start() == 0
+        or m.end() == len(text)
+        or text[m.start() - 1] in "([{"
+        or text[m.end()] in ".,;:!?)]}"
+    )
 
 
 def _item_marker(lead: str, refs: list[re.Match[str]]) -> str:
