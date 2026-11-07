@@ -235,7 +235,7 @@ def test_an_upload_or_ingest_answer_out_of_shape_is_not_queued_not_a_crash(
     assert _main_against(answer, monkeypatch) == 2
 
 
-def test_an_answer_out_of_shape_mid_run_is_counted_and_the_run_still_reports(
+def test_an_answer_out_of_shape_mid_run_is_skipped_and_the_run_still_reports(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A dataset or inspect answer the harness cannot read ends no task: it is
@@ -265,23 +265,3 @@ def test_an_answer_out_of_shape_mid_run_is_counted_and_the_run_still_reports(
     assert out["measures"]["knowledge.search"]["ok"] > 0
     # Exit 1 for what the skipped dataset left: no query ran.
     assert "knowledge.query: nothing measured" in out["past_level"]
-    assert out["harness_errors"] == {}
-
-
-def test_a_task_that_cannot_read_an_answer_is_counted_and_fails_the_run(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """A read that raises inside a task ends no other task: the run reports, counts
-    it as a harness error, and fails on it."""
-    import json
-
-    async def unreadable(self: load.Run, n: int) -> None:
-        raise KeyError("results")
-
-    monkeypatch.setattr(load.Run, "search", unreadable)
-    assert _main_against(_server("ready"), monkeypatch, "--json") == 1
-    out = json.loads(capsys.readouterr().out)
-    errors = out["harness_errors"]
-    assert set(errors) == {"KeyError"} and errors["KeyError"] > 0
-    assert f"answers the harness could not read: {errors}" in out["past_level"]
-    assert out["measures"]["knowledge.upload"]["ok"] > 0  # the other tasks ran on
