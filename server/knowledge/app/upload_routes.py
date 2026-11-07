@@ -29,6 +29,7 @@ from server.auth.context import set_current_auth
 from server.auth.gateway import effective_auth, personal_namespace
 from server.core import fail_open, tenant_slots
 from server.core.errors import RateLimitedError
+from server.identity.app.restricted_access import note_restricted_access
 from server.operations.base import Role
 from server.settings import settings
 
@@ -96,8 +97,9 @@ async def knowledge_upload(
     sha256: str = "",
 ) -> Any:
     """Store one file for `knowledge.ingest`. Auth: bearer + WRITER on (org,
-    namespace), as the ops check it. Answers the upload's id, sha256, size,
-    detected format and expiry."""
+    namespace), as the ops check it, and the restricted-access audit row an
+    op leaves. Answers the upload's id, sha256, size, detected format and
+    expiry."""
     auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None and settings.auth_actually_required():
         raise missing_bearer()
@@ -111,6 +113,9 @@ async def knowledge_upload(
         raise _refuse(400, "VALIDATION_FAILED", str(e)) from e
     except PermissionError as e:
         raise _refuse(403, "AUTH_INSUFFICIENT", str(e)) from e
+    await note_restricted_access(
+        auth, op="knowledge.upload", org=org, namespace=namespace, transport="http"
+    )
 
     name = filename.strip().replace("\\", "/").rsplit("/", 1)[-1]
     if not name:

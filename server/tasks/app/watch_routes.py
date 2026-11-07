@@ -16,7 +16,8 @@ the inbox's owner namespace; the poster side (``posted_by_me=1``) streams
 the events of tasks the caller's subject posted. The stream is bounded
 (``max_seconds``, ≤ 600) so the proxy's read timeout never cuts it mid
 frame, and it writes no ledger row (it is not a registered operation; the
-pulls it wakes are).
+pulls it wakes are). An admitted watch of an inbox in a restricted namespace
+leaves the ``namespace.restricted_access`` audit row an op leaves.
 """
 
 from __future__ import annotations
@@ -142,6 +143,7 @@ async def _resolve_key(
     """(wake-up key, inbox filter, from_subject filter) for the side asked for,
     after the handlers' authorization rule."""
     from server.auth.authz import may_act_in_org
+    from server.identity.app.restricted_access import note_restricted_access
     from server.tasks.app.common import _caller_subject, _in_scope
     from server.tasks.store import repo as repo
 
@@ -156,6 +158,9 @@ async def _resolve_key(
             raise _err(404, "RESOURCE_NOT_FOUND", "inbox not found")
         if not await _in_scope(org, row["owner_namespace"], write=True):
             raise _err(403, "AUTH_INSUFFICIENT", "not a writer on the inbox's owner namespace")
+        await note_restricted_access(
+            auth, op="task.watch", org=org, namespace=row["owner_namespace"], transport="http"
+        )
         return task_wakeups.inbox_key(org, inbox), inbox, None
     if not posted_by_me:
         raise _err(422, "VALIDATION_FAILED", "name inbox= or posted_by_me=1")

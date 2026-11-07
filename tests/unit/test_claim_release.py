@@ -151,6 +151,25 @@ def test_a_restricted_namespace_is_answered_like_a_missing_one(env: Any) -> None
     assert run(_tok(["org_admin"]))[0].released
 
 
+def test_a_release_of_a_restricted_namespace_writes_the_access_audit_row(
+    env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, state = env
+    noted: list[tuple[str, str, str]] = []
+
+    async def note(auth: Any, *, op: str, org: str, namespace: str, transport: str) -> bool:
+        noted.append((op, org, namespace))
+        return True
+
+    monkeypatch.setattr(cr, "note_restricted_access", note)
+    state["restricted"] = True
+    assert _status(run, _tok(["org_admin"])) == 404
+    assert noted == []  # refused: nothing was reached
+    state["allows"] = True
+    assert run(_tok(["org_admin"]))[0].released
+    assert noted == [("admin.claim_release", "acme", "repo-x")]
+
+
 def test_auth_off_releases_as_local(env: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     run, _ = env
     monkeypatch.setattr(settings, "identity_provider", "single-user")

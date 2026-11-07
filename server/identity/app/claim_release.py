@@ -26,6 +26,7 @@ from server.core import grant_cache
 from server.core.ch import CHClient, get_client
 from server.core.errors import BackendUnavailableError
 from server.identity.app import account_admin
+from server.identity.app.restricted_access import note_restricted_access
 from server.identity.domain.account_ties import kept_aliases
 from server.identity.store import grants as grants_repo
 
@@ -72,6 +73,9 @@ async def claim_release(
     # gate withholds. Refused exactly like a missing name.
     if info is not None and not await _may_release(info, input.org, input.namespace):
         raise not_found
+    await note_restricted_access(
+        info, op="admin.claim_release", org=input.org, namespace=input.namespace, transport="http"
+    )
 
     out = await release_claim(
         org=input.org,
