@@ -4,9 +4,9 @@ The census statement, the agent-label gauge and the code-plane lag and
 config gauges need a few facts only a domain holds: the knowledge plane's
 chunk-liveness predicate, the usage kinds an agent writes, the configured
 repositories, the compiler tiers and the code-index tiers the `code_tier_failing`
-problem reports. The composition root
-(`server/wiring.py`) hands them in with `use_state_inputs`; the repository
-list and the config-error count are callables, read at every probe.
+problem reports. The composition root (`server/wiring.py`) hands them in with
+`use_state_inputs`; the repository list, the config-error count and the failing
+code-index tiers are callables, read at every probe.
 """
 
 from __future__ import annotations
