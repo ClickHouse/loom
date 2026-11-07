@@ -816,7 +816,9 @@ def test_a_pptx_drawing_the_reader_does_not_know_is_named_by_its_fallback_pictur
     equation = (
         f'<mc:AlternateContent {_MC}><mc:Choice Requires="a14"><p:sp><p:nvSpPr><p:nvPr/></p:nvSpPr>'
         f"<p:txBody><a:p>{math}</a:p></p:txBody></p:sp></mc:Choice>"
-        "<mc:Fallback><p:pic/></mc:Fallback></mc:AlternateContent>"
+        # as PowerPoint writes it: a shape drawing the equation as its picture fill
+        "<mc:Fallback><p:sp><p:nvSpPr><p:nvPr/></p:nvSpPr><p:spPr><a:blipFill/></p:spPr>"
+        "</p:sp></mc:Fallback></mc:AlternateContent>"
     )
     # A shape in alternate content whose choice is read: its fallback is a copy.
     shape = (
