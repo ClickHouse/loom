@@ -355,13 +355,14 @@ schema. These rules keep that safe. The operator procedure is in
     document's Markdown export; N-1 stores the export as it comes. A document N-1 writes
     is found by N on its next full listing, whose stored-revision read checks each
     stored text for such a definition, and converted again at the same revision. N
-    writes that copy with a `text_sha256` in its metadata, so the mining step of either
-    build, which keys a document carrying one by its revision and that hash, mines the
-    new text once; N-1 rewrites the document only when its file changes. No gate holds
-    the rollout: the cost is the base64 a document N-1 writes holds until N's next full
-    listing, and the check, which reads each document's stored text on every full
-    listing, stays while a build that stores raw exports may serve. The mixed-version
-    gate does not check this rule.
+    writes every native document with a `text_sha256` in its metadata, so the mining
+    step of either build, which keys a document carrying one by its revision and that
+    hash, mines the converted text once; a document N-1 writes carries none and is keyed
+    by its revision alone, which is new whenever N-1 writes; N-1 rewrites the document
+    only when its file changes. No gate holds the rollout: the cost is the base64 a
+    document N-1 writes holds until N's next full listing, and the check, which reads
+    each document's stored text on every full listing, stays while a build that stores
+    raw exports may serve. The mixed-version gate does not check this rule.
 
 ## What checks them
 

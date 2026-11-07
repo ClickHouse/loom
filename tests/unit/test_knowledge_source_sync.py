@@ -566,6 +566,27 @@ def test_a_turn_cut_after_a_reconverting_write_still_mines_the_new_text(
     assert uri in [u for u, _, _ in world.mined]
 
 
+def test_a_reconverting_write_cut_before_its_chunks_still_mines_the_new_text(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc1", DOCS, REV1)]
+    uri = _stored(world, "doc1", DOCS, OLD_EXPORT)
+    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
+    real = writes.handle_knowledge_upsert
+
+    async def _cut_before_chunks(inp: Any) -> Any:
+        await real(inp)
+        world.docs[inp.source_uri]["chunks"] = False  # the document row, no live chunks
+        raise RuntimeError("cut before the chunks")
+
+    monkeypatch.setattr(writes, "handle_knowledge_upsert", _cut_before_chunks)
+    asyncio.run(source_sync.run_sync())
+    monkeypatch.setattr(writes, "handle_knowledge_upsert", real)
+    asyncio.run(source_sync.run_sync(full=True))
+    assert "data:" not in world.docs[uri]["content"]
+    assert uri in [u for u, _, _ in world.mined]
+
+
 def test_a_failed_reconverting_write_leaves_the_document_to_be_mined_again(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1810,6 +1831,17 @@ REV1 = "2026-01-01T00:00:00.000Z"
 REV2 = "2026-01-02T00:00:00.000Z"
 
 
+def _at(world: _World, uri: str, revision: str = "") -> str:
+    """The key the extraction leg mines the stored copy at `uri` by: its revision and the
+    hash of its text, which every native document's write records."""
+    meta = world.docs[uri]["metadata"]
+    if revision:
+        assert meta["source_revision"] == revision
+    return source_sync._mined_revision(
+        {"source_revision": meta["source_revision"], "text_sha256": meta.get("text_sha256", "")}
+    )
+
+
 def _two_docs(world: _World) -> None:
     world.files = [_file("doc1", DOCS, REV1), _file("doc2", DOCS, REV2)]
 
@@ -1838,7 +1870,7 @@ def test_a_written_document_is_mined_in_the_same_pass_as_the_worker(
     assert (result.extracted, result.failed, result.extract_deferred) == (1, 0, 0)
     detail = _detail(world)
     assert (detail["mined"], detail["extract_waits"], detail["pending_extract"]) == (
-        {DOC1: REV1},
+        {DOC1: _at(world, DOC1)},
         {},
         0,
     )
@@ -1878,7 +1910,7 @@ def test_a_document_written_by_a_turn_that_did_not_finish_is_mined_next_pass(
     assert DOC1 in world.docs
     asyncio.run(source_sync.run_sync())
     assert [uri for uri, _, _ in world.mined][-1:] == [DOC1]
-    assert _detail(world)["mined"] == {DOC1: REV1}
+    assert _detail(world)["mined"] == {DOC1: _at(world, DOC1)}
 
 
 def test_pinned_rows_a_run_tags_are_counted_and_kept_through_a_held_turn(
@@ -1989,14 +2021,14 @@ def test_a_failing_extraction_is_given_up_after_its_tries_until_rewritten(
     result = asyncio.run(source_sync.run_sync())
     assert result.failed == 1 and result.errors == [f"{ORG}/{NS}/decks: extraction not_run"]
     detail = _detail(world)
-    assert detail["extract_waits"] == {DOC1: [REV1, 1, "not_run"]}
+    assert detail["extract_waits"] == {DOC1: [_at(world, DOC1), 1, "not_run"]}
     assert (detail["extract_error"], detail["pending_extract"]) == ("not_run", 1)
     asyncio.run(source_sync.run_sync())
     result = asyncio.run(source_sync.run_sync())
     assert len(world.mined) == source_sync._WAIT_PASSES and result.unextracted == 1
     detail = _detail(world)
     assert (detail["mined"], detail["extract_waits"], detail["pending_extract"]) == (
-        {DOC1: REV1},
+        {DOC1: _at(world, DOC1)},
         {},
         0,
     )
@@ -2035,7 +2067,10 @@ def test_each_failed_document_counts_one_try(
     _two_docs(world)
     result = asyncio.run(source_sync.run_sync())
     assert result.failed == 2
-    assert _detail(world)["extract_waits"] == {DOC1: [REV1, 1, reason], DOC2: [REV2, 1, reason]}
+    assert _detail(world)["extract_waits"] == {
+        DOC1: [_at(world, DOC1), 1, reason],
+        DOC2: [_at(world, DOC2), 1, reason],
+    }
 
 
 def test_a_document_no_longer_the_source_s_is_not_mined_and_leaves_the_map(
@@ -2103,7 +2138,7 @@ def test_a_document_out_of_time_with_a_whole_pass_is_given_up_at_once(world: _Wo
     result = asyncio.run(source_sync.run_sync())
     assert result.unextracted == 1
     detail = _detail(world)
-    assert (detail["mined"], detail["extract_waits"]) == ({DOC1: REV1}, {})
+    assert (detail["mined"], detail["extract_waits"]) == ({DOC1: _at(world, DOC1)}, {})
     assert (detail["unextracted"], detail["extract_error"]) == (1, "too_large_for_pass")
     asyncio.run(source_sync.run_sync())
     assert len(world.mined) == 1
@@ -2136,7 +2171,7 @@ def test_a_permanent_refusal_settles_the_document(world: _World) -> None:
     result = asyncio.run(source_sync.run_sync())
     assert (result.extracted, result.failed) == (1, 0)
     detail = _detail(world)
-    assert (detail["mined"], detail["extract_waits"]) == ({DOC1: REV1}, {})
+    assert (detail["mined"], detail["extract_waits"]) == ({DOC1: _at(world, DOC1)}, {})
     asyncio.run(source_sync.run_sync())
     assert len(world.mined) == 1
 
@@ -2326,7 +2361,7 @@ def test_a_turn_ended_from_outside_writes_no_state_and_is_mined_next_pass(
     monkeypatch.setattr(decision_extract, "extract_document", mined)
     monkeypatch.setattr(leases, "cluster_lease", _plain_lease(world))
     asyncio.run(source_sync.run_sync())
-    assert _detail(world)["mined"] == {DOC1: "2026-03-01T00:00:00.000Z"}
+    assert _detail(world)["mined"] == {DOC1: _at(world, DOC1, "2026-03-01T00:00:00.000Z")}
 
 
 def _plain_lease(world: _World) -> Any:

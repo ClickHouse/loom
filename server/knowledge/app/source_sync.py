@@ -55,15 +55,15 @@ namespace (`decision_extract.extract_document`, as `loom decisions extract`
 does) each of a source's documents whose stored revision is not the one last
 mined for it. The mined revision is kept per document in the source's sync state
 and written only after that document's extraction settled, so a document a turn
-wrote is mined on a later pass whatever stopped this one. A native document
-converted again at its mined revision (its stored text held its pictures' bytes)
-is written with a hash of its text, which the document's mined key then carries,
-so it is mined again. The leg holds the source's lease and bills its model calls
-to the namespace. A namespace whose own spend on this leg reached
-`knowledge_source_sync_cap_share` of its daily cost cap (read before each
-document; a cap that cannot be read counts as reached), an org whose model calls
-are switched off and a namespace whose calls are held are left for a later pass.
-A document whose extraction fails waits like a file: it is tried again for
+wrote is mined on a later pass whatever stopped this one. A native document is
+written with a hash of its title and text, which its mined key carries, so a
+copy written again at its mined revision with other text (a reconversion, or its
+redo after a cut write) is mined again. The leg holds the source's lease and
+bills its model calls to the namespace. A namespace whose own spend on this leg
+reached `knowledge_source_sync_cap_share` of its daily cost cap (read before
+each document; a cap that cannot be read counts as reached), an org whose model
+calls are switched off and a namespace whose calls are held are left for a later
+pass. A document whose extraction fails waits like a file: it is tried again for
 `_WAIT_PASSES` passes on the same revision, then left until it is written again.
 Its model reads stop shortly before the pass's deadline (a try, nothing written;
 one that had a whole pass's read time is given up on at once). Each decision's
@@ -463,7 +463,7 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     turn.kind_state[_PICTURES_CHECKED] = {
         k: v
         for k, v in turn.kind_state[_PICTURES_CHECKED].items()
-        if listed_at_revision.get(k, "" if trusted else v) == v
+        if (rev := listed_at_revision.get(k)) == v or (rev is None and not trusted)
     }
     if trusted:
         listed_ids = set(listed_at_revision)
@@ -817,9 +817,11 @@ async def _fetch_and_write(
             # to write, mine or embed again, and not fetched again at this revision.
             turn.kind_state[_PICTURES_CHECKED][str(f["id"])] = str(f.get("modifiedTime") or "")
             return "unchanged"
+    if f.get("mimeType") == GDRIVE_MIME_TYPES["docs"]:
         # The mining step keys a document that carries a text hash by its revision and
-        # that hash, so the converted text, written at the same revision, is mined again
-        # by the same write; a write that fails leaves the old key, already mined.
+        # that hash, so text written again at the same revision with other content (a
+        # reconversion, or its redo after a write cut before its chunks) is mined again;
+        # a write that fails leaves the old copy and its old key.
         extra["text_sha256"] = sha256_text(f"{f.get('name') or ''}\n{fetched.content}")
     try:
         await write_document(
@@ -1131,10 +1133,10 @@ def _extract_waits(detail: dict[str, Any]) -> dict[str, list[Any]]:
 
 def _mined_revision(doc: dict[str, str]) -> str:
     """The revision a document is mined at: its source revision, with the hash of its
-    text when its metadata records one (`text_sha256`: a page store's page, and a
-    folder's native document converted again at its revision), since such a copy can
-    be written again at the same revision with other text. Every other document's key
-    is the source revision alone."""
+    text when its metadata records one (`text_sha256`: a page store's page and a
+    folder's native document), since such a copy can be written again at the same
+    revision with other text. Every other document's key is the source revision
+    alone."""
     text = doc.get("text_sha256") or ""
     return f"{doc['source_revision']}@{text}" if text else doc["source_revision"]
 

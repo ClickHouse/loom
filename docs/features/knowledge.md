@@ -242,14 +242,15 @@ without its query, so a `knowledge.synthesize` citation of it reads `<link>#<chu
 Its title is the file's name, its description the first paragraph, its tags
 `source-kind:design_doc`, the repository's `repo:<id>` and `source:<name>`, and its
 metadata the source's kind and name, the file's id (`ingested_from`), its revision
-(`source_revision`) and the conversion (`ingested_format`); a native document converted
-again at its revision also carries a hash of its text (`text_sha256`), which the
-[mining](#mining-decisions) step keys it by. Every document a sync writes has the actor
-`worker:knowledge-source-sync` and the class `imported`. A live document at the same
-address that another writer or another source holds is never overwritten or retired; the
-file is counted `skipped` and nothing is fetched for it. The source is read again before
-each write: one removed or replaced during its turn stops the turn, which records
-nothing.
+(`source_revision`) and the conversion (`ingested_format`); a native document also
+carries a hash of its title and text (`text_sha256`), which the
+[mining](#mining-decisions) step keys it by with its revision, so a copy written again
+at the same revision with other text is mined again. Every document a sync writes has
+the actor `worker:knowledge-source-sync` and the class `imported`. A live document at
+the same address that another writer or another source holds is never overwritten or
+retired; the file is counted `skipped` and nothing is fetched for it. The source is read
+again before each write: one removed or replaced during its turn stops the turn, which
+records nothing.
 
 A document is retired only on positive evidence: its file is missing from a complete
 full listing and the store, asked about that file, reports it gone, trashed or in none
