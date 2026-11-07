@@ -52,7 +52,8 @@ def _form(namespace: str, error: str = "", status_code: int = 200) -> Response:
         _TITLE,
         f"""<h2>{_TITLE}</h2>
 <p>Enter the code the agent printed and choose your password. The code works
-once; afterwards you sign in with the namespace name and this password.</p>{message}
+once; afterwards you sign in with the namespace name and this password.
+Claiming takes about 20 seconds: submit once and wait for the answer.</p>{message}
 <form method="post" action="/oauth/agent-claim">
 <input name="namespace" placeholder="agent-…" value="{html.escape(namespace)}" required>
 <input name="code" placeholder="claim code" autocomplete="off" required>
@@ -115,7 +116,13 @@ async def agent_claim(request: Request) -> Response:
         password_hash = await hash_password_off_loop(password)
         claimed = await _replace_code(org, namespace, code_hash, password_hash)
     if claimed is None:
-        return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
+        return _form(
+            namespace,
+            "That code does not claim this namespace, or it was used. If you just submitted "
+            "this form, the first claim may have gone through: sign in with the namespace "
+            "name and your password.",
+            400,
+        )
     # The person signs in next: past the cutoff on every replica's clock, so the
     # token they get is not one it ends.
     await revocation.wait_out(claimed)
@@ -154,7 +161,7 @@ async def _replace_code(
         # never a spent code and live tokens. A subject cutoff also ends every
         # OAuth and device session the code started (`oauth.issue_tokens`).
         subject = str(row["owner_email"])
-        first = await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
+        await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         # Insert-as-replace carrying every other column forward.
         await get_client().insert(
@@ -175,21 +182,27 @@ async def _replace_code(
     # Again once the write reads back: a replica of the build before signs in with
     # a plain-hash code, reading without sequential consistency, until its
     # ClickHouse replica has the write, and the first cutoff predates it.
+    # The claim is written, so nothing below answers an error.
     try:
         with own_write_reads():
             landed = await namespaces.fetch_row(org, namespace)
         if (landed or {}).get("password_hash") != password_hash:
             log.warning("agent claim of %s/%s: the write does not read back yet", org, namespace)
-        # A replica whose clock runs up to CLOCK_SKEW_S ahead stamps later `iat`s:
-        # after this wait the cutoff still ends what any replica issues for
-        # CLOCK_SKEW_S + 1 seconds after the read back.
-        await _skew_wait()
+    except Exception as e:  # noqa: BLE001 — the read only times the cutoff below, which still runs
+        log.warning("agent claim of %s/%s: reading the write back failed: %r", org, namespace, e)
+    # A replica whose clock runs up to CLOCK_SKEW_S ahead stamps later `iat`s:
+    # after this wait the cutoff still ends what any replica issues for
+    # CLOCK_SKEW_S + 1 seconds after the read back.
+    await _skew_wait()
+    try:
         return await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
-    except Exception as e:  # noqa: BLE001 — the claim is written; the first cutoff still holds
+    except Exception as e:  # noqa: BLE001 — the claim is written; the earlier cutoff holds
         log.warning(
             "agent claim of %s/%s: the cutoff after the write failed: %r", org, namespace, e
         )
-        return first
+        # Later than any cutoff the failed call could have stored, so the claimer's
+        # next sign-in is not ended by it either.
+        return revocation.from_now_on()
 
 
 async def _skew_wait() -> None:

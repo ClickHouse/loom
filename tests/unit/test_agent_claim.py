@@ -205,6 +205,7 @@ def test_the_code_claims_once_and_the_claimer_signs_in_with_their_password(world
     c = _app()
     page = c.get("/oauth/agent-claim", params={"namespace": _NS})
     assert page.status_code == 200 and 'name="code"' in page.text and _NS in page.text
+    assert "about 20 seconds" in page.text
 
     r = _claim(c, world["code"], "correct horse")
     assert r.status_code == 200 and _NS in r.text
@@ -386,24 +387,18 @@ def test_the_cutoff_waited_out_follows_the_password_write(world, monkeypatch) ->
     assert world["audited_before_wait"] == [1]
 
 
-@pytest.mark.parametrize("failing", ["read_back", "second_cutoff"])
-def test_a_failure_after_the_write_still_answers_claimed(world, monkeypatch, failing) -> None:
-    # The claim is written and audited; the first cutoff still holds and is the
-    # one waited out.
+def test_a_failed_read_back_still_waits_and_cuts_off_again(world, monkeypatch) -> None:
     from server.identity.app import account_admin
 
-    real_end, real_fetch, cutoffs = account_admin.end_tokens, namespaces.fetch_row, []
-    fetches = [0]
+    real_end, real_fetch, cutoffs, fetches = account_admin.end_tokens, namespaces.fetch_row, [], [0]
 
     async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
-        if failing == "second_cutoff" and cutoffs:
-            raise RuntimeError("revocation store away")
         cutoffs.append(await real_end(subject, by=by, reason=reason))
         return cutoffs[-1]
 
     async def fetch_row(org: str, namespace: str) -> Any:
         fetches[0] += 1
-        if failing == "read_back" and fetches[0] == 2:  # the one after the write
+        if fetches[0] == 2:  # the read back after the write
             raise RuntimeError("ClickHouse away")
         return await real_fetch(org, namespace)
 
@@ -411,9 +406,34 @@ def test_a_failure_after_the_write_still_answers_claimed(world, monkeypatch, fai
     monkeypatch.setattr(agent_claim.namespaces, "fetch_row", fetch_row)
     r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
     assert r.status_code == 200 and "Claimed" in r.text
+    assert len(cutoffs) == 2 and world["skew_waits"] == [True]
+    assert world["waited"] == cutoffs[1:]
     assert [e for e, _ in world["events"]] == ["auth.agent_claimed"]
-    assert world["waited"] == cutoffs[:1]
     assert passwords.verify_password(_row(world, _LEGACY)["password_hash"], "correct horse")
+
+
+def test_a_second_cutoff_that_stores_then_fails_is_waited_past(world, monkeypatch) -> None:
+    # The failed call may have stored its cutoff: the page waits past any it could
+    # have written, so the claimer's next sign-in is not ended by it.
+    from datetime import UTC, datetime
+
+    from server.identity.app import account_admin
+
+    real_end, calls = account_admin.end_tokens, []
+
+    async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
+        calls.append(await real_end(subject, by=by, reason=reason))
+        if len(calls) == 2:
+            raise RuntimeError("revocation store away after the write")
+        return calls[-1]
+
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+    r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
+    assert r.status_code == 200 and "Claimed" in r.text
+    [waited] = world["waited"]
+    stored = datetime.fromtimestamp(world["cutoffs"][_LEGACY], UTC)
+    assert waited >= calls[1] >= stored
+    assert [e for e, _ in world["events"]] == ["auth.agent_claimed"]
 
 
 def revocation_cutoff(world: dict[str, Any], subject: str) -> Any:

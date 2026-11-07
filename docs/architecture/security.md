@@ -338,7 +338,8 @@ refresh), replaces the code with the claimer's own password, adds the tag
 `machine:agent-signup:claimed` and audits `auth.agent_claimed`. Once the account is released it
 reads the row back with sequential consistency, waits `CLOCK_SKEW_S` (5 s), and cuts off once
 more, for a sign-in with a plain-hash code on an older replica while the write was landing. A
-failure in these last steps is logged and the claim stands, with the first cutoff.
+failed read-back is logged and the wait and the cutoff still run; a failed second cutoff is
+logged, the claim stands, and the page waits past any cutoff the failed call could have stored.
 `namespace.register` carries a `machine:` tag forward from the row and drops one from a form,
 on this build and the one before it, and a trust's name never holds `:`. On this build the
 claim's tag does not bind the namespace's owner as a trust's tag does; the build before binds
