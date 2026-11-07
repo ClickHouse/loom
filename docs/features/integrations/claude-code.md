@@ -102,8 +102,10 @@ finding.
   run the `node` on `PATH`, so Windows needs Node.js 18 or newer on the `PATH` Claude Code
   starts with; without Git Bash the hooks run that `node` without checking its version. A
   hook that finds no `node` lets the session continue; it writes one `loom:` line to its
-  stderr, which Claude Code shows as a hook error on macOS and Linux and, under
-  PowerShell (where the hook exits 0), only in `claude --debug`.
+  stderr, which Claude Code shows as a hook error under `sh` (macOS, Linux, Git Bash) and,
+  under PowerShell (where the hook exits 0), only in `claude --debug`. Without Git Bash,
+  commands run through Claude Code's PowerShell tool are captured, but the code shunt and
+  the test gate read only `sh` commands, so they do not judge them.
 - A **writer** token for the namespace the session writes to. A viewer token lets the
   tools read, but the server refuses every capture.
 
@@ -368,19 +370,19 @@ Start with `/loom:loom-status`; it names the cause in one line. It runs its chec
 `sh`: on Windows without Git Bash, run `node <plugin root>/bin/loom-client-status.mjs`
 instead.
 
-| Symptom                                                                     | Cause                                              | Fix                                                                                                                          |
-| --------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `node: not found` from a hook                                               | the installed plugin predates its Node launcher    | `claude plugin update loom@loom`                                                                                             |
-| a hook prints a `loom:` line about Node.js 18+                              | the launcher found no Node 18+, or only an old one | `LOOM_NODE=/path/to/node`, or the `loom-status` skill; restart                                                               |
-| nothing captured on Windows; `claude --debug` shows `loom: no node on PATH` | no `node` on the `PATH` Claude Code starts with    | install Node.js 18+ on the system `PATH`; with Git for Windows, `bin/loom-node` also finds a version manager's Node; restart |
-| MCP server "needs authentication"                                           | no Node for the header helper, or no token found   | the `loom-status` skill names which                                                                                          |
-| no primer, nothing captured                                                 | server unreachable, or no token found              | `loom-status`; check `~/.loom/config.json`                                                                                   |
-| tools answer, captures do not                                               | the token is viewer-only on the write namespace    | mint a writer token                                                                                                          |
-| Sessions view empty                                                         | conversation logging is off for the namespace      | turn it on in the dashboard or with `conversation.set_logging`                                                               |
-| a hook added in a new release never fires                                   | the installed plugin is older than the server      | `claude plugin update loom@loom`                                                                                             |
-| every tool listed twice                                                     | a user-scope `loom` MCP entry beside the plugin    | `claude mcp remove loom`                                                                                                     |
-| reads denied in a repo you work on locally                                  | the checkout is indexed and the file is unmodified | `--config local_first=true` or `LOOM_CODE_LOCAL_FIRST=on`                                                                    |
-| `Hook cancelled` at exit                                                    | SessionEnd hooks ran past the client's budget      | update the plugin (its entries declare `timeout: 10`)                                                                        |
+| Symptom                                                                     | Cause                                              | Fix                                                                                                                     |
+| --------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `node: not found` from a hook                                               | the installed plugin predates its Node launcher    | `claude plugin update loom@loom`                                                                                        |
+| a hook prints a `loom:` line about Node.js 18+                              | the launcher found no Node 18+, or only an old one | `LOOM_NODE=/path/to/node`, or the `loom-status` skill; restart                                                          |
+| nothing captured on Windows; `claude --debug` shows `loom: no node on PATH` | no `node` on the `PATH` Claude Code starts with    | install Node.js 18+ on the system `PATH` (the header helper runs through `cmd.exe`, which only finds that one); restart |
+| MCP server "needs authentication"                                           | no Node for the header helper, or no token found   | the `loom-status` skill names which                                                                                     |
+| no primer, nothing captured                                                 | server unreachable, or no token found              | `loom-status`; check `~/.loom/config.json`                                                                              |
+| tools answer, captures do not                                               | the token is viewer-only on the write namespace    | mint a writer token                                                                                                     |
+| Sessions view empty                                                         | conversation logging is off for the namespace      | turn it on in the dashboard or with `conversation.set_logging`                                                          |
+| a hook added in a new release never fires                                   | the installed plugin is older than the server      | `claude plugin update loom@loom`                                                                                        |
+| every tool listed twice                                                     | a user-scope `loom` MCP entry beside the plugin    | `claude mcp remove loom`                                                                                                |
+| reads denied in a repo you work on locally                                  | the checkout is indexed and the file is unmodified | `--config local_first=true` or `LOOM_CODE_LOCAL_FIRST=on`                                                               |
+| `Hook cancelled` at exit                                                    | SessionEnd hooks ran past the client's budget      | update the plugin (its entries declare `timeout: 10`)                                                                   |
 
 ## Other clients
 

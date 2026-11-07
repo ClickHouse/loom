@@ -85,6 +85,7 @@ test("inferActionType: shell variants are command runs, apply_patch is a file ed
   assert.equal(inferActionType("exec_command", false), "command_run");
   assert.equal(inferActionType("apply_patch", false), "file_edit");
   assert.equal(inferActionType("Bash", false), "command_run");
+  assert.equal(inferActionType("PowerShell", false), "command_run");
   assert.equal(inferActionType("Read", false), "file_read");
   assert.equal(inferActionType("apply_patch", true), "error");
 });

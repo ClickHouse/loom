@@ -624,7 +624,17 @@ export function patchFiles(text) {
 // is deferred to Loom's async worker / session-end batch, server-side.
 
 const _EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "str_replace_editor", "apply_patch"]);
-const _RUN_TOOLS = new Set(["Bash", "BashOutput", "Shell", "command_run", "shell", "exec_command", "local_shell"]);
+// PowerShell is Claude Code's shell tool on Windows without Git Bash.
+const _RUN_TOOLS = new Set([
+  "Bash",
+  "BashOutput",
+  "PowerShell",
+  "Shell",
+  "command_run",
+  "shell",
+  "exec_command",
+  "local_shell",
+]);
 const _FETCH_TOOLS = new Set(["WebFetch", "WebSearch", "Fetch"]);
 const _READ_TOOLS = new Set(["Read", "Grep", "Glob", "LS"]);
 
