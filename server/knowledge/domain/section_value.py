@@ -61,14 +61,17 @@ _DECISION = re.compile(
     rf"let's {_CHOICE_VERB})",
     re.IGNORECASE,
 )
-# A line of meeting notes that says the discussion reached no decision.
+# A line of meeting notes that says the discussion reached no decision, with the label
+# it is written under ("Outcome: no decision yet").
 _UNDECIDED = re.compile(
-    r"\b(?:no (?:conclusion|decision|consensus|agreement)|undecided|"
+    r"\b(?:(?:outcome|conclusion|resolved)\s*:\s*)?"
+    r"(?:no (?:conclusion|decision|consensus|agreement)|undecided|"
     r"not (?:yet )?(?:decided|concluded|agreed)|"
     r"to be decided|(?:haven't|hasn't|have not|has not)(?: yet)?(?: been)? decided|"
     r"decision (?:pending|needed|deferred)|needs? a decision|"
+    r"decisions?\W+(?:tbd|tbc|deferred)\b|"
     # "Decision: open" is a placeholder; "Decision: open the replica to reads" is a decision.
-    r"decisions?\W+(?:tbd|tbc|none|pending|open|deferred)(?: yet)?(?=\W*$|\W*[.;,(]))",
+    r"decisions?\W+(?:none|pending|open)(?: yet)?(?=\W*$|\s*[.;,(\-\u2013\u2014]))",
     re.IGNORECASE,
 )
 # The title shapes of meeting notes and status reports (the module docstring).
@@ -119,8 +122,6 @@ _DECISIONS_HEADING = re.compile(
     r"^\W*(?:slide\s+\d+\s*:\s*)?(?:decisions?|decided|agreed|outcomes?)\b", re.IGNORECASE
 )
 
-# The label words a line of notes opens with ("Outcome:").
-_LABEL = re.compile(r"\b(?:outcome|conclusion|resolved|decisions?)\s*:", re.IGNORECASE)
 # Where one sentence of a line ends and the next begins.
 _SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
 # A list marker, a table pipe or a quote mark opening a line, dropped before the
@@ -176,18 +177,10 @@ def _decides(line: str, notes: bool) -> bool:
     # Sentence by sentence: a question records no decision ("Are we going with Redis?"),
     # and in notes "no decision" is none; "agreed: X; Y is not decided" still is one.
     return any(
-        not sentence.endswith("?") and _records(sentence, notes)
+        not sentence.endswith("?")
+        and _DECISION.search(_UNDECIDED.sub("", sentence) if notes else sentence)
         for sentence in _SENTENCE_END.split(line.strip())
     )
-
-
-def _records(sentence: str, notes: bool) -> bool:
-    kept = _UNDECIDED.sub("", sentence) if notes else sentence
-    # "Outcome: no decision yet" leaves its label behind, which records nothing; a bare
-    # "Outcome:" line heads the decision on the next line, and stays one.
-    if kept != sentence:
-        kept = _LABEL.sub("", kept)
-    return bool(_DECISION.search(kept))
 
 
 def _lines(text: str) -> tuple[list[str], int]:

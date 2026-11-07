@@ -91,6 +91,9 @@ def test_the_labelled_set_scores_as_measured() -> None:
         ("Storage sync 2026-03-04", ("Cache",), "Conclusion: no consensus, revisit next week"),
         ("Storage sync 2026-03-04", ("Cache",), "Final outcome: no decision"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: none yet."),
+        ("Storage sync 2026-03-04", ("Cache",), "Decision: TBD - revisit next week"),
+        ("Storage sync 2026-03-04", ("Cache",), "Decision: deferred to next sync"),
+        ("Storage sync 2026-03-04", ("Cache",), "Decision: open - revisit next week"),
         (
             "Session store RFC",
             ("Decision: TBD", "Open questions"),
@@ -155,6 +158,17 @@ def test_bookkeeping_and_discussion_without_a_decision_are_noise(
         ("Storage sync 2026-03-04", ("Ledger",), "**Outcome:** keep Postgres for the ledger."),
         ("Storage sync 2026-03-04", ("Ledger",), "Outcome:\n- keep Postgres for the ledger"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: open the replica to analytics reads."),
+        (
+            "Storage sync 2026-03-04",
+            ("Cache",),
+            "No consensus on the TTL, outcome: drop the cache.",
+        ),
+        (
+            "Storage sync 2026-03-04",
+            ("Cache",),
+            "Not agreed on the TTL - decision: keep 5 minutes.",
+        ),
+        ("Storage sync 2026-03-04", ("Cache",), "Decision: pending writes go to the WAL."),
         (
             "Storage sync 2026-03-04",
             ("Cache",),
