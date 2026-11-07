@@ -302,3 +302,17 @@ def test_listing_links_into_the_repository_resolve() -> None:
     assert links
     for path in links:
         assert (ROOT / path).is_file(), path
+
+
+def test_skills_find_the_codex_plugin_root_under_the_loom_marketplace() -> None:
+    """A glob over every marketplace sorts by marketplace name first, so
+    `cache/zz-old/loom/0.8.0/` would beat `cache/loom/loom/0.9.30/`; the skills
+    read versions of this marketplace's copy only, as `.mcp.json` does."""
+    globs = [
+        (path.relative_to(ROOT), glob)
+        for path in sorted((CLAUDE / "skills").rglob("SKILL.md"))
+        for glob in re.findall(r"\.codex/plugins/cache/\S*", path.read_text())
+    ]
+    assert globs, "no skill locates the plugin under Codex"
+    for path, glob in globs:
+        assert glob.startswith(".codex/plugins/cache/loom/loom/*/"), f"{path}: {glob}"

@@ -376,11 +376,14 @@ def test_codex_wiring_is_read_from_config_toml_and_the_plugin_cache(tmp_path: Pa
     assert g["client:codex:plugin"] == "WARN" and "codex plugin add loom@loom" in _detail(
         checks, "client:codex:plugin"
     )
-    (tmp_path / ".codex" / "plugins" / "cache" / "loom" / "loom" / "0.9.38").mkdir(parents=True)
     (tmp_path / ".codex" / "config.toml").write_text(
         '[plugins."loom@loom"]\nenabled = true\n'
         '[mcp_servers.loom]\nurl = "https://loom.test/mcp?toolset=coding"\n'
     )
+    # another marketplace's copy is not the one the skills and the header helper read
+    (tmp_path / ".codex" / "plugins" / "cache" / "zz-old" / "loom" / "0.8.0").mkdir(parents=True)
+    assert _grades(dc.codex_checks(tmp_path, "https://loom.test"))["client:codex:plugin"] == "WARN"
+    (tmp_path / ".codex" / "plugins" / "cache" / "loom" / "loom" / "0.9.38").mkdir(parents=True)
     assert _grades(dc.codex_checks(tmp_path, "https://loom.test"))["client:codex:plugin"] == "PASS"
     (tmp_path / ".codex" / "config.toml").write_text("")
     assert "enable `loom@loom`" in _detail(

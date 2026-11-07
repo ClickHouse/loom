@@ -24,7 +24,7 @@ sees. This skill diagnoses. It writes nothing to Loom and changes nothing
 on the machine unless the user agrees to the one fix it names.
 
 `<root>` below is the installed plugin: `$CLAUDE_PLUGIN_ROOT` in Claude
-Code; in Codex, the newest `~/.codex/plugins/cache/*/loom/*/` directory.
+Code; in Codex, the newest `~/.codex/plugins/cache/loom/loom/*/` directory.
 
 ## Check in this order; the first failure is the cause
 

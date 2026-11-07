@@ -26,7 +26,7 @@ set by this line, which finds it in Claude Code (`CLAUDE_PLUGIN_ROOT`) and in
 Codex (the plugin cache):
 
 ```bash
-LR="${CLAUDE_PLUGIN_ROOT:-$(ls -d ~/.codex/plugins/cache/*/loom/*/ 2>/dev/null | sort -V | tail -1)}"; LB="${LR%/}/bin/loom-brief.mjs"; LN="${LR%/}/bin/loom-node"
+LR="${CLAUDE_PLUGIN_ROOT:-$(ls -d ~/.codex/plugins/cache/loom/loom/*/ 2>/dev/null | sort -V | tail -1)}"; LB="${LR%/}/bin/loom-brief.mjs"; LN="${LR%/}/bin/loom-node"
 ```
 
 `get …` and `list` below mean `sh "$LN" "$LB" get …`. Use the helper, not an MCP
