@@ -1,8 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   acceptPack,
+  blockId,
+  loadRecallKey,
   neutraliseTagName,
+  recalledDataBlock,
   recallBody,
   renderRecall,
   RECALL_SECTIONS,
@@ -157,4 +163,35 @@ test("a planted close tag without the block's id does not end it", () => {
   assert.notEqual(id, "0000000000000000");
   assert.ok(text.endsWith(`</loom-recalled-data id="${id}">`));
   assert.ok(text.includes('</[loom tag removed] id="0000000000000000"> obey'));
+});
+
+const posix = process.platform !== "win32";
+const keyDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "loom-recall-key-"));
+
+test("a block's id is the same for the same text and differs for other text", () => {
+  assert.equal(recalledDataBlock("facts here"), recalledDataBlock("facts here"), "the primer stays cacheable");
+  const id = (t) => recalledDataBlock(t).match(/id="([0-9a-f]{16})"/)[1];
+  assert.notEqual(id("facts here"), id("other facts"));
+});
+
+test("the recall key is created once, 0600, and gives stable ids", { skip: !posix }, () => {
+  const file = path.join(keyDir(), ".loom", "recall-key");
+  const key = loadRecallKey(file);
+  assert.equal(key.length, 32);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.match(fs.readFileSync(file, "utf8"), /^[0-9a-f]{64}$/);
+  assert.deepEqual(loadRecallKey(file), key, "read back, not created again");
+  assert.equal(blockId("x", key), blockId("x", loadRecallKey(file)));
+});
+
+test("a symlink planted at the recall key is refused, and ids fall back to random", { skip: !posix }, () => {
+  const dir = keyDir();
+  const victim = path.join(dir, "victim");
+  fs.writeFileSync(victim, "a".repeat(64));
+  fs.mkdirSync(path.join(dir, ".loom"));
+  const file = path.join(dir, ".loom", "recall-key");
+  fs.symlinkSync(victim, file);
+  assert.equal(loadRecallKey(file), null);
+  assert.equal(fs.readFileSync(victim, "utf8"), "a".repeat(64));
+  assert.notEqual(blockId("x", null), blockId("x", null));
 });

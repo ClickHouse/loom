@@ -12,10 +12,14 @@
 // prompt, tagged by plane, without having to ask. Pull (the agent calling
 // memory.search itself) stays the correctness lever; this is the cost lever.
 
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { redactHead } from "./loom-client.mjs";
 import { sessionRunId } from "./run-hook.mjs";
+import { readPrivateFile } from "./tmp-state.mjs";
 export const RECALL_SECTIONS = ["memories", "decisions", "procedures"];
 export const SEEN_CAP = 60;
 export const DEFAULT_MAX_CHARS = 1200;
@@ -91,16 +95,63 @@ export function neutraliseTagName(text) {
   return out + chars.slice(i).join("");
 }
 
+/** ~/.loom/recall-key: this install's secret for block ids. */
+export function recallKeyPath(home = os.homedir()) {
+  return path.join(home, ".loom", "recall-key");
+}
+
+/** The 32-byte secret in `file`, created once (O_EXCL, 0600) when missing; null
+ *  when it cannot be read or written, or the path is a link or another user's
+ *  file (readPrivateFile's checks), and then a block's id is random. */
+export function loadRecallKey(file = recallKeyPath()) {
+  const read = () => {
+    const key = Buffer.from(readPrivateFile(file).trim(), "hex");
+    return key.length === 32 ? key : null;
+  };
+  try {
+    return read();
+  } catch {
+    /* missing, or not ours: try to create it */
+  }
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    const c = fs.constants;
+    const fd = fs.openSync(file, c.O_WRONLY | c.O_CREAT | c.O_EXCL | (c.O_NOFOLLOW ?? 0), 0o600);
+    const key = randomBytes(32);
+    try {
+      fs.writeSync(fd, key.toString("hex"));
+    } finally {
+      fs.closeSync(fd);
+    }
+    return key;
+  } catch {
+    try {
+      return read(); // another hook created it first
+    } catch {
+      return null;
+    }
+  }
+}
+
+let recallKey; // loaded once per process
+
+/** The block id for `text`: an HMAC of it under the install's secret, so the same
+ *  text gets the same id (the primer stays cacheable across sessions) and the
+ *  text's writer cannot compute it; random when there is no secret. */
+export function blockId(text, key = (recallKey ??= loadRecallKey())) {
+  if (!key) return randomBytes(8).toString("hex");
+  return createHmac("sha256", key).update(text).digest("hex").slice(0, 16);
+}
+
 /** Server text as one delimited data block with its note. The open and close
- *  tags carry a random id drawn for this call, and the note says only the close
- *  tag with that id ends the block: stored text cannot know it, so it cannot
- *  write the block's end. The tag name inside the text is also rewritten
- *  (neutraliseTagName). */
+ *  tags carry an id derived from the text under a secret (blockId), and the note
+ *  says only the close tag with that id ends the block: stored text cannot know
+ *  it, so it cannot write the block's end. The tag name inside the text is also
+ *  rewritten (neutraliseTagName). */
 export function recalledDataBlock(text) {
-  const id = randomBytes(8).toString("hex");
-  return (
-    `<${RECALLED_TAG} id="${id}">\n${recalledNote(id)}\n${neutraliseTagName(text)}\n` + `</${RECALLED_TAG} id="${id}">`
-  );
+  const body = neutraliseTagName(text);
+  const id = blockId(body);
+  return `<${RECALLED_TAG} id="${id}">\n${recalledNote(id)}\n${body}\n</${RECALLED_TAG} id="${id}">`;
 }
 
 /** Gate on memory's own verdict: abstain or low confidence → silence. */

@@ -165,8 +165,8 @@ function readCapCounts(sessionId) {
   return readSessionState("shunt-cap", sessionId);
 }
 
-// The verdict for a call whose budget spend could not be written: it passes.
-const BUDGET_UNRECORDED = { deny: null, reason: "budget_unrecorded" };
+// The pass reason for a call whose budget spend could not be written: it passes.
+const BUDGET_UNRECORDED = "budget_unrecorded";
 
 /** True when the spend was kept. */
 function writeCapCounts(sessionId, counts) {
@@ -308,7 +308,8 @@ function settleRead(repo, { tool, rel, abs, offset, limit, sessionId, ctxBase, d
     capCounts,
   };
   let verdict = classifyRead(readCtx, MAX_LINES);
-  if (verdict.capped && !writeCapCounts(sessionId, spendCapBudget(capCounts, rel))) verdict = { ...BUDGET_UNRECORDED };
+  if (verdict.capped && !writeCapCounts(sessionId, spendCapBudget(capCounts, rel)))
+    verdict = { deny: null, reason: BUDGET_UNRECORDED };
   if (verdict.deny && denyRewrite) verdict.deny = denyRewrite(verdict.deny);
   // A whole-file hit kept the whole file out; a cap hit kept the SPAN out
   // (what the ranged read would have let in); a pass let its span in.
@@ -331,7 +332,8 @@ function classifySymbolGrep(ctx, sessionId) {
     symbol,
     symbolBudgetSpent: capBudgetSpent(counts, key, SYMBOL_GREP_DENIALS_PER_SYMBOL),
   });
-  if (verdict.symbol && !writeCapCounts(sessionId, spendCapBudget(counts, key))) return { ...BUDGET_UNRECORDED };
+  if (verdict.symbol && !writeCapCounts(sessionId, spendCapBudget(counts, key)))
+    return { deny: null, reason: BUDGET_UNRECORDED };
   return verdict;
 }
 
@@ -418,7 +420,7 @@ async function settleTrackerSearch(repo, { search, sessionId, ctxBase }) {
         if (writeCapCounts(sessionId, spendCapBudget(counts, key))) {
           verdict.deny = denyGhSearchWithAnswer({ ...ctxBase, namespace: target.namespace }, answer);
         } else {
-          verdict.reason = BUDGET_UNRECORDED.reason;
+          verdict.reason = BUDGET_UNRECORDED;
         }
       }
     } catch {

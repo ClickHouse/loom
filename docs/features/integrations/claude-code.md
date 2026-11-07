@@ -252,9 +252,12 @@ GitHub issue search can carry other people's writes: team file rules live in the
 repository's code namespace, where every member writes, and anyone who can file an issue
 writes its title. Each item is labelled with its writer (`by=` in recall, the author on a
 team file rule), and the plugin wraps every one of these in a `<loom-recalled-data>` block
-that says it is data and not instructions. Each block's closing tag carries a per-call id,
-`<loom-recalled-data id="…">` and `</loom-recalled-data id="…">`, and the note says only
-that closing tag ends the block, so stored text cannot write its end. The plugin also
+that says it is data and not instructions. Each block's tags carry an id,
+`<loom-recalled-data id="…">` and `</loom-recalled-data id="…">`, derived from the block's
+text under a secret kept in `~/.loom/recall-key` (created once, `0600`), and the note says
+only that closing tag ends the block: the text's writer cannot compute the id, so stored
+text cannot write the block's end, and the same text keeps the same id, so the primer
+stays cacheable across sessions. The plugin also
 rewrites the tag name inside the text, including common lookalike spellings, to
 `[loom tag removed]`. Only procedures the caller wrote are injected (a teammate's still
 answers an explicit `procedure.match`). Loom cannot control what an agent then does:
@@ -314,10 +317,10 @@ code map.
 
 Repository detection is cached ten minutes. A lookup that does not answer within
 `LOOM_SHUNT_RESOLVE_TIMEOUT_MS` (8 s) is retried after a minute rather than cached as
-"not indexed". Decisions are logged to `$TMPDIR/loom-shunt-log-<hash of the uid>.log` (`LOOM_SHUNT_LOG=off`
-disables) and reported to the server as `code.outcome` rows (`LOOM_SHUNT_REPORT=off`
-disables). `LOOM_SHUNT_GREP=off` and `LOOM_SHUNT_BASH=off` exempt the Grep tool and the
-Bash tool respectively.
+"not indexed". Decisions are logged to `$TMPDIR/loom-shunt-log-<hash of the uid>.log`
+(`LOOM_SHUNT_LOG=off` disables) and reported to the server as `code.outcome` rows
+(`LOOM_SHUNT_REPORT=off` disables). `LOOM_SHUNT_GREP=off` and `LOOM_SHUNT_BASH=off` exempt
+the Grep tool and the Bash tool respectively.
 
 `claude --bare` skips hooks, so none of this runs there; the
 [grep shim](grep-shim.md) covers that case. The operations are described in

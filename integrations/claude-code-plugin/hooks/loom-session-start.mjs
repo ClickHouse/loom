@@ -204,11 +204,13 @@ async function collectionsLine(scope, token) {
   return line;
 }
 
-/** One line naming this project's saved session briefs, so a
- *  session that starts after a compaction, a resume or a break knows it can
- *  load where the work stood. Never the brief itself — it is loaded on
- *  request (the loom-session skill), and a pointer costs ~60 tokens. "" on
- *  any error, an op the deployment does not serve (404) or no briefs. */
+/** This project's saved session briefs, so a session that starts after a
+ *  compaction, a resume or a break knows it can load where the work stood: a
+ *  heading, the briefs' keys and goals inside a recalled-data block (other
+ *  members' briefs in a shared namespace), and the line saying how to resume
+ *  one. Never the brief itself — it is loaded on request (the loom-session
+ *  skill); the pointer costs about 170 tokens for three briefs. "" on any
+ *  error, an op the deployment does not serve (404) or no briefs. */
 async function savedBriefsLine(scope, token) {
   if (!scope || !scope.org || !scope.namespace || !scope.project) return "";
   const result = await postBounded(

@@ -132,9 +132,9 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   knows about the target file (its files[] facet, the person's namespace and
   the repository's team-rules namespace) and injects, as additionalContext, a
   heading the plugin writes, the server's text inside a recalled-data block
-  whose closing tag carries a per-call id, and after the block, in the
-  plugin's words, how to remove a wrong team rule and read rows left out
-  (each only when the server's text ends with that footer). One lookup per
+  whose tags carry an id only this install can compute, and after the
+  block, in the plugin's words, how to remove a wrong team rule and read
+  rows left out (each only when the server's text ends with that footer). One lookup per
   (session, file) per 30 min; fail-open; never a permission decision.
   LOOM_FILE_CONTEXT=off disables.
 - **loom-code-shunt.** In a loom-indexed repo, whole-file Reads (>
@@ -144,8 +144,8 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   pass. With LOOM_SHUNT_READ_CAP=<lines> (default 0 = off) a ranged Read
   whose span is longer than the cap on an indexed, unmodified file is denied
   too — redirect to code.enclosing/code.symbol/code.outline — at most twice
-  per file per session ($TMPDIR/loom-shunt-cap-<hash of session_id>.json), then it
-  passes as cap_spent. The deny text never names
+  per file per session ($TMPDIR/loom-shunt-cap-<hash of session_id>.json),
+  then it passes as cap_spent. The deny text never names
   LOOM_CODE_SHUNT=off. The once-per-10-min repository lookup names
   the checkout's repo (code.repos repo=owner/name), has its own bound
   (LOOM_SHUNT_RESOLVE_TIMEOUT_MS, default 8000) and, when it does not answer,
