@@ -49,7 +49,7 @@ describe("ExposurePanel", () => {
     );
   });
 
-  it("reads a fraction past the whole namespace as all, and a tiny one as under 1%", async () => {
+  it("reads a fraction past the whole namespace as all, a tiny one as under 1%, and a near-whole one as 99%", async () => {
     const row = (actor: string, fraction: number) => ({
       actor,
       agent: "a",
@@ -61,13 +61,14 @@ describe("ExposurePanel", () => {
     });
     vi.mocked(api.getExposureSummary).mockResolvedValue({
       namespace_rows: 1000,
-      rows: [row("sa:wide", 1.2), row("sa:thin", 0.001)],
+      rows: [row("sa:wide", 1.2), row("sa:thin", 0.001), row("sa:nearly", 0.996)],
     });
     render(<ExposurePanel />);
     const table = await screen.findByRole("table", { name: "Memory reads by reader" });
     expect(await within(table).findByText("all")).toBeInTheDocument();
     expect(within(table).getByText("<1%")).toBeInTheDocument();
-    expect(screen.getByText("2 readers of 1,000 memories")).toBeInTheDocument();
+    expect(within(table).getByText("99%")).toBeInTheDocument();
+    expect(screen.getByText("3 readers of 1,000 memories")).toBeInTheDocument();
   });
 
   it("names the cut when as many readers came back as it asks for", async () => {

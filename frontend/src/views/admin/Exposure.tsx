@@ -29,12 +29,14 @@ const HEADERS = [
 // The widest readers the summary is asked for; the toolbar says when there may be more.
 const LIMIT = 200;
 
-/** A share of the namespace, never rounded to 0% when something was read. Keys read
+/** A share of the namespace, never rounded to 0% when something was read nor to 100%
+ *  when something was not. Keys read
  *  include memories deleted since, so the fraction can pass 1, and a namespace emptied
  *  since answers 0 for any read: both read as all. */
 function share({ fraction, distinct_keys }: ExposureRow, namespaceRows: number): string {
   if (fraction >= 1 || (namespaceRows === 0 && distinct_keys > 0)) return "all";
-  return fraction > 0 && fraction < 0.005 ? "<1%" : `${Math.round(fraction * 100)}%`;
+  if (fraction > 0 && fraction < 0.005) return "<1%";
+  return `${Math.min(99, Math.round(fraction * 100))}%`;
 }
 
 /** Which readers (a principal through one agent) read how much of the namespace
