@@ -5,6 +5,7 @@ Server-free: a fake transport records what goes out."""
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import loom.memory
@@ -29,23 +30,24 @@ class _FakeTransport:
         # Values that get no result row at all, as N-1 answers a blacklisted entry.
         self.dropped_values: set[str] = set()
         self.refused = {"blacklisted", "blacklist_unchecked"}
-        # Verdicts for a value, one per bulk_set that carries it, before value_verdicts.
-        self.value_rounds: dict[str, list[str]] = {}
+        # Value bytes one bulk_set checks against the blacklist; past it, unchecked.
+        self.budget_bytes: int | None = None
         # What a memory.set alone of a value raises.
         self.alone_errors: dict[str, BaseException] = {}
 
-    def _verdict(self, e: dict[str, Any], unchecked_keys: set[str]) -> str:
-        # As the server answers: after an unchecked entry, every later one of its key.
-        if e["memory_key"] in unchecked_keys:
-            return "blacklist_unchecked"
-        rounds = self.value_rounds.get(str(e["value"]))
-        verdict = (
-            rounds.pop(0)
-            if rounds
-            else self.value_verdicts.get(
+    def _verdict(self, e: dict[str, Any], unchecked_keys: set[str], spent: list[int]) -> str:
+        # As the server answers: after an unchecked entry, every later one of its key, and
+        # past the budget, every entry it has no room for.
+        size = len(json.dumps(e["value"]))
+        if e["memory_key"] in unchecked_keys or (
+            self.budget_bytes is not None and spent[0] + size > self.budget_bytes
+        ):
+            verdict = "blacklist_unchecked"
+        else:
+            spent[0] += size
+            verdict = self.value_verdicts.get(
                 str(e["value"]), self.row_verdicts.get(e["memory_key"], "")
             )
-        )
         if verdict == "blacklist_unchecked":
             unchecked_keys.add(e["memory_key"])
         return verdict
@@ -69,10 +71,11 @@ class _FakeTransport:
                 raise self.fail_bulk
             written = []
             unchecked_keys: set[str] = set()
+            spent = [0]
             for i, e in enumerate(payload["entries"]):
                 if str(e["value"]) in self.dropped_values:
                     continue
-                verdict = self._verdict(e, unchecked_keys)
+                verdict = self._verdict(e, unchecked_keys, spent)
                 unchanged = (
                     e["memory_key"] in self.bulk_extra.get("merged", [])
                     or str(e["value"]) in self.unchanged_values
@@ -206,15 +209,30 @@ async def test_an_unchecked_set_is_written_when_the_later_one_of_its_key_is_refu
     assert old["version"] == 7 and new is refusal
 
 
-async def test_unchecked_sets_go_out_again_once_each(agent: Agent) -> None:
-    # One bulk request, then one set alone per unchecked entry, in order: linear.
+async def test_unchecked_sets_go_out_again_in_batches_the_size_the_budget_checked(
+    agent: Agent,
+) -> None:
+    # 200 sets of 2 KB where a request checks about 80 KB: each further batch is the
+    # size the last one checked, so a handful of requests answer all, in order.
+    t: Any = agent.transport
+    t.budget_bytes = 80_000
+    values = [f"{i:04d}" + "v" * 2_000 for i in range(200)]
+    results = await asyncio.gather(*[agent.memory.set(f"k{i}", v) for i, v in enumerate(values)])
+    assert t.paths().count("/v1/memory.bulk_set") <= 6
+    assert t.paths().count("/v1/memory.set") == 2  # the first two of the window
+    sent = [e["value"] for path, p in t.calls if path.endswith("bulk_set") for e in p["entries"]]
+    first_sent = list(dict.fromkeys(sent))
+    assert first_sent == values[2:]  # in order
+    assert all(r["version"] for r in results)
+
+
+async def test_an_unchecked_set_too_long_even_first_in_a_request_goes_alone(agent: Agent) -> None:
     t: Any = agent.transport
     t.value_verdicts = {v: "blacklist_unchecked" for v in "cdef"}
-    results = await asyncio.gather(*[agent.memory.set(k, k) for k in "abcdefg"])
-    assert t.paths().count("/v1/memory.bulk_set") == 1
+    await asyncio.gather(*[agent.memory.set(k, k) for k in "abcdefg"])
+    assert t.paths().count("/v1/memory.bulk_set") <= 2
     sent_alone = [p["memory_key"] for path, p in t.calls if path == "/v1/memory.set"]
     assert sent_alone == ["a", "b", "c", "d", "e", "f"]
-    assert [r["version"] for r in results[2:]] == [7, 7, 7, 7, 104]
 
 
 async def test_a_coalesced_set_against_a_pinned_row_raises_as_alone(agent: Agent) -> None:

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -93,8 +94,9 @@ class _SetCoalescer:
     verdict, as the point path spells it) and `noop` (version 0: a merge, or
     a restatement the server skipped, wrote nothing). A set the server refused
     raises the error the same set alone would have raised, and a failed bulk
-    request fails every set it carried with the same exception. A set the
-    blacklist could not check in the batch goes out again alone, in order."""
+    request fails every set it carried with the same exception. The sets the
+    blacklist could not check in the batch go out again in order, in smaller
+    batches."""
 
     def __init__(self, transport: Any) -> None:
         self._transport = transport
@@ -145,9 +147,38 @@ class _SetCoalescer:
         identity: dict[str, str],
         batch: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]],
     ) -> None:
-        if len(batch) == 1:
-            await self._set_alone(identity, *batch[0])
-            return
+        # The entries the blacklist could not check (the request's values together were
+        # too long for its regexes) go out again in order, in batches the size of what the
+        # last request checked. The server answers every later entry of an unchecked key
+        # unchecked too, so a key's entries stay in order and it ends at its last value.
+        # One unchecked at the front of a request is too long even first in one: it goes
+        # alone, and gets what a set alone answers.
+        pending = batch
+        room: int | None = None  # the value bytes the last request checked
+        while len(pending) > 1:
+            size = len(pending) if room is None else _entries_within(pending, room)
+            if size == 1:
+                await self._set_alone(identity, *pending[0])
+                pending = pending[1:]
+                continue
+            sent, pending = pending[:size], pending[size:]
+            unchecked, checked = await self._bulk_round(identity, sent)
+            if unchecked and unchecked[0][1] is sent[0][1]:
+                await self._set_alone(identity, *unchecked[0])
+                unchecked = unchecked[1:]
+            room = checked or room
+            pending = unchecked + pending
+        for entry, fut in pending:
+            await self._set_alone(identity, entry, fut)
+
+    async def _bulk_round(
+        self,
+        identity: dict[str, str],
+        batch: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]],
+    ) -> tuple[list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]], int]:
+        """Send `batch` as one memory.bulk_set and answer each entry from its row. Returns
+        the entries the blacklist could not check, in order, and the value bytes of the
+        ones it did."""
         payload: dict[str, Any] = dict(identity)
         payload["entries"] = [entry for entry, _ in batch]
         try:
@@ -156,13 +187,14 @@ class _SetCoalescer:
             for _, fut in batch:
                 if not fut.done():
                     fut.set_exception(e)
-            return
+            return [], 0
         # Results are matched by key, in order, not by position: an older server leaves
         # a blacklisted entry out of `written`, which would shift every later result.
         rows_by_key: dict[str, list[dict[str, Any]]] = {}
         for written_row in res.get("written") or []:
             rows_by_key.setdefault(str(written_row.get("memory_key")), []).append(written_row)
         unchecked: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]] = []
+        checked = 0
         for entry, fut in batch:
             rows = rows_by_key.get(str(entry["memory_key"])) or []
             # popped even for a caller gone: the next entry of this key keeps its own row
@@ -173,12 +205,10 @@ class _SetCoalescer:
             # unstamped row (unchecked, or a restatement skipped) is clear.
             row["conflict_verdict"] = row.get("conflict_verdict") or "clear"
             row["noop"] = int(row.get("version") or 0) == 0
-            # The batch's values together were too long for the blacklist's regexes: the
-            # server answers every later entry of the key so too, and each goes out again
-            # as a set alone, in order, so the key ends at its last value.
             if row["conflict_verdict"] == "blacklist_unchecked":
                 unchecked.append((entry, fut))
                 continue
+            checked += _value_bytes(entry)
             if fut.done():
                 continue
             # A refused entry (a pinned or read_only key, a blacklisted value, a write
@@ -191,8 +221,7 @@ class _SetCoalescer:
                 fut.set_exception(from_response({"detail": detail}, status))
                 continue
             fut.set_result(row)
-        for entry, fut in unchecked:
-            await self._set_alone(identity, entry, fut)
+        return unchecked, checked
 
     async def _set_alone(
         self, identity: dict[str, str], entry: dict[str, Any], fut: asyncio.Future[dict[str, Any]]
@@ -213,6 +242,23 @@ class _SetCoalescer:
             self._close(key, window)
         if self._inflight:
             await asyncio.gather(*list(self._inflight), return_exceptions=True)
+
+
+def _value_bytes(entry: dict[str, Any]) -> int:
+    """The bytes of an entry's value as the server checks it: JSON, in UTF-8."""
+    return len(json.dumps(entry.get("value")).encode("utf-8", "replace"))
+
+
+def _entries_within(
+    pending: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]], room: int
+) -> int:
+    """How many entries from the front of `pending` fit in `room` value bytes, at least one."""
+    total = 0
+    for n, (entry, _) in enumerate(pending):
+        total += _value_bytes(entry)
+        if total > room:
+            return max(n, 1)
+    return len(pending)
 
 
 # A coalesced entry's refusal by its row's verdict: the status, code and message the

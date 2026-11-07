@@ -13,10 +13,10 @@ from typing import Any
 from server.memory.domain.sensitivity import (
     HIGH,
     SCALAR_SEP,
-    SHAPE_SPAN,
     Sensitivity,
     caller_level,
     detect_sensitivity,
+    detect_window_sensitivity,
     detection_windows,
     detector_lines,
     detector_text,
@@ -27,7 +27,6 @@ from server.memory.domain.sensitivity import (
 # characters hold the event loop for about 20 ms at most. Past it, in one request, a
 # value is read a window of this size at a time.
 ON_LOOP_CHARS = 16 * 1024
-assert ON_LOOP_CHARS >= 4 * SHAPE_SPAN  # a window moves past the one before it
 # Lines of a decoded value read between two turns, however short they are.
 _LINES_PER_TURN = 2_000
 
@@ -44,7 +43,7 @@ async def resolve_level(requested: str | None, text: str, *, read_before: int = 
     found: Sensitivity = ""
     for window in detection_windows(text, ON_LOOP_CHARS):
         await asyncio.sleep(0)
-        found = max_sensitivity([found, detect_sensitivity(window)])
+        found = max_sensitivity([found, detect_window_sensitivity(window)])
         if found == HIGH:
             break
     return found

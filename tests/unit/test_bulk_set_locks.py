@@ -249,9 +249,10 @@ async def test_an_entry_the_blacklist_could_not_check_says_so(
 async def test_every_later_entry_of_an_unchecked_key_is_unchecked_too(
     wire, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Once an entry of a key is answered blacklist_unchecked, a later entry of the key
-    (here a restatement of the live value, which alone is skipped as unchanged) is too, so
-    a caller that sends them again in order leaves the key at its last value."""
+    """Once an entry of a key is answered blacklist_unchecked, a later entry of the key is
+    too, whether it would have been written (a changed value that fits the budget) or
+    skipped (a restatement of the live value), so a caller that sends them again in order
+    leaves the key at its last value. Another key's entry is still checked."""
     from server.core.hashing import sha256_value
     from server.memory.app import blacklist_guard as bl
 
@@ -269,6 +270,7 @@ async def test_every_later_entry_of_an_unchecked_key_is_unchecked_too(
         for k, v in (
             ("user_deploy_day", "user_deploy_day is Friday"),
             ("other", "other is Monday"),
+            ("user_deploy_day", "user_deploy_day is Saturday"),
             ("user_deploy_day", "user_deploy_day is Thursday"),
         )
     ]
@@ -276,7 +278,8 @@ async def test_every_later_entry_of_an_unchecked_key_is_unchecked_too(
     out = await mem_extract.handle_memory_bulk_set(inp)
     assert [(r.memory_key, r.conflict_verdict) for r in out.written] == [
         ("user_deploy_day", "blacklist_unchecked"),
-        ("other", out.written[1].conflict_verdict),
+        ("other", ""),
+        ("user_deploy_day", "blacklist_unchecked"),
         ("user_deploy_day", "blacklist_unchecked"),
     ]
-    assert out.written[1].conflict_verdict != "blacklist_unchecked"
+    assert out.written[1].version > 0

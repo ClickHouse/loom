@@ -301,9 +301,13 @@ further value is refused as `BLACKLISTED` with an empty `pattern_id` and a reaso
 it is too long to check, unless a substring pattern matches it: send it in a smaller
 request, or, when the value alone is past the budget (the reason says so), shorten it. In
 a `memory.bulk_set`, every later entry of its key is refused the same way
-(`blacklist_unchecked`), so sending them again in order leaves the key at its last value;
-the Python SDK sends each coalesced set refused this way again as a `memory.set` of its
-own, in order.
+(`blacklist_unchecked`), even one that would fit, so sending them again in order leaves
+the key at its last value; a caller that does not send them again keeps the key's earlier
+value. The server sends none again itself, since the budget bounds one request's work:
+`memory.set_from_messages` lists such facts in `refused` and `memory.import` in its
+results, for the caller to send again. The Python SDK sends the coalesced sets refused
+this way again, in order, in batches the size of what the last request checked, and one
+still unchecked at the front of a request as a `memory.set` alone.
 
 | Operation          | Role   | Does                                                                              |
 | ------------------ | ------ | --------------------------------------------------------------------------------- |

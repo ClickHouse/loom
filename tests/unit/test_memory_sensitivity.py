@@ -1096,7 +1096,7 @@ async def test_a_long_value_is_labelled_a_window_at_a_time_with_turns_between(
         reads.append((len(text), turns[0]))
         return detect_sensitivity(text)
 
-    monkeypatch.setattr(sensitivity_level, "detect_sensitivity", _detect)
+    monkeypatch.setattr(sensitivity_level, "detect_window_sensitivity", _detect)
     value = "the quick brown fox 123 jumps over a lazy dog. " * 4_000 + "SSN 123-45-6789"
     level = await _beside_another_task(sensitivity_level.resolve_level("", value), turns)
     assert level == "high"
@@ -1129,7 +1129,7 @@ _SHAPES = (
     "PIN is 4471",
     "-----BEGIN RSA " + "PRIVATE KEY-----\nMIIEow",
     "password=hunter2xyz9",
-    # 3 KB with no whitespace: a window's edge falls inside it, where it is
+    # 3 KB with no whitespace: a window's edge can fall inside it
     "eyJhbGciOiJIUzI1NiJ9.eyJ" + "a" * 3_000 + ".c2lnbmF0dXJl",
 )
 
@@ -1146,7 +1146,11 @@ def test_a_value_read_in_windows_reads_as_the_whole_value() -> None:
     # Each shape is placed across a window's edge, at an offset that moves through it.
     import random
 
-    from server.memory.domain.sensitivity import detection_windows, max_sensitivity
+    from server.memory.domain.sensitivity import (
+        detect_window_sensitivity,
+        detection_windows,
+        max_sensitivity,
+    )
 
     rng = random.Random(11)
     size = 4 * 1024
@@ -1154,13 +1158,17 @@ def test_a_value_read_in_windows_reads_as_the_whole_value() -> None:
     for i in range(240):
         text = _filler(rng, rng.randint(6_000, 9_000))
         first_edge = len(next(detection_windows(text, size)))
-        for shape in rng.sample(_SHAPES, rng.randint(0, 2)):
-            at = max(0, first_edge - rng.randint(0, len(shape)))
-            text = text[:at] + " " + shape + " " + text[at:]
-            straddled += at < first_edge < at + len(shape) + 2
-        windowed = max_sensitivity(detect_sensitivity(w) for w in detection_windows(text, size))
+        # side by side, so one never lands inside the other
+        shapes = " ".join(rng.sample(_SHAPES, rng.randint(0, 2)))
+        if shapes:
+            at = max(0, first_edge - rng.randint(0, len(shapes)))
+            text = text[:at] + " " + shapes + " " + text[at:]
+            straddled += at < first_edge < at + len(shapes) + 2
+        windowed = max_sensitivity(
+            detect_window_sensitivity(w) for w in detection_windows(text, size)
+        )
         assert windowed == detect_sensitivity(text), (i, text)
-    assert straddled > 100  # most shapes did cross an edge
+    assert straddled > 100  # most did cross an edge
 
 
 _EDGE = "x " * 1_000  # 2,000 characters before and after the shape
@@ -1184,10 +1192,27 @@ _EDGE = "x " * 1_000  # 2,000 characters before and after the shape
     ],
     ids=["jwt-3kb", "no-whitespace-cut", "pin-gap", "assignment-gap", "jwt-long-header"],
 )
-def test_the_shapes_longer_than_a_window_overlap(text: str, whole: str, windowed: str) -> None:
-    from server.memory.domain.sensitivity import detection_windows, max_sensitivity
+def test_shapes_past_the_window_overlap(text: str, whole: str, windowed: str) -> None:
+    from server.memory.domain.sensitivity import (
+        detect_window_sensitivity,
+        detection_windows,
+        max_sensitivity,
+    )
 
     windows = list(detection_windows(text, 4 * 1024))
     assert len(windows) > 1
     assert detect_sensitivity(text) == whole
-    assert max_sensitivity(detect_sensitivity(w) for w in windows) == windowed
+    assert max_sensitivity(detect_window_sensitivity(w) for w in windows) == windowed
+
+
+def test_a_jwt_reads_whole_with_its_signature_and_in_a_window_from_its_start() -> None:
+    # A whole value needs all three parts; a window, whose edge may cut the signature off,
+    # needs the header and the start of the payload.
+    from server.memory.domain.sensitivity import detect_window_sensitivity, detection_windows
+
+    two_parts = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0"
+    assert detect_sensitivity(two_parts) == ""
+    assert detect_sensitivity(two_parts + ".c2lnbmF0dXJl") == "high"
+    assert detect_window_sensitivity(two_parts) == "high"
+    with pytest.raises(ValueError):
+        next(detection_windows("x" * 10_000, 1024))
