@@ -289,7 +289,7 @@ def main() -> int:
         "(default: a fresh one per run, erased at its end)",
     )
     ap.add_argument("--phase", choices=("ingest", "search", "both"), default="both")
-    ap.add_argument("--param", action="append", default=[], help="knowledge.search KEY=VALUE")
+    ap.add_argument("--param", action="append", default=[], help="ranking knob KEY=VALUE")
     ap.add_argument("--out", type=Path, help="write the full report (per query) as JSON")
     args = ap.parse_args()
     if args.fetch:
