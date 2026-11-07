@@ -36,7 +36,7 @@ which settings move it.
 
 ## Prerequisites
 
-When a feature needs an operator switch or an external system, say so in the page's first sentence: "Needs `LOOM_X=true`." Add no maturity or status banners. The generated [operations reference](../reference/operations.md) carries what the MCP listing depends on.
+When a feature needs an operator switch or an external system, say so in the page's first sentence: "Needs `LOOM_X=true`." Add no maturity or status banners: link the generated [status page](../reference/status.md), which says whether an op is stable and a switch is on by default, and the [operations reference](../reference/operations.md), which carries what the MCP listing depends on.
 
 ## Writing rules
 

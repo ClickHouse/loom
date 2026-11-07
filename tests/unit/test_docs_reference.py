@@ -79,6 +79,9 @@ def test_first_sentence_skips_e_g_and_i_e_but_may_end_at_etc(text, first) -> Non
 def test_status_switches_list_what_loads_false_not_what_is_declared_false(monkeypatch) -> None:
     """The conflict resolver is declared false and resolved on at load with a real
     provider; the env of the process that renders the page changes nothing."""
+    from server.settings import Settings
+
+    assert Settings.model_fields["memory_conflict_resolver_enabled"].default is False
     monkeypatch.setenv("LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED", "false")
     monkeypatch.setenv("LOOM_CODE_ORG_READABLE", "true")
     # Built under this env, not taken from a cache another test filled.

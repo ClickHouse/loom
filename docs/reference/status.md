@@ -1,7 +1,9 @@
 # Status of Loom's surfaces
 
 This page counts each op group's stable ops, names its experimental ones, and lists every
-boolean setting that loads false. Both tables are generated from the code: each op's
+boolean setting that loads false, so a caller can tell, before relying on an op or a
+switch, whether it is stable and whether it is on by default. Both tables are generated
+from the code: each op's
 `maturity` in the operation registry, and the boolean settings of
 `server/settings/catalog.py` as they load.
 
