@@ -233,20 +233,22 @@ scip-clang. Upstream builds scip-clang for x86_64 Linux only, so the arm64 image
 the rest of the C/C++ toolchain but no scip-clang: point `LOOM_CODE_SCIP_CLANG_PATH` at
 your own build, or the C/C++ tier records `scip-clang missing` as a skip. Each worker
 creates a missing working tree as an empty repository and fetches each commit into it
-from the entry's mirror, so a new leader starts from nothing. The C/C++ harness runs
-the repository's CMake configure (compile database only, no build) on the first run in
-a tree, or when its build tree has no `CMakeCache.txt` or one naming a compiler the
-host no longer has. It runs the configure again on the existing cache before a full
-index and for a delta whose window adds a `.cpp`, `.cc` or `.cxx` file or adds, changes
-or deletes a `CMakeLists.txt` or `.cmake` file, because the compile database lists only
-the translation units of the tree it was configured on. A reconfigure that fails fails
-the run with CMake's last lines, and the entry's `clang` record (`clang_full` for a
-full index) reads failing with kind `cmake` (`disk` when the disk is full). A failed
-delta moves no watermark, so its window, with the translation units it adds, is
-retried every pass; a full index is retried 6 hours later, as any failed full run is. A
-worker whose project prerequisites are absent records a skip in `workers.status`; the
-Tree-sitter tier remains available. TypeScript projects have their dependencies
-installed automatically in their checkout.
+from the entry's mirror, so a new leader starts from nothing. A worker whose project
+prerequisites are absent records a skip in `workers.status`; the Tree-sitter tier
+remains available. TypeScript projects have their dependencies installed
+automatically in their checkout.
+
+The C/C++ harness runs the repository's CMake configure (compile database only, no
+build) on the first run in a tree, or when its build tree has no `CMakeCache.txt` or one
+naming a compiler the host no longer has. It runs the configure again on the existing
+cache before a full index and for a delta whose window adds a `.cpp`, `.cc` or `.cxx`
+file or adds, changes or deletes a `CMakeLists.txt` or `.cmake` file, because the
+compile database lists only the translation units of the tree it was configured on. A
+reconfigure that fails fails the run with CMake's last lines, and the entry's `clang`
+record (`clang_full` for a full index) reads failing with kind `cmake` (`disk` when the
+disk is full). A failed delta moves no watermark, so its window, with the translation
+units it adds, is retried every pass; a full index is retried 6 hours later, as any
+failed full run is.
 
 A large C++ tree is the heavy case: a ClickHouse-sized checkout with its submodules
 and build tree is about 30 GB beside the mirror, and scip-clang holds a translation

@@ -259,15 +259,15 @@ class _CppWindow:
         }
 
     def run(self, head: str, index_docs: list[str]) -> dict | None:
-        proc = self.run_unchecked(head, tuple(index_docs))
+        proc = self.run_unchecked(head, index_docs)
         assert proc.returncode == 0, proc.stdout
         return json.loads(self.delta.read_text()) if self.delta.exists() else None
 
     def run_unchecked(
-        self, head: str = "", index_docs: tuple[str, ...] = (), **env: str
+        self, head: str = "", index_docs: list[str] | None = None, **env: str
     ) -> subprocess.CompletedProcess[str]:
         """One run, its output merged; no `head` is a full index."""
-        _write_index(self.index, list(index_docs))
+        _write_index(self.index, index_docs or [])
         window = [self.base, head] if head else ["--full", ""]
         return subprocess.run(
             ["bash", str(_HARNESS / "run_delta.sh"), str(self.repo), *window, "-"],
@@ -398,7 +398,7 @@ def test_a_cache_that_cannot_be_reconfigured_is_configured_from_scratch(
             f"CMAKE_C_COMPILER:FILEPATH=/bin/sh\n{cache}:FILEPATH=/nonexistent/clang-18\n"
         )
     assert (
-        w.run_unchecked(index_docs=("src/a.cpp", "src/b.cpp"), CC="cc", CXX="c++").returncode == 0
+        w.run_unchecked(index_docs=["src/a.cpp", "src/b.cpp"], CC="cc", CXX="c++").returncode == 0
     )
     assert len(w.cmake_runs) == 1 and "-G Ninja" in w.cmake_runs[0]
 
@@ -407,7 +407,7 @@ def test_a_first_configure_is_not_followed_by_a_reconfigure(tmp_path: Path) -> N
     w = _CppWindow(tmp_path)
     (w.repo / "build" / "compile_commands.json").unlink()
     assert (
-        w.run_unchecked(index_docs=("src/a.cpp", "src/b.cpp"), CC="cc", CXX="c++").returncode == 0
+        w.run_unchecked(index_docs=["src/a.cpp", "src/b.cpp"], CC="cc", CXX="c++").returncode == 0
     )
     assert len(w.cmake_runs) == 1 and "-G Ninja" in w.cmake_runs[0]
     assert w.compdbs == [["a.cpp", "b.cpp"]]
@@ -417,7 +417,7 @@ def test_a_full_index_reconfigures_before_it_reads_the_compile_database(tmp_path
     w = _CppWindow(tmp_path)
     (w.repo / "src" / "c.cpp").write_text("int c() { return 3; }\n")
     _commit(w.repo, "add c")
-    assert w.run_unchecked(index_docs=("src/a.cpp", "src/b.cpp", "src/c.cpp")).returncode == 0
+    assert w.run_unchecked(index_docs=["src/a.cpp", "src/b.cpp", "src/c.cpp"]).returncode == 0
     assert w.cmake_runs == ["cmake -B build -S ."]
     assert w.compdbs == [["a.cpp", "b.cpp", "c.cpp"]]
 
