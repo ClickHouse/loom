@@ -1,7 +1,7 @@
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { accept, renderPack, searchBody, shouldAsk, SEEN_CAP } from "../lib/prompt-pack.mjs";
+import { accept, renderPack, searchBody, searchQuery, shouldAsk, SEEN_CAP } from "../lib/prompt-pack.mjs";
 
 const RES = {
   abstain: false,
@@ -48,8 +48,7 @@ test("seen list is bounded", () => {
   assert.equal(out.seen.length, SEEN_CAP);
 });
 
-test("the index is asked about the request, not about how to answer it", async () => {
-  const { searchQuery } = await import("../lib/prompt-pack.mjs");
+test("the index is asked about the request, not about how to answer it", () => {
   const prompt =
     "Below is a question about the repository in the current directory. Find the source files " +
     "that answer it. Do not edit any file and do not run tests or builds.\n\n" +
@@ -62,10 +61,34 @@ test("the index is asked about the request, not about how to answer it", async (
   const plain = "where is the merge selector decided? Do not edit anything.";
   assert.equal(searchQuery(plain), "where is the merge selector decided?");
   assert.equal(searchQuery("why is FINAL slow on ReplacingMergeTree"), "why is FINAL slow on ReplacingMergeTree");
+  assert.equal(
+    searchQuery("<task>\n\n  why does the merge selector skip small parts?  \n\n</task>"),
+    "why does the merge selector skip small parts?",
+  );
+  // Trimmed, the body is shorter than MIN_PROMPT_CHARS, so the whole prompt is searched.
+  assert.equal(
+    searchQuery("<task>" + " ".repeat(12) + "fix it</task> in the merge selector code"),
+    "<task> fix it</task> in the merge selector code",
+  );
+  const task = "why does the merge selector skip parts?";
+  assert.equal(searchQuery(`<question> see <question> below <task>${task}</task>`), task, "an unclosed tag is skipped");
+  assert.equal(searchQuery(`<Task>${task}</TASK>`), task, "tags pair across case");
+  assert.equal(
+    searchQuery(`<task>x <task>${task}</task> and more</task>`),
+    `x <task>${task}`,
+    "the first open tag pairs with the nearest close",
+  );
 });
 
-test("a question about a change in history gets no code pointers", async () => {
-  const { shouldAsk } = await import("../lib/prompt-pack.mjs");
+test("a wrapper tag followed by a long whitespace run and no close tag is matched in linear time", () => {
+  const prompt = "please look at this <task>" + " ".repeat(2000) + "why";
+  const start = performance.now();
+  shouldAsk(prompt);
+  searchQuery(prompt);
+  assert.ok(performance.now() - start < 500, "the wrapper match backtracks over the whitespace run");
+});
+
+test("a question about a change in history gets no code pointers", () => {
   for (const q of [
     "Which change made HTTP clients get 403 instead of 500 for ACCESS_DENIED?",
     "When did FINAL queries stop using the lazy plan?",

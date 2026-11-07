@@ -190,7 +190,7 @@ export function patternSearchShape(cmd, t) {
   const positional = (from) => t.slice(from).filter((x) => !x.startsWith("-") && x !== "--");
   if (cmd === "awk") {
     const prog = t.slice(1).find((x) => !x.startsWith("-"));
-    const m = prog && !/\bNR\b/.test(prog) ? /^\/((?:\\.|[^\/])+)\//.exec(prog) : null;
+    const m = prog && !/\bNR\b/.test(prog) ? /^\/((?:\\.|[^\/\\])+)\//.exec(prog) : null;
     if (!m) return null;
     const files = positional(1).slice(1);
     if (!files.length) return null;
@@ -198,7 +198,7 @@ export function patternSearchShape(cmd, t) {
   }
   if (cmd === "sed") {
     const prog = t.slice(1).find((x) => !x.startsWith("-"));
-    const m = prog ? /^\/((?:\\.|[^\/])+)\/p$/.exec(prog) : null;
+    const m = prog ? /^\/((?:\\.|[^\/\\])+)\/p$/.exec(prog) : null;
     if (!m) return null;
     const files = positional(1).slice(1);
     if (!files.length) return null;
