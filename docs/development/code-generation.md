@@ -82,10 +82,10 @@ operator script (`sdk_example`), a plugin hook or integration (`plugin_hook`) an
 dashboard call site (`dashboard`). The last four come from scanning the tree, which a
 deployed server does not carry, so they are committed as `reach_manifest.STATIC_REACH`.
 `--check` enforces the rule, that every op without a dashboard call site is in
-`server/operations/dashboard.py` (with the reason, or pending), and that the
-committed manifest matches the tree; `--write-manifest` refreshes it. `--call-counts --days 30` adds each op's call
-count from `loom.agent_events` (the only mode that connects to ClickHouse), and
-`--owners` names the commit that introduced each experimental op's declaration.
+`server/operations/dashboard.py` (with the reason, or pending), and that the committed
+manifest matches the tree; `--write-manifest` refreshes it. `--call-counts --days 30` adds
+each op's call count from `loom.agent_events` (the only mode that connects to ClickHouse),
+and `--owners` names the commit that introduced each experimental op's declaration.
 
 ### Wire changelog
 

@@ -15,9 +15,8 @@ The gate (also ``tests/unit/test_op_reach_census.py``): every op has a reach
 path other than a raw HTTP POST or is declared experimental; every op is on the
 dashboard or in ``server.operations.dashboard`` (with the reason it is not, or
 pending); the committed manifest is byte-identical to what ``--write-manifest``
-writes. ``--owners``
-names, for every experimental op, the commit that added its declaration: the
-owner a deletion PR should cite.
+writes. ``--owners`` names, for every experimental op, the commit that added its
+declaration: the owner a deletion PR should cite.
 """
 
 from __future__ import annotations
@@ -255,15 +254,15 @@ def dashboard_violations(ops: list[Operation]) -> list[str]:
     out: list[str] = []
     names = {op.name for op in ops}
     for op in ops:
-        on = "dashboard" in op.reach
+        called = "dashboard" in op.reach
         skipped = op.name in NOT_IN_DASHBOARD
         pending = op.name in DASHBOARD_PENDING
-        if not on and not skipped and not pending:
+        if not called and not skipped and not pending:
             out.append(
                 f"{op.name}: no dashboard call site; add its control, or name it in "
                 "NOT_IN_DASHBOARD with the reason"
             )
-        if on and (skipped or pending):
+        if called and (skipped or pending):
             out.append(
                 f"{op.name}: the dashboard calls it, so drop it from server/operations/dashboard.py"
             )

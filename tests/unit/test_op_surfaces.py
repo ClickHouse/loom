@@ -1,10 +1,10 @@
 """Every op is reachable from HTTP, MCP, both SDKs and the dashboard, or says
-why not in code: HTTP serves the whole registry; MCP reaches every op its
-hidden roster does not keep for people; the two generated SDKs carry every op
-(`test_sdk_parity.py`); the dashboard calls every op a person needs, and
-`server/operations/dashboard.py` names the rest with a reason. That last rule
-is the census's `--check` (`test_op_reach_census.py`); here it is tested case by
-case."""
+why not in code: HTTP serves the whole registry (`test_op_transport_contract.py`);
+MCP reaches every op its hidden roster does not keep for people; the two
+generated SDKs carry every op (`test_sdk_parity.py`); the dashboard calls every
+op a person needs, and `server/operations/dashboard.py` names the rest with a
+reason. That last rule is the census's `--check` (`test_op_reach_census.py`);
+here it is tested case by case."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from scripts.codegen import op_reach_census as census
+from server.operations.base import Role
 from server.operations.dashboard import (
     AGENT_STEP,
     CODE_QUESTION,
@@ -24,7 +25,6 @@ from server.operations.dashboard import (
 from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport import mcp_op, mcp_tools
-from server.transport.http import build_router
 
 # DASHBOARD_PENDING, pinned: a control that lands drops its op from both, and
 # nothing joins either.
@@ -114,11 +114,6 @@ PENDING_PINNED = frozenset(
 )
 
 
-def test_http_serves_every_op():
-    paths = {r.path for r in build_router().routes if "POST" in getattr(r, "methods", ())}
-    assert {op.http_path for op in ALL_OPERATIONS} <= paths
-
-
 def _loom_op(name: str, toolset: str | None = None) -> tuple[dict, dict | None]:
     req = {
         "id": 1,
@@ -192,6 +187,12 @@ def test_each_dashboard_violation_is_named(
     monkeypatch.setattr(census, "NOT_IN_DASHBOARD", dict.fromkeys(skipped, "a reason"))
     monkeypatch.setattr(census, "DASHBOARD_PENDING", frozenset(pending))
     assert census.dashboard_violations([op]) == [expected]
+
+
+def test_an_agent_step_is_one_an_agent_token_may_call():
+    for name, reason in NOT_IN_DASHBOARD.items():
+        if reason == AGENT_STEP:
+            assert OPERATIONS_BY_NAME[name].required_role <= Role.WRITER, name
 
 
 def test_an_op_kept_off_mcp_is_never_an_agent_step():
