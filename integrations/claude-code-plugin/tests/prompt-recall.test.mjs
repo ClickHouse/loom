@@ -9,9 +9,11 @@ import path from "node:path";
 import {
   acceptPack,
   blockId,
+  clearStrayLinks,
   loadRecallKey,
   neutraliseTagName,
   recalledDataBlock,
+  replaceBadKey,
   recallBody,
   renderRecall,
   RECALL_SECTIONS,
@@ -255,4 +257,48 @@ test("a key whose second link is a temporary name a creator left is repaired", {
   assert.deepEqual(loadRecallKey(file), key);
   assert.equal(fs.existsSync(stray), false);
   assert.equal(fs.statSync(file).nlink, 1);
+});
+
+test("a read that caught a creator mid-link retries: the link count is back to one, or the stray goes", {
+  skip: !posix,
+}, (t) => {
+  const file = keyFile(t);
+  const key = loadRecallKey(file);
+  // The creator unlinked its temporary name between the reader's refused read and its look.
+  assert.equal(clearStrayLinks(file), "retry");
+  // The creator's temporary name is still there.
+  const stray = `${file}.77.abcdefabcdef`;
+  fs.linkSync(file, stray);
+  assert.equal(clearStrayLinks(file), "retry");
+  assert.equal(fs.existsSync(stray), false);
+  // Gone altogether: the next pass creates or reads it.
+  assert.equal(clearStrayLinks(`${file}-missing`), "retry");
+  assert.deepEqual(loadRecallKey(file), key);
+});
+
+test("a second link with any other name is not taken for a stray: the key is refused and both stay", {
+  skip: !posix,
+}, (t) => {
+  const file = keyFile(t);
+  loadRecallKey(file);
+  const bak = `${file}.bak`;
+  fs.linkSync(file, bak);
+  assert.equal(clearStrayLinks(file), "refuse");
+  assert.equal(loadRecallKey(file), null);
+  assert.ok(fs.existsSync(bak));
+  assert.equal(fs.statSync(file).nlink, 2);
+});
+
+test("a good key still linked under its creator's temporary name is put back, not removed", { skip: !posix }, (t) => {
+  // A hook moving a bad key aside can catch the good key another hook just linked
+  // in its place, before that hook unlinks its temporary name.
+  const file = keyFile(t);
+  const key = loadRecallKey(file);
+  const creatorTmp = `${file}.88.0123456789ab`;
+  fs.linkSync(file, creatorTmp);
+  replaceBadKey(file);
+  assert.equal(fs.readFileSync(file, "utf8"), key.toString("hex"));
+  assert.equal(fs.statSync(file).nlink, 1);
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), ["recall-key"]);
+  assert.deepEqual(loadRecallKey(file), key);
 });
