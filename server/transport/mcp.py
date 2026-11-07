@@ -57,6 +57,7 @@ from server.transport.mcp_config import (
     INVALID_PARAMS,
     INVALID_REQUEST,
     LIST_TTL_MS,
+    MAX_BATCH_ENTRIES,
     MCP_SUPPORTED_PROTOCOL_VERSIONS,
     META_SERVER_INFO,
     METHOD_NOT_FOUND,
@@ -310,6 +311,15 @@ def attach(app: FastAPI) -> None:
     async def mcp_endpoint(request: Request, response: Response) -> Any:
         from server.auth.jwt import TokenError
 
+        # `Mcp-Session-Id` correlates the `initialize` handshake (carrying
+        # `clientInfo.name`) with later `tools/call` POSTs. Assigned at initialize
+        # when the client sent none (in _dispatch) and echoed on every answer this
+        # endpoint returns, refusals included, so clients keep sending it — that
+        # round-trip drives the provenance cache.
+        session_id = request.headers.get("mcp-session-id")
+        if session_id:
+            response.headers["Mcp-Session-Id"] = session_id
+
         try:
             payload = await request.json()
         except Exception:  # noqa: BLE001 — any body read failure answers PARSE_ERROR
@@ -323,14 +333,13 @@ def attach(app: FastAPI) -> None:
         if header_version is not None and not protocol_version_supported(header_version):
             response.status_code = 400
             return unsupported_version_error(_echo_request_id(payload), header_version)
-
-        # `Mcp-Session-Id` correlates the `initialize` handshake (carrying
-        # `clientInfo.name`) with later `tools/call` POSTs. Server-assigned at
-        # initialize (in _dispatch) and echoed on every response so clients
-        # keep sending it — that round-trip drives the provenance cache.
-        session_id = request.headers.get("mcp-session-id") or request.headers.get("Mcp-Session-Id")
-        if session_id:
-            response.headers["Mcp-Session-Id"] = session_id
+        if isinstance(payload, list) and not 0 < len(payload) <= MAX_BATCH_ENTRIES:
+            # Refused whole, before the bearer or any entry (JSON-RPC: an empty batch is invalid).
+            return _err(
+                _TRANSPORT_ERROR_ID,
+                INVALID_REQUEST,
+                f"A batch holds 1 to {MAX_BATCH_ENTRIES} requests; send larger work in parts",
+            )
 
         # Verify the bearer once per request (single or batch). In open mode tolerate a
         # stale/malformed bearer — clients template Authorization from env vars that may
@@ -448,7 +457,7 @@ def attach(app: FastAPI) -> None:
             response.headers["Retry-After"] = str(wait)
             msg = f"MCP session end rate limit exceeded (retry in {wait}s)"
             return {"error": msg, "code": "RATE_LIMITED", "retry_after_s": wait}
-        session_id = request.headers.get("mcp-session-id") or request.headers.get("Mcp-Session-Id")
+        session_id = request.headers.get("mcp-session-id")
         closed = await _mcp_runs.close_session(session_id, org, _mcp_runs.subject_of(auth))
         if session_id:
             _MCP_AGENT_BY_SESSION.pop(session_id, None)

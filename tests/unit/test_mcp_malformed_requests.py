@@ -4,7 +4,9 @@ A batch entry (or a whole body) that is not an object is an Invalid
 Request for that entry, and a `params` / `arguments` that is not an object
 is Invalid Params — with and without a bearer (the authenticated
 pre-dispatch screen reads `arguments`), so one bad entry never answers
-HTTP 500 for the whole batch.
+HTTP 500 for the whole batch. A batch outside 1 to 64 entries is one Invalid Request,
+answered after the protocol-version check and before the bearer or any entry.
+Every answer the endpoint returns, refusals included, echoes the request's `Mcp-Session-Id`.
 """
 
 from __future__ import annotations
@@ -17,9 +19,12 @@ from fastapi.testclient import TestClient
 
 from server.auth.jwt import mint_token
 from server.settings import settings
-
-INVALID_REQUEST = -32600
-INVALID_PARAMS = -32602
+from server.transport.mcp_config import (
+    INVALID_PARAMS,
+    INVALID_REQUEST,
+    MAX_BATCH_ENTRIES,
+    UNSUPPORTED_PROTOCOL_VERSION,
+)
 
 
 def _client(monkeypatch: pytest.MonkeyPatch, *, auth: bool) -> TestClient:
@@ -99,3 +104,70 @@ def test_non_object_params_on_other_methods(monkeypatch: pytest.MonkeyPatch) -> 
         r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 4, "method": method, "params": 7})
         assert r.status_code == 200
         assert r.json()["error"]["code"] == INVALID_PARAMS, method
+
+
+@pytest.mark.parametrize("auth", [False, True])
+def test_a_batch_past_its_cap_or_empty_is_refused_before_any_entry_runs(
+    monkeypatch: pytest.MonkeyPatch, auth: bool
+) -> None:
+    from server.transport import mcp as mcp_mod
+
+    client = _client(monkeypatch, auth=auth)
+    ran: list[Any] = []
+    handle = mcp_mod._handle_request
+
+    async def counted(*args: Any, **kwargs: Any) -> Any:
+        ran.append(1)
+        return await handle(*args, **kwargs)
+
+    monkeypatch.setattr(mcp_mod, "_handle_request", counted)
+    ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    for body in ([ping] * (MAX_BATCH_ENTRIES + 1), []):
+        r = client.post("/mcp", json=body, headers=_headers(auth))
+        assert r.status_code == 200 and r.json()["error"]["code"] == INVALID_REQUEST
+    assert ran == []
+    r = client.post("/mcp", json=[ping] * MAX_BATCH_ENTRIES, headers=_headers(auth))
+    assert r.status_code == 200 and len(r.json()) == MAX_BATCH_ENTRIES
+    assert len(ran) == MAX_BATCH_ENTRIES
+
+
+def test_an_oversized_batch_is_refused_before_the_bearer_is_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    listing = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}  # needs a bearer
+    client = _client(monkeypatch, auth=True)
+    for headers in ({}, {"Authorization": "Bearer not-a-token"}):
+        r = client.post("/mcp", json=[listing] * (MAX_BATCH_ENTRIES + 1), headers=headers)
+        assert r.status_code == 200 and r.json()["error"]["code"] == INVALID_REQUEST
+
+
+def test_an_unsupported_protocol_version_answers_400_before_the_batch_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    r = _client(monkeypatch, auth=False).post(
+        "/mcp",
+        json=[ping] * (MAX_BATCH_ENTRIES + 1),
+        headers={"MCP-Protocol-Version": "1999-01-01"},
+    )
+    assert r.status_code == 400 and r.json()["error"]["code"] == UNSUPPORTED_PROTOCOL_VERSION
+
+
+def test_every_refusal_echoes_the_session_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch, auth=True)
+    session = {"Mcp-Session-Id": "s-refused"}
+    ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    refusals = [
+        (client.post("/mcp", content=b"{", headers=session), 200),
+        (
+            client.post(
+                "/mcp", json=ping, headers={**session, "MCP-Protocol-Version": "1999-01-01"}
+            ),
+            400,
+        ),
+        (client.post("/mcp", json=[ping] * (MAX_BATCH_ENTRIES + 1), headers=session), 200),
+        (client.post("/mcp", json={**ping, "method": "tools/list"}, headers=session), 401),
+    ]
+    for r, status in refusals:
+        assert r.status_code == status
+        assert r.headers.get("Mcp-Session-Id") == "s-refused"

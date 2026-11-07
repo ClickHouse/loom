@@ -55,7 +55,8 @@ JSON-RPC error frame but show a tool result to the model:
   field error, each unknown key with the field it most likely meant, the
   required and optional arguments and one corrected example call.
 - **Transport failures stay JSON-RPC errors**: parse error `-32700`, invalid
-  request `-32600` (with the HTTP 401 of a missing or rejected bearer), method
+  request `-32600` (an auth refusal carries its HTTP status; a malformed request
+  or a batch outside 1 to 64 answers 200), method
   not found `-32601`, invalid params `-32602` (a `tools/call` without a string
   `name` or with non-object `arguments`, an unknown resource), unsupported protocol version `-32022`, and a server fault
   `-32000 "tool execution failed"`. A fault Loom names (`OVERLOADED`,
