@@ -241,7 +241,9 @@ def test_an_op_named_twice_is_refused():
 
 
 def test_an_op_a_refusal_sends_the_agent_to_is_on_mcp():
-    """Every op a refusal names is one the agent can call."""
+    """Every op and MCP tool a refusal names is one the agent can call."""
     for name, instead in mcp_op._INSTEAD.items():
+        for tool in re.findall(r"\bloom_[a-z_]+\b", instead):
+            assert tool in mcp_tools.TOOLS_BY_NAME or tool == mcp_op.LOOM_OP_TOOL_NAME, (name, tool)
         for other in re.findall(r"[a-z_]+(?:\.[a-z_]+)+", instead):
             assert other in OPERATIONS_BY_NAME and other not in _MCP_HIDDEN_OPS, (name, other)

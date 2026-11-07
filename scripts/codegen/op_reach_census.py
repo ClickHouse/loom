@@ -69,7 +69,8 @@ _DASHBOARD_CALL = re.compile(r"""["'`]/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b""")
 # What a comment scan keeps (group 1: an escaped character, as in a regex literal's
 # `\/`; a `'` or `"` string, ending at its line; a template literal, which may span
 # lines) and what it drops (`//` and `/* */` comments). A lone `'` (JSX text's
-# "can't") is code.
+# "can't") is code; one paired with a `'` in a comment later on its line reads the
+# rest of that comment as code.
 _TS_KEEP_OR_COMMENT = re.compile(
     r"""(\\.|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)|//[^\n]*|/\*.*?\*/""",
     re.DOTALL,
