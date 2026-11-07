@@ -2,7 +2,8 @@
 {{- if not (or (kindIs "invalid" $guard) (kindIs "bool" $guard)) }}
 {{- fail "networkPolicy.guardMetadata must be true or false" }}
 {{- end }}
-{{- if not (kindIs "slice" (.Values.networkPolicy.egressExcept | default list)) }}
+{{- $except := .Values.networkPolicy.egressExcept }}
+{{- if not (or (kindIs "invalid" $except) (kindIs "slice" $except)) }}
 {{- fail "networkPolicy.egressExcept must be a list of CIDRs" }}
 {{- end }}
 {{- /* Off: every pod and every address but `egressExcept`; pods are named apart
