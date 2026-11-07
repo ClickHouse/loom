@@ -142,15 +142,15 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
                 "AND memory_id = {mid:String} AND event_type = 'rejection'",
                 params={"org": input.org, "ns": input.namespace, "mid": memory_id},
             )
-            if int((cnt or {}).get("n") or 0) >= threshold:
+            # A locked memory is not quarantined; the reject skips any locked copy.
+            if int((cnt or {}).get("n") or 0) >= threshold and not refuses_retirement(row):
                 idr = await ch.query_one(
                     "SELECT agent, user_id, memory_key FROM loom.memory FINAL "
                     "WHERE org = {org:String} AND namespace = {ns:String} "
                     "AND memory_id = {mid:UUID} AND tombstoned_at IS NULL",
                     params={"org": input.org, "ns": input.namespace, "mid": memory_id},
                 )
-                # A locked memory is not quarantined; the reject skips any locked copy.
-                if idr and not refuses_retirement(row):
+                if idr:
                     written = await reject_by_identity(
                         input.org,
                         input.namespace,

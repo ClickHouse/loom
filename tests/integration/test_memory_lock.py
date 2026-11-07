@@ -146,13 +146,12 @@ def test_no_delete_and_a_lapsing_lock(writer: httpx.Client, ns: str) -> None:
         "memory.set",
         _ident(ns, memory_key=key, value="v1", memory_type="semantic", classify=False),
     )
-    # 3 s, not 1: the 423 below is asserted only while the lock still holds,
-    # and on a slow runner the get→delete pair alone can take longer than a 1 s
-    # lock.
+    # 5 s, not 1: the 423s below are asserted only while the lock still holds, and on
+    # a slow runner the get, delete and reject alone can take longer than a 1 s lock.
     r = _post(
         writer,
         "memory.lock",
-        _ident(ns, memory_key=key, mode="no_delete", reason="keep", ttl_seconds=3),
+        _ident(ns, memory_key=key, mode="no_delete", reason="keep", ttl_seconds=5),
     )
     assert r.status_code == 200 and r.json()["lock_until"]
     # the value may change under no_delete
