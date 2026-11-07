@@ -134,7 +134,7 @@ const besideKeyPattern = (file) => new RegExp(`^${path.basename(file).replace(/\
  *  between its link and its unlink, or one that died there), then looks again.
  *  "retry" when `target` is now ours with one link, or gone; "refuse" for anything
  *  else: a link elsewhere, a symlink, another user's file. Exported for tests. */
-export function clearStrayLinks(target, keyFile = target) {
+export function clearStrayLinks(target, keyFile) {
   const look = () => {
     try {
       const st = fs.lstatSync(target);
@@ -172,15 +172,15 @@ export function clearStrayLinks(target, keyFile = target) {
 }
 
 /** `target`'s text with readPrivateFile's checks, clearing this install's own stray
- *  links (clearStrayLinks) when they are what refused it. Throws when it stays
- *  refused, or is missing. */
+ *  links (clearStrayLinks) when they are what refused it, in at most KEY_PASSES
+ *  reads. Throws when it stays refused, or is missing. */
 function readKeyText(target, keyFile) {
   for (let pass = 0; ; pass++) {
     try {
       return readPrivateFile(target).trim();
     } catch (e) {
       const missing = e && e.code === "ENOENT";
-      if (missing || pass >= KEY_PASSES || clearStrayLinks(target, keyFile) !== "retry") throw e;
+      if (missing || pass + 1 >= KEY_PASSES || clearStrayLinks(target, keyFile) !== "retry") throw e;
     }
   }
 }
@@ -215,8 +215,9 @@ export function replaceBadKey(file) {
  *  empty or the wrong length (a write that failed) is moved aside and made again; a
  *  second link that is only this install's own temporary name is removed and the
  *  read retried. null, and then a block's id is random, when the key cannot be read
- *  or made within KEY_PASSES, or the path is a link, a hard link elsewhere or another
- *  user's file (readPrivateFile's checks). */
+ *  or made within KEY_PASSES passes (each reading at most KEY_PASSES times), or the
+ *  path is a link, a hard link elsewhere or another user's file (readPrivateFile's
+ *  checks). */
 export function loadRecallKey(file = recallKeyPath()) {
   for (let pass = 0; pass < KEY_PASSES; pass++) {
     let text = null;

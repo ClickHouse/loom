@@ -265,14 +265,14 @@ test("a read that caught a creator mid-link retries: the link count is back to o
   const file = keyFile(t);
   const key = loadRecallKey(file);
   // The creator unlinked its temporary name between the reader's refused read and its look.
-  assert.equal(clearStrayLinks(file), "retry");
+  assert.equal(clearStrayLinks(file, file), "retry");
   // The creator's temporary name is still there.
   const stray = `${file}.77.abcdefabcdef`;
   fs.linkSync(file, stray);
-  assert.equal(clearStrayLinks(file), "retry");
+  assert.equal(clearStrayLinks(file, file), "retry");
   assert.equal(fs.existsSync(stray), false);
   // Gone altogether: the next pass creates or reads it.
-  assert.equal(clearStrayLinks(`${file}-missing`), "retry");
+  assert.equal(clearStrayLinks(`${file}-missing`, file), "retry");
   assert.deepEqual(loadRecallKey(file), key);
 });
 
@@ -283,7 +283,7 @@ test("a second link with any other name is not taken for a stray: the key is ref
   loadRecallKey(file);
   const bak = `${file}.bak`;
   fs.linkSync(file, bak);
-  assert.equal(clearStrayLinks(file), "refuse");
+  assert.equal(clearStrayLinks(file, file), "refuse");
   assert.equal(loadRecallKey(file), null);
   assert.ok(fs.existsSync(bak));
   assert.equal(fs.statSync(file).nlink, 2);
