@@ -5,6 +5,7 @@ exception type in the saga's failure message (str(ReadTimeout) is empty)."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -212,3 +213,42 @@ async def test_the_server_version_is_probed_once_per_backend(backend) -> None:
         "observations",
         "observations",
     ]
+
+
+@pytest.mark.asyncio
+async def test_langfuse_4_lookup_fails_closed_on_a_repeated_cursor(backend) -> None:
+    c = _Client([_health("4.76.0"), _obs_page(["t1"], "c1"), _obs_page([], "c1")])
+    with pytest.raises(eb.ErasureBackendError, match="cursor"):
+        await backend._find_trace_ids(c, tags=["org:o"])  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_langfuse_4_lookup_fails_closed_past_the_page_cap(backend, monkeypatch) -> None:
+    monkeypatch.setattr(eb.LangfuseBackend, "_V4_MAX_PAGES", 2)
+    c = _Client([_health("4.76.0"), _obs_page([], "c1"), _obs_page([], "c2")])
+    with pytest.raises(eb.ErasureBackendError, match="2 pages"):
+        await backend._find_trace_ids(c, tags=["org:o"])  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_a_namespace_list_probes_the_version_once(backend, monkeypatch) -> None:
+    """The lookups run concurrently; the probe runs before them."""
+    calls: list[str] = []
+
+    class _Concurrent:
+        async def get(self, url: str, headers: Any = None, params: Any = None) -> Any:
+            calls.append(url.rsplit("/", 1)[-1])
+            await asyncio.sleep(0)
+            if url.endswith("/health"):
+                return _health("4.76.0")
+            return _obs_page([], None)
+
+        async def __aenter__(self) -> Any:
+            return self
+
+        async def __aexit__(self, *a: Any) -> None:
+            return None
+
+    monkeypatch.setattr(eb.httpx, "AsyncClient", lambda **kw: _Concurrent())
+    assert await backend.delete_namespaces("o", ["a", "b", "c", "d"]) == 0
+    assert calls.count("health") == 1 and calls.count("observations") == 4

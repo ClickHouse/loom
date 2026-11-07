@@ -137,8 +137,8 @@ class LangfuseBackend:
         else:
             self._headers = {"Authorization": f"Bearer {admin_token}"}
         self._timeout = timeout_s
-        # The server's major version, probed once per backend: a namespace-list
-        # erasure runs one lookup per namespace.
+        # The server's major version, cached after the first answer: a
+        # namespace-list erasure runs one lookup per namespace.
         self._major: int | None = None
 
     # Langfuse has no bulk-by-filter delete, so erasure is query-then-delete:
@@ -150,6 +150,9 @@ class LangfuseBackend:
     # The observations list (Langfuse 4) returns one row per span, so a trace
     # spans several rows; its maximum page size keeps the page count down.
     _V4_PAGE_SIZE: ClassVar[int] = 1000
+    # A page may come back empty while a cursor is still present, so the trace
+    # cap alone does not end a lookup that a server keeps paging; this does.
+    _V4_MAX_PAGES: ClassVar[int] = 10_000
     # Both lookups ask for core fields only: the default payload carries each
     # row's input, output and metadata, and on a project with millions of
     # traces a one-row default list can take tens of seconds or time out, where
@@ -231,7 +234,8 @@ class LangfuseBackend:
             "filter": json.dumps(conditions),
         }
         ids: dict[str, None] = {}
-        while True:
+        seen_cursors: set[str] = set()
+        for _ in range(self._V4_MAX_PAGES):
             r = await self._get_retried(c, "/api/public/v2/observations", query)
             if r.status_code != 200:
                 raise ErasureBackendError(
@@ -249,9 +253,18 @@ class LangfuseBackend:
                 )
             cursor = (body.get("meta") or {}).get("cursor")
             if not cursor:
-                break
+                return list(ids)
+            if cursor in seen_cursors:
+                raise ErasureBackendError(
+                    f"langfuse observation lookup {tags} returned a cursor it had "
+                    f"already returned; refusing to erase a set it cannot finish reading"
+                )
+            seen_cursors.add(cursor)
             query = {**query, "cursor": cursor}
-        return list(ids)
+        raise ErasureBackendError(
+            f"langfuse observation lookup {tags} did not finish within "
+            f"{self._V4_MAX_PAGES} pages; refusing to erase a truncated set"
+        )
 
     async def _find_trace_ids_v3(
         self,
@@ -418,6 +431,14 @@ class LangfuseBackend:
     _LIST_CONCURRENCY = 4
 
     async def delete_namespaces(self, org: str, namespaces: Sequence[str]) -> int:
+        # Probed before the concurrent lookups, so they share one answer.
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as c:
+                await self._api_major(c)
+        except httpx.HTTPError as e:
+            raise ErasureBackendError(
+                f"langfuse.delete_namespaces {org} transport error: {_describe(e)}"
+            ) from e
         sem = asyncio.Semaphore(self._LIST_CONCURRENCY)
 
         async def _one(ns: str) -> int:
