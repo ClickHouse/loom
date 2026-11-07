@@ -2180,8 +2180,6 @@
            "default": "",
            "const": null,
            "choices": [
-            "fetch",
-            "ingest",
             "clang",
             "typescript",
             "go",
@@ -2190,7 +2188,7 @@
            "nargs": null,
            "type": null,
            "required": false,
-           "help": "Record the command's outcome as this tier's health on the entry: exit 0 clears a failure, any other exit records one with the end of its output.",
+           "help": "Record the command's outcome as this compiler tier's health on the entry: exit 0 clears a failure, any other exit records one with the end of its output. The command's output, stderr included, is relayed to stdout.",
            "metavar": null
           },
           {

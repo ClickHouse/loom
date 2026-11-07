@@ -47,10 +47,9 @@ async def run_pass(org: str = "", namespace: str = "") -> CodeIngestResult:
     configured repo runs (the poller cadence)."""
     result = CodeIngestResult()
     with record_pass("code_ingest") as rec:
-        try:
-            await _run(result, org, namespace)
-        finally:
-            await _record_tier_health(result)
+        await _run(result, org, namespace)
+        # Not on a cancellation: the pass may have lost its lease to another process.
+        await _record_tier_health(result)
         log_pass_errors(logger, "code_ingest", result.errors)
         rec.outcome = pass_outcome(result)
     return result
@@ -178,7 +177,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
             result.errors.append(f"{cfg.label}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: repo %s failed", cfg.label)
             pass_context.note_failure(e, cfg.namespace)
-            result.tier_failed(cfg, "ingest", e)
+            result.tier_failed(cfg, "ingest", f"{type(e).__name__}: {e}")
             continue
         if plan is not None:
             plans.append(plan)

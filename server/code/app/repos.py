@@ -176,7 +176,7 @@ async def _code_repo_rows(input: CodeReposInput, wanted: set[str] | None) -> lis
                     scip_lag=st.scip_lag,
                     scip_py_lag=st.scip_py_lag,
                     scip_producer=str(getattr(st, "scip_producer", "") or ""),
-                    tier_health=list(getattr(st, "tier_health", []) or []),
+                    tier_health=list(getattr(st, "tier_health", [])),
                     indexed_at=(st.state.get("git_head") or {}).get("updated_at", ""),
                     last_refresh_at=st.last_refresh_at,
                     counts=st.counts,

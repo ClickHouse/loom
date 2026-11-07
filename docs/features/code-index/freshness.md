@@ -9,17 +9,17 @@ is.
 Every conversational answer (`code.search`, `code.ask`, `code.grep`, `code.symbol`, …)
 carries `as_of`:
 
-| Field           | Meaning                                                                                                                              |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `commit`        | the commit the index holds for this namespace (`git_head`)                                                                           |
-| `branch`        | the branch the namespace tracks                                                                                                      |
-| `indexed_at`    | when that commit landed                                                                                                              |
-| `lag_commits`   | first-parent commits between `commit` and the mirror's fetched tip; `-1` unknown                                                     |
-| `stale`         | `lag_commits` > `LOOM_CODE_STALE_AFTER_COMMITS` (default 5), or the mirror fetch is overdue                                          |
-| `status`        | `fresh` (at the tip), `behind` (under the stale threshold), `stale`, `unknown` (lag `-1`)                                            |
-| `stale_reason`  | `mirror_not_fetched` when the lag is counted against a mirror that stopped fetching                                                  |
-| `fetched_at`    | with `stale_reason`: when the mirror last fetched                                                                                    |
-| `failing_tiers` | present while a tier is failing on the entry: `tier`, `kind`, `since`, `failed_passes`, `fix`, and for a compiler tier `lag_commits` |
+| Field           | Meaning                                                                                                                                              |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `commit`        | the commit the index holds for this namespace (`git_head`)                                                                                           |
+| `branch`        | the branch the namespace tracks                                                                                                                      |
+| `indexed_at`    | when that commit landed                                                                                                                              |
+| `lag_commits`   | first-parent commits between `commit` and the mirror's fetched tip; `-1` unknown                                                                     |
+| `stale`         | `lag_commits` > `LOOM_CODE_STALE_AFTER_COMMITS` (default 5), or the mirror fetch is overdue                                                          |
+| `status`        | `fresh` (at the tip), `behind` (under the stale threshold), `stale`, `unknown` (lag `-1`)                                                            |
+| `stale_reason`  | `mirror_not_fetched` when the lag is counted against a mirror that stopped fetching                                                                  |
+| `fetched_at`    | with `stale_reason`: when the mirror last fetched                                                                                                    |
+| `failing_tiers` | present while a tier is failing on the entry: `tier`, `kind`, `failing_since`, `failed_passes`, `fix`, and for a tier with a watermark `lag_commits` |
 
 The block is cached for 30 seconds per namespace; a pass that moves `git_head`
 invalidates it. It is fail-open: when freshness cannot be read, the block is empty and

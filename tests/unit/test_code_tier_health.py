@@ -7,8 +7,10 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -19,7 +21,7 @@ from server.code.app.index import tier_health as recorder
 from server.code.domain.index import tier_health
 from server.workers import pass_context
 
-# The error the C++ tier gave on every pass for an entry with a private submodule.
+# A C++ tier's error for a private submodule with no credential.
 SUBMODULE_NO_TOKEN = (
     "RuntimeError: git submodule failed: fatal: could not read Username for "
     "'https://github.com': terminal prompts disabled\n"
@@ -56,7 +58,11 @@ T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 )
 def test_an_error_is_classified_into_its_kind(text: str, kind: str) -> None:
     assert tier_health.classify(text) == kind
-    assert kind in tier_health.KINDS
+
+
+def test_a_harness_exit_that_names_a_network_error_is_a_network_failure() -> None:
+    text = "RuntimeError: harness exit 1: fatal: unable to access: Connection refused"
+    assert tier_health.classify(text) == "network"
 
 
 def test_a_credential_fix_names_the_host_the_submodule_and_the_setting() -> None:
@@ -150,6 +156,8 @@ class _Cfg:
     git_dir = "/nonexistent/repo.git"
     git_remote = "/nonexistent/mirror.git"
     scip_checkout_dir = "/nonexistent/checkout"
+    label = "o/code-x"
+    github_token = ""
 
 
 async def _run_tier(module: str, repo: _StateRepo, run_repo: Any) -> Any:
@@ -244,7 +252,7 @@ def test_as_of_lists_only_the_failing_tiers_with_the_fix_and_the_lag() -> None:
     rows = failing_tiers(state, None)
     assert [r["tier"] for r in rows] == ["clang"]
     assert rows[0]["kind"] == "credential" and rows[0]["failed_passes"] == 1
-    assert rows[0]["since"] == T0.isoformat(timespec="seconds")
+    assert rows[0]["failing_since"] == T0.isoformat(timespec="seconds")
     assert "LOOM_CODE_GITHUB_TOKEN" in rows[0]["fix"] and rows[0]["lag_commits"] == -1
 
 
@@ -273,3 +281,167 @@ def test_a_fix_names_the_repository_url_over_a_bare_host_and_a_short_submodule_p
     )
     fix = tier_health.fix_for("credential", text)
     assert "(github.com/o/private, submodule contrib/private)" in fix
+
+
+@pytest.mark.asyncio
+async def test_entry_lock_records_a_stopped_command_as_a_timeout_and_drops_a_cut_first_line() -> (
+    None
+):
+    from server.cli import code_scip
+
+    repo = _StateRepo()
+    with patch("server.code.store.index.CodeRepo", return_value=repo):
+        await code_scip._record_tier("o", "ns", "python", -15, b"")
+        assert tier_health.parse("python", repo.state["tier_health:python"]).kind == "timeout"
+        # a token whose prefix the 4 KiB cut dropped is on the first, partial line
+        tail = b"abcdefghijklmnopqrstuvwxyz0123456789 leaked\n" + b"x" * 4000 + b"\nharness exit 2"
+        await code_scip._record_tier("o", "ns", "python", 2, tail[-code_scip._TAIL_BYTES :])
+    health = tier_health.parse("python", repo.state["tier_health:python"])
+    assert "leaked" not in health.error and health.error.endswith("harness exit 2")
+
+
+@pytest.mark.asyncio
+async def test_a_lost_lease_records_nothing() -> None:
+    from server.code.app.index.entry_lock import EntryLockLost
+
+    repo = _StateRepo()
+
+    async def lost(*_: Any) -> None:
+        raise EntryLockLost("entry lease lost")
+
+    await _run_tier("server.code.workers.scip_delta", repo, lost)
+    assert repo.writes == []
+
+
+@pytest.mark.asyncio
+async def test_the_full_run_records_its_own_tier_and_an_entry_not_due_records_nothing() -> None:
+    repo = _StateRepo()
+
+    async def not_due(*_: Any) -> bool:
+        return False
+
+    async def boom(*_: Any) -> bool:
+        raise RuntimeError("harness exit 1: cmake failed")
+
+    async def ran(*_: Any) -> bool:
+        return True
+
+    module = "server.code.workers.scip_full"
+    await _run_tier(module, repo, boom)
+    assert tier_health.parse("clang_full", repo.state["tier_health:clang_full"]).failing
+    assert "tier_health:clang" not in repo.state  # a delta's record is its own
+    await _run_tier(module, repo, not_due)
+    assert tier_health.parse("clang_full", repo.state["tier_health:clang_full"]).failing
+    await _run_tier(module, repo, ran)
+    assert not tier_health.parse("clang_full", repo.state["tier_health:clang_full"]).failing
+
+
+def test_an_ingest_failure_is_never_overwritten_by_a_later_success_of_the_same_tier() -> None:
+    from server.code.app.index.pass_budget import CodeIngestResult
+
+    result = CodeIngestResult()
+    cfg = _Cfg()
+    result.tier_ok(cfg, "fetch")
+    result.tier_failed(cfg, "ingest", "walk: RuntimeError: boom")
+    result.tier_ok(cfg, "ingest")
+    result.tier_failed(cfg, "ingest", "a second error")
+    assert result.tier_outcomes == {
+        ("o", "code-x", "fetch"): "",
+        ("o", "code-x", "ingest"): "walk: RuntimeError: boom",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_fetch_records_its_outcome(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from server.code.app.index import gitrepo, pass_fetch
+    from server.code.app.index.pass_budget import CodeIngestResult
+
+    async def nothing(*_: Any, **__: Any) -> int:
+        return 0
+
+    for name in ("fetch_extra_branches", "fetch_missing_merges", "fetch_pr_heads"):
+        monkeypatch.setattr(pass_fetch, name, nothing)
+    monkeypatch.setattr(pass_fetch, "mark_fetched", lambda _d: None)
+
+    async def refused(*_: Any, **__: Any) -> None:
+        raise gitrepo.GitError("fatal: Authentication failed for 'https://github.com/o/r.git/'")
+
+    result = CodeIngestResult()
+    monkeypatch.setattr(gitrepo, "fetch", refused)
+    assert not await pass_fetch.fetch_entry(_Cfg(), str(tmp_path / "x.git"), None, result)
+
+    async def fetched(*_: Any, **__: Any) -> None:
+        return None
+
+    monkeypatch.setattr(gitrepo, "fetch", fetched)
+    other = type("Other", (_Cfg,), {"namespace": "code-y"})()
+    assert await pass_fetch.fetch_entry(other, str(tmp_path / "y.git"), None, result)
+    assert result.tier_outcomes[("o", "code-y", "fetch")] == ""
+    error = result.tier_outcomes[("o", "code-x", "fetch")]
+    assert error.startswith("fetch /nonexistent/mirror.git: ") and "Authentication failed" in error
+
+
+@pytest.mark.asyncio
+async def test_a_failing_leg_records_the_ingest_tier(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.code.app.index import ingest_pass
+    from server.code.app.index.pass_budget import CodeIngestResult, PassBudget
+
+    async def boom(*_: Any) -> None:
+        raise RuntimeError("parser crashed")
+
+    plan = type("Plan", (), {"cfg": _Cfg()})()
+    result = CodeIngestResult()
+    await ingest_pass._run_leg(
+        result,
+        PassBudget(started=time.monotonic(), stop_after=time.monotonic() + 600),
+        [plan],
+        "walk",
+        boom,
+    )
+    assert result.tier_outcomes[("o", "code-x", "ingest")] == "walk: RuntimeError: parser crashed"
+
+
+@pytest.mark.asyncio
+async def test_the_ingest_pass_writes_its_outcomes_at_its_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.app.index import ingest_pass
+
+    repo = _StateRepo()
+
+    async def run(result: Any, *_: Any) -> None:
+        result.tier_failed(_Cfg(), "fetch", "fetch x: Could not resolve host: x")
+        result.tier_ok(_Cfg(), "ingest")
+
+    monkeypatch.setattr(ingest_pass, "_run", run)
+    with patch("server.code.store.index.CodeRepo", return_value=repo):
+        await ingest_pass.run_pass()
+    assert tier_health.parse("fetch", repo.state["tier_health:fetch"]).kind == "network"
+    assert "tier_health:ingest" not in repo.state  # ok over no record: nothing to write
+
+
+def test_as_of_counts_a_compiler_tiers_lag_from_the_published_status() -> None:
+    from server.code.app.common import failing_tiers
+    from server.code.app.index_status import STATUS_SNAPSHOT_KEY
+
+    tip, mark = "c" * 40, "a" * 40
+    snap = {
+        "clone_head": tip,
+        "compiler_tiers": [{"watermark_key": "scip_commit", "commit": mark, "lag": 413}],
+    }
+    state = {
+        "tier_health:clang": {
+            "value": tier_health.failed(None, "clang", NO_TOKEN_SHORT, T0).to_json()
+        },
+        "scip_commit": {"value": mark},
+        "clone_head": {"value": tip, "detail": "main"},
+        STATUS_SNAPSHOT_KEY: {"value": json.dumps(snap)},
+    }
+    cfg = type("Cfg", (), {"git_branch": "main"})()
+    (row,) = failing_tiers(state, cfg)
+    assert row["lag_commits"] == 413
+
+
+NO_TOKEN_SHORT = (
+    "fatal: could not read Username for 'https://github.com': terminal prompts disabled"
+)

@@ -106,13 +106,14 @@ def _write_tail(out: str) -> None:
 
 async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: Any) -> int:
     """One entry's full compiler-tier run; the caller holds the entry lock."""
-    from server.code.app.index import scip_full
+    from server.code.app.index import scip_full, tier_health
     from server.code.app.index.compiler_tier import (
         SANDBOX_REQUIRED_SKIP,
         resolve_binary,
         resolve_checkout,
         unsandboxed_skip,
     )
+    from server.code.app.index.entry_lock import EntryLockLost
     from server.code.store.index import CodeRepo
     from server.settings import settings
 
@@ -165,10 +166,17 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
             keep_delta=getattr(args, "keep_delta", ""),
         )
     except scip_full.FullIndexFailed as e:
+        await tier_health.record(repo, org, ns, "clang_full", e)
         _write_tail(e.tail)
         print(f"harness failed (exit {e.returncode})", file=sys.stderr)
         _note(head=git_head[:12], harness_exit=e.returncode)
         return 1
+    except EntryLockLost:
+        raise  # the entry is another host's now: no further write
+    except Exception as e:
+        await tier_health.record(repo, org, ns, "clang_full", e)
+        raise
+    await tier_health.record(repo, org, ns, "clang_full")
     _write_tail(out)
     if getattr(args, "keep_delta", ""):
         print(f"delta kept at {args.keep_delta}")
@@ -202,7 +210,7 @@ async def _entry_locked(args: argparse.Namespace) -> int:
         print("entry-lock: no command after --", file=sys.stderr)
         return 2
     org, ns = _identity(args)
-    tier = getattr(args, "tier", "") or ""
+    tier = args.tier
     tail = bytearray() if tier else None
     try:
         async with entry_lock(org, ns, wait=False):
@@ -229,8 +237,13 @@ async def _record_tier(org: str, ns: str, tier: str, rc: int, tail: bytes) -> No
     from server.code.store.index import CodeRepo
 
     error = None
-    if rc != 0:
-        text = tail.decode("utf-8", "replace").strip()
+    if rc < 0:  # the caller's time limit (or a kill) stopped it
+        error = f"exit {rc}: stopped by signal {-rc}"
+    elif rc != 0:
+        # The kept tail may start inside a line, a token's prefix cut off: redaction
+        # matches whole tokens, so that first partial line goes.
+        lines = tail.decode("utf-8", "replace").split("\n")
+        text = "\n".join(lines[1:] if len(tail) >= _TAIL_BYTES else lines).strip()
         error = f"exit {rc}: {text}" if text else f"exit {rc}"
     await tier_health.record(CodeRepo(), org, ns, tier, error)
 

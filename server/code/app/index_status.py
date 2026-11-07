@@ -258,12 +258,14 @@ async def _clone_lags(
 def tier_health_rows(state: IndexState, lags: dict[str, int]) -> list[CodeTierHealth]:
     """Each recorded tier's health, with the lag of the watermark the tier advances
     (`lags` is keyed by state key: `git_head` for ingest, each compiler tier's own)."""
-    from server.code.domain.index import tier_health
-    from server.code.domain.index.compiler_tiers import TIERS
+    from dataclasses import asdict
 
-    watermark = {"ingest": "git_head", **{t.producer: t.watermark_key for t in TIERS}}
+    from server.code.domain.index import tier_health
+
     return [
-        CodeTierHealth(**h.public(), lag_commits=lags.get(watermark.get(tier, ""), -1))
+        CodeTierHealth(
+            **asdict(h), lag_commits=lags.get(tier_health.WATERMARK_FOR_TIER.get(tier, ""), -1)
+        )
         for tier, h in tier_health.from_state(state).items()
     ]
 

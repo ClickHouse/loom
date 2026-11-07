@@ -109,7 +109,8 @@ class CodeTierHealth(BaseModel):
     the next pass that succeeds; `kind` classifies the error and `fix` is the one
     action that clears it."""
 
-    tier: str  # fetch | ingest | clang | typescript | go | python
+    # fetch | ingest | clang | typescript | go | python | clang_full (the weekly C++ full run)
+    tier: str
     state: str = "ok"  # ok | failing
     # credential | pin_missing | egress | network | timeout | disk | harness | unknown
     kind: str = ""

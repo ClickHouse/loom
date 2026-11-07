@@ -81,11 +81,10 @@ class CodeIngestResult:
     def tier_ok(self, cfg: Any, tier: str) -> None:
         self.tier_outcomes.setdefault((cfg.org, cfg.namespace, tier), "")
 
-    def tier_failed(self, cfg: Any, tier: str, error: BaseException | str) -> None:
-        text = f"{type(error).__name__}: {error}" if isinstance(error, BaseException) else error
+    def tier_failed(self, cfg: Any, tier: str, error: str) -> None:
         key = (cfg.org, cfg.namespace, tier)
         if not self.tier_outcomes.get(key):
-            self.tier_outcomes[key] = text or "failed"
+            self.tier_outcomes[key] = error or "failed"
 
     def cut(self, where: str) -> None:
         """The budget stopped the pass before `where` started. `where` is

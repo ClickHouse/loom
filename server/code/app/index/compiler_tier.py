@@ -59,13 +59,13 @@ async def run_tier[R: TierResult](
     producer: str,
     watermark: str,
     result: R,
-    run_repo: Callable[[CodeRepo, RepoConfig, R], Awaitable[None]],
+    run_repo: Callable[[CodeRepo, RepoConfig, R], Awaitable[bool | None]],
     *,
     entry_locked: bool = False,
     runs_repo_code: bool = False,
     gc_checkout: bool = False,
     extras: Callable[[R], dict[str, Any]] | None = None,
-    records_health: bool = True,
+    health_tier: str = "",
 ) -> R:
     """One pass of a compiler tier over every configured entry it owns.
 
@@ -79,23 +79,25 @@ async def run_tier[R: TierResult](
     entry with a network remote gets no tier at all (`unsandboxed_skip`). With
     `gc_checkout` each entry's checkout is repacked when due (`gc_if_due`) after its
     work, under the entry lock where the tier takes it; only this tier's worker moves
-    that tree. Each entry's outcome is its tier-health record (`tier_health.record`) unless
-    `records_health` is off: a tier whose pass visits entries it does no work on records
-    its own."""
+    that tree. Each entry's outcome is its `health_tier` record (default: `producer`;
+    `tier_health.record`): a failure, or a success unless `run_repo` returned False (it
+    attempted nothing: the entry was not due) or added a skip."""
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
+
+    tier = health_tier or producer
 
     async def run_entry(repo: CodeRepo, cfg: RepoConfig) -> None:
         # The watermark reset is one of the entry's writes: under its lock too.
         skips = len(result.skipped)
         try:
-            await run_repo(repo, cfg, result)
+            attempted = await run_repo(repo, cfg, result)
         except BaseUnknown as e:
             # Not a failure to report: the next run indexes in full.
             await restart_full(repo, cfg, watermark, e, result.errors)
         else:
-            if records_health and len(result.skipped) == skips:  # a skip did not run the tier
-                await tier_health.record(repo, cfg.org, cfg.namespace, producer)
+            if attempted is not False and len(result.skipped) == skips:
+                await tier_health.record(repo, cfg.org, cfg.namespace, tier)
         if gc_checkout:
             await _gc_checkout(cfg, producer)
 
@@ -126,8 +128,8 @@ async def run_tier[R: TierResult](
                 logger.exception("%s: %s failed", worker, cfg.namespace)
                 result.errors.append(f"{cfg.namespace}: {type(e).__name__}: {e}")
                 pass_context.note_failure(e, cfg.namespace)
-                if records_health and not isinstance(e, EntryLockLost):
-                    await tier_health.record(repo, cfg.org, cfg.namespace, producer, e)
+                if not isinstance(e, EntryLockLost):  # the entry is another host's now
+                    await tier_health.record(repo, cfg.org, cfg.namespace, tier, e)
         log_pass_errors(logger, worker, result.errors)
         rec.outcome = tier_outcome(result, **(extras(result) if extras else {}))
     return result

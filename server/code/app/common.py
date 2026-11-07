@@ -264,14 +264,12 @@ async def index_as_of(repo: CodeRepo, org: str, ns: str) -> dict[str, Any]:
 
 
 def failing_tiers(state: IndexState, cfg: RepoConfig | None) -> list[dict[str, Any]]:
-    """The entry's failing tiers from their health records: tier, kind, since, the
-    failed passes in a row, the fix, and for a compiler tier how many commits its
-    watermark trails the fetched tip by (the published count; -1 unknown)."""
+    """The entry's failing tiers from their health records: tier, kind, failing_since, the
+    failed passes in a row, the fix, and for a tier with a watermark how many commits
+    that watermark trails the fetched tip by (the published count; -1 unknown)."""
     from server.code.app.index_status import published_clone_head, published_lags
     from server.code.domain.index import tier_health
-    from server.code.domain.index.compiler_tiers import TIERS as COMPILER_TIERS
 
-    keys = {t.producer: t.watermark_key for t in COMPILER_TIERS}
     tip = published_clone_head(state, cfg.git_branch) if cfg else ""
     out: list[dict[str, Any]] = []
     for tier, health in tier_health.from_state(state).items():
@@ -280,11 +278,11 @@ def failing_tiers(state: IndexState, cfg: RepoConfig | None) -> list[dict[str, A
         row: dict[str, Any] = {
             "tier": tier,
             "kind": health.kind,
-            "since": health.failing_since,
+            "failing_since": health.failing_since,
             "failed_passes": health.failed_passes,
             "fix": health.fix,
         }
-        if key := keys.get(tier):
+        if key := tier_health.WATERMARK_FOR_TIER.get(tier):
             mark = str((state.get(key) or {}).get("value") or "")
             row["lag_commits"] = published_lags(state, {key: mark}, tip)[key] if mark else -1
         out.append(row)

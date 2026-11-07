@@ -5,7 +5,7 @@ compiler tier) records its outcome per entry in `code_index_state` under
 `tier_health:<tier>`, so the cron CLI, the supervised workers and every replica read
 the same record. The value is the JSON of `TierHealth`. A failure classifies the
 error output into a kind, and each kind names the one fix; a success clears it.
-Pure: the store writes and reads the row (`server.code.app.index.tier_health`).
+Pure: `server.code.app.index.tier_health` writes the row.
 """
 
 from __future__ import annotations
@@ -14,14 +14,22 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from typing import Any
 
+from server.code.domain.index.compiler_tiers import TIERS as COMPILER_TIER_SPECS
 from server.code.domain.index.state import IndexState
 
 STATE_PREFIX = "tier_health:"
+# The compiler tiers by producer; `clang_full` is the weekly C++ full re-index, kept apart
+# so a delta pass that finds the tier current does not clear a failed full run.
+COMPILER_TIERS: tuple[str, ...] = tuple(t.producer for t in COMPILER_TIER_SPECS)
 # The tiers, in the order a status lists them.
-TIERS: tuple[str, ...] = ("fetch", "ingest", "clang", "typescript", "go", "python")
-COMPILER_TIERS = frozenset({"clang", "typescript", "go", "python"})
+TIERS: tuple[str, ...] = ("fetch", "ingest", *COMPILER_TIERS, "clang_full")
+# The watermark each tier advances: its lag is that watermark's.
+WATERMARK_FOR_TIER: dict[str, str] = {
+    "ingest": "git_head",
+    **{t.producer: t.watermark_key for t in COMPILER_TIER_SPECS},
+    "clang_full": "scip_commit",
+}
 # Each error kept is cut to this many characters, after redaction.
 ERROR_CHARS = 600
 
@@ -51,10 +59,6 @@ class TierHealth:
 
     def to_json(self) -> str:
         return json.dumps({k: v for k, v in asdict(self).items() if k != "tier"}, sort_keys=True)
-
-    def public(self) -> dict[str, Any]:
-        """What a status or an `as_of` block carries for this tier."""
-        return asdict(self)
 
 
 def parse(tier: str, raw: str) -> TierHealth | None:
@@ -113,8 +117,7 @@ def recovered(tier: str, now: datetime) -> TierHealth:
 
 
 def _iso(now: datetime) -> str:
-    ts = now if now.tzinfo else now.replace(tzinfo=UTC)
-    return ts.astimezone(UTC).isoformat(timespec="seconds")
+    return now.astimezone(UTC).isoformat(timespec="seconds")
 
 
 # --- redaction ---------------------------------------------------------------------
@@ -181,12 +184,13 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
     (
         "timeout",
-        re.compile(r"timed out after|exceeded \d+(?:\.\d+)?s|timeouterror", re.IGNORECASE),
+        re.compile(
+            r"timed out after|exceeded \d+(?:\.\d+)?s|timeouterror|stopped by signal",
+            re.IGNORECASE,
+        ),
     ),
     ("harness", re.compile(r"^(?:\w+: )?harness exit", re.IGNORECASE | re.MULTILINE)),
 )
-
-KINDS: tuple[str, ...] = (*(k for k, _ in _KINDS), "unknown")
 
 
 def classify(text: str) -> str:
@@ -236,11 +240,17 @@ def fix_for(kind: str, text: str) -> str:
             "Point the pin at a commit that exists, or mirror the submodule."
         )
     if kind == "egress":
-        return f"The egress proxy refused the host{at}: allow it in the proxy's allowlist."
+        return (
+            f"The sandbox's egress proxy refused the host{at}: it connects only to public "
+            "addresses on port 443, 22 or the remote's own port."
+        )
     if kind == "network":
         return f"The host could not be reached{at}: check DNS, routes and the remote's status."
     if kind == "timeout":
-        return "The step ran past its timeout: raise the tier's timeout setting or its host's CPU."
+        return (
+            "The step exceeded its time limit; the error names the step, and that step's "
+            "timeout setting raises it."
+        )
     if kind == "disk":
         return "The disk is full: free space under the code-index work directory."
     if kind == "harness":

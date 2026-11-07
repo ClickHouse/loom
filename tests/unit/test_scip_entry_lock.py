@@ -403,6 +403,7 @@ def test_entry_lock_wrapper_runs_the_command_or_reports_the_entry_held(held, tmp
     args = argparse.Namespace(
         org="acme",
         namespace="code-web",
+        tier="",
         command=["--", sys.executable, "-c", f"open({str(marker)!r}, 'w').write('x')"],
     )
     fd = _hold(entry_lock_path("acme", "code-web")) if held else None
@@ -426,6 +427,7 @@ def test_entry_lock_wrapper_runs_nothing_without_the_lease(no_clickhouse, tmp_pa
     args = argparse.Namespace(
         org="acme",
         namespace="code-web",
+        tier="",
         command=[sys.executable, "-c", f"open({str(marker)!r}, 'w').write('x')"],
     )
     assert asyncio.run(code_scip._entry_locked(args)) == 1
@@ -448,7 +450,9 @@ def test_entry_lock_wrapper_kills_the_command_group_when_the_lease_is_lost(
     pidfile = tmp_path / "child.pid"
     # A grandchild that ignores SIGTERM: killed at once, no grace to write in.
     script = f"trap '' TERM; sleep 60 & echo $! > {pidfile}; wait"
-    args = argparse.Namespace(org="acme", namespace="code-web", command=["sh", "-c", script])
+    args = argparse.Namespace(
+        org="acme", namespace="code-web", tier="", command=["sh", "-c", script]
+    )
 
     def take_over() -> None:
         while _NAME not in keeper.keys:
@@ -607,7 +611,7 @@ def test_entry_lock_wrapper_hands_its_command_the_lease_holder(keeper, tmp_path)
 
         with patch.object(code_scip, "_run_while_held", spy):
             args = argparse.Namespace(
-                org="acme", namespace="code-web", command=[sys.executable, "-c", script]
+                org="acme", namespace="code-web", tier="", command=[sys.executable, "-c", script]
             )
             return await code_scip._entry_locked(args)
 
