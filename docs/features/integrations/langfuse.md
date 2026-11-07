@@ -5,9 +5,9 @@ are set. Once they are, the OpenTelemetry span tree is forwarded to Langfuse ove
 Langfuse is optional and is not part of Loom's local Compose stack.
 
 Span export and erasure are tested against self-hosted **Langfuse 3.227.0** and
-**Langfuse 4.76.0**. Langfuse Cloud runs Langfuse 4. A local Langfuse deployment also runs PostgreSQL, ClickHouse,
-Redis/Valkey and S3-compatible object storage, so it is substantially larger than the
-two-service Loom profile.
+**Langfuse 4.76.0**. Langfuse Cloud runs Langfuse 4. A local Langfuse deployment also
+runs PostgreSQL, ClickHouse, Redis/Valkey and S3-compatible object storage, so it is
+substantially larger than the two-service Loom profile.
 
 Loom keeps its own telemetry in ClickHouse ([telemetry](../observability/telemetry.md)).
 Langfuse adds a trace per request with nested model calls, per-generation cost,
@@ -138,11 +138,12 @@ that list, lists observations (`GET /api/public/v2/observations`) and collects t
 ids. Langfuse 4 deletes asynchronously, so a deleted trace can stay visible for a few
 minutes. The server version is read once per erasure step.
 
-On a deployment upgraded from Langfuse 3, the Langfuse 4 lookup finds what the
-observations list holds. Loom's traces are there: Loom sends the
-`x-langfuse-ingestion-version: 4` header, under which Langfuse 3 already writes them where
-Langfuse 4 reads. Traces that reached a Langfuse 3 release without that write path need
-Langfuse's historic backfill before an erasure can find them.
+On a deployment upgraded from Langfuse 3, the Langfuse 4 lookup finds only what the
+observations list holds, and an erasure reports nothing else. Traces that Langfuse 3.227.0
+stored are there (tested by upgrading it in place to 4.76.0): Loom sends the
+`x-langfuse-ingestion-version: 4` header, and that release writes them where Langfuse 4
+reads. For traces stored by an earlier Langfuse 3 release, run Langfuse's historic
+backfill after the upgrade and before relying on erasure.
 
 The step fails closed. A health answer with no version, a 5xx, a timeout, or a 404 from
 the delete endpoint (an older self-hosted build, or a proxy that forwards only GET and

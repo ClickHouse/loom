@@ -53,9 +53,9 @@ class ErasureBackendError(Exception):
     (5xx, timeout, network drop, or a confirmed-rows-but-failed delete).
 
     MUST propagate so the saga records the request `failed` instead of falsely
-    `completed`; the recovery worker re-runs failed sagas idempotently (backends
-    404→0 on already-deleted data). NOT raised for "nothing to erase" (404, zero
-    matching rows, unconfigured backend) — those return 0.
+    `completed`; the recovery worker re-runs failed sagas, which each backend
+    makes idempotent. NOT raised for "nothing to erase" (zero matching rows,
+    unconfigured backend) — those return 0.
     """
 
 

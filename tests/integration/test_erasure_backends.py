@@ -202,12 +202,13 @@ async def test_langfuse_4_finds_traces_through_observations(mock_server) -> None
 
 
 @pytest.mark.asyncio
-async def test_langfuse_delete_is_idempotent_via_the_lookup(mock_server) -> None:
+async def test_langfuse_rerun_with_nothing_found_issues_no_delete(mock_server) -> None:
     """A re-run must not fail, and must not fake success either.
 
-    `erasure_recovery` re-runs failed sagas, so a repeat pass has to be safe. The
-    idempotency comes from the LOOKUP: the second run finds no matching traces and
-    returns 0 without issuing a delete at all.
+    `erasure_recovery` re-runs failed sagas, so a repeat pass has to be safe. A
+    re-run whose lookup finds no matching traces returns 0 without issuing a
+    delete at all; one that finds traces still being deleted deletes them again,
+    which the delete endpoint answers with 200.
 
     It does NOT come from treating 404 on the delete as success, which would
     fail open. The bulk endpoint
