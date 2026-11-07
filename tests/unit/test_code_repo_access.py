@@ -232,13 +232,18 @@ async def test_set_source_writes_the_binding_state_and_the_override_is_read_firs
 
     async def refresh_over(*, force=False, ch=None):
         # the "state" after a write: what set_state recorded last
-        binding.reset_overrides_for_tests({ns: v for _o, ns, _k, v in states})
+        binding.reset_overrides_for_tests({(o, ns): v for o, ns, _k, v in states})
         return {}
 
     monkeypatch.setattr(reg, "refresh_db_repos", refresh)
     monkeypatch.setattr(
         "server.code.domain.index.repos.repo_for_namespace",
         lambda org, ns: cfg if ns == "code-weave" else None,
+    )
+    # the operator's entries, the only ones the config glob links
+    monkeypatch.setattr(
+        "server.code.domain.index.repos.configured_repos",
+        lambda: [cfg, _cfg("code-other", classification="standard")],
     )
     monkeypatch.setattr("server.code.store.index.CodeRepo", lambda: _Repo())
     monkeypatch.setattr(binding, "refresh_overrides", refresh_over)
@@ -254,7 +259,9 @@ async def test_set_source_writes_the_binding_state_and_the_override_is_read_firs
     )
     binding.reset_overrides_for_tests()
     monkeypatch.setattr(h, "current_caller", lambda: ("alice", ORG))
-    assert binding.tracker_namespace_for("code-weave") == "tracker-clickhouse"  # the config glob
+    assert (
+        binding.tracker_namespace_for(ORG, "code-weave") == "tracker-clickhouse"
+    )  # the config glob
     out = await h.handle_code_repo_set_source(
         SimpleNamespace(org=ORG, namespace="code-weave", tracker_namespaces=["tracker-weave"])
     )
@@ -263,7 +270,7 @@ async def test_set_source_writes_the_binding_state_and_the_override_is_read_firs
         "tracker-weave"
     ]
     assert (
-        binding.tracker_namespace_for("code-weave") == "tracker-weave"
+        binding.tracker_namespace_for(ORG, "code-weave") == "tracker-weave"
     )  # the override wins over the glob
     # [] clears the links: the code namespace has no tracker record at all
     out = await h.handle_code_repo_set_source(
@@ -271,10 +278,10 @@ async def test_set_source_writes_the_binding_state_and_the_override_is_read_firs
     )
     assert (
         out.previous_tracker_namespaces == ["tracker-weave"]
-        and binding.tracker_namespace_for("code-weave") == ""
+        and binding.tracker_namespace_for(ORG, "code-weave") == ""
     )
     assert (
-        binding.tracker_namespace_for("code-other") == "tracker-clickhouse"
+        binding.tracker_namespace_for(ORG, "code-other") == "tracker-clickhouse"
     )  # others still follow the config
     with pytest.raises(ValidationError) as e:
         await h.handle_code_repo_set_source(

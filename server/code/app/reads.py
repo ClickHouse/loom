@@ -22,7 +22,9 @@ class CodeIndexReads(Protocol):
 
     async def all_state(self, org: str, ns: str) -> IndexState: ...
 
-    async def state_values_for_key(self, key: str) -> dict[str, str]: ...
+    async def state_values_for_keys(
+        self, keys: list[str]
+    ) -> dict[str, dict[tuple[str, str], str]]: ...
 
     async def items_by_number(
         self, org: str, ns: str, numbers: list[int]

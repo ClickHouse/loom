@@ -1775,7 +1775,7 @@ The tracker plane: records, duplicate checks, bisect.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_TRACKER_ORG` | `str` | `''` |  | The loom org the tracker namespaces belong to; empty (default) = none, so no tracker namespace serves and self-service sources are refused until it is set. |
-| `LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON` | `str` | `''` |  | Which tracker namespace a code namespace reads its facts from: glob keys → namespace, e.g. {"code-myrepo*": "tracker-myrepo"}. Numbers are repository-global, so every branch namespace binds to its repository's one tracker namespace. '' = no QA facts anywhere. |
+| `LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON` | `str` | `''` |  | Which tracker namespace a code namespace reads its facts from: glob keys → namespace, e.g. {"code-myrepo*": "tracker-myrepo"}. Numbers are repository-global, so one glob binds every configured branch namespace of a repository to its tracker namespace. Links only the operator's repositories (LOOM_CODE_REPOS_JSON or LOOM_CODE_REPO) and the branches code.repo.add_branch adds to them, which read their repository's links; any other self-service repository is linked by its maintainer. A branch of an operator repository re-added under a removed name whose tracker-link row is still there reads no tracker until its maintainer links it. '' = no QA facts. |
 
 ### Tracker sources and the record contract
 

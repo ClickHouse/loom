@@ -22,6 +22,7 @@ async def test_auth_off_adder_becomes_maintainer(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda _self: False)
     monkeypatch.setattr(repo_admin, "current_caller", lambda: ("", None))
     monkeypatch.setattr(repo_admin.reg, "insert_entry", AsyncMock())
+    monkeypatch.setattr(repo_admin, "_drop_stale_tracker_links", AsyncMock())
     monkeypatch.setattr(repo_admin.reg, "refresh_db_repos", AsyncMock())
     monkeypatch.setattr(repo_admin, "registry_repos", lambda: [])
     monkeypatch.setattr(bootstrap, "set_stage", AsyncMock())

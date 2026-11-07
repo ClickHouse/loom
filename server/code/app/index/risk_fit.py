@@ -70,7 +70,7 @@ async def _bound_tracker_namespace(org: str, ns: str) -> tuple[str, str]:
     from server.identity.app.namespace_classification import is_restricted
     from server.tracker.app.binding import tracker_namespace_for
 
-    tracker_ns = tracker_namespace_for(ns)
+    tracker_ns = tracker_namespace_for(org, ns)
     if not tracker_ns:
         return "", "not_bound"
     if await is_restricted(org, tracker_ns):

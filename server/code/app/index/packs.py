@@ -225,7 +225,7 @@ async def tracker_section_rows(
     from server.tracker.app.source import tracker_source
     from server.tracker.domain import bisect as bi
 
-    tracker_ns = tracker_namespace_for(ns)
+    tracker_ns = tracker_namespace_for(org, ns)
     if not tracker_ns:
         return "not_bound", []
     if await is_restricted(org, tracker_ns):

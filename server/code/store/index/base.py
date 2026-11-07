@@ -60,6 +60,11 @@ class CodeRepoBase:
         await self._ch.insert(f"loom.{table}", rows)
 
     async def get_state(self, org: str, ns: str, key: str) -> str:
+        return await self.get_state_or_none(org, ns, key) or ""
+
+    async def get_state_or_none(self, org: str, ns: str, key: str) -> str | None:
+        """The `key` row's value, None when the namespace has no such row ("" is a
+        row that holds an empty value)."""
         row = await self._ch.query_one(
             """
             SELECT state_value FROM loom.code_index_state FINAL
@@ -68,19 +73,24 @@ class CodeRepoBase:
             """,
             {"org": org, "ns": ns, "key": key},
         )
-        return str(row["state_value"]) if row else ""
+        return str(row["state_value"] or "") if row else None
 
-    async def state_values_for_key(self, key: str) -> dict[str, str]:
-        """namespace -> value of the `key` state row in every namespace that has one. Across
-        orgs: a key published per namespace (a tracker binding) is read as one directory."""
+    async def state_values_for_keys(self, keys: list[str]) -> dict[str, dict[tuple[str, str], str]]:
+        """key -> (org, namespace) -> value of the `keys` state rows in every namespace
+        that has one, across orgs, in one read; the org stays in the key because two orgs
+        can hold the same namespace name. A key with no rows maps to {}."""
         rows = await self._ch.query_all(
             """
-            SELECT namespace, state_value FROM loom.code_index_state FINAL
-            WHERE state_key = {k:String}
+            SELECT org, namespace, state_key, state_value FROM loom.code_index_state FINAL
+            WHERE state_key IN {keys:Array(String)}
             """,
-            {"k": key},
+            {"keys": keys},
         )
-        return {str(r["namespace"]): str(r.get("state_value") or "") for r in rows}
+        out: dict[str, dict[tuple[str, str], str]] = {k: {} for k in keys}
+        for r in rows:
+            key = (str(r["org"]), str(r["namespace"]))
+            out[str(r["state_key"])][key] = str(r.get("state_value") or "")
+        return out
 
     async def all_state(self, org: str, ns: str) -> IndexState:
         rows = await self._ch.query_all(

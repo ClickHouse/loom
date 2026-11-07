@@ -13,6 +13,7 @@ def test_persisted_state_keys_keep_their_stored_names() -> None:
     assert dupcheck_fit.STATE_KEY.startswith("qa_dupcheck_fit")
     assert dupcheck_fit.state_key_for(1) == "qa_dupcheck_fit"
     assert binding.OVERRIDE_KEY == "qa_binding"
+    assert binding.BRANCH_OF_KEY == "qa_branch_of"
     assert embed_index.CURSOR_KEY == "qa_embed_cursor"
     assert CONTRACT_SNAPSHOT_KEY == "qa_contract_snapshot"
     assert FRESHNESS_SNAPSHOT_KEY == "qa_freshness_snapshot"

@@ -144,7 +144,7 @@ async def tracker_pr_facts(org: str, ns: str, pr_number: int) -> tuple[str, dict
     from server.tracker.app.binding import tracker_namespace_for
     from server.tracker.app.source import tracker_source
 
-    tracker_ns = tracker_namespace_for(ns)
+    tracker_ns = tracker_namespace_for(org, ns)
     if not tracker_ns:
         return NOT_BOUND, {}
     if await is_restricted(org, tracker_ns):

@@ -194,7 +194,7 @@ read every linked tracker and name the source of each result.
 | Who        | How                                                                                                                                                                                                                                                                                                                                                                    |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | maintainer | `code.repo.set_source` with `tracker_namespaces` (repository admin, and admin of each tracker the repository's own links do not already hold), or the repository card's Trackers section. Replaces the operator map for that repository within `LOOM_CODE_REPOS_REFRESH_SECONDS`. A tracker whose `repos` do not cover the repository is accepted with `not_covering`. |
-| operator   | `LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON`: glob keys over code namespace names, each to one tracker namespace or an ordered list.                                                                                                                                                                                                                                    |
+| operator   | `LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON`: glob keys over code namespace names, each to one tracker namespace or an ordered list. Links only the operator's repositories (`LOOM_CODE_REPOS_JSON` or `LOOM_CODE_REPO`); a self-service one (`code.repo.add`) is linked by its maintainer.                                                                             |
 
 A linked standard tracker is read by every reader of the repository, so linking one is a
 lasting delegation; a new link needs the tracker's admin, restricted or not. A reader of
@@ -206,10 +206,20 @@ it, including through a later `code.repo.set_access` join-policy change.
 LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON='{"code-widgets*": ["tracker-widgets", "tracker-helpdesk"]}'
 ```
 
-Links are never guessed from names. The gate runs again for the caller on the bound
-namespace, so a restricted tracker bound to a public repository stays closed to anyone the
-gate refuses. `tracker.binding` reports what a namespace resolves to; unbound, refused and
-"no tracker" are the same answer (`kind: "none"`), so a refusal reveals nothing.
+A branch added with `code.repo.add_branch` records the repository it came from. A branch
+of an operator repository with no links of its own reads that repository's links, so a
+glob the operator changes, or a link set on the repository, reaches it. A maintainer's
+link on a self-service repository is copied to a new branch; a link set on that repository
+later is set on its branches with `code.repo.set_source`. A branch of an operator
+repository re-added under a removed name whose tracker-link row is still there reads no
+tracker until its maintainer links it with `code.repo.set_source`.
+
+Links are never guessed from names, and a link belongs to one org: two orgs can hold the
+same code namespace name, and a link set in one never applies in the other. The gate runs
+again for the caller on the bound namespace, so a restricted tracker bound to a public
+repository stays closed to anyone the gate refuses. `tracker.binding` reports what a
+namespace resolves to; unbound, refused and "no tracker" are the same answer
+(`kind: "none"`), so a refusal reveals nothing.
 
 ## Adding a tracker from the dashboard
 

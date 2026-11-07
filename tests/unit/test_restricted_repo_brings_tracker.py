@@ -42,12 +42,14 @@ def wired(monkeypatch: pytest.MonkeyPatch):
         return state["grants"].get(ns)
 
     monkeypatch.setattr(nc, "is_restricted", _isr)
-    monkeypatch.setattr(binding, "tracker_namespace_for", lambda ns: state["bindings"].get(ns, ""))
+    monkeypatch.setattr(
+        binding, "tracker_namespace_for", lambda org, ns: state["bindings"].get(ns, "")
+    )
     # The token scope walks every linked tracker
     monkeypatch.setattr(
         binding,
         "tracker_namespaces_for",
-        lambda ns: [state["bindings"][ns]] if state["bindings"].get(ns) else [],
+        lambda org, ns, **_: [state["bindings"][ns]] if state["bindings"].get(ns) else [],
     )
     monkeypatch.setattr(me_callers, "caller_role_on", _role)
     return state

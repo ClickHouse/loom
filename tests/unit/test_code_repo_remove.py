@@ -145,9 +145,13 @@ def plane(monkeypatch):
 
     import server.code.store.index as code_repo_mod
 
+    ch.states = []
+
     class _CodeRepo(code_repo_mod.CodeRepo):
-        async def set_state(self, *a: Any, **k: Any) -> None:
-            return None
+        async def set_state(
+            self, org: str, ns: str, key: str, value: str, detail: str = ""
+        ) -> None:
+            ch.states.append((org, ns, key, value))
 
     monkeypatch.setattr(code_repo_mod, "CodeRepo", _CodeRepo)
     import server.erasure.app.saga as erasure_mod
@@ -401,3 +405,55 @@ async def test_remove_refuses_without_the_lease_and_writes_nothing(
             CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
         )
     assert plane.registry_active and plane.inserted == [] and plane.sagas == []
+    assert plane.states == []  # a refused removal leaves the live repository's links
+
+
+@pytest.mark.asyncio
+async def test_remove_empties_the_tracker_links_before_it_deactivates_or_purges(
+    plane, monkeypatch
+) -> None:
+    """The purge is detached: a namespace of the same name registered again before it
+    runs must not follow the removed branch's source or links."""
+    from server.tracker.app import binding
+
+    async def _no_refresh(**_: Any) -> dict[Any, str]:
+        return {}
+
+    monkeypatch.setattr(binding, "refresh_overrides", _no_refresh)
+    import server.erasure.app.saga as erasure_mod
+    from server.knowledge.app import sources
+
+    def _links() -> list[tuple[str, str, str, str]]:
+        keys = (binding.OVERRIDE_KEY, binding.BRANCH_OF_KEY)
+        return sorted(r for r in plane.states if r[2] in keys)
+
+    seen: dict[str, list[Any]] = {}
+    real_sources, real_registry = (
+        sources.deactivate_namespace_sources,
+        retire.deactivate_registry_row,
+    )
+    real_saga = erasure_mod.run_erasure_detached
+
+    async def _sources(*a: Any, **k: Any) -> Any:
+        seen["sources"] = _links()
+        return await real_sources(*a, **k)
+
+    async def _registry(*a: Any, **k: Any) -> Any:
+        seen["registry"] = _links()
+        return await real_registry(*a, **k)
+
+    async def _saga(req: Any) -> Any:
+        seen["saga"] = _links()
+        return await real_saga(req)
+
+    monkeypatch.setattr(sources, "deactivate_namespace_sources", _sources)
+    monkeypatch.setattr(retire, "deactivate_registry_row", _registry)
+    monkeypatch.setattr(erasure_mod, "run_erasure_detached", _saga)
+    await admin.handle_code_repo_remove(
+        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+    )
+    emptied = [
+        (ORG, "code-widgets", binding.OVERRIDE_KEY, ""),
+        (ORG, "code-widgets", binding.BRANCH_OF_KEY, ""),
+    ]
+    assert seen == {"sources": emptied, "registry": emptied, "saga": emptied}

@@ -50,7 +50,7 @@ class _Source:
 
 @pytest.fixture
 def wired(monkeypatch):
-    monkeypatch.setattr(binding, "tracker_namespace_for", lambda ns: QA if ns == NS else "")
+    monkeypatch.setattr(binding, "tracker_namespace_for", lambda org, ns: QA if ns == NS else "")
     state: dict[str, Any] = {"restricted": False}
 
     async def _restricted(org, ns):

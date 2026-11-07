@@ -11,6 +11,16 @@ which one each result came from. The map is operator configuration —
 list — or a maintainer's links (`code.repo.set_source`), never a guess from
 names.
 
+Links are keyed by (org, code namespace). A code namespace name is derived
+from the repository and branch, so two orgs can hold the same one: a
+maintainer's link applies only in the org that set it. The operator's map
+applies only to the repositories the operator configured (`source ==
+"config"`): a self-service repository, or a namespace with no repository
+entry, whose name matches a glob gets nothing from the map. A branch added
+from an operator repository (`code.repo.add_branch`, its `qa_branch_of` row)
+reads that repository's links when read, so it follows the map as the
+repository does.
+
 The bound namespace is read inside a request the transport authorized
 against the CODE namespace, so the read runs the gate again for the current
 principal (`row_in_scope`): a restricted tracker namespace bound to a public code
@@ -24,6 +34,7 @@ import fnmatch
 import json
 import logging
 import time
+from collections.abc import Collection
 from typing import Any
 
 from server.settings import settings
@@ -73,15 +84,19 @@ def bindings() -> dict[str, str]:
 # A maintainer's binding, written by `code.repo.set_source` as
 # the `OVERRIDE_KEY` state row of the code namespace; "" clears the config's.
 OVERRIDE_KEY = "qa_binding"  # storage key
-_OVERRIDES: dict[str, str] = {}
+_OVERRIDES: dict[tuple[str, str], str] = {}
+# The repository a branch was added from (`code.repo.add_branch`), the
+# `qa_branch_of` state row of the branch's namespace.
+BRANCH_OF_KEY = "qa_branch_of"  # storage key
+_BRANCH_OF: dict[tuple[str, str], str] = {}
 _OVERRIDES_AT = 0.0
 
 
-async def refresh_overrides(*, force: bool = False) -> dict[str, str]:
-    """Re-read the `OVERRIDE_KEY` state rows when the snapshot is older than
-    `code_repos_refresh_seconds` (or `force`); never raises — a directory that
-    cannot be read keeps the last snapshot."""
-    global _OVERRIDES, _OVERRIDES_AT
+async def refresh_overrides(*, force: bool = False) -> dict[tuple[str, str], str]:
+    """Re-read the `OVERRIDE_KEY` and `BRANCH_OF_KEY` state rows when the snapshot is
+    older than `code_repos_refresh_seconds` (or `force`); never raises — a directory
+    that cannot be read keeps the last snapshot."""
+    global _OVERRIDES, _BRANCH_OF, _OVERRIDES_AT
     now = time.monotonic()
     if not force and now - _OVERRIDES_AT < float(settings.code_repos_refresh_seconds):
         return dict(_OVERRIDES)
@@ -91,35 +106,66 @@ async def refresh_overrides(*, force: bool = False) -> dict[str, str]:
 
         if getattr(get_client(), "_client", "absent") is None:
             return dict(_OVERRIDES)
-        _OVERRIDES = await code_index().state_values_for_key(OVERRIDE_KEY)
+        rows = await code_index().state_values_for_keys([OVERRIDE_KEY, BRANCH_OF_KEY])
+        _OVERRIDES, _BRANCH_OF = rows[OVERRIDE_KEY], rows[BRANCH_OF_KEY]
         _OVERRIDES_AT = now
     except Exception as e:  # noqa: BLE001 — keep the last snapshot
         log.warning("qa bindings: override refresh failed, keeping %d: %s", len(_OVERRIDES), e)
     return dict(_OVERRIDES)
 
 
-def override_for(code_namespace: str) -> str | None:
-    """The maintainer's binding for the namespace ("" = cleared), None when
-    no row exists."""
-    return _OVERRIDES.get(code_namespace)
+def override_for(org: str, code_namespace: str) -> str | None:
+    """The maintainer's binding for the org's namespace ("" = cleared), None
+    when no row exists."""
+    return _OVERRIDES.get((org, code_namespace))
 
 
-def reset_overrides_for_tests(rows: dict[str, str] | None = None) -> None:
-    global _OVERRIDES, _OVERRIDES_AT
+def reset_overrides_for_tests(
+    rows: dict[tuple[str, str], str] | None = None,
+    branches: dict[tuple[str, str], str] | None = None,
+) -> None:
+    global _OVERRIDES, _BRANCH_OF, _OVERRIDES_AT
     _OVERRIDES = dict(rows or {})
+    _BRANCH_OF = dict(branches or {})
     _OVERRIDES_AT = 0.0
 
 
-def tracker_namespaces_for(code_namespace: str) -> list[str]:
-    """Every tracker namespace linked to `code_namespace`, primary first: a
-    maintainer's links first ("" there clears the config's),
-    then the config's exact key, then the first glob that matches; [] when
-    none."""
-    over = override_for(code_namespace) if code_namespace else None
+def operator_repositories() -> frozenset[tuple[str, str]]:
+    """(org, namespace) of every repository the operator configured, the only
+    kind the deployment's map links. One read of the repository list: a caller
+    looking up many namespaces builds it once and passes it down."""
+    from server.code.domain.index import repos
+
+    return frozenset((c.org, c.namespace) for c in repos.configured_repos() if c.source == "config")
+
+
+def tracker_namespaces_for(
+    org: str, code_namespace: str, *, operator: Collection[tuple[str, str]] | None = None
+) -> list[str]:
+    """Every tracker namespace linked to the org's `code_namespace`, primary
+    first: a maintainer's links first ("" there clears the config's); then,
+    for a repository the operator configured (`operator`, read when not
+    given), the config's exact key, then the first glob that matches; for a
+    branch added from an operator repository, that repository's links, read
+    now; [] when none."""
+    if not code_namespace:
+        return []
+    over = override_for(org, code_namespace)
     if over is not None:
         return parse_binding(over)
+    source = _BRANCH_OF.get((org, code_namespace), "")
     m = bindings()
-    if not m or not code_namespace:
+    if not m and not source:
+        return []
+    if operator is None:
+        operator = operator_repositories()
+    if (org, code_namespace) not in operator:
+        # Issue and PR numbers are repository-wide: a branch reads its repository's
+        # trackers. Only an operator source is followed, one level.
+        if source and (org, source) in operator:
+            return tracker_namespaces_for(org, source, operator=operator)
+        return []
+    if not m:
         return []
     if code_namespace in m:
         return parse_binding(m[code_namespace])
@@ -129,19 +175,36 @@ def tracker_namespaces_for(code_namespace: str) -> list[str]:
     return []
 
 
-def tracker_namespace_for(code_namespace: str) -> str:
+def tracker_namespace_for(
+    org: str, code_namespace: str, *, operator: Collection[tuple[str, str]] | None = None
+) -> str:
     """The PRIMARY tracker namespace of `code_namespace` — the record whose
     numbers are the repository's — or "" (lookups by number
     read only it)."""
-    linked = tracker_namespaces_for(code_namespace)
+    linked = tracker_namespaces_for(org, code_namespace, operator=operator)
     return linked[0] if linked else ""
 
 
-def code_namespaces_linking(tracker_ns: str, code_namespaces: list[str]) -> list[str]:
-    """Of `code_namespaces`, those that link `tracker_ns` (primary or not) —
-    the reverse lookup the binding gate needs for a tracker read by the
-    readers of a repository it is linked to."""
-    return [c for c in code_namespaces if tracker_ns in tracker_namespaces_for(c)]
+def code_namespaces_linking(
+    org: str,
+    tracker_ns: str,
+    code_namespaces: list[str],
+    *,
+    operator: Collection[tuple[str, str]] | None = None,
+) -> list[str]:
+    """Of the org's `code_namespaces`, those that link `tracker_ns` (primary or
+    not) — the reverse lookup the binding gate needs for a tracker read by the
+    readers of a repository it is linked to. The operator's repositories are
+    read once for the whole list when `operator` is not given."""
+    if not code_namespaces:
+        return []
+    if operator is None:
+        operator = operator_repositories()
+    return [
+        c
+        for c in code_namespaces
+        if tracker_ns in tracker_namespaces_for(org, c, operator=operator)
+    ]
 
 
 async def _gated(org: str, code_namespace: str, ns: str, *, hides_answer: bool) -> bool:
@@ -175,13 +238,17 @@ async def authorized_tracker_namespaces(
     await refresh_overrides()
     return [
         ns
-        for ns in tracker_namespaces_for(code_namespace)
+        for ns in tracker_namespaces_for(org, code_namespace)
         if await _gated(org, code_namespace, ns, hides_answer=hides_answer)
     ]
 
 
 async def authorized_tracker_namespace(
-    org: str, code_namespace: str, *, hides_answer: bool = True
+    org: str,
+    code_namespace: str,
+    *,
+    hides_answer: bool = True,
+    operator: Collection[tuple[str, str]] | None = None,
 ) -> str:
     """`tracker_namespace_for` passed through the gate for the current principal;
     "" when unbound, unauthorized, or the check itself fails (closed).
@@ -193,9 +260,9 @@ async def authorized_tracker_namespace(
     naming the tracker namespace to see its public QA facts. A RESTRICTED QA
     namespace, or one the tracker plane does not know, keeps its
     own two-factor gate on the tracker namespace itself. `hides_answer`: see
-    `authz.row_in_scope`."""
+    `authz.row_in_scope`; `operator`: see `tracker_namespaces_for`."""
     await refresh_overrides()
-    ns = tracker_namespace_for(code_namespace)
+    ns = tracker_namespace_for(org, code_namespace, operator=operator)
     if not ns or not await _gated(org, code_namespace, ns, hides_answer=hides_answer):
         return ""
     return ns
@@ -231,7 +298,7 @@ async def resolve_binding(org: str, namespace: str) -> dict[str, Any]:
             "authorized": True,
             "templates": template_names(own.restricted),
         }
-    primary = tracker_namespace_for(namespace)
+    primary = tracker_namespace_for(org, namespace)
     target = tracker_namespace(org, primary)
     if target is None:  # unbound, or bound to a name the tracker plane does not serve
         return none

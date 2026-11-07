@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -32,6 +33,16 @@ def _wire_namespaces(
     monkeypatch.setattr(
         "server.tracker.app.binding.bindings",
         lambda: {"code-example-private*": PRIV, "code-clickhouse*": PUB},
+    )
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        json.dumps(
+            [
+                {"org": ORG, "namespace": n, "repo": "ClickHouse/ClickHouse"}
+                for n in ("code-clickhouse", "code-example-private")
+            ]
+        ),
     )
 
     async def _scope(org, n, role=None, *, hides_answer=True):
@@ -69,7 +80,7 @@ async def test_a_restricted_record_needs_its_own_grant(monkeypatch) -> None:
 async def test_requested_namespaces_are_resolved_and_gated_in_order(monkeypatch) -> None:
     _wire_namespaces(monkeypatch, readable={PRIV, PUB})
 
-    async def _bound(org, code_ns, *, hides_answer=True):
+    async def _bound(org, code_ns, *, hides_answer=True, **_):
         return PUB if code_ns.startswith("code-clickhouse") else ""
 
     monkeypatch.setattr("server.tracker.app.binding.authorized_tracker_namespace", _bound)
@@ -333,3 +344,89 @@ async def test_cancelling_a_fan_out_cancels_every_check_it_started(monkeypatch) 
         await asyncio.wait_for(hd._checked(inputs, None, 5), timeout=0.05)
     await asyncio.sleep(0)
     assert sorted(started) == sorted(cancelled) == sorted([PRIV, PUB])
+
+
+def _registry_entry(namespace: str) -> Any:
+    from server.code.domain.index.repos import RepoConfig
+
+    return RepoConfig(
+        org=ORG,
+        namespace=namespace,
+        repo="Someone/clickhouse",
+        git_dir="",
+        git_remote="",
+        git_branch="main",
+        path_prefixes=(),
+        github_token="",
+        source="registry",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_cleared_link_closes_the_record_the_glob_would_open(monkeypatch) -> None:
+    from server.tracker.app import binding
+
+    _wire_namespaces(monkeypatch, readable={PRIV}, code_readable={"code-clickhouse"})
+    binding.reset_overrides_for_tests({(ORG, "code-clickhouse"): ""})
+    try:
+        assert await fo.readable_tracker_namespaces(ORG, PRIV, [], 4) == [PRIV]
+    finally:
+        binding.reset_overrides_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_a_self_service_repository_matching_the_glob_opens_nothing(monkeypatch) -> None:
+    from server.code.domain.index import repos
+
+    _wire_namespaces(monkeypatch, readable={PRIV}, code_readable={"code-clickhouse"})
+    # the operator configured a branch the glob links; the readable repository of the
+    # same shape was added through self-service, so the glob does not reach it
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        json.dumps(
+            [{"org": ORG, "namespace": "code-clickhouse-26-8", "repo": "ClickHouse/ClickHouse"}]
+        ),
+    )
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_repos", [_registry_entry("code-clickhouse")])
+    assert await fo.readable_tracker_namespaces(ORG, PRIV, [], 4) == [PRIV]
+
+
+@pytest.mark.asyncio
+async def test_one_check_reads_configured_repos_once_for_every_tracker(monkeypatch) -> None:
+    from server.code.domain.index import repos
+
+    _wire_namespaces(
+        monkeypatch, readable=set(), code_readable={"code-clickhouse", "code-example-private"}
+    )
+    real = repos.configured_repos
+    calls: list[int] = []
+
+    def counted() -> list[Any]:
+        calls.append(1)
+        return real()
+
+    monkeypatch.setattr(repos, "configured_repos", counted)
+    assert await fo.readable_tracker_namespaces(ORG, "", [], 4) == [PUB]
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_requested_names_read_configured_repos_once(monkeypatch) -> None:
+    from server.code.domain.index import repos
+
+    _wire_namespaces(monkeypatch, readable={PRIV}, code_readable={"code-clickhouse"})
+    real = repos.configured_repos
+    calls: list[int] = []
+
+    def counted() -> list[Any]:
+        calls.append(1)
+        return real()
+
+    monkeypatch.setattr(repos, "configured_repos", counted)
+    got = await fo.readable_tracker_namespaces(
+        ORG, "", ["code-clickhouse", "code-example-private", PRIV], 4
+    )
+    assert got == [PUB, PRIV]
+    assert len(calls) == 1
