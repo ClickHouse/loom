@@ -36,7 +36,8 @@ def test_auth_env_carries_the_token_as_an_extraheader() -> None:
     ],
 )
 def test_the_token_is_sent_only_under_the_remote_owner(remote: str, key: str) -> None:
-    """A submodule URL of another owner on the same host gets no credential."""
+    """The header is keyed to the remote's owner, or to the whole host when the
+    remote has no owner path."""
     headers = [k for k in git_config(gitrepo.auth_env("tok", remote)) if k.endswith(".extraheader")]
     assert headers == [key]
 
