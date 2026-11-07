@@ -152,23 +152,21 @@ async def agent_claim(request: Request) -> Response:
         return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
     # The person signs in next: past the cutoff on every replica's clock, so the
     # token they get is not one it ends.
-    listing = asyncio.create_task(_listed_once_replicas_cut_off(org, namespace))
-    await revocation.wait_out(cutoff)
     if outcome == "taken":
-        listing.cancel()
-    else:
-        others = await listing
-    if outcome == "unconfirmed":
-        return _form(
-            namespace, _EARLIER_SUBMIT, 503, notice=_grants_notice(others), retry_after_s=60
-        )
-    if outcome == "taken":
+        await revocation.wait_out(cutoff)
         return _form(
             namespace,
             "This namespace was claimed a moment ago. If that was an earlier submit of this "
             "form, sign in with the namespace name and the password you chose; otherwise ask "
             "your Loom operator.",
             400,
+        )
+    others, _ = await asyncio.gather(
+        _listed_once_replicas_cut_off(org, namespace), revocation.wait_out(cutoff)
+    )
+    if outcome == "unconfirmed":
+        return _form(
+            namespace, _EARLIER_SUBMIT, 503, notice=_grants_notice(others), retry_after_s=60
         )
     return oauth.html_page(
         _TITLE,
@@ -335,9 +333,14 @@ async def _listed_once_replicas_cut_off(org: str, namespace: str) -> list[str] |
     revocations past the claim's cutoffs: until then a code session can still
     act on another replica. None when they could not be listed."""
     await asyncio.sleep(settings.jwt_revocation_cache_ttl_seconds)
+    return await _listed(org, namespace)
+
+
+async def _listed(org: str, namespace: str) -> list[str] | None:
+    """`_other_grants`, or None when they could not be listed."""
     try:
         return await _other_grants(org, namespace)
-    except Exception as e:  # noqa: BLE001 — the claim is done; the page still answers
+    except Exception as e:  # noqa: BLE001 — the claim is done; it answers without them
         log.warning("agent claim of %s/%s: listing its grants failed: %r", org, namespace, e)
         return None
 
@@ -369,11 +372,7 @@ async def _audit(org: str, namespace: str, *, confirmed: bool = True) -> None:
     """Audit the claim with the grants others hold (None when they could not
     be listed), which it leaves for the claimer to review, and whether its
     write read back (`confirmed`)."""
-    others: list[str] | None = None
-    try:
-        others = await _other_grants(org, namespace)
-    except Exception as e:  # noqa: BLE001 — the claim is written; it is audited without them
-        log.warning("agent claim of %s/%s: listing its grants failed: %r", org, namespace, e)
+    others = await _listed(org, namespace)
     await audit.emit(  # never raises
         "auth.agent_claimed",
         org=org,

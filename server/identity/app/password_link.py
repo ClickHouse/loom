@@ -32,7 +32,6 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-
 # The SSO accounts (no password) naming an email, active, in one org.
 _SSO_ACCOUNTS = """
     SELECT org, namespace FROM loom.namespaces FINAL
