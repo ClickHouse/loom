@@ -31,7 +31,7 @@ MAX_RECORD_CHARS = 8 << 20  # not a setting: a bound on hostile input
 _LINE = re.compile(rf"[^\r\n]{{0,{MAX_RECORD_CHARS + 1}}}(?:\r\n|\r|\n)?")
 _SNIFF_CHARS = 64 * 1024
 # The sniffer's quote guess runs regexes that backtrack quadratically on a sample with an
-# opening quote it never closes (`,"a` repeated: 16 s on 64 KB), so it reads only this much.
+# opening quote it never closes (`,"a` repeated: seconds on 64 KiB), so it reads only this much.
 _QUOTE_SNIFF_CHARS = 4 * 1024
 _MAX_NUMBER_CHARS = 40
 _DELIMITERS = ",;\t|"
