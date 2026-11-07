@@ -18,10 +18,8 @@ sys.path.insert(0, str(ROOT))
 from tests.integration._resources import minted_identity  # noqa: E402
 
 
-def _post(url: str, path: str, body: dict, token: str | None = None) -> httpx.Response:
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+def _post(url: str, path: str, body: dict, token: str) -> httpx.Response:
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
     with httpx.Client(base_url=url, timeout=8.0) as c:
         return c.post(path, json=body, headers=headers)
 
