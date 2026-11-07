@@ -422,12 +422,6 @@ def _auth_problems(settings: Any) -> list[Problem]:
     return []
 
 
-def _weak_signing_key() -> bool:
-    from server.auth.keyring import root_is_weak, weak_gateway_kids
-
-    return root_is_weak() or bool(weak_gateway_kids())
-
-
 def _exposure_problems(settings: Any) -> list[Problem]:
     """A server others can reach (non-loopback LOOM_BIND_HOST) without its
     safeguards, and forwarded-header or CORS settings that trust everyone.
@@ -479,13 +473,16 @@ def _exposure_problems(settings: Any) -> list[Problem]:
                 "Set LOOM_MCP_AUTH_MODE=required or bind 127.0.0.1.",
             )
         )
-    if reachable and _weak_signing_key():
+    from server.auth.keyring import weak_keys
+
+    weak = weak_keys(settings) if reachable else []
+    if weak:
         out.append(
             Problem(
                 "insecure_bind_weak_secret",
                 severity,
-                "LOOM_JWT_SECRET or a key in LOOM_JWT_PUBLIC_KEYS_JSON is below the minimum "
-                f"key size on a non-loopback bind (LOOM_BIND_HOST={settings.bind_host}).",
+                f"{', '.join(weak)} below the minimum key size on a non-loopback bind "
+                f"(LOOM_BIND_HOST={settings.bind_host}).",
                 "Use a random secret of 32 or more bytes (`openssl rand -hex 32`) and RSA "
                 "keys of 2048 bits or more, or bind 127.0.0.1.",
             )

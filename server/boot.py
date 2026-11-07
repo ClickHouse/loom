@@ -85,14 +85,14 @@ def require_safe_bind(
     dev_secret: bool,
     allow_insecure: bool,
     mcp_open: bool,
-    weak_secret: bool,
+    weak_keys: list[str],
 ) -> None:
     """Refuse to start on a non-loopback LOOM_BIND_HOST without
     LOOM_PUBLIC_BASE_URL (generated URLs would otherwise echo a request's Host),
     or, unless LOOM_ALLOW_INSECURE=1, with auth off, MCP open (`mcp_open`: every
     tool runs with no principal), the dev signing secret, or a weak root key
-    (`weak_secret`: the root secret or a gateway key below the minimum key size of
-    RFC 7518, an HMAC secret under 32 bytes or an RSA key under 2048 bits).
+    (`weak_keys`: the root secret, gateway or end-user keys below the minimum key size
+    of RFC 7518, an HMAC secret under 32 bytes or an RSA key under 2048 bits).
     A loopback bind is not checked."""
     from server.auth.public_url import is_loopback_host
 
@@ -124,13 +124,13 @@ def require_safe_bind(
             "which anyone can mint accepted tokens with. Set a private LOOM_JWT_SECRET, bind "
             "127.0.0.1, or set LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
         )
-    if weak_secret:
+    if weak_keys:
         raise InsecureBindRefused(
-            f"refusing to start: {where} and LOOM_JWT_SECRET or a key in "
-            "LOOM_JWT_PUBLIC_KEYS_JSON is below the minimum key size (an HMAC secret "
-            "shorter than 32 bytes or an RSA key under 2048 bits). Use 32 or more random "
-            "bytes or 2048-bit keys, bind 127.0.0.1, or set "
-            "LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
+            f"refusing to start: {where} and {', '.join(weak_keys)} "
+            f"{'is' if len(weak_keys) == 1 else 'are'} below the minimum key size (an HMAC "
+            "secret shorter than 32 bytes or an RSA key under 2048 bits). Use 32 or more "
+            "random bytes or 2048-bit keys, bind 127.0.0.1, or set LOOM_ALLOW_INSECURE=1 if "
+            "the port is not actually reachable."
         )
 
 

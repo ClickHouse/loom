@@ -4816,7 +4816,7 @@ class RuntimeSettings(BaseModel):
     # it; in a container (which listens on all its interfaces) it is the
     # address the port is published on. Anything but loopback turns on the
     # startup checks: public_base_url set, and no auth-off, MCP open mode, dev
-    # secret or weak root key.
+    # secret or weak root, gateway or end-user key.
     bind_host: str = "127.0.0.1"
     # Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto
     # headers uvicorn applies; any other peer's are ignored. "*" trusts all.
@@ -4824,7 +4824,7 @@ class RuntimeSettings(BaseModel):
     # balancer's address for the sign-in and sign-up limits.
     trusted_proxies: str = "127.0.0.1"
     # True lets a non-loopback bind start with auth off, MCP open mode, the dev
-    # signing secret or a weak root key. Only for a port others cannot reach.
+    # signing secret or a weak signing key. Only for a port others cannot reach.
     allow_insecure: bool = False
 
     def workers_mode(self) -> str:

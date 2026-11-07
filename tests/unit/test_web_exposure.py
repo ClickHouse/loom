@@ -30,7 +30,7 @@ def _bind(**over: object) -> None:
         "dev_secret": False,
         "allow_insecure": False,
         "mcp_open": False,
-        "weak_secret": False,
+        "weak_keys": [],
     }
     kw.update(over)
     require_safe_bind(**kw)  # type: ignore[arg-type]
@@ -62,8 +62,10 @@ def test_mcp_open_on_a_reachable_bind_is_refused() -> None:
 
 def test_a_weak_root_key_on_a_reachable_bind_is_refused() -> None:
     with pytest.raises(InsecureBindRefused, match="below the minimum key size"):
-        _bind(weak_secret=True)
-    _bind(weak_secret=True, allow_insecure=True)
+        _bind(weak_keys=["LOOM_JWT_SECRET"])
+    _bind(weak_keys=["LOOM_JWT_SECRET"], allow_insecure=True)
+    with pytest.raises(InsecureBindRefused, match="gateway:gw-old is below"):
+        _bind(weak_keys=["gateway:gw-old"])
 
 
 def _rsa_pem(bits: int) -> str:
@@ -116,9 +118,43 @@ def test_a_gateway_key_under_2048_bits_is_weak(monkeypatch: pytest.MonkeyPatch) 
             serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
         ).decode()
 
-    keys = {"gw-old": public(1024), "gw": public(2048), "broken": "not a key"}
+    def openssh(bits: int) -> str:
+        key = rsa.generate_private_key(public_exponent=65537, key_size=bits).public_key()
+        return key.public_bytes(
+            serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH
+        ).decode()
+
+    keys = {
+        "gw-old": public(1024),
+        "gw-ssh": openssh(1024),  # PyJWT verifies with an OpenSSH key too
+        "gw": public(2048),
+        "broken": "not a key",
+    }
+    monkeypatch.setattr(settings, "jwt_secret", "s" * 48)
     monkeypatch.setattr(settings, "jwt_public_keys_json", json.dumps(keys))
-    assert keyring.weak_gateway_kids() == ["gw-old"]
+    assert keyring.weak_keys() == ["gateway:gw-old", "gateway:gw-ssh"]
+
+
+def test_an_end_user_issuers_inline_key_under_2048_bits_is_weak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from server.auth import keyring
+
+    pem = (
+        rsa.generate_private_key(public_exponent=65537, key_size=1024)
+        .public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode()
+    )
+    issuers = {"https://app.example": {"orgs": ["acme"], "keys": {"k1": pem}}}
+    monkeypatch.setattr(settings, "jwt_secret", "s" * 48)
+    monkeypatch.setattr(settings, "jwt_end_user_issuers_json", json.dumps(issuers))
+    assert keyring.weak_keys() == ["end_user:https://app.example:k1"]
 
 
 def test_health_reports_mcp_open_and_a_weak_root_key_on_a_reachable_bind(
@@ -135,6 +171,13 @@ def test_health_reports_mcp_open_and_a_weak_root_key_on_a_reachable_bind(
     found = {p.code: p.severity for p in problems._exposure_problems(settings)}
     assert found["insecure_bind_mcp_open"] == "warn"
     assert found["insecure_bind_weak_secret"] == "warn"
+    weak = next(p for p in problems._exposure_problems(settings) if p.code.endswith("secret"))
+    assert weak.message.startswith("LOOM_JWT_SECRET below")
+    # a reachable bind with a strong secret and MCP required reports neither
+    monkeypatch.setattr(settings, "mcp_auth_mode", "required")
+    monkeypatch.setattr(settings, "jwt_secret", "s" * 48)
+    found = {p.code for p in problems._exposure_problems(settings)}
+    assert not found & {"insecure_bind_mcp_open", "insecure_bind_weak_secret"}
     monkeypatch.setattr(settings, "bind_host", "127.0.0.1")
     found = {p.code for p in problems._exposure_problems(settings)}
     assert not found & {"insecure_bind_mcp_open", "insecure_bind_weak_secret"}

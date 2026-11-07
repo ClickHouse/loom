@@ -115,7 +115,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         auth_required=settings.auth_actually_required(),
         dev_secret=settings.jwt_secret_is_dev_default(),
     )
-    from server.auth.keyring import root_is_weak, weak_gateway_kids
+    from server.auth.keyring import weak_keys
     from server.auth.scim_routes import require_scim_settings
 
     require_scim_settings(
@@ -128,7 +128,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         dev_secret=settings.jwt_secret_is_dev_default(),
         allow_insecure=settings.allow_insecure,
         mcp_open=settings.mcp_auth_mode == "open",
-        weak_secret=root_is_weak() or bool(weak_gateway_kids()),
+        weak_keys=weak_keys(),
     )
 
     from server.core.object_store import require_client

@@ -255,11 +255,11 @@ MIN_HMAC_ROOT_BYTES = 32
 MIN_RSA_ROOT_BITS = 2048
 
 
-def root_is_weak() -> bool:
+def root_is_weak(cfg: Any = None) -> bool:
     """Whether LOOM_JWT_SECRET is below the minimum key size: an HMAC secret under 32
     bytes or an RSA key under 2048 bits."""
-    secret = str(settings.jwt_secret)
-    if root_is_hmac_key():
+    secret = str((cfg or settings).jwt_secret)
+    if _hmac_usable(secret):
         return len(secret.encode()) < MIN_HMAC_ROOT_BYTES
     key = _pem_root(secret)
     if key is None:
@@ -272,21 +272,38 @@ def root_is_weak() -> bool:
     return public.key_size < MIN_RSA_ROOT_BITS
 
 
-def weak_gateway_kids() -> list[str]:
-    """The kids of `jwt_public_keys_json` whose RSA key is under 2048 bits: each
-    verifies tokens as the root does, and its modulus is public."""
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
+def weak_keys(cfg: Any = None) -> list[str]:
+    """What signs or verifies tokens below the minimum key size: `LOOM_JWT_SECRET`, a
+    gateway key (`gateway:<kid>`) or an end-user issuer's inline key
+    (`end_user:<issuer>:<kid>`). A verifying RSA key's modulus is public, so one under
+    2048 bits is as weak as a short root. Each key is loaded as the verifier loads it
+    (PEM or OpenSSH); one it cannot load verifies nothing. Keys fetched from a JWKS URL
+    arrive at runtime and are not seen here."""
+    cfg = cfg or settings
+    out = ["LOOM_JWT_SECRET"] if root_is_weak(cfg) else []
+    for kid, pem in sorted(cfg.jwt_public_key_map().items()):
+        if _rsa_bits(pem) < MIN_RSA_ROOT_BITS:
+            out.append(f"gateway:{kid}")
+    for issuer, spec in sorted(cfg.end_user_issuers().items()):
+        for kid, pem in sorted(spec.keys.items()):
+            if _rsa_bits(pem) < MIN_RSA_ROOT_BITS:
+                out.append(f"end_user:{issuer}:{kid}")
+    return out
 
-    weak = []
-    for kid, pem in settings.jwt_public_key_map().items():
-        try:
-            key = serialization.load_pem_public_key(pem.strip().encode())
-        except (ValueError, TypeError):
-            continue  # a key that does not parse verifies nothing
-        if isinstance(key, rsa.RSAPublicKey) and key.key_size < MIN_RSA_ROOT_BITS:
-            weak.append(kid)
-    return sorted(weak)
+
+def _rsa_bits(public_key: str) -> int:
+    """The bits of an RSA verifying key as PyJWT loads it; no limit for anything else."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jwt.algorithms import RSAAlgorithm
+    from jwt.exceptions import InvalidKeyError
+
+    try:
+        key = RSAAlgorithm(RSAAlgorithm.SHA256).prepare_key(public_key.strip())
+    except (InvalidKeyError, ValueError, TypeError):
+        return MIN_RSA_ROOT_BITS  # not a key PyJWT verifies with
+    if isinstance(key, rsa.RSAPrivateKey):
+        key = key.public_key()
+    return key.key_size if isinstance(key, rsa.RSAPublicKey) else MIN_RSA_ROOT_BITS
 
 
 def _keys(view: _View) -> dict[str, SigningKey]:
