@@ -20,6 +20,8 @@ import socket
 import sys
 import threading
 import time
+import types
+import unittest.mock
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
@@ -560,9 +562,15 @@ def _process_state_left_as_found(request: pytest.FixtureRequest) -> Iterator[Non
 
 
 def _is_test_double(obj: object) -> bool:
-    """A client a test built: a class defined under tests/, or a mock."""
-    module = type(obj).__module__
-    return module.startswith(("tests.", "unittest.mock")) or module.startswith("test_")
+    """A mock (an autospec'd function included), an instance of a class defined under
+    tests/, or a function or class defined under tests/ (a lambda included). An
+    instance's `__module__` is its class's."""
+    if isinstance(obj, types.FunctionType) and isinstance(
+        obj.__dict__.get("mock"), unittest.mock.NonCallableMock
+    ):
+        return True  # create_autospec(fn) returns a plain function carrying its mock
+    module = getattr(obj, "__module__", None)
+    return isinstance(module, str) and module.startswith(("tests.", "test_", "unittest.mock"))
 
 
 @pytest.fixture(autouse=True)
@@ -610,6 +618,66 @@ def _provider_clients_left_as_found() -> Iterator[None]:
             + ", ".join(left)
             + " — patch get_llm_client / get_embedder with monkeypatch instead"
         )
+
+
+def _is_repo_file(path: str, *, tests: bool) -> bool:
+    """Whether `path` is a repository file outside a dot directory such as .venv, and,
+    unless `tests`, outside tests/ (whose fakes are the doubles)."""
+    resolved = Path(path).resolve()
+    if not resolved.is_relative_to(_REPO):
+        return False
+    top = resolved.relative_to(_REPO).parts[0]
+    return not top.startswith(".") and (tests or top != "tests")
+
+
+def _source_modules_since(modules_before: set[str], *, tests: bool = False) -> list[str]:
+    """The repository modules (tests/ helpers too when `tests`) imported since
+    `modules_before`, skipping entries without a file: blocked imports (`None`), builtins
+    and namespace packages."""
+    return [
+        name
+        for name in sys.modules.keys() - modules_before
+        if (path := getattr(sys.modules.get(name), "__file__", None))
+        and _is_repo_file(path, tests=tests)
+    ]
+
+
+def _double_bound_at_import(modules_before: set[str]) -> bool:
+    """Whether a source module imported since `modules_before` holds a test double.
+
+    A module that runs `from pkg import Name` binds whatever `pkg.Name` is at that
+    moment. When its first import in the process happens while a test patches
+    `pkg.Name`, the module keeps the double after the patch ends, and every later
+    test that uses it sees the double (an `isinstance(x, Name)` raises TypeError).
+    """
+    return any(
+        _is_test_double(value)
+        for name in _source_modules_since(modules_before)
+        for value in vars(sys.modules[name]).values()
+    )
+
+
+@pytest.fixture(autouse=True)
+def _test_double_bound_at_import_dropped() -> Iterator[None]:
+    """After a test that left a test double bound in a source module it first imported, drop
+    every repository module first imported during the test, tests/ helpers included (one may
+    have bound a name from the poisoned module), from `sys.modules` and from its package, so
+    the next import binds the real names. Teardown runs after the test's own patches are
+    undone. A module first imported in a module-, class- or session-scoped fixture is
+    outside the window.
+    """
+    before = set(sys.modules)
+    yield
+    if not _double_bound_at_import(before):
+        return
+    for name in _source_modules_since(before, tests=True):
+        module = sys.modules.pop(name)
+        # `from package import leaf` returns the package attribute when it is set,
+        # without importing again.
+        package, _, leaf = name.rpartition(".")
+        parent = sys.modules.get(package)
+        if parent is not None and getattr(parent, leaf, None) is module:
+            delattr(parent, leaf)
 
 
 @pytest.fixture(autouse=True)
