@@ -109,10 +109,11 @@ files name `X.Y.Z`, so the candidate's server already reports `X.Y.Z`; a later o
 goes on a later commit of `main`. The final `vX.Y.Z` tag goes on the last candidate's commit after
 the soak. The final's bundle keeps the ClickHouse release that candidate's bundle names (the newest
 candidate on that commit with a published bundle); its images are built again from the same
-commit, uncached, so an OS package may be newer than in the soaked image. A candidate tag run after
-its final is refused. One numbered below the final's candidate, such as an older candidate
-dispatched to publish its SDKs, has nothing to run, and its tag stays. One numbered above it is a
-stray: it also fails the final's later runs until it is deleted. The chart's `appVersion` names
+commit, uncached, so an OS package may be newer than in the soaked image. A run of a candidate tag
+after its final is refused. One on the final's commit is told to run the final. One numbered below
+the final's candidate, such as an older candidate dispatched to publish its SDKs, has nothing to
+run, and its tag stays. Any other is a stray: it also fails the final's later runs until it is
+deleted. The chart's `appVersion` names
 `X.Y.Z` too, so a soak on Kubernetes sets `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`.
 
 Only the highest final version becomes the repository's Latest release (`releases/latest` serves the

@@ -1108,6 +1108,19 @@ def test_a_candidate_numbered_below_the_finals_is_not_called_released(tmp_path: 
     assert prepare.check_tag("1.2.0", tmp_path) is None
 
 
+def test_a_candidate_is_compared_with_the_newest_on_the_finals_commit(tmp_path: Path) -> None:
+    """rc.2, rc.4 and the final on one commit; rc.3 is below rc.4, so it stays."""
+    git_repo.git(tmp_path, "init", "-q")
+    _commit(tmp_path, "rc.3")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.3")
+    _commit(tmp_path, "rc.2 and rc.4")
+    for tag in ("v1.2.0-rc.2", "v1.2.0-rc.4", "v1.2.0"):
+        git_repo.git(tmp_path, "tag", "-a", "-m", tag, tag)
+    git_repo.git(tmp_path, "checkout", "-q", "v1.2.0-rc.3")
+    error = prepare.check_tag("1.2.0-rc.3", tmp_path)
+    assert error == "v1.2.0-rc.3 is numbered below v1.2.0-rc.4, v1.2.0's candidate: nothing to run"
+
+
 def test_either_candidate_on_the_finals_commit_is_told_to_run_the_final(tmp_path: Path) -> None:
     git_repo.git(tmp_path, "init", "-q")
     _commit(tmp_path, "rc.2")

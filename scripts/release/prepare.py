@@ -241,7 +241,7 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
 
     Once `vX.Y.Z` is out, a candidate of it is refused three ways: on the final's
     commit (run the final), numbered below the candidate there (nothing to run,
-    and its tag stays), or above it (a stray, to delete). A final `vX.Y.Z` is
+    and its tag stays), or any other (a stray, to delete). A final `vX.Y.Z` is
     refused on another commit than its last candidate."""
     final = final_of(tag_version)
     if tag_version != final:  # a candidate, X.Y.Z-rc.N
@@ -256,7 +256,7 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
         soaked = candidates_at(final, final_sha, root)
         if soaked and _candidate_number(tag_version) < _candidate_number(soaked[0]):
             # Most likely soaked before the final's candidate; git cannot tell
-            # when a tag was pushed, so it is never told to go.
+            # when a tag was pushed, so its tag is kept.
             return (
                 f"v{tag_version} is numbered below {soaked[0]}, v{final}'s candidate:"
                 " nothing to run"
