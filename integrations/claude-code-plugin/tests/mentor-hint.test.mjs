@@ -1,4 +1,5 @@
 // The mentor-hint PostToolUse hook — lift a tool result's `hint` into context, once per code.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decideShow, extractHint, hintPayload, isLoomTool, renderHint } from "../lib/mentor-hint.mjs";

@@ -24,6 +24,7 @@ import {
   redactHead,
   resolveToken,
 } from "./loom-client.mjs";
+import { recalledDataBlock } from "./prompt-recall.mjs";
 
 export const MAX_EVENTS = 3000;
 export const TEXT_MAX = 1500;
@@ -306,8 +307,10 @@ export function briefBody(scope, { sessionId, branch, head, trigger, events, cur
   return body;
 }
 
-/** One-line pointer for the SessionStart primer: the briefs this project
- *  has, so the session knows it can resume without reading them all. */
+/** Pointer for the SessionStart primer: the briefs this project has, so the
+ *  session knows it can resume without reading them all. In a shared namespace
+ *  the list holds other members' briefs, so the keys and goals go inside a
+ *  recalled-data block. */
 export function primerLine(briefs, { max = 3 } = {}) {
   const items = (briefs || []).slice(0, max);
   if (!items.length) return "";
@@ -317,7 +320,7 @@ export function primerLine(briefs, { max = 3 } = {}) {
     return `${b.brief_key} (rev ${b.revision}, ${age}${goal ? `: ${goal}` : ""})`;
   });
   return (
-    `Saved session briefs for this project: ${rows.join("; ")}. ` +
+    `Saved session briefs for this project:\n${recalledDataBlock(rows.join("\n"))}\n` +
     "To resume one, run the loom-session skill (or session.brief_get) — a brief is where earlier work stood, not a source of facts."
   );
 }

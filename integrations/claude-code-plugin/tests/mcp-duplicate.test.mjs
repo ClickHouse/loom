@@ -1,5 +1,6 @@
 // A user-scope entry duplicating the plugin's mount is named
 // in the primer once a day.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

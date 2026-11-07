@@ -7,8 +7,6 @@
 //
 // Usage: node loom-flush.mjs <job-file.json>
 
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
-
 import { runFlushJob } from "../lib/flush-job.mjs";
 import {
   postBounded,
@@ -19,22 +17,19 @@ import {
   scheduleExit,
 } from "../lib/loom-client.mjs";
 import { recordingFromAppends, writeRecording } from "../lib/recording.mjs";
+import { readPrivateFile, removeFile, writeCursor } from "../lib/tmp-state.mjs";
 
+// The cursor and the job file sit in a shared tmp dir: read and write them
+// through the private-file helpers, which refuse a planted symlink or file.
 const cursor = {
   read(path) {
     try {
-      return readFileSync(path, "utf8");
+      return readPrivateFile(path);
     } catch {
       return "";
     }
   },
-  write(path, n) {
-    try {
-      writeFileSync(path, String(n));
-    } catch {
-      /* best-effort */
-    }
-  },
+  write: writeCursor,
 };
 
 async function main() {
@@ -45,7 +40,7 @@ async function main() {
   scheduleExit(0, 2 * requestTimeoutMs() + 5000);
   let job = null;
   try {
-    job = JSON.parse(readFileSync(jobPath, "utf8"));
+    job = JSON.parse(readPrivateFile(jobPath));
   } catch {
     /* unreadable or garbage: nothing to deliver */
   }
@@ -64,11 +59,7 @@ async function main() {
       },
     });
   }
-  try {
-    unlinkSync(jobPath);
-  } catch {
-    /* best-effort */
-  }
+  removeFile(jobPath);
 }
 
 runHookMain(main);

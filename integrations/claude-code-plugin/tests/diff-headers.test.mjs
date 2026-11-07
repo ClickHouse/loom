@@ -2,6 +2,7 @@
 // the hunk ranges, with only the function name the server reads from a hunk's
 // context. No changed line is sent. tests/unit/test_hook_diff_headers.py checks
 // the result against the server's own parser.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { diffHeaders, hunkFunctionName } from "../lib/loom-client.mjs";

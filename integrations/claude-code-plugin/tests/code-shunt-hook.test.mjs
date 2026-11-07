@@ -2,6 +2,7 @@
 // the developer chose local-first. A throwaway git checkout, the repo entry
 // seeded in the shared cache (no code.repos call), the hook run as Claude
 // Code runs it, and a local server only where a call is expected.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -11,6 +12,12 @@ import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { cachePathFor } from "../lib/repo-scope.mjs";
+import { batchKind } from "../lib/shunt-ledger.mjs";
+import { sessionStatePath, tmpStatePath } from "../lib/tmp-state.mjs";
+
+// The hook's per-user decision log.
+const logPath = (tmp) =>
+  tmpStatePath("shunt-log", typeof process.getuid === "function" ? process.getuid() : "", { ext: ".log", tmp });
 
 const HOOK = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "hooks", "loom-code-shunt.mjs");
 const BIG = Array.from({ length: 900 }, (_, i) => `int f${i}() { return ${i}; }`).join("\n") + "\n";
@@ -77,7 +84,7 @@ function runHook(payload, { tmp, url = "http://127.0.0.1:9", env = {} }) {
     child.on("close", () => {
       let log = "";
       try {
-        log = fs.readFileSync(path.join(tmp, "loom-shunt.log"), "utf8");
+        log = fs.readFileSync(logPath(tmp), "utf8");
       } catch {
         /* no decision logged */
       }
@@ -251,4 +258,192 @@ test("a chained Bash read is judged segment by segment; the first deny wins", as
   const p = await runHook(bash("cd src && sed -n '1,40p' a.cpp; echo ---"), { tmp: seed(dir) });
   assert.equal(p.deny, null, "a ranged read passes (no read cap set)");
   assert.match(p.log, /\tpass\tBash:sed\t.*targeted_span\tsrc\/a\.cpp\t1\t40/);
+});
+
+// The hook's pending batch for the seeded repository (o/code-x), the server at
+// `url`, runHook's token and a session.
+const pendingPath = (tmp, url, session = "e2e", namespace = "code-x") =>
+  sessionStatePath(batchKind({ serverUrl: url, token: "t", org: "o", namespace }), session, { ext: ".log", tmp });
+const reporting = { LOOM_SHUNT_REPORT: "on", LOOM_SHUNT_READ_CAP: "200" };
+const rangedRead = (dir) => ({
+  ...readOf(dir, "src/a.cpp"),
+  tool_input: { file_path: path.join(dir, "src/a.cpp"), offset: 1, limit: 500 },
+});
+const settle = () => new Promise((r) => setTimeout(r, 200));
+const outcomes = (seen) => seen.filter((s) => s.url === "/v1/code.outcome");
+const plantedBatch = "1\thit\tRead\t999\t\t\tplanted.cpp\t1\t2\n";
+const carriesPlanted = (seen) => outcomes(seen).some((s) => JSON.stringify(s.body).includes("planted.cpp"));
+const posix = process.platform !== "win32";
+
+test("a deny claims the pending batch, posts it as code.outcome and removes it", async () => {
+  const { dir } = checkout({ "src/a.cpp": BIG });
+  const tmp = seed(dir);
+  await withServer({}, async (url, seen) => {
+    const r = await runHook(readOf(dir, "src/a.cpp"), { tmp, url, env: reporting });
+    assert.ok(r.deny);
+    await settle();
+    assert.ok(outcomes(seen).length >= 1);
+    assert.equal(outcomes(seen)[0].body.action, "shunt_hit");
+    assert.equal(fs.existsSync(pendingPath(tmp, url)), false);
+  });
+  assert.deepEqual(
+    fs.readdirSync(tmp).filter((n) => n.startsWith("loom-shunt-claim-")),
+    [],
+    "the claimed batch is removed",
+  );
+  assert.match(fs.readFileSync(logPath(tmp), "utf8"), /\thit\tRead\t/);
+});
+
+test("the read cap denies a file twice per session, then passes it as cap_spent", async () => {
+  const { dir } = checkout({ "src/a.cpp": BIG });
+  const tmp = seed(dir);
+  const env = { LOOM_SHUNT_READ_CAP: "200" };
+  for (let i = 0; i < 2; i++) assert.ok((await runHook(rangedRead(dir), { tmp, env })).deny, `denial ${i + 1}`);
+  const third = await runHook(rangedRead(dir), { tmp, env });
+  assert.equal(third.deny, null);
+  assert.match(third.log, /\tpass\tRead\t\d+\t\tcap_spent\t/);
+});
+
+test("symlinks planted at the shunt's tmp files are not followed and cannot lock the agent out", {
+  skip: !posix,
+}, async () => {
+  const { dir } = checkout({ "src/a.cpp": BIG });
+  const tmp = seed(dir);
+  const planted = {};
+  const victims = {};
+  await withServer({}, async (url, seen) => {
+    Object.assign(planted, {
+      log: logPath(tmp),
+      pending: pendingPath(tmp, url),
+      cap: sessionStatePath("shunt-cap", "e2e", { tmp }),
+    });
+    for (const [name, at] of Object.entries(planted)) {
+      victims[name] = path.join(tmp, `victim-${name}`);
+      // A pending batch someone else planted: it must never reach code.outcome.
+      fs.writeFileSync(victims[name], name === "pending" ? plantedBatch : "keep");
+      fs.symlinkSync(victims[name], at);
+    }
+    assert.ok((await runHook(readOf(dir, "src/a.cpp"), { tmp, url, env: reporting })).deny);
+    // The cap file cannot be kept, so the over-cap read passes instead of being denied.
+    const ranged = await runHook(rangedRead(dir), { tmp, url, env: reporting });
+    assert.equal(ranged.deny, null);
+    await settle();
+    assert.equal(carriesPlanted(seen), false, "the planted batch is never posted");
+  });
+  for (const [name, at] of Object.entries(planted)) {
+    assert.equal(fs.readFileSync(victims[name], "utf8"), name === "pending" ? plantedBatch : "keep", name);
+    if (name !== "pending") assert.ok(fs.lstatSync(at).isSymbolicLink(), name);
+  }
+});
+
+test("a hard link planted at the pending batch is neither posted nor truncated", { skip: !posix }, async () => {
+  const { dir } = checkout({ "src/a.cpp": BIG });
+  const tmp = seed(dir);
+  const victim = path.join(tmp, "victim-log");
+  fs.writeFileSync(victim, plantedBatch);
+  await withServer({}, async (url, seen) => {
+    fs.linkSync(victim, pendingPath(tmp, url));
+    for (let i = 0; i < 2; i++) assert.ok((await runHook(readOf(dir, "src/a.cpp"), { tmp, url, env: reporting })).deny);
+    await settle();
+    assert.equal(carriesPlanted(seen), false);
+  });
+  assert.equal(fs.readFileSync(victim, "utf8"), plantedBatch);
+});
+
+test("a flush also posts the batch another session left behind", async () => {
+  const { dir } = checkout({ "src/a.cpp": BIG });
+  fs.appendFileSync(path.join(dir, "src/a.cpp"), "// mine\n");
+  const { dir: other } = checkout({ "src/a.cpp": BIG });
+  const tmp = seed(dir);
+  fs.writeFileSync(cachePathFor(other, tmp), fs.readFileSync(cachePathFor(dir, tmp)));
+  await withServer({}, async (url, seen) => {
+    const a = await runHook({ ...readOf(dir, "src/a.cpp"), session_id: "A" }, { tmp, url, env: reporting });
+    assert.equal(a.deny, null, "a modified file passes; nothing is flushed yet");
+    await settle();
+    assert.equal(outcomes(seen).length, 0);
+    assert.ok(fs.existsSync(pendingPath(tmp, url, "A")));
+    const b = await runHook({ ...readOf(other, "src/a.cpp"), session_id: "B" }, { tmp, url, env: reporting });
+    assert.ok(b.deny);
+    await settle();
+    const passes = outcomes(seen).filter((o) => o.body.action === "shunt_pass");
+    assert.deepEqual(
+      passes.map((o) => o.body.source),
+      ["modified"],
+      "session A's pass is posted by session B's flush",
+    );
+    assert.equal(fs.existsSync(pendingPath(tmp, url, "A")), false);
+  });
+});
+
+test("a flush leaves another reporting scope's batch alone", async () => {
+  const { dir } = checkout({ "src/a.cpp": BIG });
+  const tmp = seed(dir);
+  await withServer({}, async (url, seen) => {
+    // Another repository's batch, and one this repository's lines would go to under another server.
+    const others = [pendingPath(tmp, url, "X", "code-other"), pendingPath(tmp, "http://127.0.0.1:9", "Y")];
+    for (const f of others) fs.writeFileSync(f, plantedBatch, { mode: 0o600 });
+    assert.ok((await runHook(readOf(dir, "src/a.cpp"), { tmp, url, env: reporting })).deny);
+    await settle();
+    assert.ok(outcomes(seen).length >= 1, "this scope's own batch is posted");
+    assert.equal(carriesPlanted(seen), false);
+    for (const f of others) assert.equal(fs.readFileSync(f, "utf8"), plantedBatch);
+  });
+});
+
+const plantCap = (tmp, session = "e2e") => {
+  const victim = path.join(tmp, "victim-cap");
+  fs.writeFileSync(victim, "keep");
+  fs.symlinkSync(victim, sessionStatePath("shunt-cap", session, { tmp }));
+  return victim;
+};
+
+test("a symbol grep whose budget cannot be written passes as budget_unrecorded", { skip: !posix }, async () => {
+  const { dir } = checkout({ "src/a.h": "bool renameTempPartAndAdd(\n", "src/a.cpp": "// def\n" });
+  const tmp = seed(dir);
+  const victim = plantCap(tmp);
+  const cmd = {
+    tool_name: "Bash",
+    tool_input: { command: "grep -n renameTempPartAndAdd src/a.cpp src/a.h" },
+    cwd: dir,
+    session_id: "e2e",
+  };
+  const r = await withServer({}, (url) => runHook(cmd, { tmp, url }));
+  assert.equal(r.deny, null);
+  assert.match(r.log, /\tpass\tBash:grep\t\d+\t\tbudget_unrecorded\t/);
+  assert.equal(fs.readFileSync(victim, "utf8"), "keep");
+});
+
+test("an answered tracker search whose budget cannot be written passes as budget_unrecorded", {
+  skip: !posix,
+}, async () => {
+  const { dir } = checkout({ "src/a.cpp": "// x\n" });
+  const tmp = seed(dir);
+  const victim = plantCap(tmp);
+  const cmd = {
+    tool_name: "Bash",
+    tool_input: { command: 'gh issue list --search "merge hangs"' },
+    cwd: dir,
+    session_id: "e2e",
+  };
+  const answers = { "/v1/tracker.duplicate_check": { verdict: "none", epistemic: "calibrated", items: [] } };
+  const r = await withServer(answers, async (url, seen) => {
+    const out = await runHook(cmd, { tmp, url });
+    assert.ok(
+      seen.some((x) => x.url === "/v1/tracker.duplicate_check"),
+      "the record was asked",
+    );
+    return out;
+  });
+  assert.equal(r.deny, null);
+  assert.match(r.log, /\tpass\tBash:gh\t\d+\t\tbudget_unrecorded\t/);
+  assert.equal(fs.readFileSync(victim, "utf8"), "keep");
+});
+
+test("an over-cap read whose budget cannot be written passes as budget_unrecorded", { skip: !posix }, async () => {
+  const { dir } = checkout({ "src/a.cpp": BIG });
+  const tmp = seed(dir);
+  plantCap(tmp);
+  const r = await runHook(rangedRead(dir), { tmp, env: { LOOM_SHUNT_READ_CAP: "200" } });
+  assert.equal(r.deny, null);
+  assert.match(r.log, /\tpass\tRead\t\d+\t\tbudget_unrecorded\t/);
 });

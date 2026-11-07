@@ -2,6 +2,7 @@
 // remotes become one ordered candidate list (origin, upstream, the rest; or
 // the repository LOOM_CODE_REPO names, alone), every hook resolves through the one lookup in
 // lib/repo-scope.mjs, and the primer says how the checkout matched.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";

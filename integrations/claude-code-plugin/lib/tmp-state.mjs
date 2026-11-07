@@ -42,14 +42,16 @@ export function writeSessionState(kind, sessionId, value, opts = {}) {
   return writeJsonFile(sessionStatePath(kind, sessionId, opts), value);
 }
 
-/** The text of `file`. Throws when the path is a symlink, not a regular file, or
- *  owned by another user, like writePrivateFile: a planted file is not our state. */
+/** The text of `file`. Throws when the path is a symlink, not a regular file, a
+ *  hard link, or owned by another user, like writePrivateFile: a planted file is
+ *  not our state. */
 export function readPrivateFile(file) {
   const c = fs.constants;
   const fd = fs.openSync(file, c.O_RDONLY | (c.O_NOFOLLOW ?? 0) | (c.O_NONBLOCK ?? 0));
   try {
     const st = fs.fstatSync(fd);
     if (!st.isFile()) throw new Error(`${file} is not a regular file`);
+    if (st.nlink !== 1) throw Object.assign(new Error(`${file} has other hard links`), { code: "ELINKED" });
     if (typeof process.getuid === "function" && st.uid !== process.getuid()) {
       throw new Error(`${file} belongs to another user`);
     }
@@ -101,7 +103,7 @@ export function writePrivateFile(file, text, { append = false } = {}) {
   try {
     const st = fs.fstatSync(fd);
     if (!st.isFile()) throw new Error(`${file} is not a regular file`);
-    if (st.nlink !== 1) throw new Error(`${file} has other hard links`);
+    if (st.nlink !== 1) throw Object.assign(new Error(`${file} has other hard links`), { code: "ELINKED" });
     if (typeof process.getuid === "function" && st.uid !== process.getuid()) {
       throw new Error(`${file} belongs to another user`);
     }
@@ -154,8 +156,10 @@ export function writeCursor(file, n) {
 }
 
 export const STALE_STATE_MS = 24 * 60 * 60 * 1000;
-// tmpStatePath's names, and the recalled-key and code-trace stashes named by session id.
-const STATE_FILE_RE = /^loom-(?:[a-z0-9-]+-[0-9a-f]{12}(?:\.[a-z]+)?|(?:recalled|code-trace)-[\w-]+\.json)$/;
+// tmpStatePath's names but the code shunt's decision log (a log the user reads, not
+// session state), and the recalled-key and code-trace stashes named by session id.
+const STATE_FILE_RE =
+  /^loom-(?!shunt-log-)(?:[a-z0-9-]+-[0-9a-f]{12}(?:\.[a-z]+)?|(?:recalled|code-trace)-[\w-]+\.json)$/;
 
 /** Remove this user's state files in `tmp` untouched for `maxAgeMs`: a session's
  *  journal and cursors outlive it, since SessionEnd hooks run in parallel and none

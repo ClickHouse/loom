@@ -1,5 +1,6 @@
 // An agent with no Loom token of its own: its workload token is exchanged for
 // a Loom token, saved 0600 for that proof only, and renewed when it is due.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

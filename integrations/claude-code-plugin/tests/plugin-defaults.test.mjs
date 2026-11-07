@@ -1,5 +1,6 @@
 // A plugin's shipped default server URL sits below every
 // user-set source (env, install option, ~/.loom/config.json) and above localhost.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";

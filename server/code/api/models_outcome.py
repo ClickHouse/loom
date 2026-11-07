@@ -46,6 +46,9 @@ SHUNT_PASS_REASONS: frozenset[str] = frozenset(
         # A single-file grep whose pattern names a symbol, let through because this
         # symbol's per-session denial budget is spent
         "symbol_grep_spent",
+        # A denial whose per-session budget spend could not be written (the counts file
+        # cannot be kept), let through rather than deny every such call
+        "budget_unrecorded",
     }
 )
 

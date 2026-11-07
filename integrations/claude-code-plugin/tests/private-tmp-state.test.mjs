@@ -2,6 +2,7 @@
 // SessionEnd leaves the journal its parallel hooks read, and SessionStart sweeps
 // stale state.
 
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -10,7 +11,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { readJsonFile, sweepStaleStateFiles, writeJsonFile, writePrivateFile } from "../lib/tmp-state.mjs";
+import {
+  readJsonFile,
+  readPrivateFile,
+  sweepStaleStateFiles,
+  writeJsonFile,
+  writePrivateFile,
+} from "../lib/tmp-state.mjs";
 import { appendTurn, journalPath, readJournal } from "../lib/turn-journal.mjs";
 
 const posix = process.platform !== "win32";
@@ -57,6 +64,15 @@ test("a planted hard link to a file of ours is refused before it is truncated", 
   assert.equal(fs.readFileSync(target, "utf8"), "original");
 });
 
+test("a planted hard link is not read as state", { skip: !posix }, () => {
+  const dir = tmp();
+  const target = path.join(dir, "victim.json");
+  fs.writeFileSync(target, '{"secret":1}');
+  fs.linkSync(target, path.join(dir, "loom-x.json"));
+  assert.throws(() => readPrivateFile(path.join(dir, "loom-x.json")), /hard links/);
+  assert.deepEqual(readJsonFile(path.join(dir, "loom-x.json")), {});
+});
+
 test("a rewrite replaces the whole file", { skip: !posix }, () => {
   const file = path.join(tmp(), "loom-x.json");
   assert.ok(writeJsonFile(file, { long: "a".repeat(100) }));
@@ -88,17 +104,20 @@ test("SessionStart sweeps this user's state files untouched for a day", { skip: 
   assert.ok(appendTurn("old", "user", "hello", { dir }));
   assert.ok(appendTurn("new", "user", "hello", { dir }));
   const oldStash = path.join(dir, "loom-recalled-old.json");
+  const shuntLog = path.join(dir, "loom-shunt-log-0123456789ab.log");
   const other = path.join(dir, "loom-notes.txt");
   const link = path.join(dir, "loom-code-trace-link.json");
   fs.writeFileSync(oldStash, "[]");
+  fs.writeFileSync(shuntLog, "");
   fs.writeFileSync(other, "not ours to sweep");
   fs.symlinkSync(other, link);
   const old = new Date(now - day - 1000);
-  for (const f of [journalPath("old", dir), oldStash, other]) fs.utimesSync(f, old, old);
+  for (const f of [journalPath("old", dir), oldStash, shuntLog, other]) fs.utimesSync(f, old, old);
   fs.lutimesSync(link, old, old);
   assert.equal(sweepStaleStateFiles({ tmp: dir, now }), 2);
   assert.equal(fs.existsSync(journalPath("old", dir)), false);
   assert.equal(fs.existsSync(oldStash), false);
+  assert.ok(fs.existsSync(shuntLog), "the shunt's decision log is a log, not session state");
   assert.ok(fs.existsSync(journalPath("new", dir)), "a live session's journal stays");
   assert.ok(fs.existsSync(other) && fs.lstatSync(link).isSymbolicLink(), "other files and links stay");
 });

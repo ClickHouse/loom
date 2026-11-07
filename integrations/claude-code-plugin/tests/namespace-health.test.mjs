@@ -1,4 +1,5 @@
 // The namespace-health Stop hook — one audit per session, one line on a critical.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {

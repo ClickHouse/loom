@@ -2,6 +2,7 @@
 // SessionStart hook and the MCP headers helper never fall back to the token a
 // person saved on this machine, nor sign a new identity up. Both run as the
 // host runs them, against a server whose token endpoint is away.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";

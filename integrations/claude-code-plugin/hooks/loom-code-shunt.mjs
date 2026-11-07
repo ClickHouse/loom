@@ -17,12 +17,13 @@
 //
 // Side effects, all in $TMPDIR: the shared repository cache
 // (lib/repo-scope.mjs); per-session denial budgets for the read-window cap,
-// symbol greps and tracker searches (loom-shunt-cap-<session>.json); the
-// decision log loom-shunt.log and its unflushed copy loom-shunt-pending.log,
+// symbol greps and tracker searches (sessionStatePath "shunt-cap"); the
+// user's decision log (tmpStatePath "shunt-log") and its unflushed copy, one
+// batch per reporting scope and session (repo.pending, named by batchKind in
+// lib/shunt-ledger.mjs), all through lib/tmp-state.mjs's private-file helpers,
 // flushed as code.outcome rows (fire-and-forget, 300 ms) on a deny or every
 // SHUNT_FLUSH_EVERY lines (lib/shunt-ledger.mjs).
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import {
@@ -30,6 +31,8 @@ import {
   postBounded,
   postFireAndForget,
   readStdinJson,
+  resolveServerUrl,
+  resolveToken,
   redactSecrets,
   scheduleExit,
   commandText,
@@ -61,12 +64,22 @@ import {
 import { ghIssueSearchInCommand, parseBashBulkSegments } from "../lib/shell-command.mjs";
 import {
   aggregateShuntLog,
+  batchKind,
   estimateTokensRead,
   estimateTokensSaved,
   formatShuntLine,
   shouldFlushShunt,
 } from "../lib/shunt-ledger.mjs";
 import { repoLookupOutcome, resolveIndexedRepo, resolveTimeoutMs } from "../lib/repo-scope.mjs";
+import {
+  readPrivateFile,
+  readSessionState,
+  removeFile,
+  sessionStatePath,
+  tmpStatePath,
+  writePrivateFile,
+  writeSessionState,
+} from "../lib/tmp-state.mjs";
 
 const ENABLED = envSwitch("LOOM_CODE_SHUNT", true);
 const MAX_LINES = Number(process.env.LOOM_SHUNT_MAX_LINES || DEFAULT_MAX_LINES);
@@ -81,8 +94,25 @@ const TRACKER_SEARCH_TIMEOUT_MS = Math.max(500, Number(process.env.LOOM_TRACKER_
 const LOG_ON = envSwitch("LOOM_SHUNT_LOG", true);
 const REPORT_ON = envSwitch("LOOM_SHUNT_REPORT", true);
 const FLUSH_TIMEOUT_MS = 300;
-const LOG_PATH = path.join(os.tmpdir(), "loom-shunt.log");
-const PENDING_PATH = path.join(os.tmpdir(), "loom-shunt-pending.log");
+const UID = typeof process.getuid === "function" ? process.getuid() : "";
+// One decision log per user.
+const LOG_PATH = tmpStatePath("shunt-log", UID, { ext: ".log" });
+
+/** The unflushed batch, set on `repo` in main: `kind` names the reporting scope
+ *  (server, token, repository) every batch of it shares, `path` this session's
+ *  batch, a name nobody can create ahead of the session. Batches and claimed
+ *  batches are swept with the other state files. A flush also claims the
+ *  scope's other batches: those ended or crashed sessions left, and those of
+ *  sessions still running. */
+function pendingFor(repo, sessionId) {
+  const kind = batchKind({
+    serverUrl: resolveServerUrl(),
+    token: resolveToken(),
+    org: repo.org || "",
+    namespace: repo.namespace || "",
+  });
+  return { kind, path: sessionStatePath(kind, sessionId, { ext: ".log" }) };
+}
 
 function countLines(abs) {
   try {
@@ -125,31 +155,22 @@ function deny(reason) {
   );
 }
 
-/** Per-session read-cap denial counts, {rel: n}. Unreadable → {} (fail-open:
- *  a lost file costs at most READ_CAP_DENIALS_PER_FILE more denials). */
-function capStatePath(sessionId) {
-  const sid =
-    String(sessionId || "nosession")
-      .replace(/[^A-Za-z0-9_.-]/g, "_")
-      .slice(0, 80) || "nosession";
-  return path.join(os.tmpdir(), `loom-shunt-cap-${sid}.json`);
-}
-
+/** Per-session denial counts, {key: n}, for three budgets: over-cap reads (the
+ *  file's path), symbol greps (`sym:`) and answered tracker searches (`qa:`).
+ *  {} when the file is missing or refused. A denial is given only when its
+ *  spend was written: when the file cannot be kept (tmp not writable, or a file
+ *  planted there) the call passes as if its budget were spent, so a planted
+ *  file cannot lock the agent out. */
 function readCapCounts(sessionId) {
-  try {
-    const c = JSON.parse(fs.readFileSync(capStatePath(sessionId), "utf8"));
-    return c && typeof c === "object" && !Array.isArray(c) ? c : {};
-  } catch {
-    return {};
-  }
+  return readSessionState("shunt-cap", sessionId);
 }
 
+// The pass reason for a call whose budget spend could not be written: it passes.
+const BUDGET_UNRECORDED = "budget_unrecorded";
+
+/** True when the spend was kept. */
 function writeCapCounts(sessionId, counts) {
-  try {
-    fs.writeFileSync(capStatePath(sessionId), JSON.stringify(counts));
-  } catch {
-    /* tmp not writable: fine */
-  }
+  return writeSessionState("shunt-cap", sessionId, counts);
 }
 
 function fileBytes(abs) {
@@ -163,7 +184,7 @@ function fileBytes(abs) {
 
 /** Append one decision locally; returns the number of unflushed lines. Sync
  *  appends of one short line — microseconds, and never on the network. */
-function logDecision({ decision, tool, tokensSaved, reason, passReason, path, startLine, endLine }) {
+function logDecision(pending, { decision, tool, tokensSaved, reason, passReason, path, startLine, endLine }) {
   if (!LOG_ON) return 0;
   const line = formatShuntLine({
     decision,
@@ -176,35 +197,73 @@ function logDecision({ decision, tool, tokensSaved, reason, passReason, path, st
     endLine,
   });
   try {
-    fs.appendFileSync(LOG_PATH, line);
+    writePrivateFile(LOG_PATH, line, { append: true });
   } catch {
-    /* tmp not writable: fine */
+    /* tmp not writable, or a file we do not own: fine */
   }
   try {
-    fs.appendFileSync(PENDING_PATH, line);
-    const text = fs.readFileSync(PENDING_PATH, "utf8");
+    writePrivateFile(pending.path, line, { append: true });
+    const text = readPrivateFile(pending.path);
     return text.split("\n").length - 1;
   } catch {
     return 0;
   }
 }
 
-/** Ship the pending batch as code.outcome rows and truncate it. Fire-and-
- *  forget with a 300 ms ceiling; a lost batch costs a few counter ticks. */
-function flushPending(repo) {
-  if (!REPORT_ON) return;
+/** The batch files of this reporting scope that this user owns: this
+ *  session's and any other session's. Another user's file, a link or a hard
+ *  link is left alone. */
+function scopeBatches(pending) {
+  const dir = path.dirname(pending.path);
+  const prefix = `loom-${pending.kind}-`;
+  let names = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((n) => n.startsWith(prefix) && n.endsWith(".log"))
+    .map((n) => path.join(dir, n))
+    .filter((file) => {
+      try {
+        const st = fs.lstatSync(file);
+        return st.isFile() && st.nlink === 1 && (UID === "" || st.uid === UID);
+      } catch {
+        return false;
+      }
+    });
+}
+
+/** Claim one batch by renaming it to a name of this process, read it with the
+ *  private-file checks, and remove it: of two hooks flushing at once only one
+ *  gets each batch. "" when another hook claimed it first, or it is not ours. */
+function claimBatch(file) {
+  const claimed = tmpStatePath("shunt-claim", `${file}:${process.pid}:${crypto.randomBytes(8).toString("hex")}`, {
+    ext: ".log",
+  });
+  try {
+    fs.renameSync(file, claimed);
+  } catch {
+    return "";
+  }
   let text = "";
   try {
-    text = fs.readFileSync(PENDING_PATH, "utf8");
+    text = readPrivateFile(claimed);
   } catch {
-    return;
+    /* replaced between the check and the rename: not ours to post */
   }
+  removeFile(claimed);
+  return text;
+}
+
+/** Ship the scope's pending batches as code.outcome rows. Fire-and-forget with
+ *  a 300 ms ceiling; a lost batch costs a few counter ticks. Each batch is
+ *  claimed before it is read, so it is posted at most once. */
+function flushPending(repo) {
+  if (!REPORT_ON) return;
+  const text = scopeBatches(repo.pending).map(claimBatch).join("");
   if (!text) return;
-  try {
-    fs.writeFileSync(PENDING_PATH, "");
-  } catch {
-    /* ignore */
-  }
   const agg = aggregateShuntLog(text);
   const opts = { timeoutMs: FLUSH_TIMEOUT_MS };
   const scope = { org: repo.org || "", namespace: repo.namespace || "", consumer: "claude-code-shunt" };
@@ -218,7 +277,7 @@ function flushPending(repo) {
 function settle(repo, { tool, verdict, tokens, path = "", span = { start: 0, end: 0 } }) {
   const denied = Boolean(verdict.deny);
   if (denied) deny(verdict.deny);
-  const pending = logDecision({
+  const unflushed = logDecision(repo.pending, {
     decision: denied ? "hit" : "pass",
     tool,
     tokensSaved: tokens,
@@ -228,7 +287,7 @@ function settle(repo, { tool, verdict, tokens, path = "", span = { start: 0, end
     startLine: span.start,
     endLine: span.end,
   });
-  if (shouldFlushShunt({ denied, pending })) flushPending(repo);
+  if (shouldFlushShunt({ denied, pending: unflushed })) flushPending(repo);
   return denied;
 }
 
@@ -240,20 +299,19 @@ function settleRead(repo, { tool, rel, abs, offset, limit, sessionId, ctxBase, d
   const bytes = fileBytes(abs);
   const ranged = offset != null || limit != null;
   const capCounts = READ_CAP > 0 && ranged ? readCapCounts(sessionId) : {};
-  const verdict = classifyRead(
-    {
-      ...ctxBase,
-      rel,
-      offset,
-      limit,
-      lineCount,
-      modified: gitStatusClass(repo.root, rel),
-      readCap: READ_CAP,
-      capCounts,
-    },
-    MAX_LINES,
-  );
-  if (verdict.capped) writeCapCounts(sessionId, spendCapBudget(capCounts, rel));
+  const readCtx = {
+    ...ctxBase,
+    rel,
+    offset,
+    limit,
+    lineCount,
+    modified: gitStatusClass(repo.root, rel),
+    readCap: READ_CAP,
+    capCounts,
+  };
+  let verdict = classifyRead(readCtx, MAX_LINES);
+  if (verdict.capped && !writeCapCounts(sessionId, spendCapBudget(capCounts, rel)))
+    verdict = { deny: null, reason: BUDGET_UNRECORDED };
   if (verdict.deny && denyRewrite) verdict.deny = denyRewrite(verdict.deny);
   // A whole-file hit kept the whole file out; a cap hit kept the SPAN out
   // (what the ranged read would have let in); a pass let its span in.
@@ -276,7 +334,8 @@ function classifySymbolGrep(ctx, sessionId) {
     symbol,
     symbolBudgetSpent: capBudgetSpent(counts, key, SYMBOL_GREP_DENIALS_PER_SYMBOL),
   });
-  if (verdict.symbol) writeCapCounts(sessionId, spendCapBudget(counts, key));
+  if (verdict.symbol && !writeCapCounts(sessionId, spendCapBudget(counts, key)))
+    return { deny: null, reason: BUDGET_UNRECORDED };
   return verdict;
 }
 
@@ -360,8 +419,11 @@ async function settleTrackerSearch(repo, { search, sessionId, ctxBase }) {
         ));
       const answer = target ? trackerAnswerText(res, { query: search.query, namespace: target.namespace }) : "";
       if (answer) {
-        verdict.deny = denyGhSearchWithAnswer({ ...ctxBase, namespace: target.namespace }, answer);
-        writeCapCounts(sessionId, spendCapBudget(counts, key));
+        if (writeCapCounts(sessionId, spendCapBudget(counts, key))) {
+          verdict.deny = denyGhSearchWithAnswer({ ...ctxBase, namespace: target.namespace }, answer);
+        } else {
+          verdict.reason = BUDGET_UNRECORDED;
+        }
       }
     } catch {
       /* the search runs */
@@ -395,6 +457,7 @@ async function main() {
   // overdue mirror fetch turns the shunt off; `asOf` rides
   // the deny text as information.
   if (!repo.indexed) return;
+  repo.pending = pendingFor(repo, sessionId);
   // The deny text names this checkout's org/namespace.
   const ctxBase = {
     prefixes: repo.prefixes,

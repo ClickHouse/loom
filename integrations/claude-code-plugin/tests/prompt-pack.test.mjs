@@ -1,3 +1,4 @@
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { accept, renderPack, searchBody, shouldAsk, SEEN_CAP } from "../lib/prompt-pack.mjs";

@@ -1,3 +1,4 @@
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sessionMemoryBody, sessionToolEchoes, structuredPieces, transcriptTurns } from "../lib/session-memory.mjs";

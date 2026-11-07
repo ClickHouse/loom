@@ -173,7 +173,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "decision.chain": ("sdk_method",),
     "decision.outcome": ("sdk_method",),
     "decision.precedents": ("sdk_method",),
-    "decision.record": ("sdk_method",),
+    "decision.record": (
+        "sdk_method",
+        "plugin_hook",
+    ),
     "erasure.export": ("sdk_method",),
     "erasure.list": ("plugin_hook",),
     "erasure.request": (

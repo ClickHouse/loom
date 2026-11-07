@@ -1,5 +1,6 @@
 // The turn journal — the hooks' own record of prompts and
 // replies, for clients that hand them no parseable transcript.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

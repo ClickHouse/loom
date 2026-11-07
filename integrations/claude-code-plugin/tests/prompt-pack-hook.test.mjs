@@ -2,6 +2,7 @@
 // server that answers code.search, it injects the index's pointers — and it
 // never fails silently on its own code (a missing import once made every
 // prompt throw inside runHookMain, which swallows the error).
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

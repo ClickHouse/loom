@@ -1,4 +1,5 @@
 // A repository is known by its remote, not its folder name.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";

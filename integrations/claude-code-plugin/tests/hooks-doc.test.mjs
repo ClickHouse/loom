@@ -1,5 +1,6 @@
 // HOOKS.md is the lifecycle doc: every wired script and every setting the
 // capture-lane scripts read must appear in it.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

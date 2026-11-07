@@ -1,5 +1,6 @@
 // The plugin's bin/ entrypoints launched the way a skill or the host runs
 // them: missing token, unreachable server, a healthy server.
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
