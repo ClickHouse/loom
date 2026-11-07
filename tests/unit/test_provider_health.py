@@ -36,12 +36,15 @@ def test_unknown_provider_is_not_degraded() -> None:
 
 
 def test_failure_marks_degraded() -> None:
-    ph.record_failure("openai:embeddings", RuntimeError("429 insufficient_quota"))
+    ph.record_failure(
+        "openai:embeddings", RuntimeError("429 insufficient_quota at https://gw.internal:8443/v1")
+    )
     st = ph.status()
     assert st["degraded"] is True
     e = st["providers"]["openai:embeddings"]
     assert e["failing"] is True
-    assert "insufficient_quota" in e["last_error"]
+    # `/v1/health` answers without a token: the kind, never a gateway's address.
+    assert e["last_error"] == "RuntimeError"
     assert e["last_error_age_s"] >= 0
 
 
@@ -135,3 +138,39 @@ def test_every_provider_client_records_through_the_one_wrapper() -> None:
         src = inspect.getsource(mod)
         assert "recording(" in src, mod.__name__
         assert "record_failure(" not in src and "record_success(" not in src, mod.__name__
+
+
+def test_a_providers_http_refusal_keeps_its_status() -> None:
+    import httpx
+
+    request = httpx.Request("POST", "https://gw.internal:8443/v1/embeddings")
+    refused = httpx.HTTPStatusError(
+        "Client error '429' for url 'https://gw.internal:8443/v1/embeddings'",
+        request=request,
+        response=httpx.Response(429, request=request),
+    )
+    ph.record_failure("openai:embeddings", refused)
+    assert ph.status()["providers"]["openai:embeddings"]["last_error"] == (
+        "HTTPStatusError (HTTP 429)"
+    )
+
+
+def test_a_loom_error_is_shown_by_its_code_alone() -> None:
+    """`/v1/health` answers without a token, and a Loom error's message can name a
+    host (a gateway refusal names the one it refused)."""
+    from server.core.errors import GatewayRequiredError
+    from server.observability import degradations
+
+    ph.record_failure("openai:chat", GatewayRequiredError("gw.internal is not listed"))
+    assert ph.status()["providers"]["openai:chat"]["last_error"] == "GATEWAY_REQUIRED"
+    degradations.note("rerank", "input_order_kept", GatewayRequiredError("gw.internal x"))
+    assert ph.status()["providers"]["rerank"]["last_error"] == "GATEWAY_REQUIRED"
+
+
+def test_a_text_reason_stays_on_the_note_and_health_shows_the_effect() -> None:
+    """A classifier's answer is a tenant's remote text: the request's own note may
+    quote it, `/v1/health` (no token) shows only what the response did instead."""
+    from server.observability import degradations
+
+    degradations.note("classify", "caller_type_kept", "'secret-answer' not a registered type")
+    assert ph.status()["providers"]["classify"]["last_error"] == "caller_type_kept"

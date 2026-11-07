@@ -626,7 +626,9 @@ def test_an_unreachable_lease_is_a_health_problem_not_another_holder() -> None:
         RuntimeError("Code: 497. DB::Exception: not enough privileges. (ACCESS_DENIED)")
     )
     lease.step()
-    assert not lease.held and "497" in lease.error
+    # `/v1/health` (workers_leader, the lease problem) shows it without a token: the kind.
+    assert not lease.held and lease.error == "RuntimeError"
+    assert "privileges" not in lease.reason and "RuntimeError" in lease.reason
     assert "held by another process" not in lease.reason
     codes = {
         p.code: p
@@ -652,7 +654,8 @@ def test_an_unreachable_lease_is_a_health_problem_not_another_holder() -> None:
             broken.step()
     finally:
         mod._lock = real
-    assert "unreachable" in broken.reason and "connection refused" in broken.error
+    assert "unreachable" in broken.reason and broken.error == "ConnectionError"
+    assert "connection refused" not in broken.reason
 
 
 def test_a_waiting_contender_sends_no_insert_while_the_key_is_held() -> None:

@@ -299,18 +299,18 @@ generated from the same schemas.
 Start with `code.index_status` (watermarks, lags, tiers, worker errors) and
 `code.coverage` (what the namespace holds).
 
-| Symptom                                    | Cause                                                     | Fix                                                                      |
-| ------------------------------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------ |
-| a symbol you just added is not found       | uncommitted, unpushed, or not yet ingested                | grep your tree; `code.index_status` shows the lag                        |
-| `lag_commits: 0` but merges are missing    | the mirror stopped fetching                               | check `clone_fetched_at` / `fetch_overdue` and the worker's `last_error` |
-| a fix you know exists is not found         | wrong branch namespace                                    | `code.grep mode=presence namespaces=[…]`                                 |
-| `AUTH_INSUFFICIENT` on every `code.*` call | the token does not name the code namespace                | join the repository, or mint with `--namespaces`                         |
-| a call that names no namespace is refused  | no `X-Loom-Code-Scope` header and no deployment default   | pass `namespace`, or set `LOOM_CODE_ORG` / `LOOM_CODE_NAMESPACE`         |
-| no code tools in the MCP list              | the `core` toolset without `LOOM_MCP_CODE_TOOLS=true`     | mount `?toolset=coding`, or set the flag                                 |
-| `code.search` says lexical-only            | embedding coverage below `LOOM_CODE_READY_EMBED_COVERAGE` | enable `code_embed_recovery`; watch `embedding_coverage`                 |
-| callers look incomplete for a language     | the language has only the fast tier                       | read `epistemic` / `causes`; `code.coverage` shows the `scip` column     |
-| every namespace re-indexing after a deploy | an extractor module changed (the stamp moved)             | expected; progress is in `code_index_state`                              |
-| a self-service repository stuck in `error` | clone or first index failed                               | read `stage_detail` on `code.repos`                                      |
+| Symptom                                    | Cause                                                     | Fix                                                                   |
+| ------------------------------------------ | --------------------------------------------------------- | --------------------------------------------------------------------- |
+| a symbol you just added is not found       | uncommitted, unpushed, or not yet ingested                | grep your tree; `code.index_status` shows the lag                     |
+| `lag_commits: 0` but merges are missing    | the mirror stopped fetching                               | `clone_fetched_at` / `fetch_overdue`, then `/v1/admin/workers.status` |
+| a fix you know exists is not found         | wrong branch namespace                                    | `code.grep mode=presence namespaces=[…]`                              |
+| `AUTH_INSUFFICIENT` on every `code.*` call | the token does not name the code namespace                | join the repository, or mint with `--namespaces`                      |
+| a call that names no namespace is refused  | no `X-Loom-Code-Scope` header and no deployment default   | pass `namespace`, or set `LOOM_CODE_ORG` / `LOOM_CODE_NAMESPACE`      |
+| no code tools in the MCP list              | the `core` toolset without `LOOM_MCP_CODE_TOOLS=true`     | mount `?toolset=coding`, or set the flag                              |
+| `code.search` says lexical-only            | embedding coverage below `LOOM_CODE_READY_EMBED_COVERAGE` | enable `code_embed_recovery`; watch `embedding_coverage`              |
+| callers look incomplete for a language     | the language has only the fast tier                       | read `epistemic` / `causes`; `code.coverage` shows the `scip` column  |
+| every namespace re-indexing after a deploy | an extractor module changed (the stamp moved)             | expected; progress is in `code_index_state`                           |
+| a self-service repository stuck in `error` | clone or first index failed                               | read `stage_detail` on `code.repos`                                   |
 
 Operator signals (tier lag, stale files, failed passes) are in
 [code index operations](../../operations/code-index-operations.md).

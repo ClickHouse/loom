@@ -143,8 +143,8 @@ async def test_outcome_reports_skipped_no_value_and_parse_failures(
         def record_success(self, name, *, duration_ms, outcome):
             outcomes.append(outcome)
 
-        def record_failure(self, name, *, duration_ms, error):
-            raise AssertionError(error)
+        def record_failure(self, name, *, duration_ms, exc):
+            raise AssertionError(exc)
 
     monkeypatch.setattr(worker_status, "get_registry", lambda: _Reg())
     await ee.run_pass(ee.EntityExtractorConfig())

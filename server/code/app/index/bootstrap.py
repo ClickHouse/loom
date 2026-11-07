@@ -35,13 +35,18 @@ from server.code.app.index.mirror_locks import (
     partial_mirror,
     partial_temp_dir,
 )
+from server.code.domain.index.state import (
+    CLONE_TIMED_OUT,
+    SANDBOX_REQUIRED_REFUSAL,
+    STAGE_KEY,
+)
 from server.core.background import gather_or_cancel
+from server.core.errors import error_kind
 from server.llm import customer
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.bootstrap")
 
-STAGE_KEY = "bootstrap_stage"
 CURSOR_KEY = "backfill_cursor:index"
 # Stages during which the entry is still being built (the recovery worker
 # takes its larger batch, status reads shorten their count cache).
@@ -199,8 +204,11 @@ async def clone_mirror(cfg: Any, *, pin: bool = False) -> str:
             **remote_access(cfg.git_remote),
         )
         if done.returncode != 0:
-            last = done.stderr.decode(errors="replace").strip().splitlines()[-1:]
-            return (last or ["git clone failed"])[0][:300]
+            # The reason reaches `/v1/health?include=mirrors` without a token: git's
+            # stderr can name host paths and the remote's URL, so it is logged only.
+            stderr = done.stderr.decode(errors="replace").strip()[-600:]
+            logger.warning("mirror clone exited %s: %s", done.returncode, stderr)
+            return f"git clone failed (exit {done.returncode})"
         if cfg.classification == "restricted":
             await asyncio.to_thread(os.chmod, tmp, 0o700)
         await asyncio.to_thread(os.rename, tmp, git_dir)
@@ -208,11 +216,14 @@ async def clone_mirror(cfg: Any, *, pin: bool = False) -> str:
             await _pin_ledger_merges(cfg)
         return ""
     except TimeoutError:
-        return "clone timed out; retrying next pass"
-    except SandboxRequiredError as e:
-        return str(e)[:300]
+        return CLONE_TIMED_OUT
+    except SandboxRequiredError:
+        return SANDBOX_REQUIRED_REFUSAL
     except OSError as e:
-        return f"clone failed: {e}"[:300]
+        # The reason reaches `code.repos` and `/v1/health?include=mirrors`: the kind; the
+        # mirror's path is logged.
+        logger.warning("mirror clone failed: %s: %s", type(e).__name__, e)
+        return f"clone failed: {error_kind(e)}"
     finally:
         await asyncio.to_thread(shutil.rmtree, tmp, True)
         if lock >= 0:
@@ -227,7 +238,9 @@ async def fetch_mirror(cfg: Any) -> str:
         async with fetch_lock(cfg.git_dir):
             await gitrepo.fetch(cfg.git_dir, cfg.git_remote, cfg.git_branch, token=cfg.github_token)
     except gitrepo.GitError as e:
-        return str(e)[:300]
+        # As for a clone: git's message is logged, the reason is fixed.
+        logger.warning("mirror fetch failed: %s", e)
+        return "git fetch failed"
     return ""
 
 
@@ -292,7 +305,13 @@ async def _logged(name: str, run: Any, cfg: Any) -> str:
     from server.core.ch import set_query_tag
 
     set_query_tag(f"code.mirror_{name}")
-    reason = str(await run(cfg))
+    try:
+        reason = str(await run(cfg))
+    except Exception:
+        # A raised job's text reaches no reader (`_job_failure` shows its kind): it is
+        # logged here, once, and re-raised for the task to hold.
+        logger.exception("mirror %s of %s raised", name, cfg.label)
+        raise
     if reason:
         logger.warning("mirror %s of %s failed: %s", name, cfg.label, reason)
     return reason
@@ -305,7 +324,8 @@ def _job_failure(task: asyncio.Task[str] | None) -> str:
     if task.cancelled():
         return "cancelled"
     if (e := task.exception()) is not None:
-        return f"{type(e).__name__}: {e}"[:300]
+        # History reads and `/v1/health` (no token) show it; `_logged` has the text.
+        return error_kind(e)
     return task.result()
 
 

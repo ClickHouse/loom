@@ -28,6 +28,7 @@ from typing import Any
 
 import httpx
 
+from server.core.errors import caller_text
 from server.llm.gateway import GatewayUnavailable
 from server.memory.app import extraction_queue as q
 from server.workers.holds import hold_seconds
@@ -154,22 +155,21 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
         except held as e:
             # Held until the org is back on, the switch or identity is read, or the
             # gateway's hold is over; the other rows, and other identities', go on.
-            await q.mark_held(
-                row, reason=f"{type(e).__name__}: {e}", seconds=hold_seconds(e), ch=ch
-            )
+            await q.mark_held(row, reason=caller_text(e), seconds=hold_seconds(e), ch=ch)
             result.skipped += 1
             return
         except Exception as e:
             if unreachable(e):
                 log.warning(
                     "extraction_queue: the model provider could not be reached for %s/%s "
-                    "queue_id=%s (%s); no attempt spent",
+                    "queue_id=%s (%s: %s); no attempt spent",
                     row.get("org"),
                     row.get("namespace"),
                     row.get("queue_id"),
                     type(e).__name__,
+                    e,
                 )
-                await q.mark_unreachable(row, error=f"{type(e).__name__}: {e}", ch=ch)
+                await q.mark_unreachable(row, error=caller_text(e), ch=ch)
                 result.unreachable += 1
                 return
             log.exception(
@@ -178,11 +178,10 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
                 row.get("namespace"),
                 row.get("queue_id"),
             )
+            # last_error reaches memory.extraction_status readers: the error's kind,
+            # or a Loom error's code and message. The text is in the log above.
             status = await q.mark_error(
-                row,
-                error=f"{type(e).__name__}: {e}",
-                max_attempts=cfg.max_attempts,
-                ch=ch,
+                row, error=caller_text(e), max_attempts=cfg.max_attempts, ch=ch
             )
             result.failures.append(f"{row.get('queue_id')}: {status}")
             return

@@ -86,7 +86,7 @@ One scope grammar for every write that can touch more than one row.
 | `would_apply` | `int` | rows that would be written (dry_run) |
 | `refused` | `int` | locks, policy, preconditions |
 | `noop` | `int` | Rows already in the asked state: nothing was written for them. |
-| `failed` | `int` | Rows whose write raised; each row's `detail` says why. |
+| `failed` | `int` | Rows whose write failed; each row's `detail` names the error, not its text. |
 | `truncated` | `bool` | more of the caller's rows may match than `limit` |
 | `rows` | `list[ApplyRow]` | One entry per matched row: its identity, status, new version and detail. |
 

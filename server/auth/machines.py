@@ -389,7 +389,13 @@ async def _signed(token: str, m: Machine) -> dict[str, Any]:
             leeway=_LEEWAY_S,
         )
     except (httpx.HTTPError, jwt.PyJWKClientConnectionError, _Undiscovered) as e:
-        raise Refused("temporarily_unavailable", f"the issuer's keys: {e}") from e
+        # The answer is unauthenticated: the keys' URL and the network error are logged.
+        log.warning(
+            "workload token: the issuer's keys could not be read: %s: %s", type(e).__name__, e
+        )
+        raise Refused(
+            "temporarily_unavailable", "the issuer's keys could not be read; retry"
+        ) from e
     except (jwt.PyJWTError, ValueError, KeyError) as e:
         raise Refused("invalid_grant", f"subject token refused: {e}") from None
     return claims

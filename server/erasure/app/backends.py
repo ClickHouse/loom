@@ -29,8 +29,8 @@ LOG_ERROR_TEXT_LIMIT = 200
 
 
 def _describe(e: BaseException) -> str:
-    """`str(httpx.ReadTimeout())` is empty, which would leave the saga's
-    failure message as "transport error: "; name the type as well."""
+    """`str(httpx.ReadTimeout())` is empty, which would leave the log line
+    as "transport error: "; name the type as well."""
     text = str(e).strip()
     return f"{type(e).__name__}: {text}" if text else type(e).__name__
 

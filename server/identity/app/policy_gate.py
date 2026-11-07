@@ -32,7 +32,7 @@ import logging
 from typing import Any
 
 from server.core.background import TaskSet
-from server.core.errors import LoomServerError
+from server.core.errors import LoomServerError, caller_text
 from server.identity.app import history_policy as _policy
 from server.identity.domain import policy_rules
 from server.operations.base import Operation, Role
@@ -195,7 +195,8 @@ async def gate(
         decision = policy_rules.PolicyDecision(
             decision="allow",
             determining_rules=[],
-            errors=[f"policy gate: {type(e).__name__}: {e}"[:400]],
+            # The text can carry a statement; the caller's 403 names `caller_text(e)`.
+            errors=[f"policy gate: {caller_text(e)}"[:400]],
             verdicts=[],
         )
         log.warning("policy gate failed for %s: %s", op.name, e)

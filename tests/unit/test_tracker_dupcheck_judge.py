@@ -24,7 +24,7 @@ class _LLM:
             {"system": system, "user": user, "max_tokens": max_tokens, "fmt": response_format}
         )
         if self.fail:
-            raise RuntimeError("provider down")
+            raise RuntimeError("provider down at https://gw.internal:8443")
         return SimpleNamespace(text=self.text, model=self.model, tokens_in=321, tokens_out=45)
 
 
@@ -81,7 +81,8 @@ async def test_judge_calls_once_with_json_format_and_fails_open() -> None:
     assert call["fmt"] == {"type": "json_object"} and call["system"] == dj.SYSTEM
     assert call["max_tokens"] == 80 + 60 * 2 and "[#7] a" in call["user"]
     down = await dj.judge(_LLM(fail=True), "t", "b", [{"number": 7}])
-    assert not down.ran and down.labels == {} and "RuntimeError" in down.error
+    # A viewer reads the error: the kind; the provider's text is in the log.
+    assert not down.ran and down.labels == {} and down.error == "RuntimeError"
     assert not (await dj.judge(None, "t", "b", [{"number": 7}])).ran
     assert not (await dj.judge(llm, "", "", [{"number": 7}])).ran  # nothing to judge against
 

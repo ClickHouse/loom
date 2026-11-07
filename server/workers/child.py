@@ -29,6 +29,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 
+from server.core.errors import error_kind
 from server.settings import settings
 from server.workers import leader
 from server.workers.supervisor import WorkerSupervisor, get_supervisor
@@ -116,7 +117,9 @@ class ChildWorkers:
             except OSError as e:  # no child exists: fork, exec or a pipe failed
                 self._close_pipe()
                 self._proc = None
-                outcome = f"could not start ({e})"
+                # The outcome reaches `/v1/health` (no token) as the lease's reason.
+                log.warning("workers child could not start: %s: %s", type(e).__name__, e)
+                outcome = f"could not start ({error_kind(e)})"
             else:
                 assert self._proc is not None
                 self.last_exit = await self._proc.wait()

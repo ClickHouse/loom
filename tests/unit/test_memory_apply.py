@@ -179,6 +179,84 @@ async def test_enforcing_delete_goes_through_the_handler(monkeypatch: pytest.Mon
 
 
 @pytest.mark.asyncio
+async def test_a_failed_row_reports_the_error_kind_not_its_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unexpected failure's text (a statement, another row's values) stays in the
+    server log; the row names the kind of error only."""
+
+    class _Failing(_CH):
+        async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+            raise RuntimeError("Code: 62. SELECT value FROM loom.memory WHERE org = 'other'")
+
+    ch = _Failing()
+    _stub(monkeypatch, {"a": _row("a")}, ch)
+    out = await handle_memory_apply(
+        MemoryApplyInput(
+            **_ID, target={"keys": ["a"]}, action="delete", reason="stale", dry_run=False
+        )
+    )
+    (row,) = out.rows
+    assert row.status == "failed"
+    assert row.detail == "RuntimeError: see the server log, request_id=-"
+    assert "loom.memory" not in row.detail
+    # the id an operator looks the traceback up by
+    from server.core.logging_config import request_id_var
+
+    bound = request_id_var.set("req-42")
+    try:
+        out = await handle_memory_apply(
+            MemoryApplyInput(
+                **_ID, target={"keys": ["a"]}, action="delete", reason="stale", dry_run=False
+            )
+        )
+    finally:
+        request_id_var.reset(bound)
+    assert out.rows[0].detail == "RuntimeError: see the server log, request_id=req-42"
+
+
+@pytest.mark.asyncio
+async def test_a_typed_refusal_is_a_refused_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core.errors import AuthInsufficientError
+
+    class _Refusing(_CH):
+        async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+            raise AuthInsufficientError("this token may not delete here")
+
+    _stub(monkeypatch, {"a": _row("a")}, _Refusing())
+    out = await handle_memory_apply(
+        MemoryApplyInput(
+            **_ID, target={"keys": ["a"]}, action="delete", reason="stale", dry_run=False
+        )
+    )
+    (row,) = out.rows
+    assert (row.status, row.detail) == (
+        "refused",
+        "AUTH_INSUFFICIENT: this token may not delete here",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_typed_error_keeps_its_code_and_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Loom error's message is written for the caller (a retry hint, say)."""
+    from server.core.errors import OverloadedError
+
+    class _Busy(_CH):
+        async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+            raise OverloadedError("every connection is busy; retry shortly")
+
+    _stub(monkeypatch, {"a": _row("a")}, _Busy())
+    out = await handle_memory_apply(
+        MemoryApplyInput(
+            **_ID, target={"keys": ["a"]}, action="delete", reason="stale", dry_run=False
+        )
+    )
+    (row,) = out.rows
+    assert row.status == "failed"
+    assert row.detail == "OVERLOADED: every connection is busy; retry shortly"
+
+
+@pytest.mark.asyncio
 async def test_label_and_demote_write_version_rows_and_mirror(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

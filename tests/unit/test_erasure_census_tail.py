@@ -56,9 +56,10 @@ async def _run(
     scope_type="namespace_list",
     scope_value='{"namespaces": ["lme-1", "lme-2"], "purge": true}',
     census=None,
+    audits: list[dict[str, Any]] | None = None,
 ):
     """Drive `run_saga` with a fake namespace saga, recording the order of the
-    census, the checkpoints and the audit rows."""
+    census, the checkpoints and the audit rows (each row's arguments into `audits`)."""
     calls: list[str] = []
     checkpoints: list[dict[str, Any]] = []
 
@@ -68,6 +69,8 @@ async def _run(
 
     async def fake_emit(**kw):
         calls.append(f"audit:{kw.get('event_type')}")
+        if audits is not None:
+            audits.append(kw)
 
     async def fake_census(org, st, sv, *, ch=None):
         calls.append(f"census:{st}:{'purge' if erasure_mutations.purge_mode() else 'live'}")
@@ -161,15 +164,16 @@ async def test_a_step_error_names_its_step_even_with_a_message(monkeypatch) -> N
         await h._do_step(step_name="memory.tombstone", step_fn=_boom, completed=completed, row=row)
         return []
 
-    out, _calls, checkpoints = await _run(monkeypatch, saga=saga)
-    assert checkpoints[-1]["failure_reason"] == (
-        "memory.tombstone: ValueError: Network Error: Timeout on reading data from socket"
-    )
+    audits: list[dict[str, Any]] = []
+    out, _calls, checkpoints = await _run(monkeypatch, saga=saga, audits=audits)
+    # the driver's text (a statement, an address) stays in the log; the requester
+    # reads the step and the error's kind
+    assert checkpoints[-1]["failure_reason"] == "memory.tombstone: ValueError"
+    (failed,) = [a for a in audits if a["event_type"] == "erasure.failed"]
+    assert failed["subject"]["error"] == "memory.tombstone: ValueError"
     err = saga_steps.ErasureStepError("x.step", KeyError("k"))
     assert (
-        err.step == "x.step"
-        and isinstance(err.cause, KeyError)
-        and str(err) == "x.step: KeyError: 'k'"
+        err.step == "x.step" and isinstance(err.cause, KeyError) and str(err) == "x.step: KeyError"
     )
 
 
@@ -262,6 +266,9 @@ async def test_a_user_scope_tail_counts_by_user(monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
+_DRIVER_TEXT = "Code: 210. Connection refused (ch-internal-7:9440) ALTER TABLE loom.memory"
+
+
 def _ledger_row(**over) -> dict[str, Any]:
     row = {
         "id": "e9",
@@ -300,7 +307,7 @@ async def test_the_terminal_row_keeps_the_last_step_reason_and_the_verify_column
             residue_count=41,
             residue={"loom.entity_edges": 41},
             verified_at=verified_at,
-            failure_reason="external.delete_namespace: ErasureBackendError: transport error",
+            failure_reason="external.delete_namespace: ErasureBackendError",
             steps_completed=["entity_graph.delete", "memory.tombstone"],
         )
 
@@ -328,7 +335,7 @@ async def test_the_terminal_row_keeps_the_last_step_reason_and_the_verify_column
         attempts=5,
     )
     assert t["failure_reason"] == (
-        "max_attempts (5) exceeded; last: external.delete_namespace: ErasureBackendError: transport error"
+        "max_attempts (5) exceeded; last: external.delete_namespace: ErasureBackendError"
     )
     assert t["steps_completed"] == [
         "entity_graph.delete",
@@ -340,7 +347,7 @@ async def test_the_terminal_row_keeps_the_last_step_reason_and_the_verify_column
         "residue": '{"loom.entity_edges": 41}',
     }
     assert audits[-1]["event_type"] == "erasure.abandoned"
-    assert audits[-1]["subject"]["last_error"].startswith("external.delete_namespace")
+    assert audits[-1]["subject"]["last_error"] == "external.delete_namespace: ErasureBackendError"
     assert audits[-1]["subject"]["residue_count"] == 41
 
 
@@ -366,9 +373,8 @@ async def test_the_terminal_row_falls_back_to_the_ledgers_reason_when_the_saga_r
     res = w.RecoveryResult()
     await w._recover_one(row=_ledger_row(), cfg=w.RecoveryConfig(max_attempts=5), result=res)
     t = checkpoints[0]
-    assert (
-        t["failure_reason"] == "max_attempts (5) exceeded; last: RuntimeError: client disconnected"
-    )
+    # the requester reads the kind; the text is in the server log
+    assert t["failure_reason"] == "max_attempts (5) exceeded; last: RuntimeError"
     assert t["extra"] == {} and t["steps_completed"] == ["memory.tombstone"]
     assert res.errors and res.errors[0]["error"] == "RuntimeError: client disconnected"
 
@@ -467,13 +473,16 @@ async def test_a_saga_whose_abandonment_never_landed_is_abandoned_next_pass(
     from server.erasure.workers import recovery as w
 
     verified_at = _now()
+    # a saga that failed before the upgrade stored the driver's text after the kind
     stored = _ledger_row(
         attempts=5,
         residue_count=3,
         residue='{"loom.memory": 3}',
         verified_at=verified_at,
+        failure_reason=f"external.delete_namespace: ErasureBackendError: {_DRIVER_TEXT}",
     )
     order: list[str] = []
+    subjects: list[dict[str, Any]] = []
     checkpoints: list[dict[str, Any]] = []
 
     async def no_stuck(**kw):
@@ -488,6 +497,7 @@ async def test_a_saga_whose_abandonment_never_landed_is_abandoned_next_pass(
 
     async def fake_emit(**kw):
         order.append(kw["event_type"])
+        subjects.append(kw["subject"])
 
     async def fake_checkpoint(**kw):
         order.append("checkpoint")
@@ -502,7 +512,8 @@ async def test_a_saga_whose_abandonment_never_landed_is_abandoned_next_pass(
     assert order == ["erasure.abandoned", "checkpoint"]  # the marker lands last
     (t,) = checkpoints
     assert t["failure_reason"].startswith(erasure_ledger.ABANDONED_REASON_PREFIX)
-    assert t["failure_reason"].endswith("last: " + stored["failure_reason"])
+    assert t["failure_reason"].endswith("last: external.delete_namespace: ErasureBackendError")
+    assert subjects[-1]["last_error"] == "external.delete_namespace: ErasureBackendError"
     assert t["row"]["attempts"] == 5 and t["steps_completed"] == ["memory.tombstone"]
     assert t["extra"] == {
         "residue_count": 3,
@@ -1166,3 +1177,204 @@ async def test_the_evidence_census_passes_a_refusal_through(monkeypatch) -> None
     monkeypatch.setattr(erasure_census, "pg_residue", _refused)
     with pytest.raises(AuthorityMismatch):
         await erasure_census.evidence_census("o", "namespace", "ns")
+
+
+async def test_a_failure_outside_a_step_names_its_kind_only(monkeypatch) -> None:
+    """A failure the step wrapper does not see (here, the saga itself) reaches the
+    requester as its kind; the driver's text stays in the log."""
+
+    async def saga(org, namespace, *, completed, row, verify=None):
+        raise RuntimeError("Code: 210. Connection refused (ch-internal-7:9440)")
+
+    audits: list[dict[str, Any]] = []
+    out, _calls, checkpoints = await _run(monkeypatch, saga=saga, audits=audits)
+    assert checkpoints[-1]["failure_reason"] == "RuntimeError"
+    assert out.failure_reason == "RuntimeError"
+    (failed,) = [a for a in audits if a["event_type"] == "erasure.failed"]
+    assert failed["subject"]["error"] == "RuntimeError"
+
+
+def test_a_stored_reason_keeps_its_step_and_kind_only() -> None:
+    """A reason read back from the ledger (a saga from before the upgrade kept the
+    driver's text) keeps the step and the kind, a Loom error's code and message, a
+    residue failure's counts, and an abandoned saga's head with its cut last reason."""
+    from server.erasure.domain.failure_reason import caller_reason
+
+    residue = "verify.residue: ErasureResidueError: residue after erasure: {'loom.memory': 3}"
+    typed = "memory.tombstone: BACKEND_UNAVAILABLE: ClickHouse is unavailable; retry"
+    abandoned = "max_attempts (5) exceeded"
+    assert {
+        reason: caller_reason(reason)
+        for reason in (
+            "",
+            "RuntimeError",
+            "memory.tombstone: ValueError",
+            f"memory.tombstone: ValueError: {_DRIVER_TEXT}",
+            f"RuntimeError: {_DRIVER_TEXT}",
+            "Connection refused (ch-internal-7:9440)",
+            "Code: 241. DB::Exception: Memory limit (total) exceeded",
+            "memory.tombstone: Code: 241. DB::Exception: Memory limit (total) exceeded",
+            residue,
+            typed,
+            "OVERLOADED: the server is busy; retry",
+            "external.delete_namespace: gaierror",
+            "external.delete_namespace: ConnectTimeout",
+            abandoned,
+            f"{abandoned}; last: memory.tombstone: ValueError: {_DRIVER_TEXT}",
+            f"{abandoned}; last: RuntimeError: {_DRIVER_TEXT}",
+            f"{abandoned}; last: {typed}",
+            f"{abandoned}; last: Connection refused (ch-internal-7:9440)",
+        )
+    } == {
+        "": "",
+        "RuntimeError": "RuntimeError",
+        "memory.tombstone: ValueError": "memory.tombstone: ValueError",
+        f"memory.tombstone: ValueError: {_DRIVER_TEXT}": "memory.tombstone: ValueError",
+        f"RuntimeError: {_DRIVER_TEXT}": "RuntimeError",
+        "Connection refused (ch-internal-7:9440)": "",
+        "Code: 241. DB::Exception: Memory limit (total) exceeded": "",
+        "memory.tombstone: Code: 241. DB::Exception: Memory limit (total) exceeded": (
+            "memory.tombstone"
+        ),
+        residue: residue,
+        typed: typed,
+        "OVERLOADED: the server is busy; retry": "OVERLOADED: the server is busy; retry",
+        # What this build writes for a kind that is not `...Error`: kept.
+        "external.delete_namespace: gaierror": "external.delete_namespace: gaierror",
+        "external.delete_namespace: ConnectTimeout": "external.delete_namespace: ConnectTimeout",
+        abandoned: abandoned,
+        f"{abandoned}; last: memory.tombstone: ValueError: {_DRIVER_TEXT}": (
+            f"{abandoned}; last: memory.tombstone: ValueError"
+        ),
+        f"{abandoned}; last: RuntimeError: {_DRIVER_TEXT}": f"{abandoned}; last: RuntimeError",
+        f"{abandoned}; last: {typed}": f"{abandoned}; last: {typed}",
+        f"{abandoned}; last: Connection refused (ch-internal-7:9440)": abandoned,
+    }
+
+
+async def test_erasure_status_cuts_a_reason_stored_before_the_upgrade(monkeypatch) -> None:
+    """A saga that failed under an older build and was never resumed: `erasure.status`
+    shows the step and the kind, not the driver's text the ledger holds."""
+    from server.auth.context import set_current_auth
+    from server.erasure.api.erasure import ErasureStatusInput
+    from server.erasure.app import handlers
+
+    async def _row(erasure_id: str) -> dict[str, Any]:
+        return {
+            "id": erasure_id,
+            "org": "o",
+            "scope_type": "namespace",
+            "scope_value": "ns",
+            "requester": "r",
+            "status": "failed",
+            "current_step": 3,
+            "requested_at": None,
+            "completed_at": None,
+            "failure_reason": (
+                f"max_attempts (5) exceeded; last: memory.tombstone: ValueError: {_DRIVER_TEXT}"
+            ),
+        }
+
+    set_current_auth(None)
+    monkeypatch.setattr(erasure_ledger, "fetch_request_status", _row)
+    out = await handlers.handle_erasure_status(ErasureStatusInput(erasure_id="e1"))
+    assert out.failure_reason == "max_attempts (5) exceeded; last: memory.tombstone: ValueError"
+
+
+async def test_a_reason_in_no_known_shape_reads_as_a_fixed_reason(monkeypatch) -> None:
+    """A failed saga always says it failed: a stored reason the cut leaves nothing of
+    reads as the fixed reason, never as `None` or `""`."""
+    from server.auth.context import set_current_auth
+    from server.erasure.api.erasure import ErasureListInput, ErasureStatusInput
+    from server.erasure.app import handlers
+    from server.erasure.domain.failure_reason import UNSHOWN_REASON
+
+    # A driver's lead word (`Code`) is not a kind: nothing of this reason is shown.
+    raw = "Code: 241. DB::Exception: Memory limit (total) exceeded (ch-internal-7:9440)"
+    row = {
+        "id": "e1",
+        "org": "o",
+        "scope_type": "namespace",
+        "scope_value": "ns",
+        "requester": "r",
+        "status": "failed",
+        "current_step": 3,
+        "requested_at": _now(),
+        "completed_at": None,
+        "failure_reason": raw,
+    }
+
+    async def _row(erasure_id: str) -> dict[str, Any]:
+        return row
+
+    async def _rows(org, **_kw) -> list[dict[str, Any]]:
+        return [row]
+
+    set_current_auth(None)
+    monkeypatch.setattr(erasure_ledger, "fetch_request_status", _row)
+    monkeypatch.setattr(erasure_ledger, "list_requests", _rows)
+    status = await handlers.handle_erasure_status(ErasureStatusInput(erasure_id="e1"))
+    listed = await handlers.handle_erasure_list(ErasureListInput(org="o"))
+    assert status.failure_reason == UNSHOWN_REASON
+    assert [r.failure_reason for r in listed.rows] == [UNSHOWN_REASON]
+
+
+async def test_erasure_list_cuts_a_reason_stored_before_the_upgrade(monkeypatch) -> None:
+    from server.auth.context import set_current_auth
+    from server.erasure.api.erasure import ErasureListInput
+    from server.erasure.app import handlers
+
+    async def _rows(org, **_kw) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": "e1",
+                "scope_type": "namespace",
+                "scope_value": "ns",
+                "requester": "r",
+                "status": "failed",
+                "requested_at": _now(),
+                "completed_at": None,
+                "failure_reason": f"external.delete_namespace: ErasureBackendError: {_DRIVER_TEXT}",
+            }
+        ]
+
+    set_current_auth(None)
+    monkeypatch.setattr(erasure_ledger, "list_requests", _rows)
+    out = await handlers.handle_erasure_list(ErasureListInput(org="o"))
+    assert [r.failure_reason for r in out.rows] == [
+        "external.delete_namespace: ErasureBackendError"
+    ]
+
+
+async def test_erasure_export_cuts_an_erasure_failure_written_before_the_upgrade(
+    monkeypatch,
+) -> None:
+    """`erasure.export` returns the scope's audit rows: an `erasure.failed` subject an
+    older build wrote with the driver's text shows the step and the kind."""
+    from server.erasure.app import handlers
+    from server.erasure.store import exports as erasure_exports
+
+    failed = {"erasure_id": "e1", "error": f"memory.tombstone: ValueError: {_DRIVER_TEXT}"}
+    other = {"key": "k", "note": _DRIVER_TEXT}
+
+    async def _rows(org, namespace, *, limit, shown) -> list[dict[str, Any]]:
+        return [
+            {"event_type": "erasure.failed", "subject": json.dumps(failed)},
+            {"event_type": "memory.set", "subject": json.dumps(other)},
+        ]
+
+    monkeypatch.setattr(erasure_exports, "export_audit_namespace", _rows)
+    rows, _n, _more = await handlers._export_audit_log(
+        "o", "namespace", "ns", limit=10, shown=erasure_exports._EVERY
+    )
+    assert json.loads(str(rows[0]["subject"]))["error"] == "memory.tombstone: ValueError"
+    assert rows[1]["subject"] == json.dumps(other)  # another event as stored
+
+
+def test_a_step_failing_with_a_loom_error_keeps_its_code_and_message() -> None:
+    from server.core.errors import BackendUnavailableError
+
+    err = saga_steps.ErasureStepError(
+        "memory.tombstone", BackendUnavailableError("ClickHouse is unavailable; retry")
+    )
+    assert str(err) == "memory.tombstone: BACKEND_UNAVAILABLE: ClickHouse is unavailable; retry"

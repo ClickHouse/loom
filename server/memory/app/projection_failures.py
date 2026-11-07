@@ -20,6 +20,7 @@ from server.core.datetimes import (
     parse_iso_dt,
     to_naive_utc,
 )
+from server.core.errors import caller_text
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
     WHOLE_NAMESPACE,
@@ -526,12 +527,19 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
         # Held by the model-call switch: no attempt, no error; the row stays open.
         return _held(failure)
     except Exception as e:  # noqa: BLE001 — reported on the result; the row stays open
+        # `ops.projection_failures.retry` returns the error: its kind; the text is logged.
+        log.warning(
+            "projection failure %s: the retry failed: %s: %s",
+            failure.failure_id,
+            type(e).__name__,
+            e,
+        )
         return ProjectionFailureRetryResult(
             failure_id=failure.failure_id,
             projection=failure.projection,
             retried=True,
             resolved=False,
-            error=f"{type(e).__name__}: {e}",
+            error=caller_text(e),
         )
 
 

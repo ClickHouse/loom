@@ -72,7 +72,7 @@ async def test_parse_failure_lands_in_index_error(monkeypatch: pytest.MonkeyPatc
     stats = await _ingest(repo)
 
     assert not stats.skipped
-    assert stats.error.startswith("parse: RuntimeError: grammar exploded")
+    assert stats.error == "parse: RuntimeError"  # the text is in the log
     # Degraded to chunk-only: the file is still searchable...
     assert any(t == "code_chunks" and rows for t, rows in repo.inserts)
     assert stats.symbols_new == 0
@@ -113,7 +113,7 @@ async def test_edge_failure_keeps_chunks_and_symbols(monkeypatch: pytest.MonkeyP
     repo = _StubRepo()
     stats = await _ingest(repo)
 
-    assert "edges: ValueError: bad tree" in stats.error
+    assert stats.error == "edges: ValueError"
     tables = [t for t, _ in repo.inserts]
     assert "code_chunks" in tables and "code_symbols" in tables
     assert stats.edges_new == 0
@@ -121,12 +121,17 @@ async def test_edge_failure_keeps_chunks_and_symbols(monkeypatch: pytest.MonkeyP
     assert file_row["index_error"] == stats.error
 
 
-def test_error_text_is_bounded() -> None:
-    long = RuntimeError("x" * 5000 + "\nsecond line")
-    text = ingest_stats.error_text("parse", long)
-    assert text.startswith("parse: RuntimeError: ")
-    assert len(text) <= len("parse: RuntimeError: ") + ingest_stats._ERROR_MAX_CHARS
-    assert "\n" not in text
+def test_error_text_names_the_stage_and_the_kind_only() -> None:
+    """`code.index_errors` returns the column to a viewer: a stage's exception can be
+    a ClickHouse error with its statement, so the kind only."""
+    from server.core.errors import BackendUnavailableError
+
+    driver = RuntimeError("Code: 210. Connection refused (ch-internal-7:9440)\nSELECT 1")
+    assert ingest_stats.error_text("parse", driver) == "parse: RuntimeError"
+    typed = BackendUnavailableError("ClickHouse is unavailable; retry")
+    assert ingest_stats.error_text("edges", typed) == (
+        "edges: BACKEND_UNAVAILABLE: ClickHouse is unavailable; retry"
+    )
 
 
 def test_parse_file_public_shape_unchanged() -> None:

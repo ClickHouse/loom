@@ -631,6 +631,22 @@ def test_a_trust_with_its_keys_address_skips_discovery(bots, monkeypatch) -> Non
     assert r.status_code == 200 and fetched == ["https://keys.example/jwks.json"]
 
 
+def test_unreadable_keys_refuse_without_naming_their_address(bots, monkeypatch) -> None:
+    """`/oauth/token` answers without a token: the keys' URL and the network error
+    are logged, never quoted."""
+
+    def signing_key(uri: str, token: str) -> Any:
+        raise pyjwt.PyJWKClientConnectionError(
+            f"Fail to fetch data from the url, err: {uri} refused (10.0.0.7:8443)"
+        )
+
+    bots["registered"]["fleet"]["jwks_uri"] = "https://keys.internal/jwks.json"
+    monkeypatch.setattr(oidc, "signing_key", signing_key)
+    r = _exchange(TestClient(oauth_app()), _ci_token(bots, agent_id="a1"), client_id="fleet")
+    assert r.json()["error"] == "temporarily_unavailable"
+    assert r.json()["error_description"] == "the issuer's keys could not be read; retry"
+
+
 def test_a_release_rewrites_each_bot_under_its_claim(monkeypatch) -> None:
     # A disable or replace landing between the read and the save must not be
     # written back over (a disabled bot saved active again).

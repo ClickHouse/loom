@@ -19,11 +19,15 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from server.core.errors import shown_unauthenticated
 from server.settings import settings
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -42,6 +46,7 @@ Check = Callable[[], CheckResult | Awaitable[CheckResult]]
 
 @dataclass
 class _Entry:
+    name: str
     check: Check
     required: bool
     ttl_s: float
@@ -56,7 +61,7 @@ _draining = False
 
 def register(name: str, check: Check, *, required: bool = True, ttl_s: float = 0.0) -> None:
     """Add (or replace) the check `name`."""
-    _CHECKS[name] = _Entry(check=check, required=required, ttl_s=ttl_s)
+    _CHECKS[name] = _Entry(name=name, check=check, required=required, ttl_s=ttl_s)
 
 
 def names() -> list[str]:
@@ -82,7 +87,8 @@ async def _run(entry: _Entry) -> CheckResult:
     except TimeoutError:
         return CheckResult(False, f"no answer within {settings.readiness_check_timeout_s:g} s")
     except Exception as e:  # noqa: BLE001 — a failing check is an unready answer, not a 500
-        return CheckResult(False, f"{type(e).__name__}: {e}"[:200])
+        # `/v1/health/ready` answers without a token: the reason is the error's kind.
+        return CheckResult(False, shown_unauthenticated(log, f"readiness check {entry.name}", e))
 
 
 async def _cached(entry: _Entry) -> CheckResult:

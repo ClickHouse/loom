@@ -12,14 +12,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from typing import Any, Protocol
 
+from server.core.errors import caller_text
 from server.settings import settings
 from server.tracker.domain.contract import ContractFailed
 from server.tracker.domain.errors import TrackerUnavailable
 from server.tracker.store.source import contract_reports
 from server.tracker.store.source.sql import KIND_TABLES, RESTRICTED_TABLES
+
+log = logging.getLogger(__name__)
 
 _MAX_CACHE = 4096
 _cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
@@ -129,7 +133,9 @@ class SourceBase:
             try:
                 ok = await _the_gate().is_restricted(self.org, self.namespace)
             except Exception as e:
-                raise TrackerUnavailable(f"classification unavailable: {e}") from e
+                # The reason reaches the caller: the error's kind; the text is logged.
+                log.warning("tracker: the classification read failed: %s: %s", type(e).__name__, e)
+                raise TrackerUnavailable(f"classification unavailable: {caller_text(e)}") from e
             if not ok:
                 raise TrackerUnavailable(
                     f"{self.namespace} is configured restricted but its directory row is not"
@@ -147,7 +153,8 @@ class SourceBase:
         except TrackerUnavailable:
             raise
         except Exception as e:
-            raise TrackerUnavailable(f"contract check: {type(e).__name__}: {e}") from e
+            log.warning("tracker: the contract check failed: %s: %s", type(e).__name__, e)
+            raise TrackerUnavailable(f"contract check: {caller_text(e)}") from e
 
     def _privacy(self) -> str:
         """The privacy predicate: standard namespaces never see a private row
@@ -240,7 +247,8 @@ class SourceBase:
             # unavailable, the breaker stays closed
             raise TrackerUnavailable(f"{tag} exceeded {int(budget_s * 1000)} ms") from e
         except Exception as e:
-            raise TrackerUnavailable(f"{tag}: {type(e).__name__}: {e}") from e
+            log.warning("tracker %s failed: %s: %s", tag, type(e).__name__, e)
+            raise TrackerUnavailable(f"{tag}: {caller_text(e)}") from e
         ttl = float(ttl_s) if ttl_s else float(settings.tracker_live_cache_ttl_s)
         if not rows:
             ttl = min(ttl, 60.0)  # an unknown number may land within minutes

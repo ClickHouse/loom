@@ -160,7 +160,10 @@ async def roll_namespace(
         try:
             await roll_day(repo, src, org, ns, day, result, pace=pace)
         except TrackerUnavailable as e:
-            # the quota, the budget or the breaker: the rest waits for the next pass
+            # the quota, the budget or the breaker: the rest waits for the next pass.
+            # TrackerUnavailable's messages are Loom's own (the source cuts driver text),
+            # and `stopped` reaches only the admin worker status (`ops.health` keeps an
+            # outcome's numbers).
             result.stopped = f"{org}/{ns} {day.day.isoformat()}: {str(e)[:200]}"
             logger.info("tracker_test_daily stopped at %s: %s", day.day, e)
             return

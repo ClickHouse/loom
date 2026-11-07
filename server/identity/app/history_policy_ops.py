@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from server.core.errors import ValidationError
+from server.core.errors import ValidationError, stored_caller_text
 from server.identity.api.models_policy import (
     PolicyCheckInput,
     PolicyCheckOutput,
@@ -199,6 +199,17 @@ async def handle_policy_check(input: PolicyCheckInput) -> PolicyCheckOutput:
     )
 
 
+def _caller_error(error: str) -> str:
+    """A recorded decision's error as a reader gets it: `<where>: ` (`policy gate` or a
+    leaf's op) and `caller_text`'s shape. A build before that rule recorded the
+    store's text after the kind; it is cut here."""
+    where, _, rest = error.partition(": ")
+    shown = stored_caller_text(rest)
+    if shown:
+        return f"{where}: {shown}"
+    return where
+
+
 async def handle_policy_decisions(input: PolicyDecisionsInput) -> PolicyDecisionsOutput:
     """List the recorded history-policy decisions for a namespace, optionally one verdict."""
 
@@ -223,7 +234,7 @@ async def handle_policy_decisions(input: PolicyDecisionsInput) -> PolicyDecision
                 decision=r["decision"],
                 enforced=bool(r["enforced"]),
                 determining_rules=list(r["determining_rules"]),
-                errors=list(r["errors"]),
+                errors=[_caller_error(str(e)) for e in r["errors"]],
                 latency_ms=int(r["latency_ms"]),
             )
             for r in rows

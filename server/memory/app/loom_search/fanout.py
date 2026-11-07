@@ -13,9 +13,10 @@ lean result; the `search` operation returns it as is.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Literal
 
-from server.core.errors import LoomServerError
+from server.core.errors import LoomServerError, caller_text
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
 from server.knowledge.app.repo_docs import knowledge_with_repo_docs
@@ -26,6 +27,8 @@ from server.memory.app.loom_search.answer_first import answer_first
 from server.memory.app.loom_search.repo_decisions import memory_with_repo_decisions
 from server.memory.app.loom_search.tracker_leg import tracker_leg
 from server.memory.app.profile_search import search_profile
+
+log = logging.getLogger(__name__)
 
 # Query words that name nothing in a profile section — otherwise "where does
 # the user live" matches every persona that says "user".
@@ -271,14 +274,14 @@ async def search_sections(
     # as memory.search does); None for a parked page, which searched nothing.
     settled: MemorySearchInput | None = None
     if isinstance(mem_result, Exception):
-        payload["memory"] = {"error": _leg_error(mem_result), "results": []}
+        payload["memory"] = {"error": _leg_error("memory", mem_result), "results": []}
     else:
         memory = mem_result.model_dump()
         models = {id(d): (d, m) for d, m in zip(memory["results"], mem_result.results, strict=True)}
         settled = mem_result._settled_input
         payload["memory"] = drop_flagged_hits(memory)
     if isinstance(know_result, Exception):
-        payload["knowledge"] = {"error": _leg_error(know_result), "results": []}
+        payload["knowledge"] = {"error": _leg_error("knowledge", know_result), "results": []}
     else:
         know = know_result.model_dump()
 
@@ -304,7 +307,10 @@ async def search_sections(
     # lands in the same call.
     conv_hits: list[dict[str, Any]] = []
     if isinstance(conv_result, Exception):
-        payload["conversations"] = {"error": _leg_error(conv_result), "results": []}
+        payload["conversations"] = {
+            "error": _leg_error("conversations", conv_result),
+            "results": [],
+        }
     else:
         conv_dump = conv_result.model_dump()
         conv_hits = conv_dump.get("results") or conv_dump.get("hits") or []
@@ -327,9 +333,11 @@ async def search_sections(
     return payload
 
 
-def _leg_error(e: Exception) -> str:
+def _leg_error(leg: str, e: Exception) -> str:
     """A failed leg's error as the payload shows it: a Loom error leads with
-    its code (`EMBED_TIMEOUT: ...`), so an agent can tell what to do."""
-    if isinstance(e, LoomServerError):
-        return f"{e.code}: {e.message}" if e.message else e.code
-    return str(e)
+    its code (`EMBED_TIMEOUT: ...`), so an agent can tell what to do. Any other
+    error names its kind: its text can carry a statement or a server address,
+    so it goes to the server log."""
+    if not isinstance(e, LoomServerError):
+        log.warning("loom_search: the %s leg failed: %s: %s", leg, type(e).__name__, e)
+    return caller_text(e)

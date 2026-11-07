@@ -827,6 +827,9 @@ def _model_call_holds_left_empty() -> Iterator[None]:
     from server.llm import customer
 
     customer._logged_at.clear()
+    from server.core import errors
+
+    errors._logged_at.clear()  # each test sees its own tokenless failures logged
 
 
 @pytest.fixture(autouse=True)

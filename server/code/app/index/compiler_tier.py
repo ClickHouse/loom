@@ -45,7 +45,7 @@ class BaseUnknown(RuntimeError):
     """The window's base commit is gone: the next run must index in full."""
 
 
-class TierDegraded(RuntimeError):
+class TierDegraded(tier_health.ToolOutputError):
     """The entry's run finished and moved its watermark, but part of it failed (a Go
     module that would not build): the tier's record says failing, the pass is no error."""
 
@@ -246,7 +246,7 @@ def harness_failure(returncode: int | None, tail: str) -> RuntimeError:
     """The error for a harness exit: `BaseUnknown` for `BASE_UNKNOWN_EXIT`."""
     if returncode == BASE_UNKNOWN_EXIT:
         return BaseUnknown(f"harness exit {returncode}: base commit unknown: {tail[-500:]}")
-    return RuntimeError(f"harness exit {returncode}: {tail}")
+    return tier_health.ToolOutputError(f"harness exit {returncode}: {tail}")
 
 
 async def restart_full(
@@ -256,9 +256,8 @@ async def restart_full(
     full index (which also retires rows the new index no longer emits),
     instead of retrying a window that can never be diffed."""
     check_held()
-    await repo.set_state(
-        cfg.org, cfg.namespace, watermark_key, "", detail=f"base unknown: {err}"[:500]
-    )
+    # `code.index_status` returns the detail: the harness output (host paths) is logged.
+    await repo.set_state(cfg.org, cfg.namespace, watermark_key, "", detail="base unknown")
     errors.append(f"{cfg.namespace}: {err}; {watermark_key} cleared, the next run indexes in full")
     logger.warning(
         "%s: %s base unknown, %s cleared for a full run",

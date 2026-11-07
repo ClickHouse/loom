@@ -567,7 +567,7 @@ def test_the_extraction_queue_leaves_a_refused_row_without_spending_an_attempt(
     monkeypatch.setattr(q, "mark_held", mark_held)
     result = asyncio.run(worker.run_pass(worker.ExtractionQueueConfig()))
     assert (result.skipped, done, errors) == (1, ["b"], [])
-    assert held == [("a", "ModelCallRefused", 600.0)]  # held for its cooldown, not `running`
+    assert held == [("a", "MODEL_CALL_REFUSED", 600.0)]  # held for its cooldown, not `running`
 
 
 def test_the_embedding_worker_leaves_a_refused_identitys_rows(wire, monkeypatch) -> None:

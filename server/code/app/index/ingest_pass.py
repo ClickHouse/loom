@@ -33,6 +33,7 @@ from server.code.app.index.pass_budget import (
 )
 from server.code.app.index.pass_fetch import _publish_clone_head, fetch_entry, prefetch_mirrors
 from server.code.app.index.pass_stream import ingest_oldest_first
+from server.core.errors import caller_text
 from server.llm import customer
 from server.settings import settings
 from server.workers import pass_context
@@ -184,7 +185,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
             result.errors.append(f"{cfg.label}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: repo %s failed", cfg.label)
             pass_context.note_failure(e, cfg.namespace)
-            result.tier_failed(cfg, "ingest", f"{type(e).__name__}: {e}")
+            result.tier_failed(cfg, "ingest", caller_text(e))
             continue
         if plan is not None:
             plans.append(plan)
@@ -255,7 +256,7 @@ async def _run_leg(
             result.errors.append(f"{plan.cfg.label}: {leg}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: %s of %s failed", leg, plan.cfg.label)
             pass_context.note_failure(e, f"{plan.cfg.namespace}:{leg}")
-            result.tier_failed(plan.cfg, "ingest", f"{leg}: {type(e).__name__}: {e}")
+            result.tier_failed(plan.cfg, "ingest", f"{leg}: {caller_text(e)}")
 
 
 async def _bootstrap_leg(plan: RepoPass, result: CodeIngestResult, budget: PassBudget) -> None:
@@ -670,7 +671,7 @@ async def _maybe_reconcile(
     except Exception as e:
         result.errors.append(f"reconcile: {type(e).__name__}: {e}")
         logger.exception("code_ingest: reconcile failed for %s", cfg.label)
-        result.tier_failed(cfg, "ingest", f"reconcile: {type(e).__name__}: {e}")
+        result.tier_failed(cfg, "ingest", f"reconcile: {caller_text(e)}")
 
 
 def _stage_plan(
@@ -983,4 +984,4 @@ async def _maybe_rechunk(
     except Exception as e:
         result.errors.append(f"rechunk: {type(e).__name__}: {e}")
         logger.exception("code_ingest: extractor re-chunk failed for %s", cfg.label)
-        result.tier_failed(cfg, "ingest", f"rechunk: {type(e).__name__}: {e}")
+        result.tier_failed(cfg, "ingest", f"rechunk: {caller_text(e)}")

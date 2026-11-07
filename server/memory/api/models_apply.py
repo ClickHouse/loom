@@ -129,6 +129,8 @@ class ApplyRow(BaseModel):
     session_id: str = ""
     status: Literal["would_apply", "applied", "refused", "noop", "failed"]
     version: int | None = None
+    # Why a row was refused or failed, `""` otherwise: `<CODE>: <message>` for a refusal
+    # or a Loom error, `<Kind>: see the server log, request_id=<id>` for any other error.
     detail: str = ""
 
 
@@ -200,7 +202,7 @@ class MemoryApplyOutput(BaseModel):
     refused: int = 0  # locks, policy, preconditions
     # Rows already in the asked state: nothing was written for them.
     noop: int = 0
-    # Rows whose write raised; each row's `detail` says why.
+    # Rows whose write failed; each row's `detail` names the error, not its text.
     failed: int = 0
     truncated: bool = False  # more of the caller's rows may match than `limit`
     # One entry per matched row: its identity, status, new version and detail.

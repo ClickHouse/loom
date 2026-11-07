@@ -9,6 +9,7 @@ the worker supervisor and the observability subsystems.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from collections.abc import Awaitable
 from typing import Any, cast
@@ -17,8 +18,17 @@ from fastapi import APIRouter
 from fastapi.responses import Response
 
 from server import __version__, boot
+from server.core.errors import shown_unauthenticated
 from server.operations.capabilities import SCHEMA_VERSION
 from server.settings import settings
+
+log = logging.getLogger(__name__)
+
+
+def _shown_error(e: BaseException, where: str) -> str:
+    """An error as `/v1/health` shows it: `/v1/health` answers without a token."""
+    return shown_unauthenticated(log, f"health: {where}", e)
+
 
 health_router = APIRouter()
 
@@ -55,7 +65,7 @@ def _health_provider_fields(
     from server.auth import claims as signin_claims
     from server.auth import keyring, revocation
     from server.code.app.index import tier_health
-    from server.code.app.index.sandbox import layout_refusal, sandbox_state
+    from server.code.app.index.sandbox import LAYOUT_REFUSED, layout_refusal, sandbox_state
     from server.core.ch import reader_user_error, reader_user_state
     from server.core.vectors import codes_state
     from server.embedding.embedder import effective_embedding_dim, embedder_is_fake
@@ -91,7 +101,9 @@ def _health_provider_fields(
             keyring=keyring.status(),
             config_drift=tuple(deployment_config.drift()),
             repo_sandbox=sandbox_state(),
-            repo_sandbox_refusal=layout_refusal(),
+            # The refusal names a host path; `/v1/health` answers without a token, so it
+            # says what is wrong and `loom doctor` names the path.
+            repo_sandbox_refusal=LAYOUT_REFUSED if layout_refusal() else "",
             ch_reader_ok=reader_user_state(),
             ch_reader_error=reader_user_error(),
             oauth_signin_state_full=signin_claims.keeper_full(),
@@ -131,7 +143,7 @@ async def _ping_clickhouse() -> tuple[bool, str | None]:
         row = await get_client().query_one("SELECT 1 AS one")
         return bool(row and row["one"] == 1), None
     except Exception as e:  # noqa: BLE001 — health reports any CH failure
-        return False, f"{type(e).__name__}: {e}"
+        return False, _shown_error(e, "the ClickHouse ping")
 
 
 def _mode() -> str:
@@ -197,7 +209,7 @@ def _ratelimit_block() -> dict[str, Any]:
 
         return dict(get_limiter().backend_status())
     except Exception as e:  # noqa: BLE001 — health must not fail on the limiter
-        return {"error": f"{type(e).__name__}: {e}"}
+        return {"error": _shown_error(e, "the rate limiter's status")}
 
 
 def _workers_blocks() -> dict[str, object]:
@@ -206,10 +218,12 @@ def _workers_blocks() -> dict[str, object]:
     out: dict[str, object] = {}
     try:
         from server.workers import child as _workers_child
+        from server.workers.status import shown_worker_row
 
-        out["workers"] = _workers_child.current_runner().status()
+        # Without a token: a pass's text and outcome strings can name another org.
+        out["workers"] = [shown_worker_row(r) for r in _workers_child.current_runner().status()]
     except Exception as e:  # noqa: BLE001 — health must not fail on workers
-        out["workers"] = {"error": f"{type(e).__name__}: {e}"}
+        out["workers"] = {"error": _shown_error(e, "the workers' status")}
     lease = _leader.current()
     out["workers_leader"] = {
         "held": bool(lease.held) if lease else True,

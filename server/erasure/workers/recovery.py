@@ -15,6 +15,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, TypedDict
 
+from server.core.errors import caller_text
+from server.erasure.domain.failure_reason import (
+    ABANDONED_REASON_PREFIX,
+    LAST_REASON_SEP,
+    caller_reason,
+)
 from server.erasure.store.rows import LedgerRow, ResumeRow, VerifyColumns, census_kept
 from server.observability import audit
 from server.workers import pass_context
@@ -86,7 +92,7 @@ async def run_pass(cfg: RecoveryConfig | None = None) -> RecoveryResult:
                     cfg=cfg,
                     result=result,
                     attempts=int(row["attempts"]),
-                    last_error=str(row.get("failure_reason") or ""),
+                    last_error=caller_reason(str(row.get("failure_reason") or "")),
                     completed=set(row.get("steps_completed") or []),
                     verify=_ledger_verify(row),
                 )
@@ -146,7 +152,7 @@ async def _recover_one(
     # exceeded` that hides the step's reason and reads `residue_count = 0`
     # over live rows.
     out: Any = None
-    last_error = str(row.get("failure_reason") or "")
+    last_error = caller_reason(str(row.get("failure_reason") or ""))
     completed_now: set[str] = set(previously_completed)
 
     try:
@@ -191,13 +197,11 @@ async def _recover_one(
             completed_now |= set(out.steps_completed or [])
     except Exception as e:
         log.exception("erasure_recovery raised on id=%s", erasure_id)
-        last_error = f"{type(e).__name__}: {e}"
+        # The ledger's reason reaches the requester: `caller_text`'s kind, or a Loom
+        # error's code and message. The text is in the server log (the line above).
+        last_error = caller_text(e)
         result.errors.append(
-            {
-                "erasure_id": erasure_id,
-                "attempt": new_attempts,
-                "error": last_error,
-            }
+            {"erasure_id": erasure_id, "attempt": new_attempts, "error": f"{type(e).__name__}: {e}"}
         )
 
     # Permanent-fail once attempts hit max and the Saga still didn't complete.
@@ -258,12 +262,11 @@ async def _abandon(
         input_from_ledger_row,
         request_row_template,
     )
-    from server.erasure.store.ledger import ABANDONED_REASON_PREFIX
 
     erasure_id = str(row["id"])
     reason = f"{ABANDONED_REASON_PREFIX}{cfg.max_attempts}) exceeded"
     if last_error:
-        reason = f"{reason}; last: {last_error}"
+        reason = f"{reason}{LAST_REASON_SEP}{last_error}"
     await audit.emit(
         event_type="erasure.abandoned",
         org=row["org"],

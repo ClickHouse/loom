@@ -42,7 +42,8 @@ class BlacklistAddOutput(BaseModel):
     # True when more rows matched than one sweep takes; call `blacklist.sweep`.
     swept_truncated: bool = False
     # "" when the sweep finished, else why not (the pattern is stored either way):
-    # `<code>: <message>` (rerun with blacklist.sweep) or the failed match query's message.
+    # `<code>: <message>` (rerun with blacklist.sweep), RE2's reason when a regex cannot
+    # run (no query ran), or the kind of error the match query failed with.
     sweep_error: str = ""
 
 
@@ -65,7 +66,8 @@ class BlacklistSweepOutput(BaseModel):
     # True when more rows matched than one call takes; call again.
     truncated: bool
     # "" when the sweep finished, else `<code>: <message>` once rows may have landed (call
-    # again) or the failed match query's message; a failure before that is the call's.
+    # again), RE2's reason when a regex cannot run (no query ran), or the kind of error
+    # the match query failed with; a failure before that is the call's.
     error: str = ""
 
 

@@ -249,7 +249,9 @@ async def _resolve_window(
             git_dir, "log", "--no-walk", "--format=%H %ct", w.base_sha, w.to_sha
         )
     except gitrepo.GitError as e:
-        w.error = f"window commits unread: {e}"[:200]
+        # git's stderr can name the mirror's path on this host: logged, not returned.
+        logger.info("blame window commits unread: %s", e)
+        w.error = "window commits unread"
         return w
     pairs = [ln.split() for ln in times.splitlines()]
     by_sha = {p[0]: int(p[1]) for p in pairs if len(p) == 2}

@@ -66,7 +66,7 @@ async def test_a_raising_or_hanging_check_fails_instead_of_erroring(monkeypatch)
     monkeypatch.setattr(settings, "readiness_check_timeout_s", 0.05)
 
     def _boom() -> CheckResult:
-        raise RuntimeError("no table")
+        raise RuntimeError("Code: 60. Unknown table loom.grants (ch-internal-7:9440)")
 
     async def _hang() -> CheckResult:
         await asyncio.sleep(5)
@@ -76,7 +76,22 @@ async def test_a_raising_or_hanging_check_fails_instead_of_erroring(monkeypatch)
     readiness.register("hang", _hang)
     state = await readiness.evaluate()
     assert not state.ready and sorted(state.failing) == ["boom", "hang"]
-    assert "no table" in state.checks["boom"].reason
+    # `/v1/health/ready` answers without a token: the kind, not the driver's text.
+    assert state.checks["boom"].reason == "RuntimeError"
+
+
+async def test_a_raising_check_is_logged_by_name_once_a_minute(caplog) -> None:
+    """Probes poll readiness without a token: the text is logged, named, not per poll."""
+
+    def _boom() -> CheckResult:
+        raise RuntimeError("Code: 60. Unknown table loom.grants (ch-internal-7:9440)")
+
+    readiness.register("grants", _boom)
+    with caplog.at_level("WARNING", logger="server.core.readiness"):
+        for _ in range(3):
+            await readiness.evaluate()
+    lines = [r.getMessage() for r in caplog.records if "failed" in r.getMessage()]
+    assert len(lines) == 1 and "grants" in lines[0]
 
 
 @pytest.mark.asyncio

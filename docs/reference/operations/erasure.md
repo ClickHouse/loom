@@ -80,7 +80,7 @@ GDPR Article 17 forgetting.
 | `residue_count` | `int` | Verified forgetting: live rows and bucket objects the post-erasure census still found in scope, per substrate; 0 / {} on a completed saga. |
 | `residue` | `dict[str, int]` | Rows still live per table after the saga, only tables with a non-zero count (the Postgres authority's under `pg:<table>`), and the bucket objects left, under the key `objects.document_originals`; `{}` on success. |
 | `verified_at` | `datetime \| None` | When the residue census ran (UTC); `None` if it never ran or left a store uncounted (the Postgres authority or the bucket, which the server log names); `residue` then holds what it did count. |
-| `failure_reason` | `str` | A failed saga names the step that failed, and the steps it did complete, so the recovery worker's terminal row and an operator re-verify keep both instead of the attempts count alone. |
+| `failure_reason` | `str` | Why a failed saga failed, `""` otherwise: `<step>: <error>` or a bare `<error>` outside a step, where `<error>` is the exception's kind or a Loom error's `<CODE>: <message>`, or `verify.residue: ErasureResidueError: residue after erasure… |
 | `steps_completed` | `list[str]` | Names of the steps finished so far, sorted. |
 
 ## `erasure.status`
@@ -105,7 +105,7 @@ Check the status of an in-flight erasure request (queued, running, completed, fa
 | `current_step` | `int \| None` | How many steps have finished; 99 once the saga completed. |
 | `requested_at` | `datetime \| None` | When the saga was registered (UTC). |
 | `completed_at` | `datetime \| None` | When the saga reached its terminal state (UTC); `None` while in progress. |
-| `failure_reason` | `str \| None` | The failing step and its error for a failed saga; `None` otherwise. |
+| `failure_reason` | `str \| None` | Why a failed saga failed, `None` otherwise: a reason `erasure.request` names, or `max_attempts (N) exceeded` once recovery gave up, then `; last: <reason>` if any; `the saga failed; the error is in the server log` for a reason in neither… |
 | `residue_count` | `int` | Verified forgetting. |
 | `residue` | `dict[str, int]` | Rows still live per table at the last census (the Postgres authority's under `pg:<table>`), and the bucket objects left, under the key `objects.document_originals`; `{}` when none. |
 | `verified_at` | `datetime \| None` | When the last residue census ran (UTC); `None` if it has not run or left a store uncounted (the Postgres authority or the bucket, which the server log names); `residue` then holds what it did count. |

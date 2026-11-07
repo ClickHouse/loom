@@ -36,11 +36,11 @@ from operator import itemgetter
 from typing import Any
 
 from server.core import pg
+from server.core.caller_regex import compile_caller_regex
 from server.core.ch import sequential_reads
-from server.core.ch_errors import error_line
 from server.core.datetimes import naive_utc_now
 from server.core.error_summary import error_summary
-from server.core.errors import LoomServerError
+from server.core.errors import LoomServerError, ValidationError, caller_text
 from server.memory.app import webhooks
 from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 from server.memory.store.rows import MemoryRow, stored_value_text
@@ -149,6 +149,13 @@ async def sweep_pattern(
     from server.memory.app.search import pg_validation
     from server.memory.store import pg_memory
 
+    if pattern_type == "regex":
+        # ClickHouse's match() is RE2: a pattern RE2 refuses is the caller's to fix, and
+        # RE2's reason names only the pattern.
+        try:
+            compile_caller_regex(pattern)
+        except ValidationError as e:
+            return SweepResult(pattern_id, 0, 0, False, error=e.message[:200])
     ch = ch or _default_client()
     authority = pg.enabled()
     where, params = sweep_where(pattern_type, scope, namespace)
@@ -168,10 +175,12 @@ async def sweep_pattern(
                 """,
                 params=params,
             )
-    except Exception as e:  # noqa: BLE001 — a bad regex must not break the add
-        # The caller wrote the pattern and is answered its error; the log keeps a summary.
+    except Exception as e:  # noqa: BLE001 — a failed sweep must not fail the add
         log.warning("blacklist sweep %s: match query failed: %s", pattern_id, error_summary(e))
-        return SweepResult(pattern_id, 0, 0, False, error=error_line(e))
+        # The driver's text can carry the statement and the server's address.
+        return SweepResult(
+            pattern_id, 0, 0, False, error=f"the match query failed ({caller_text(e)})"
+        )
 
     def no_match(head: Any) -> bool:
         return matches is not None and not matches(stored_value_text(head))

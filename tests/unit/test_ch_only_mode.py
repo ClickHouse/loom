@@ -263,7 +263,7 @@ def test_health_is_200_when_clickhouse_answers(health_client: TestClient) -> Non
 def test_health_is_503_when_clickhouse_is_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
     """A probe that reads only the status code must see the outage: a degraded
     service answers /v1/health with a non-200 status, not 200 + `degraded` in
-    the body. The body still carries the detail."""
+    the body. The body names the error kind; its text is only logged."""
     import server.main as main_module
 
     class _DownCH:
@@ -275,7 +275,7 @@ def test_health_is_503_when_clickhouse_is_unreachable(monkeypatch: pytest.Monkey
     assert r.status_code == 503
     body = r.json()
     assert body["ch_ok"] is False and body["status"] == "degraded"
-    assert "Too many open files" in body["ch_error"]
+    assert body["ch_error"] == "OSError"
 
 
 def test_health_names_the_migrations_a_skipping_process_lacks(

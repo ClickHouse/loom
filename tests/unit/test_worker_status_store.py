@@ -505,6 +505,7 @@ def test_merge_prefers_the_freshest_report_per_worker_and_unions_unknown_workers
             now - timedelta(minutes=1),
             status="failed",
             error="boom",
+            error_class="RuntimeError",
             consecutive_failures=2,
         ),
         _store_row("b", "deploy:workers:green", now - timedelta(minutes=9)),
@@ -514,6 +515,8 @@ def test_merge_prefers_the_freshest_report_per_worker_and_unions_unknown_workers
     a = out["a"]
     assert a["source"] == "store" and a["reporting_from"] == "deploy:workers:green"
     assert a["last_pass_status"] == "failed" and a["last_error"] == "boom"
+    # The store row wins: its class is the kind, as the registry's is.
+    assert a["last_error_kind"] == "RuntimeError"
     assert a["consecutive_failures"] == 2 and a["last_duration_ms"] == 2000
     assert a["reporters"] == ["deploy:workers:blue", "deploy:workers:green"]
     assert a["total_runs"] == 3  # registry-only fields survive
@@ -736,3 +739,14 @@ async def test_pass_summaries_read_one_plane_by_name_prefix(ch: _FakeCH) -> None
     sql, params = ch.queries[-1]
     assert params == {"prefix": "code_", "days": 14}
     assert "startsWith(worker, {prefix:String})" in sql and store.TABLE in sql
+
+
+def test_a_failed_pass_records_the_error_class_as_its_kind_never_its_message() -> None:
+    # The registry is process-wide and passes run for every org: a Loom error's
+    # message can name an org, so the kind is the class, as the ledger's is.
+    from server.core.errors import NotFoundError
+
+    with pytest.raises(NotFoundError), wstatus.record_pass("kind_probe"):
+        raise NotFoundError("namespace other-org/secret is not configured")
+    got = wstatus.get_registry().snapshot()["kind_probe"]
+    assert got["last_error_kind"] == "NotFoundError"

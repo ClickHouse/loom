@@ -230,3 +230,35 @@ def test_a_v2_cursor_with_a_malformed_hash_is_a_validation_error(row_hash: str) 
     v2 = _v2_cursor(datetime(2026, 5, 16, 12, 0, tzinfo=UTC), "req-1", row_hash)
     with pytest.raises(ValidationError):
         _decode_page_cursor(v2)
+
+
+@pytest.mark.asyncio
+async def test_an_erasure_failure_written_before_the_upgrade_is_cut_on_read(monkeypatch) -> None:
+    """An older build wrote the driver's text into `erasure.failed`'s `error` and
+    `erasure.abandoned`'s `last_error`: `audit.list` shows the step and the kind."""
+    import json
+
+    from server.auth import context as ctx
+    from server.insights.api.models_audit import AuditListInput
+    from server.insights.app import audit as h
+
+    text = "Code: 210. Connection refused (ch-internal-7:9440) ALTER TABLE loom.memory"
+    failed = {"erasure_id": "e1", "error": f"memory.tombstone: ValueError: {text}"}
+    abandoned = {"erasure_id": "e1", "last_error": f"RuntimeError: {text}", "attempts": 5}
+    other = {"key": "v", "error": text}
+    rows = [
+        {**_row(), "event_type": "erasure.failed", "subject": json.dumps(failed)},
+        {**_row(), "event_type": "erasure.abandoned", "subject": json.dumps(abandoned)},
+        {**_row(), "event_type": "erasure.failed", "subject": '{"error": "RuntimeError"}'},
+        {**_row(), "subject": json.dumps(other)},
+    ]
+    monkeypatch.setattr(ctx, "current_auth", lambda: None)
+    ch = StubCH()
+    ch.query_all_returns.extend([rows, rows, []])
+    monkeypatch.setattr(h, "get_client", lambda: ch)
+    out = await h.handle_audit_list(AuditListInput(org="clickhouse", namespace="ns", limit=10))
+    subjects = [json.loads(r.subject) for r in out.rows]
+    assert subjects[0] == {**failed, "error": "memory.tombstone: ValueError"}
+    assert subjects[1] == {**abandoned, "last_error": "RuntimeError"}
+    assert out.rows[2].subject == '{"error": "RuntimeError"}'  # already cut: as stored
+    assert subjects[3] == other  # another event's subject is never rewritten

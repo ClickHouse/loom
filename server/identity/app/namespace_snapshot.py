@@ -12,6 +12,7 @@ from server.core import grant_cache
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
+from server.erasure.domain.failure_reason import caller_audit_subject
 from server.identity.api.models import (
     NamespaceRestoreInput,
     NamespaceRestoreOutput,
@@ -98,7 +99,10 @@ async def handle_namespace_snapshot(
                 ts=a["ts"],
                 event_type=a["event_type"],
                 actor=a.get("actor") or "",
-                subject_json=a.get("subject_json") or "",
+                # An erasure failure an older build wrote with the driver's text is cut.
+                subject_json=caller_audit_subject(
+                    str(a["event_type"]), str(a.get("subject_json") or "")
+                ),
             )
             for a in audit_rows
         ]

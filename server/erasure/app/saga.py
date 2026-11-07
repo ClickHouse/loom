@@ -23,7 +23,7 @@ from typing import Any
 from server.core import pg
 from server.core.background import register_deferred_task
 from server.core.error_summary import error_summary
-from server.core.errors import BackendUnavailableError
+from server.core.errors import BackendUnavailableError, caller_text
 from server.core.pg import PostgresUnavailableError
 from server.erasure.api.erasure import (
     ErasureRequestInput,
@@ -337,13 +337,18 @@ async def run_saga(
                 isinstance(cause, _BACKEND_FAILURES) or (cause is not None and pg.is_outage(cause))
             ):
                 log.warning(
-                    "erasure %s failed at step %s (backend, will retry): %s",
+                    "erasure %s failed at step %s (backend, will retry): %s: %s",
                     erasure_id,
                     e.step,
+                    type(cause).__name__,
                     cause,
                 )
             else:
                 log.exception("erasure %s failed mid-saga", erasure_id)
+            # What the requester reads: the step and `caller_text` of the cause; a
+            # failure outside a step (a checkpoint's insert) is `caller_text(e)` alone.
+            # The text is in the log.
+            reason = str(e) if isinstance(e, ErasureStepError) else caller_text(e)
             # The census tail: the census runs whether or not the steps did, so a
             # step that fails ahead of `verify.residue` does not leave readable
             # residue under `residue_count = 0`. The tail fills the holder and
@@ -358,7 +363,7 @@ async def run_saga(
                 status="failed",
                 steps_completed=sorted(completed),
                 current_step=len(completed),
-                failure_reason=str(e),
+                failure_reason=reason,
                 completed_at=completed_at,
                 extra=_verify_columns(verify),
             )
@@ -370,7 +375,7 @@ async def run_saga(
                 subject={
                     "erasure_id": erasure_id,
                     "requester": input.requester,
-                    "error": str(e)[:512],
+                    "error": reason[:512],
                     "steps_completed": sorted(completed),
                 },
                 request_id=erasure_id,
@@ -384,7 +389,7 @@ async def run_saga(
                 residue_count=int(verify.get("count") or 0),
                 residue={t: n for t, n in (verify.get("per_table") or {}).items() if n},
                 verified_at=verify.get("verified_at"),
-                failure_reason=str(e)[:512],
+                failure_reason=reason[:512],
                 steps_completed=sorted(completed),
             )
     # After the census and before the checkpoint: a crash in between reopens the saga,

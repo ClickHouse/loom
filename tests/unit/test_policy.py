@@ -311,7 +311,7 @@ async def test_leaf_error_is_reported_never_a_verdict():
     d = await P.evaluate([rule], ctx(), FakeCH(fail=True))
     assert d.decision == "allow"  # the evaluator does not decide on errors
     assert d.determining_rules == []
-    assert d.errors and "clickhouse unreachable" in d.errors[0]
+    assert d.errors == ["formerly: RuntimeError"]  # the store's text stays in the log
     assert d.verdicts[0].holds is None and d.verdicts[0].denies is False
 
 
@@ -439,3 +439,47 @@ async def test_a_stored_rule_over_a_lowered_window_cap_is_clamped_not_dropped(mo
     with pytest.raises(ValueError):
         R.parse_rule({**stored, "condition": json.loads(stored["condition"])})
     P.invalidate()
+
+
+async def test_a_decision_recorded_before_the_upgrade_shows_the_error_kind(monkeypatch) -> None:
+    """An older build recorded `<where>: <Kind>: <text>` in a decision's errors, and a
+    viewer reads them through `policy.decisions`: the place and the kind remain."""
+    from server.identity.api.models_policy import PolicyDecisionsInput
+    from server.identity.app import history_policy_ops as ops
+    from server.identity.store import policy as policy_repo
+
+    text = (
+        "Code: 210. Connection refused (ch-internal-7:9440) SELECT count() FROM loom.agent_events"
+    )
+
+    async def _decisions(org, namespace, **_kw) -> list[dict[str, Any]]:
+        return [
+            {
+                "ts": datetime.now(UTC),
+                "agent": "a",
+                "user_id": "-",
+                "session_id": "-",
+                "operation": "memory.set",
+                "request_id": "r",
+                "mode": "enforce",
+                "decision": "deny",
+                "enforced": 1,
+                "determining_rules": [],
+                "errors": [
+                    f"policy gate: RuntimeError: {text}",
+                    f"formerly: RuntimeError: {text}",
+                    "count_within: OVERLOADED: the server is busy; retry",
+                    "formerly: RuntimeError",
+                ],
+                "latency_ms": 3,
+            }
+        ]
+
+    monkeypatch.setattr(policy_repo, "list_decisions", _decisions)
+    out = await ops.handle_policy_decisions(PolicyDecisionsInput(org="o", namespace="n"))
+    assert out.rows[0].errors == [
+        "policy gate: RuntimeError",
+        "formerly: RuntimeError",
+        "count_within: OVERLOADED: the server is busy; retry",
+        "formerly: RuntimeError",
+    ]

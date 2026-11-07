@@ -12,6 +12,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+from server.core.errors import caller_text
 from server.identity.domain.policy_rules import (
     All,
     AnyOf,
@@ -76,8 +77,9 @@ async def _eval_leaf(leaf: Any, ctx: CallContext, ch: Any, out: list[LeafResult]
         return False
     try:
         rows = await ch.query_all(compiled.sql, compiled.params)
-    except Exception as e:
-        msg = f"{leaf.op}: {type(e).__name__}: {e}"[:400]
+    except Exception as e:  # a failed leaf is reported on the decision, then raised
+        log.warning("history policy leaf %s failed: %s", leaf.op, e)
+        msg = f"{leaf.op}: {caller_text(e)}"[:400]  # the text stays in the log
         out.append(
             LeafResult(
                 op=leaf.op,

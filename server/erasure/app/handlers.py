@@ -34,6 +34,7 @@ from server.erasure.api.erasure import (
     ErasureStatusOutput,
 )
 from server.erasure.app.saga import audit_namespace, begin_erasure, run_saga
+from server.erasure.domain.failure_reason import caller_audit_subject, shown_reason
 from server.erasure.store import exports as erasure_exports
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store.rows import RequestStatusRow
@@ -202,6 +203,11 @@ async def _export_audit_log(
         rows = await erasure_exports.export_audit_by_subject_substring(
             org, scope_value, limit=limit + 1, shown=shown
         )
+    # An erasure failure an older build wrote with the driver's text is cut here too.
+    rows = [
+        {**r, "subject": caller_audit_subject(str(r.get("event_type")), str(r.get("subject")))}
+        for r in rows
+    ]
     return _page(rows, limit)
 
 
@@ -396,7 +402,8 @@ async def handle_erasure_status(input: ErasureStatusInput) -> ErasureStatusOutpu
         current_step=int(row["current_step"]),
         requested_at=row["requested_at"],
         completed_at=row["completed_at"],
-        failure_reason=row["failure_reason"] or None,
+        # A build from before the upgrade stored the driver's text; it is cut here.
+        failure_reason=shown_reason(str(row["failure_reason"] or "")) or None,
         residue_count=int(row.get("residue_count") or 0),
         residue=_parse_residue(row.get("residue")),
         verified_at=row.get("verified_at"),
@@ -476,7 +483,7 @@ async def handle_erasure_list(input: ErasureListInput) -> ErasureListOutput:
                 status=cast("ErasureStatus", r["status"]),
                 requested_at=r["requested_at"],
                 completed_at=r["completed_at"],
-                failure_reason=str(r.get("failure_reason") or ""),
+                failure_reason=shown_reason(str(r.get("failure_reason") or "")),
                 steps_completed_count=int(r.get("steps_completed_count") or 0),
                 reversals_count=int(r.get("reversals_count") or 0),
                 residue_count=int(r.get("residue_count") or 0),

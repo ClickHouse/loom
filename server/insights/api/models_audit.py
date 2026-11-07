@@ -46,7 +46,11 @@ class AuditListRow(ProjectedRow):
     org: str
     namespace: str
     actor: str
-    subject: str  # JSON string; caller decides whether to deserialize
+    # JSON string; caller decides whether to deserialize. An `erasure.failed` `error` or
+    # `erasure.abandoned` `last_error` an older build wrote with the driver's text is
+    # cut to the step and the error's kind; `row_hash` covers the stored subject, not
+    # the returned one.
+    subject: str
     request_id: str
     row_hash: str
 

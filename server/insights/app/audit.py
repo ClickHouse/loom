@@ -12,6 +12,7 @@ from server.core.ch import get_client
 from server.core.cursors import decode_cursor as _decode_cursor
 from server.core.cursors import encode_cursor as _encode_cursor
 from server.core.errors import ValidationError
+from server.erasure.domain.failure_reason import caller_audit_subject
 from server.insights.api.models_audit import AuditListInput, AuditListOutput, AuditListRow
 from server.insights.store import audit as audit_repo
 from server.operations.read_projection import project_rows
@@ -178,7 +179,10 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
     page = await read_page(before=before)
     # The page's last write is read again under the same cursor.
     page, has_more = await _finish_the_write(page, input.limit, partial(read_page, before=before))
-    rows = [AuditListRow(**r.model_dump()) for r in page]
+    rows = [
+        AuditListRow(**{**r.model_dump(), "subject": caller_audit_subject(r.event_type, r.subject)})
+        for r in page
+    ]
     next_cursor = _encode_cursor(page[-1].ts, page[-1].request_id) if rows and has_more else None
     project_rows(rows, AuditListRow, input.fields, always=frozenset({"ts"}))
     return AuditListOutput(rows=rows, next_cursor=next_cursor)

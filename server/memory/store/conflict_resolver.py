@@ -44,7 +44,7 @@ _LIVE_VECTOR = """tombstoned_at IS NULL
           AND embedding_dim > 0"""
 
 # The failure_reason of an abandoned erasure saga, which never runs again
-# (erasure.store.ledger.ABANDONED_REASON_PREFIX; this store may not import it).
+# (erasure.domain.failure_reason.ABANDONED_REASON_PREFIX; this store may not import it).
 ERASURE_ABANDONED_PREFIX = "max_attempts ("
 
 # The orgs with an erasure a write waits for (an abandoned saga never runs again). The

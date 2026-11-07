@@ -465,3 +465,21 @@ async def test_a_candidate_is_expired_from_the_authoritys_head(
     )
     X.emit_sweep_event(res, latency_ms=1)
     assert events[0].args["moved_skipped"] == "2"
+
+
+async def test_a_failed_scan_records_the_error_class_for_the_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The sweep covers every org and an org admin reads the registry's kind: a Loom
+    # error's message can name another org, so the kind is the class.
+    import server.memory.store as memory_repo
+    from server.core.errors import NotFoundError
+    from server.workers.status import get_registry
+
+    async def _boom(**_kw: Any) -> list[MemoryRow]:
+        raise NotFoundError("namespace other-org/secret is not configured")
+
+    monkeypatch.setattr(memory_repo, "find_expired_candidates", _boom)
+    await X.run_pass(X.ExpiryConfig())
+    got = get_registry().snapshot()["memory_expiry_sweep"]
+    assert got["last_error_kind"] == "NotFoundError"

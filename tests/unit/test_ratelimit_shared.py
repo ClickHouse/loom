@@ -206,7 +206,9 @@ def test_limiter_auto_shares_when_workers_exceed_one(settings_override, tmp_path
     assert lim.shared_active is True
     status = lim.backend_status()
     assert status["backend"] == "shared" and status["divisor"] == 1
-    assert status["path"] == str(tmp_path / "rl") and status["slots"] == 256
+    assert status["slots"] == 256 and status["reason"] == "shared table"
+    # `/v1/health` answers without a token: no host path in it.
+    assert str(tmp_path) not in str(status)
 
 
 def test_shared_cap_is_divided_by_replicas_not_workers(settings_override, tmp_path: Path) -> None:

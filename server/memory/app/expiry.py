@@ -37,6 +37,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now, to_naive_utc
+from server.core.errors import caller_text
 from server.core.hashing import sha256_value as _sha
 from server.memory.app import webhooks
 from server.memory.domain import lock as _lock
@@ -209,9 +210,10 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
         get_registry().record_failure(
             "memory_expiry_sweep",
             duration_ms=int((time.monotonic() - started) * 1000),
-            error=f"{type(e).__name__}: {e}",
+            exc=e,
         )
-        res.failures.append(f"scan: {type(e).__name__}: {e}")
+        # `memory.sweep_expired` returns the failures: the kind; the text is logged above.
+        res.failures.append(f"scan: {caller_text(e)}")
         return res
 
     version_rows: list[dict[str, Any]] = []
@@ -257,11 +259,11 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             version_rows, mirrors = await _over_unmoved_heads(version_rows, mirrors, res, ch=ch)
         except Exception as e:  # the pass records a failure; the rows expire next pass
             log.exception("memory_expiry_sweep: version insert failed")
-            res.failures.append(f"insert: {type(e).__name__}: {e}")
+            res.failures.append(f"insert: {caller_text(e)}")
             get_registry().record_failure(
                 "memory_expiry_sweep",
                 duration_ms=int((time.monotonic() - started) * 1000),
-                error=f"{type(e).__name__}: {e}",
+                exc=e,
             )
             return res
         # A demoted or anonymized row is a new version of a live key.

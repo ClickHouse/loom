@@ -1150,3 +1150,74 @@ async def test_a_restore_payload_without_its_links_is_malformed(payload) -> None
     failure = dataclasses.replace(_graph_failure("entity_edges_restore"), payload=payload)
     (out,) = await retry_failures([failure], ch=_GraphCH())
     assert out.abandoned and out.reason == "malformed_payload"
+
+
+def test_the_list_shows_the_error_kind_and_an_abandon_reason_never_the_text() -> None:
+    """The stored message is the exception's text, which can carry a statement or the
+    server's address: `ops.projection_failures.list` shows `error_type` and the reason
+    a retry abandoned the row with."""
+    from types import SimpleNamespace
+
+    from server.insights.app import ops as ops_app
+
+    text = "Code: 210. Connection refused (ch-internal-7:9440) INSERT INTO loom.memory_chunks"
+
+    def row(message: str, status: str = "abandoned") -> Any:
+        return SimpleNamespace(
+            failure_id="f",
+            org="o",
+            namespace="n",
+            agent="a",
+            projection="memory_chunks",
+            source_operation="memory.set",
+            source_resource_id="k",
+            memory_keys=["k"],
+            error_type="RuntimeError",
+            error_message=message,
+            payload={},
+            status=status,
+            created_at=None,
+            resolved_at=None,
+        )
+
+    assert ops_app._projection_failure_row(row(text, "active")).error_message == ""
+    abandoned = ops_app._projection_failure_row(row(f"{text}; abandoned: model_calls_held"))
+    assert abandoned.error_message == "abandoned: model_calls_held"
+    assert abandoned.error_type == "RuntimeError"
+    # The stored text can hold the separator itself: the reason is after the last one.
+    echoed = f"{text} value '; abandoned: x' (ch-internal-7:9440); abandoned: model_calls_held"
+    assert ops_app._projection_failure_row(row(echoed)).error_message == (
+        "abandoned: model_calls_held"
+    )
+    # An active row's text is the exception's alone, whatever it holds.
+    assert ops_app._projection_failure_row(row(echoed, "active")).error_message == ""
+
+
+async def test_a_retry_that_raises_reports_the_kind_only(monkeypatch) -> None:
+    """`ops.projection_failures.retry` returns each result's `error`: the kind; the
+    driver's text is logged."""
+    from server.memory.app import projection_failures as pf
+
+    async def _boom(failure: Any, *, ch: Any) -> None:
+        raise RuntimeError("Code: 210. Connection refused (ch-internal-7:9440) INSERT INTO x")
+
+    monkeypatch.setattr(pf, "_retry_memory_chunks", _boom)
+    (result,) = await retry_failures(
+        [
+            ProjectionFailureRow(
+                failure_id="f1",
+                org="o",
+                namespace="n",
+                agent="a",
+                projection="memory_chunks",
+                source_operation="memory.set",
+                source_resource_id="k",
+                memory_keys=["k"],
+                error_type="RuntimeError",
+                error_message="boom",
+            )
+        ],
+        ch=object(),
+    )
+    assert result.retried is True and result.resolved is False
+    assert result.error == "RuntimeError"

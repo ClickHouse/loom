@@ -69,7 +69,9 @@ def test_a_symlink_at_the_path_is_refused_and_the_limiter_falls_back(
     )
     lim = ratelimit.Limiter()
     assert lim.shared_active is False
-    assert "shared table unavailable" in str(lim.backend_status()["reason"])
+    reason = str(lim.backend_status()["reason"])
+    # `/v1/health` shows it without a token: the error's kind, not the path's text.
+    assert reason.startswith("shared table unavailable (") and str(link) not in reason
 
 
 def test_a_directory_or_a_foreign_file_at_the_path_is_refused(tmp_path: Path) -> None:

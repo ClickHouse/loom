@@ -171,6 +171,8 @@ class PolicyDecisionRow(BaseModel):
     decision: str
     enforced: bool
     determining_rules: list[str]
+    # Why the gate or a leaf could not answer: `policy gate: <error>` or `<op>: <error>`,
+    # `<error>` the exception's kind or a Loom error's `<CODE>: <message>`.
     errors: list[str]
     latency_ms: int
 

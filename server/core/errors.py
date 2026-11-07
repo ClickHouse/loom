@@ -7,6 +7,8 @@ server `code` is a class the SDK deserializes via `errors.from_response`.
 from __future__ import annotations
 
 import json
+import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -282,6 +284,78 @@ class SchemaPendingError(LoomServerError):
 
     def __init__(self, message: str = "", *, table: str = "", migration: str = "") -> None:
         super().__init__(message, table=table, migration=migration)
+
+
+def caller_text(e: BaseException) -> str:
+    """An error as a caller-facing field shows it: a Loom error's code and message,
+    which are written for callers; any other error's kind only, since its text can
+    carry a statement, a server address or a remote response. The caller logs the
+    text."""
+    if isinstance(e, LoomServerError):
+        return f"{e.code}: {e.message}" if e.message else e.code
+    return type(e).__name__
+
+
+def error_kind(e: BaseException) -> str:
+    """An error as a surface without a token shows it: a Loom error's code, any other
+    error's class. Even a Loom error's message can name a host (a gateway refusal
+    names the one it refused)."""
+    return e.code if isinstance(e, LoomServerError) else type(e).__name__
+
+
+# When each (place, kind) was last logged by `shown_unauthenticated`.
+_logged_at: dict[tuple[str, str], float] = {}
+
+
+def shown_unauthenticated(log: logging.Logger, place: str, e: BaseException) -> str:
+    """`error_kind(e)` for a surface any caller can poll without a token, with the
+    text logged at most once a minute per place and kind, however often it is polled."""
+    kind = error_kind(e)
+    now = time.monotonic()
+    if now - _logged_at.get((place, kind), float("-inf")) >= 60.0:
+        _logged_at[(place, kind)] = now
+        log.warning("%s failed: %s: %s", place, type(e).__name__, e)
+    return kind
+
+
+# The wire codes of the `LoomServerError` classes, as `caller_text` leads with them.
+_LOOM_CODES: set[str] = set()
+
+
+def _is_loom_code(word: str) -> bool:
+    """`word` is the code of a `LoomServerError` class loaded (`BACKEND_UNAVAILABLE`).
+    A known code is a set lookup; an upper-case word not in the set walks the classes
+    again, since a module imported later can add one (`ERROR` from a driver walks
+    each time, and is not one)."""
+    if word in _LOOM_CODES or not word.isupper():
+        return word in _LOOM_CODES
+    todo: list[type[LoomServerError]] = [LoomServerError]
+    while todo:
+        cls = todo.pop()
+        _LOOM_CODES.add(cls.code)
+        todo.extend(cls.__subclasses__())
+    return word in _LOOM_CODES
+
+
+def stored_caller_text(text: str) -> str:
+    """An error a row stored, cut to `caller_text`'s shape: `<CODE>: <message>` is kept
+    whole when `<CODE>` is a Loom error's (a driver's `ERROR: ...` is not),
+    `<Kind>: <text>` (what a build before `caller_text` stored) keeps the kind, and
+    text in neither shape reads as `""`. For a field read back from a table that
+    an older build may have written. A bare identifier is kept whatever its case
+    (`ConnectTimeout`, `gaierror`): one word carries no statement or address. Before
+    `: <text>`, a kind is a class name that ends in `Error` or `Exception`, so a
+    driver's own lead word (`Code: 241. ...`) is not one."""
+    kind, sep, rest = text.partition(": ")
+    if rest and _is_loom_code(kind):
+        return text
+    if not kind.isidentifier():
+        return ""
+    if not sep:
+        return kind
+    if kind[0].isupper() and kind.endswith(("Error", "Exception")):
+        return kind
+    return ""
 
 
 # Each code's entry in the error catalogue; an HTTP error names it in a `Link` header.
