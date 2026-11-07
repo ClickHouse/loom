@@ -95,8 +95,8 @@ async def classify(
             payload = resp.json()
         else:
             payload = await _post_vetted(endpoint, body, scope=(org, namespace))
-            if payload is None:
-                return ""
+    except _HostRefused:
+        return ""  # noted and logged where it was refused
     except customer.HOLDS:
         raise  # the gateway refused or held the call's identity: never "kept the caller's type"
     except Exception as e:  # noqa: BLE001 — a failed classifier keeps the caller's type
@@ -124,6 +124,11 @@ async def classify(
     return candidate
 
 
+class _HostRefused(Exception):
+    """The endpoint's host is refused at the call: kept apart from any answer, a JSON
+    null included."""
+
+
 # The largest classifier answer read: {"memory_type": ...} is a few dozen bytes.
 _MAX_ANSWER_BYTES = 64 * 1024  # not a setting: bounds what an admin's endpoint can send
 
@@ -132,8 +137,8 @@ async def _post_vetted(endpoint: str, body: Mapping[str, object], *, scope: tupl
     """POST to a classifier off the gateway and return its decoded answer: to the public
     address its host resolves to (vetted here and connected to, so a rebinding name
     cannot move it), with no redirect and no identity headers. The lookup, the call
-    and the answer, at most `_MAX_ANSWER_BYTES`, are under one deadline. None, noted,
-    when the host is refused (logged once per `scope`, the (org, namespace))."""
+    and the answer, at most `_MAX_ANSWER_BYTES`, are under one deadline. _HostRefused,
+    noted, when the host is refused (logged once per `scope`, the (org, namespace))."""
     async with asyncio.timeout(settings.memory_classify_timeout_s):
         refusal, url, host, server_name = await webhooks.pinned_target(
             # http only for a listed host: classify_refusal refused it for any other
@@ -149,7 +154,7 @@ async def _post_vetted(endpoint: str, body: Mapping[str, object], *, scope: tupl
                     refusal,
                 )
             _degradations.note("classify", "caller_type_kept", "endpoint host refused")
-            return None
+            raise _HostRefused
         async with (
             httpx.AsyncClient(follow_redirects=False, verify=webhooks.tls()) as client,
             client.stream(

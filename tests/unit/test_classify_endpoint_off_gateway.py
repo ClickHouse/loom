@@ -488,3 +488,30 @@ def test_a_private_host_matches_in_either_spelling(
     assert _classify(url) == "note"
     (seen,) = client.seen
     assert seen["url"] == "http://xn--bcher-kva.local:9000/c"
+
+
+def test_a_null_answer_is_noted_as_malformed_not_as_a_refused_host(
+    vetted: None, client: type[_Client]
+) -> None:
+    client.answer = staticmethod(lambda: _Answer([b"null"]))
+    degradations.begin()
+    assert _classify("https://classifier.example/c") == ""
+    assert len(client.seen) == 1
+    assert degradations.current() == ["classify: caller_type_kept (malformed payload)"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://[fe80::1%25eth0]/c",  # a zone id
+        "https://gate%77ay.example/c",  # a percent-encoded name
+        "https://ｇａｔｅｗａｙ.example/c",  # fullwidth, at the default port
+    ],
+)
+def test_a_host_that_is_not_a_bare_name_or_address_is_refused_and_never_posted(
+    monkeypatch: pytest.MonkeyPatch, url: str, client: type[_Client]
+) -> None:
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
+    monkeypatch.setattr("server.core.hosts._resolve", lambda host: ["93.184.215.14"])
+    assert classify_refusal(url) == "it is not a valid URL"
+    assert _classify(url) == "" and client.seen == []

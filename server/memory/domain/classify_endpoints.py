@@ -15,40 +15,42 @@ password, and every check reads one host: httpx's and `urlsplit`'s must agree.
 from __future__ import annotations
 
 from typing import Annotated
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 from pydantic import AfterValidator
 
 from server.settings import settings
-from server.settings.catalog import ascii_host, url_host
+from server.settings.catalog import ascii_host, is_bare_host, url_host
 
 
 def via_gateway(url: str) -> bool:
-    """Whether a classifier at `url` is called as a model call, through the gateway:
+    """Whether the classify call posts to `url` as a model call, through the gateway:
     while the gateway is required, or at one of its listed hosts. Read only for a URL
     `classify_refusal` passes, so httpx's host and the call's are one."""
     return settings.gateway_required() or url_host(url.strip()) in settings.gateway_hosts()
 
 
-def _one_host(url: str) -> tuple[str, str]:
-    """(refusal, host): the one host httpx (the gateway check, the model call) and
-    `urlsplit` (the off-gateway call, `webhooks.pinned_target`) both read in `url`,
-    as `ascii_host` spells it. Refused when they would read two, or either none."""
+def _one_host(url: str) -> tuple[str, SplitResult | None, str]:
+    """(refusal, parts, host): `url` as `urlsplit` parts and the one host httpx (the
+    gateway check, the model call) and `urlsplit` (the off-gateway call,
+    `webhooks.pinned_target`) both read, as `ascii_host` spells it. Refused when they
+    would read two, either none, or it is not a bare name or address literal."""
     # urlsplit drops a tab or a newline that httpx refuses, and either may read a
     # control character apart: no URL carries one.
     if any(ch.isspace() or not ch.isprintable() for ch in url):
-        return "it may not carry a control or whitespace character", ""
+        return "it may not carry a control or whitespace character", None, ""
     try:
         parts = urlsplit(url)
         host = ascii_host(parts.hostname or "")
         parts.port  # noqa: B018 — an invalid port raises here, as at the call
     except ValueError:  # an IDNA error is a ValueError too
-        return "it is not a valid URL", ""
+        return "it is not a valid URL", None, ""
     if not host:
-        return "it names no host", ""
-    if host != url_host(url):  # "" when httpx cannot parse it
-        return "it is not a valid URL", ""
-    return "", host
+        return "it names no host", None, ""
+    # A zone id or a percent-encoded name is read apart by a resolver, httpx or a proxy.
+    if not is_bare_host(host) or host != url_host(url):  # url_host: "" when httpx cannot
+        return "it is not a valid URL", None, ""
+    return "", parts, host
 
 
 def classify_refusal(url: str) -> str:
@@ -57,19 +59,19 @@ def classify_refusal(url: str) -> str:
     url = url.strip()
     if not url:
         return ""
-    refusal, host = _one_host(url)
-    if refusal:
+    refusal, parts, host = _one_host(url)
+    if parts is None:
         return refusal
-    parts = urlsplit(url)
     # The call drops them, and namespace.get would hand the credential back.
     if parts.username is not None or parts.password is not None:
         return "the URL may not carry a user name or password"
-    if not via_gateway(url):
+    gateway_hosts = settings.gateway_hosts()
+    if not (settings.gateway_required() or host in gateway_hosts):
         private = host in settings.memory_classify_private_host_set()
         if parts.scheme != "https" and not (private and parts.scheme == "http"):
             return "it must be https"
         return ""
-    if settings.gateway_required() and host not in settings.gateway_hosts():
+    if host not in gateway_hosts:
         return f"{host} is not in LOOM_INFERENCE_GATEWAY_HOSTS"
     if parts.scheme != "https" or parts.port is not None:
         return "it must be https at the default port"

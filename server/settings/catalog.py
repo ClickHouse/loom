@@ -2600,14 +2600,24 @@ class MemorySettings(BaseModel):
     # Seconds a namespace's classify_endpoint may take to answer a write's
     # classification; past it the write keeps the caller's memory_type.
     memory_classify_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
-    # Comma-separated hostnames (exact, any case) a classify_endpoint may name although
-    # they resolve to a private or loopback address, reached over plain http too (a
-    # classifier beside Loom): any port and path of a listed host, so list only a host
-    # that serves nothing else; "" = only https at public addresses.
+    # Comma-separated hostnames or IP literals, no port (exact, any case; an IDN in either
+    # spelling) a classify_endpoint may name although they resolve to a private or
+    # loopback address, reached over plain http too (a classifier beside Loom): any port
+    # and path of a listed host, so list only a host that serves nothing else; "" = only
+    # https at public addresses.
     memory_classify_private_hosts: str = ""
 
     def memory_classify_private_host_set(self) -> frozenset[str]:
         return ascii_host_set(self.memory_classify_private_hosts)
+
+    @model_validator(mode="after")
+    def _check_classify_private_hosts(self) -> MemorySettings:
+        refusal = host_list_refusal(
+            "LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS", self.memory_classify_private_hosts
+        )
+        if refusal:
+            raise ValueError(refusal)
+        return self
 
     # ---- delete-version checks ----
     # Run the delete_version_check worker, which finishes the memory.delete_version checks a
@@ -3550,8 +3560,9 @@ class MemoryWebhookSettings(BaseModel):
     # True lets a memory webhook use plain http (a local receiver in development);
     # false: https only.
     memory_webhook_allow_http: bool = False
-    # Comma-separated hostnames or IP literals (exact, any case) a memory webhook may
-    # reach although they resolve to a private, loopback or link-local address; "" = none.
+    # Comma-separated hostnames or IP literals, no port (exact, any case; an IDN in either
+    # spelling) a memory webhook may reach although they resolve to a private, loopback or
+    # link-local address; "" = none.
     memory_webhook_private_hosts: str = ""
 
     @model_validator(mode="after")
@@ -3569,6 +3580,15 @@ class MemoryWebhookSettings(BaseModel):
 
     def memory_webhook_private_host_set(self) -> frozenset[str]:
         return ascii_host_set(self.memory_webhook_private_hosts)
+
+    @model_validator(mode="after")
+    def _check_webhook_private_hosts(self) -> MemoryWebhookSettings:
+        refusal = host_list_refusal(
+            "LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS", self.memory_webhook_private_hosts
+        )
+        if refusal:
+            raise ValueError(refusal)
+        return self
 
 
 # ===== Model ==================================================================
@@ -3966,8 +3986,9 @@ def ascii_host(host: str) -> str:
 
 
 def ascii_host_set(hosts: str) -> frozenset[str]:
-    """The comma-separated `hosts`, each as `ascii_host` spells it (one IDNA cannot
-    encode is dropped: no URL's host can equal it)."""
+    """The comma-separated `hosts`, each as `ascii_host` spells it. One IDNA cannot
+    encode is refused at load (`host_list_refusal`), and dropped here: no URL's host
+    can equal it."""
     out = set()
     for h in hosts.split(","):
         try:
@@ -4010,14 +4031,36 @@ def _is_http_url(url: str) -> bool:
 _GATEWAY_HOST_RE = re.compile(r"[a-z0-9][a-z0-9.-]*")
 
 
-def _is_gateway_host(host: str) -> bool:
-    """A bare DNS name, or an IPv6 address (its colons are not a port)."""
+def is_bare_host(host: str) -> bool:
+    """A bare DNS name or IPv4 address, or an IPv6 address (its colons are not a port)
+    with no zone: no `%`, so no percent-encoding either."""
+    if "%" in host:
+        return False
     if ":" not in host:
         return bool(_GATEWAY_HOST_RE.fullmatch(host))
     try:
         return ipaddress.ip_address(host).version == 6
     except ValueError:
         return False
+
+
+def host_list_refusal(setting: str, hosts: str) -> str:
+    """Why an entry of the comma-separated `hosts` is not a bare hostname or IP literal
+    as `ascii_host` spells it (a scheme, port, brackets, path, wildcard, or a name IDNA
+    cannot encode); "" when every entry is one."""
+    for entry in hosts.split(","):
+        if not entry.strip():
+            continue
+        try:
+            host = ascii_host(entry)
+        except ValueError:
+            host = ""
+        if not is_bare_host(host):
+            return (
+                f"{setting}: {entry.strip()[:64]!r} is not a hostname or IP literal "
+                "(no scheme, port, brackets, path or wildcard)"
+            )
+    return ""
 
 
 # The settings the gateway check reads; a dashboard configuration overrides the embedding ones.
@@ -4657,12 +4700,9 @@ class ProviderSettings(ModelSettings):
         """Every gateway host is a bare hostname, and with the gateway required
         every address Loom sends model calls to is one of them (the senders
         refuse any other too, on every redirect hop)."""
-        for host in self.gateway_hosts():
-            if not _is_gateway_host(host):
-                raise ValueError(
-                    f"LOOM_INFERENCE_GATEWAY_HOSTS: {host[:64]!r} is not a hostname "
-                    "(no scheme, port, path or wildcard)"
-                )
+        refusal = host_list_refusal("LOOM_INFERENCE_GATEWAY_HOSTS", self.inference_gateway_hosts)
+        if refusal:
+            raise ValueError(refusal)
         refusal = self.gateway_refusal()
         if refusal:
             raise ValueError(refusal)

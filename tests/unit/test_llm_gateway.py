@@ -846,6 +846,39 @@ def test_a_gateway_host_is_a_bare_hostname(monkeypatch: pytest.MonkeyPatch, host
         Settings(_env_file=None)  # type: ignore[call-arg]
 
 
+_HOST_LISTS = (
+    "LOOM_INFERENCE_GATEWAY_HOSTS",
+    "LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS",
+    "LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS",
+)
+
+
+@pytest.mark.parametrize("name", _HOST_LISTS)
+@pytest.mark.parametrize(
+    "entry", ["box.local:8080", "[::1]", "*.local", "bü..local", "fe80::1%eth0", "a/b"]
+)
+def test_a_host_list_entry_that_is_not_a_bare_host_is_refused_at_load(
+    monkeypatch: pytest.MonkeyPatch, name: str, entry: str
+) -> None:
+    """A port, brackets, a wildcard, a zone or a name IDNA cannot encode would match no
+    URL's host: refused, never dropped."""
+    monkeypatch.setenv(name, f"ok.local, {entry}")
+    with pytest.raises(ValueError, match=f"{name}: .* is not a hostname or IP literal"):
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_a_private_host_list_loads_names_and_address_literals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    listed = "Box.Local., bücher.local, 127.0.0.1, ::1"
+    monkeypatch.setenv("LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS", listed)
+    monkeypatch.setenv("LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS", listed)
+    loaded = Settings(_env_file=None)  # type: ignore[call-arg]
+    spelled = {"box.local", "xn--bcher-kva.local", "127.0.0.1", "::1"}
+    assert loaded.memory_classify_private_host_set() == spelled
+    assert loaded.memory_webhook_private_host_set() == spelled
+
+
 def test_the_gateway_required_loads_with_every_root_at_its_hosts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
