@@ -330,8 +330,8 @@ def test_cache_hit_is_not_an_embedding_observation() -> None:
 
     Marking every embed an embedding would put cache hits in Langfuse as
     embedding calls with 0 tokens and $0, as `traced(..., model=...)` would without
-    the same rule. Empty generations inflate the count and drag every
-    per-generation average down by exactly the cache hit rate.
+    the same rule. Empty embedding observations inflate the count and drag every
+    per-call average down by exactly the cache hit rate.
     """
     span = _FakeSpan()
     genai._Embedding(span, "text-embedding-3-small").record_usage(
@@ -349,14 +349,15 @@ def test_cache_hit_is_not_an_embedding_observation() -> None:
 def test_embedding_span_defers_observation_type() -> None:
     """It cannot be set at span start: cache-hit status is not known until after.
 
-    A hard-coded "generation" at span creation is what produced the $0 rows, so
-    guard that the span helper does not reintroduce it.
+    A type hard-coded at span creation is what produced the $0 rows, so guard
+    that the span helper sets no type at all.
     """
     src = (ROOT / "server" / "observability" / "genai.py").read_text()
     body = src.split("def embedding_span(", 1)[1].split("\ndef ", 1)[0]
-    assert 'langfuse.observation.type", "generation"' not in body, (
+    attrs = body.split("attrs: dict[str, Any] = {", 1)[1].split("}", 1)[0]
+    assert "langfuse.observation.type" not in attrs, (
         "embedding_span must not declare the observation type up front — a cache "
-        "hit is not a generation, and that is unknown until the call returns"
+        "hit is not an embedding call, and that is unknown until the call returns"
     )
 
 
@@ -459,3 +460,30 @@ def test_provider_spans_carry_the_genai_semantic_convention_keys(
     for span in (chat, embed):
         assert "gen_ai.system" not in span.attributes
         assert "gen_ai.operation.kind" not in span.attributes
+
+
+def test_the_resource_names_the_environment_under_the_current_convention_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`deployment.environment.name` (stable in semantic conventions 1.41.0), the
+    key Langfuse and HyperDX read first; the deprecated `deployment.environment`
+    is not sent."""
+    from opentelemetry.sdk.resources import Resource
+
+    from server.observability import otel
+
+    seen: dict[str, Any] = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _create(attrs: dict[str, Any]) -> Any:
+        seen.update(attrs)
+        raise _Stop
+
+    monkeypatch.setattr(Resource, "create", staticmethod(_create))
+    monkeypatch.setattr(otel.settings, "otel_environment", "staging")
+    with pytest.raises(_Stop):
+        otel._start_tracing("ch", "")
+    assert seen["deployment.environment.name"] == "staging"
+    assert "deployment.environment" not in seen

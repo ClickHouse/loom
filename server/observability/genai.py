@@ -12,9 +12,10 @@ second instrumentation path:
     (`gen_ai.provider.name`), the operation (`chat`, `embeddings`), the token
     split and the cost from the same attributes.
 
-The keys and values are the OpenTelemetry GenAI semantic conventions'; the
-cascade leg that made the call is `loom.llm.stage` and the span name
-(`llm.<stage>`, `embed.provider`).
+The keys, and the operation values, are the OpenTelemetry GenAI semantic
+conventions'; the provider value is Loom's own provider name (`openai`,
+`anthropic`, `gemini`, ...). The cascade leg that made the call is
+`loom.llm.stage` and the span name (`llm.<stage>`, `embed.provider`).
 
 That mapping is verified, not assumed: a probe span carrying
 `gen_ai.request.model`, `gen_ai.usage.input_tokens/output_tokens` and
@@ -594,15 +595,15 @@ class _Generation:
                         "loom.llm.prompt_cache_hit_ratio",
                         round(cached_input_tokens / tokens_in, 4),
                     )
-            writes = max(0, int(cache_write_5m_tokens)) + max(0, int(cache_write_1h_tokens))
-            if writes:
-                # Also part of `input_tokens`; Langfuse splits it out the same way.
-                self._span.set_attribute("gen_ai.usage.cache_creation.input_tokens", writes)
+            w5, w1 = max(0, int(cache_write_5m_tokens)), max(0, int(cache_write_1h_tokens))
+            if w5 + w1:
+                # Also part of `input_tokens`; Langfuse subtracts it from the
+                # uncached share as it does a cache read.
+                self._span.set_attribute("gen_ai.usage.cache_creation.input_tokens", w5 + w1)
             if self._attempts:
                 self._span.set_attribute("gen_ai.request.attempts", self._attempts)
             if priced:
                 reads = max(0, int(cached_input_tokens))
-                w5, w1 = max(0, int(cache_write_5m_tokens)), max(0, int(cache_write_1h_tokens))
                 self._span.set_attribute(
                     "gen_ai.usage.cost",
                     turn_cost_usd(
@@ -806,8 +807,8 @@ def embedding_span(*, provider: str, model: str) -> Iterator[_Embedding]:
     }
     # `langfuse.observation.type` is deliberately NOT set here — see
     # `_Embedding.record_usage`. A cache hit made no provider call and is not
-    # a generation, and whether the cache served the request is unknown until
-    # after it returns.
+    # an embedding observation, and whether the cache served the request is
+    # unknown until after it returns.
     #
     # Named "embed.provider", NOT "embed.compute": four call sites already open
     # a `traced("embed.compute")` block, and this span nests inside them. Two
