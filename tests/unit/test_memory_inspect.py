@@ -403,6 +403,7 @@ async def test_a_row_the_authority_no_longer_serves_is_not_listed(
     """Under Postgres a row ClickHouse still shows, deleted, revised or redacted in the
     authority, is left out, and its preview is not read."""
     from server.core import pg
+    from server.memory.app.search import pg_validation
     from server.memory.store import pg_memory
 
     def located(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -414,8 +415,12 @@ async def test_a_row_the_authority_no_longer_serves_is_not_listed(
     fake = _ch(newest=located)
     fake.strict = False
     fake.install(monkeypatch, "server.identity.app.namespace_catalog")
+    async def published(*_: object) -> bool:
+        return False  # ClickHouse holds every commit
+
     monkeypatch.setattr(pg, "enabled", lambda: True)
     monkeypatch.setattr(pg_memory, "heads_by_keys", heads_by_keys)
+    monkeypatch.setattr(pg_validation, "admit", published)
     out = await mi.handle_memory_inspect(_inp(sample_limit=1))
     assert out.own.newest == []
     assert not fake.statements("value_preview")

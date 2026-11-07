@@ -4769,3 +4769,43 @@ async def test_a_rollback_to_a_high_version_retires_the_embedded_heads_vectors(
         ns,
     )
     assert owed == 0
+
+
+async def test_a_finding_never_cites_a_row_the_authority_moved_past(
+    call: Any, pg_conn: Any, org: str
+) -> None:
+    """A report cites a sampled row only while the authority serves it: a newer version
+    committed whose delivery ClickHouse keeps refusing (parked, so the report does not
+    wait for it) leaves the finding ClickHouse's row raised, uncited, and memory.get
+    serves the newer version."""
+    from server.core import pg
+    from server.memory.store import pg_memory, rows
+    from server.memory.store.pg_publish import audit_row_for
+
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    blob = json.dumps({"service": "billing", "owner": "payments-team"})
+    written = await call("memory.set", _set(ns, "billing/owner", blob))
+    assert written.status_code == 200, written.text
+    before = await call("namespace.audit", {"namespace": ns, "sample_limit": 5})
+    cited = next(f for f in before.json()["findings"] if f["code"] == "double_encoded_values")
+    assert [e["version"] for e in cited["evidence"]] == [written.json()["version"]]
+
+    newer = {**await _head_row(pg_conn, org, ns), "version": rows.next_version()}
+    try:
+        await pg_memory.commit_versions([newer], [audit_row_for(newer, request_id="", writer="")])
+    finally:
+        await pg.close_pool()
+    # Parked: ClickHouse keeps refusing it, so no barrier waits for it.
+    await pg_conn.execute(
+        "UPDATE loom.memory_deliveries SET lease_until = 'infinity' "
+        "WHERE org = $1 AND namespace = $2 AND targets <> 0",
+        org,
+        ns,
+    )
+
+    after = (await call("namespace.audit", {"namespace": ns, "sample_limit": 5})).json()
+    found = next(f for f in after["findings"] if f["code"] == "double_encoded_values")
+    assert found["count"] == 1 and found["evidence"] == []
+    assert after["coverage"]["complete"] is True
+    got = await call("memory.get", {"namespace": ns, "agent": "a", "memory_key": "billing/owner"})
+    assert got.json()["version"] == newer["version"]

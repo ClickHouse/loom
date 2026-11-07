@@ -324,6 +324,7 @@ async def test_findings_carry_the_contract_and_cite_the_live_revisions(
         "version": 7,
         "sensitivity": "",
         "value_len": 10,
+        "redacted": False,
         "agent": "a",
         "user_id": "-",
         "session_id": "-",

@@ -796,6 +796,7 @@ def _revision(key: str, version: int, *, agent: str = "writer", mid: str = "") -
         "version": version,
         "sensitivity": "",
         "value_len": 10,
+        "redacted": False,
         "agent": agent,
         "user_id": "-",
         "session_id": "-",
@@ -1651,3 +1652,32 @@ async def test_a_procedure_read_over_mcp_is_left_out_of_the_object_store_gauge()
     # The hot key the gauge samples is the plain fact, named from args.
     exact = _finding(audit, "exact_key_store")
     assert exact.count == 21 and exact.samples == [{"memory_key": "team/fact", "reads": 21}]
+
+
+@pytest.mark.asyncio
+async def test_an_unpublished_projection_reads_on_and_marks_the_report_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under Postgres, a wait for ClickHouse to publish the namespace's commits that runs
+    out does not fail the report: it reads what ClickHouse holds, sequentially, and names
+    the projection in `skipped` and `coverage`."""
+    from server.core.ch import sequential_reads_active
+    from server.memory.app.pg_admission import ProjectionBehindError
+    from server.memory.app.search import pg_validation
+
+    async def behind(*_: object, **__: object) -> bool:
+        raise ProjectionBehindError("behind")
+
+    seen: list[bool] = []
+    run_checks = na.run_checks
+
+    async def checks(audit: Any, codes: Any) -> None:
+        seen.append(sequential_reads_active())
+        await run_checks(audit, codes)
+
+    monkeypatch.setattr(pg_validation, "admit", behind)
+    monkeypatch.setattr(na, "run_checks", checks)
+    out, _ = await _run(monkeypatch, {M_LIVE: _live(10, 1)})
+    assert seen == [True]
+    assert "projection" in out.coverage.rules_skipped and not out.coverage.complete
+    assert any(s.startswith("projection: PROJECTION_BEHIND: ") for s in out.skipped)

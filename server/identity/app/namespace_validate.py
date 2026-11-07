@@ -8,7 +8,9 @@ handler is that call: the same class of invariants, scoped to one
 
 Fourteen checks, each an independent query over existing tables. No mutation,
 no new storage. A check that fails to run is reported in `skipped` and the
-rest still return — the report closes a task, it must never fail one.
+rest still return — the report closes a task, it must never fail one. Under
+Postgres the checks start once ClickHouse holds what the namespace committed
+(`pg_validation.published_reads`, 503 PROJECTION_BEHIND past its wait).
 
 Severity is fixed per check, not per row:
 
@@ -38,7 +40,13 @@ from server.identity.api.models_namespace_catalog import (
     NamespaceValidateOutput,
     _NamespaceValidateFinding,
 )
-from server.identity.app.report_rules import RuleContract, RuleLog, attach_evidence
+from server.identity.app.report_rules import (
+    PROJECTION,
+    RuleContract,
+    RuleLog,
+    attach_evidence,
+)
+from server.memory.app.search import pg_validation
 
 log = logging.getLogger(__name__)
 
@@ -438,6 +446,15 @@ async def _code_links_stale(params: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def handle_namespace_validate(input: NamespaceValidateInput) -> NamespaceValidateOutput:
+    rules = RuleLog()
+    published = pg_validation.published_reads(
+        input.org, [input.namespace], lambda reason: rules.skip(PROJECTION, reason)
+    )
+    async with published:
+        return await _validate(input, rules)
+
+
+async def _validate(input: NamespaceValidateInput, rules: RuleLog) -> NamespaceValidateOutput:
     # Taken before the reads, to the second as updated_at is: a cited row updated at or
     # after it may have been revised mid-report.
     checked_at = naive_utc_now_seconds()
@@ -456,7 +473,6 @@ async def handle_namespace_validate(input: NamespaceValidateInput) -> NamespaceV
     }
 
     findings: list[_NamespaceValidateFinding] = []
-    rules = RuleLog()
 
     async def run(
         name: str,

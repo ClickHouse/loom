@@ -12,7 +12,9 @@ optimize skill can act on it.
 Thirteen checks, each one read over existing tables scoped to (org, namespace).
 No mutation, no new storage. A check that fails to run is reported in
 `skipped` and the rest still return. Samples carry keys and counts only,
-never a value.
+never a value. Under Postgres the checks start once ClickHouse holds what the
+namespace committed (`pg_validation.published_reads`), and a sample is cited
+only while the authority serves its row at the version read.
 
 There is no query-shape check: the ledger keeps no query text
 (`server/observability/event_args.py` replaces every free-text argument with
@@ -42,7 +44,13 @@ from server.identity.api.models_namespace_catalog import (
     NamespaceAuditSummary,
 )
 from server.identity.app.namespace_summary import state_change_ops
-from server.identity.app.report_rules import RuleContract, RuleLog, attach_evidence
+from server.identity.app.report_rules import (
+    PROJECTION,
+    RuleContract,
+    RuleLog,
+    attach_evidence,
+)
+from server.memory.app.search import pg_validation
 from server.memory.domain.excerpt import EXCERPT_LIMIT
 from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
 from server.memory.domain.namespace_shapes import (
@@ -1035,8 +1043,12 @@ async def handle_namespace_audit(input: NamespaceAuditInput) -> NamespaceAuditOu
     # after it may have been revised mid-report.
     computed_at = naive_utc_now_seconds()
     audit = new_audit(input)
-    await run_checks(audit, FINDING_CODES)
-    await attach_evidence(input.org, input.namespace, audit.findings, audit.rules, ch=audit.ch)
+    published = pg_validation.published_reads(
+        input.org, [input.namespace], lambda reason: audit.rules.skip(PROJECTION, reason)
+    )
+    async with published:
+        await run_checks(audit, FINDING_CODES)
+        await attach_evidence(input.org, input.namespace, audit.findings, audit.rules, ch=audit.ch)
 
     criticals = sum(1 for f in audit.findings if f.severity == "critical")
     warnings = sum(1 for f in audit.findings if f.severity == "warning")

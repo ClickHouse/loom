@@ -15,6 +15,9 @@ log = logging.getLogger(__name__)
 
 # The citation read's name in a report's coverage and skipped lines.
 EVIDENCE = "evidence"
+# Under Postgres, the wait for ClickHouse to publish what the namespace committed
+# (`pg_validation.published_reads`), skipped when it did not finish.
+PROJECTION = "projection"
 
 
 class RuleContract(NamedTuple):

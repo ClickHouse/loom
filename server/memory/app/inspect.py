@@ -13,7 +13,9 @@ It changes nothing it reads: plain reads of the namespace's rows, ledger, direct
 guide, categories, grants and extraction policy, and no recall credit. Its one write is
 an exposure-ledger row for the rows it lists, as memory.list writes, which inside a run
 can feed the usage fold's `acted` credit. A section that cannot be read lands in
-`skipped`, never raises.
+`skipped`, never raises. Under Postgres the report starts once ClickHouse holds what
+the namespace committed (`pg_validation.published_reads`, 503 PROJECTION_BEHIND past
+its wait), so its counts, tags and categories show every published write.
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ from server.memory.api.models_inspect import (
 from server.memory.app import extraction_policy
 from server.memory.app.exposure_ledger import record_exposure
 from server.memory.app.finding_evidence import IDENTITY, revisions_for
+from server.memory.app.search import pg_validation
 from server.memory.store import inspect as store
 from server.observability.consumer import INSPECTOR_CONSUMERS
 from server.settings import settings
@@ -264,6 +267,14 @@ def _record_exposure(input: MemoryInspectInput, keys: list[str]) -> None:
 
 async def handle_memory_inspect(input: MemoryInspectInput) -> MemoryInspectOutput:
     run = _Inspect(input)
+    published = pg_validation.published_reads(
+        input.org, [input.namespace], lambda reason: run.skipped.append(f"projection: {reason}")
+    )
+    async with published:
+        return await _inspect(input, run)
+
+
+async def _inspect(input: MemoryInspectInput, run: _Inspect) -> MemoryInspectOutput:
     own_def, others_def = _DEFINITIONS[input.subject]
     # Settings first: the views name categories from it.
     settings_out = await run.settings_section()

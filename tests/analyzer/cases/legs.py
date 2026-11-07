@@ -473,6 +473,7 @@ _CITED_ROWS = rows_by_substring(
                 "version": 1,
                 "sensitivity": "",
                 "value_len": 10,
+                "redacted": False,
                 "agent": AGENT,
                 "user_id": "-",
                 "session_id": "-",

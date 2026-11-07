@@ -55,6 +55,7 @@ from server.knowledge.app.ingest_run import JOB_LEASE_S
 from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.store import inspect as store
 from server.memory.app.query import document_decision_tally
+from server.memory.app.search import pg_validation
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -630,9 +631,17 @@ class _Inspect:
                 "with '#'; a listed document may count some of their decisions"
             )
         uris = listed_uris + [u for u in longer if u not in listed_uris]
-        rows = await self.guarded(
-            "decisions", lambda: document_decision_tally(i.org, i.namespace, uris), None
-        )
+
+        async def tally() -> list[dict[str, Any]]:
+            # Decision rows are memory rows: under Postgres they are counted once
+            # ClickHouse holds what the namespace committed.
+            published = pg_validation.published_reads(
+                i.org, [i.namespace], lambda reason: self.skipped.append(f"decisions: {reason}")
+            )
+            async with published:
+                return await document_decision_tally(i.org, i.namespace, uris)
+
+        rows = await self.guarded("decisions", tally, None)
         if rows is None:
             return out
         out.all_documents = _decisions(rows)
