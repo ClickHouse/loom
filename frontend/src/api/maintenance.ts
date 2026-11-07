@@ -46,7 +46,8 @@ export interface ExtractionBatch {
   enqueued_at: string | null;
 }
 
-/** The newest batches in any state; the counts cover those batches only. */
+/** The newest batches in any state. `pending` counts every batch not yet extracted in the
+ *  namespace; `failed` counts the returned batches that failed. */
 export interface ExtractionBatches {
   batches: ExtractionBatch[];
   pending: number;
@@ -157,11 +158,25 @@ export async function listProjectionFailures(
   );
 }
 
-/** `results` has one entry per failure tried; `retried` counts those with a retry path. */
+/** Mirrors `server/insights/api/models_ops.py::ProjectionFailureRetryRow`. `reason` says
+ *  why a failure was not retried: `pending` or `model_calls_held` wait for a later pass,
+ *  `unsupported_projection` has no retry. `error` is set when a retry failed again. */
+export interface ProjectionRetry {
+  failure_id: string;
+  projection: string;
+  retried: boolean;
+  resolved: boolean;
+  abandoned: boolean;
+  reason: string;
+  error: string;
+}
+
+export const RETRY_LIMIT = 50;
+
 export async function retryProjectionFailures(
   id: Scope,
-): Promise<{ results: unknown[]; retried: number; resolved: number; abandoned: number }> {
-  return post("/v1/ops.projection_failures.retry", { org: id.org, namespace: id.namespace });
+): Promise<{ results: ProjectionRetry[]; retried: number; resolved: number; abandoned: number }> {
+  return post("/v1/ops.projection_failures.retry", { org: id.org, namespace: id.namespace, limit: RETRY_LIMIT });
 }
 
 export async function resolveProjectionFailures(org: string, ids: string[]): Promise<{ resolved: number }> {

@@ -81,17 +81,44 @@ describe("RepairsPanel", () => {
       });
     render(<RepairsPanel />);
     await userEvent.click(screen.getByRole("button", { name: "Apply expiries now" }));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("The expiry did not all land: insert: down", "error"));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Expired 2, but not all landed: insert: down", "error"));
   });
 
-  it("re-embeds, and says when every memory already uses the model or more remain", async () => {
+  it("says to run a full pass again only when it expired something", async () => {
+    const pass = {
+      scanned: api.SWEEP_LIMIT,
+      tombstoned: 0,
+      demoted: 0,
+      anonymized: 0,
+      locked_skipped: 0,
+      failures: [],
+    };
+    vi.mocked(api.sweepExpired)
+      .mockResolvedValueOnce({ ...pass, tombstoned: 3 })
+      .mockResolvedValueOnce({ ...pass, tombstoned: 3 })
+      .mockResolvedValueOnce({ ...pass, locked_skipped: api.SWEEP_LIMIT });
+    render(<RepairsPanel />);
+    const apply = screen.getByRole("button", { name: "Apply expiries now" });
+    await userEvent.click(apply);
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith("Expired 3; 0 locked kept; run it again for the rest", "ok"),
+    );
+    // A preview that finds only locked rows says so and writes nothing.
+    await userEvent.click(apply);
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(`${api.SWEEP_LIMIT} memories are past their expiry but locked.`, "info"),
+    );
+    expect(api.sweepExpired).toHaveBeenCalledTimes(3);
+  });
+
+  it("re-embeds, and says when none needs it or more remain", async () => {
     vi.mocked(api.reembedMemories)
       .mockResolvedValueOnce({ processed: 0, target_model: "m" })
       .mockResolvedValueOnce({ processed: api.REEMBED_LIMIT, target_model: "m" });
     render(<RepairsPanel />);
     const reembed = screen.getByRole("button", { name: "Re-embed stale vectors" });
     await userEvent.click(reembed);
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Every memory already uses m.", "info"));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("No memory here needs re-embedding with m.", "info"));
     await userEvent.click(reembed);
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith(`Re-embedded ${api.REEMBED_LIMIT} with m; run it again for the rest`, "ok"),
@@ -125,20 +152,48 @@ describe("RepairsPanel", () => {
     const file = new File([JSON.stringify({ snapshot_id: "s1" })], "team.json", { type: "application/json" });
     await userEvent.upload(screen.getByLabelText("Snapshot file"), file);
     await waitFor(() => expect(api.restoreNamespace).toHaveBeenCalledWith("acme", "team", { snapshot_id: "s1" }));
-    expect(confirmAction).toHaveBeenCalledWith(expect.objectContaining({ danger: true }));
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        danger: true,
+        message:
+          "It holds an unknown number of memories, taken at an unknown time. Its memories replace their current versions here, deleted ones come back, and its grants are active again, including any revoked since.",
+      }),
+    );
+  });
+
+  it("counts only the memories a restore wrote, without the erased ones", async () => {
+    vi.mocked(api.restoreNamespace).mockResolvedValueOnce({
+      restored: true,
+      counts: { memories: 7, erased_skipped: 2 },
+    });
+    render(<RepairsPanel />);
+    const file = new File([JSON.stringify({ source_namespace: "team" })], "team.json", { type: "application/json" });
+    await userEvent.upload(screen.getByLabelText("Snapshot file"), file);
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Restored 5 memories, 2 skipped as erased", "ok"));
   });
 
   it("says a snapshot of another namespace brings its members' grants here", async () => {
     render(<RepairsPanel />);
-    const payload = { source_namespace: "team-a", created_at: "2000-01-01 00:00:00", memory_count: 3 };
+    const payload = { org: "acme", source_namespace: "team-a", created_at: "2000-01-01 00:00:00", memory_count: 3 };
     const file = new File([JSON.stringify(payload)], "team-a.json", { type: "application/json" });
     await userEvent.upload(screen.getByLabelText("Snapshot file"), file);
     await waitFor(() => expect(api.restoreNamespace).toHaveBeenCalled());
     expect(confirmAction).toHaveBeenCalledWith(
       expect.objectContaining({
         message:
-          "It holds 3 memories, taken 2000-01-01 00:00:00. It is a snapshot of team-a: its memories are written here, and its members get the grants they had there.",
+          "It holds 3 memories, taken Jan 1, 2000, 00:00 UTC. It is a snapshot of team-a: its memories are written here, and its members get the grants they had there.",
       }),
+    );
+  });
+
+  it("names the other org of a snapshot with the same namespace name", async () => {
+    render(<RepairsPanel />);
+    const payload = { org: "globex", source_namespace: "team", memory_count: 1 };
+    const file = new File([JSON.stringify(payload)], "team.json", { type: "application/json" });
+    await userEvent.upload(screen.getByLabelText("Snapshot file"), file);
+    await waitFor(() => expect(api.restoreNamespace).toHaveBeenCalled());
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("It is a snapshot of globex/team:") }),
     );
   });
 });

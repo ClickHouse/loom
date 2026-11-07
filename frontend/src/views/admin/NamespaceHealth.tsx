@@ -114,7 +114,7 @@ function Extractions({ batches }: { batches: ExtractionBatches }) {
       <SectionHeading
         label="Recent extractions"
         level={2}
-        caption={`${batchCount(batches.batches.length)}: ${batches.pending} pending, ${batches.failed} failed`}
+        caption={`${batchCount(batches.batches.length)}, ${batches.failed} failed; ${batches.pending} waiting in all`}
       />
       {batches.batches.length === 0 ? (
         <p className="text-sm text-text-muted">No transcript was queued for extraction.</p>

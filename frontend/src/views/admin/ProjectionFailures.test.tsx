@@ -2,6 +2,7 @@ import { act, cleanup, render, screen, waitFor } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api/maintenance";
+import type { ProjectionRetry } from "../../api/maintenance";
 import { toast } from "../../components/Toast";
 import { useStore } from "../../lib/state";
 import { ProjectionFailuresPanel } from "./ProjectionFailures";
@@ -25,7 +26,7 @@ vi.mock("../../api/maintenance", async (importOriginal) => {
         },
       ],
     })),
-    retryProjectionFailures: vi.fn(async () => ({ results: [{}], retried: 1, resolved: 1, abandoned: 0 })),
+    retryProjectionFailures: vi.fn(async () => ({ results: [], retried: 0, resolved: 0, abandoned: 0 })),
     resolveProjectionFailures: vi.fn(async () => ({ resolved: 1 })),
   };
 });
@@ -44,20 +45,64 @@ describe("ProjectionFailuresPanel", () => {
     await waitFor(() =>
       expect(api.retryProjectionFailures).toHaveBeenCalledWith(expect.objectContaining({ namespace: "team" })),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Dismiss the embedding failure of deploy_window" }));
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss failure f1" }));
     await waitFor(() => expect(api.resolveProjectionFailures).toHaveBeenCalledWith("acme", ["f1"]));
   });
 
-  it("says when the failures it tried have no retry", async () => {
+  it("counts what each retry came to: fixed, failed again, given up, waiting or no retry", async () => {
+    const row = (over: Partial<ProjectionRetry>): ProjectionRetry => ({
+      failure_id: "f",
+      projection: "embedding",
+      retried: false,
+      resolved: false,
+      abandoned: false,
+      reason: "",
+      error: "",
+      ...over,
+    });
     vi.mocked(api.retryProjectionFailures).mockResolvedValueOnce({
-      results: [{}, {}],
+      results: [
+        row({ retried: true, resolved: true }),
+        row({ retried: true, error: "timeout" }),
+        row({ retried: true, abandoned: true, reason: "memory_gone" }),
+        row({ reason: "model_calls_held" }),
+        row({ reason: "pending" }),
+        row({ reason: "unsupported_projection" }),
+      ],
+      retried: 3,
+      resolved: 1,
+      abandoned: 1,
+    });
+    render(<ProjectionFailuresPanel />);
+    await userEvent.click(await screen.findByRole("button", { name: "Retry failures" }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        "Tried 6: 1 fixed, 1 failed again, 1 given up, 2 waiting for a later pass, 1 with no retry",
+        "ok",
+      ),
+    );
+  });
+
+  it("says a retry held by the org's model calls is waiting, not lost", async () => {
+    vi.mocked(api.retryProjectionFailures).mockResolvedValueOnce({
+      results: [
+        {
+          failure_id: "f",
+          projection: "embedding",
+          retried: false,
+          resolved: false,
+          abandoned: false,
+          reason: "model_calls_held",
+          error: "",
+        },
+      ],
       retried: 0,
       resolved: 0,
       abandoned: 0,
     });
     render(<ProjectionFailuresPanel />);
     await userEvent.click(await screen.findByRole("button", { name: "Retry failures" }));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Retried 0: 0 fixed, 0 given up; 2 have no retry", "info"));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Tried 1: 1 waiting for a later pass", "info"));
   });
 
   it("says when there is nothing to retry", async () => {

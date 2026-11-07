@@ -3,6 +3,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Table } from "@clickhouse/click-ui/Table";
 import {
   FAILURE_LIST_LIMIT,
+  type ProjectionRetry,
   listProjectionFailures,
   resolveProjectionFailures,
   retryProjectionFailures,
@@ -18,8 +19,8 @@ import { TableSkeleton } from "../../components/Skeleton";
 
 /**
  * Projection failures: derived rows (an embedding, a graph edge, a summary) a write
- * could not produce. Retry runs the newest 50 again for this namespace; Dismiss marks one resolved
- * without retrying it. The ops are ORG_ADMIN.
+ * could not produce. Retry runs this namespace's newest failures again (`RETRY_LIMIT` a
+ * call); Dismiss marks one resolved without retrying it. The ops are ORG_ADMIN.
  */
 export function ProjectionFailuresPanel() {
   const identity = useIdentity();
@@ -54,9 +55,15 @@ export function ProjectionFailuresPanel() {
   const retry = () =>
     act(async () => {
       const r = await retryProjectionFailures(identity);
-      const noPath = r.results.length - r.retried;
-      const none = noPath ? `; ${noPath} have no retry` : "";
-      toast(`Retried ${r.retried}: ${r.resolved} fixed, ${r.abandoned} given up${none}`, r.retried ? "ok" : "info");
+      const count = (keep: (x: ProjectionRetry) => boolean) => r.results.filter(keep).length;
+      const parts = [
+        `${r.resolved} fixed`,
+        `${count((x) => x.retried && !x.resolved && !x.abandoned)} failed again`,
+        `${r.abandoned} given up`,
+        `${count((x) => x.reason === "pending" || x.reason === "model_calls_held")} waiting for a later pass`,
+        `${count((x) => x.reason === "unsupported_projection")} with no retry`,
+      ].filter((p) => !p.startsWith("0 "));
+      toast(`Tried ${r.results.length}: ${parts.join(", ") || "nothing changed"}`, r.resolved ? "ok" : "info");
     });
   const dismiss = (id: string) =>
     act(async () => {
@@ -119,7 +126,7 @@ export function ProjectionFailuresPanel() {
                     type="empty"
                     htmlType="button"
                     disabled={busy}
-                    aria-label={`Dismiss the ${f.projection} failure of ${f.memory_keys[0] ?? f.source_operation}`}
+                    aria-label={`Dismiss failure ${f.failure_id}`}
                     onClick={() => void dismiss(f.failure_id)}
                   >
                     Dismiss

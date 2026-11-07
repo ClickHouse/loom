@@ -13,6 +13,7 @@ import {
 } from "../../api/maintenance";
 import { useIdentity } from "../../lib/state";
 import { saveJson } from "../../lib/download";
+import { listTimeTitle } from "../../lib/format";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { toast, toastError } from "../../components/Toast";
 import { Panel, SectionHeading } from "../../components/ui";
@@ -44,7 +45,13 @@ export function RepairsPanel() {
     run(async () => {
       const preview = await sweepExpired(identity, true);
       const due = preview.tombstoned + preview.demoted + preview.anonymized;
-      if (due === 0) return toast("No memory is past its expiry.", "info");
+      if (due === 0) {
+        const locked = preview.locked_skipped;
+        return toast(
+          locked ? `${locked} memories are past their expiry but locked.` : "No memory is past its expiry.",
+          "info",
+        );
+      }
       if (
         !(await confirmAction({
           title: `Apply the expiry of ${due} memories in ${identity.namespace} now?`,
@@ -53,9 +60,11 @@ export function RepairsPanel() {
       )
         return;
       const r = await sweepExpired(identity, false);
-      if (r.failures.length) return toast(`The expiry did not all land: ${r.failures.join("; ")}`, "error");
-      const rest = r.scanned === SWEEP_LIMIT ? "; run it again for the rest" : "";
-      toast(`Expired ${r.tombstoned + r.demoted + r.anonymized}; ${r.locked_skipped} locked kept${rest}`, "ok");
+      const done = r.tombstoned + r.demoted + r.anonymized;
+      if (r.failures.length) return toast(`Expired ${done}, but not all landed: ${r.failures.join("; ")}`, "error");
+      // A full pass may have left more; one that expired nothing only met locked rows.
+      const rest = r.scanned === SWEEP_LIMIT && done > 0 ? "; run it again for the rest" : "";
+      toast(`Expired ${done}; ${r.locked_skipped} locked kept${rest}`, "ok");
     });
 
   const reembed = () =>
@@ -67,7 +76,7 @@ export function RepairsPanel() {
       });
       if (!ok) return;
       const r = await reembedMemories(identity);
-      if (r.processed === 0) return toast(`Every memory already uses ${r.target_model}.`, "info");
+      if (r.processed === 0) return toast(`No memory here needs re-embedding with ${r.target_model}.`, "info");
       const rest = r.processed === REEMBED_LIMIT ? "; run it again for the rest" : "";
       toast(`Re-embedded ${r.processed} with ${r.target_model}${rest}`, "ok");
     });
@@ -115,7 +124,7 @@ export function RepairsPanel() {
       const payload: unknown = JSON.parse(await file.text());
       const ok = await confirmAction({
         title: `Restore ${file.name} into ${identity.namespace}?`,
-        message: restoreWarning(payload, identity.namespace),
+        message: restoreWarning(payload, identity),
         confirmLabel: "Restore",
         danger: true,
       });
@@ -123,7 +132,8 @@ export function RepairsPanel() {
       const r = await restoreNamespace(identity.org, identity.namespace, payload);
       if (!r.restored) return toast("This snapshot was already restored here", "info");
       const erased = r.counts.erased_skipped ? `, ${r.counts.erased_skipped} skipped as erased` : "";
-      toast(`Restored ${r.counts.memories} memories${erased}`, "ok");
+      // `memories` is the file's count; the erased ones in it were not written.
+      toast(`Restored ${r.counts.memories - r.counts.erased_skipped} memories${erased}`, "ok");
     });
 
   return (
@@ -200,16 +210,20 @@ export function RepairsPanel() {
   );
 }
 
-/** What a restore of `payload` does to `namespace`: a snapshot of another namespace adds
- *  its memories and its members' grants; one of this namespace puts it back as it was. */
-function restoreWarning(payload: unknown, namespace: string): string {
+/** What a restore of `payload` does here: a snapshot of another namespace (or another
+ *  org's) adds its memories and its members' grants; one of this namespace puts it back as
+ *  it was. */
+function restoreWarning(payload: unknown, here: { org: string; namespace: string }): string {
   const p = (typeof payload === "object" && payload !== null ? payload : {}) as {
+    org?: string;
     source_namespace?: string;
     created_at?: string;
     memory_count?: number;
   };
-  const taken = `It holds ${p.memory_count ?? "an unknown number of"} memories, taken ${p.created_at ?? "at an unknown time"}.`;
-  if (p.source_namespace && p.source_namespace !== namespace)
-    return `${taken} It is a snapshot of ${p.source_namespace}: its memories are written here, and its members get the grants they had there.`;
+  const when = listTimeTitle(p.created_at) || "at an unknown time";
+  const taken = `It holds ${p.memory_count ?? "an unknown number of"} memories, taken ${when}.`;
+  const from = p.org && p.org !== here.org ? `${p.org}/${p.source_namespace}` : p.source_namespace;
+  if (from && from !== here.namespace)
+    return `${taken} It is a snapshot of ${from}: its memories are written here, and its members get the grants they had there.`;
   return `${taken} Its memories replace their current versions here, deleted ones come back, and its grants are active again, including any revoked since.`;
 }
