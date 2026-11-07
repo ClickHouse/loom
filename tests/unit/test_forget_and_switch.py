@@ -436,3 +436,12 @@ async def test_a_correction_past_the_forget_cap_keeps_its_replacement(monkeypatc
     assert "user_editor" in deleted
     # the per-request candidate reads stop at the cap, on the latest requests
     assert len(fetched[0]) == cap and "I use Vim" not in fetched[0]
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_forget_request_is_resolved_at_its_latest_mention(monkeypatch) -> None:
+    cap = forget.MAX_FORGET_REQUESTS
+    turns = ["forget my salary."] + [f"forget jazz{i}." for i in range(cap)] + ["forget my salary."]
+    fetched: list[list[str]] = []
+    await _write(monkeypatch, [("user", t) for t in turns], [SALARY], [], fetched)
+    assert len(fetched[0]) == cap and "my salary" in fetched[0]

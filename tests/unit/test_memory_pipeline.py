@@ -667,9 +667,11 @@ async def test_a_phrased_forget_request_is_never_stored(monkeypatch: pytest.Monk
 
 
 def _by_content(fact: dict[str, Any], rows: list[dict[str, Any]]) -> set[str]:
-    from server.memory.domain import forget_requests as fr
+    """The rows a forget entry names by content: its targets less its own keys."""
+    from server.memory.domain.forget_requests import forget_targets
 
-    return fr._targets_by_words(fr._request_words(fact, {}), fr._row_words(rows))
+    fact = {**fact, "forget": True}
+    return forget_targets([fact], rows) - forget_targets([fact], [])
 
 
 def test_a_forget_request_by_content_finds_the_row_the_request_names() -> None:
