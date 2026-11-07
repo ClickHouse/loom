@@ -52,6 +52,12 @@ FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).t
             "proxy after CONNECT",
             "egress",
         ),
+        ("fatal: unable to access 'https://h/': CONNECT tunnel failed, response 405", "egress"),
+        (
+            "fatal: unable to access 'https://h/': Received HTTP code 502 from proxy after CONNECT",
+            "network",
+        ),
+        ("fatal: unable to access 'https://h/': CONNECT tunnel failed, response 503", "network"),
         ("fatal: unable to access 'https://h/': Could not resolve host: h", "network"),
         ("RuntimeError: harness timed out after 600.0s", "timeout"),
         ("TimeoutError: git fetch origin in /c exceeded 600s", "timeout"),
@@ -108,6 +114,7 @@ def test_an_unreadable_record_reads_as_none() -> None:
     assert tier_health.parse("clang", "") is None
     assert tier_health.parse("clang", "not json") is None
     assert tier_health.parse("clang", "[1]") is None
+    assert tier_health.parse("clang", '{"state": "failing", "failed_passes": "x"}') is None
 
 
 class _StateRepo:
@@ -165,7 +172,7 @@ class _Cfg:
     github_token = ""
 
 
-async def _run_tier(module: str, repo: _StateRepo, run_repo: Any) -> Any:
+async def _run_tier(module: str, repo: _StateRepo, run_repo: Any, *, owns: bool = True) -> Any:
     w = importlib.import_module(module)
 
     @asynccontextmanager
@@ -177,7 +184,7 @@ async def _run_tier(module: str, repo: _StateRepo, run_repo: Any) -> Any:
         with (
             patch("server.code.store.index.CodeRepo", return_value=repo),
             patch("server.code.domain.index.repos.configured_repos", return_value=[_Cfg()]),
-            patch.object(compiler_tier, "worker_owns", AsyncMock(return_value=True)),
+            patch.object(compiler_tier, "worker_owns", AsyncMock(return_value=owns)),
             patch.object(compiler_tier, "entry_lock", _lock),
             patch.object(w, "_run_repo", run_repo),
         ):
@@ -206,6 +213,22 @@ async def test_a_compiler_tier_records_its_failure_and_clears_it_on_the_next_pas
     assert tier_health.parse("clang", repo.state["tier_health:clang"]).failing
     await _run_tier(module, repo, ok)
     assert not tier_health.parse("clang", repo.state["tier_health:clang"]).failing
+
+
+@pytest.mark.asyncio
+async def test_an_entry_the_tier_no_longer_runs_drops_its_record() -> None:
+    failing = tier_health.failed(None, "clang", SUBMODULE_NO_TOKEN, T0).to_json()
+    full = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).to_json()
+    repo = _StateRepo({"tier_health:clang": failing, "tier_health:clang_full": full})
+
+    async def never(*_: Any) -> None:
+        raise AssertionError("an entry the tier does not own is not run")
+
+    await _run_tier("server.code.workers.scip_delta", repo, never, owns=False)
+    assert tier_health.from_state({k: {"value": v} for k, v in repo.state.items()}) == {}
+    writes = len(repo.writes)
+    await _run_tier("server.code.workers.scip_delta", repo, never, owns=False)
+    assert len(repo.writes) == writes  # nothing left to drop: no write
 
 
 @pytest.mark.asyncio
@@ -485,8 +508,28 @@ async def test_an_entry_the_budget_cut_is_not_recorded_healthy() -> None:
         raise AssertionError("a cut leg runs nothing")
 
     await ingest_pass._run_leg(result, spent, [served, cut], "walk", never)
-    assert result.cut_namespaces == {"code-x", "code-y"}
+    assert result.unserved_namespaces == {"code-x", "code-y"}
     assert result.resume == "code-x:walk"  # the next pass starts at the first
+
+
+@pytest.mark.asyncio
+async def test_an_entry_a_held_call_stopped_is_not_recorded_healthy() -> None:
+    from server.code.app.index import ingest_pass
+    from server.code.app.index.pass_budget import CodeIngestResult, PassBudget
+    from server.llm import customer
+
+    plan = type("Plan", (), {"cfg": _Cfg()})()
+    result = CodeIngestResult()
+
+    async def held(*_: Any) -> None:
+        raise customer.HOLDS[0]("held")
+
+    fresh = PassBudget(started=time.monotonic(), stop_after=time.monotonic() + 600)
+    await ingest_pass._run_leg(result, fresh, [plan], "walk", held)
+    ingest_pass._ingest_served(plan.cfg, result)
+    assert result.unserved_namespaces == {"code-x"}
+    assert result.tier_outcomes == {}
+    assert not result.partial
 
 
 @pytest.mark.asyncio

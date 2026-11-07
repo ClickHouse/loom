@@ -97,9 +97,9 @@ def pass_outcome(result: CodeIngestResult) -> dict[str, Any]:
 
 
 def _ingest_served(cfg: Any, result: CodeIngestResult) -> None:
-    """The parser tier is ok on an entry the pass served in full: no budget cut stopped
-    it (its record otherwise stays as it was)."""
-    if cfg.namespace not in result.cut_namespaces:
+    """The parser tier is ok on an entry the pass served in full: no budget cut or held
+    model call stopped it (its record otherwise stays as it was)."""
+    if cfg.namespace not in result.unserved_namespaces:
         result.tier_ok(cfg, "ingest")
 
 
@@ -249,7 +249,8 @@ async def _run_leg(
             ):
                 await run(plan, result, budget)
         except customer.HOLDS:
-            pass  # a held call is no failure: the leg runs once the org is back
+            # a held call is no failure: the leg runs once the org is back
+            result.unserved_namespaces.add(plan.cfg.namespace)
         except Exception as e:
             result.errors.append(f"{plan.cfg.label}: {leg}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: %s of %s failed", leg, plan.cfg.label)

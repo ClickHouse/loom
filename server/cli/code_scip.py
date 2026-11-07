@@ -254,6 +254,10 @@ async def _entry_locked(args: argparse.Namespace) -> int:
         return 1
 
 
+# How much of a command's output `entry-lock --tier` keeps for its health record.
+_TAIL_BYTES = 4096
+
+
 async def _record_tier(
     org: str, ns: str, tier: str, rc: int, tail: bytes, *, stopped: bool = False
 ) -> None:
@@ -275,10 +279,6 @@ async def _record_tier(
         text = "\n".join(lines[1:] if len(tail) >= _TAIL_BYTES else lines).strip()
         error = f"harness exit {rc}: {text}" if text else f"harness exit {rc}"
     await tier_health.record(CodeRepo(), org, ns, tier, error)
-
-
-# How much of a command's output `entry-lock --tier` keeps for its health record.
-_TAIL_BYTES = 4096
 
 
 async def _relay(proc: asyncio.subprocess.Process, tail: bytearray) -> int:

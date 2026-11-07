@@ -75,7 +75,11 @@ def parse(tier: str, raw: str) -> TierHealth | None:
         k: str(data.get(k) or "")
         for k in ("state", "kind", "error", "fix", "failing_since", "last_failed_at", "last_ok_at")
     }
-    return TierHealth(tier=tier, failed_passes=int(data.get("failed_passes") or 0), **texts)
+    try:
+        failed_passes = int(data.get("failed_passes") or 0)
+    except (TypeError, ValueError):
+        return None
+    return TierHealth(tier=tier, failed_passes=failed_passes, **texts)
 
 
 def from_state(state: IndexState) -> dict[str, TierHealth]:
@@ -168,8 +172,9 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "egress",
         re.compile(
-            r"from proxy after connect|connect tunnel failed|proxy connect aborted"
-            r"|received http code 40[37] from proxy",
+            # the sandbox proxy refuses a host or port with 403 and a method with 405;
+            # its 502 (the vetted address did not answer) and 503 (tunnel cap) are network
+            r"received http code 40[35] from proxy|connect tunnel failed, response 40[35]\b",
             re.IGNORECASE,
         ),
     ),
@@ -178,7 +183,8 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(
             r"could not resolve host|failed to connect to|connection refused|connection reset"
             r"|network is unreachable|connection timed out|the remote end hung up unexpectedly"
-            r"|ssl_connect|gnutls_handshake",
+            r"|ssl_connect|gnutls_handshake"
+            r"|received http code 50[23] from proxy|connect tunnel failed, response 50[23]\b",
             re.IGNORECASE,
         ),
     ),

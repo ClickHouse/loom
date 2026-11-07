@@ -81,22 +81,25 @@ async def run_tier[R: TierResult](
     work, under the entry lock where the tier takes it; only this tier's worker moves
     that tree. Each entry's outcome is its `health_tier` record (default: `producer`;
     `tier_health.record`): a failure, or a success unless `run_repo` returned False (it
-    attempted nothing: the entry was not due) or added a skip."""
+    attempted nothing: the entry was not due) or added a skip. An entry the tier does
+    not own drops its record (`tier_health.forget`)."""
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
 
     tier = health_tier or producer
+    # What an entry this tier does not own drops: the weekly C++ full run goes with it.
+    not_run = (tier, "clang_full") if tier == "clang" else (tier,)
 
     async def run_entry(repo: CodeRepo, cfg: RepoConfig) -> None:
         # The watermark reset is one of the entry's writes: under its lock too.
         skips = len(result.skipped)
         try:
-            attempted = await run_repo(repo, cfg, result)
+            ran = await run_repo(repo, cfg, result) is not False  # False: nothing was due
         except BaseUnknown as e:
             # Not a failure to report: the next run indexes in full.
             await restart_full(repo, cfg, watermark, e, result.errors)
         else:
-            if attempted is not False and len(result.skipped) == skips:
+            if ran and len(result.skipped) == skips:
                 await tier_health.record(repo, cfg.org, cfg.namespace, tier)
         if gc_checkout:
             await _gc_checkout(cfg, producer)
@@ -107,6 +110,7 @@ async def run_tier[R: TierResult](
         repo = CodeRepo()
         for cfg in configured_repos():
             if not await worker_owns(repo, cfg, producer):
+                await tier_health.forget(repo, cfg.org, cfg.namespace, not_run)
                 continue
             if skip := unsandboxed_skip(cfg, worker, runs_repo_code=runs_repo_code):
                 result.skipped.append(f"{cfg.namespace}: {skip}")

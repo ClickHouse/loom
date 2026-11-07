@@ -71,9 +71,9 @@ class CodeIngestResult:
     # `walk`), so the next pass starts each phase at the entry this one
     # starved; `resume` shows them all, first cut first.
     cuts: dict[str, str] = field(default_factory=dict)
-    # Every namespace a cut stopped this pass before it was served in full: its parser
-    # tier is not known healthy from this pass.
-    cut_namespaces: set[str] = field(default_factory=set)
+    # Every namespace a cut or a held model call stopped this pass before it was served
+    # in full: its parser tier is not known healthy from this pass.
+    unserved_namespaces: set[str] = field(default_factory=set)
     budget_s: float = 0.0
     elapsed_s: float = 0.0
     # Per-file resolution reads the rounds answered from memory / sent on.
@@ -97,7 +97,7 @@ class CodeIngestResult:
         `<namespace>:<leg>[@detail]`; the first cut per phase is kept and
         `resume` lists them, first cut first."""
         self.partial = True
-        self.cut_namespaces.add(where.partition(":")[0])
+        self.unserved_namespaces.add(where.partition(":")[0])
         phase = cut_phase(where)
         if phase and phase not in self.cuts:
             self.cuts[phase] = where

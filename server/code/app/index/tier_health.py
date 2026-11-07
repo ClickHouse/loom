@@ -2,7 +2,9 @@
 
 A failure appends to the run of failures; a success after a failure clears it. A
 success over a record that is already ok writes nothing, so a healthy entry costs one
-state read per tier per pass. Recording never fails the pass it describes.
+state read per tier per pass. A tier the entry no longer runs drops its record
+(`forget`), so a failure it left does not read as failing for ever. Recording never
+fails the pass it describes.
 """
 
 from __future__ import annotations
@@ -55,3 +57,15 @@ async def record(
             new.fix,
         )
     return new
+
+
+async def forget(repo: CodeRepo, org: str, ns: str, tiers: tuple[str, ...]) -> None:
+    """Drop the records of `tiers` on an entry that no longer runs them. One state read
+    per tier; a write only where a record is left."""
+    for tier in tiers:
+        key = tier_health.state_key(tier)
+        try:
+            if await repo.get_state(org, ns, key):
+                await repo.set_state(org, ns, key, "", detail="not run")
+        except Exception as e:  # noqa: BLE001 — a health record never fails the pass it describes
+            logger.warning("tier health %s/%s %s not dropped: %s", org, ns, tier, e)
