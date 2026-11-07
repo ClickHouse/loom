@@ -5,9 +5,9 @@ turn module (`source_sync_linear`, `source_sync_notion`, `source_sync_recording`
 chosen by `_turn_of`, which builds on the public helpers here: `Pass` and
 `TurnResult`, `start_waits`, `full_due`, `capped`, `stamp_of` and `valid_stamp` for a
 turn's start and stamp, `sync_item` for one listed item, with `give_up`, `wait` and
-`require_current` for its fetch, `write_document`, `retire_absent` and `retire`, and
-`client_error`. A kind's own bookkeeping goes in `TurnResult.kind_state`, which the
-sync state keeps.
+`require_current` for its fetch, `write_document` and `counted` for its write,
+`retire_absent` and `retire`, and `client_error`. A kind's own bookkeeping goes in
+`TurnResult.kind_state`, which the sync state keeps.
 
 A pass reads the active sources and drops those whose namespace is inactive or no
 longer a repository's trunk. Sources a maintainer asked to sync (`sync_now`) go
@@ -39,8 +39,10 @@ changes, once after each completed full listing, and on a full sync request.
 What fails for every file stays the turn's: the token exchange, the listing, a
 401, a rate limit, an extractor whose capabilities cannot be read.
 
-Before each write the source is read again: a source removed or replaced during
-its turn stops the turn, which records nothing.
+The source and the address are read again before each write. A source removed or
+replaced during its turn stops the turn, which records nothing. A document another
+writer saved at the address during the fetch is left alone, and the file is counted
+`skipped`.
 
 A document is retired only on positive evidence that the source dropped it:
 absence from a complete full listing whose folders the account can still see,
@@ -659,9 +661,9 @@ async def sync_item(
     address is skipped; one given up on this revision is unconverted; one at an
     address another writer holds is skipped; `before_fetch` (a kind's own checks)
     may settle it; then it costs one of the pass bound and `fetch_and_write` runs,
-    answering `written`, `unchanged` (fetched again and nothing to write), `waiting`,
-    `given_up` or `stop`. A written item that moved to a new address has its old one
-    retired. With `refetch`, a stored copy at this revision is fetched again all the
+    answering `written`, `unchanged` (fetched again and nothing to write), `skipped`,
+    `waiting`, `given_up` or `stop`. A written item that moved to a new address has its old
+    one retired. With `refetch`, a stored copy at this revision is fetched again all the
     same (a kind's own conversion changed)."""
     file_id = str(f["id"])
     revision = str(f.get("modifiedTime") or "")
@@ -778,10 +780,11 @@ async def _fetch_and_write(
     stored_content_sha256: str,
 ) -> str:
     """Fetch, convert and write one file: `written`, `unchanged` (a reconversion whose
-    text equals the stored copy), `waiting` (a failure that may pass holds the turn
-    for `_WAIT_PASSES` passes), `given_up` (a refusal gives the file up at once; for
-    both the wait entry is kept, and `start_waits` says when it is tried again) or
-    `stop` (the turn's own failure: a rate limit, a refused credential)."""
+    text equals the stored copy), `skipped` (another writer took the address during the
+    fetch), `waiting` (a failure that may pass holds the turn for `_WAIT_PASSES` passes),
+    `given_up` (a refusal gives the file up at once; for both the wait entry is kept, and
+    `start_waits` says when it is tried again) or `stop` (the turn's own failure: a rate
+    limit, a refused credential)."""
     try:
         fetched = await _fetch(token, f)
     except gdrive.RateLimited:
@@ -824,7 +827,7 @@ async def _fetch_and_write(
         # a write that fails leaves the old copy and its old key.
         extra["text_sha256"] = sha256_text(f"{f.get('name') or ''}\n{fetched.content}")
     try:
-        await write_document(
+        written = await write_document(
             src,
             f,
             uri,
@@ -839,8 +842,7 @@ async def _fetch_and_write(
     except Exception as e:  # noqa: BLE001 — one file's write must not stop the others
         log.warning("knowledge_source_sync: writing %s failed: %s", f["id"], e)
         return wait(f, turn, f"write_failed:{type(e).__name__}", type(e).__name__)
-    turn.changed += 1
-    return "written"
+    return counted(turn, written)
 
 
 def give_up(f: dict[str, Any], turn: TurnResult, reason: str) -> str:
@@ -932,6 +934,16 @@ async def _fetch(token: str, f: dict[str, Any]) -> _Fetched:
     return _Fetched(convert.artifact_markdown(artifact), fmt, data, convert.coverage_of(artifact))
 
 
+def counted(turn: TurnResult, written: bool) -> str:
+    """The outcome of a write step: `written`, or `skipped` for an address another writer
+    took during the fetch (counted as the check before the fetch counts it)."""
+    if not written:
+        turn.skipped += 1
+        return "skipped"
+    turn.changed += 1
+    return "written"
+
+
 async def _may_write(src: KnowledgeSource, uri: str) -> bool:
     """Whether the live document at `uri`, if any, is this source's: a document
     another writer or another source holds is never overwritten or retired."""
@@ -966,12 +978,14 @@ async def write_document(
     ingested_format: str,
     original: bytes = b"",
     extra_metadata: dict[str, Any] | None = None,
-) -> None:
+) -> bool:
     """Write one item (`f`: its `id`, `name`, `modifiedTime` and, with an original,
     its `mimeType`) at `uri` with `knowledge.upsert`, as the sync worker: tagged
     `source-kind:design_doc`, the repository's `repo:<id>` and `source:<name>`,
     class `imported`, with the source's kind and name, the item's id and revision
-    and the conversion in its metadata."""
+    and the conversion in its metadata. False, writing nothing, when another writer
+    took the address while the item was fetched: the check before the fetch is
+    seconds old by now."""
     tags = ["source-kind:design_doc", source_tag(src.name)]
     if repo := _repo_tag(src):
         tags.insert(1, repo)
@@ -983,6 +997,10 @@ async def write_document(
         "ingested_format": ingested_format,
         **(extra_metadata or {}),
     }
+    with sequential_reads():  # a replica behind the person's write would say free
+        free = await _may_write(src, uri)
+    if not free:
+        return False
     pass_context.check_stop()  # a stopped pass or a lost lease writes nothing
     await writes.handle_knowledge_upsert(
         KnowledgeUpsertInput(
@@ -1000,12 +1018,15 @@ async def write_document(
             source_class="imported",
         )
     )
+    return True
 
 
 async def retire(src: KnowledgeSource, uri: str) -> bool:
     """Retire one of the source's documents, with the audit row the transport would
     have written for `knowledge.delete`; False when it is no longer the source's."""
-    if not await _may_write(src, uri):
+    with sequential_reads():  # a replica behind a person's write would say still ours
+        ours = await _may_write(src, uri)
+    if not ours:
         return False
     pass_context.check_stop()
     out = await writes.handle_knowledge_delete(
@@ -1539,6 +1560,7 @@ __all__ = [
     "TurnResult",
     "capped",
     "client_error",
+    "counted",
     "full_due",
     "give_up",
     "require_current",

@@ -447,7 +447,8 @@ async def _sync_page(
 
 async def _fetch_and_write(t: _Turn, f: dict[str, Any], uri: str) -> str:
     """Read one page's blocks, record its child pages, convert and write them:
-    `written`, `waiting`, `given_up` or `stop`, as `sync.sync_item` expects."""
+    `written`, `skipped` (another writer took the address during the fetch), `waiting`,
+    `given_up` or `stop`, as `sync.sync_item` expects."""
     result = t.result
     read_at = _now()
     try:
@@ -506,7 +507,7 @@ async def _write(
     if skipped:
         metadata["skipped_blocks"] = skipped
     try:
-        await sync.write_document(
+        written = await sync.write_document(
             t.src, f, uri, content, ingested_format="blocks", extra_metadata=metadata
         )
     except ValidationError as e:
@@ -516,8 +517,7 @@ async def _write(
     except Exception as e:  # noqa: BLE001 — one page's write must not stop the others
         log.warning("knowledge_source_sync: writing %s failed: %s", f["id"], e)
         return sync.wait(f, t.result, f"write_failed:{type(e).__name__}", type(e).__name__)
-    t.result.changed += 1
-    return "written"
+    return sync.counted(t.result, written)
 
 
 def _record_children(

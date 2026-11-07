@@ -57,7 +57,8 @@ class _Stores:
         # meet: conference records, and per record id its transcripts and entries.
         self.records: list[dict[str, Any]] = []
         self.transcripts: dict[str, list[dict[str, Any]]] = {}
-        self.entries: dict[str, list[dict[str, Any]]] = {}
+        # A transcript's entries, or a callable that answers them.
+        self.entries: dict[str, Any] = {}
         self.lost_spaces: set[str] = set()
         self.forbidden_spaces: set[str] = set()
         # An HTTP status a space read or a transcript's entries answer instead.
@@ -127,7 +128,10 @@ class _Stores:
         if parts[-1] == "entries":
             if parts[3] in self.entry_status:
                 return httpx.Response(self.entry_status[parts[3]])
-            return httpx.Response(200, json={"transcriptEntries": self.entries.get(parts[3], [])})
+            found = self.entries.get(parts[3], [])
+            return httpx.Response(
+                200, json={"transcriptEntries": found() if callable(found) else found}
+            )
         return httpx.Response(404)
 
     def _zoom(self, request: httpx.Request, path: str) -> httpx.Response:
@@ -782,3 +786,26 @@ def test_a_transcript_is_mined_for_decisions_by_the_same_leg(
     assert _detail(world, "calls")["mined"] == {uri: revision}
     asyncio.run(source_sync.run_sync())
     assert len(world.mined) == 1
+
+
+def test_a_transcript_whose_address_is_taken_during_the_fetch_is_counted_skipped(
+    world: _World,  # noqa: F811
+    stores: _Stores,
+) -> None:
+    """The address is free when the record is listed; a person writes there while the
+    transcript is read. The write step reads the address again and leaves theirs."""
+    world.sources = [_source("meet", [SPACE], MEET_KEY)]
+    stores.records = [_meet_record("r1", "2026-01-02T10:00:00Z", "2026-01-02T10:40:00Z")]
+    stores.transcripts["r1"] = _generated("r1", "t1")
+    uri = "https://meet.googleapis.com/v2/conferenceRecords/r1"
+
+    def _entries() -> list[dict[str, Any]]:
+        world.docs[uri] = {"actor": "human:ann", "tags": [], "metadata": {}}
+        return [_entry("r1", "p1", "Hi.", "2026-01-02T10:01:00Z", "2026-01-02T10:01:01Z")]
+
+    stores.entries["t1"] = _entries
+    asyncio.run(source_sync.run_sync())
+    detail = _detail(world, "calls")
+    assert world.upserts == []
+    assert world.docs[uri]["actor"] == "human:ann"
+    assert (detail["skipped"], detail["changed"]) == (1, 0)

@@ -248,9 +248,10 @@ carries a hash of its title and text (`text_sha256`), which the
 at the same revision with other text is mined again. Every document a sync writes has
 the actor `worker:knowledge-source-sync` and the class `imported`. A live document at
 the same address that another writer or another source holds is never overwritten or
-retired; the file is counted `skipped` and nothing is fetched for it. The source is read
-again before each write: one removed or replaced during its turn stops the turn, which
-records nothing.
+retired. The source and the address are read again before each write. A source removed
+or replaced during its turn stops the turn, which records nothing. A file whose address
+another writer holds is counted `skipped`: nothing is fetched for it when the address is
+held as the file is listed, and nothing is written when it was taken during the fetch.
 
 A document is retired only on positive evidence: its file is missing from a complete
 full listing and the store, asked about that file, reports it gone, trashed or in none

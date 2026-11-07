@@ -20,6 +20,7 @@ import pytest
 
 from server.clients import gdrive
 from server.core import leases
+from server.core.ch import sequential_reads_active
 from server.core.errors import ValidationError
 from server.core.hashing import sha256_text
 from server.core.secrets_at_rest import seal
@@ -1332,6 +1333,68 @@ def test_an_address_another_writer_holds_reads_no_extractor(world: _World) -> No
     asyncio.run(source_sync.run_sync())
     assert world.capability_calls == 0
     assert _detail(world)["skipped"] == 1
+
+
+def test_an_address_a_writer_takes_during_the_fetch_is_not_overwritten(world: _World) -> None:
+    """The address is free when the file is listed; a person writes there while it is
+    downloaded and converted. The write step reads the address again and leaves theirs."""
+    uri = _uri("pdf1", "file")
+    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="14")]
+
+    def _download(request: httpx.Request) -> httpx.Response:
+        world.docs[uri] = {"actor": "human:ann", "tags": [], "metadata": {}}
+        return httpx.Response(200, content=b"%PDF-1.7 bytes")
+
+    world.file_answers["pdf1"] = _download
+    asyncio.run(source_sync.run_sync())
+    assert world.upserts == []
+    assert world.docs[uri]["actor"] == "human:ann"
+    assert _detail(world)["skipped"] == 1
+
+
+def test_the_write_time_owner_read_reads_with_sequential_consistency(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A replica that has not seen a person's write during the fetch would answer the
+    address is free, so the read just before the write waits for every insert."""
+    uri = _uri("pdf1", "file")
+    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="14")]
+    fake = documents.get_one
+    sequential: list[bool] = []
+
+    async def _get_one(org: str, ns: str, at: str, **kw: Any) -> Any:
+        if at == uri:
+            sequential.append(sequential_reads_active())
+        return await fake(org, ns, at, **kw)
+
+    monkeypatch.setattr(documents, "get_one", _get_one)
+    asyncio.run(source_sync.run_sync())
+    assert len(world.upserts) == 1
+    assert sequential == [False, True]  # the check before the fetch, then the write's
+
+
+def test_the_retire_owner_read_reads_with_sequential_consistency(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A replica that has not seen a person's write at the address would answer the
+    document is still the source's, so the read before a retirement waits for every
+    insert."""
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    (uri,) = world.docs
+    world.files = []
+    fake = documents.get_one
+    sequential: list[bool] = []
+
+    async def _get_one(org: str, ns: str, at: str, **kw: Any) -> Any:
+        if at == uri:
+            sequential.append(sequential_reads_active())
+        return await fake(org, ns, at, **kw)
+
+    monkeypatch.setattr(documents, "get_one", _get_one)
+    result = asyncio.run(source_sync.run_sync(full=True))
+    assert result.removed == 1 and world.docs == {}
+    assert sequential == [True]
 
 
 def _timeout(request: httpx.Request) -> httpx.Response:

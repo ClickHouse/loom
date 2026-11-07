@@ -301,9 +301,10 @@ async def _fetch_and_write(
     run: sync.Pass,
     result: sync.TurnResult,
 ) -> str:
-    """Read and write one recording's transcript: `written`, `waiting`, `given_up`,
-    `no_transcript` (a recent recording with none yet, its check given back to the
-    pass bound) or `stop`, as `sync.sync_item` expects."""
+    """Read and write one recording's transcript: `written`, `skipped` (another writer
+    took the address during the fetch), `waiting`, `given_up`, `no_transcript` (a
+    recent recording with none yet, its check given back to the pass bound) or
+    `stop`, as `sync.sync_item` expects."""
     max_bytes = int(settings.knowledge_source_sync_max_file_bytes)
     try:
         text = await transcript(session, f, max_bytes=max_bytes)
@@ -334,7 +335,7 @@ async def _fetch_and_write(
         return sync.wait(f, result, f"fetch_failed:{type(e).__name__}", type(e).__name__)
     await sync.require_current(src)
     try:
-        await sync.write_document(src, f, f["uri"], text, ingested_format="transcript")
+        written = await sync.write_document(src, f, f["uri"], text, ingested_format="transcript")
     except ValidationError as e:
         # The write refuses this transcript whatever the pass: it will not go through.
         code = e.to_detail().get("code") or "invalid"
@@ -342,8 +343,7 @@ async def _fetch_and_write(
     except Exception as e:  # noqa: BLE001 — one transcript's write must not stop the others
         log.warning("knowledge_source_sync: writing %s failed: %s", f["id"], e)
         return sync.wait(f, result, f"write_failed:{type(e).__name__}", type(e).__name__)
-    result.changed += 1
-    return "written"
+    return sync.counted(result, written)
 
 
 __all__ = [
