@@ -343,9 +343,9 @@ networkPolicy:
   # NetworkPolicy peers allowed to reach the pods (the ALB's subnets, the
   # ingress controller's namespace). [] = any source.
   ingressFrom: []
-  # Addresses the Loom pods never reach, in either policy (unless an extraEgress
-  # rule reopens them): the instance metadata service, so repository code a pod
-  # builds cannot take the node's cloud role.
+  # Addresses a policy keeps the Loom pods off (the full policy's own rules and
+  # extraEgress still allow theirs): the instance metadata service, so repository
+  # code a pod builds cannot take the node's cloud role.
   # 169.254.169.254 serves most clouds, the IPv6 entries AWS and GCE. Add your
   # provider's address if it differs, other host endpoints that hand out node
   # credentials, and node or other non-pod ranges (the cluster's pods stay reachable).
