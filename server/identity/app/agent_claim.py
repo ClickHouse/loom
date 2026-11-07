@@ -165,7 +165,12 @@ async def agent_claim(request: Request) -> Response:
     )
     if outcome == "unconfirmed":
         return _form(
-            namespace, _EARLIER_SUBMIT, 503, notice=_grants_notice(others), retry_after_s=60
+            namespace,
+            "This claim may still be landing: wait a minute and sign in with the password you "
+            "chose; if that fails, submit again.",
+            503,
+            notice=_grants_notice(others),
+            retry_after_s=60,
         )
     return oauth.html_page(
         _TITLE,

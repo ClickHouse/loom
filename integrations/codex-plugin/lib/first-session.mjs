@@ -64,7 +64,8 @@ function _peerResult(cfg, { base, dir, configPath }) {
     token: String(cfg.token),
     namespace,
     org: cfg.org || "",
-    claimUrl: `${String(cfg.url || base).replace(/\/+$/, "")}/`,
+    // The claim page's address is in the claim file the winning sign-up wrote.
+    claimUrl: "",
     claimPath: cfg.claimed === true ? "" : join(dir, `claim-${namespace}.txt`),
     claimed: cfg.claimed === true,
     configPath,
@@ -215,8 +216,11 @@ export function renderFirstSessionNotice(result, serverUrl) {
       }
       return (
         `Loom: no credential was found, so this machine signed itself up as memory namespace ` +
-        `\`${result.namespace}\` on ${base}. Tell the user once: to make it theirs, open ${result.claimUrl} and ` +
-        `enter namespace \`${result.namespace}\` and the code saved in ${result.claimPath} where it asks; ` +
+        `\`${result.namespace}\` on ${base}. Tell the user once: to make it theirs, ` +
+        (result.claimUrl
+          ? `open ${result.claimUrl} and enter namespace \`${result.namespace}\` and the code saved in ` +
+            `${result.claimPath} where it asks; `
+          : `follow the steps saved in ${result.claimPath}; `) +
         `until then memory is per-machine.`
       );
     case "unavailable":

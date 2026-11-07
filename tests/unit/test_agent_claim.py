@@ -714,7 +714,7 @@ def test_a_write_that_does_not_confirm_still_cuts_off_after_it(world, monkeypatc
     monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
     monkeypatch.setattr(ch, "insert", insert)
     r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
-    assert r.status_code == 503 and "An earlier submit may still be claiming" in r.text
+    assert r.status_code == 503 and "This claim may still be landing" in r.text
     assert "Review its grants" in r.text
     assert len(cutoffs) == 2 and world["waited"] == cutoffs[1:]
     [(event, kw)] = world["events"]
