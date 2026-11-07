@@ -8,6 +8,7 @@ wraps this client behind a private event loop.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import sys
 import time
@@ -175,7 +176,6 @@ class Agent:
 
         base_url, api_key, auth = _credentials(base_url, api_key, profile)
 
-        self._timeout_s = float(timeout_s)
         self.transport = Transport(
             base_url=base_url,
             api_key=api_key,
@@ -541,8 +541,11 @@ class Agent:
                 await self.ambient_run.complete(failed=failed)
         finally:
             try:
-                # A close() cancelled while sets are still going out lets them land, up
-                # to one request's timeout, before the pool closes under them.
-                await self.memory._wait_for_sets(self._timeout_s)
+                # Always: sets made while the ambient run completed, or while a cancelled
+                # close() was waiting, land too, up to one request's timeout, before the
+                # pool closes under them.
+                with contextlib.suppress(TimeoutError):
+                    timeout_s = getattr(self.transport, "_timeout_s", None)
+                    await asyncio.wait_for(self.memory.flush_sets(), timeout_s)
             finally:
                 await self.transport.close()  # even when the flush fails or is cancelled

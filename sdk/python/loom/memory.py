@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import builtins
-import contextlib
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -85,7 +84,7 @@ class _CoalesceWindow:
         self.pending: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]] = []
         self.timer: asyncio.TimerHandle | None = None
         self.identity = identity
-        # The window's first sets, sent alone: its flush waits for them.
+        # The window's first sets, sent alone: its flush, if it has one, waits for them.
         self.first_sets: list[asyncio.Task[Any]] = []
 
 
@@ -191,6 +190,12 @@ class _SetCoalescer:
             # Nothing here cancels a flush; one cancelled from outside tells its callers.
             for _, fut in batch:
                 fut.cancel()
+        elif (error := task.exception()) is not None:
+            # A failure outside a request (a value the JSON encoder refuses): every caller
+            # still waiting gets it.
+            for _, fut in batch:
+                if not fut.done():
+                    fut.set_exception(error)
 
     async def _flush(
         self,
@@ -661,13 +666,6 @@ class MemoryClient:
         server before reading it back can call it directly."""
         if self._coalescer is not None:
             await self._coalescer.flush()
-
-    async def _wait_for_sets(self, timeout_s: float) -> None:
-        """`flush_sets()`, for at most `timeout_s`: the writes it has not seen land by then
-        keep going."""
-        if self._coalescer is not None:
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self._coalescer.flush(), timeout_s)
 
     def _identity(
         self,

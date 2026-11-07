@@ -773,7 +773,11 @@ async def test_close_returns_while_a_writer_keeps_setting(agent: Agent) -> None:
             i += 1
 
     writing = asyncio.create_task(writer())
-    await asyncio.sleep(0.05)
+    t: Any = agent.transport
+    for _ in range(10_000):  # until the writer is well into a burst
+        if len(t.calls) >= 10:
+            break
+        await asyncio.sleep(0)
     await asyncio.wait_for(agent.close(), 5)
     stop.set()
     await writing
@@ -822,6 +826,20 @@ async def test_windows_of_many_identities_do_not_pile_up(
     # A window with only its first sets ends at its time like any other.
     monkeypatch.setattr(loom.memory, "COALESCE_WINDOW_S", 0.01)
     await asyncio.gather(*[agent.memory.set("k", i, session_id=f"s{i}") for i in range(200)])
-    await asyncio.sleep(0.05)
     co: Any = agent.memory._coalescer
+    assert co._windows
+    for _ in range(1_000):  # each window's timer, at its time
+        if not co._windows:
+            break
+        await asyncio.sleep(0.001)
     assert co._windows == {}
+
+
+async def test_a_flush_that_raises_fails_its_callers(agent: Agent) -> None:
+    # A value the JSON encoder refuses fails inside the flush itself: every set of the
+    # flush gets that error instead of waiting for good.
+    import datetime as dt
+
+    sets = [agent.memory.set(k, k) for k in "abcd"] + [agent.memory.set("e", dt.datetime.now())]
+    results = await asyncio.wait_for(asyncio.gather(*sets, return_exceptions=True), 2)
+    assert all(isinstance(r, TypeError) for r in results[2:])
