@@ -98,7 +98,7 @@ def test_a_bump_moves_every_version_and_nothing_else(tmp_path: Path) -> None:
     target = f"{major}.{minor + 1}.0"
     chart = prepare.read(prepare.CHART)
     prepare.bump(target, prepare.planned_chart(target, current, chart, root), root)
-    assert prepare.check(root) == []
+    assert prepare.check(root=root) == []
     assert prepare.read(prepare.SERVER, root) == target
     for path in {pin.path for pin in prepare.PINS}:
         before = (ROOT / path).read_text().splitlines()
@@ -164,7 +164,7 @@ def test_a_file_left_behind_is_named(tmp_path: Path) -> None:
     root = _copy(tmp_path)
     chart = root / "deploy/helm/loom/Chart.yaml"
     chart.write_text(chart.read_text().replace('appVersion: "', 'appVersion: "0.0.0-'))
-    ((path, error),) = prepare.check(root)
+    ((path, error),) = prepare.check(root=root)
     assert path == "deploy/helm/loom/Chart.yaml"
     assert error.startswith("deploy/helm/loom/Chart.yaml names 0.0.0-")
 
@@ -647,7 +647,7 @@ def test_a_server_version_the_check_cannot_read_is_an_error_line_on_its_file(
     root = _copy(tmp_path)
     (root / "server/__init__.py").write_text("version = 1\n")
     check = prepare.check
-    monkeypatch.setattr(prepare, "check", lambda **kw: check(root, **kw))
+    monkeypatch.setattr(prepare, "check", lambda **kw: check(root=root, **kw))
     monkeypatch.setattr(sys, "argv", ["prepare.py", "check", "1.2.0"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
@@ -821,7 +821,7 @@ def test_a_version_file_that_is_missing_is_an_error_line(
     root = _copy(tmp_path)
     (root / "frontend/package-lock.json").unlink()
     check = prepare.check
-    monkeypatch.setattr(prepare, "check", lambda **kw: check(root, **kw))
+    monkeypatch.setattr(prepare, "check", lambda **kw: check(root=root, **kw))
     monkeypatch.setattr(sys, "argv", ["prepare.py", "check", "1.2.0"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
@@ -887,10 +887,33 @@ def test_a_tag_whose_files_name_another_release_is_an_error_on_the_server_file(
 ) -> None:
     root = _copy(tmp_path)
     version = prepare.read(prepare.SERVER, root)
-    assert prepare.check(root, tag_version=f"{version}-rc.1") == []  # a candidate of it
-    assert prepare.check(root, tag_version="0.0.1") == [
+    assert prepare.check(root=root, tag_version=f"{version}-rc.1") == []  # a candidate of it
+    assert prepare.check(root=root, tag_version="0.0.1") == [
         ("server/__init__.py", f"server/__init__.py names {version}, not 0.0.1 (the tag v0.0.1)")
     ]
+
+
+def test_the_checks_need_only_the_standard_library(tmp_path: Path) -> None:
+    """The release workflow runs them on the runner's python3, outside the project."""
+    version = prepare.read(prepare.SERVER)
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", str(ROOT / "scripts/release/prepare.py"), "check", version],
+        cwd=tmp_path, capture_output=True, text=True,
+    )  # fmt: skip
+    assert result.returncode == 0, result.stderr
+
+
+def test_a_missing_gh_is_one_line(
+    prepared: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_gh(version: str, previous: str) -> str:
+        raise FileNotFoundError(2, "No such file or directory", "gh")
+
+    monkeypatch.setattr(prepare, "release_notes", no_gh)
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "notes", "1.2.0"])
+    with pytest.raises(SystemExit) as exited:
+        prepare.main()
+    assert str(exited.value) == "gh is not installed"
 
 
 def test_the_previous_release_is_printed_for_a_candidate_too(

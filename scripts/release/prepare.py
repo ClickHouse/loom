@@ -2,7 +2,9 @@
 """The release pull request's changes (every version file, the chart, the notes)
 and the version checks the release workflow runs.
 
-Run with the project's environment (the notes import the server's registry):
+`bump` and `notes` run with the project's environment (the notes import the
+server's registry); the other commands, which the release workflow runs on the
+runner's own python3, need only the standard library:
 
     .venv/bin/python scripts/release/prepare.py bump 1.2.0       # notes, then the bump
     .venv/bin/python scripts/release/prepare.py notes 1.2.0      # the notes alone
@@ -107,7 +109,7 @@ def next_chart_version(version: str, previous_version: str, previous_chart: str)
     return f"{major}.{minor + 1}.0"
 
 
-def check(root: Path = ROOT, tag_version: str | None = None) -> list[tuple[str, str]]:
+def check(tag_version: str | None = None, root: Path = ROOT) -> list[tuple[str, str]]:
     """(file, error) for every pin that does not carry the server's version, and
     for the server's version when it is not the final `tag_version` names."""
     try:
@@ -115,8 +117,8 @@ def check(root: Path = ROOT, tag_version: str | None = None) -> list[tuple[str, 
     except ValueError as e:
         return [(SERVER.path, str(e))]
     errors = []
-    if tag_version and want != final_of(tag_version):
-        final = final_of(tag_version)
+    final = final_of(tag_version) if tag_version else want
+    if want != final:
         errors.append(
             (SERVER.path, f"{SERVER.path} names {want}, not {final} (the tag v{tag_version})")
         )
@@ -243,7 +245,8 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
 
 def validate(version: str, root: Path = ROOT) -> None:
     """Refuse a final version the files cannot take, before any `gh` call or
-    write: every pin is found once, and the version is not below the current one."""
+    write: every pin is found once, the chart's own version parses, and the version
+    is not below the current one."""
     for pin in FOLLOWERS:
         read(pin, root)
     chart = read(CHART, root)
@@ -523,6 +526,8 @@ def _bump(args: argparse.Namespace) -> None:
 
 
 def _one_line(e: Exception) -> str:
+    if isinstance(e, FileNotFoundError):
+        return f"{e.filename} is not installed"
     if isinstance(e, subprocess.CalledProcessError):
         detail = f": {e.stderr.strip()}" if e.stderr else ""
         return f"{' '.join(map(str, e.cmd))} failed{detail}"
@@ -549,12 +554,10 @@ def main() -> None:
         command.add_argument("tag_version", help="the tag's version, X.Y.Z or X.Y.Z-rc.N")
         command.set_defaults(run=run)
     args = parser.parse_args()
+    # A refusal, a failed git or gh call, or a missing gh is one line; in a check, an ::error::.
     try:
         args.run(args)
-    # A refusal raises ValueError and a failed git or gh call CalledProcessError;
-    # either is one line, and in a check, which the release workflow runs, an
-    # `::error::` annotation.
-    except (ValueError, subprocess.CalledProcessError) as e:
+    except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as e:
         prefix = "" if args.command in ("bump", "notes") else "::error::"
         raise SystemExit(prefix + _one_line(e)) from None
 
