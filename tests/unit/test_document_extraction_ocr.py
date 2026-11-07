@@ -117,6 +117,14 @@ def test_a_slide_with_a_picture_ocr_read_and_a_small_one_is_listed(engine: FakeE
     assert a.attrs["images_unread"] == [1]
 
 
+def test_a_small_image_its_own_text_layer_fills_is_not_listed(engine: FakeEngine) -> None:
+    # a scan in strips: a small image with its text layer drawn over it
+    lines = b"".join(text_at(110, 380 - 14 * k, f"Strip line {k} of text.") for k in range(6))
+    a = extract(laid_out_pdf([b"q 200 0 0 90 100 300 cm /Im1 Do Q\n" + lines], image=GRAY), "s.pdf")
+    assert a.coverage.complete and engine.seen == []
+    assert "images_unread" not in a.attrs and a.warnings == ()
+
+
 def test_a_diagrams_labels_on_a_text_page_are_text_not_a_table_or_a_heading(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

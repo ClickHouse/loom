@@ -378,6 +378,10 @@ _PATTERN_FILLED_BOX = _TEXT_BOX_AS_WORD_WRITES_IT.replace(
         '<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml">'
         '<v:fill r:id="rId5" type="frame" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>'
         "</v:shape></w:pict></w:r></w:p>",
+        # The same fill naming its image by its Office relationship id.
+        '<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml">'
+        '<v:fill o:relid="rId5" type="frame" xmlns:o="urn:schemas-microsoft-com:office:office"/>'
+        "</v:shape></w:pict></w:r></w:p>",
         _MODEL_3D,  # a drawing the reader does not know, its picture in the fallback
         _WORDART,
         # An embedded spreadsheet or diagram: an OLE object and its preview image.
@@ -393,6 +397,7 @@ _PATTERN_FILLED_BOX = _TEXT_BOX_AS_WORD_WRITES_IT.replace(
         "picture fill",
         "vml image",
         "vml picture fill",
+        "vml picture fill by its office id",
         "3d model",
         "wordart",
         "embedded object",

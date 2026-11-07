@@ -160,7 +160,8 @@ def _vml_picture_fill(el: Element) -> bool:
 
 def _pictures(el: Element) -> bool:
     """Whether `el` holds what a drawing shows and the reader does not read: an
-    image, a chart, a diagram or an embedded object. An alternate-content fallback
+    image, drawn text (WordArt, a locked canvas's), a chart, a diagram or an embedded
+    object; the same walk fails a document of these and no text. An alternate-content fallback
     is searched too: a drawing the reader does not know (a 3D model) holds its only
     picture there."""
     for child in el:
