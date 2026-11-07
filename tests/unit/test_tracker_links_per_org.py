@@ -330,3 +330,44 @@ def test_a_link_set_on_an_operator_repository_later_reaches_its_branches(monkeyp
     assert binding.tracker_namespaces_for(ORG_X, branch) == []
     binding.reset_overrides_for_tests({(ORG_X, CODE): "tracker-later"}, {(ORG_X, branch): CODE})
     assert binding.tracker_namespaces_for(ORG_X, branch) == ["tracker-later"]
+
+
+def test_a_refresh_after_a_write_reads_its_own_writes(monkeypatch) -> None:
+    """A forced refresh follows the caller's own write, and the first refresh after
+    `forget_links` follows an emptying: both read with sequential consistency, so a
+    lagging ClickHouse replica cannot hand back the old rows. A plain refresh does not."""
+    import server.code.app.reads as reads_mod
+    import server.core.ch as ch_mod
+
+    seen: list[bool] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            seen.append(ch_mod.sequential_reads_active())
+            return []
+
+    ch = _CH()
+    monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
+    monkeypatch.setattr(reads_mod, "code_index", lambda: CodeRepo(ch))  # type: ignore[arg-type]
+    asyncio.run(binding.refresh_overrides())
+    asyncio.run(binding.refresh_overrides(force=True))
+    binding.forget_links(ORG_X, CODE)
+    binding._OVERRIDES_AT = -float("inf")
+    asyncio.run(binding.refresh_overrides())
+    binding._OVERRIDES_AT = -float("inf")
+    asyncio.run(binding.refresh_overrides())
+    assert seen == [False, True, True, False]
+
+
+def test_branches_following_names_only_registered_branches_in_the_org(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    _set_registry(monkeypatch, [_entry(ORG_X, "code-widgets-26-8")])
+    binding.reset_overrides_for_tests(
+        branches={
+            (ORG_X, "code-widgets-26-8"): CODE,
+            (ORG_X, "code-widgets-gone"): CODE,  # no registry entry
+            (ORG_Y, "code-widgets-26-8"): CODE,  # another org
+        }
+    )
+    assert binding.branches_following(ORG_X, CODE) == ["code-widgets-26-8"]
+    assert binding.branches_following(ORG_Y, CODE) == []

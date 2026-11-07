@@ -498,3 +498,44 @@ async def test_set_source_reads_its_own_stored_links_fail_closed(monkeypatch) ->
         assert written == []
     finally:
         b.reset_overrides_for_tests({})
+
+
+@pytest.mark.asyncio
+async def test_set_source_says_which_branches_read_the_links_too(wired, monkeypatch) -> None:
+    """A link on an operator repository is read by its `code.repo.add_branch` branches;
+    the tracker admin who sets it is told which."""
+    import server.code.app.repo_admin as adm
+    from server.code.api.models_repos import CodeRepoSetSourceInput
+
+    class _Repo:
+        async def get_state(self, org, ns, key):
+            return ""
+
+        async def set_state(self, org, ns, key, value, detail=""):
+            return None
+
+    async def _noop(**_):
+        return None
+
+    async def _scope(org, ns, role=None, *, hides_answer=True):
+        return True
+
+    monkeypatch.setattr("server.code.store.index.CodeRepo", _Repo)
+    monkeypatch.setattr(adm.reg, "refresh_db_repos", _noop)
+    monkeypatch.setattr(b, "refresh_overrides", _noop)
+    monkeypatch.setattr(adm, "_require_same_org", lambda org: None)
+    monkeypatch.setattr(adm, "current_caller", lambda: ("alice", ORG))
+    monkeypatch.setattr(
+        "server.code.domain.index.repos.repo_for_namespace",
+        lambda org, ns: SimpleNamespace(repo="Acme/widgets"),
+    )
+    monkeypatch.setattr(b, "branches_following", lambda org, ns: [f"{CODE}-26-8"])
+    monkeypatch.setattr(authz, "row_in_scope", _scope)
+    out = await adm.handle_code_repo_set_source(
+        CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[QA])
+    )
+    assert f"the readers of {CODE}-26-8 read these links too" in out.warning
+    out = await adm.handle_code_repo_set_source(
+        CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[])
+    )
+    assert "read these links too" not in out.warning  # a clear delegates nothing

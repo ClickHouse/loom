@@ -31,6 +31,7 @@ from server.code.api.models_repos import (
 from server.code.app.common import require_code_intel
 from server.code.app.index import repo_registry as reg
 from server.code.domain.index.repos import registry_repos
+from server.core.ch import own_write_reads
 from server.core.errors import AuthInsufficientError, ValidationError
 from server.settings import settings
 
@@ -532,7 +533,9 @@ async def _empty_tracker_links(org: str, namespace: str, *, detail: str) -> None
 
     repo = CodeRepo()
     for key in (binding.BRANCH_OF_KEY, binding.OVERRIDE_KEY):
-        if await repo.get_state_or_none(org, namespace, key):
+        with own_write_reads():  # a link written a moment ago on another replica counts
+            value = await repo.get_state_or_none(org, namespace, key)
+        if value:
             await repo.set_state(org, namespace, key, "", detail=detail)
     binding.forget_links(org, namespace)
 
@@ -551,10 +554,13 @@ async def _inherit_tracker_links(
             # An operator entry is its own root, whatever row a removed namespace left there.
             root, own = source_ns, None
         else:
-            root = await repo.get_state(org, source_ns, binding.BRANCH_OF_KEY) or source_ns
-            # As it is, "" included: a source branch whose maintainer cleared it must not
-            # hand its own branch back to the root's links.
-            own = await repo.get_state_or_none(org, source_ns, binding.OVERRIDE_KEY)
+            # Read-your-writes: a link the source's maintainer cleared a moment ago must
+            # not be copied from a lagging replica.
+            with own_write_reads():
+                root = await repo.get_state(org, source_ns, binding.BRANCH_OF_KEY) or source_ns
+                # As it is, "" included: a source branch whose maintainer cleared it must
+                # not hand its own branch back to the root's links.
+                own = await repo.get_state_or_none(org, source_ns, binding.OVERRIDE_KEY)
         if own is not None:
             await repo.set_state(
                 org,
@@ -684,10 +690,12 @@ async def handle_code_repo_set_source(input: Any) -> Any:
         raise ValidationError(f"{input.namespace} is not a repository index", code="NOT_A_REPO")
     await binding.refresh_overrides(force=True)
     previous = binding.tracker_namespaces_for(input.org, input.namespace)
-    # This repository's own stored links, read for its org and raising when unread.
-    stored = binding.parse_binding(
-        await CodeRepo().get_state(input.org, input.namespace, binding.OVERRIDE_KEY)
-    )
+    # This repository's own stored links, read for its org and raising when unread, with
+    # read-your-writes: a link cleared a moment ago must count as new again.
+    with own_write_reads():
+        stored = binding.parse_binding(
+            await CodeRepo().get_state(input.org, input.namespace, binding.OVERRIDE_KEY)
+        )
     wanted = binding.parse_binding(input.tracker_namespaces)
     # A link the repository's stored links do not hold needs the tracker's admin; one only
     # the operator map holds counts as new.
@@ -718,9 +726,16 @@ async def handle_code_repo_set_source(input: Any) -> Any:
         effective_within_s=int(settings.code_repos_refresh_seconds),
         not_covering=[qa for qa, _ in missing],
         warning="; ".join(
-            f"{qa} names {', '.join(getattr(t, 'repos', ()) or ()) or 'no repository'}, "
-            f"not {repo}: its reads will not return {repo}'s issues and PRs"
-            for qa, t in missing
+            [
+                f"{qa} names {', '.join(getattr(t, 'repos', ()) or ()) or 'no repository'}, "
+                f"not {repo}: its reads will not return {repo}'s issues and PRs"
+                for qa, t in missing
+            ]
+            + (
+                [f"the readers of {', '.join(following)} read these links too"]
+                if wanted and (following := binding.branches_following(input.org, input.namespace))
+                else []
+            )
         ),
     )
 
@@ -754,7 +769,6 @@ async def _tracker_or_refuse(org: str, qa: str, *, new: bool) -> Any:
     if await row_in_scope(org, qa, Role.VIEWER, hides_answer=False):
         raise AuthInsufficientError(
             f"linking {qa} needs an admin of it: it is not among this repository's stored "
-            "links (a link from the deployment's map counts as new); a link on an operator "
-            "repository is also read by the readers of its code.repo.add_branch branches"
+            "links (a link from the deployment's map counts as new)"
         )
     raise not_a_tracker

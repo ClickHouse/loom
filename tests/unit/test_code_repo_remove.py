@@ -453,9 +453,19 @@ async def test_remove_empties_the_tracker_links_before_it_deactivates_or_purges(
     monkeypatch.setattr(erasure_mod, "run_erasure_detached", _saga)
     plane.stored[(ORG, "code-widgets", binding.OVERRIDE_KEY)] = "tracker-widgets"
     plane.stored[(ORG, "code-widgets", binding.BRANCH_OF_KEY)] = "code-root"
-    await admin.handle_code_repo_remove(
-        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+    binding.reset_overrides_for_tests(
+        {(ORG, "code-widgets"): "tracker-widgets"},
+        branches={(ORG, "code-widgets"): "code-root"},
     )
+    try:
+        await admin.handle_code_repo_remove(
+            CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        )
+        # this replica's snapshot drops the name at once
+        assert binding.override_for(ORG, "code-widgets") is None
+        assert (ORG, "code-widgets") not in binding._BRANCH_OF
+    finally:
+        binding.reset_overrides_for_tests()
     emptied = [
         (ORG, "code-widgets", binding.OVERRIDE_KEY, ""),
         (ORG, "code-widgets", binding.BRANCH_OF_KEY, ""),

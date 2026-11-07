@@ -96,40 +96,63 @@ _OVERRIDES_AT = -math.inf  # the first call reads
 # Bumped by `forget_links`: a refresh whose read started before it may hold the rows
 # just emptied, so it keeps nothing.
 _FORGOTTEN = 0
+# Set by `forget_links`: the next refresh reads its own writes, so a lagging ClickHouse
+# replica cannot hand back the rows just emptied.
+_AFTER_WRITE = False
 
 
 async def refresh_overrides(*, force: bool = False) -> None:
     """Re-read the `OVERRIDE_KEY` and `BRANCH_OF_KEY` state rows when the snapshot is
-    older than `code_repos_refresh_seconds` (or `force`); never raises — a directory
+    older than `code_repos_refresh_seconds` (or `force`, which callers pass right after
+    their own write, so it reads with sequential consistency); never raises — a directory
     that cannot be read keeps the last snapshot."""
-    global _OVERRIDES, _BRANCH_OF, _OVERRIDES_AT
+    global _OVERRIDES, _BRANCH_OF, _OVERRIDES_AT, _AFTER_WRITE
     now = time.monotonic()
     if not force and now - _OVERRIDES_AT < float(settings.code_repos_refresh_seconds):
         return
     try:
         from server.code.app.reads import code_index
-        from server.core.ch import get_client
+        from server.core.ch import get_client, own_write_reads
 
         if getattr(get_client(), "_client", "absent") is None:
             return
-        forgotten = _FORGOTTEN
-        rows = await code_index().state_values_for_keys([OVERRIDE_KEY, BRANCH_OF_KEY])
+        forgotten, after_write = _FORGOTTEN, force or _AFTER_WRITE
+        if after_write:
+            with own_write_reads():
+                rows = await code_index().state_values_for_keys([OVERRIDE_KEY, BRANCH_OF_KEY])
+        else:
+            rows = await code_index().state_values_for_keys([OVERRIDE_KEY, BRANCH_OF_KEY])
         if forgotten != _FORGOTTEN:
             _OVERRIDES_AT = -math.inf  # the next call reads again
             return
         _OVERRIDES, _BRANCH_OF = rows[OVERRIDE_KEY], rows[BRANCH_OF_KEY]
         _OVERRIDES_AT = now
+        if after_write:
+            _AFTER_WRITE = False
     except Exception as e:  # noqa: BLE001 — keep the last snapshot
         log.warning("qa bindings: override refresh failed, keeping %d: %s", len(_OVERRIDES), e)
 
 
 def forget_links(org: str, code_namespace: str) -> None:
     """Drop the org's namespace from this replica's snapshot, whose rows were just
-    emptied, and discard any refresh already reading."""
-    global _FORGOTTEN
+    emptied, discard any refresh already reading, and make the next one read its own
+    writes."""
+    global _FORGOTTEN, _AFTER_WRITE
     _FORGOTTEN += 1
+    _AFTER_WRITE = True
     _OVERRIDES.pop((org, code_namespace), None)
     _BRANCH_OF.pop((org, code_namespace), None)
+
+
+def branches_following(org: str, code_namespace: str) -> list[str]:
+    """The registered branches whose `qa_branch_of` row names the org's namespace: they
+    read its links too (as of the last refresh)."""
+    registered = repos.registry_namespaces()
+    return sorted(
+        ns
+        for (o, ns), root in _BRANCH_OF.items()
+        if o == org and root == code_namespace and (o, ns) in registered
+    )
 
 
 def override_for(org: str, code_namespace: str) -> str | None:
@@ -142,10 +165,11 @@ def reset_overrides_for_tests(
     rows: dict[tuple[str, str], str] | None = None,
     branches: dict[tuple[str, str], str] | None = None,
 ) -> None:
-    global _OVERRIDES, _BRANCH_OF, _OVERRIDES_AT
+    global _OVERRIDES, _BRANCH_OF, _OVERRIDES_AT, _AFTER_WRITE
     _OVERRIDES = dict(rows or {})
     _BRANCH_OF = dict(branches or {})
     _OVERRIDES_AT = -math.inf
+    _AFTER_WRITE = False
 
 
 def operator_repositories() -> frozenset[tuple[str, str]]:
@@ -344,6 +368,7 @@ __all__ = [
     "OVERRIDE_KEY",
     "authorized_tracker_namespace",
     "authorized_tracker_namespaces",
+    "branches_following",
     "bindings",
     "code_namespaces_linking",
     "encode_binding",

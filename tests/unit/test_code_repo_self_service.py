@@ -758,3 +758,37 @@ async def test_a_re_add_after_a_removal_on_another_replica_drops_the_stale_snaps
         assert (ORG, "code-widgets") not in binding._BRANCH_OF
     finally:
         binding.reset_overrides_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_the_link_reads_around_a_registration_read_their_own_writes(
+    plane, links, monkeypatch
+) -> None:
+    """A link the source's maintainer cleared a moment ago must not come back from a
+    lagging ClickHouse replica: the stale-row check and the copy read with sequential
+    consistency."""
+    import server.code.store.index as code_repo_mod
+    from server.core import ch as ch_mod
+
+    seen: list[tuple[str, bool]] = []
+    repo_cls = code_repo_mod.CodeRepo
+    real_get, real_or_none = repo_cls.get_state, repo_cls.get_state_or_none
+
+    async def _get(self: Any, org: str, ns: str, key: str) -> str:
+        seen.append((key, ch_mod.sequential_reads_active()))
+        return await real_get(self, org, ns, key)
+
+    async def _or_none(self: Any, org: str, ns: str, key: str) -> str | None:
+        seen.append((key, ch_mod.sequential_reads_active()))
+        return await real_or_none(self, org, ns, key)
+
+    monkeypatch.setattr(repo_cls, "get_state", _get)
+    monkeypatch.setattr(repo_cls, "get_state_or_none", _or_none)
+    await admin.handle_code_repo_add(
+        CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main", join_policy="open")
+    )
+    await admin.handle_code_repo_add_branch(
+        CodeRepoAddBranchInput(org=ORG, namespace="code-widgets", branch="release/1.2")
+    )
+    link_reads = [on for key, on in seen if key in (links.OVERRIDE_KEY, links.BRANCH_OF_KEY)]
+    assert link_reads and all(link_reads)
