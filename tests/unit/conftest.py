@@ -555,11 +555,9 @@ def _process_state_left_as_found(request: pytest.FixtureRequest) -> Iterator[Non
 
 def _is_test_double(obj: object) -> bool:
     """A mock, an instance of a class defined under tests/, or a function or class
-    defined under tests/ (a lambda included)."""
-    if type(obj).__module__.startswith(("tests.", "test_", "unittest.mock")):
-        return True
+    defined under tests/ (a lambda included). An instance's `__module__` is its class's."""
     module = getattr(obj, "__module__", None)
-    return isinstance(module, str) and module.startswith(("tests.", "test_"))
+    return isinstance(module, str) and module.startswith(("tests.", "test_", "unittest.mock"))
 
 
 @pytest.fixture(autouse=True)
@@ -609,18 +607,28 @@ def _provider_clients_left_as_found() -> Iterator[None]:
         )
 
 
-def _server_modules_since(modules_before: set[str]) -> list[str]:
-    """The server modules imported since `modules_before`, skipping the `None` entries a
-    test sets in `sys.modules` to block an import."""
-    return [
-        name
-        for name in sys.modules.keys() - modules_before
-        if name.startswith("server.") and sys.modules.get(name) is not None
-    ]
+# The source trees whose modules can bind a patched name at import: tests/ is left out,
+# since its fakes are the doubles.
+_SOURCE_TREES = frozenset({"server", "bench", "dev", "extractor", "sdk"})
+
+
+def _source_modules_since(modules_before: set[str]) -> list[str]:
+    """The modules under `_SOURCE_TREES` imported since `modules_before`, skipping the
+    `None` entries a test sets in `sys.modules` to block an import."""
+    found = []
+    for name in sys.modules.keys() - modules_before:
+        path = getattr(sys.modules.get(name), "__file__", None)
+        if path is None:
+            continue
+        parts = Path(path).resolve().parts
+        top = parts[len(_REPO.parts)] if parts[: len(_REPO.parts)] == _REPO.parts else ""
+        if top in _SOURCE_TREES:
+            found.append(name)
+    return found
 
 
 def _double_bound_at_import(modules_before: set[str]) -> bool:
-    """Whether a server module imported since `modules_before` holds a test double.
+    """Whether a source module imported since `modules_before` holds a test double.
 
     A module that runs `from pkg import Name` binds whatever `pkg.Name` is at that
     moment. When its first import in the process happens while a test patches
@@ -629,25 +637,22 @@ def _double_bound_at_import(modules_before: set[str]) -> bool:
     """
     return any(
         _is_test_double(value)
-        for name in _server_modules_since(modules_before)
+        for name in _source_modules_since(modules_before)
         for value in vars(sys.modules[name]).values()
     )
 
 
 @pytest.fixture(autouse=True)
 def _test_double_bound_at_import_dropped() -> Iterator[None]:
-    """After a test during which a server module was first imported with a test double
-    bound to one of its names, drop every server module first imported during the test
-    from `sys.modules` and from its package. Teardown runs after the test's own patches
-    are undone, so only a binding made at import survives to here. A module that bound a
-    name from a poisoned one at its own import was imported in the same test, so the next
-    import of either runs it again and binds the real names, and no later test sees the
-    double."""
+    """After a test that left a test double bound in a source module it first imported,
+    drop every source module first imported during the test, from `sys.modules` and from
+    its package, so the next import binds the real names. Teardown runs after the test's
+    own patches are undone."""
     before = set(sys.modules)
     yield
     if not _double_bound_at_import(before):
         return
-    for name in _server_modules_since(before):
+    for name in _source_modules_since(before):
         module = sys.modules.pop(name)
         # `from package import leaf` returns the package attribute when it is set,
         # without importing again.

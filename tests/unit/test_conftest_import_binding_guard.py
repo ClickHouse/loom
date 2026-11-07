@@ -1,4 +1,4 @@
-"""The unit conftest finds a server module first imported while a test patched a name
+"""The unit conftest finds a source module first imported while a test patched a name
 it binds at import, and drops it after that test, so no later test sees the double."""
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ _PROBE = "server._import_binding_probe"
 @pytest.fixture
 def probe() -> Iterator[types.ModuleType]:
     module = types.ModuleType(_PROBE)
+    module.__file__ = str(_REPO / "server" / "_import_binding_probe.py")
     yield module
     sys.modules.pop(_PROBE, None)
 
@@ -43,6 +44,26 @@ def test_a_mock_bound_at_first_import_is_found(probe) -> None:
 def test_a_lambda_the_test_defined_is_found(probe) -> None:
     before = _fake_first_import(probe, CodeRepo=lambda: object())
     assert _double_bound_at_import(before)
+
+
+class _FakeRepo:
+    pass
+
+
+def test_an_instance_of_a_test_class_is_found(probe) -> None:
+    before = _fake_first_import(probe, CodeRepo=_FakeRepo())
+    assert _double_bound_at_import(before)
+
+
+def test_a_class_the_test_defined_is_found(probe) -> None:
+    before = _fake_first_import(probe, CodeRepo=_FakeRepo)
+    assert _double_bound_at_import(before)
+
+
+def test_a_module_outside_the_source_trees_is_not_checked(probe) -> None:
+    probe.__file__ = str(_REPO / "tests" / "_import_binding_probe.py")
+    before = _fake_first_import(probe, CodeRepo=MagicMock())
+    assert not _double_bound_at_import(before)
 
 
 def test_the_real_class_is_not_found(probe) -> None:
@@ -111,3 +132,24 @@ def test_a_module_imported_under_a_patch_is_imported_again_with_the_real_names(
     pytester.makepyfile(test_inner=_INNER_TESTS)
     result = pytester.runpytest_subprocess("-p", "no:randomly", "-p", "no:cacheprovider")
     result.assert_outcomes(passed=3)
+
+
+_PROVIDER_TESTS = """
+def test_a_function_left_in_the_llm_cache():
+    from server.llm import client
+
+    client._cached = lambda: None
+"""
+
+
+def test_a_function_left_in_the_llm_cache_fails_the_test(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PYTHONPATH", str(_REPO))
+    pytester.makeconftest(
+        "from tests.unit.conftest import _provider_clients_left_as_found  # noqa: F401\n"
+    )
+    pytester.makepyfile(test_inner=_PROVIDER_TESTS)
+    result = pytester.runpytest_subprocess("-p", "no:randomly", "-p", "no:cacheprovider")
+    result.assert_outcomes(passed=1, errors=1)
+    result.stdout.fnmatch_lines(["*test double in a provider cache: server.llm.client._cached*"])
