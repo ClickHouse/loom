@@ -72,7 +72,9 @@ def config_key(client: str) -> str:
 
 
 def _coding_url(mcp_url: str) -> str:
-    return mcp_url if "toolset=" in mcp_url else f"{mcp_url}?toolset=coding"
+    if "toolset=" in mcp_url:
+        return mcp_url
+    return f"{mcp_url}{'&' if '?' in mcp_url else '?'}toolset=coding"
 
 
 def client_config(client: str, mcp_url: str, minted: str) -> dict[str, object]:

@@ -18,19 +18,22 @@ from server.identity.app.token_clients import CONFIG_PATHS, config_key
 # `loom install` — wire Loom into a local AI client's config
 # ============================================================
 
-# Per-client config file and the key its MCP servers sit under: the token mint's
-# table, so the dashboard and `loom install` name the same files.
-_INSTALL_CLIENTS: dict[str, dict[str, str]] = {
-    client: {**paths, "section": config_key(client)} for client, paths in CONFIG_PATHS.items()
-}
-# Claude Code never reads ~/.claude/mcp.json: its MCP servers live in ~/.claude.json,
-# written by `claude mcp add`, so _install_one routes it to _install_claude_code_mcp and
-# Codex to _install_codex_mcp (`codex mcp add`). For Claude Code the path is only the
-# detection probe (~/.claude exists once it has run), the file the capture writer edits.
-_INSTALL_CLIENTS["claude-code"] |= {
+# Claude Code keeps its MCP servers in ~/.claude.json through `claude mcp add`
+# (_install_claude_code_mcp), so for it the path is only a probe: ~/.claude exists once
+# it has run.
+_CLAUDE_CODE_PROBE = {
     "darwin": "~/.claude/settings.json",
     "linux": "~/.claude/settings.json",
     "win32": "%USERPROFILE%\\.claude\\settings.json",
+}
+# Per-client config file and the key its MCP servers sit under: the token mint's table,
+# so the dashboard and `loom install` name the same files.
+_INSTALL_CLIENTS: dict[str, dict[str, str]] = {
+    client: {
+        **(_CLAUDE_CODE_PROBE if client == "claude-code" else paths),
+        "section": config_key(client),
+    }
+    for client, paths in CONFIG_PATHS.items()
 }
 
 

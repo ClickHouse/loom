@@ -309,8 +309,8 @@ function TokenForm({
     [identity.org, identity.namespace],
   );
 
-  const eligibleNs = (mine ?? []).filter((n) => n.kind !== "code");
-  const eligibleRepos = (mine ?? []).filter((n) => n.kind === "code");
+  const eligibleNs = useMemo(() => (mine ?? []).filter((n) => n.kind !== "code"), [mine]);
+  const eligibleRepos = useMemo(() => (mine ?? []).filter((n) => n.kind === "code"), [mine]);
   const repoInfo = useRepoInfo(mine ?? storedMine);
   const repoGroups = useMemo(() => {
     const by = new Map<string, { repo: string; restricted: boolean; rows: { namespace: string; branch: string }[] }>();

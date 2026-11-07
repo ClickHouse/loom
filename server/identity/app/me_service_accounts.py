@@ -152,10 +152,8 @@ async def _name_holder(org: str, name: str) -> str | None:
 def token_name(raw: object) -> str:
     """A new token's name in its owner's token list; 422 for one off its shape."""
     name = str(raw or "").strip()
-    if not name:  # admin/token.mint asks for one; this mint names it itself
+    if not 1 <= len(name) <= 64:
         raise _invalid("name required, 1-64 chars")
-    if len(name) > 64:
-        raise _invalid("name must be 1-64 chars")
     if "\x00" in name:  # reserved: revocation cutoffs key on a NUL (mint_token refuses it)
         raise _invalid("name cannot hold a NUL character")
     if ":" in name:  # reserved: `sa:<trust>:<agent>` is a machine trust's agent (auth.agents)

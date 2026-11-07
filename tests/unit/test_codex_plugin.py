@@ -212,31 +212,24 @@ def test_the_token_mint_client_table_names_codex() -> None:
 
 
 def test_the_mint_builds_the_entries_the_dashboard_prints() -> None:
-    """The server's `clients` and the dashboard's snippets come from two builders; the
-    client sets each keys on, and the Claude Code line, are the same. It fails when a
-    client joins or leaves a set, or the line changes, on one side only; a reformat of
-    clients.ts that keeps each set a `new Set([...])` of quoted ids passes."""
-    import re
-
+    """The server's `clients` and the dashboard's snippets come from two builders. Both
+    are checked against one fixture of every client's setup: this test for the server,
+    frontend/src/lib/clients.test.ts for the dashboard."""
     from server.identity.app import token_clients
 
-    ts = (ROOT / "frontend" / "src" / "lib" / "clients.ts").read_text()
+    fixture = ROOT / "frontend" / "src" / "lib" / "clientSetups.fixture.json"
+    expected = json.loads(fixture.read_text())
+    assert set(expected) == set(token_clients.MCP_CLIENTS)
+    for client, want in expected.items():
+        got = token_clients.client_config(client, "http://x/mcp", "T")
+        assert {k: got[k] for k in want} == want, client
 
-    def ts_set(name: str) -> set[str]:
-        m = re.search(rf"const {name}\b[^=]*=\s*new Set\(\s*\[([^\]]*)\]", ts)
-        assert m, name
-        return set(re.findall(r'"([a-z-]+)"', m.group(1)))
 
-    assert ts_set("STDIO_VIA_NPX") == token_clients._STDIO_VIA_NPX
-    assert ts_set("CODING_TOOLSET_CLIENTS") == token_clients._CODING_CLIENTS
-    assert token_clients.client_config("codex", "http://x/mcp", "T")["env"] == {"LOOM_API_KEY": "T"}
-    assert re.search(r'CODEX_TOKEN_ENV\b[^=]*=\s*"LOOM_API_KEY"', ts)
-    line = token_clients.client_config("claude-code", "http://x/mcp", "T")["command"]
-    template = 'claude mcp add --transport http ${name} "${args.mcpUrl}" -H "Authorization: Bearer ${args.token}" -s user'
-    assert template in ts
-    assert line == template.replace("${name}", "loom").replace(
-        "${args.mcpUrl}", "http://x/mcp?toolset=coding"
-    ).replace("${args.token}", "T")
+def test_the_coding_toolset_joins_a_url_that_has_a_query() -> None:
+    from server.identity.app import token_clients
+
+    got = token_clients.client_config("cursor", "http://x/mcp?a=1", "T")
+    assert got["config"]["mcpServers"]["loom"]["url"] == "http://x/mcp?a=1&toolset=coding"
 
 
 def test_codex_plugin_bundles_its_mcp_entry() -> None:

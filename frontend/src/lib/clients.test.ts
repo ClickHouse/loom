@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import serverSetups from "./clientSetups.fixture.json";
 import {
   CLIENTS,
   CODING_TOOLSET_CLIENTS,
@@ -125,5 +126,20 @@ describe("isClientId", () => {
     expect(isClientId("claude")).toBe(false);
     expect(isClientId("")).toBe(false);
     expect(isClientId(null)).toBe(false);
+  });
+});
+
+describe("the dashboard builds the setups the server's token mint returns", () => {
+  // The fixture is token_clients.client_config for this URL and token; a pytest checks
+  // that side (tests/unit/test_codex_plugin.py).
+  it.each(Object.entries(serverSetups))("%s", (client, server) => {
+    expect(isClientId(client)).toBe(true);
+    const ours = formatMcpConfig({ client: client as ClientId, token: "T", mcpUrl: "http://x/mcp" });
+    expect(ours.configKey).toBe(server.config_key);
+    expect(ours.block).toEqual(server.config);
+    expect(ours.command ?? "").toBe(server.command);
+    expect(ours.fileText ?? "").toBe(server.config_toml);
+    const env = Object.entries(server.env as Record<string, string>).map(([k, v]) => `export ${k}="${v}"`);
+    expect(ours.envLines ?? "").toBe(env.join("\n"));
   });
 });

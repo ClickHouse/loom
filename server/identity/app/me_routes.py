@@ -162,7 +162,7 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
     # Auth-off keeps a self-minted bearer's subject so per-subject role lookups
     # stay accurate on multi-member namespaces.
     subject, org = me_callers.caller_identity(request, prefer_bearer_in_dev=True)
-    subs = await me_callers.subject_aliases_of(org, subject)
+    subs = await me_callers.lowered_aliases(org, subject)
 
     ch = get_client()
     # auth_off only when we have no identifiable caller. With a verified
@@ -181,7 +181,7 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
         grant_subq = """
             SELECT namespace FROM loom.namespace_grants FINAL
             WHERE org = {org:String}
-              AND subject IN {subs:Array(String)}
+              AND lower(subject) IN {subs:Array(String)}
               AND {live}
         """.replace("{live}", LIVE_GRANT)
 
@@ -227,7 +227,7 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
         SELECT namespace, role, granted_at
         FROM loom.namespace_grants FINAL
         WHERE org = {org:String}
-          AND subject IN {subs:Array(String)}
+          AND lower(subject) IN {subs:Array(String)}
           AND {live}
         ORDER BY granted_at DESC
         """.replace("{live}", LIVE_GRANT)
