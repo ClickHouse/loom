@@ -12,9 +12,10 @@ OCR reads it into a block marked `attrs.ocr` after the slide's shapes, and
 without OCR the slide is a failed unit. A slide that holds pictures, charts,
 diagrams or embedded objects and no text is a failed unit: what it shows is in
 them, which this parser does not read. A slide of text with a picture OCR does
-not read (one under a fifth of it, or one as a fill or background), a chart, a
-diagram or an embedded object is read for its text and listed in
-`attrs.images_unread`, with one warning for the file.
+not read (one under a fifth of it, one as a fill or background, or an
+alternate content's fallback picture), a chart, a diagram or an embedded object
+is read for its text and listed in `attrs.images_unread`, with one warning for
+the file, unless the slide failed for what it shows, which its failure names.
 
 Pure and I/O-free.
 """
@@ -384,13 +385,15 @@ def extract_pptx(data: bytes) -> Artifact:
                 )
                 incomplete.add(number)
             continue
-        if shows_unread and not unread:  # a slide failed for its pictures is named there
-            not_read.append(number)
         if slide.charts and not (slide.title or slide.shapes or notes):
             # what the slide says of its own is in a chart or diagram, beside the
             # text OCR read in its pictures
-            failed.append(Failure(f"slide {number}", "its charts or diagrams are not read"))
+            failed.append(
+                Failure(f"slide {number}", "its charts, diagrams or embedded objects are not read")
+            )
             incomplete.add(number)
+        elif shows_unread and not unread:  # a slide failed for what it shows is named there
+            not_read.append(number)
         if slide.title:
             acc.heading(1, slide.title, loc, **hidden)
         else:

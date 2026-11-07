@@ -92,6 +92,17 @@ def test_a_large_picture_on_a_text_page_is_read_and_a_small_one_is_not(engine: F
     assert small.attrs["images_unread"] == [1] and len(small.warnings) == 1
 
 
+def test_a_text_page_partial_for_its_pictures_is_named_there_not_listed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ocr, "engine", lambda: None)
+    text = text_at(72, 740, "A page of text with a photo and an icon.")
+    pictures = b"q 400 0 0 300 100 300 cm /Im1 Do Q q 40 0 0 30 100 100 cm /Im2 Do Q"
+    a = extract(laid_out_pdf([text + pictures], image=[GRAY, GRAY]), "p.pdf")
+    assert not a.coverage.complete
+    assert "images_unread" not in a.attrs and a.warnings == ()
+
+
 def test_a_diagrams_labels_on_a_text_page_are_text_not_a_table_or_a_heading(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -737,8 +748,10 @@ def test_a_chart_beside_a_picture_whose_text_ocr_read_still_fails_its_slide(
     a = extract(_one_slide(_pic(large) + chart), "c.pptx")
     assert [b.attrs for b in a.blocks] == [{"ocr": True}]
     assert [(f.unit, f.reason) for f in a.coverage.failed] == [
-        ("slide 1", "its charts or diagrams are not read")
+        ("slide 1", "its charts, diagrams or embedded objects are not read")
     ]
+    # Its failure names the chart: the slide is not listed again.
+    assert "images_unread" not in a.attrs and a.warnings == ()
 
 
 def test_an_image_the_engine_cannot_decode_leaves_the_files_bound(

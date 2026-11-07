@@ -782,6 +782,14 @@ def test_a_pptx_slides_background_picture_or_picture_filled_group_is_named_as_no
     assert a.attrs["images_unread"] == [2, 3, 4]
 
 
+def test_a_pptx_slide_of_only_a_picture_background_is_a_failed_unit() -> None:
+    bare = f"<p:sld {_P}><p:cSld><p:bg><p:bgPr><a:blipFill/></p:bgPr></p:bg><p:spTree/></p:cSld></p:sld>"
+    a = extract(_zip(_deck({"a.xml": _slide(_sp("Plain")), "b.xml": bare})), "deck.pptx")
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        ("slide 2", "no text: its pictures, charts, diagrams or embedded objects are not read")
+    ]
+
+
 def test_a_pptx_drawing_the_reader_does_not_know_is_named_by_its_fallback_picture() -> None:
     ink = (
         f'<mc:AlternateContent {_MC}><mc:Choice Requires="p14"><p14:contentPart xmlns:p14="p14"/>'

@@ -251,12 +251,11 @@ def _read_layout(
         and (not texted or (p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p)))
     ]
     # The pictures OCR leaves on a page of text: under a fifth of it, and not a scan
-    # its own text fills.
+    # its own text fills (a page partial for its pictures is named there instead).
     shown_inline = [p for p in (drew.inline if drew else []) if math.hypot(p.ctm[0], p.ctm[1]) >= 1]
+    shown = [p for p in pictures if math.hypot(p.ctm[0], p.ctm[1]) >= 1]
     read.unread = texted and any(
-        p.area < ocr.PICTURE_SHARE * area and not _filled(found, p)
-        for p in [*pictures, *shown_inline]
-        if math.hypot(p.ctm[0], p.ctm[1]) >= 1
+        p.area < ocr.PICTURE_SHARE * area and not _filled(found, p) for p in [*shown, *shown_inline]
     )
     if len(targets) > layout.MAX_PICTURES:
         problems.append(f"it shows more than {layout.MAX_PICTURES} pictures OCR would read")
@@ -332,6 +331,7 @@ def _read_layout(
             )
         else:
             read.partial = f"OCR did not read all of its pictures: {problems[0]}"
+        read.unread = False
     read.lines = layout.lines_of(found, layout.text_words(read.text), read.dropped)
     return rules
 
