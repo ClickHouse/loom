@@ -5139,8 +5139,9 @@ class TrackerSettings(BaseModel):
     # (LOOM_CODE_REPOS_JSON or LOOM_CODE_REPO) and the branches code.repo.add_branch
     # adds to them, which read their repository's links; any other self-service
     # repository is linked by its maintainer. A branch of an operator repository
-    # re-added under a removed name whose tracker-link row is still there reads no
-    # tracker until its maintainer links it. '' = no QA facts.
+    # re-added under the name of a removed namespace that had a maintainer's links,
+    # before its purge runs, reads no tracker until its maintainer links it.
+    # '' = no QA facts.
     tracker_code_namespace_bindings_json: Annotated[str, JsonObject] = ""
     # --- tracker sources and the record contract ------------------------------
     # Every tracker source and the namespaces that read them:

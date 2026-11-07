@@ -703,3 +703,35 @@ async def test_a_fresh_name_writes_no_clear(plane, links) -> None:
         CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main", join_policy="open")
     )
     assert _link_rows(plane) == []
+
+
+@pytest.mark.asyncio
+async def test_a_re_add_after_a_removal_on_another_replica_refreshes_the_snapshot(
+    plane, monkeypatch
+) -> None:
+    """Another replica's removal emptied the rows in the store; this replica's snapshot
+    still holds the old branch row, so registering the name refreshes it at once."""
+    from server.tracker.app import binding
+
+    refreshed: list[bool] = []
+
+    async def _refresh(*, force: bool = False) -> dict[Any, str]:
+        refreshed.append(force)
+        binding.reset_overrides_for_tests(
+            {k[:2]: v for k, v in plane.stored.items() if k[2] == binding.OVERRIDE_KEY},
+            branches={k[:2]: v for k, v in plane.stored.items() if k[2] == binding.BRANCH_OF_KEY},
+        )
+        return {}
+
+    monkeypatch.setattr(binding, "refresh_overrides", _refresh)
+    binding.reset_overrides_for_tests(branches={(ORG, "code-widgets"): "code-clickhouse"})
+    plane.stored[(ORG, "code-widgets", binding.BRANCH_OF_KEY)] = ""
+    try:
+        await admin.handle_code_repo_add(
+            CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main", join_policy="open")
+        )
+        assert refreshed == [True]
+        assert _link_rows(plane) == []  # the rows are empty already
+        assert binding._BRANCH_OF.get((ORG, "code-widgets")) == ""  # not code-clickhouse
+    finally:
+        binding.reset_overrides_for_tests()

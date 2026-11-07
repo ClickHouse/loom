@@ -211,8 +211,9 @@ of an operator repository with no links of its own reads that repository's links
 glob the operator changes, or a link set on the repository, reaches it. A maintainer's
 link on a self-service repository is copied to a new branch; a link set on that repository
 later is set on its branches with `code.repo.set_source`. A branch of an operator
-repository re-added under a removed name whose tracker-link row is still there reads no
-tracker until its maintainer links it with `code.repo.set_source`.
+repository re-added under the name of a removed namespace that had a maintainer's links,
+before that namespace's purge runs, reads no tracker until its maintainer links it with
+`code.repo.set_source`.
 
 Links are never guessed from names, and a link belongs to one org: two orgs can hold the
 same code namespace name, and a link set in one never applies in the other. The gate runs

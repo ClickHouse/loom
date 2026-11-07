@@ -387,12 +387,14 @@ branch). A branch whose root is an operator repository follows that repository's
 read time, the glob included; a source that is not an operator repository has its own
 `qa_binding` row copied to the branch, a cleared one included. An operator source is its own
 root. Both rows are written with the source's rows read first and `qa_branch_of` last, so a
-failure leaves the branch following nothing. `code.repo.remove` empties both rows before the
-namespace's detached purge, and registering a namespace empties any row a removed one of the
-same name left, so the new namespace follows neither; an emptied `qa_binding` reads as
-cleared until its maintainer links it. An operator entry configured under a removed name
-gets no such cleanup: until the purge runs, it reads the removed namespace's `qa_binding`
-row, the old links after a removal on build N-1 and none after one on N. Other replicas keep
+failure leaves the branch following nothing. `code.repo.remove` empties whichever of the
+two rows holds a value before the namespace's detached purge, and registering a namespace
+empties any row a removed one of the same name left, so the new namespace follows neither;
+an emptied `qa_binding` reads as cleared until its maintainer links it. A namespace that
+had no `qa_binding` row gets none, so the operator's map still reaches a namespace of the
+same name. An operator entry configured under a removed name gets no such cleanup: until
+the purge runs, it reads the removed namespace's `qa_binding` row when there is one, the
+old links after a removal on build N-1 and none after one on N. Other replicas keep
 the rows they read for up to `LOOM_CODE_REPOS_REFRESH_SECONDS`. Tracker workers read each
 namespace through its own source, so a restricted namespace's rows never land under a
 standard one. The record contract is in

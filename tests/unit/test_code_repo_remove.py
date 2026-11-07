@@ -146,12 +146,17 @@ def plane(monkeypatch):
     import server.code.store.index as code_repo_mod
 
     ch.states = []
+    ch.stored = {}  # (org, namespace, key) -> value, what get_state_or_none answers
 
     class _CodeRepo(code_repo_mod.CodeRepo):
         async def set_state(
             self, org: str, ns: str, key: str, value: str, detail: str = ""
         ) -> None:
             ch.states.append((org, ns, key, value))
+            ch.stored[(org, ns, key)] = value
+
+        async def get_state_or_none(self, org: str, ns: str, key: str) -> str | None:
+            return ch.stored.get((org, ns, key))
 
     monkeypatch.setattr(code_repo_mod, "CodeRepo", _CodeRepo)
     import server.erasure.app.saga as erasure_mod
@@ -449,6 +454,8 @@ async def test_remove_empties_the_tracker_links_before_it_deactivates_or_purges(
     monkeypatch.setattr(sources, "deactivate_namespace_sources", _sources)
     monkeypatch.setattr(retire, "deactivate_registry_row", _registry)
     monkeypatch.setattr(erasure_mod, "run_erasure_detached", _saga)
+    plane.stored[(ORG, "code-widgets", binding.OVERRIDE_KEY)] = "tracker-widgets"
+    plane.stored[(ORG, "code-widgets", binding.BRANCH_OF_KEY)] = "code-root"
     await admin.handle_code_repo_remove(
         CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
     )
@@ -457,3 +464,23 @@ async def test_remove_empties_the_tracker_links_before_it_deactivates_or_purges(
         (ORG, "code-widgets", binding.BRANCH_OF_KEY, ""),
     ]
     assert seen == {"sources": emptied, "registry": emptied, "saga": emptied}
+
+
+@pytest.mark.asyncio
+async def test_remove_writes_no_link_row_for_a_namespace_that_had_none(plane, monkeypatch) -> None:
+    """An empty `qa_binding` reads as cleared: one written for a namespace that never had
+    links would hide the operator's map from a namespace of the same name until the purge."""
+    from server.tracker.app import binding
+
+    async def _no_refresh(**_: Any) -> dict[Any, str]:
+        return {}
+
+    monkeypatch.setattr(binding, "refresh_overrides", _no_refresh)
+    plane.stored[(ORG, "code-widgets", binding.BRANCH_OF_KEY)] = "code-root"
+    await admin.handle_code_repo_remove(
+        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+    )
+    keys = (binding.OVERRIDE_KEY, binding.BRANCH_OF_KEY)
+    assert [r for r in plane.states if r[2] in keys] == [
+        (ORG, "code-widgets", binding.BRANCH_OF_KEY, "")
+    ]
