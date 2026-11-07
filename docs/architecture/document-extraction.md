@@ -272,12 +272,13 @@ its resources and never draws is none. A page with text that draws a picture cov
 screenshot, a whiteboard photo) has its picture read with OCR, each of its lines a paragraph block of its own after the
 page's text (`attrs.ocr`), never a table or a heading, or, without OCR, is not complete: the page is read, and a failed
 unit says the picture's text needs OCR. A picture the page's own text already fills a tenth of (a scan's text layer,
-drawn over its image) is not read again. A page with text that draws a smaller picture, which OCR leaves, is read for
-its text and named in `attrs.images_unread` (its number) and one warning for the file: text drawn only inside such an
-image is not extracted; a page partial for its pictures is named by its reason instead, which names what stopped it, not
-every picture it holds. A page pypdf cannot read is a failed unit, not the file; a failed page's outline headings still
-open their sections. A character a font's map gives no Unicode character (a lone surrogate) is read as U+FFFD, with a
-warning naming its page. A PDF that opens only with a password is `unsupported_format`.
+drawn over its image) is not read again. A page with text that draws a smaller picture, which OCR leaves (one under a
+point wide or high is none), is read for its text and named in `attrs.images_unread` (its number) and one warning for
+the file: text drawn only inside such an image is not extracted; a page partial for its pictures is named by its reason
+instead, which names what stopped it, not every picture it holds. A page pypdf cannot read is a failed unit, not the
+file; a failed page's outline headings still open their sections. A character a font's map gives no Unicode character (a
+lone surrogate) is read as U+FFFD, with a warning naming its page. A PDF that opens only with a password is
+`unsupported_format`.
 
 **OCR.** The extractor image installs Tesseract's and Leptonica's libraries and Tesseract's English model
 (`LOOM_EXTRACTOR_OCR_LANGUAGES` names others the image holds; the service refuses to start when one is missing, and says

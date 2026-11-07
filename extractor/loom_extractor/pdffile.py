@@ -254,7 +254,10 @@ def _read_layout(
     # its own text fills (a page partial for its pictures is named there instead).
     shown_inline = [p for p in (drew.inline if drew else []) if math.hypot(p.ctm[0], p.ctm[1]) >= 1]
     read.unread = texted and any(
-        p.area < ocr.PICTURE_SHARE * area and not _filled(found, p) for p in [*shown, *shown_inline]
+        p.area < ocr.PICTURE_SHARE * area
+        and math.hypot(p.ctm[2], p.ctm[3]) >= 1  # nor one under a point high (a rule, a bar)
+        and not _filled(found, p)
+        for p in [*shown, *shown_inline]
     )
     if len(targets) > layout.MAX_PICTURES:
         problems.append(f"it shows more than {layout.MAX_PICTURES} pictures OCR would read")

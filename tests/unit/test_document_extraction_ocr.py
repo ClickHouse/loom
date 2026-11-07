@@ -103,6 +103,20 @@ def test_a_text_page_partial_for_its_pictures_is_named_there_not_listed(
     assert "images_unread" not in a.attrs and a.warnings == ()
 
 
+def test_a_picture_under_a_point_high_is_no_unread_image(engine: FakeEngine) -> None:
+    text = text_at(72, 740, "A page of text over a thin bar.")
+    a = extract(laid_out_pdf([text + b"q 500 0 0 0.5 50 300 cm /Im1 Do Q"], image=GRAY), "r.pdf")
+    assert a.coverage.complete and "images_unread" not in a.attrs and a.warnings == ()
+
+
+def test_a_slide_with_a_picture_ocr_read_and_a_small_one_is_listed(engine: FakeEngine) -> None:
+    large = '<p:spPr><a:xfrm><a:ext cx="9000000" cy="4500000"/></a:xfrm></p:spPr>'
+    small = '<p:spPr><a:xfrm><a:ext cx="500000" cy="500000"/></a:xfrm></p:spPr>'
+    a = extract(_one_slide(_pic(large) + _pic(small)), "s.pptx")
+    assert a.coverage.complete and a.attrs["ocr_slides"] == [1]
+    assert a.attrs["images_unread"] == [1]
+
+
 def test_a_diagrams_labels_on_a_text_page_are_text_not_a_table_or_a_heading(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1176,6 +1190,7 @@ def test_a_text_page_whose_layout_fails_beside_an_image_is_partial(
     assert [f.reason for f in a.coverage.failed] == [
         "its layout could not be read, so a picture on it may be unread: RuntimeError"
     ]
+    assert "images_unread" not in a.attrs  # its reason names it
 
 
 def test_a_page_whose_image_check_fails_too_fails_alone(

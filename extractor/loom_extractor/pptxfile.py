@@ -92,8 +92,8 @@ class _Slide:
         self.title = ""
         self.shapes: list[tuple[str, dict[str, object]]] = []  # (text, attrs)
         self.charts = False  # a chart, diagram or embedded object among them
-        # A picture OCR does not read: a fill, the background, an alternate's fallback.
-        self.filled = (
+        # A picture OCR never sees: the background here, a fill or a fallback in the walk.
+        self.unread_picture = (
             root.find(f"{q('p:cSld')}/{q('p:bg')}/{q('p:bgPr')}/{q('a:blipFill')}") is not None
         )
         self.picture_count = 0  # its pictures, those `pictures` lists and any other
@@ -110,7 +110,7 @@ class _Slide:
         for el in tree:
             if el.tag == q("p:grpSp"):
                 if el.find(f"{q('p:grpSpPr')}/{q('a:blipFill')}") is not None:
-                    self.filled = True  # a group filled with a picture
+                    self.unread_picture = True  # a group filled with a picture
                 ext, child = _extent(el, "p:grpSpPr"), _extent(el, "p:grpSpPr", "a:chExt")
                 if ext and child:
                     self._walk(el, sx * ext[0] / child[0], sy * ext[1] / child[1])
@@ -136,7 +136,7 @@ class _Slide:
                         or fallback.find(f".//{q('a:blipFill')}") is not None
                     )
                 ):
-                    self.filled = True
+                    self.unread_picture = True
             elif el.tag == q("p:pic"):
                 self.picture_count += 1
                 blip = el.find(f"{q('p:blipFill')}/{q('a:blip')}")
@@ -151,7 +151,7 @@ class _Slide:
                     self.pictures.append((rid, ph))
             elif el.tag == q("p:sp"):
                 if el.find(f"{q('p:spPr')}/{q('a:blipFill')}") is not None:
-                    self.filled = True  # a shape filled with a picture
+                    self.unread_picture = True  # a shape filled with a picture
                 body = el.find(q("p:txBody"))
                 text = _paragraphs(body) if body is not None else ""
                 if not text:
@@ -165,7 +165,7 @@ class _Slide:
                 if not tables:
                     self.charts = True  # a chart, a diagram or an embedded object
                 elif el.find(f".//{q('a:tcPr')}/{q('a:blipFill')}") is not None:
-                    self.filled = True  # a table cell filled with a picture
+                    self.unread_picture = True  # a table cell filled with a picture
                 for tbl in tables:
                     text, rows, columns = _table(tbl)
                     if text.strip(" |\n"):
@@ -375,7 +375,7 @@ def extract_pptx(data: bytes) -> Artifact:
         if seen:
             ocr_slides.append(number)
         # pictures that OCR read every one of, and found no text in, lose nothing
-        shows_unread = slide.charts or slide.filled or seen < slide.picture_count
+        shows_unread = slide.charts or slide.unread_picture or seen < slide.picture_count
         if not (slide.title or slide.shapes or notes or pictured):
             if not unread and shows_unread:
                 failed.append(

@@ -334,7 +334,6 @@ _MODEL_3D = (
 )
 
 
-# A text box as Word writes it: a shape in alternate content, its VML copy in the fallback.
 # WordArt as a document saved for an older Word writes it: its text a VML path's.
 _WORDART = (
     '<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml">'
@@ -342,6 +341,7 @@ _WORDART = (
 )
 
 
+# A text box as Word writes it: a shape in alternate content, its VML copy in the fallback.
 _TEXT_BOX_AS_WORD_WRITES_IT = (
     '<w:p><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">'
     f'<mc:Choice Requires="wps">{_run(_drawing(f"{_WPS}Shape", _TEXT_BOX))}</mc:Choice>'
