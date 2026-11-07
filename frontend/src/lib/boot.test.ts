@@ -1,11 +1,16 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   claimsFromToken,
   provisionalNamespace,
   rememberKinds,
   rememberedKinds,
+  SIGN_IN_PENDING,
   sameIdentity,
+  markSignInStarted,
+  sameAccount,
   takeLinkToken,
+  takeSignInStarted,
+  takeSsoAsk,
 } from "./boot";
 import type { MyNamespaceEntry } from "../api";
 import { VIEW_LOADERS } from "../views/registry";
@@ -129,13 +134,13 @@ describe("login link token", () => {
 
   it("takes a #token= fragment and scrubs it from the address bar", () => {
     history.replaceState(null, "", "/setup?tab=a#token=abc.def%2Eghi");
-    expect(takeLinkToken()).toEqual({ token: "abc.def.ghi", atRoot: false });
+    expect(takeLinkToken()).toEqual({ token: "abc.def.ghi", atRoot: false, nonce: null });
     expect(address()).toBe("/setup?tab=a");
   });
 
   it("never takes a ?token= query, and removes it anyway", () => {
     history.replaceState(null, "", "/?token=leaked.jwt.value&tab=a#memories");
-    expect(takeLinkToken()).toEqual({ token: null, atRoot: false });
+    expect(takeLinkToken()).toEqual({ token: null, atRoot: false, nonce: null });
     expect(window.location.search).toBe("?tab=a");
     expect(window.location.hash).toBe("#memories");
     expect(window.location.href).not.toContain("leaked");
@@ -150,7 +155,7 @@ describe("login link token", () => {
   it("says when the token came back to the bare root, where a sign-in returns to its page", () => {
     for (const root of ["/", "/me"]) {
       history.replaceState(null, "", `${root}#token=abc`);
-      expect(takeLinkToken(), root).toEqual({ token: "abc", atRoot: true });
+      expect(takeLinkToken(), root).toEqual({ token: "abc", atRoot: true, nonce: null });
       expect(address(), root).toBe(root);
     }
     history.replaceState(null, "", "/?tab=a#token=abc");
@@ -165,7 +170,79 @@ describe("login link token", () => {
 
   it("scrubs a fragment that does not decode, and takes no token from it", () => {
     history.replaceState(null, "", "/#token=%E0%A4%A");
-    expect(takeLinkToken()).toEqual({ token: null, atRoot: true });
+    expect(takeLinkToken()).toEqual({ token: null, atRoot: true, nonce: null });
     expect(address()).toBe("/");
+  });
+});
+
+describe("a sign-in this tab started", () => {
+  beforeEach(() => sessionStorage.clear());
+
+  it("trusts only its own nonce, for ten minutes, once", () => {
+    const nonce = markSignInStarted(1_000);
+    expect(nonce).toMatch(/^[A-Za-z0-9_-]{32}$/);
+    expect(markSignInStarted(1_000)).not.toBe(nonce);
+    const again = markSignInStarted(1_000);
+    expect(takeSignInStarted(again, 1_000 + 10 * 60 * 1000)).toBe(true);
+    expect(takeSignInStarted(again, 1_000 + 1)).toBe(false);
+  });
+
+  it("is none for another nonce, no nonce, a mark over ten minutes old, or no mark", () => {
+    const nonce = markSignInStarted(1_000);
+    expect(takeSignInStarted("someone-elses-nonce-0000", 1_001)).toBe(false);
+    expect(sessionStorage.getItem(SIGN_IN_PENDING)).toBeNull(); // used up by a wrong one too
+    markSignInStarted(1_000);
+    expect(takeSignInStarted(null, 1_001)).toBe(false);
+    const late = markSignInStarted(1_000);
+    expect(takeSignInStarted(late, 1_000 + 10 * 60 * 1000 + 1)).toBe(false);
+    expect(takeSignInStarted(nonce)).toBe(false);
+  });
+
+  it("reads the sign-in's nonce from the landing's query, only a well-formed one, and scrubs it", () => {
+    history.replaceState(null, "", "/me?n=Ab_-Ab_-Ab_-Ab_-#token=abc.def.ghi");
+    expect(takeLinkToken()).toEqual({ token: "abc.def.ghi", atRoot: true, nonce: "Ab_-Ab_-Ab_-Ab_-" });
+    expect(window.location.search + window.location.hash).toBe("");
+    history.replaceState(null, "", "/me?n=short#token=abc");
+    expect(takeLinkToken()).toEqual({ token: "abc", atRoot: true, nonce: null });
+    expect(window.location.search + window.location.hash).toBe("");
+    // The fragment is the token alone, as a dashboard that predates the nonce reads it.
+    history.replaceState(null, "", "/me#token=abc&n=Ab_-Ab_-Ab_-Ab_-");
+    expect(takeLinkToken()?.nonce).toBeNull();
+    // A page's own `n` stays when no token comes with it.
+    history.replaceState(null, "", "/library?n=1&token=leak");
+    takeLinkToken();
+    expect(window.location.search).toBe("?n=1");
+  });
+
+  it("names the same account only when the server's answer has the held token's subject and org", () => {
+    const alice = jwt({ sub: "alice", org: "acme" });
+    expect(sameAccount({ subject: "alice", org: "acme" }, alice)).toBe(true);
+    expect(sameAccount({ subject: "bob", org: "acme" }, alice)).toBe(false);
+    expect(sameAccount({ subject: "alice", org: "other" }, alice)).toBe(false);
+    expect(sameAccount({ subject: "alice", org: "acme" }, null)).toBe(false);
+    expect(sameAccount({}, "garbage")).toBe(false);
+  });
+});
+
+describe("the session-ended card's ask", () => {
+  afterEach(() => {
+    delete window.__LOOM_OWN_ORIGIN;
+    history.replaceState(null, "", "/");
+  });
+
+  it("counts only when a Loom page sent the browser here, and is scrubbed either way", () => {
+    for (const own of [true, false, undefined]) {
+      window.__LOOM_OWN_ORIGIN = own;
+      history.replaceState(null, "", "/me?sign_in=sso&tab=a#x");
+      expect(takeSsoAsk(), String(own)).toBe(own === true);
+      expect(window.location.pathname + window.location.search + window.location.hash).toBe("/me?tab=a#x");
+    }
+  });
+
+  it("is no ask without ?sign_in=sso, and leaves the address alone", () => {
+    window.__LOOM_OWN_ORIGIN = true;
+    history.replaceState(null, "", "/me?sign_in=other");
+    expect(takeSsoAsk()).toBe(false);
+    expect(window.location.search).toBe("?sign_in=other");
   });
 });

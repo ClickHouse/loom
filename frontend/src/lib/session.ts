@@ -40,20 +40,20 @@ export function endSession(lost = storedToken()): void {
 
 /** whoami, asked again while the replica answers 503 (its signing keys still loading, the
  *  token may be fine): up to five more times, a second apart (the server's own Retry-After
- *  is 5 s), before boot gives up. */
-export async function whoamiWhenReady(): Promise<WhoAmI> {
-  const asked = storedToken();
+ *  is 5 s), before boot gives up. With `asToken`, about that token instead of the stored one,
+ *  which stays as it is. */
+export async function whoamiWhenReady(asToken?: string): Promise<WhoAmI> {
+  // A token stored meanwhile is not the one asked about; with asToken the stored one plays no part.
+  const asked = asToken ? null : storedToken();
+  const changed = () => !asToken && storedToken() !== asked;
   for (let attempt = 1; ; attempt++) {
     try {
-      return await whoami();
+      return await whoami(asToken);
     } catch (e) {
       // Only a 503 (an ApiError's status; any other error has none) is asked again.
-      if (storedToken() === asked && (attempt >= 6 || (e as ApiError).status !== 503)) throw e;
+      if (!changed() && (attempt >= 6 || (e as ApiError).status !== 503)) throw e;
     }
-    if (storedToken() === asked) await new Promise((r) => setTimeout(r, 1000));
-    // A token stored meanwhile (checked after the failure and after the wait) is not the one
-    // being asked about: no retry carries it, and the caller, which checks the stored token
-    // next, decides on the new one.
-    if (storedToken() !== asked) return { authenticated: false };
+    if (!changed()) await new Promise((r) => setTimeout(r, 1000));
+    if (changed()) return { authenticated: false };
   }
 }

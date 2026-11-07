@@ -17,6 +17,7 @@ import hashlib
 import html
 import json
 import logging
+import re
 import secrets
 import time
 from collections.abc import Coroutine
@@ -553,12 +554,25 @@ def _warn_once_a_minute(kind: str, message: str, *args: object) -> None:
         log.warning(message, *args)
 
 
+# The dashboard tab's own mark for one sign-in (`?n=`), sealed with the sign-in and handed
+# back with the token (`/me?n=<mark>#token=<jwt>`): the tab stores a token without asking
+# only when it carries the mark it wrote, or names the account already held.
+_TAB_NONCE = re.compile(r"[A-Za-z0-9_-]{16,64}")
+
+
+def _tab_nonce(value: object) -> str:
+    """`value` when it is a well-formed tab mark, else empty."""
+    return value if isinstance(value, str) and _TAB_NONCE.fullmatch(value) else ""
+
+
 @router.get("/oauth/sso")
 async def dashboard_sso(request: Request) -> Response:
     """The dashboard's "Sign in with SSO" button."""
     if settings.oauth_login_provider != "oidc":
         raise OAuthError("sso_not_configured", 404)
-    return await start_oidc_login("dashboard", client_address(request))
+    tab_nonce = _tab_nonce(request.query_params.get("n", ""))
+    data = {"tab_nonce": tab_nonce} if tab_nonce else {}
+    return await start_oidc_login("dashboard", client_address(request), **data)
 
 
 async def _signin_denied(email: str, reason: str) -> None:
@@ -601,7 +615,9 @@ def _sign_in_unavailable(restart: str) -> Response:
 def _restart_url(pending: dict[str, Any]) -> str:
     """Where the sign-in `pending` carries began, to begin it once more."""
     if pending["kind"] == "dashboard":
-        return "/oauth/sso"
+        # The dashboard's gate, which starts the sign-in again with a fresh tab nonce: the
+        # click on this page is a same-origin load, the only kind it starts SSO for.
+        return "/me?sign_in=sso"
     if pending["kind"] == "device":
         return "/oauth/device?" + urlencode({"user_code": pending["user_code"]})
     return "/oauth/authorize?" + urlencode(
@@ -1162,7 +1178,12 @@ async def _dashboard_signed_in(identity: Identity, pending: dict[str, Any]) -> R
         actor=subject,
         subject={"client": "dashboard", "family": family, "namespaces": namespaces, "roles": roles},
     )
-    return RedirectResponse(url=f"/me#token={token}", status_code=302)
+    # Checked again on the way out, so nothing but a well-formed mark is ever put in the URL.
+    tab_nonce = _tab_nonce(pending.get("tab_nonce"))
+    # In the query, where a dashboard that predates the mark ignores it: the fragment stays
+    # the token alone.
+    query = f"?n={tab_nonce}" if tab_nonce else ""
+    return RedirectResponse(url=f"/me{query}#token={token}", status_code=302)
 
 
 # --------------------------------------------------------------------------

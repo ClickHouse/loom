@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { PasswordField } from "@clickhouse/click-ui/PasswordField";
@@ -8,7 +8,7 @@ import { ExternalLink } from "../components/ui/ExternalLink";
 import { Panel } from "../components/ui/Panel";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { selfSignup, setToken, loginWithPassword } from "../api";
-import { SIGN_IN_FROM } from "../lib/boot";
+import { SIGN_IN_FROM, markSignInStarted, type TokenClaims } from "../lib/boot";
 import { goToSso } from "../lib/navigation";
 import { errorRequestId, humanizeError } from "../lib/format";
 import type { GateReason } from "../lib/state";
@@ -19,6 +19,8 @@ interface TokenGateProps {
   /** Why the gate is showing: "expired" when the server refused a sign-in session's stored
    *  token, "ended" any other, "refused" one a sign-in link brought; null on a first visit. */
   reason?: GateReason;
+  /** A Loom page sent the browser here to start SSO (`takeSsoAsk` in `lib/boot.ts`). */
+  ssoAsked?: boolean;
 }
 
 // No hosted docs site — the repo's Markdown is the documentation (README).
@@ -39,22 +41,37 @@ export const DOCS_MCP_URL = `${REPO_DOCS}/features/integrations/mcp-clients.md`;
  * With SSO on (the `__LOOM_SSO` boot flag) the gate is one button instead:
  * the server refuses password sign-in and sign-up there.
  */
-export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
-  if (window.__LOOM_SSO === true) return <SsoGate reason={reason} />;
+export function TokenGate({ onLogin, reason = null, ssoAsked = false }: TokenGateProps) {
+  if (window.__LOOM_SSO === true) return <SsoGate reason={reason} ssoAsked={ssoAsked} />;
   return <PasswordGate onLogin={onLogin} reason={reason} />;
 }
 
-/** Remember the page a sign-in starts on, and when: the identity provider sends the
- *  browser back to the root, and boot returns here within ten minutes
- *  (`lib/linkToken.ts`). From the bare root there is nothing to come back to. */
-function rememberSignInStart(): void {
+/** Remember that this tab starts a sign-in, and the page it starts on: the token that
+ *  comes back is stored without asking (`lib/boot.ts`), and the identity provider sends
+ *  the browser back to the root, where boot returns here within ten minutes
+ *  (`lib/linkToken.ts`). From the bare root there is nothing to come back to; from the
+ *  landing (`/me`, where a restart begins) the page saved by the first start stays. */
+function rememberSignInStart(): string {
+  const nonce = markSignInStarted();
   const path = window.location.pathname + window.location.search;
   try {
-    if (path === "/") sessionStorage.removeItem(SIGN_IN_FROM);
-    else sessionStorage.setItem(SIGN_IN_FROM, JSON.stringify({ path, at: Date.now() }));
+    // A restart from the landing keeps the page the sign-in started on.
+    if (window.location.pathname !== "/me") {
+      if (path === "/") sessionStorage.removeItem(SIGN_IN_FROM);
+      else sessionStorage.setItem(SIGN_IN_FROM, JSON.stringify({ path, at: Date.now() }));
+    }
   } catch {
     /* no session storage: the sign-in lands on the root */
   }
+  return nonce;
+}
+
+/** The SSO button's plain click starts this tab's own marked sign-in; a click that opens a
+ *  new tab or window follows the bare link, whose token there asks to be confirmed. */
+function startSso(e: MouseEvent<HTMLAnchorElement>): void {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  goToSso(rememberSignInStart());
 }
 
 // When the gate last started an SSO sign-in on its own in this tab, so a provider that
@@ -75,22 +92,28 @@ export function resumeSsoOnce(now: number = Date.now()): boolean {
   return true;
 }
 
-/** Sends the browser to the identity provider; it comes back to `/me#token=…`. After an
- *  expired session (the gate shows only while the app boots) it goes there by itself, so a
- *  person still signed in at the provider returns to the page they were on. */
-function SsoGate({ reason }: { reason?: GateReason }) {
+/** Sends the browser to the identity provider; it comes back to `/me?n=…#token=…`. After an
+ *  expired session (the gate shows only while the app boots), and in the tab the
+ *  session-expired card opens, it goes there by itself, so a person still signed in at the
+ *  provider returns to the page they were on. */
+function SsoGate({ reason, ssoAsked }: { reason?: GateReason; ssoAsked: boolean }) {
+  const started = useRef(false);
   useEffect(() => {
-    if (reason !== "expired" || !resumeSsoOnce()) return;
-    rememberSignInStart();
-    goToSso();
-  }, [reason]);
+    if (started.current) return;
+    // A counted ask (`takeSsoAsk` in `lib/boot.ts`) follows a click on a Loom page, so it needs
+    // no loop guard. The resume after an expired session is the guarded one (boot gives no
+    // "expired" reason after a sign-out).
+    if (!ssoAsked && (reason !== "expired" || !resumeSsoOnce())) return;
+    started.current = true;
+    goToSso(rememberSignInStart());
+  }, [reason, ssoAsked]);
   return (
     <GateShell>
       <Panel className="space-y-4">
         <GateNotice reason={reason} />
         <a
           href="/oauth/sso"
-          onClick={rememberSignInStart}
+          onClick={startSso}
           className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-on-accent hover:opacity-90"
         >
           <Icon name="lock" size="sm" aria-hidden="true" /> Sign in with SSO
@@ -107,6 +130,58 @@ function GateNotice({ reason }: { reason?: GateReason }) {
   if (reason === "refused")
     return <Alert role="status" state="neutral" text="The token this sign-in brought was refused — sign in again." />;
   return null;
+}
+
+/** Asks before a `#token=` link this tab did not ask for signs the browser in: anyone
+ *  holding a token can send one, and storing it unasked would put what this browser
+ *  writes next in the sender's account. */
+export function LinkTokenConfirm({
+  subject,
+  org,
+  current,
+  onConfirm,
+  onCancel,
+}: {
+  /** The account the server says the link's token signs in as. */
+  subject: string | null;
+  org: string | null;
+  /** The account of the token this browser holds, when it holds one. */
+  current: TokenClaims | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <GateShell>
+      <Panel className="space-y-4">
+        <h2 className="m-0 text-base">Sign in from a link?</h2>
+        {current?.subject ? (
+          <p className="m-0 text-sm">
+            You are signed in as <strong>{current.subject}</strong>
+            {current.org ? ` (${current.org})` : ""}.
+          </p>
+        ) : null}
+        <p className="m-0 text-sm">
+          This link signs this browser in as {subject ? <strong>{subject}</strong> : "an account it does not name"}
+          {org ? (
+            <>
+              {" "}
+              in org <strong>{org}</strong>
+            </>
+          ) : null}
+          . What you upload, write or mint next goes to that account. Continue only if you opened a link you asked for.
+        </p>
+        <div className="flex gap-2">
+          <Button
+            type="primary"
+            htmlType="button"
+            label={subject ? `Sign in as ${subject}` : "Sign in"}
+            onClick={onConfirm}
+          />
+          <Button type="secondary" htmlType="button" label="Cancel" onClick={onCancel} />
+        </div>
+      </Panel>
+    </GateShell>
+  );
 }
 
 /** The sign-in page around either gate: the logo and its tagline. */

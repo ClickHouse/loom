@@ -437,8 +437,26 @@ browser that started the sign-in, never stored on the server. The callback finis
 sign-in only with that cookie, once: its state is marked used in Keeper. The callback URL
 alone (from a log, browser history or a screenshot) finishes nothing. The cookie is scoped
 to `/oauth/callback`, not `__Host-`, so it is not sent on every request; a site on a
-sibling subdomain could therefore plant its own sign-in for the victim to finish (login
-CSRF), which serving Loom on a host of its own rules out.
+sibling subdomain can therefore plant its own sign-in for the victim to finish. The
+dashboard's tab nonce (below) makes such a sign-in ask before it takes effect; for the MCP
+connect and device sign-ins, which it does not cover, serving Loom on a host of its own
+rules it out.
+
+**The dashboard's hand-off is bound to its tab.** The sign-in gate starts SSO as
+`/oauth/sso?n=<nonce>`, with a random nonce it keeps in that tab's session storage. The
+server seals the nonce into the sign-in's cookie and lands the token at
+`/me?n=<nonce>#token=<jwt>`. The dashboard stores a token without asking only when its
+nonce is the one the tab kept (used once, for ten minutes), or when the server's answer
+for it names the account already signed in (the token's own claims are unverified and never
+decide); any other token, a planted sign-in's or a link's, waits for the person to confirm
+the account the server names, and is checked again after the confirmation. The page's
+Cross-Origin-Opener-Policy ([response headers](#response-headers)) keeps a page that
+opened it from navigating it while it is away at the identity provider. A page load at
+`/me?sign_in=sso`, which starts SSO without a click on the gate, is honoured only when a
+Loom page asked for it: the dashboard page tells the gate whether the load's
+`Sec-Fetch-Site` is `same-origin` (or, from a browser that sends none, whether its
+`Referer` has Loom's public origin), so another site cannot start a sign-in whose token
+the tab would store unasked.
 
 **A revocation that cannot be written is owed.** When ending a session cannot write
 `loom.revoked_tokens`, a `revocation_owed` row in `loom.oauth_state` stands in for it for
@@ -640,16 +658,18 @@ its value.
 
 **Route policies.** The dashboard page carries a Content-Security-Policy whose
 `script-src` admits the bundle's origin and the one boot snippet by a per-response nonce,
-never `unsafe-inline`, and whose `frame-src 'none'` allows no frame. An uploaded document
-is attacker-chosen bytes under an attacker-chosen type, so `knowledge.download` previews
-inline only plain text (text, Markdown, CSV and JSON, all served as `text/plain`) and PNG,
-JPEG, GIF and WebP whose bytes match their type; anything else (HTML, SVG, XML, PDF,
-unknown, mismatched) is an `application/octet-stream` attachment, and every download
-carries `Content-Security-Policy: sandbox; default-src 'none'; frame-ancestors 'none'`.
-The dashboard applies the same allowlist to the bytes it fetches: it decodes the first 1
-MB of text as UTF-8 into a text node in a `<pre>`, shows images with `<img>` from a
-re-typed `blob:` URL (which ignores the server's headers), and downloads everything else,
-PDF and SVG included.
+never `unsafe-inline`, and whose `frame-src 'none'` allows no frame. It also carries
+`Cross-Origin-Opener-Policy: same-origin`: a page of another origin that opened the
+dashboard keeps no handle on its window, so it cannot navigate it to a sign-in link of its
+own. An uploaded document is attacker-chosen bytes under an attacker-chosen type, so
+`knowledge.download` previews inline only plain text (text, Markdown, CSV and JSON, all
+served as `text/plain`) and PNG, JPEG, GIF and WebP whose bytes match their type; anything
+else (HTML, SVG, XML, PDF, unknown, mismatched) is an `application/octet-stream`
+attachment, and every download carries `Content-Security-Policy: sandbox; default-src
+'none'; frame-ancestors 'none'`. The dashboard applies the same allowlist to the bytes it
+fetches: it decodes the first 1 MB of text as UTF-8 into a text node in a `<pre>`, shows
+images with `<img>` from a re-typed `blob:` URL (which ignores the server's headers), and
+downloads everything else, PDF and SVG included.
 
 ## Rate limiting
 

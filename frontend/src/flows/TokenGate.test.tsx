@@ -1,10 +1,10 @@
 import { fireEvent, render, screen } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SIGN_IN_FROM } from "../lib/boot";
+import { SIGN_IN_FROM, SIGN_IN_PENDING } from "../lib/boot";
 import { ApiError } from "../lib/errors";
 import { axeViolations } from "../test/axe";
-import { DOCS_QUICKSTART_URL, DOCS_TOKENS_URL, TokenGate, resumeSsoOnce } from "./TokenGate";
+import { DOCS_QUICKSTART_URL, DOCS_TOKENS_URL, LinkTokenConfirm, TokenGate, resumeSsoOnce } from "./TokenGate";
 
 // The gate says why it is showing, tells a stranger how to get in, and every field is
 // labelled.
@@ -169,6 +169,11 @@ describe("TokenGate", () => {
       expect(JSON.parse(sessionStorage.getItem(SIGN_IN_FROM) ?? "{}")).toMatchObject({
         path: "/knowledge?namespace=group-a-shared",
       });
+      // The sign-in carries the nonce this tab keeps: the token that brings it back is stored
+      // without asking.
+      const { nonce } = JSON.parse(sessionStorage.getItem(SIGN_IN_PENDING) ?? "{}");
+      expect(nonce).toMatch(/^[A-Za-z0-9_-]{16,64}$/);
+      expect(goToSso).toHaveBeenCalledWith(nonce);
       history.replaceState(null, "", "/");
     });
 
@@ -218,6 +223,87 @@ describe("TokenGate", () => {
       history.replaceState(null, "", "/");
       fireEvent.click(link);
       expect(sessionStorage.getItem(SIGN_IN_FROM)).toBeNull();
+      // Each start is marked with a nonce of its own.
+      const { nonce } = JSON.parse(sessionStorage.getItem(SIGN_IN_PENDING) ?? "{}");
+      expect(goToSso).toHaveBeenLastCalledWith(nonce);
+      expect(vi.mocked(goToSso).mock.calls[0][0]).not.toBe(nonce);
+    });
+
+    it("starts on an explicit ask though a sign-in started on its own minutes ago", () => {
+      window.__LOOM_SSO = true;
+      resumeSsoOnce(); // the loop guard is set: an expired session would wait for a click
+      expect(sessionStorage.getItem("loom_sso_resumed_v1")).not.toBeNull();
+      render(<TokenGate onLogin={() => undefined} reason="expired" ssoAsked />);
+      const { nonce } = JSON.parse(sessionStorage.getItem(SIGN_IN_PENDING) ?? "{}");
+      expect(goToSso).toHaveBeenCalledTimes(1);
+      expect(goToSso).toHaveBeenCalledWith(nonce);
+    });
+
+    it("starts on a counted ask after a sign-out too: the ask is a click on a Loom page", () => {
+      window.__LOOM_SSO = true;
+      localStorage.setItem("loom_signed_out_v1", "1");
+      try {
+        render(<TokenGate onLogin={() => undefined} reason={null} ssoAsked />);
+        expect(goToSso).toHaveBeenCalledTimes(1);
+      } finally {
+        localStorage.removeItem("loom_signed_out_v1");
+      }
+    });
+
+    it("starts once for an ask that arrives after it mounted, and not again when the reason comes", () => {
+      window.__LOOM_SSO = true;
+      const { rerender } = render(<TokenGate onLogin={() => undefined} reason={null} />);
+      expect(goToSso).not.toHaveBeenCalled();
+      rerender(<TokenGate onLogin={() => undefined} reason={null} ssoAsked />);
+      rerender(<TokenGate onLogin={() => undefined} reason="expired" ssoAsked />);
+      expect(goToSso).toHaveBeenCalledTimes(1);
+    });
+
+    it("a click that opens another tab or window follows the bare link and marks nothing here", () => {
+      window.__LOOM_SSO = true;
+      render(<TokenGate onLogin={() => undefined} reason={null} />);
+      const link = screen.getByRole("link", { name: "Sign in with SSO" });
+      // Read once the click has passed the gate's own handler (on the React root), then
+      // stopped: jsdom does not navigate.
+      let followed = 0;
+      const after = (e: Event) => {
+        if (!e.defaultPrevented) followed++;
+        e.preventDefault();
+      };
+      document.addEventListener("click", after);
+      try {
+        for (const init of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }])
+          fireEvent.click(link, init);
+        expect(followed).toBe(5);
+        expect(goToSso).not.toHaveBeenCalled();
+        expect(sessionStorage.getItem(SIGN_IN_PENDING)).toBeNull();
+        // A plain click is the gate's: it starts this tab's marked sign-in instead.
+        fireEvent.click(link);
+        expect(followed).toBe(5);
+        expect(goToSso).toHaveBeenCalledTimes(1);
+      } finally {
+        document.removeEventListener("click", after);
+      }
+    });
+
+    it("starts the sign-in by itself in the tab the session-expired card opens", () => {
+      window.__LOOM_SSO = true;
+      render(<TokenGate onLogin={() => undefined} reason={null} ssoAsked />);
+      const { nonce } = JSON.parse(sessionStorage.getItem(SIGN_IN_PENDING) ?? "{}");
+      expect(goToSso).toHaveBeenCalledWith(nonce);
+    });
+
+    it("a restart from the landing keeps the page the sign-in started on", () => {
+      window.__LOOM_SSO = true;
+      sessionStorage.setItem(SIGN_IN_FROM, JSON.stringify({ path: "/memories?namespace=a", at: 1 }));
+      history.replaceState(null, "", "/me");
+      render(<TokenGate onLogin={() => undefined} reason={null} ssoAsked />);
+      expect(goToSso).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(sessionStorage.getItem(SIGN_IN_FROM) ?? "{}")).toEqual({
+        path: "/memories?namespace=a",
+        at: 1,
+      });
+      history.replaceState(null, "", "/");
     });
 
     it("shows the password gate when it is off", () => {
@@ -226,5 +312,40 @@ describe("TokenGate", () => {
       expect(screen.queryByRole("link", { name: "Sign in with SSO" })).not.toBeInTheDocument();
       expect(screen.getAllByLabelText(/password/i).length).toBeGreaterThan(0);
     });
+  });
+});
+
+describe("LinkTokenConfirm", () => {
+  const claims = (subject: string | null, org: string | null) => ({ subject, org, namespaces: [], session: null });
+
+  it("names both accounts and passes axe", async () => {
+    const { container } = render(
+      <LinkTokenConfirm
+        subject="mallory"
+        org="acme"
+        current={claims("alice", "acme")}
+        onConfirm={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Sign in as mallory" })).toBeInTheDocument();
+    expect(screen.getByText(/You are signed in as/)).toHaveTextContent("You are signed in as alice (acme).");
+    expect(await axeViolations(container)).toEqual([]);
+  });
+
+  it("offers a plain Sign in for a token that names no subject", async () => {
+    const { container } = render(
+      <LinkTokenConfirm
+        subject={null}
+        org={null}
+        current={null}
+        onConfirm={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByText(/You are signed in as/)).not.toBeInTheDocument();
+    expect(screen.getByText(/an account it does not name/)).toBeInTheDocument();
+    expect(await axeViolations(container)).toEqual([]);
   });
 });

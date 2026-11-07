@@ -180,8 +180,11 @@ export interface WhoAmI {
   iat?: number;
 }
 
-export async function whoami(): Promise<WhoAmI> {
-  const r = await fetch("/v1/whoami", { headers: authHeader(), signal: boundedSignal() });
+/** Who the stored token signs in as; with `asToken`, who that token would, asked before
+ *  anything is stored. */
+export async function whoami(asToken?: string): Promise<WhoAmI> {
+  const headers = asToken ? { Authorization: `Bearer ${asToken}` } : authHeader();
+  const r = await fetch("/v1/whoami", { headers, signal: boundedSignal() });
   // A refused token answers 200 with authenticated=false. Anything else not ok (a replica
   // whose keys are still loading answers 503) says nothing about the token: it is kept.
   // Behind a proxy a refusal is the proxy's own 401 or 403: signed out, as before.
