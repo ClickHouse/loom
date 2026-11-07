@@ -154,6 +154,7 @@ _INSTEAD: dict[str, str] = {
     "conversation.search": "call loom_search",
     "namespace.list": "call loom_namespace_list_mine",
     "run.list": "call run.get with a run id (loom_op)",
+    "code.context_packs": "call code.context_pack (loom_op) with the pr_number you want",
     "memory.extraction_status": (
         "call memory.extraction_status_mine (loom_op) with the queue_id each deferred "
         "memory.set_from_messages returned"

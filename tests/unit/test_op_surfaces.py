@@ -207,7 +207,7 @@ def test_an_op_kept_off_mcp_is_never_agent_only():
         assert NOT_IN_DASHBOARD.get(name) not in AGENT_ONLY, name
 
 
-def test_a_refusal_names_the_dashboard_exactly_when_the_dashboard_calls_the_op():
+def test_a_refusal_names_the_dashboard_only_for_an_op_the_dashboard_calls():
     """A hidden op with no alternative of its own sends the agent to the user in the
     dashboard when the dashboard calls it, and to an operator when it does not."""
     for name in _MCP_HIDDEN_OPS:
