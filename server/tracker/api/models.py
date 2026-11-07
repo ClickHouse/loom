@@ -21,7 +21,7 @@ from pydantic import (
 
 from server.operations.base import MCP_HIDDEN
 
-# One frame, trace line or path: a deep template frame runs to a few thousand
+# One frame, symbol, trace line or path: a deep template frame runs to a few thousand
 # characters, and each is parsed or compared on the request path.
 MAX_FRAME_CHARS = 4000  # not a setting: the wire contract's bound
 _BoundedLine = Annotated[str, Field(max_length=MAX_FRAME_CHARS)]
