@@ -15,7 +15,7 @@ second instrumentation path:
 The keys, and the operation values, are the OpenTelemetry GenAI semantic
 conventions'; the provider value is Loom's own provider name (`openai`,
 `anthropic`, `gemini`, ...). The cascade leg that made the call is
-`loom.llm.stage` and the span name (`llm.<stage>`, `embed.provider`).
+`loom.llm.stage`, and for a chat call also the span name (`llm.<stage>`).
 
 That mapping is verified, not assumed: a probe span carrying
 `gen_ai.request.model`, `gen_ai.usage.input_tokens/output_tokens` and
@@ -618,7 +618,9 @@ class _Generation:
             else:
                 # Deliberately absent rather than 0.0: an unpriced model billing
                 # $0 reads as "free" on a cost panel, which is worse than a gap.
-                self._span.set_attribute("gen_ai.usage.cost_unknown", True)
+                # Not under `gen_ai.usage.`: Langfuse counts every key there as
+                # usage, and would add this flag to the token total.
+                self._span.set_attribute("loom.llm.cost_unknown", True)
         except Exception:  # noqa: BLE001 — telemetry must not fail a completion
             pass
 

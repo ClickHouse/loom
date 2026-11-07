@@ -150,7 +150,9 @@ def test_unpriced_model_is_marked_unknown_not_zero() -> None:
     span = _FakeSpan()
     genai._Generation(span, "some-model-nobody-priced").record_usage(10, 5, priced=False)
     assert "gen_ai.usage.cost" not in span.attrs
-    assert span.attrs["gen_ai.usage.cost_unknown"] is True
+    assert span.attrs["loom.llm.cost_unknown"] is True
+    # Langfuse adds any `gen_ai.usage.*` key to the token total.
+    assert not [k for k in span.attrs if k.startswith("gen_ai.usage.") and "token" not in k]
 
 
 def test_every_model_a_setting_defaults_to_is_priced() -> None:
@@ -346,19 +348,17 @@ def test_cache_hit_is_not_an_embedding_observation() -> None:
     assert span2.attrs["langfuse.observation.type"] == "embedding"
 
 
-def test_embedding_span_defers_observation_type() -> None:
+def test_embedding_span_defers_observation_type(monkeypatch: pytest.MonkeyPatch) -> None:
     """It cannot be set at span start: cache-hit status is not known until after.
 
-    A type hard-coded at span creation is what produced the $0 rows, so guard
-    that the span helper sets no type at all.
+    A type set when the span opens is what produced the $0 rows, so a span that
+    records no usage must carry no type at all.
     """
-    src = (ROOT / "server" / "observability" / "genai.py").read_text()
-    body = src.split("def embedding_span(", 1)[1].split("\ndef ", 1)[0]
-    attrs = body.split("attrs: dict[str, Any] = {", 1)[1].split("}", 1)[0]
-    assert "langfuse.observation.type" not in attrs, (
-        "embedding_span must not declare the observation type up front — a cache "
-        "hit is not an embedding call, and that is unknown until the call returns"
-    )
+    exporter = _recording_tracer(monkeypatch)
+    with genai.embedding_span(provider="openai", model="text-embedding-3-small"):
+        pass
+    (span,) = exporter.get_finished_spans()
+    assert "langfuse.observation.type" not in span.attributes
 
 
 def test_billed_tokens_come_from_the_provider_not_an_estimate() -> None:
