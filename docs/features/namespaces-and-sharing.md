@@ -157,7 +157,10 @@ entry.
 The report's `coverage` lists the rules that ran (`rules_run`) and those that could not
 (`rules_skipped`, also in `skipped` with the reason). Both name the evidence read
 (`evidence`) and, for `namespace.audit`, its summary reads, which most findings are
-measured against. `complete` is false when any of them was skipped.
+measured against, and under the Postgres authority `projection`, the wait for ClickHouse
+to publish what the namespace committed
+([storage authority](../architecture/storage-authority.md)). `complete` is false when
+any of them was skipped.
 
 `loom audit-namespace` runs `namespace.audit` from the shell; the
 [optimize a namespace guide](../guides/optimize-namespace.md) turns its findings into a
@@ -195,7 +198,9 @@ are refused. It changes nothing it reads and gives no recall credit. Like
   excerpt. A high-sensitivity row has neither the excerpt nor the hash; a value
   larger than `namespace_report_hash_max_bytes` (0 cites none) and a row revised
   between the listing and the citation read have no hash. `complete` is false when
-  the listing holds fewer rows than the view, or the view's counts could not be read.
+  the listing holds fewer rows than the view, the view's counts could not be read, or,
+  under the Postgres authority, ClickHouse had not published what the namespace
+  committed (`skipped` names `projection`).
 - **`activity`**: the calls the ledger files under the subject per operation in
   `window_seconds` (default 7 days), attempted and succeeded, without worker rows or the
   dashboard's and the assistant's calls. The ledger files a call under the `agent`,
