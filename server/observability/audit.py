@@ -185,18 +185,36 @@ _NAMING_SUFFIXES = (
     "_name",
     "_by",
 )
-# A credential's name can end in a naming suffix (`api_key`, `signing_key`): a field
-# named with one of these is hashed whatever its suffix.
+# Parts of a field name that mark a credential, which can end in a naming suffix
+# (`api_key`, `refresh_token_id`): such a field is hashed whatever its suffix. A bare
+# `key` is not one (memory ops address rows by `key`), nor `tokens` (`*_tokens` count
+# model tokens).
 _CREDENTIAL_WORDS = frozenset(
-    {"password", "passwd", "secret", "secrets", "apikey", "credential", "credentials"}
+    {
+        "password",
+        "passwords",
+        "passwd",
+        "secret",
+        "secrets",
+        "apikey",
+        "token",
+        "credential",
+        "credentials",
+        "authorization",
+        "bearer",
+        "cookie",
+    }
 )
 _CREDENTIAL_KEYS = ("api_key", "private_key", "signing_key", "encryption_key")
 
 
-def _is_credential(name: str) -> bool:
-    return bool(_CREDENTIAL_WORDS & set(name.split("_"))) or any(
-        key in name for key in _CREDENTIAL_KEYS
-    )
+def is_credential(name: str) -> bool:
+    """True for a field name that marks a credential. `*_ref` names the environment
+    variable that holds one, and `token_budget` a size in model tokens."""
+    parts = set(name.split("_"))
+    if name.endswith("_ref") or parts & {"budget", "budgets"}:
+        return False
+    return bool(_CREDENTIAL_WORDS & parts) or any(key in name for key in _CREDENTIAL_KEYS)
 
 
 def _is_vocabulary(annotation: Any) -> bool:
@@ -262,7 +280,7 @@ def _shape(model: type[BaseModel], dumped: dict[str, Any]) -> dict[str, Any]:
             or (annotation is not None and _is_number(annotation))
             or (
                 (name in _NAMING_FIELDS or name.endswith(_NAMING_SUFFIXES))
-                and not _is_credential(name)
+                and not is_credential(name)
             )
             or (annotation is not None and _is_vocabulary(annotation))
         )

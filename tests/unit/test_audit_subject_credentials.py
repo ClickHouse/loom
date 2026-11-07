@@ -13,43 +13,13 @@ from pydantic import BaseModel
 
 from server.code.api.models_repos import CodeRepoAddInput
 from server.observability import budgets
+from server.observability.audit import is_credential
 from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
 from server.tracker.api.models import TrackerSourceAddInput, TrackerSourceRotateInput
 from server.transport import _common as common
 from server.transport import post_rows
 
 SECRET = "s3cret-value-never-audited"
-# Parts of a field name that mark a credential. A bare `key` is not one (memory
-# ops address rows by `key`), so only the compounds below count. `tokens` is not a
-# part either: `*_tokens` fields count model tokens.
-CREDENTIAL_PARTS = {
-    "password",
-    "passwords",
-    "passwd",
-    "secret",
-    "secrets",
-    "apikey",
-    "token",
-    "credential",
-    "credentials",
-    "authorization",
-    "bearer",
-    "cookie",
-}
-CREDENTIAL_COMPOUNDS = ("api_key", "private_key", "signing_key", "encryption_key")
-
-
-def _is_credential(field: str) -> bool:
-    parts = set(field.split("_"))
-    # `*_ref` names an environment variable that holds the secret, not the secret.
-    if field.endswith("_ref"):
-        return False
-    # `token_budget`, `section_token_budgets`: a size in model tokens.
-    if parts & {"budget", "budgets"}:
-        return False
-    return bool(CREDENTIAL_PARTS & parts) or any(
-        compound in field for compound in CREDENTIAL_COMPOUNDS
-    )
 
 
 def _models_in(annotation: Any) -> list[type[BaseModel]]:
@@ -71,7 +41,7 @@ def _credential_fields(
     seen = seen | {model}
     found = []
     for name, info in model.model_fields.items():
-        if _is_credential(name):
+        if is_credential(name):
             found.append(prefix + name)
         for inner in _models_in(info.annotation):
             found.extend(_credential_fields(inner, f"{prefix}{name}.", seen))
@@ -85,7 +55,7 @@ def _subject(op_name: str, input_obj: Any, response: dict[str, Any]) -> dict[str
 
 
 def _assert_no_credential(subject: dict[str, Any]) -> None:
-    assert not [key for key in subject if _is_credential(key)]
+    assert not [key for key in subject if is_credential(key)]
     assert SECRET not in json.dumps(subject)
 
 
@@ -171,10 +141,12 @@ def test_the_matcher_tells_credentials_from_lookalikes() -> None:
         "access_token",
         "authorization",
         "signing_key",
+        "refresh_token_id",
+        "session_token_key",
     ):
-        assert _is_credential(name), name
+        assert is_credential(name), name
     for name in ("key", "secret_ref", "token_budget", "section_token_budgets", "max_tokens"):
-        assert not _is_credential(name), name
+        assert not is_credential(name), name
 
 
 class _Node(BaseModel):

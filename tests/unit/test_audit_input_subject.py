@@ -221,14 +221,18 @@ def test_a_credential_named_field_is_hashed_whatever_its_suffix() -> None:
         signing_key: str
         db_password_id: str
         secret_name: str
+        refresh_token_id: str
+        session_token_key: str
         item_key: str
 
-    body = Body(
-        api_key=SECRET, signing_key=SECRET, db_password_id=SECRET, secret_name=SECRET, item_key="k"
-    )
+    credentials = ("api_key", "signing_key", "db_password_id", "secret_name")
+    credentials += ("refresh_token_id", "session_token_key")
+    body = Body(item_key="k", **dict.fromkeys(credentials, SECRET))
     subject = input_subject(body)
     assert SECRET not in json.dumps(subject)
-    assert subject["api_key"] == _digest(SECRET)
+    assert {name: subject[name] for name in credentials} == dict.fromkeys(
+        credentials, _digest(SECRET)
+    )
     assert subject["item_key"] == "k"
 
 
