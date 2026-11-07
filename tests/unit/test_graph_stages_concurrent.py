@@ -18,12 +18,12 @@ async def test_graph_expansion_and_triple_matching_overlap(monkeypatch: pytest.M
 
     async def expansion(ctx: Any) -> None:
         marks.append(("expansion", "start"))
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.01)
         marks.append(("expansion", "end"))
 
     async def triples(ctx: Any) -> None:
         marks.append(("triples", "start"))
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.01)
         marks.append(("triples", "end"))
 
     monkeypatch.setattr(ms, "_run_graph_expansion", expansion)

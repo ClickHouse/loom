@@ -32,9 +32,8 @@ def _vec(cid: str, distance: float) -> dict[str, Any]:
     return {"chunk_id": cid, "distance": distance, "path": f"src/{cid}.cpp", **_UNIT}
 
 
-# Each fake read or embed sleeps this long, so a leg started beside another is still
-# reading when that one starts. Overlap is read from the recorded start and end
-# stamps, never from a wall-clock bound a loaded runner can miss.
+# Each fake read or embed sleeps this long, so legs that run side by side overlap in
+# the recorded start and end stamps.
 _SLEEP = 0.2
 
 

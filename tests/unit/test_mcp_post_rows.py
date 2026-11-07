@@ -55,7 +55,7 @@ def _slow_rows(monkeypatch: pytest.MonkeyPatch) -> _Rows:
         async def _write(**_: Any) -> None:
             done.in_flight += 1
             done.peak = max(done.peak, done.in_flight)
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.01)
             done.in_flight -= 1
             if fail:
                 raise RuntimeError(f"{name} down")
