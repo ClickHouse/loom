@@ -617,6 +617,36 @@ test("the Codex header helper runs the newest loom@loom helper under the node on
   }
 });
 
+test("the Codex header helper falls back to the launcher when the node on PATH cannot run it", {
+  skip: WINDOWS,
+}, () => {
+  const f = fixture();
+  try {
+    // A node on PATH that refuses `-e` as one older than 18 does (exit 1).
+    const old = path.join(f.dir, "old-bin");
+    fs.mkdirSync(old);
+    fs.writeFileSync(path.join(old, "node"), '#!/bin/sh\n[ "$1" = --version ] && echo v16.20.2\nexit 1\n', {
+      mode: 0o755,
+    });
+    f.node(".nvm/versions/node/v22.1.0/bin");
+    codexCache(f.home, "loom", "1.2.9");
+    const tools = path.join(f.dir, "tools");
+    fs.mkdirSync(tools);
+    for (const t of ["sh", "ls", "sort", "tail"]) {
+      const real = spawnSync("/bin/sh", ["-c", `command -v ${t}`], { encoding: "utf8" }).stdout.trim();
+      fs.symlinkSync(real, path.join(tools, t));
+    }
+    const r = spawnSync("/bin/sh", ["-c", codexHelper()], {
+      encoding: "utf8",
+      env: { HOME: f.home, PATH: `${old}:${tools}`, LOOM_NODE_SYSTEM_DIRS: "" },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, "1.2.9");
+  } finally {
+    f.done();
+  }
+});
+
 // Codex on Windows runs the helper as `%COMSPEC% /Q /D /C "<helper>"` with its
 // core variables only: USERPROFILE, no HOME (codex-rs/rmcp-client).
 test("the Codex header helper runs under cmd.exe the way Codex starts it", { skip: !WINDOWS }, () => {

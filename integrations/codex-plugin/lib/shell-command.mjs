@@ -438,6 +438,13 @@ const HARMLESS_REDIRECT = /(^|\s)(?:[12]?>\s*\/dev\/null|2>&1)(?=\s|$)/g;
  * whole command unjudged ([]), and a `cd` the parser cannot follow ends the
  * scan.
  */
+/** On Windows, Git Bash's /c/x spelling of C:/x, which Node resolves as a
+ *  path on the current drive; `p` as given elsewhere. */
+export function gitBashPath(p, platform = process.platform) {
+  const m = platform === "win32" ? /^\/([A-Za-z])(\/.*)?$/.exec(p) : null;
+  return m ? `${m[1].toUpperCase()}:${m[2] || "/"}` : p;
+}
+
 export function parseBashBulkSegments(command) {
   const c = String(command || "");
   if (!c.trim()) return [];
@@ -453,7 +460,8 @@ export function parseBashBulkSegments(command) {
       const dir = words.length === 2 ? words[1] : "";
       // `~` expands only at the start of a word: C:/Users/RUNNER~1 is literal.
       if (!dir || dir.includes("$") || dir.startsWith("~") || dir === "-") break;
-      cwd = /^(\/|[A-Za-z]:[\\/])/.test(dir) ? dir : cwd ? `${cwd}/${dir}` : dir;
+      const abs = gitBashPath(dir);
+      cwd = /^(\/|[A-Za-z]:[\\/])/.test(abs) ? abs : cwd ? `${cwd}/${abs}` : abs;
       continue;
     }
     const stages = splitOutsideQuotes(s, ["|"]);

@@ -30,6 +30,7 @@ import {
   ghRepoSlug,
   patternSearchShape,
   parseBashBulk,
+  gitBashPath,
   parseBashBulkSegments,
   splitOutsideQuotes,
 } from "../lib/shell-command.mjs";
@@ -146,6 +147,11 @@ test("Bash segments: a chained read is judged, not passed in silence", () => {
   assert.deepEqual(parseBashBulkSegments("cd a; cd b; cat c.py")[0].cwd, "a/b");
   // A Windows path is absolute by its drive, and an 8.3 name's ~ is literal.
   assert.deepEqual(parseBashBulkSegments("cd a; cd C:/Users/RUNNER~1/app; cat c.py")[0].cwd, "C:/Users/RUNNER~1/app");
+  // Git Bash's /c/ spelling is the drive on Windows, a plain path elsewhere.
+  assert.equal(gitBashPath("/c/Users/me/app", "win32"), "C:/Users/me/app");
+  assert.equal(gitBashPath("/c", "win32"), "C:/");
+  assert.equal(gitBashPath("/c/Users/me/app", "linux"), "/c/Users/me/app");
+  assert.equal(gitBashPath("/srv/app", "win32"), "/srv/app");
   assert.deepEqual(parseBashBulkSegments("make test || cat log.txt")[0].file, "log.txt");
 });
 
