@@ -682,6 +682,12 @@ async def test_scip_full_runs_in_the_clang_tree_when_clang_is_an_extra_tier(
     assert harness.await_args.args[1] == (tmp_path / "checkout.clang").resolve()
 
 
+def _git_config(env: dict[str, str]) -> dict[str, str]:
+    """The `GIT_CONFIG_KEY_i`/`VALUE_i` pairs `auth_env` sets, as a dict."""
+    n = int(env.get("GIT_CONFIG_COUNT", "0"))
+    return {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"] for i in range(n)}
+
+
 @pytest.mark.asyncio
 async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, monkeypatch) -> None:
     """The fetch reads the bare clone, which the sandbox mounts only when named,
@@ -730,15 +736,10 @@ async def test_a_networked_compiler_tier_git_authenticates_to_the_repository_own
     )
     await compiler_tier.git(tmp_path, *args, network=True)
     with_token, without = envs
-
-    def config(env: dict[str, str]) -> dict[str, str]:
-        n = int(env.get("GIT_CONFIG_COUNT", "0"))
-        return {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"] for i in range(n)}
-
-    header = config(with_token)["http.https://github.com/o/.extraheader"]
+    header = _git_config(with_token)["http.https://github.com/o/.extraheader"]
     assert header.startswith("AUTHORIZATION: basic ")
     assert not any("ghs_test" in a for a in argvs[0])
-    assert not any(k.endswith(".extraheader") for k in config(without))
+    assert not any(k.endswith(".extraheader") for k in _git_config(without))
 
 
 @pytest.mark.asyncio
@@ -761,8 +762,7 @@ async def test_a_local_remote_entry_keeps_the_file_transport_off_its_submodules(
         tmp_path, "submodule", "update", network=True, token="t", remote="/srv/m.git"
     )
     for env in envs:
-        n = int(env.get("GIT_CONFIG_COUNT", "0"))
-        assert "protocol.file.allow" not in {env[f"GIT_CONFIG_KEY_{i}"] for i in range(n)}
+        assert "protocol.file.allow" not in _git_config(env)
 
 
 @pytest.mark.asyncio

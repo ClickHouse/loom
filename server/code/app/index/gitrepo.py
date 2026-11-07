@@ -95,9 +95,10 @@ def auth_env(token: str = "", remote: str = "https://github.com/") -> dict[str, 
     missing credential a failure, not a hang.
 
     `token` rides an `http.<url>.extraheader` keyed to the remote's owner
-    (`https://host/owner/`), so it appears in no argv, no remote URL, no stored
-    config and no `code_index_state.repo_remote`, and git sends it to that
-    owner's repositories only: a submodule URL elsewhere on the host gets none.
+    (`https://host/owner/`; the whole host for a remote with no owner path), so
+    it appears in no argv, no remote URL, no stored config and no
+    `code_index_state.repo_remote`, and git sends it to that owner's
+    repositories only: a submodule URL elsewhere on the host gets none.
     Git matches the prefix byte for byte, so an owner spelled in another case
     gets none either."""
     env = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "TMPDIR") if k in os.environ}
@@ -224,7 +225,7 @@ async def _git(
 ) -> str:
     """A git command on the bare clone. With `remote` it talks to that remote, so it
     runs as a repository job (sandbox.run_job): the network only through the egress
-    proxy, the clone the one writable path, `token` for the remote's host. A local
+    proxy, the clone the one writable path, `token` for the remote's owner (`auth_env`). A local
     command reads and writes `index_file` as its index when given. `timeout_s`
     defaults to `code_git_timeout_s`."""
     if timeout_s is None:

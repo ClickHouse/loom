@@ -245,9 +245,10 @@ unit's AST per job (a few GB each), so `LOOM_CODE_SCIP_CLANG_JOBS` should fit th
 memory the workers process has. The full index of such a tree takes about an hour.
 The C/C++ tier fetches submodule pins with the entry's access token, so a private
 submodule whose `.gitmodules` URL is an absolute https URL under the remote's owner
-needs no other credential. The owner is matched as written, case included, and a
-relative URL resolves against the checkout, which has no remote, so neither gets the
-token.
+needs no other credential. The owner is matched as written, case included, so an
+owner spelled in another case is fetched without the token. A relative URL resolves
+to a local path in the checkout, which has no remote; the tier refuses the `file`
+transport, so that submodule update fails.
 
 - **C/C++ delta cap.** The worker indexes changed translation units, including those
   that include a changed header, up to `LOOM_CODE_SCIP_DELTA_MAX_TUS` (200); above the
@@ -371,7 +372,7 @@ the `https` and `ssh` transports (`protocol.allow=never`); `ext::` and `file://`
 refused, so are URL rewrites. The entry's access token reaches only its clone, its
 fetches and the C/C++ tier's `git submodule update`, never a build or `go mod
 download`, and git sends it only to URLs under the remote's owner
-(`https://host/owner/`). Inside the sandbox an `ssh` remote has no
+(`https://host/owner/`; the whole host for a remote with no owner path). Inside the sandbox an `ssh` remote has no
 host SSH key: use an HTTPS remote with an access token.
 
 **Which stacks run the sandbox.** The blue/green colours `redeploy.sh` deploys
