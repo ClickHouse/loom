@@ -42,10 +42,10 @@ export interface OpGate {
 
 // One shared object per gate: the table sits in the index chunk, and a literal per entry
 // costs bytes on every page load.
-const VIEWER: OpGate = { min: "viewer", by: "namespace" };
-const WRITER: OpGate = { min: "writer", by: "namespace" };
-const ADMIN: OpGate = { min: "admin", by: "namespace" };
-const ADMIN_CLAIM: OpGate = { min: "admin", by: "claim" };
+const VIEWER: OpGate = VIEWER;
+const WRITER: OpGate = WRITER;
+const ADMIN: OpGate = ADMIN;
+const ADMIN_CLAIM: OpGate = ADMIN_CLAIM;
 
 export const OP_MIN_ROLE = {
   // Gated at a call site: Sidebar badge polls, Recent / MemoryInspector
@@ -88,6 +88,17 @@ export const OP_MIN_ROLE = {
   // The inspector's Restore on a superseded row and the Review queue's Auto-resolved Undo.
   "memory.restore": WRITER,
   "memory.unpin": ADMIN,
+  // The inspector's lifecycle actions and its Evidence and Links sections.
+  "memory.lock": WRITER,
+  "memory.unlock": ADMIN,
+  "memory.touch": WRITER,
+  "memory.reject": WRITER,
+  "memory.promote": ADMIN,
+  "memory.demote": ADMIN,
+  "memory.redact": ADMIN,
+  "memory.outcome": WRITER,
+  "memory.evidence": VIEWER,
+  "memory.backlinks": VIEWER,
   // Conversations' recording toggle: a namespace setting, ADMIN on the namespace.
   "conversation.set_logging": ADMIN,
   // A repository card's Docs and Sources facets (`canCallOn`): Add a document and Remove,

@@ -547,6 +547,12 @@ export interface MemoryDetail {
   verified_by?: string;
   verified_at?: string | null;
   verification?: VerificationState;
+  /** The lock in force (memory.lock): `read_only` | `no_delete`; "" when unlocked or lapsed. */
+  lock_mode?: string;
+  lock_reason?: string;
+  /** When the lock lapses; null when open-ended. */
+  lock_until?: string | null;
+  locked_by?: string;
   /** On the wire only for a `status='duplicate'` row — the key that answers for it (a
    *  hash-collapsed duplicate, or the destination of a `memory.move` redirect). Absent
    *  otherwise. */

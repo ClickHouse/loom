@@ -222,17 +222,6 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
 DASHBOARD_PENDING: frozenset[str] = frozenset(
     {
         # the memory drawer
-        "memory.backlinks",
-        "memory.cross_promote",
-        "memory.demote",
-        "memory.evidence",
-        "memory.lock",
-        "memory.outcome",
-        "memory.promote",
-        "memory.redact",
-        "memory.reject",
-        "memory.touch",
-        "memory.unlock",
         # settings
         "extraction_policy.clear",
         "extraction_policy.get",

@@ -19,6 +19,8 @@ import type {
   LineageStep,
   MemoryProvenance,
   MemoryMoveResult,
+  MemoryEvidenceItem,
+  MemoryBacklinkEdge,
 } from "../api";
 import { sharedTagVocabulary } from "../lib/sharedReads";
 import { readSession, writeSession } from "../lib/afterPaint";
@@ -38,7 +40,16 @@ import {
   moveMemory,
   restoreMemory,
   relatedFacts,
+  memoryEvidence,
+  memoryBacklinks,
+  touchMemoryExpiry,
+  unlockMemory,
+  shareMemory,
+  unshareMemory,
+  redactMemoryVersion,
+  recordMemoryOutcome,
 } from "../api";
+import { LockMemoryDialog, RejectMemoryDialog } from "../flows/MemoryReasonDialogs";
 import { navigationHref, useStore } from "../lib/state";
 import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { AgentBadge } from "./AgentBadge";
@@ -60,9 +71,16 @@ import { historyChange, previousVersion } from "../lib/historyChange";
 import { MenuTrigger } from "./ui/Menu";
 import { shortcutOff } from "../lib/shortcuts";
 
-type SectionId = "history" | "related" | "provenance" | "lineage";
+type SectionId = "history" | "related" | "provenance" | "lineage" | "evidence" | "links";
 const SECTIONS_KEY = "loom_inspector_sections_v1";
-const CLOSED: Record<SectionId, boolean> = { history: false, related: false, provenance: false, lineage: false };
+const CLOSED: Record<SectionId, boolean> = {
+  history: false,
+  related: false,
+  provenance: false,
+  lineage: false,
+  evidence: false,
+  links: false,
+};
 
 /** A secondary section of the drawer: a heading that opens, and reads, on demand. */
 function Disclosure({
@@ -145,6 +163,10 @@ export function MemoryInspector({
   const [related, setRelated] = useState<RelatedMemoryRow[] | null>(null);
   const [lineage, setLineage] = useState<LineageStep[] | null>(null);
   const [provenance, setProvenance] = useState<MemoryProvenance | null>(null);
+  const [evidence, setEvidence] = useState<MemoryEvidenceItem[] | null>(null);
+  const [links, setLinks] = useState<{ in: MemoryBacklinkEdge[]; out: MemoryBacklinkEdge[] } | null>(null);
+  // The Lock or Mark-as-wrong dialog, over the drawer.
+  const [reasonDialog, setReasonDialog] = useState<"lock" | "reject" | null>(null);
   const [conflictCount, setConflictCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   // A Restore in flight for the memory on screen; reset when the drawer moves on.
@@ -302,6 +324,8 @@ export function MemoryInspector({
     setRelated(null);
     setLineage(null);
     setProvenance(null);
+    setEvidence(null);
+    setLinks(null);
     inspection.current += 1;
     shown.current = shownAs(identity, memoryKey);
     requested.current = new Set();
@@ -374,6 +398,24 @@ export function MemoryInspector({
           if (fresh()) setLineage([]);
         }),
     );
+    want("evidence", () =>
+      memoryEvidence(identity, k)
+        .then((r) => {
+          if (fresh()) setEvidence(r.items ?? []);
+        })
+        .catch(() => {
+          if (fresh()) setEvidence([]);
+        }),
+    );
+    want("links", () =>
+      memoryBacklinks(identity, k)
+        .then((r) => {
+          if (fresh()) setLinks({ in: r.links_in ?? [], out: r.links_out ?? [] });
+        })
+        .catch(() => {
+          if (fresh()) setLinks({ in: [], out: [] });
+        }),
+    );
     want("provenance", () =>
       getProvenance(identity, k)
         .then((r) => {
@@ -397,6 +439,13 @@ export function MemoryInspector({
   const canMove = canCall("memory.move", role, whoami);
   const canTogglePin = canCall(detail?.pinned ? "memory.unpin" : "memory.pin", role, whoami);
   const canRestore = canCall("memory.restore", role, whoami);
+  const canLock = canCall("memory.lock", role, whoami);
+  const canUnlock = canCall("memory.unlock", role, whoami);
+  const canReject = canCall("memory.reject", role, whoami);
+  const canShare = canCall("memory.promote", role, whoami);
+  const canRedact = canCall("memory.redact", role, whoami);
+  const canJudge = canCall("memory.outcome", role, whoami);
+  const canTouch = canCall("memory.touch", role, whoami);
   const verified = detail?.verification === "human" || detail?.verification === "process";
   useEffect(() => {
     setConflictCount(0);
@@ -455,6 +504,71 @@ export function MemoryInspector({
       onChanged();
     } catch (e) {
       toast(`Verify failed: ${humanizeError(e)}`, "error");
+    }
+  };
+
+  // A person's verdict on the fact: it helped, or relying on it went badly.
+  const onOutcome = async (outcome: "positive" | "negative") => {
+    if (!detail) return;
+    try {
+      await recordMemoryOutcome(rowIdentity(identity, detail), memoryKey, outcome);
+      toast(outcome === "positive" ? "Recorded as helpful" : "Recorded as unhelpful", "ok");
+    } catch (e) {
+      toast(`Couldn't record that: ${humanizeError(e)}`, "error");
+    }
+  };
+
+  // A past version's value is scrubbed in place: for a leaked secret or personal data.
+  const onRedact = async (h: MemoryHistoryEntry, label: string) => {
+    const ok = await confirmAction({
+      title: `Redact ${label} of ${memoryKey}?`,
+      message: "Its value is scrubbed for good; the version and its audit row stay.",
+      confirmLabel: "Redact",
+      danger: true,
+    });
+    if (!ok || !h.memory_id || !h.version_text) return;
+    try {
+      const r = await redactMemoryVersion(identity.org, h.memory_id, h.version_text, "");
+      toast(r.redacted ? `Redacted ${label}` : "That version could not be redacted", r.redacted ? "ok" : "error");
+      const fresh = await memoryHistory(identity, memoryKey, 8);
+      setHistory(fresh.rows || []);
+    } catch (e) {
+      toast(`Redact failed: ${humanizeError(e)}`, "error");
+    }
+  };
+
+  // A lock, an unlock or a reject changes the row: read it again.
+  const reread = async () => {
+    setDetail(await getMemory(identity, memoryKey));
+    onChanged();
+  };
+
+  const onUnlock = async () => {
+    if (!detail) return;
+    try {
+      const r = await unlockMemory(rowIdentity(identity, detail), memoryKey);
+      toast(r.unlocked ? "Unlocked" : "This memory carried no lock", "ok");
+      await reread();
+    } catch (e) {
+      toast(`Unlock failed: ${humanizeError(e)}`, "error");
+    }
+  };
+
+  // Promote copies the row to the namespace's shared layer, read by every agent there;
+  // demote removes that copy and leaves this row as it is.
+  const onShare = async (share: boolean) => {
+    if (!detail) return;
+    try {
+      if (share) {
+        const r = await shareMemory(rowIdentity(identity, detail), memoryKey);
+        toast(`Shared as ${r.shared_memory_key}`, "ok");
+      } else {
+        const r = await unshareMemory(identity, memoryKey);
+        toast(r.demoted ? "No longer shared" : "This memory was not shared", "ok");
+      }
+      onChanged();
+    } catch (e) {
+      toast(`${share ? "Share" : "Stop sharing"} failed: ${humanizeError(e)}`, "error");
     }
   };
 
@@ -525,15 +639,8 @@ export function MemoryInspector({
   const onChangeExpiry = async (ttlSeconds: number | null) => {
     if (!detail) return;
     try {
-      await setMemory(identity, memoryKey, detail.value, {
-        memoryType: detail.memory_type || "semantic",
-        tags: detail.tags,
-        // ttlSeconds=null is "Never expire" — clearExpiry overrides any
-        // inherited per-tag retention default.
-        ttlSeconds: ttlSeconds ?? undefined,
-        clearExpiry: ttlSeconds === null,
-        charLimit: detail.char_limit ?? undefined,
-      });
+      // The expiry alone: the value, its version history and its attestation stay.
+      await touchMemoryExpiry(rowIdentity(identity, detail), memoryKey, ttlSeconds);
       toast(ttlSeconds === null ? "Expiry cleared — never expires" : "Expiry updated", "ok");
       const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
       setDetail(fresh);
@@ -812,7 +919,10 @@ export function MemoryInspector({
                     )}
                     <dt className="text-text-muted">Expires</dt>
                     <dd>
-                      <ExpiryEditor expiresAt={detail.expires_at ?? null} onChange={onChangeExpiry} />
+                      <ExpiryEditor
+                        expiresAt={detail.expires_at ?? null}
+                        onChange={canTouch ? onChangeExpiry : undefined}
+                      />
                     </dd>
                     <TipRow label="Last recalled" tip={RECALLED_TIP} value={recalledLabel(detail)} />
                     <TipRow label="Recall credit" tip={CREDIT_TIP} value={creditLabel(detail.recall_count)} />
@@ -948,6 +1058,25 @@ export function MemoryInspector({
                 </Disclosure>
 
                 <Disclosure
+                  id="evidence"
+                  title="Evidence"
+                  icon="chat"
+                  open={sections.evidence}
+                  onToggle={toggleSection}
+                  count={evidence?.length || undefined}
+                >
+                  {!done.has("evidence") || evidence === null ? (
+                    <LoadingSkeleton label="Loading evidence">
+                      <SkeletonText lines={2} />
+                    </LoadingSkeleton>
+                  ) : evidence.length === 0 ? (
+                    <SectionEmpty>No source turn is linked to this memory.</SectionEmpty>
+                  ) : (
+                    <EvidenceList items={evidence} />
+                  )}
+                </Disclosure>
+
+                <Disclosure
                   id="related"
                   title="Related"
                   icon="url"
@@ -992,6 +1121,25 @@ export function MemoryInspector({
                         </div>
                       ))}
                     </div>
+                  )}
+                </Disclosure>
+
+                <Disclosure
+                  id="links"
+                  title="Links"
+                  icon="url"
+                  open={sections.links}
+                  onToggle={toggleSection}
+                  count={links ? links.in.length + links.out.length || undefined : undefined}
+                >
+                  {!done.has("links") || links === null ? (
+                    <LoadingSkeleton label="Loading links">
+                      <SkeletonText lines={2} />
+                    </LoadingSkeleton>
+                  ) : links.in.length + links.out.length === 0 ? (
+                    <SectionEmpty>No typed link points to or from this memory.</SectionEmpty>
+                  ) : (
+                    <LinkList links={links} onOpen={openMemory} />
                   )}
                 </Disclosure>
 
@@ -1066,6 +1214,16 @@ export function MemoryInspector({
                                   prevLabel={`${label} (${writtenAt})`}
                                   nextLabel={`v${history.length} (current)`}
                                 />
+                                {canRedact && !h.redacted_at && h.memory_id && h.version_text && (
+                                  <Button
+                                    type="danger"
+                                    htmlType="button"
+                                    className="mt-2"
+                                    onClick={() => void onRedact(h, label)}
+                                  >
+                                    Redact {label}
+                                  </Button>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1154,6 +1312,32 @@ export function MemoryInspector({
                   >
                     <MenuLabel icon="folder-open">Copy to…</MenuLabel>
                   </Dropdown.Item>
+                  {detail.lock_mode
+                    ? canUnlock && (
+                        <Dropdown.Item onSelect={onUnlock}>
+                          <MenuLabel icon="lock">Unlock</MenuLabel>
+                        </Dropdown.Item>
+                      )
+                    : canLock && (
+                        <Dropdown.Item
+                          onSelect={() => {
+                            menuHandsOff.current = true;
+                            setReasonDialog("lock");
+                          }}
+                        >
+                          <MenuLabel icon="lock">Lock…</MenuLabel>
+                        </Dropdown.Item>
+                      )}
+                  {canShare && (
+                    <>
+                      <Dropdown.Item onSelect={() => void onShare(true)}>
+                        <MenuLabel icon="users">Share with every agent</MenuLabel>
+                      </Dropdown.Item>
+                      <Dropdown.Item onSelect={() => void onShare(false)}>
+                        <MenuLabel icon="user">Stop sharing</MenuLabel>
+                      </Dropdown.Item>
+                    </>
+                  )}
                   {canMove && !editing && (
                     <Dropdown.Item
                       onSelect={() => {
@@ -1167,6 +1351,27 @@ export function MemoryInspector({
                   <Dropdown.Item onSelect={onCopyAll}>
                     <MenuLabel icon="copy">Copy</MenuLabel>
                   </Dropdown.Item>
+                  {canJudge && (
+                    <>
+                      <Dropdown.Item onSelect={() => void onOutcome("positive")}>
+                        <MenuLabel icon="check">This helped</MenuLabel>
+                      </Dropdown.Item>
+                      <Dropdown.Item onSelect={() => void onOutcome("negative")}>
+                        <MenuLabel icon="warning">This misled</MenuLabel>
+                      </Dropdown.Item>
+                    </>
+                  )}
+                  {canReject && (
+                    <Dropdown.Item
+                      type="danger"
+                      onSelect={() => {
+                        menuHandsOff.current = true;
+                        setReasonDialog("reject");
+                      }}
+                    >
+                      <MenuLabel icon="cross">Mark as wrong…</MenuLabel>
+                    </Dropdown.Item>
+                  )}
                 </Dropdown.Content>
               </Dropdown>
               {/* Verify sits in More; who attested stays in view. */}
@@ -1178,6 +1383,14 @@ export function MemoryInspector({
                   </span>
                 </span>
               )}
+              {detail.lock_mode && (
+                <Tip content={detail.lock_reason || "Locked"}>
+                  <span className="min-w-0 inline-flex items-center gap-1 text-xs text-text-muted">
+                    <Icon name="lock" size="sm" aria-hidden="true" />
+                    <span className="truncate">{detail.lock_mode === "read_only" ? "Read only" : "No delete"}</span>
+                  </span>
+                </Tip>
+              )}
               <div className="flex-1" />
               <Button type="danger" htmlType="button" iconLeft="trash" onClick={onDelete}>
                 Delete
@@ -1185,6 +1398,15 @@ export function MemoryInspector({
             </footer>
           )}
           <CopyToNamespaceDialog open={copyOpen} onOpenChange={setCopyOpen} source={identity} memoryKey={memoryKey} />
+          {reasonDialog && detail && (
+            <ReasonDialogFor
+              kind={reasonDialog}
+              row={rowIdentity(identity, detail)}
+              memoryKey={memoryKey}
+              onDone={() => void reread()}
+              onClose={() => setReasonDialog(null)}
+            />
+          )}
           {/* Reading the source conversation keeps the drawer: the replay opens over it, and
               Conversations is one link away. */}
           <ThreadReplayDialog
@@ -1564,6 +1786,62 @@ function CodeLinks({ links }: { links: CodeLink[] }) {
   );
 }
 
+function ReasonDialogFor({ kind, ...props }: { kind: "lock" | "reject" } & Parameters<typeof LockMemoryDialog>[0]) {
+  return kind === "lock" ? <LockMemoryDialog {...props} /> : <RejectMemoryDialog {...props} />;
+}
+
+const EVIDENCE_SCOPE: Record<MemoryEvidenceItem["scope"], string> = {
+  cited: "Cited",
+  lexical: "Matched",
+  window: "Window",
+  derived: "Derived",
+  other: "Other",
+};
+
+/** The source turns behind a memory (memory.evidence): who said it, when, and the span. */
+function EvidenceList({ items }: { items: MemoryEvidenceItem[] }) {
+  return (
+    <ul className="space-y-2">
+      {items.map((e) => (
+        <li key={e.evidence_id} className="rounded-md bg-surface-2 px-2 py-1.5 text-xs">
+          <div className="flex items-center gap-2 text-text-muted">
+            <Badge text={EVIDENCE_SCOPE[e.scope] ?? e.scope} state="neutral" size="sm" />
+            <span>{e.role}</span>
+            {e.observed_at && <span className="ml-auto tabular">{relativeTime(e.observed_at)}</span>}
+          </div>
+          <p className="mt-1 text-text line-clamp-3 [overflow-wrap:anywhere]">{e.span || e.content}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Typed links into and out of a memory (memory.backlinks). */
+function LinkList({
+  links,
+  onOpen,
+}: {
+  links: { in: MemoryBacklinkEdge[]; out: MemoryBacklinkEdge[] };
+  onOpen: (key: string) => void;
+}) {
+  const rows = [
+    ...links.out.map((l) => ({ ...l, dir: "out" as const })),
+    ...links.in.map((l) => ({ ...l, dir: "in" as const })),
+  ];
+  return (
+    <ul className="space-y-1">
+      {rows.map((l) => (
+        <li key={`${l.dir}-${l.relation}-${l.memory_key}`} className="flex items-center gap-2 text-xs">
+          <span className="text-text-muted shrink-0">{l.dir === "out" ? l.relation : `${l.relation} from`}</span>
+          <Link component="button" size="sm" onClick={() => onOpen(l.memory_key)} className="font-mono truncate">
+            {l.memory_key}
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 const EXPIRY_PRESETS: Array<{ label: string; ttl: number | null }> = [
   { label: "Never", ttl: null },
   { label: "1 hour", ttl: 60 * 60 },
@@ -1579,7 +1857,8 @@ function ExpiryEditor({
   onChange,
 }: {
   expiresAt: string | null;
-  onChange: (ttlSeconds: number | null) => void;
+  /** Absent for a role that cannot change it (memory.touch is WRITER). */
+  onChange?: (ttlSeconds: number | null) => void;
 }) {
   const current = expiresAt ? `Expires ${relativeTime(expiresAt)}` : "Never expires";
   const expiry = parseChTime(expiresAt);
@@ -1588,20 +1867,22 @@ function ExpiryEditor({
   return (
     <div className="inline-flex items-center gap-2">
       <span className={isExpired ? "text-danger" : "text-text"}>{isExpired ? "Expired" : current}</span>
-      <Dropdown modal={false}>
-        <MenuTrigger>
-          <Button type="empty" htmlType="button" iconRight="chevron-down">
-            Change
-          </Button>
-        </MenuTrigger>
-        <Dropdown.Content align="end">
-          {EXPIRY_PRESETS.map((opt) => (
-            <Dropdown.Item key={opt.label} onSelect={() => onChange(opt.ttl)}>
-              {opt.label}
-            </Dropdown.Item>
-          ))}
-        </Dropdown.Content>
-      </Dropdown>
+      {onChange && (
+        <Dropdown modal={false}>
+          <MenuTrigger>
+            <Button type="empty" htmlType="button" iconRight="chevron-down">
+              Change
+            </Button>
+          </MenuTrigger>
+          <Dropdown.Content align="end">
+            {EXPIRY_PRESETS.map((opt) => (
+              <Dropdown.Item key={opt.label} onSelect={() => onChange(opt.ttl)}>
+                {opt.label}
+              </Dropdown.Item>
+            ))}
+          </Dropdown.Content>
+        </Dropdown>
+      )}
     </div>
   );
 }
