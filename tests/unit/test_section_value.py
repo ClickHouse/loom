@@ -94,6 +94,9 @@ def test_the_labelled_set_scores_as_measured() -> None:
         ("Storage sync 2026-03-04", ("Cache",), "Decision: TBD - revisit next week"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: deferred to next sync"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: open - revisit next week"),
+        ("Storage sync 2026-03-04", ("Cache",), "Decision: not decided yet"),
+        ("Storage sync 2026-03-04", ("Cache",), "Decision: no decision"),
+        ("Storage sync 2026-03-04", ("Decision: not decided",), "- Revisit next week."),
         (
             "Session store RFC",
             ("Decision: TBD", "Open questions"),
@@ -169,6 +172,8 @@ def test_bookkeeping_and_discussion_without_a_decision_are_noise(
             "Not agreed on the TTL - decision: keep 5 minutes.",
         ),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: pending writes go to the WAL."),
+        ("Storage sync 2026-03-04", ("Cache",), "Decision: open-source the parser."),
+        ("Storage sync 2026-03-04", ("Cache",), "Decision: pending-write queue goes first."),
         (
             "Storage sync 2026-03-04",
             ("Cache",),
@@ -662,4 +667,5 @@ def test_a_long_line_is_judged_in_linear_time() -> None:
     # Quadratic backtracking takes tens of seconds on this line; linear, a few ms.
     started = time.perf_counter()
     is_noise("Disk set", ("X",), "option " * 20_000)
+    is_noise("Storage sync 2026-03-04", ("X",), "outcome: decision: " * 20_000)
     assert time.perf_counter() - started < 5.0

@@ -64,14 +64,15 @@ _DECISION = re.compile(
 # A line of meeting notes that says the discussion reached no decision, with the label
 # it is written under ("Outcome: no decision yet").
 _UNDECIDED = re.compile(
-    r"\b(?:(?:outcome|conclusion|resolved)\s*:\s*)?"
+    r"\b(?:(?:outcome|conclusion|resolved|decisions?)\s*:\s*)?"
     r"(?:no (?:conclusion|decision|consensus|agreement)|undecided|"
     r"not (?:yet )?(?:decided|concluded|agreed)|"
     r"to be decided|(?:haven't|hasn't|have not|has not)(?: yet)?(?: been)? decided|"
     r"decision (?:pending|needed|deferred)|needs? a decision|"
     r"decisions?\W+(?:tbd|tbc|deferred)\b|"
-    # "Decision: open" is a placeholder; "Decision: open the replica to reads" is a decision.
-    r"decisions?\W+(?:none|pending|open)(?: yet)?(?=\W*$|\s*[.;,(\-\u2013\u2014]))",
+    # "Decision: open" is a placeholder; "Decision: open the replica to reads" and
+    # "Decision: open-source the parser" are decisions.
+    r"decisions?\W+(?:none|pending|open)(?: yet)?(?=\W*$|\s*[.;,(\u2013\u2014]|\s+-(?:\s|$)))",
     re.IGNORECASE,
 )
 # The title shapes of meeting notes and status reports (the module docstring).
