@@ -242,12 +242,21 @@ def is_activity_narration(value: Any) -> bool:
 
 
 # A token with a path separator, a dotted/hyphenated/underscored identifier,
-# or anything in backticks. A token is read from its start or after a
-# backtick, over at most 255 characters each side: the search
-# then costs one pass over the text, not one per character of a long token.
+# or anything in backticks. A token is read from its start over at most 255
+# characters each side, and right after a backtick over at most 63 (a path
+# glued to a backtick span): the search costs one pass over the text, not one
+# per character of a long token.
+_PATHLIKE_SHAPES = (
+    r"\S{{0,{n}}}[/\\]\S{{0,{n}}}"
+    r"|\S{{1,{n}}}[._-]\S{{0,{n}}}[._-]\S{{0,{n}}}"
+    r"|\S{{1,{n}}}\.\w{{1,5}}\b"
+)
 _PATHLIKE_RE = re.compile(
-    r"`[^`]*`|(?<![^\s`])(?:\S{0,255}[/\\]\S{0,255}|\S{1,255}[._-]\S{0,255}[._-]\S{0,255}"
-    r"|\S{1,255}\.\w{1,5}\b)"
+    r"`[^`]*`|(?<!\S)(?:"
+    + _PATHLIKE_SHAPES.format(n=255)
+    + r")|(?<=`)(?:"
+    + _PATHLIKE_SHAPES.format(n=63)
+    + ")"
 )
 
 

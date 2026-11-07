@@ -121,20 +121,26 @@ def _strip_line_suffix(path: str) -> str:
     return m.group(1) if m else path
 
 
-def _looks_like_commit_sha(token: str, text: str) -> bool:
-    """A 7-40 hex run is only a commit SHA when the surrounding prose says
-    so — otherwise hex-looking tokens (ids, hashes, colors) over-match.
-    Closed-class: require a commit/sha/revision cue near the token."""
-    if not (7 <= len(token) <= 40):
-        return False
-    # Pure-decimal runs are never SHAs (years, counts).
-    if token.isdigit():
-        return False
+def _has_commit_cue(text: str) -> bool:
+    """The prose says a hex run is a commit: a commit/sha/revision cue.
+    Read once per text, not once per hex run."""
     lowered = text.lower()
     return any(
         cue in lowered
         for cue in ("commit", "sha", "revision", "rev ", "git ", "cherry-pick", "hash")
     )
+
+
+def _looks_like_commit_sha(token: str, cued: bool) -> bool:
+    """A 7-40 hex run is only a commit SHA when the surrounding prose says
+    so (`cued`, from `_has_commit_cue`) — otherwise hex-looking tokens (ids,
+    hashes, colors) over-match."""
+    if not (7 <= len(token) <= 40):
+        return False
+    # Pure-decimal runs are never SHAs (years, counts).
+    if token.isdigit():
+        return False
+    return cued
 
 
 def extract_code_facets(text: str) -> tuple[list[str], list[str]]:
@@ -223,8 +229,9 @@ def extract_code_facets(text: str) -> tuple[list[str], list[str]]:
             continue
         _add_concept(sym, from_prose=True)
     # Commit SHA (gated on a nearby commit/sha cue).
+    cued = _has_commit_cue(text)
     for m in _COMMIT_SHA_RE.finditer(text):
-        if _looks_like_commit_sha(m.group(1), text):
+        if _looks_like_commit_sha(m.group(1), cued):
             _add_concept(f"commit:{m.group(1).lower()}")
 
     return (files, concepts)

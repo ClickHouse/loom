@@ -4,6 +4,7 @@ which notes a window earns."""
 
 from __future__ import annotations
 
+import bisect
 import re
 from typing import Any
 
@@ -226,7 +227,17 @@ def amount_candidates(
         key = str(getattr(m, "memory_key", "") or "")
         when = str(getattr(m, "valid_at", "") or "")[:10]
         for sent in re.split(r"(?<=[.!?])\s+", text):
-            for am in _AMOUNT_RE.finditer(sent):
+            amounts = list(_AMOUNT_RE.finditer(sent))
+            if not amounts:
+                continue
+            # read once per sentence; each amount looks up its neighbours by start
+            ents = [
+                (e.start(), e.group(1))
+                for e in _AMOUNT_ENTITY_RE.finditer(sent)
+                if e.group(1).split()[0] not in _AMOUNT_ENTITY_STOP
+            ]
+            starts = [s for s, _ in ents]
+            for am in amounts:
                 is_money = am.group(1) is not None or bool(
                     re.search(r"dollars?|usd", am.group(0), re.I)
                 )
@@ -237,14 +248,10 @@ def amount_candidates(
                     val = float(raw.replace(",", ""))
                 except ValueError:
                     continue
-                ents = [
-                    (e.start(), e.group(1))
-                    for e in _AMOUNT_ENTITY_RE.finditer(sent)
-                    if e.group(1).split()[0] not in _AMOUNT_ENTITY_STOP
-                ]
-                before = [e for e in ents if e[0] < am.start()]
-                after = [e for e in ents if e[0] > am.end()]
-                ent = (before[-1] if before else after[0] if after else (0, ""))[1].strip(" .,")
+                # the nearest entity before the amount, else the first after it
+                b = bisect.bisect_left(starts, am.start())
+                a = bisect.bisect_right(starts, am.end())
+                ent = (ents[b - 1] if b else ents[a] if a < len(ents) else (0, ""))[1].strip(" .,")
                 if not ent:
                     continue
                 out.setdefault((ent.lower(), val), (ent, val, key, when))

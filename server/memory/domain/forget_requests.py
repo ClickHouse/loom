@@ -324,18 +324,20 @@ def forget_sentences(
             continue
         text = str(m.get("content") or "")
         sents = [x.strip() for x in _SENTENCE_SPLIT_RE.split(text) if x.strip()]
+        rests: list[str] = []
+        others: list[str] = []
         for raw in sents:
             sent = raw.strip("\"'“”‘’")
             # the length forget_requests_from_messages reads: the match is
             # quadratic in a sentence's trailing whitespace
-            if len(sent) > MAX_FORGET_SENTENCE_CHARS:
-                continue
-            mt = _FORGET_MSG_RE.match(sent)
-            if not mt:
-                continue
-            _, rest = split_replacement(mt.group("what"))
-            others = "" if same_sentence else " ".join(x for x in sents if x is not raw)
-            out[i] = " ".join(p for p in (out.get(i, ""), rest, others) if p).strip()
+            mt = _FORGET_MSG_RE.match(sent) if len(sent) <= MAX_FORGET_SENTENCE_CHARS else None
+            if mt:
+                rests.append(split_replacement(mt.group("what"))[1])
+            elif not same_sentence:
+                others.append(raw)
+        # The message's other sentences ride along once, however many requests it holds.
+        if rests:
+            out[i] = " ".join(p for p in (*rests, *others) if p).strip()
     return out
 
 

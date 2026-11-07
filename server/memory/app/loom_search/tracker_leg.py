@@ -88,7 +88,14 @@ def defect_report_shape(query: str) -> dict[str, Any] | None:
     text = str(query or "").strip()
     if len(text) < 12:
         return None
-    frames = list(dict.fromkeys(m.group(0) for m in _FRAME_RE.finditer(text)))
+    from server.tracker.api.models import MAX_FRAME_CHARS
+
+    # a frame longer than the check accepts would fail the whole request
+    frames = [
+        f
+        for f in dict.fromkeys(m.group(0) for m in _FRAME_RE.finditer(text))
+        if len(f) <= MAX_FRAME_CHARS
+    ]
     signals = [
         s
         for s, hit in (

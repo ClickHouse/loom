@@ -141,10 +141,11 @@ _IDENTIFIER_HANDLE_PATTERN = re.compile(r"@\s*([A-Za-z0-9][A-Za-z0-9_-]{1,})")
 # numbered SQL tests, gtest Suite.Case). Precision is NOT carried by the
 # extraction — a token only answers if it EXACTLY equals a stored test_name and
 # matches exactly one record — so the patterns can be liberal.
+# pytest path::name with optional [param] — must carry ".py::" to be test-specific;
+# group 1, read from a path's first word only, so a long path costs one pass
+_PYTEST_ID_RE = re.compile(r"(?<![\w./-])[./-]*+\b([\w./-]+\.py::[\w./-]+(?:\[[^\]\s]+\])?)")
 _TEST_IDENTIFIER_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # pytest path::name with optional [param] — must carry ".py::" to be test-specific;
-    # group 1, read from a path's first word only, so a long path costs one pass
-    re.compile(r"(?<![\w./-])[./-]*+\b([\w./-]+\.py::[\w./-]+(?:\[[^\]\s]+\])?)"),
+    _PYTEST_ID_RE,
     # test_-prefixed name with optional [param]
     re.compile(r"\btest_[A-Za-z0-9_]{3,}(?:\[[^\]\s]+\])?"),
     # numbered SQL test, e.g. 05047_distributed_plan_finished_stages_drain
@@ -162,7 +163,7 @@ def salient_test_identifiers(query_text: str) -> list[str]:
     out: list[str] = []
     for pat in _TEST_IDENTIFIER_PATTERNS:
         for m in pat.finditer(query_text):
-            ident = m.group(1) if pat.groups else m.group(0)
+            ident = m.group(1) if pat is _PYTEST_ID_RE else m.group(0)
             if ident.lower() not in seen:
                 seen.add(ident.lower())
                 out.append(ident)

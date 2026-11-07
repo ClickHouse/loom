@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -20,13 +21,19 @@ from server.code.domain.index import citations, query_trim
 from server.identity.app import scim_groups
 from server.memory.app import observe_replay, value_updates
 from server.memory.app.ask import identifiers, prompts
+from server.memory.app.loom_search import tracker_leg
 from server.memory.domain import (
     activity_facts,
+    ask_threshold,
     conflicts,
     files,
     forget_requests,
+    passage_trim,
+    precedents,
+    query_nodes,
     query_planner,
     retrieval_calibration,
+    sensitivity,
 )
 from server.storage import frontend_assets
 from server.tracker.api.models import (
@@ -34,7 +41,7 @@ from server.tracker.api.models import (
     TrackerDuplicateCheckInput,
     TrackerSimilarInput,
 )
-from server.tracker.domain import similar
+from server.tracker.domain import defect_answer, similar
 
 # A run this long takes a quadratic pattern well past the 8x bound, and the
 # whole file stays within a few seconds.
@@ -68,8 +75,17 @@ def _then(read: Callable[[str], object], tail: str) -> Callable[[str], object]:
     return lambda s: read(s + tail)
 
 
+def _amounts(s: str) -> object:
+    row = SimpleNamespace(content_excerpt=s, memory_key="k", valid_at="")
+    return prompts.amount_candidates([row], money=None)
+
+
+def _forget(s: str) -> object:
+    return forget_requests.forget_sentences([{"role": "user", "content": s}])
+
+
 def _pytest_ids(s: str) -> object:
-    return list(retrieval_calibration._TEST_IDENTIFIER_PATTERNS[0].finditer(s))
+    return list(retrieval_calibration._PYTEST_ID_RE.finditer(s))
 
 
 # (pattern, call as its caller makes it, text before the repeat, repeated unit)
@@ -131,6 +147,33 @@ CASES: list[tuple[str, Callable[[str], object], str, str]] = [
         "the user ",
         "call ",
     ),
+    (
+        "citations._BLOB_URL_RE",
+        _finditer(citations, "_BLOB_URL_RE"),
+        "https://github.com/o/r/blob/",
+        "a/",
+    ),
+    (
+        "defect_answer._SEGMENT_SPLIT_RE",
+        _then(lambda s: defect_answer._SEGMENT_SPLIT_RE.split(s), "b"),
+        "a",
+        " ",
+    ),
+    ("sensitivity email", _then(sensitivity.detect_sensitivity, "x"), "", "a+"),
+    ("passage_trim._ENUM_LINE_RE", _findall(passage_trim, "_ENUM_LINE_RE"), "", "\n"),
+    ("precedents._TRAIL_RE", _then(_sub(precedents, "_TRAIL_RE", ""), "x"), "", "?"),
+    ("query_nodes._TRAIL_PUNCT", _then(_sub(query_nodes, "_TRAIL_PUNCT", ""), "x"), "", "?"),
+    ("ask_threshold._NUM_RE", _then(_finditer(ask_threshold, "_NUM_RE"), "x"), "", " "),
+    (
+        "ask_threshold._PART_SPLIT_RE",
+        _then(lambda s: ask_threshold._PART_SPLIT_RE.split(s), "x"),
+        "",
+        " ",
+    ),
+    # Per-text work done once, not once per match.
+    ("facets.extract_code_facets hex runs", facets.extract_code_facets, "", "deadbee "),
+    ("prompts.amount_candidates", _amounts, "", "Ab 1 km "),
+    ("forget_requests.forget_sentences", _forget, "", "forget that I like jazz. "),
 ]
 
 
@@ -187,3 +230,12 @@ def test_a_frame_line_is_bounded(model: type[Any], field: str) -> None:
     model(namespace="t", **{field: ["a" * MAX_FRAME_CHARS]})
     with pytest.raises(ValidationError):
         model(namespace="t", **{field: ["a" * (MAX_FRAME_CHARS + 1)]})
+
+
+def test_the_search_tracker_leg_drops_a_frame_the_check_would_refuse() -> None:
+    long_frame = "DB::" + "a" * MAX_FRAME_CHARS
+    shape = tracker_leg.defect_report_shape(
+        f"LOGICAL_ERROR in {long_frame} and DB::Foo::bar — already reported?"
+    )
+    assert shape is not None and shape["frames"] == ["DB::Foo::bar"]
+    TrackerDuplicateCheckInput(namespace="t", frames=shape["frames"])

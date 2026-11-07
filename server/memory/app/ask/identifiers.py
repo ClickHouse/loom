@@ -247,7 +247,7 @@ def _injectable_identifiers(query_text: str) -> list[str]:
         _INJECT_FILELINE_RE,
     ):
         for m in pat.finditer(query_text or ""):
-            t = m.group(1) if pat.groups else m.group(0)
+            t = m.group(1) if pat is _INJECT_FILELINE_RE else m.group(0)
             # A product word is not an identifier: OR-ed into the exact fetch
             # it would crowd the numbered rows out.
             if len(t) >= 5 and t.lower() not in seen and t.lower() not in _TECH_STOP:

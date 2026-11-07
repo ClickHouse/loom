@@ -71,7 +71,7 @@ _UNIT_DAYS = {
     "years": 365,
 }
 _NUM_RE = re.compile(
-    r"(?:~|about|around|roughly|approximately|nearly|almost|just|whole|over|under)?\s*"
+    r"(?:~|about|around|roughly|approximately|nearly|almost|just|whole|over|under)?(?<!\s)\s*"
     r"\b(?P<num>\d+(?:[.,]\d+)?|" + "|".join(sorted(_WORDS, key=len, reverse=True)) + r")\b"
     r"(?:[\s-]+(?P<tens>"
     + "|".join(k for k in _WORDS if _WORDS[k] < 10 and k not in ("a", "an"))
@@ -131,7 +131,10 @@ _PRE_OPS = {
     "fewer than": "<",
 }
 _PART_SPLIT_RE = re.compile(
-    r"\s*(?:\?|\.)\s*(?:Additionally|Also|In addition|And)[,:]?\s+|;\s+", re.I
+    # blanks read from the first of a run; right after one (where a `;` split
+    # stopped) the mark comes at once
+    r"(?:(?<!\s)\s*|(?<=\s))(?:\?|\.)\s*(?:Additionally|Also|In addition|And)[,:]?\s+|;\s+",
+    re.I,
 )
 _ANSWER_RE = re.compile(r"(?im)^\s*ANSWER\s*:\s*(.*)$")
 _ITEMS_HEAD_RE = re.compile(r"(?im)^\s*ITEMS\b[^\n]*$")

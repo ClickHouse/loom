@@ -16,7 +16,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 _WS = re.compile(r"\s+")
-_TRAIL_PUNCT = re.compile(r"[\s?.!,;:]+$")
+# from the run's first character only, so a long run is one pass
+_TRAIL_PUNCT = re.compile(r"(?<![\s?.!,;:])[\s?.!,;:]+$")
 
 
 def normalise_query(text: str) -> str:

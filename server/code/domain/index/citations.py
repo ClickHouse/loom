@@ -47,8 +47,9 @@ _LOC_RE = re.compile(
     r"(?![\w/])"
 )
 # github.com/<owner>/<repo>/blob/<rev>/<path>#L12-L20 — the rev rides along.
+# The rev is at most four segments: each one tried re-reads the path after it.
 _BLOB_URL_RE = re.compile(
-    r"https?://github\.com/[\w.\-]+/[\w.\-]+/blob/(?P<rev>[\w.\-/]+?)/"
+    r"https?://github\.com/[\w.\-]+/[\w.\-]+/blob/(?P<rev>[\w.\-]+(?:/[\w.\-]+){0,3}?)/"
     rf"(?P<path>{_PATH})(?:#L(?P<start>\d+)(?:-L?(?P<end>\d+))?)?"
 )
 _ITEM_URL_RE = re.compile(r"https?://github\.com/[\w.\-]+/[\w.\-]+/(?:pull|issues)/(?P<number>\d+)")
