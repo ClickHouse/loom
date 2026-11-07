@@ -282,11 +282,15 @@ async def _loom_primer_text(
     profile_section = ""
     if include_profile and defaults and defaults["namespace"]:
         try:
+            from server.identity.app.namespace_classification import is_restricted
             from server.identity.app.restricted_access import note_restricted_access
             from server.memory.api.models_profile import ProfileRenderInput
             from server.memory.app.profile import handle_profile_render
 
-            # read outside the op gate, so it leaves the row the gate would
+            # read outside the op gate, so it leaves the row the gate would; the
+            # classification read fills the snapshot the row is decided on (a
+            # single-user default reaches here with no gate check)
+            await is_restricted(defaults["org"], defaults["namespace"])
             await note_restricted_access(
                 auth,
                 op="mcp.primer",

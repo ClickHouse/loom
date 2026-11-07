@@ -47,7 +47,10 @@ def audit_rows(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, dict
     rows: list[tuple[str, dict[str, Any]]] = []
 
     async def _emit(event_type: str, **kw: Any) -> str:
-        rows.append((event_type, kw))
+        from server.auth.context import current_auth
+
+        # the principal bound to the request: what fills the row's token_id column
+        rows.append((event_type, {**kw, "bound": current_auth()}))
         return "hash"
 
     monkeypatch.setattr("server.observability.audit.emit", _emit)
@@ -115,6 +118,7 @@ async def test_an_admitted_download_writes_the_audit_row(
         )
     assert r.status_code == 404  # admitted: the miss is the document's, not the gate's
     _assert_one_row(audit_rows, "knowledge.download")
+    assert audit_rows[0][1]["bound"].subject == "alice"
 
 
 @pytest.mark.asyncio
@@ -438,9 +442,17 @@ async def test_a_setup_mint_onto_a_restricted_namespace_writes_the_audit_row(
     async def _restricted(org: str, subject: str, raw: object) -> list[str]:
         return [NS, "other"]
 
-    async def _saved(**_k: Any) -> tuple[str, str, None, list[str]]:
-        return "jwt", "sa:cursor-x", None, [NS]  # "other" was not granted
+    from server.identity.app import me_callers
 
+    async def _nothing(*_a: Any, **_k: Any) -> None:
+        return None
+
+    async def _role(*_a: Any) -> str:
+        return "viewer"
+
+    # the real `_save_mcp_token`; its grant write (mint_env) grants only NS
+    monkeypatch.setattr(me_setup, "save_token", _nothing)
+    monkeypatch.setattr(me_callers, "caller_role_on", _role)
     # both asked-for names are restricted: only the granted one may get a row
     monkeypatch.setitem(nc._cache, ORG, (1e12, frozenset({NS, "other"})))
 
@@ -448,7 +460,6 @@ async def test_a_setup_mint_onto_a_restricted_namespace_writes_the_audit_row(
         return ""
 
     monkeypatch.setattr(me_setup, "_validate_restricted_request", _restricted)
-    monkeypatch.setattr(me_setup, "_save_mcp_token", _saved)
     monkeypatch.setattr(me_setup, "default_namespace", _no_default)
     monkeypatch.setattr(
         "server.auth.public_url.public_base_url", lambda request: "https://loom.example.com"
@@ -461,7 +472,7 @@ async def test_a_setup_mint_onto_a_restricted_namespace_writes_the_audit_row(
         )
     assert r.status_code == 200, r.text
     _assert_one_row(audit_rows, "me.setup.mcp_config")
-    assert audit_rows[0][1]["subject"]["granted_to"] == "sa:cursor-x"
+    assert audit_rows[0][1]["subject"]["granted_to"].startswith("sa:cursor-")
 
 
 @pytest.mark.asyncio

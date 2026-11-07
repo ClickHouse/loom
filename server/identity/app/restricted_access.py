@@ -129,7 +129,7 @@ async def note_restricted_grants(
     auth: Any, *, op: str, org: str, namespaces: list[str], granted_to: str
 ) -> None:
     """The row of each restricted namespace a token mint granted `granted_to`,
-    written together so the inline inserts share one batch."""
+    written concurrently."""
     await asyncio.gather(
         *(
             note_restricted_access(
