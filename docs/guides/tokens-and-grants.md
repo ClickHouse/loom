@@ -410,6 +410,8 @@ exists. If the classification cannot be read, access is denied.
   (`POST /v1/admin/token.mint`, `POST /v1/me/service_accounts.create`, the Setup
   page) writes one for each restricted namespace whose direct grant it writes for
   the new token, with the minter as actor and the token's subject as `granted_to`.
+  An inbox watch writes one for the inbox's owner namespace, and the MCP primer
+  (op `mcp.primer`) for the default namespace whose profile it renders.
   Code search traces keep only the query digest.
 - A restricted namespace cannot be made public; its directory row changes only for a caller
   who passes the four checks at `admin`.

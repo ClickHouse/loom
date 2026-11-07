@@ -285,8 +285,10 @@ denied.
 
 Every request admitted to the restricted namespace it names, through an op, or a raw
 route that serves its content or grants a token access to it, writes a
-`namespace.restricted_access` audit row, and code search traces keep only the query
-digest; neither can be switched off.
+`namespace.restricted_access` audit row (an inbox watch for the inbox's owner namespace,
+and the MCP primer, op `mcp.primer`, for the caller's default namespace whose profile it
+renders), and code search traces keep only the query digest; neither can be switched
+off.
 
 | Setting                        | Default | Effect                                                            |
 | ------------------------------ | ------- | ----------------------------------------------------------------- |

@@ -28,9 +28,12 @@ from httpx import ASGITransport, AsyncClient
 
 import server.identity.app.namespace_classification as nc
 from server.auth.jwt import AuthInfo
+from server.identity.app import token_grants
 from server.operations.base import Role
 
 ORG, NS, PLAIN = "acme", "vault", "plain"
+# the real grant write, before a fixture stubs it
+_REAL_GRANT_TO_TOKEN = token_grants.grant_restricted_to_token
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -433,10 +436,13 @@ async def test_a_setup_mint_onto_a_restricted_namespace_writes_the_audit_row(
     _, me_setup = mint_env
 
     async def _restricted(org: str, subject: str, raw: object) -> list[str]:
-        return [NS]
+        return [NS, "other"]
 
     async def _saved(**_k: Any) -> tuple[str, str, None, list[str]]:
-        return "jwt", "sa:cursor-x", None, [NS]
+        return "jwt", "sa:cursor-x", None, [NS]  # "other" was not granted
+
+    # both asked-for names are restricted: only the granted one may get a row
+    monkeypatch.setitem(nc._cache, ORG, (1e12, frozenset({NS, "other"})))
 
     async def _no_default(*_a: Any) -> str:
         return ""
@@ -450,7 +456,7 @@ async def test_a_setup_mint_onto_a_restricted_namespace_writes_the_audit_row(
     async with _client(me_setup) as c:
         r = await c.post(
             "/v1/me/setup/mcp_config",
-            json={"client": "cursor", "restricted_namespaces": [NS]},
+            json={"client": "cursor", "restricted_namespaces": [NS, "other"]},
             headers=BEARER,
         )
     assert r.status_code == 200, r.text
@@ -488,27 +494,37 @@ async def test_the_mcp_primer_profile_read_writes_the_audit_row(
 
 
 @pytest.mark.asyncio
-async def test_the_setup_mint_audits_what_it_granted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`_save_mcp_token` answers the namespaces the grant write granted, which the
-    route audits, not the ones the caller asked for."""
-    from server.identity.app import me_callers, me_setup, token_grants
+async def test_a_mint_from_a_cold_snapshot_writes_the_audit_row(
+    monkeypatch: pytest.MonkeyPatch, mint_env: Any, audit_rows: list[Any]
+) -> None:
+    """The real grant write reads the classification, which fills the snapshot
+    the row reads."""
+    import server.core.ch as ch
+    from server.identity.store import grants as grants_repo
 
-    async def _nothing(*_a: Any, **_k: Any) -> None:
+    me_service_accounts, _ = mint_env
+
+    class _Directory:
+        _client = object()
+
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, str]]:
+            return [{"namespace": NS}]
+
+    async def _written(rows: list[dict[str, Any]]) -> None:
         return None
 
-    async def _role(*_a: Any) -> str:
-        return "viewer"
-
-    async def _granted(org: str, sa_subject: str, creator: str, ns_roles: Any) -> list[str]:
-        return [NS]  # "other" is no longer restricted by the time of the write
-
-    monkeypatch.setattr(me_setup, "save_token", _nothing)
-    monkeypatch.setattr(me_callers, "caller_role_on", _role)
-    monkeypatch.setattr(token_grants, "grant_restricted_to_token", _granted)
-    *_, granted = await me_setup._save_mcp_token(
-        subject="alice", client="cursor", delegated=_Delegated(), restricted_names=[NS, "other"]
-    )  # type: ignore[arg-type]
-    assert granted == [NS]
+    monkeypatch.setattr(token_grants, "grant_restricted_to_token", _REAL_GRANT_TO_TOKEN)
+    monkeypatch.setattr(grants_repo, "insert_rows", _written)
+    monkeypatch.setattr(ch, "get_client", lambda: _Directory())
+    monkeypatch.setattr(nc, "_cache", {})
+    async with _client(me_service_accounts) as c:
+        r = await c.post(
+            "/v1/me/service_accounts.create",
+            json={"name": "bot", "namespaces": [NS]},
+            headers=BEARER,
+        )
+    assert r.status_code == 200, r.text
+    _assert_one_row(audit_rows, "me.service_accounts.create")
 
 
 # The checks that admit a caller to a namespace outside the op transport.
