@@ -83,6 +83,9 @@ Rules:
 - A copy on an operator namespace whose `granted_by` is `repo-maintainers:<namespace>`
   naming a branch added here, or a namespace no longer configured, stays until revoked:
   list those grants and revoke the ones that should not stand.
+- While self-service is off, a revoke on an operator entry sees no branch added here,
+  so a copy there of the revoked grant stays when self-service is switched back on:
+  revoke it on that branch.
 - A restricted repository is never `open`: `code.repo.add` sets `approval`. Widening a
   restricted index to standard needs `confirm` equal to the namespace.
 - A private repository's token is stored encrypted with a key derived from

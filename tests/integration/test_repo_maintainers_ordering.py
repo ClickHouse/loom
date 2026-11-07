@@ -23,8 +23,8 @@ BRANCHES = ("code-ord", "code-ord-26-5")
 
 
 class _Entry:
-    def __init__(self, org: str, namespace: str) -> None:
-        self.org, self.namespace, self.repo, self.source = org, namespace, "It/ord", "config"
+    def __init__(self, org: str, namespace: str, source: str = "config") -> None:
+        self.org, self.namespace, self.repo, self.source = org, namespace, "It/ord", source
 
 
 @pytest.fixture
@@ -45,12 +45,18 @@ async def ch(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[tuple[Any, str]]:
 
 
 async def _grant(
-    client: Any, org: str, namespace: str, role: str, at: datetime, status: str = "active"
+    client: Any,
+    org: str,
+    namespace: str,
+    role: str,
+    at: datetime,
+    status: str = "active",
+    subject: str = "alice",
 ) -> None:
     row = {
         "org": org,
         "namespace": namespace,
-        "subject": "alice",
+        "subject": subject,
         "role": role,
         "status": status,
         "granted_at": at,
@@ -63,13 +69,14 @@ async def _grant(
     )
 
 
-async def _state(client: Any, org: str, namespace: str) -> str:
+async def _state(client: Any, org: str, namespace: str, subject: str = "alice") -> str:
     row = await client.query_one(
-        "SELECT concat(role, '/', toString(status)) AS state FROM loom.namespace_grants FINAL"
-        " WHERE org = {org:String} AND namespace = {ns:String} AND subject = 'alice'",
-        params={"org": org, "ns": namespace},
+        "SELECT concat(role, '/', toString(status), if(revoked_at IS NULL, '', '/revoked'))"
+        " AS state FROM loom.namespace_grants FINAL"
+        " WHERE org = {org:String} AND namespace = {ns:String} AND subject = {sub:String}",
+        params={"org": org, "ns": namespace, "sub": subject},
     )
-    return str(row["state"])
+    return str(row["state"]) if row else "none"
 
 
 async def test_a_promotion_in_the_same_second_as_a_lowering_reaches_that_branch(
@@ -117,3 +124,24 @@ async def test_a_request_made_after_the_admin_grant_is_left_for_its_approval(
     await _grant(client, org, "code-ord-26-5", "viewer", second, status="pending")
     assert await maintainers.sync_repo_maintainers(org, "code-ord", ch=client) == 0
     assert await _state(client, org, "code-ord-26-5") == "viewer/pending"
+
+
+async def test_a_page_added_branch_admin_never_reaches_the_operator_entry(
+    ch: tuple[Any, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, org = ch
+    entries = [_Entry(org, "code-ord"), _Entry(org, "code-ord-dev", source="registry")]
+    monkeypatch.setattr(repos, "configured_repos", lambda: entries)
+    second = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    await _grant(client, org, "code-ord", "admin", second, subject="ops")
+    await _grant(client, org, "code-ord-dev", "admin", second, subject="mallory")
+    await maintainers.sync_repo_maintainers(org, "code-ord-dev", ch=client)
+    assert await _state(client, org, "code-ord", "mallory") == "none"
+    assert await _state(client, org, "code-ord-dev", "ops") == "admin/active"
+
+    async def _read(_ch: Any = None) -> bool:
+        return True
+
+    monkeypatch.setattr(repo_registry, "read_registry", _read)
+    await maintainers.revoke_repo_maintainer(org, "code-ord", "ops", repo="It/ord", ch=client)
+    assert await _state(client, org, "code-ord-dev", "ops") == "admin/active/revoked"
