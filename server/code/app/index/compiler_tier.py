@@ -224,19 +224,29 @@ def harness_failure(returncode: int | None, tail: str) -> RuntimeError:
     return RuntimeError(f"harness exit {returncode}: {tail}")
 
 
-# run_delta.sh leaves this in the checkout while its CMake reconfigure fails and it
-# indexes with the last compile database
+# run_delta.sh leaves this in the checkout, holding CMake's last lines, while its
+# CMake reconfigure fails and it indexes with the last compile database
 STALE_COMPDB_MARKER = "build/.loom-reconfigure-failed"
+
+
+async def stale_compdb(namespace: str, checkout: Path) -> tuple[str, str]:
+    """(reason, CMake's last lines) when the harness indexed `checkout` with a stale
+    compile database, else ("", "")."""
+    try:
+        tail = await asyncio.to_thread((checkout / STALE_COMPDB_MARKER).read_text, errors="replace")
+    except FileNotFoundError:
+        return "", ""
+    return f"{namespace}: cmake reconfigure failed; compile database stale", tail
 
 
 async def note_stale_compdb(
     worker: str, cfg: RepoConfig, checkout: Path, skipped: list[str]
 ) -> None:
-    """The harness indexed with a stale compile database (its CMake reconfigure failed):
-    a skip, first, so workers.status keeps it among the skips it shows."""
-    if await asyncio.to_thread((checkout / STALE_COMPDB_MARKER).exists):
-        reason = f"{cfg.namespace}: cmake reconfigure failed; compile database stale"
-        logger.warning("%s: %s", worker, reason)
+    """A stale compile database is a skip, first, so workers.status keeps it among
+    the skips it shows; the log carries why CMake failed."""
+    reason, tail = await stale_compdb(cfg.namespace, checkout)
+    if reason:
+        logger.warning("%s: %s\n%s", worker, reason, tail)
         skipped.insert(0, reason)
 
 

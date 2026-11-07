@@ -199,7 +199,7 @@ done
 # in the compile database, as a configure over a glob does
 _FAKE_CMAKE = """#!/usr/bin/env bash
 echo "cmake $*" >>"$CMAKE_CALLS"
-[[ -n "${CMAKE_FAIL:-}" ]] && exit 1
+[[ -n "${CMAKE_FAIL:-}" ]] && { echo "CMake Error: a package is missing" >&2; exit 1; }
 "$PYTHON" - <<'PYEOF'
 import json, pathlib
 root = pathlib.Path.cwd()
@@ -388,7 +388,7 @@ def test_a_full_index_whose_reconfigure_fails_indexes_the_last_compile_database(
         text=True,
     )
     assert "cmake reconfigure failed" in proc.stderr
-    assert (w.repo / STALE_COMPDB_MARKER).exists()
+    assert "a package is missing" in (w.repo / STALE_COMPDB_MARKER).read_text()
     assert w.compdbs == [["a.cpp", "b.cpp"]]
 
 

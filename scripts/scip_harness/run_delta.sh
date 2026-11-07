@@ -56,10 +56,12 @@ fi
 reconfigure() {
   if [[ -z "${CONFIGURED:-}" ]]; then
     echo ">> cmake reconfigure (compile_commands.json): $1"
-    if cmake -B build -S . >/dev/null; then
+    if cmake -B build -S . >"$WORK/cmake.log" 2>&1; then
       rm -f "$STALE"
     else
-      touch "$STALE"
+      # the marker keeps CMake's last lines: why it failed, for the worker's log
+      tail -n 20 "$WORK/cmake.log" >"$STALE"
+      cat "$STALE" >&2
       echo ">> warning: cmake reconfigure failed; indexing with the last compile_commands.json" >&2
     fi
   fi
