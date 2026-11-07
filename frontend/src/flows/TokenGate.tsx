@@ -49,12 +49,15 @@ export function TokenGate({ onLogin, reason = null, ssoAsked = false }: TokenGat
 /** Remember that this tab starts a sign-in, and the page it starts on: the token that
  *  comes back is stored without asking (`lib/boot.ts`), and the identity provider sends
  *  the browser back to the root, where boot returns here within ten minutes
- *  (`lib/linkToken.ts`). From the bare root there is nothing to come back to. */
+ *  (`lib/linkToken.ts`). From the bare root there is nothing to come back to; from the
+ *  landing (`/me`, where a restart begins) the page saved by the first start stays. */
 function rememberSignInStart(): string {
   const nonce = markSignInStarted();
   const path = window.location.pathname + window.location.search;
   try {
-    if (path === "/") sessionStorage.removeItem(SIGN_IN_FROM);
+    if (window.location.pathname === "/me") {
+      /* a restart: keep the page the sign-in started on */
+    } else if (path === "/") sessionStorage.removeItem(SIGN_IN_FROM);
     else sessionStorage.setItem(SIGN_IN_FROM, JSON.stringify({ path, at: Date.now() }));
   } catch {
     /* no session storage: the sign-in lands on the root */

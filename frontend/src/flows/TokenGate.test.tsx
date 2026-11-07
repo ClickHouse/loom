@@ -293,6 +293,19 @@ describe("TokenGate", () => {
       expect(goToSso).toHaveBeenCalledWith(nonce);
     });
 
+    it("a restart from the landing keeps the page the sign-in started on", () => {
+      window.__LOOM_SSO = true;
+      sessionStorage.setItem(SIGN_IN_FROM, JSON.stringify({ path: "/memories?namespace=a", at: 1 }));
+      history.replaceState(null, "", "/me");
+      render(<TokenGate onLogin={() => undefined} reason={null} ssoAsked />);
+      expect(goToSso).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(sessionStorage.getItem(SIGN_IN_FROM) ?? "{}")).toEqual({
+        path: "/memories?namespace=a",
+        at: 1,
+      });
+      history.replaceState(null, "", "/");
+    });
+
     it("shows the password gate when it is off", () => {
       window.__LOOM_SSO = false;
       render(<TokenGate onLogin={() => undefined} reason={null} />);

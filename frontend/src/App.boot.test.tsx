@@ -20,6 +20,7 @@ import { goToSso, reloadPage } from "./lib/navigation";
 import { useStore } from "./lib/state";
 import { resetNamespaceRoleCache } from "./lib/namespaceRole";
 import { invalidateShared } from "./lib/sharedReads";
+import { claimsFromToken } from "./lib/boot";
 
 const ORG = "acme";
 const NS = "team";
@@ -596,9 +597,18 @@ describe("login link", () => {
       view: "setup",
     });
     Element.prototype.scrollTo = vi.fn();
+    // whoami accepts any bearer whose payload names a subject, and answers with its claims;
+    // every other call gets the generic answer.
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => json(GENERIC)),
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (!String(input).includes("/v1/whoami")) return json(GENERIC);
+        const bearer = new Headers(init?.headers).get("Authorization")?.replace(/^Bearer /, "") ?? "";
+        const claims = claimsFromToken(bearer);
+        return claims?.subject
+          ? json({ authenticated: true, subject: claims.subject, org: claims.org, namespaces: claims.namespaces })
+          : json({ authenticated: false });
+      }),
     );
     stored = [];
     const setItem = Storage.prototype.setItem;
@@ -637,13 +647,21 @@ describe("login link", () => {
   const mallory = jwt({ sub: "mallory", org: ORG, namespaces: ["mallory-ns"], roles: ["ADMIN"] });
   const alice = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
 
-  it("holds a link token this tab did not ask for, unstored, and names the account it signs in as", async () => {
+  it("holds a link token this tab did not ask for, unstored, and names the account the server says it is", async () => {
     localStorage.setItem("loom_token_v1", alice);
     stored = [];
+    const serve = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const bearer = new Headers(init?.headers).get("Authorization");
+      if (String(input).includes("/v1/whoami") && bearer === `Bearer ${mallory}`)
+        return json({ authenticated: true, subject: "mallory@server", org: "server-org" });
+      return serve ? serve(input, init) : json(GENERIC);
+    });
     window.history.replaceState(null, "", `/settings#token=${mallory}`);
     render(<App />);
-    await screen.findByRole("button", { name: "Sign in as mallory" });
-    expect(screen.getByText("acme")).toBeTruthy();
+    // The server's answer, not the token's unverified claims.
+    await screen.findByRole("button", { name: "Sign in as mallory@server" });
+    expect(screen.getByText("server-org")).toBeTruthy();
     expect(stored).toEqual([]);
     expect(localStorage.getItem("loom_token_v1")).toBe(alice);
     expect(window.location.href).not.toContain("token=");
@@ -670,10 +688,23 @@ describe("login link", () => {
     await settle();
     expect(stored).toEqual([]);
     expect(screen.queryByRole("button", { name: "Sign in as mallory" })).toBeNull();
-    // whoami was asked about the token the browser held, never the link's.
+    // The link's token was only asked about; boot went on with the token the browser held.
     const sent = vi.mocked(fetch).mock.calls.map(([, init]) => new Headers(init?.headers).get("Authorization"));
     expect(sent).toContain(`Bearer ${alice}`);
-    expect(sent).not.toContain(`Bearer ${mallory}`);
+    expect(localStorage.getItem("loom_token_v1")).toBe(alice);
+  });
+
+  it("drops a link token the server refuses without asking, storing nothing", async () => {
+    localStorage.setItem("loom_token_v1", alice);
+    stored = [];
+    const forged = "eyJhbGciOiJIUzI1NiJ9.eyJub3N1YiI6MX0.forged"; // no subject: whoami refuses it
+    window.history.replaceState(null, "", `/settings#token=${forged}`);
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null);
+    expect(screen.queryByText(/Sign in from a link/)).toBeNull();
+    expect(stored).toEqual([]);
+    expect(localStorage.getItem("loom_token_v1")).toBe(alice);
+    expect(window.location.href).not.toContain("token=");
   });
 
   it("a sign-in mark older than ten minutes counts as none", async () => {

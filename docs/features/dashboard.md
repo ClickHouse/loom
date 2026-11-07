@@ -47,18 +47,19 @@ without asking only when it answers the SSO sign-in this tab started from the si
 within the last ten minutes, or when it names the same subject and org as the token already
 held. The sign-in screen sends a nonce it keeps in the tab to `/oauth/sso?n=<nonce>`, and
 the server hands it back as `/me?n=<nonce>#token=<jwt>`; a token without that nonce, such as
-one from an SSO sign-in started by typing `/oauth/sso`, is not the tab's own. Any other link
-waits on a screen that names the token's subject and org, and the account the browser is
-signed in as: **Sign in as …** stores it, and **Cancel** drops it and keeps the session the
-browser had. Until then the token is held only in the page's memory. A same-account token is
-stored only once the server accepts it, so a refused one leaves the held token as it was.
-`/me?sign_in=sso` opens a sign-in screen that starts SSO by itself with a nonce of that
-tab's own when a Loom page sent the browser there (the server reads the load's
-`Sec-Fetch-Site`, or its `Referer` from a browser that sends none); from another site, or
-typed, it shows the **Sign in with SSO** button. **Sign in in a new tab** on the
-session-ended card opens it, and so does **Start again** when the server could not finish an
-SSO sign-in. A `#token=` link behind a proxy that adds `Authorization`, or with auth off, is
-dropped without asking.
+one from an SSO sign-in started by typing `/oauth/sso`, is not the tab's own. Any other
+link's token is first asked about with whoami: one the server refuses is dropped without
+asking, and one it accepts waits on a screen that names the account the server says it signs
+in as, and the account the browser is signed in as: **Sign in as …** stores it, and
+**Cancel** drops it and keeps the session the browser had. Until then the token is held only
+in the page's memory. A same-account token is stored only once the server accepts it, so a
+refused one leaves the held token as it was. `/me?sign_in=sso` opens a sign-in screen that
+starts SSO by itself with a nonce of that tab's own when a Loom page sent the browser there
+(the server reads the load's `Sec-Fetch-Site`, or its `Referer` from a browser that sends
+none); from another site, or typed, it shows the **Sign in with SSO** button. **Sign in in a
+new tab** on the session-ended card opens it, and so does **Start again** when the server
+could not finish an SSO sign-in. A `#token=` link behind a proxy that adds `Authorization`,
+or with auth off, is dropped without asking.
 
 `loom init --agent NAME` signs an agent up on its own and prints a one-time code a person
 enters in the dashboard to claim the namespace. The token sits in the browser's local storage;

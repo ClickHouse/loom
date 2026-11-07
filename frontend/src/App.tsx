@@ -223,7 +223,12 @@ export default function App() {
   // A Loom page's ask to start SSO (`?sign_in=sso`), taken from the address at boot.
   const [ssoAsked, setSsoAsked] = useState(false);
   // A link token boot holds, unstored, until the person says whose account to sign in as.
-  const [linkAsk, setLinkAsk] = useState<{ token: string; answer: (ok: boolean) => void } | null>(null);
+  const [linkAsk, setLinkAsk] = useState<{
+    token: string;
+    subject: string | null;
+    org: string | null;
+    answer: (ok: boolean) => void;
+  } | null>(null);
 
   // Global keyboard bindings — disabled while focus is in an input.
   useKeyboard(
@@ -335,21 +340,22 @@ export default function App() {
           const token = link.token;
           // A proxy or auth off: the page sends no token of its own, so a link's is dropped.
           if (token && (isProxyMode() || isAuthDisabled())) link = { ...link, token: null };
-          // The sign-in this tab started (its nonce came back) skips both checks below.
+          // The sign-in this tab started (its nonce came back) skips the checks below.
           else if (token && !started) {
-            if (sameAccount(token, storedToken())) {
-              // The account already held: stored only once whoami accepts it, nothing before.
-              linkAnswer = await whoamiWhenReady(token).catch(() => null);
-              if (!linkAnswer?.authenticated) {
-                link = { ...link, token: null };
-                linkAnswer = null;
-              }
-            } else {
-              // Any other: held in memory until the person confirms it; Cancel drops it.
-              const ok = await new Promise<boolean>((answer) => setLinkAsk({ token, answer }));
+            // Asked about with its own header first; nothing is stored, nor any tab told, before.
+            linkAnswer = await whoamiWhenReady(token).catch(() => null);
+            const answer = linkAnswer;
+            // Refused, expired or unanswered: dropped without asking.
+            if (!answer?.authenticated) link = { ...link, token: null };
+            // Another account than the one held: the person confirms the one the server named.
+            else if (!sameAccount(token, storedToken())) {
+              const ok = await new Promise<boolean>((resolve) =>
+                setLinkAsk({ token, subject: answer.subject ?? null, org: answer.org ?? null, answer: resolve }),
+              );
               setLinkAsk(null);
               if (!ok) link = { ...link, token: null };
             }
+            if (!link.token) linkAnswer = null;
           }
           if (link.token) setToken(link.token);
           try {
@@ -571,7 +577,7 @@ export default function App() {
     return (
       <Suspense fallback={null}>
         <LinkTokenConfirm
-          claims={claimsFromToken(linkAsk.token)}
+          claims={{ subject: linkAsk.subject, org: linkAsk.org, namespaces: [], session: null }}
           current={claimsFromToken(storedToken())}
           onConfirm={() => linkAsk.answer(true)}
           onCancel={() => linkAsk.answer(false)}
