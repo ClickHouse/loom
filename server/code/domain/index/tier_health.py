@@ -155,7 +155,10 @@ def redact(text: str) -> str:
 # First match wins: a missing credential also makes the submodule pin look missing
 # ("did not contain <sha>"), so the credential test comes before the pin test.
 _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    # A full disk also cuts a transfer short ("the remote end hung up"): it goes first.
+    # A Go module the harness skipped because it would not build: its line ends with the
+    # module's own last log line, which can read as any other kind.
+    ("module", re.compile(r"go mod download failed|scip-go failed", re.IGNORECASE)),
+    # A full disk also cuts a transfer short ("the remote end hung up"): before network.
     ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
     (
         "credential",
@@ -203,8 +206,6 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     ("harness", re.compile(r"^(?:\w+: )?harness exit", re.IGNORECASE | re.MULTILINE)),
-    # a Go module the harness skipped because it would not build
-    ("module", re.compile(r"go mod download failed|scip-go failed", re.IGNORECASE)),
 )
 
 

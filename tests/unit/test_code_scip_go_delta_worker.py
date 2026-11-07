@@ -297,6 +297,8 @@ def test_registry_gives_the_go_worker_its_own_deadline(monkeypatch):
     "error",
     [
         "TierDegraded: svc: go mod download failed: x",
+        "TierDegraded: svc: go mod download failed: dial tcp 1.2.3.4:443: connect: "
+        "connection refused",
         # many modules: the stored error keeps only its end
         "TierDegraded: " + "; ".join(f"m{i}: go mod download failed: 404" for i in range(40)),
         "fatal: auth",
