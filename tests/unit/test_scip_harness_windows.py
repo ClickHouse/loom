@@ -380,7 +380,7 @@ def test_a_full_index_whose_reconfigure_fails_fails(tmp_path: Path) -> None:
     assert "cmake configure failed" in proc.stdout
 
 
-@pytest.mark.parametrize("cache", ["missing", "names a compiler the host lacks"])
+@pytest.mark.parametrize("cache", ["missing", "CMAKE_CXX_COMPILER", "CMAKE_C_COMPILER"])
 def test_a_cache_that_cannot_be_reconfigured_is_configured_from_scratch(
     tmp_path: Path, cache: str
 ) -> None:
@@ -391,7 +391,7 @@ def test_a_cache_that_cannot_be_reconfigured_is_configured_from_scratch(
         (w.repo / "build" / "CMakeCache.txt").unlink()
     else:
         (w.repo / "build" / "CMakeCache.txt").write_text(
-            "CMAKE_CXX_COMPILER:FILEPATH=/nonexistent/clang++-18\n"
+            f"CMAKE_C_COMPILER:FILEPATH=/bin/sh\n{cache}:FILEPATH=/nonexistent/clang-18\n"
         )
     assert (
         w.run_unchecked(index_docs=("src/a.cpp", "src/b.cpp"), CC="cc", CXX="c++").returncode == 0

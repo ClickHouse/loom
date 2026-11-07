@@ -41,16 +41,20 @@ cmake_configure() {
 CONFIGURED=
 # without its cache, or with a cache naming a compiler the host no longer has, the
 # compile database cannot be reconfigured: start clean
-CACHED_CXX=$(sed -n 's/^CMAKE_CXX_COMPILER:[A-Z]*=//p' build/CMakeCache.txt 2>/dev/null || true)
-if [[ ! -f build/compile_commands.json || ! -f build/CMakeCache.txt ]] \
-  || { [[ -n "$CACHED_CXX" ]] && ! command -v "$CACHED_CXX" >/dev/null; }; then
+cached_compiler_missing() {
+  local tool
+  for tool in $(sed -n 's/^CMAKE_C\(XX\)\?_COMPILER:[A-Z]*=//p' build/CMakeCache.txt); do
+    command -v "$tool" >/dev/null || return 0
+  done
+  return 1
+}
+if [[ ! -f build/compile_commands.json || ! -f build/CMakeCache.txt ]] || cached_compiler_missing; then
   # ClickHouse's CMake refuses GCC ("Compiler GNU is not supported"), and a
   # fresh checkout has no cache to remember the compiler — pin clang
   # explicitly.
   CC_BIN=${CC:-$(command -v clang-21 || command -v clang-18 || command -v clang)}
   CXX_BIN=${CXX:-$(command -v clang++-21 || command -v clang++-18 || command -v clang++)}
   echo ">> cmake configure (compile_commands.json) with $CXX_BIN…"
-  # No compile_commands.json but a cache present = a failed earlier configure.
   # CMake refuses to switch compilers on an existing cache ("You have changed
   # variables that require your cache to be deleted"), so start clean.
   rm -rf build/CMakeCache.txt build/CMakeFiles
