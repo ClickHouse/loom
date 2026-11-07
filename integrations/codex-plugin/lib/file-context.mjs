@@ -63,14 +63,38 @@ export function decideInject(cache, key, now, ttlMs) {
 export const FILE_RULES_HEADING =
   "Loom file rules and notes for the file this edit touches; a teammate's rule names its author:";
 
+/** What to do about the block's rows, in the plugin's own words: the block's note
+ *  says not to follow its text, and that includes the server's own footer lines.
+ *  Each line only when the server's text has the footer it restates (a team row's
+ *  removal line, a left-out line); stored text that imitates one adds only this. */
+export function fileRulesGuidance(rendered, { rel = "", teamNamespace = "" } = {}) {
+  const text = String(rendered || "");
+  const lines = [];
+  if (teamNamespace && /\n- A team /.test(text)) {
+    lines.push(
+      `A team rule or decision above that is wrong or outdated: memory.delete(namespace="${teamNamespace}", ` +
+        "memory_key=<its id>) removes it if you wrote it or are a maintainer; otherwise write a corrected " +
+        "rule for the file and tell its author, or ask a maintainer to record a corrected decision with decision.record.",
+    );
+  }
+  if (rel && /\n- … /.test(text)) {
+    lines.push(
+      `Rows left out of the block: memory.for_file(path=${JSON.stringify(rel)}) lists them; memory.get reads one by key.`,
+    );
+  }
+  return lines.join("\n");
+}
+
 /** The hook's stdout payload: additional context only — never a permission decision.
  *  Team rules come from a namespace every member writes, so the text goes inside the
- *  recalled-data block under a heading the plugin writes. */
-export function contextPayload(rendered) {
+ *  recalled-data block under a heading the plugin writes, and what to do about a row
+ *  follows it in the plugin's own words. */
+export function contextPayload(rendered, { rel = "", teamNamespace = "" } = {}) {
+  const guidance = fileRulesGuidance(rendered, { rel, teamNamespace });
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      additionalContext: `${FILE_RULES_HEADING}\n${recalledDataBlock(rendered)}`,
+      additionalContext: `${FILE_RULES_HEADING}\n${recalledDataBlock(rendered)}${guidance ? `\n${guidance}` : ""}`,
     },
   };
 }

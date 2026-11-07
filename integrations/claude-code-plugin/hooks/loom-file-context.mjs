@@ -37,6 +37,7 @@ import {
   lookupFileContext,
   relativeForLookup,
   targetPath,
+  teamRulesNamespace,
 } from "../lib/file-context.mjs";
 import { readCache } from "../lib/repo-scope.mjs";
 import { readSessionState, writeSessionState } from "../lib/tmp-state.mjs";
@@ -91,7 +92,8 @@ async function main() {
   writeSessionState("file-context", payload.session_id, decision.cache);
 
   if (rendered) {
-    process.stdout.write(JSON.stringify(contextPayload(rendered)) + "\n");
+    const teamNamespace = teamRulesNamespace(entry, scope);
+    process.stdout.write(JSON.stringify(contextPayload(rendered, { rel, teamNamespace })) + "\n");
   }
   scheduleExit(0);
 }

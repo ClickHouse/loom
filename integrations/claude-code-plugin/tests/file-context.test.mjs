@@ -117,3 +117,22 @@ test("only the close tag with the block's own id ends it; the id is new on every
   const other = contextPayload("rule").hookSpecificOutput.additionalContext;
   assert.notEqual(other.match(/id="([0-9a-f]{16})"/)[1], id);
 });
+
+test("the server's removal and read-more lines are restated outside the block, in the plugin's words", () => {
+  const rendered =
+    "Loom: 3 memories anchored to src/a.cpp — read before editing:\n" +
+    "- Team rule (alice, 2 d): keep the lock order [id: k1]\n" +
+    '- … 2 more; memory.for_file(path="src/a.cpp") lists them.\n' +
+    '- A team rule wrong or outdated? memory.delete(namespace="code-x", memory_key=<id>) removes it if you wrote it or are a maintainer; otherwise write a corrected rule for the file and tell its author.';
+  const ctx = noIds(
+    contextPayload(rendered, { rel: "src/a.cpp", teamNamespace: "code-x" }).hookSpecificOutput.additionalContext,
+  );
+  const after = ctx.slice(ctx.indexOf("</loom-recalled-data>") + "</loom-recalled-data>".length);
+  assert.match(after, /^\nA team rule or decision above that is wrong or outdated: memory\.delete\(namespace="code-x"/);
+  assert.match(after, /\nRows left out of the block: memory\.for_file\(path="src\/a\.cpp"\) lists them/);
+  const plain = contextPayload("Loom: 1 memory anchored to x\n- k: mine", { rel: "x", teamNamespace: "code-x" });
+  assert.ok(
+    noIds(plain.hookSpecificOutput.additionalContext).endsWith("</loom-recalled-data>"),
+    "no footer, no guidance",
+  );
+});

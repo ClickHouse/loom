@@ -19,7 +19,7 @@
 // (lib/repo-scope.mjs); per-session denial budgets for the read-window cap,
 // symbol greps and tracker searches (sessionStatePath "shunt-cap"); the
 // user's decision log (tmpStatePath "shunt-log") and its unflushed copy, one
-// batch per reporting scope and session (PENDING_PATH, named by batchKind in
+// batch per reporting scope and session (repo.pending, named by batchKind in
 // lib/shunt-ledger.mjs), all through lib/tmp-state.mjs's private-file helpers,
 // flushed as code.outcome rows (fire-and-forget, 300 ms) on a deny or every
 // SHUNT_FLUSH_EVERY lines (lib/shunt-ledger.mjs).
@@ -97,14 +97,22 @@ const FLUSH_TIMEOUT_MS = 300;
 const UID = typeof process.getuid === "function" ? process.getuid() : "";
 // One decision log per user.
 const LOG_PATH = tmpStatePath("shunt-log", UID, { ext: ".log" });
-// The unflushed batch, set in main: PENDING_KIND names the reporting scope
-// (server, token, repository) every batch of it shares, PENDING_PATH this
-// session's batch, a name nobody can create ahead of the session. Both are
-// swept with the other state files. A flush also claims the scope's other
-// batches: those ended or crashed sessions left, and those of sessions still
-// running.
-let PENDING_KIND = "";
-let PENDING_PATH = "";
+
+/** The unflushed batch, set on `repo` in main: `kind` names the reporting scope
+ *  (server, token, repository) every batch of it shares, `path` this session's
+ *  batch, a name nobody can create ahead of the session. Batches and claimed
+ *  batches are swept with the other state files. A flush also claims the
+ *  scope's other batches: those ended or crashed sessions left, and those of
+ *  sessions still running. */
+function pendingFor(repo, sessionId) {
+  const kind = batchKind({
+    serverUrl: resolveServerUrl(),
+    token: resolveToken(),
+    org: repo.org || "",
+    namespace: repo.namespace || "",
+  });
+  return { kind, path: sessionStatePath(kind, sessionId, { ext: ".log" }) };
+}
 
 function countLines(abs) {
   try {
@@ -176,7 +184,7 @@ function fileBytes(abs) {
 
 /** Append one decision locally; returns the number of unflushed lines. Sync
  *  appends of one short line — microseconds, and never on the network. */
-function logDecision({ decision, tool, tokensSaved, reason, passReason, path, startLine, endLine }) {
+function logDecision(pending, { decision, tool, tokensSaved, reason, passReason, path, startLine, endLine }) {
   if (!LOG_ON) return 0;
   const line = formatShuntLine({
     decision,
@@ -194,8 +202,8 @@ function logDecision({ decision, tool, tokensSaved, reason, passReason, path, st
     /* tmp not writable, or a file we do not own: fine */
   }
   try {
-    writePrivateFile(PENDING_PATH, line, { append: true });
-    const text = readPrivateFile(PENDING_PATH);
+    writePrivateFile(pending.path, line, { append: true });
+    const text = readPrivateFile(pending.path);
     return text.split("\n").length - 1;
   } catch {
     return 0;
@@ -205,9 +213,9 @@ function logDecision({ decision, tool, tokensSaved, reason, passReason, path, st
 /** The batch files of this reporting scope that this user owns: this
  *  session's and any other session's. Another user's file, a link or a hard
  *  link is left alone. */
-function scopeBatches() {
-  const dir = path.dirname(PENDING_PATH);
-  const prefix = `loom-${PENDING_KIND}-`;
+function scopeBatches(pending) {
+  const dir = path.dirname(pending.path);
+  const prefix = `loom-${pending.kind}-`;
   let names = [];
   try {
     names = fs.readdirSync(dir);
@@ -251,8 +259,8 @@ function claimBatch(file) {
  *  a 300 ms ceiling; a lost batch costs a few counter ticks. Each batch is
  *  claimed before it is read, so it is posted at most once. */
 function flushPending(repo) {
-  if (!REPORT_ON || !PENDING_PATH) return;
-  const text = scopeBatches().map(claimBatch).join("");
+  if (!REPORT_ON) return;
+  const text = scopeBatches(repo.pending).map(claimBatch).join("");
   if (!text) return;
   const agg = aggregateShuntLog(text);
   const opts = { timeoutMs: FLUSH_TIMEOUT_MS };
@@ -267,7 +275,7 @@ function flushPending(repo) {
 function settle(repo, { tool, verdict, tokens, path = "", span = { start: 0, end: 0 } }) {
   const denied = Boolean(verdict.deny);
   if (denied) deny(verdict.deny);
-  const pending = logDecision({
+  const pending = logDecision(repo.pending, {
     decision: denied ? "hit" : "pass",
     tool,
     tokensSaved: tokens,
@@ -445,13 +453,7 @@ async function main() {
   // overdue mirror fetch turns the shunt off; `asOf` rides
   // the deny text as information.
   if (!repo.indexed) return;
-  PENDING_KIND = batchKind({
-    serverUrl: resolveServerUrl(),
-    token: resolveToken(),
-    org: repo.org || "",
-    namespace: repo.namespace || "",
-  });
-  PENDING_PATH = sessionStatePath(PENDING_KIND, sessionId, { ext: ".log" });
+  repo.pending = pendingFor(repo, sessionId);
   // The deny text names this checkout's org/namespace.
   const ctxBase = {
     prefixes: repo.prefixes,
