@@ -26,7 +26,7 @@ _CLAUDE_CODE_PROBE = {
     "linux": "~/.claude/settings.json",
     "win32": "%USERPROFILE%\\.claude\\settings.json",
 }
-# Per-client config file: the token mint's table, so the dashboard and `loom install`
+# Per-client config file: the token mint's table, so its `clients` and `loom install`
 # name the same files.
 _INSTALL_CLIENTS: dict[str, dict[str, str]] = {**CONFIG_PATHS, "claude-code": _CLAUDE_CODE_PROBE}
 

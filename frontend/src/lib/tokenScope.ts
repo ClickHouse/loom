@@ -24,8 +24,8 @@ export interface TokenReadScope {
   namespaces: string[];
   /** Repositories the token reads, grouped from their branch namespaces. */
   repositories: ScopeRepo[];
-  /** Restricted repositories the person belongs to that this token still
-   * cannot read (the token's own subject holds no grant). */
+  /** Restricted repositories the person belongs to that the token reads only when
+   *  added. */
   excludedRestricted: ScopeRepo[];
   /** Memberships still awaiting approval: readable once approved, with no
    *  new token. */
@@ -48,9 +48,10 @@ function groupRepos(rows: MyNamespaceEntry[], facts: Record<string, RepoFacts>):
   return Array.from(by.values()).sort((a, b) => a.repo.localeCompare(b.repo));
 }
 
-/** What a token that reads everything its owner belongs to reads. `mine` is the caller's `namespace.list_mine` rows (null while
- *  loading); `repos` the `code.repos` rows, which carry each repository's
- *  classification (null when the caller may not list them). */
+/** What a token that reads everything its owner belongs to reads. `mine` is the
+ *  caller's `namespace.list_mine` rows (null while loading); `repos` the `code.repos`
+ *  rows, which carry each repository's classification (null when the caller may not
+ *  list them). */
 export function everythingScope(mine: MyNamespaceEntry[] | null, repos: RepoFacts[] | null): TokenReadScope {
   const rows = mine ?? [];
   const facts: Record<string, RepoFacts> = Object.fromEntries((repos ?? []).map((r) => [r.namespace, r]));

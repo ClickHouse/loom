@@ -418,13 +418,11 @@ _MEMBERSHIP_SQL = """
 
 
 def _kind(org: str, namespace: str, kind: object) -> str:
-    """A namespace's kind: its directory row's, else `code` for a configured repository
-    entry, else `memory`, the directory's own default."""
-    if kind:
-        return str(kind)
-    from server.code.domain.index.repos import repo_for_namespace
+    """A namespace's kind: its directory row's, else a configured repository's (`code`),
+    else `memory`, the directory's own default."""
+    from server.identity.app.namespace_kinds import configured_kinds
 
-    return "code" if repo_for_namespace(org, namespace) is not None else "memory"
+    return str(kind) if kind else configured_kinds(org).get(namespace, "memory")
 
 
 async def _membership_rows(ch: Any, org: str, subjects: list[str]) -> list[dict[str, Any]]:

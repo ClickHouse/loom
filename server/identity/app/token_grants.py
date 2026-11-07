@@ -75,12 +75,9 @@ def revoked_grant_row(org: str, subject: str, row: dict[str, Any], now: datetime
 async def restricted_roles(
     org: str, subject: str, delegated: Delegated, requested: Mapping[str, str | None]
 ) -> dict[str, str]:
-    """The role of the direct grant a new token gets on each restricted namespace it
-    names: its own role there, capped at the minting subject's own grant, which a
-    restricted namespace needs of every reader. That holds for one the mint named and
-    for one a narrower parent's own claim brought in through `*` (that parent named it at
-    its own mint). Where the subject holds no grant, a named one is refused (403) and one
-    that came from expanding `*` is left without a grant."""
+    """The token's own grant on each restricted namespace it names: its role there,
+    capped at the minting subject's grant. Where the subject holds none, a named one is
+    refused (403) and one that came from expanding `*` gets no grant."""
     out: dict[str, str] = {}
     for ns in delegated.namespaces:
         if ns == "*" or not await namespace_classification.is_restricted(org, ns):

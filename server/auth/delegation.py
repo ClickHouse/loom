@@ -202,14 +202,9 @@ async def delegate(
 def _flat_role(
     parent: AuthInfo, org: str, requested: dict[str, str | None], roles: dict[str, Role]
 ) -> Role:
-    """The one role of a flat child: the lowest allowed on any namespace it
-    names. Beside `*`, a namespace asked for with no role counts at the
-    parent's ceiling there rather than the creator's grant: such a token reads
-    through the creator's live grants, which cap every call, so a repository
-    the creator only reads does not leave the token unable to write anywhere.
-    The child still never exceeds the parent on any namespace. Under a
-    per-namespace parent, `*` is that parent's list and the child takes the
-    lowest role on it; a role per namespace needs a list."""
+    """The lowest role allowed on any named namespace; beside `*`, a role-less name
+    counts at the parent's ceiling, since the creator's live grants cap each call
+    (docs/guides/tokens-and-grants.md, Delegated tokens)."""
     if "*" not in requested:
         return min(roles.values())
 

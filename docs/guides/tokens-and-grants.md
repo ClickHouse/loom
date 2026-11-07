@@ -344,7 +344,8 @@ what was asked for, cut to what the caller's token allows and to the caller's li
   a restricted namespace also stay inside the caller's token role there;
 - `*` only from a sign-in token or a delegated `*` token, and it means "wherever the person
   holds a grant", at the caller's token role; from a narrower token it becomes that token's
-  own namespace list. A namespace named beside `*` without a role does not lower that one
+  own namespace list, at the lowest role the narrower token holds on it (a role per
+  namespace needs a list). A namespace named beside `*` without a role does not lower that one
   role: the person's live grant caps every call there anyway;
 - the caller's `read_scope`, `read_user_id` and `ns_write`; a per-namespace child asking for
   `writer` or `admin` on a namespace outside the caller's `ns_write` is refused, and the

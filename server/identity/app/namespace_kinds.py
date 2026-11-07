@@ -7,9 +7,9 @@ by name or by their own tools (`code.*`), never swept for a personal fact.
 Sweeping them would turn one `loom_search` over a few dozen namespaces into
 hundreds of ClickHouse statements and seconds of reads.
 
-Fail-open: an org whose directory cannot be read has no kinds, and a
-namespace without a kind row counts as memory —
-the sweep can only narrow when the directory says so. The cache mirrors
+Fail-open: an org whose directory cannot be read has no kinds but its configured
+repositories', and a namespace without a kind row counts as memory —
+the sweep can only narrow when the directory or the repository config says so. The cache mirrors
 `namespace_classification.restricted_set`: `_TTL_S` seconds per org.
 """
 
@@ -30,8 +30,17 @@ def reset_cache() -> None:
     _cache.clear()
 
 
+def configured_kinds(org: str) -> dict[str, str]:
+    """`code` for each repository `LOOM_CODE_REPOS_JSON` lists in `org`: one with no
+    directory row is a repository all the same."""
+    from server.code.domain.index.repos import configured_repos
+
+    return {r.namespace: "code" for r in configured_repos() if r.org == org}
+
+
 async def kind_map(org: str) -> dict[str, str]:
-    """`{namespace: kind}` for `org`; `{}` when the directory is unreadable."""
+    """`{namespace: kind}` for `org`, from the directory over `configured_kinds`; the
+    configured kinds alone when the directory is unreadable."""
     now = time.monotonic()
     hit = _cache.get(org)
     if hit is not None and hit[0] > now:
@@ -40,7 +49,7 @@ async def kind_map(org: str) -> dict[str, str]:
 
     client = get_client()
     if getattr(client, "_client", "absent") is None:
-        return {}
+        return configured_kinds(org)
     try:
         rows = await client.query_all(
             """
@@ -57,8 +66,9 @@ async def kind_map(org: str) -> dict[str, str]:
             )
             return hit[1]
         log.warning("namespace kind lookup failed for org %s; no narrowing: %s", org, e)
-        return {}
-    out = {str(r.get("namespace") or ""): str(r.get("kind") or "") for r in rows or []}
+        return configured_kinds(org)
+    out = configured_kinds(org)
+    out.update((str(r.get("namespace") or ""), str(r.get("kind") or "")) for r in rows or [])
     out.pop("", None)
     _cache[org] = (now + _TTL_S, out)
     return out
