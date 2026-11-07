@@ -216,7 +216,8 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
     name = _plain(title) if title else (headings[0] if headings else "")
     dated = bool(_NOTES_TITLE.search(name)) or (
         bool(_MEETING_TITLE.search(name))
-        and bool(_DATE_HEADING.match(_top_heading(name, headings)))
+        # A running notes page dates each meeting in its top heading below the title.
+        and bool(_DATE_HEADING.match((_below_title(name, headings) or ("",))[0]))
     )
     # A transcript names a recording whatever else the title says; "notes by" also signs a
     # person's notes, so it needs a meeting word and no design-document word.
@@ -263,13 +264,6 @@ def _unanswered(section_path: tuple[str, ...], prose: list[str], code: int) -> b
         return False
     heading = section_path[-1] if section_path else ""
     return bool(_QUESTIONS_HEADING.search(heading) or _CLOSING_QUESTION.match(" ".join(prose)))
-
-
-def _top_heading(name: str, section_path: tuple[str, ...]) -> str:
-    """The section's top heading below the document's own title (a first heading that
-    repeats the title is the title): a running notes page dates each meeting there."""
-    path = _below_title(name, section_path)
-    return path[0] if path else ""
 
 
 def _below_title(name: str, section_path: tuple[str, ...]) -> tuple[str, ...]:

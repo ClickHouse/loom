@@ -122,6 +122,12 @@ def test_the_labelled_set_scores_as_measured() -> None:
         ("Session store RFC", ("Open questions",), "- Keep sessions across it?\n- Who owns it?"),
         # a running notes page that dates each meeting with its year
         ("Storage weekly sync", ("Aug 13, 2026", "Cache"), "Talked about the TTL."),
+        # under a first heading with the title's words (an upload named by its file)
+        (
+            "Storage weekly sync.md",
+            ("Storage weekly sync", "Aug 13", "Cache"),
+            "Talked about the TTL.",
+        ),
         ("Storage weekly sync", ("4 March 2026", "Cache"), "Talked about the TTL."),
         ("Storage sync 2026-03-04", ("Coverage",), "We are lower than the target on coverage."),
     ],
