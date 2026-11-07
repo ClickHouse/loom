@@ -30,7 +30,8 @@ Two plugin pull requests that bump to the same number merge without a conflict, 
 
 ## Release notes
 
-The run that creates the GitHub Release generates its notes from the commits since the previous tag;
+The run that creates the GitHub Release generates its notes from the commits since the previous final
+release's tag (`prepare.py previous`), so a final on its candidate's commit lists them too;
 a re-run or the later registry dispatch keeps them as they are. What commits cannot say goes in a
 "Release notes" section of the release pull request's description, so it is reviewed before the tag:
 the pull requests' changelog entries, grouped by their changelog category (pull requests in a
@@ -162,8 +163,8 @@ the package's visibility to public in its settings, then re-run the failed jobs.
 1. `version` takes the version from the tag (`vX.Y.Z` → `X.Y.Z`) and refuses a ref that
    is not a `v*` tag (unless the run is a [dry run](#rehearsing-a-release)) or not `X.Y.Z` or
    `X.Y.Z-rc.N`. It fails when any of these is false (for `vX.Y.Z-rc.N`, against `X.Y.Z`):
-   - `server/__init__.py` reads `__version__ = "X.Y.Z"`;
-   - `prepare.py check`: every other version file, `server.json` included, names that version;
+   - `prepare.py check`: `server/__init__.py` reads `__version__ = "X.Y.Z"`, and every other
+     version file, `server.json` included, names that version;
    - `prepare.py check-chart`: the chart's version is above the previous release's;
    - `prepare.py check-tag`: a candidate `vX.Y.Z-rc.N` before `vX.Y.Z` is tagged, and a final
      `vX.Y.Z` on the commit of its last candidate;

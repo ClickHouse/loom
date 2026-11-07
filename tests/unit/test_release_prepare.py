@@ -646,8 +646,8 @@ def test_a_server_version_the_check_cannot_read_is_an_error_line_on_its_file(
     root = _copy(tmp_path)
     (root / "server/__init__.py").write_text("version = 1\n")
     check = prepare.check
-    monkeypatch.setattr(prepare, "check", lambda: check(root))
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "check"])
+    monkeypatch.setattr(prepare, "check", lambda **kw: check(root, **kw))
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "check", "1.2.0"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
     assert exited.value.code == 1
@@ -703,6 +703,17 @@ def test_a_candidate_comes_before_its_final_and_the_final_goes_where_it_was_soak
     error = prepare.check_tag("1.2.0-rc.3", tmp_path)
     assert error == "v1.2.0-rc.3 is on v1.2.0's commit, which is released: run v1.2.0 instead"
     # A stray candidate on the final's own commit leaves the final's runs alone.
+    assert prepare.check_tag("1.2.0", tmp_path) is None
+
+
+def test_annotated_tags_keep_the_candidate_order(tmp_path: Path) -> None:
+    """A release tag is annotated (signed): its commit, not the tag object, is compared."""
+    (tmp_path / "f").write_text("a")
+    git_repo.git(tmp_path, "init", "-q")
+    _commit(tmp_path, "soaked")
+    for tag in ("v1.2.0-rc.1", "v1.2.0"):
+        git_repo.git(tmp_path, "tag", "-a", "-m", tag, tag)
+    assert prepare.tag_on_head("1.2.0", tmp_path)
     assert prepare.check_tag("1.2.0", tmp_path) is None
 
 
@@ -809,8 +820,8 @@ def test_a_version_file_that_is_missing_is_an_error_line(
     root = _copy(tmp_path)
     (root / "frontend/package-lock.json").unlink()
     check = prepare.check
-    monkeypatch.setattr(prepare, "check", lambda: check(root))
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "check"])
+    monkeypatch.setattr(prepare, "check", lambda **kw: check(root, **kw))
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "check", "1.2.0"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
     assert exited.value.code == 1
@@ -851,8 +862,43 @@ def test_the_release_runs_every_check_on_the_tag_with_its_tags() -> None:
     (checkout,) = [s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout@")]
     assert checkout["with"]["fetch-depth"] == 0  # the candidate order and the chart read tags
     script = "\n".join(s.get("run", "") for s in job["steps"])
-    for command in ("check", 'check-chart "$VERSION"', 'check-tag "$VERSION"'):
-        assert f"python3 scripts/release/prepare.py {command}\n" in script, command
+    for command in ("check", "check-chart", "check-tag"):
+        assert f'python3 scripts/release/prepare.py {command} "$VERSION"\n' in script, command
+
+
+def test_the_github_release_notes_start_at_the_previous_final() -> None:
+    """A final on its candidate's commit would otherwise list nothing."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    job = workflow["jobs"]["version"]
+    assert job["outputs"]["previous"] == "${{ steps.checks.outputs.previous }}"
+    (checks,) = [s for s in job["steps"] if s.get("id") == "checks"]
+    assert 'previous=$(python3 scripts/release/prepare.py previous "$VERSION")' in checks["run"]
+    (create,) = [
+        s
+        for s in workflow["jobs"]["github-release"]["steps"]
+        if s.get("uses", "").startswith("softprops/action-gh-release@")
+    ]
+    assert create["with"]["previous_tag"] == "${{ needs.version.outputs.previous }}"
+
+
+def test_a_tag_whose_files_name_another_release_is_an_error_on_the_server_file(
+    tmp_path: Path,
+) -> None:
+    root = _copy(tmp_path)
+    version = prepare.read(prepare.SERVER, root)
+    assert prepare.check(root, tag_version=f"{version}-rc.1") == []  # a candidate of it
+    assert prepare.check(root, tag_version="0.0.1") == [
+        ("server/__init__.py", f"server/__init__.py names {version}, the tag v0.0.1")
+    ]
+
+
+def test_the_previous_release_is_printed_for_a_candidate_too(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(prepare, "previous_release", lambda version: f"below-{version}")
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "previous", "1.2.0-rc.3"])
+    prepare.main()
+    assert capsys.readouterr().out == "below-1.2.0\n"
 
 
 @pytest.mark.parametrize(

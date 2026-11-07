@@ -31,8 +31,8 @@ from typing import Any
 import dns.asyncresolver
 import pytest
 
-# A run from a git hook exports GIT_DIR: for the whole session, a test's git, and
-# a script's, stay in the repositories the test makes.
+# A run from a git hook exports GIT_DIR; drop it so every test's git uses the
+# repository the test made.
 for _name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
     os.environ.pop(_name, None)
 

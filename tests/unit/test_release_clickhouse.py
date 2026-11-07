@@ -73,9 +73,11 @@ def resolve(tmp_path: Path, repo: Path, git: Git) -> Resolve:
     published = tmp_path / "published"
     published.mkdir()
 
-    def run(version: str, tags: dict[str, str], **env: str) -> subprocess.CompletedProcess[str]:
+    def run(
+        version: str, tags: dict[str, str], annotated: bool = False, **env: str
+    ) -> subprocess.CompletedProcess[str]:
         for tag, pin in tags.items():
-            git("tag", tag)
+            git("tag", *(["-a", "-m", tag] if annotated else []), tag)
             if pin:
                 (published / tag[1:]).write_text(pin)
         return subprocess.run(
@@ -105,6 +107,12 @@ def test_a_stray_candidate_without_a_bundle_is_passed_over(resolve: Resolve) -> 
     result = resolve("1.2.0", tags)
     assert result.stdout == "ch:soaked\n"
     assert "::notice::v1.2.0-rc.3 published no bundle: passed over" in result.stderr
+
+
+def test_a_final_finds_its_annotated_candidate(resolve: Resolve) -> None:
+    """A release tag is annotated (signed); `--points-at` finds it as well."""
+    result = resolve("1.2.0", {"v1.2.0-rc.1": "ch:soaked"}, annotated=True)
+    assert result.stdout == "ch:soaked\n", result.stderr
 
 
 def test_a_dispatch_must_name_one_release(resolve: Resolve) -> None:

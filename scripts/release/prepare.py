@@ -6,7 +6,7 @@ Run with the project's environment (the notes import the server's registry):
 
     .venv/bin/python scripts/release/prepare.py bump 1.2.0       # notes, then the bump
     .venv/bin/python scripts/release/prepare.py notes 1.2.0      # the notes alone
-    .venv/bin/python scripts/release/prepare.py check            # one version everywhere
+    .venv/bin/python scripts/release/prepare.py check 1.2.0      # one version everywhere
     .venv/bin/python scripts/release/prepare.py check-chart 1.2.0       # the chart moved
     .venv/bin/python scripts/release/prepare.py check-tag 1.2.0-rc.1    # candidate order
 
@@ -106,13 +106,16 @@ def next_chart_version(version: str, previous_version: str, previous_chart: str)
     return f"{major}.{minor + 1}.0"
 
 
-def check(root: Path = ROOT) -> list[tuple[str, str]]:
-    """(file, error) for every pin that does not carry the server's version."""
+def check(root: Path = ROOT, tag_version: str = "") -> list[tuple[str, str]]:
+    """(file, error) for every pin that does not carry the server's version, and
+    for the server's version when it is not the final `tag_version` names."""
     try:
         want = read(SERVER, root)
     except ValueError as e:
         return [(SERVER.path, str(e))]
     errors = []
+    if tag_version and want != final_of(tag_version):
+        errors.append((SERVER.path, f"{SERVER.path} names {want}, the tag v{tag_version}"))
     for pin in FOLLOWERS:
         try:
             got = read(pin, root)
@@ -443,11 +446,15 @@ def release_notes(version: str, previous: str, root: Path = ROOT) -> str:
 
 
 def _check(args: argparse.Namespace) -> None:
-    errors = check()
+    errors = check(tag_version=args.tag_version)
     for path, error in errors:
         print(f"::error file={path}::{error}")
     if errors:
         raise SystemExit(1)
+
+
+def _previous(args: argparse.Namespace) -> None:
+    print(previous_release(final_of(args.tag_version)))
 
 
 def _check_tag(args: argparse.Namespace) -> None:
@@ -519,23 +526,31 @@ def _one_line(e: Exception) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    bump = commands.add_parser("bump", help="write the release notes, then bump")
-    bump.add_argument("version", help="the release, X.Y.Z")
-    bump.set_defaults(run=_bump)
-    notes = commands.add_parser("notes", help="only print the release notes")
-    notes.add_argument("version", help="the release, X.Y.Z")
-    notes.set_defaults(run=_notes)
-    commands.add_parser("check", help="every file names one version").set_defaults(run=_check)
-    chart = commands.add_parser(
+    tag_version = {"help": "the tag's version, X.Y.Z or X.Y.Z-rc.N"}
+    bump_cmd = commands.add_parser("bump", help="write the release notes, then bump")
+    bump_cmd.add_argument("version", help="the release, X.Y.Z")
+    bump_cmd.set_defaults(run=_bump)
+    notes_cmd = commands.add_parser("notes", help="only print the release notes")
+    notes_cmd.add_argument("version", help="the release, X.Y.Z")
+    notes_cmd.set_defaults(run=_notes)
+    check_cmd = commands.add_parser("check", help="every file names the tag's final version")
+    check_cmd.add_argument("tag_version", **tag_version)
+    check_cmd.set_defaults(run=_check)
+    chart_cmd = commands.add_parser(
         "check-chart", help="the chart's version is above the previous release's"
     )
-    chart.add_argument("tag_version", help="the tag's version, X.Y.Z or X.Y.Z-rc.N")
-    chart.set_defaults(run=_check_chart)
-    tag = commands.add_parser(
+    chart_cmd.add_argument("tag_version", **tag_version)
+    chart_cmd.set_defaults(run=_check_chart)
+    tag_cmd = commands.add_parser(
         "check-tag", help="a candidate before its final, the final on its last candidate's commit"
     )
-    tag.add_argument("tag_version", help="the tag's version, X.Y.Z or X.Y.Z-rc.N")
-    tag.set_defaults(run=_check_tag)
+    tag_cmd.add_argument("tag_version", **tag_version)
+    tag_cmd.set_defaults(run=_check_tag)
+    previous_cmd = commands.add_parser(
+        "previous", help="the highest final release tag below the tag's version"
+    )
+    previous_cmd.add_argument("tag_version", **tag_version)
+    previous_cmd.set_defaults(run=_previous)
     args = parser.parse_args()
     try:
         args.run(args)
@@ -543,7 +558,7 @@ def main() -> None:
     # either is one line, and in a check, which the release workflow runs, an
     # `::error::` annotation.
     except (ValueError, subprocess.CalledProcessError) as e:
-        prefix = "::error::" if args.command.startswith("check") else ""
+        prefix = "" if args.command in ("bump", "notes") else "::error::"
         raise SystemExit(prefix + _one_line(e)) from None
 
 
