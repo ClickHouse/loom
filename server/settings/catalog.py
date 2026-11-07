@@ -4028,7 +4028,8 @@ def _is_http_url(url: str) -> bool:
 
 
 # A DNS name LOOM_INFERENCE_GATEWAY_HOSTS may name: no scheme, port, path or wildcard.
-_GATEWAY_HOST_RE = re.compile(r"[a-z0-9][a-z0-9.-]*")
+# `_` too: a Compose service name has one, and httpx and urlsplit read it alike.
+_GATEWAY_HOST_RE = re.compile(r"[a-z0-9_][a-z0-9_.-]*")
 
 
 def is_bare_host(host: str) -> bool:

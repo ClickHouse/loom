@@ -515,3 +515,14 @@ def test_a_host_that_is_not_a_bare_name_or_address_is_refused_and_never_posted(
     monkeypatch.setattr("server.core.hosts._resolve", lambda host: ["93.184.215.14"])
     assert classify_refusal(url) == "it is not a valid URL"
     assert _classify(url) == "" and client.seen == []
+
+
+def test_a_private_host_with_an_underscore_is_accepted(
+    monkeypatch: pytest.MonkeyPatch, client: type[_Client]
+) -> None:
+    """A Compose service name: both parsers read the `_` alike."""
+    monkeypatch.setattr(settings, "memory_classify_private_hosts", "my_classifier")
+    monkeypatch.setattr("server.core.hosts._resolve", lambda host: ["172.18.0.4"])
+    assert classify_refusal("http://my_classifier:8080/c") == ""
+    assert _classify("http://my_classifier:8080/c") == "note"
+    assert client.seen[0]["url"] == "http://my_classifier:8080/c"

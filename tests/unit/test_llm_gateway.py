@@ -870,11 +870,11 @@ def test_a_host_list_entry_that_is_not_a_bare_host_is_refused_at_load(
 def test_a_private_host_list_loads_names_and_address_literals(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    listed = "Box.Local., bücher.local, 127.0.0.1, ::1"
+    listed = "Box.Local., bücher.local, my_classifier, 127.0.0.1, ::1"
     monkeypatch.setenv("LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS", listed)
     monkeypatch.setenv("LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS", listed)
     loaded = Settings(_env_file=None)  # type: ignore[call-arg]
-    spelled = {"box.local", "xn--bcher-kva.local", "127.0.0.1", "::1"}
+    spelled = {"box.local", "xn--bcher-kva.local", "my_classifier", "127.0.0.1", "::1"}
     assert loaded.memory_classify_private_host_set() == spelled
     assert loaded.memory_webhook_private_host_set() == spelled
 
