@@ -25,16 +25,16 @@ A document is notes by its title, in one of three shapes:
 Without a date the same words name a topic as often ("Standup reminder bot", "Order
 sync 24/7"), and a title holding a design-document, release or incident word
 ("Calendar sync design 2026-01-15", "Release notes 2026-03-04") is never notes, unless
-it names a recording (below). A
-document with no title is named by its first heading. Lines inside a fenced code block
-are code, never questions.
+it names a transcript (below). A document with no title is named by its first heading.
+Lines inside a fenced code block are code, never questions.
 
 Notes a meeting tool writes from a recording carry the meeting's date and clock time and
 a transcript or notes-by mark in their title ("Planner sync - 2026/03/04 10:00 CET -
-Notes by ..."). Their summary and topic sections are the tool's account of the meeting
-and stay content; only the transcript (its clock-time segments) and the template around
-it (the invite header, next steps, the tool's footer) are noise, each unless it records
-a decision.
+Notes by ..."); a notes-by mark beside a design, release or incident word is a person's
+notes and keeps the rule above. Their summary and topic sections are the tool's account
+of the meeting and stay content; only the transcript (its clock-time segments) and the
+template around it (the invite header, next steps, the tool's footer) are noise, each
+unless it records a decision.
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ _DECISION = re.compile(
     rf"we(?:'re| are|'ll| will| won't| will not)(?: not)? {_CHOICE_VERB}|"
     # In the first person only a plan to change something: "I'll remove the old flag",
     # not "I'll move on to the next slide".
-    r"\bi(?:'m| am|'ll| will)(?: going to)? (?:enable|disable|lower|raise|remove|deprecate|"
+    r"i(?:'ll| will|'m going to| am going to) (?:enable|disable|lower|remove|deprecate|"
     r"disallow|roll out)|"
     r"the plan is to|"
     rf"(?:we|the team)(?:'ve| have| had)? {_CHOSE}|"
@@ -131,7 +131,8 @@ _DAY = (
 _DATE_HEADING = re.compile(rf"^\W*{_DAY}\b\W*$", re.IGNORECASE)
 # A recorded meeting's title: a date with a clock time, and a transcript or notes-by mark.
 _RECORDED_STAMP = re.compile(rf"\b{_DAY}\s+\d{{1,2}}[:.]\d{{2}}\b", re.IGNORECASE)
-_RECORDED_MARK = re.compile(r"\b(?:transcript|notes by)\b", re.IGNORECASE)
+_TRANSCRIPT_MARK = re.compile(r"\btranscript\b", re.IGNORECASE)
+_NOTES_BY_MARK = re.compile(r"\bnotes by\b", re.IGNORECASE)
 # A transcript's segment (a clock-time heading such as "00:12:30"), the transcript itself
 # ("Transcript", "Planner sync - Transcript", "Transcription ended after ...") and the
 # template's own sections; not a topic that names one ("Transcript search latency").
@@ -147,7 +148,8 @@ _TRANSCRIPT_HEADING = re.compile(
 # demo" is a topic's text.
 _TEMPLATE_TEXT = re.compile(
     rf"^\W*(?:invited\s+\[|{_MONTH}\s+\d{{1,2}},\s+\d{{4}}(?:\s+\[|\W*$)|"
-    r"this editable transcript\b|please\W+rate\b|you should review(?:\s+\S+){1,2}\s+notes\b)",
+    r"this editable transcript\b|please\W+rate\s+(?:these|the|this)\b|"
+    r"you should review\s+\S+'s\s+notes\b)",
     re.IGNORECASE,
 )
 _DESIGN_TITLE = re.compile(
@@ -191,7 +193,12 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
         bool(_MEETING_TITLE.search(name))
         and bool(_DATE_HEADING.match(_top_heading(name, headings)))
     )
-    recorded = bool(_RECORDED_STAMP.search(name) and _RECORDED_MARK.search(name))
+    # A transcript names a recording whatever else the title says; "notes by" also signs a
+    # person's incident or release notes, which a design word keeps as they are.
+    recorded = bool(_RECORDED_STAMP.search(name)) and bool(
+        _TRANSCRIPT_MARK.search(name)
+        or (_NOTES_BY_MARK.search(name) and not _DESIGN_TITLE.search(name))
+    )
     notes = recorded or (dated and not _DESIGN_TITLE.search(name))
     prose, code = _lines(text)
     # A heading is not in the section's text: a decision it states counts the same.

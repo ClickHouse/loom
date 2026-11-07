@@ -600,16 +600,20 @@ meeting or progress word, optionally followed by notes, minutes, update or repor
 a date (`2026-03-04`, `2026/03/04`, `3/4/26`, `March 4`, `4 March`) or a week after it,
 as in `Storage sync 2026-03-04` or `Parser team status - week 31`; a date first with the
 meeting word ending the title, as in `2026-03-04 Meeting notes`; or a meeting word in
-its title and a date as the top heading of each meeting. A document with no title is
-named by its first heading. A title that names a design document, a plan, a release, a
-migration or an incident is never notes, as in `Calendar sync design 2026-01-15` or
-`Release notes 2026-03-04`, unless it names a recording (below). In notes, a section that records no decision is noise, its
-bookkeeping (attendees, an agenda, action items) included. Notes a meeting tool writes
-from a recording, titled with the meeting's date and clock time and a transcript or
-notes-by mark (`Planner sync - 2026/03/04 10:00 CET - Notes by ...`), keep their
-summary and topic sections as content; there only the transcript, its clock-time
-segments and the template around it (the invite header, next steps, the tool's footer)
-are noise. The rules leave a section as content when unsure.
+its title and a date, with or without its year (`Aug 13, 2026`), as the top heading of
+each meeting. A document with no title is named by its first heading. A title that
+names a design document, a plan, a release, a migration or an incident is never notes,
+as in `Calendar sync design 2026-01-15` or `Release notes 2026-03-04`, unless it names
+a transcript. In notes, a section that records no decision is noise, its bookkeeping
+(attendees, an agenda, action items) included; a stated plan (`the plan is to ...`,
+`we'll enable ...`) is a decision. Notes a meeting tool writes from a recording, titled
+with the meeting's date and clock time and a transcript or notes-by mark (`Planner sync
+
+- 2026/03/04 10:00 CET - Notes by ...`), keep their summary and topic sections as
+  content; there only the transcript, its clock-time segments and the template around it
+  (the invite header, next steps, the tool's footer) are noise. A notes-by mark beside a
+  design, release or incident word is a person's notes, read by the rule above. The rules
+  leave a section as content when unsure.
 
 A hit reports `noise`. With `LOOM_KNOWLEDGE_NOISE_FILTER` on (the default), a noise hit
 moves below the last hit close to the query (cosine similarity 0.30 or more, or the
