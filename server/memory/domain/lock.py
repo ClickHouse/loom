@@ -4,7 +4,7 @@ Two modes, each naming the write classes it refuses:
 
     read_only  — value, expiry and deletion are all refused
     no_delete  — the value may change; tombstone / redact / clear /
-                 consolidate-away are refused
+                 consolidate-away / reject are refused
 
 Every write handler fetches the head row before it writes; `assert_unlocked`
 reads the lock columns off that same row, so the check costs no extra

@@ -18,8 +18,8 @@ class MemoryLockInput(_Identity):
     """Lock one row against a class of writes.
 
     `read_only` refuses a changed value, a changed expiry and deletion;
-    `no_delete` lets the value change but refuses tombstone, redact, clear
-    and consolidate-away. A WRITER may lock, and may re-lock only to a
+    `no_delete` lets the value change but refuses tombstone, redact, clear,
+    consolidate-away and reject. A WRITER may lock, and may re-lock only to a
     stricter-or-equal mode with a later-or-open expiry; loosening is
     `memory.unlock` (ADMIN). `until` / `ttl_seconds` bound the lock (omit
     both for an open-ended lock). Under auth `locked_by` is the caller's
@@ -29,7 +29,7 @@ class MemoryLockInput(_Identity):
     # The key to lock, under this exact identity (a miss answers `locked: false`).
     memory_key: str
     # `read_only` refuses a changed value, a changed expiry and deletion; `no_delete`
-    # lets the value change but refuses tombstone, redact, clear and consolidation.
+    # lets the value change but refuses tombstone, redact, clear, consolidation and reject.
     mode: Literal["read_only", "no_delete"] = "read_only"
     # Why the row is locked (1..512 chars); a refused write's 423 quotes it.
     reason: str = Field(..., min_length=1, max_length=512)

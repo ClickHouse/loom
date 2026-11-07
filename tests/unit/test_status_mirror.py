@@ -520,9 +520,12 @@ async def test_an_automatic_quarantine_leaves_a_locked_row_and_rejects_the_rest(
         ch=ch,
     )
     assert written == 1
-    assert [(m["session_id"], m["status"]) for m in ch.inserts[0][1]] == [("s1", "rejected")]
+    inserted = dict(ch.inserts)
     # The locked session's vector row is not mirrored as rejected either.
-    assert [(e["session_id"], e["status"]) for e in ch.inserts[1][1]] == [("s1", "rejected")]
+    for table in ("loom.memory", "loom.memory_embeddings"):
+        assert [(r["session_id"], r["status"]) for r in inserted[table]] == [("s1", "rejected")], (
+            table
+        )
 
 
 @pytest.mark.asyncio

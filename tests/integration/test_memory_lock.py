@@ -83,6 +83,7 @@ def test_lock_is_refused_at_the_write(writer: httpx.Client, admin: httpx.Client,
             _ident(ns, memory_key=key, value="Fridays too", memory_type="semantic", classify=False),
         ),
         ("memory.update_by_id", {"org": ORG, "memory_id": mid, "value": "Fridays too"}),
+        ("memory.reject", _ident(ns, memory_key=key, rejection_reason="wrong")),
     ):
         r = _post(writer, op, body)
         assert r.status_code == 423, (op, r.text)
@@ -162,8 +163,9 @@ def test_no_delete_and_a_lapsing_lock(writer: httpx.Client, ns: str) -> None:
     got = _post(writer, "memory.get", _ident(ns, memory_key=key)).json()
     assert got["value"] == "v2"
     if got["lock_mode"]:  # not yet lapsed
-        r = _post(writer, "memory.delete", _ident(ns, memory_key=key))
-        assert r.status_code == 423
+        for op in ("memory.delete", "memory.reject"):
+            r = _post(writer, op, _ident(ns, memory_key=key))
+            assert r.status_code == 423, (op, r.text)
     # lapsed = no lock; poll the lapse rather than sleeping past the TTL
     wait_until(
         lambda: _post(writer, "memory.get", _ident(ns, memory_key=key)).json()["lock_mode"] == "",
