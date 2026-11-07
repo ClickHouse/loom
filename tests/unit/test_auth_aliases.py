@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from server.auth import aliases as al
-from server.identity.app import scim_groups  # noqa: F401 (bound before get_client is patched)
 
 
 def _ch(rows):

@@ -20,7 +20,6 @@ from server.insights.api.models_provider_setup import (
     ProviderValidation,
 )
 from server.insights.app import provider_activation as activation
-from server.insights.app import provider_coordinator
 from server.insights.app import provider_reset as reset
 from server.insights.app import provider_runtime as runtime
 from server.observability.problems import HealthState, collect_problems
@@ -175,6 +174,8 @@ async def test_a_reset_needing_a_rebuild_takes_over_a_refusals_hold(
     assert runtime._maintenance_config_id == str(queued["config_id"])
     assert store["gate"].closed
     assert store["gate"].refusal == ""  # a rebuild now holds, retried as one
+
+    from server.insights.app import provider_coordinator
 
     reached: list[bool] = []
 

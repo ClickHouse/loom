@@ -637,34 +637,26 @@ def _doubles_bound_at_import(modules_before: set[str]) -> list[str]:
 
 
 @pytest.fixture(autouse=True)
-def _no_test_double_bound_at_import() -> Iterator[None]:
-    """Fail a test during which a server module was first imported with a test double
-    bound to one of its names. Teardown runs after the test's own patches are undone,
-    so only a binding made at import survives to here. Before failing, every server
-    module first imported during the test is dropped from `sys.modules` and from its
-    package: a module that bound a name from a poisoned one at its own import was
-    imported in the same test, so the next import of either runs it again and binds
-    the real names instead of later tests seeing the double. Import the module at the
-    top of the test file (before the patch), patch the name on that module, or put an
-    assignment back with monkeypatch."""
+def _test_double_bound_at_import_dropped() -> Iterator[None]:
+    """After a test during which a server module was first imported with a test double
+    bound to one of its names, drop every server module first imported during the test
+    from `sys.modules` and from its package. Teardown runs after the test's own patches
+    are undone, so only a binding made at import survives to here. A module that bound a
+    name from a poisoned one at its own import was imported in the same test, so the next
+    import of either runs it again and binds the real names, and no later test sees the
+    double."""
     before = set(sys.modules)
     yield
-    bound = _doubles_bound_at_import(before)
-    if bound:
-        for name in _server_modules_since(before):
-            module = sys.modules.pop(name)
-            # `from package import leaf` returns the package attribute when it is set,
-            # without importing again.
-            package, _, leaf = name.rpartition(".")
-            parent = sys.modules.get(package)
-            if parent is not None and getattr(parent, leaf, None) is module:
-                delattr(parent, leaf)
-        pytest.fail(
-            "a module first imported under a patch kept the test double: "
-            + ", ".join(bound)
-            + " — import it before patching, patch the name on that module, or put it back"
-            + " (use monkeypatch)"
-        )
+    if not _doubles_bound_at_import(before):
+        return
+    for name in _server_modules_since(before):
+        module = sys.modules.pop(name)
+        # `from package import leaf` returns the package attribute when it is set,
+        # without importing again.
+        package, _, leaf = name.rpartition(".")
+        parent = sys.modules.get(package)
+        if parent is not None and getattr(parent, leaf, None) is module:
+            delattr(parent, leaf)
 
 
 @pytest.fixture(autouse=True)

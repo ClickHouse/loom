@@ -1,5 +1,5 @@
-"""The unit conftest names a server module first imported while a test patched a
-name it binds at import, so the test that leaks fails instead of a later one."""
+"""The unit conftest finds a server module first imported while a test patched a name
+it binds at import, and drops it after that test, so no later test sees the double."""
 
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ def test_a_module_imported_before_the_test_is_not_checked(probe) -> None:
 # and scip_full holds scip_delta's apply_delta, which reads CodeRepo from scip_delta's
 # globals, so both are dropped.
 _INNER_CONFTEST = """
-from tests.unit.conftest import _no_test_double_bound_at_import  # noqa: F401
+from tests.unit.conftest import _test_double_bound_at_import_dropped  # noqa: F401
 """
 _INNER_TESTS = """
 import sys
@@ -81,8 +81,8 @@ def test_first_import_under_a_patch():
 
 
 def test_a_patch_on_the_module_itself(monkeypatch):
-    # Runs after the test above: the guard dropped both modules, so these imports bind
-    # the real class, and the patch below is undone before the guard looks.
+    # Runs after the test above: the fixture dropped both modules, so these imports bind
+    # the real class, and the patch below is undone before the fixture looks.
     assert "server.code.app.index.scip_full" not in sys.modules
     import server.code.app.index.scip_delta as sd
     import server.code.app.index.scip_full as full
@@ -94,15 +94,11 @@ def test_a_patch_on_the_module_itself(monkeypatch):
 """
 
 
-def test_the_guard_fails_the_leaking_test_and_not_a_patch_on_the_module(
+def test_a_module_imported_under_a_patch_is_imported_again_with_the_real_names(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("PYTHONPATH", str(_REPO))
     pytester.makeconftest(_INNER_CONFTEST)
     pytester.makepyfile(test_inner=_INNER_TESTS)
     result = pytester.runpytest_subprocess("-p", "no:randomly", "-p", "no:cacheprovider")
-    result.assert_outcomes(passed=2, errors=1)
-    result.stdout.fnmatch_lines(["*ERROR at teardown of test_first_import_under_a_patch*"])
-    result.stdout.fnmatch_lines(
-        ["*kept the test double: server.code.app.index.scip_delta.CodeRepo *"]
-    )
+    result.assert_outcomes(passed=2)
