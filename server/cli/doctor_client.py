@@ -943,7 +943,6 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     install = claude_plugin_install(home)
     if install is not None:
         out.append(_claude_node_check(home, env, install))
-    # codex_plugin_enabled checks loom@loom, so read that marketplace's cache.
     # Like the header helper, take the newest copy with a launcher; with none,
     # the newest copy, so a pre-launcher plugin is named.
     cached = [p for p in _codex_plugin_cache(home).glob("*") if p.is_dir()]
