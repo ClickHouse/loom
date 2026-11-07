@@ -154,7 +154,7 @@ jobs:
       # Trivy copies a loaded image out of the daemon into /tmp; a hosted runner
       # has no room for the server image beside the toolchains it carries.
       - name: Make room for the image scans
-        if: ${{ !cancelled() && (steps.server.outcome == 'success' || steps.extractor.outcome == 'success') }}
+        if: ${{ !cancelled() && steps.server.outcome == 'success' }}
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           docker buildx prune -af >/dev/null
