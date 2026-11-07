@@ -392,6 +392,28 @@ async def test_a_revoke_whose_repository_changed_after_its_claims_answers_busy(
     assert ch.inserted == []
 
 
+async def test_an_operator_revoke_keeps_a_mirror_that_is_a_page_branch_s_only_admin(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+    mirror = {"granted_by": "repo-maintainers:code-z"}
+    ch = _FakeCH(
+        [
+            _admin("code-z", "ops"),
+            _admin("code-z", "x"),
+            _admin("code-z-dev", "ops") | mirror,
+            _admin("code-z-26-5", "ops") | mirror,
+            _admin("code-z-26-5", "x") | mirror,
+        ]
+    )
+    with caplog.at_level("WARNING", logger=maintainers.log.name):
+        await _revoke("code-z", "ops", ch=ch)
+    assert [r["namespace"] for r in ch.inserted] == ["code-z-26-5"]
+    assert "repo maintainers: clickhouse/code-z-dev keeps 'ops' — only admin of that branch" in [
+        r.message for r in caplog.records
+    ]
+
+
 async def test_an_operator_revoke_takes_a_mirror_of_an_entry_no_longer_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -917,7 +939,9 @@ async def test_one_subject_changes_one_repository_at_a_time_across_its_branches(
     log: list[str] = []
 
     async def _hold(ns: str, subject: str, name: str, hold: float) -> None:
-        async with maintainers.repo_change("clickhouse", ns, subject):
+        async with maintainers.repo_change(
+            "clickhouse", maintainers.repo_of("clickhouse", ns), subject
+        ):
             log.append(f"{name} in")
             await asyncio.sleep(hold)
             log.append(f"{name} out")
@@ -929,7 +953,7 @@ async def test_one_subject_changes_one_repository_at_a_time_across_its_branches(
     log.clear()
     await asyncio.gather(_hold("code-x", "alice", "a", 0.05), _hold("code-y", "alice", "b", 0))
     assert log == ["a in", "b in", "b out", "a out"], "another repository does not wait"
-    async with maintainers.repo_change("clickhouse", "team", "alice"):
+    async with maintainers.repo_change("clickhouse", None, "alice"):
         pass  # no repository: nothing held
 
 

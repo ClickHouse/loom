@@ -221,15 +221,15 @@ async def _create_grant(
     async def _write(_row: GrantState | None) -> datetime:
         return await _write_grant(input, subject, may_replace)
 
-    now: datetime | None = None
     async with grant_change(input.org, input.namespace, subject):
-        row = None
+        takes_admin = False
         if input.replace and input.role != "admin":
+            # Only `replace=true` lowers a grant (else 409): it may take admin.
             row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
-        if row is None or not _active_admin(row):
+            takes_admin = row is not None and _active_admin(row)
+        if not takes_admin:
             now = await _write_grant(input, subject, may_replace)
-    if now is None:
-        # Only `replace=true` lowers a grant (else 409): this one takes admin.
+    if takes_admin:
         now = await _taking_admin(input, subject, _write, lowered_to=input.role)
     if input.role == "admin":
         # The admin grant reaches the repository's branches the sync passes it to.

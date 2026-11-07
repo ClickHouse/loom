@@ -88,13 +88,12 @@ def repo_of(org: str, namespace: str) -> str | None:
     return me.repo if me is not None else None
 
 
-def repo_change(org: str, namespace: str, subject: str) -> AbstractAsyncContextManager[None]:
-    """Hold `subject`'s maintainer grants on `namespace`'s repository: one change
-    at a time across its branches, taken before any branch's own claim. A
-    no-op off a configured repository."""
+def repo_change(org: str, repo: str | None, subject: str) -> AbstractAsyncContextManager[None]:
+    """Hold `subject`'s maintainer grants on `repo`: one change at a time across
+    its branches, taken before any branch's own claim. A no-op when `repo` is
+    None."""
     from server.auth.grant_claims import grant_change
 
-    repo = repo_of(org, namespace)
     return grant_change(org, _repo_key(repo), subject) if repo is not None else nullcontext()
 
 
@@ -110,12 +109,12 @@ async def repo_admin_claims(org: str, repo: str | None, subject: str) -> AsyncIt
     from its own last-admin count to its last write, so two such changes in
     one repository run one after the other. Taken before any namespace's
     admins claim. A no-op when `repo` is None."""
-    from server.auth.grant_claims import admins_change, grant_change
+    from server.auth.grant_claims import admins_change
 
     if repo is None:
         yield
         return
-    async with grant_change(org, _repo_key(repo), subject), admins_change(org, _repo_key(repo)):
+    async with repo_change(org, repo, subject), admins_change(org, _repo_key(repo)):
         yield
 
 
@@ -263,10 +262,10 @@ async def _write_under_claims(
     still_wanted: _Wanted,
     read: list[dict[str, Any]],
     *,
-    hold_repo: bool,
+    hold_repo: str | None,
 ) -> int:
     """Write each subject's planned rows that `still_wanted` keeps in one insert,
-    holding its repository claim (with `hold_repo`, else the caller holds it)
+    holding the claim of the repository `hold_repo` names (None: the caller holds it)
     and then its branch claims: with the repository claim first, one change
     across a subject's branches runs at a time. A subject that fails writes
     none of its rows; one whose claim is busy does not stop the others, and
@@ -296,7 +295,7 @@ async def _write_subject(
     rows: list[dict[str, Any]],
     still_wanted: _Wanted,
     seen: _Seen,
-    hold_repo: bool,
+    hold_repo: str | None,
 ) -> int:
     """`_write_under_claims` for one subject's rows. A row that takes admin (a
     revoke or a lowering) also holds its branch's admins claim, so the branch's
@@ -306,8 +305,8 @@ async def _write_subject(
 
     rows.sort(key=lambda r: r["namespace"])
     async with AsyncExitStack() as held:
-        if hold_repo:
-            await held.enter_async_context(repo_change(org, rows[0]["namespace"], subject))
+        if hold_repo is not None:
+            await held.enter_async_context(repo_change(org, hold_repo, subject))
         for row in rows:
             if row["role"] != "admin" or row.get("revoked_at") is not None:  # takes admin
                 await held.enter_async_context(admins_change(org, row["namespace"]))
@@ -424,7 +423,7 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
         if targets:
             inserts += _plan_mirrors(org, rows, read, targets, branches)
     written = (
-        await _write_under_claims(client, org, inserts, _mirror_wanted, rows, hold_repo=True)
+        await _write_under_claims(client, org, inserts, _mirror_wanted, rows, hold_repo=repo)
         if inserts
         else 0
     )
@@ -541,7 +540,7 @@ async def revoke_repo_maintainer(
             )
         )
     written = (
-        await _write_under_claims(client, org, out, _still_admin, rows, hold_repo=False)
+        await _write_under_claims(client, org, out, _still_admin, rows, hold_repo=None)
         if out
         else 0
     )

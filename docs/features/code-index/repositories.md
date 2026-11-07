@@ -72,10 +72,11 @@ Rules:
   `REPO_EXISTS`; join that index instead.
 - Admin grants flow between a repository's branches in one direction. The operator's
   entries pass their admins to every branch of the repository, and a branch added here
-  passes its admins only to other branches added here. A revoke follows the same path,
-  and one made on an operator entry removes from a branch added here only a copied
-  grant, and none while the subject holds a grant given on a branch added here. An
-  operator entry that names a namespace already added here keeps that namespace's
+  passes its admins only to other branches added here.
+- A revoke follows the same path. One made on an operator entry removes from a branch
+  added here only a copied grant, and none while the subject holds a grant given on a
+  branch added here.
+- An operator entry that names a namespace already added here keeps that namespace's
   admins, who then reach the repository's other operator entries, and its access row,
   whose classification and join policy win over the entry's: review both before
   listing it.
