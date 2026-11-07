@@ -17,7 +17,8 @@ the events of tasks the caller's subject posted. The stream is bounded
 (``max_seconds``, ≤ 600) so the proxy's read timeout never cuts it mid
 frame, and it writes no ledger row (it is not a registered operation; the
 pulls it wakes are). An admitted watch of an inbox in a restricted namespace
-leaves the ``namespace.restricted_access`` audit row an op leaves.
+leaves a ``namespace.restricted_access`` audit row for the inbox's owner
+namespace, as the op gate does for the namespace a request names.
 """
 
 from __future__ import annotations

@@ -155,19 +155,25 @@ def test_a_release_of_a_restricted_namespace_writes_the_access_audit_row(
     env: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run, state = env
-    noted: list[tuple[str, str, str]] = []
+    rows: list[tuple[str, dict[str, Any]]] = []
 
-    async def note(auth: Any, *, op: str, org: str, namespace: str, transport: str) -> bool:
-        noted.append((op, org, namespace))
-        return True
+    async def emit(event_type: str, **kw: Any) -> str:
+        rows.append((event_type, kw))
+        return "hash"
 
-    monkeypatch.setattr(cr, "note_restricted_access", note)
+    monkeypatch.setattr("server.observability.audit.emit", emit)
+    monkeypatch.setattr(settings, "restricted_audit_inline", True)
+    # the snapshot the classification read fills (faked here, so seeded)
+    monkeypatch.setitem(nc._cache, "acme", (1e12, frozenset({"repo-x"})))
     state["restricted"] = True
     assert _status(run, _tok(["org_admin"])) == 404
-    assert noted == []  # refused: nothing was reached
+    assert rows == []  # refused: nothing was reached
     state["allows"] = True
     assert run(_tok(["org_admin"]))[0].released
-    assert noted == [("admin.claim_release", "acme", "repo-x")]
+    ((event, kw),) = rows
+    assert event == "namespace.restricted_access"
+    assert (kw["org"], kw["namespace"]) == ("acme", "repo-x")
+    assert kw["subject"]["op"] == "admin.claim_release"
 
 
 def test_auth_off_releases_as_local(env: Any, monkeypatch: pytest.MonkeyPatch) -> None:

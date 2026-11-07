@@ -1,4 +1,4 @@
-"""The raw HTTP routes leave the restricted-access audit row an op leaves.
+"""The raw HTTP routes leave the restricted-access audit row the op gate leaves.
 
 `knowledge.download`, `knowledge.upload`, `task/watch` and
 `admin/claim_release` are not registry ops, so the transport gate
@@ -221,6 +221,48 @@ async def test_the_real_check_fills_the_snapshot_the_audit_row_reads(
 
 
 @pytest.mark.asyncio
+async def test_the_real_inbox_check_fills_the_snapshot_the_audit_row_reads(
+    monkeypatch: pytest.MonkeyPatch, audit_rows: list[Any]
+) -> None:
+    """Cold classification cache, real `row_in_scope`: the owner namespace's
+    classification is read by the check and the row is written for it."""
+    import server.auth.authz as authz
+    import server.core.ch as ch
+    from server.tasks.app import watch_routes
+    from server.tasks.store import repo
+
+    nc.reset()
+
+    class _Directory:
+        _client = object()
+
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, str]]:
+            return [{"namespace": NS}]
+
+    async def _direct_grant(org: str, namespace: str, subject: str) -> Role:
+        return Role.WRITER
+
+    async def _inbox(org: str, inbox: str) -> dict[str, Any]:
+        return {"org": org, "inbox": inbox, "owner_namespace": NS}
+
+    async def _no_events(org: str, **_k: Any) -> list[Any]:
+        return []
+
+    monkeypatch.setattr(ch, "get_client", lambda: _Directory())
+    monkeypatch.setattr(authz, "grant_role_for", _direct_grant)
+    monkeypatch.setattr(repo, "fetch_inbox_row", _inbox)
+    monkeypatch.setattr(repo, "events_since", _no_events)
+    async with _client(watch_routes) as c:
+        r = await c.get(
+            "/v1/task/watch",
+            params={"org": ORG, "inbox": "bot", "max_seconds": 1},
+            headers=BEARER,
+        )
+    assert r.status_code == 200, r.text
+    _assert_one_row(audit_rows, "task.watch")
+
+
+@pytest.mark.asyncio
 async def test_a_standard_namespace_writes_no_audit_row(
     monkeypatch: pytest.MonkeyPatch, audit_rows: list[Any]
 ) -> None:
@@ -311,9 +353,6 @@ _ADMISSION = {
     "_in_scope",
     "restricted_allows",
     "_may_release",
-    "_require_owner_side",
-    "_load_readable_inbox",
-    "authorize_op",
 }
 # The op transports admit through `gates.authorize`, which writes the row
 # (tests/unit/test_admission_parity.py).
@@ -355,6 +394,7 @@ def test_every_raw_route_that_admits_to_a_namespace_writes_the_audit_row() -> No
         if names & _ADMISSION and "note_restricted_access" not in names:
             missing.append(str(path.relative_to(ROOT)))
     assert not missing, (
-        "these route modules admit a caller to a namespace without "
-        "server.identity.app.restricted_access.note_restricted_access: " + ", ".join(missing)
+        "these route modules name a namespace check but never call "
+        "server.identity.app.restricted_access.note_restricted_access (checked per "
+        "module, not per route): " + ", ".join(missing)
     )

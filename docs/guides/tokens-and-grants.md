@@ -403,10 +403,11 @@ exists. If the classification cannot be read, access is denied.
 
 - Search fan-out, context packs and org-wide rollups skip the restricted namespaces the
   caller cannot read, and `code.repos` hides them.
-- Each admitted request writes a `namespace.restricted_access` audit row
-  before the answer (`LOOM_RESTRICTED_AUDIT_INLINE=false` writes it beside the
-  request instead, which a killed process can lose). Code search traces keep
-  only the query digest.
+- Each request admitted to the restricted namespace it names writes a
+  `namespace.restricted_access` audit row before the answer
+  (`LOOM_RESTRICTED_AUDIT_INLINE=false` writes it beside the request instead,
+  which a killed process can lose). Code search traces keep only the query
+  digest.
 - A restricted namespace cannot be made public; its directory row changes only for a caller
   who passes the four checks at `admin`.
 - `POST /v1/admin/token.mint`, like every [delegated](#delegated-tokens) mint, names a
