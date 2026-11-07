@@ -719,6 +719,10 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         nc.note_restricted(input.org, input.namespace)
         # This host's mirror at once; every other host's at its next mirror round.
         await asyncio.to_thread(restrict_entry, cfg)
+        from server.code.app.index import maintainers
+
+        # Admins its page-added siblings copied onto it while it was standard.
+        await maintainers.drop_page_mirrors(input.org, input.namespace, ch=ch)
     else:
         nc.reset()  # a widening drops the stale restricted entry
     return CodeRepoSetAccessOutput(

@@ -48,6 +48,7 @@ REPOS = [
 class _FakeCH:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
+        self.directory: dict[str, dict[str, Any]] = {}
         self.inserted: list[dict[str, Any]] = []
         self.sql: list[str] = []
 
@@ -57,6 +58,8 @@ class _FakeCH:
         return [r for r in self.rows if r["namespace"] in wanted]
 
     async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
+        if "loom.namespaces" in sql:  # a directory row: the classification `_private` reads
+            return self.directory.get(params["ns"])
         if "count()" in sql:  # a branch's live admins
             live = [r for r in self.rows if r["namespace"] == params["ns"] and r["role"] == "admin"]
             return {"n": sum(r["revoked_at"] is None and r["status"] == "active" for r in live)}
@@ -237,6 +240,51 @@ async def test_a_restricted_self_service_branch_takes_only_the_operators_admins(
     ch = _FakeCH(rows)
     await _revoke("code-z-dev", "alice", ch=ch)
     assert ch.inserted == []
+    # restricted by its directory row alone, the snapshot not knowing it yet
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+    ch = _FakeCH([_admin("code-z", "ops"), _admin("code-z-dev", "mallory")])
+    ch.directory["code-z-26-5"] = {"classification": "restricted"}
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z-dev", ch=ch)
+    assert ("code-z-26-5", "mallory") not in {(r["namespace"], r["subject"]) for r in ch.inserted}
+
+
+async def test_an_operator_revoke_takes_its_copy_off_a_restricted_page_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The subject's own page branch keeps them on page branches, but a restricted one
+    took the operator's admin only: the revoke takes that copy, and keeps a grant
+    given there."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    copied = _admin("code-z-26-5", "alice") | {"granted_by": "repo-maintainers:code-z"}
+    rows = [
+        _admin("code-z", "alice"),
+        _admin("code-z", "ops"),
+        _admin("code-z-dev", "alice"),  # given on her own page branch
+        _admin("code-z-dev", "bob"),
+        copied,
+        _admin("code-z-26-5", "bob"),
+    ]
+    ch = _FakeCH(rows)
+    await _revoke("code-z", "alice", ch=ch)
+    assert sorted(r["namespace"] for r in ch.inserted) == ["code-z-26-5"]
+    ch = _FakeCH([*rows[:4], _admin("code-z-26-5", "alice"), _admin("code-z-26-5", "bob")])
+    await _revoke("code-z", "alice", ch=ch)
+    assert ch.inserted == []  # given there: stays
+
+
+async def test_a_restriction_drops_the_copies_page_branches_gave(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+    rows = [
+        _admin("code-z-26-5", "owner"),
+        _admin("code-z-26-5", "mallory") | {"granted_by": "repo-maintainers:code-z-dev"},
+        _admin("code-z-26-5", "ops") | {"granted_by": "repo-maintainers:code-z"},
+    ]
+    ch = _FakeCH(rows)
+    assert await maintainers.drop_page_mirrors("clickhouse", "code-z-26-5", ch=ch) == 1
+    ((row,),) = [[r for r in ch.inserted]]
+    assert (row["subject"], row["revoked_at"] is not None) == ("mallory", True)
 
 
 async def test_a_mirror_on_a_self_service_branch_never_stands_in_for_an_operator_entry(
