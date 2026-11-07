@@ -201,9 +201,10 @@ def _settings_left_as_found() -> Iterator[None]:
 _KNOWN_PROCESS_STATE_LEAKS: frozenset[str] = frozenset()
 # pytest rewrites this for every phase; it is not a test's state.
 _PYTEST_ENV = frozenset({"PYTEST_CURRENT_TEST"})
-# The session loop's default executor threads, and the document bucket's own pool
-# (`server.core.object_store`), outlive every test by design.
-_SHARED_THREAD_PREFIXES = ("asyncio_", "loom-object-store")
+# The session loop's default executor threads, the document bucket's own pool
+# (`server.core.object_store`) and the classifier's lookup pool
+# (`server.memory.app.classify`) outlive every test by design.
+_SHARED_THREAD_PREFIXES = ("asyncio_", "loom-object-store", "classify-dns")
 _THREAD_JOIN_SECONDS = 2.0
 
 
@@ -240,7 +241,8 @@ def _reset_root_logger(level: int, handlers: list[logging.Handler], latch: bool)
 def _leaked_threads(before: set[threading.Thread]) -> list[str]:
     """Non-daemon threads the test started that are still running after a
     bounded join. Daemon threads die with the process; the session loop's
-    executor threads and the bucket pool are shared by design."""
+    executor threads, the bucket pool and the classifier's lookup pool are shared
+    by design."""
     leaked = [
         t
         for t in threading.enumerate()

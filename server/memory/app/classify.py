@@ -1,9 +1,15 @@
 """Pluggable per-namespace classifier hook.
 
-Mirror of `server/memory/app/rerank.py`. When a namespace sets
-`classify_endpoint`, memory.set with `classify=True` POSTs the value
-to that URL and uses the response as memory_type. Operator owns the
-model + prompt; Loom owns the data plane.
+When a namespace sets `classify_endpoint`, memory.set with `classify=True`
+POSTs the value to that URL and uses the response as memory_type. A namespace
+admin owns the URL, the model and the prompt; Loom owns the data plane, and
+checks the URL at registration and at every call (`classify_refusal`).
+
+A URL through the gateway (`via_gateway`: the gateway is required, or the host
+is one of its listed hosts) is a model call, on the model client with the
+call's identity headers. Any other is posted on its own client to the public
+address its host was vetted to, with no redirect, no identity headers and a
+capped, uncompressed answer, all under the classifier's deadline.
 
 Contract — request body:
 {
@@ -21,15 +27,18 @@ Contract — response body:
 }
 
 Fail-open: any error returns empty string; caller's original
-memory_type wins.
+memory_type wins. A `customer.HOLDS` exception (the gateway refused or held the
+call's identity) passes through instead: the write fails, not "kept the type".
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import httpx
@@ -129,6 +138,17 @@ class _HostRefused(Exception):
     null included."""
 
 
+# Concurrent name lookups for classifiers off the gateway. A lookup cut by the deadline
+# keeps its thread until the resolver gives up, and the names are a namespace admin's:
+# a burst at a name that never answers fills this pool, never asyncio's shared one.
+_LOOKUP_THREADS = 4  # not a setting: a bound on what an admin's names can hold
+
+
+@functools.cache
+def _lookup_pool() -> ThreadPoolExecutor:
+    return ThreadPoolExecutor(max_workers=_LOOKUP_THREADS, thread_name_prefix="classify-dns")
+
+
 # The largest classifier answer read: {"memory_type": ...} is a few dozen bytes.
 _MAX_ANSWER_BYTES = 64 * 1024  # not a setting: bounds what an admin's endpoint can send
 
@@ -145,6 +165,7 @@ async def _post_vetted(endpoint: str, body: Mapping[str, object], *, scope: tupl
             endpoint,
             schemes=("https", "http"),
             private_hosts=settings.memory_classify_private_host_set(),
+            pool=_lookup_pool(),
         )
         if refusal:
             if _REFUSED_LOGGED.first(("host", *scope)):

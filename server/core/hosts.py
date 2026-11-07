@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+from concurrent.futures import Executor
 
 # The NAT64 well-known prefix: its low 32 bits are the IPv4 address a packet reaches
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
@@ -44,18 +45,27 @@ def _resolve(host: str) -> list[str]:
 
 
 async def vet_host(
-    host: str, *, allow_private: bool = False, name_address: bool = True
+    host: str,
+    *,
+    allow_private: bool = False,
+    name_address: bool = True,
+    pool: Executor | None = None,
 ) -> tuple[str, str]:
     """(refusal, address): refusal is "" when the host is acceptable, else one
     sentence saying why not; address is the validated one to connect to ("" when
     refused, or when `allow_private` (a dev stack) uses the name as given).
     `name_address=False` keeps the resolved address out of the refusal, for a
-    caller whose refusal reaches someone who should not learn it."""
+    caller whose refusal reaches someone who should not learn it. The lookup runs
+    on `pool` (None: asyncio's default one), so a caller whose names a tenant
+    chooses keeps its never-answering lookups off the shared pool."""
     h = (host or "").strip()
     if not h:
         return "host is required", ""
     try:
-        addrs = await asyncio.to_thread(_resolve, h)
+        if pool is None:
+            addrs = await asyncio.to_thread(_resolve, h)
+        else:
+            addrs = await asyncio.get_running_loop().run_in_executor(pool, _resolve, h)
     except Exception as e:  # noqa: BLE001 — a name that does not resolve
         return f"{h} does not resolve ({type(e).__name__})", ""
     if not addrs:

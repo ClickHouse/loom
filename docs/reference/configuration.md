@@ -1077,7 +1077,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_CLASSIFY_TIMEOUT_S` | `float` | `8.0` | live | Seconds a namespace's classify_endpoint may take to answer a write's classification; past it the write keeps the caller's memory_type. |
-| `LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS` | `str` | `''` |  | Comma-separated hostnames or IP literals, no port (exact, any case; an IDN in either spelling) a classify_endpoint may name although they resolve to a private or loopback address, reached over plain http too (a classifier beside Loom): any port and path of a listed host, so list only a host that serves nothing else; "" = only https at public addresses. |
+| `LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS` | `str` | `''` |  | Comma-separated hostnames or IP literals, no port, a classify_endpoint may reach on a private address and over http, on any port: list only a host that serves nothing else. |
 
 ### Delete-version checks
 

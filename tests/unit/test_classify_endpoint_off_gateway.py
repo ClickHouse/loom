@@ -528,3 +528,79 @@ def test_a_private_host_with_an_underscore_is_accepted(
     assert classify_refusal("http://my_classifier:8080/c") == ""
     assert _classify("http://my_classifier:8080/c") == "note"
     assert client.seen[0]["url"] == "http://my_classifier:8080/c"
+
+
+def test_the_gateways_explicit_default_port_is_called_as_a_model_call(
+    monkeypatch: pytest.MonkeyPatch, client: type[_Client]
+) -> None:
+    from server.clients import _http
+    from server.llm import customer
+
+    posted: list[str] = []
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"memory_type": "note"}
+
+    class _ModelClient:
+        async def post(self, url: str, **kw: Any) -> _Resp:
+            posted.append(url)
+            return _Resp()
+
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
+    monkeypatch.setattr(_http, "get_model_client", lambda: _ModelClient())
+    monkeypatch.setattr(customer, "headers", lambda who: {})
+    assert _classify("https://gateway.example:443/c") == "note"
+    assert posted == ["https://gateway.example:443/c"] and client.seen == []
+
+
+def test_lookups_that_never_answer_hold_at_most_the_classifiers_own_threads(
+    monkeypatch: pytest.MonkeyPatch, client: type[_Client]
+) -> None:
+    """A burst at a name that never answers: each call ends at its deadline, and the
+    lookups hold only the classifier's small pool, never asyncio's shared one."""
+    import threading
+
+    release = threading.Event()
+    lock = threading.Lock()
+    running = [0, 0]  # now, most at once
+    threads: set[str] = set()
+
+    def _hangs(host: str) -> list[str]:
+        with lock:
+            running[0] += 1
+            running[1] = max(running[1], running[0])
+            threads.add(threading.current_thread().name)
+        release.wait(10)
+        with lock:
+            running[0] -= 1
+        return ["93.184.215.14"]
+
+    monkeypatch.setattr(settings, "memory_classify_timeout_s", 0.3)
+    monkeypatch.setattr("server.core.hosts._resolve", _hangs)
+
+    async def _burst() -> list[str]:
+        return await asyncio.gather(
+            *(
+                classify.classify(
+                    org="acme",
+                    namespace="ns",
+                    endpoint=f"https://never{i}.example/c",
+                    prompt_template="",
+                    value="v",
+                    valid_types=[],
+                )
+                for i in range(12)
+            )
+        )
+
+    try:
+        assert asyncio.run(_burst()) == [""] * 12 and client.seen == []
+        # another test's cut lookup may still hold a thread of the pool
+        assert 1 <= running[1] <= classify._LOOKUP_THREADS < 12
+        assert all(name.startswith("classify-dns") for name in threads)
+    finally:
+        release.set()

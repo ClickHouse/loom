@@ -23,6 +23,7 @@ import logging
 import os
 import ssl
 from collections.abc import Collection, Mapping
+from concurrent.futures import Executor
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
@@ -95,6 +96,7 @@ async def pinned_target(
     *,
     schemes: Collection[str] = ("http", "https"),
     private_hosts: Collection[str] = (),
+    pool: Executor | None = None,
 ) -> tuple[str, str, str, str]:
     """(refusal, request URL, Host header, TLS server name) for a webhook URL.
 
@@ -103,7 +105,8 @@ async def pinned_target(
     here. A host named in `private_hosts` (an operator's allowlist, spelled as
     `ascii_host` spells it) may resolve to a private or loopback address and is
     reached by its name. The name is resolved, matched and sent (Host, SNI) in its
-    ASCII form: a Unicode one as its UTS 46 IDNA form."""
+    ASCII form: a Unicode one as its UTS 46 IDNA form. The lookup runs on `pool`
+    (`vet_host`)."""
     try:
         parts = urlsplit(url)
         host = parts.hostname or ""
@@ -121,7 +124,9 @@ async def pinned_target(
         host = ""
     if not host:
         return "the URL is not valid", "", "", ""
-    refusal, address = await vet_host(host, allow_private=host in private_hosts, name_address=False)
+    refusal, address = await vet_host(
+        host, allow_private=host in private_hosts, name_address=False, pool=pool
+    )
     if refusal:
         return refusal, "", "", ""
     suffix = f":{port}" if port else ""
