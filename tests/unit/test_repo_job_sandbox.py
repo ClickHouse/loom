@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from server.code.app.index import sandbox
-from tests.unit.code_fixtures import git_config
+from tests.unit.code_fixtures import git_config, repo_config
 
 EPERM = sandbox.SECCOMP_RET_ERRNO_EPERM
 KILL = sandbox.SECCOMP_RET_KILL_PROCESS
@@ -343,7 +343,6 @@ async def test_a_required_sandbox_skips_every_entry_before_any_fetch(
     from server.code.app.index import compiler_tier, gitrepo, ingest_pass, pass_fetch
     from server.code.app.index.pass_budget import CodeIngestResult
     from server.settings import settings
-    from tests.unit.code_fixtures import repo_config
 
     mirror = tmp_path / "shared.git"
     mirror.mkdir()
@@ -377,7 +376,6 @@ async def test_a_refused_clone_records_an_error_stage(tmp_path: Path, monkeypatc
 
     from server.code.app.index import bootstrap
     from server.settings import settings
-    from tests.unit.code_fixtures import repo_config
 
     monkeypatch.setattr(sandbox, "_available", False)
     monkeypatch.setattr(settings, "code_sandbox_required", True)
@@ -622,7 +620,6 @@ async def test_scip_full_runs_its_harness_as_a_gated_repository_job(
     from server.code.app.index import compiler_tier, scip_full
     from server.code.store import index as store_index
     from server.settings import settings
-    from tests.unit.code_fixtures import repo_config
 
     for d in ("checkout", "bare.git"):
         (tmp_path / d).mkdir()
@@ -657,7 +654,6 @@ async def test_scip_full_runs_in_the_clang_tree_when_clang_is_an_extra_tier(
     from server.code.app.index import compiler_tier, scip_full
     from server.code.store import index as store_index
     from server.settings import settings
-    from tests.unit.code_fixtures import repo_config
 
     for d in ("checkout", "checkout.clang", "bare.git"):
         (tmp_path / d).mkdir()
@@ -687,7 +683,6 @@ async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, mo
     and the submodule pins come from the network with the repository's token, so
     a private submodule of the repository's owner is fetched."""
     from server.code.app.index import compiler_tier, scip_full
-    from tests.unit.code_fixtures import repo_config
 
     calls: list[tuple[tuple[str, ...], dict]] = []
 
@@ -786,7 +781,6 @@ async def test_scip_full_hands_the_sandbox_an_absolute_checkout(
     from server.code.app.index import compiler_tier, scip_full
     from server.code.store import index as store_index
     from server.settings import settings
-    from tests.unit.code_fixtures import repo_config
 
     for d in ("checkout", "bare.git", "elsewhere"):
         (tmp_path / d).mkdir()

@@ -26,8 +26,10 @@ def _lock_dir(monkeypatch, tmp_path):
     held_leases(monkeypatch)
 
 
-def _Cfg() -> Any:
-    return repo_config(org="clickhouse", namespace="code-clickhouse", scip_producer="clang")
+def _Cfg(**overrides: Any) -> Any:
+    return repo_config(
+        org="clickhouse", namespace="code-clickhouse", scip_producer="clang", **overrides
+    )
 
 
 def _repo(git_head: str, scip_commit: str) -> AsyncMock:
@@ -103,13 +105,7 @@ async def test_fetch_does_not_recurse_submodules(monkeypatch, tmp_path):
     harness = AsyncMock(return_value=JobResult(0, b"", b""))
 
     repo = _repo("a" * 40, "b" * 40)
-    cfg = repo_config(
-        org="clickhouse",
-        namespace="code-clickhouse",
-        scip_producer="clang",
-        github_token="ghs_test",
-        git_remote="https://github.com/o/private",
-    )
+    cfg = _Cfg(github_token="ghs_test", git_remote="https://github.com/o/private")
     with (
         patch("server.code.store.index.CodeRepo", return_value=repo),
         patch(
