@@ -24,10 +24,7 @@ async def test_a_plural_entity_meets_its_singular_filter(ch_client) -> None:
     from server.memory.app.search.handler import handle_memory_search
     from server.memory.app.write import handle_memory_set
 
-    try:
-        await get_client().connect()
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"clickhouse unavailable: {e}")
+    await get_client().connect()
     ns = f"agent-entcanon-{os.urandom(3).hex()}"
     await handle_memory_set(
         MemorySetInput(
@@ -66,10 +63,7 @@ async def test_a_timeline_entity_matches_canonical_and_older_lowercase_rows(ch_c
     from server.memory.app.curation import handle_memory_timeline
     from server.memory.app.write import handle_memory_set
 
-    try:
-        await get_client().connect()
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"clickhouse unavailable: {e}")
+    await get_client().connect()
     ns = f"agent-entcanon-{os.urandom(3).hex()}"
     for key in ("shipped", "older"):
         await handle_memory_set(
@@ -108,10 +102,7 @@ async def test_a_touch_keeps_entities_and_their_boost(ch_client) -> None:
     from server.memory.app.search.handler import handle_memory_search
     from server.memory.app.write import handle_memory_set
 
-    try:
-        await get_client().connect()
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"clickhouse unavailable: {e}")
+    await get_client().connect()
     ns = f"agent-entcanon-{os.urandom(3).hex()}"
     ident = {"org": ORG, "namespace": ns, "agent": "a", "memory_key": "api-shape"}
     await handle_memory_set(
@@ -146,10 +137,7 @@ async def test_healing_a_legacy_pair_converges(ch_client) -> None:
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.app.write import handle_memory_set
 
-    try:
-        await get_client().connect()
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"clickhouse unavailable: {e}")
+    await get_client().connect()
     ns = f"agent-entcanon-{os.urandom(3).hex()}"
     await handle_memory_set(
         MemorySetInput(
@@ -182,10 +170,7 @@ async def test_healing_a_legacy_pair_converges(ch_client) -> None:
 async def _connected() -> None:
     from server.core.ch import get_client
 
-    try:
-        await get_client().connect()
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"clickhouse unavailable: {e}")
+    await get_client().connect()
 
 
 async def test_distinct_acronyms_stay_distinct(ch_client) -> None:
