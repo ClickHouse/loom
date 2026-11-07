@@ -245,9 +245,9 @@ _SECRET_VERSION = (
 
 
 def _redact_setup(monkeypatch: pytest.MonkeyPatch) -> _StatefulLocalCH:
-    """The secret memory, the profile versions built from it, and one cached answer
-    and one precedent whose window held the profile key; memory.redact's lookups
-    other than the version reads are stubbed."""
+    """The secret memory, the profile versions built from it, one cached answer, one
+    cached code.ask answer and one precedent whose window held the profile key;
+    memory.redact's lookups other than the version reads are stubbed."""
     import server.auth.authz as authz
     import server.memory.store as memory_repo
     from server.memory.app import curation
@@ -257,11 +257,18 @@ def _redact_setup(monkeypatch: pytest.MonkeyPatch) -> _StatefulLocalCH:
         *_PROFILE_TABLES,
         ddl("llm_response_cache"),
         ddl("memory_ask_precedents"),
+        ddl("code_answers"),
         _SECRET_VERSION,
         *_profile_rows('{"timezone":"secret place"}', '{"timezone":null}'),
         "INSERT INTO loom.llm_response_cache (model, key, org, text, window_keys) VALUES "
         "('m', 'k1', 'o', 'secret place', ['structured_profile']), "
         "('m', 'k2', 'o', 'other', ['user_name'])",
+        "INSERT INTO loom.code_answers (org, namespace, question_id, question_embedding, "
+        "answer, memory_namespace, memory_keys) VALUES "
+        "('o', 'code', generateUUIDv4(), arrayWithConstant(3072, toBFloat16(0)), "
+        "'secret place', 'n', ['structured_profile']), "
+        "('o', 'code', generateUUIDv4(), arrayWithConstant(3072, toBFloat16(0)), "
+        "'other', 'n', ['user_name'])",
         "INSERT INTO loom.memory_ask_precedents (org, namespace, precedent_key, question, "
         f"answer, window_keys) VALUES ('o', 'n', '{'p' * 64}', 'where?', 'secret place', "
         "['structured_profile'])",
@@ -298,9 +305,11 @@ async def test_redact_deletes_the_answers_whose_window_held_a_scrubbed_profile(
         MemoryRedactInput(org="o", memory_id=_SECRET, version=1, reason="pii")
     )
 
-    assert out.redacted and out.cache_rows_deleted == 1 and out.precedent_rows_deleted == 1
+    assert out.redacted and out.cache_rows_deleted == 2 and out.precedent_rows_deleted == 1
     cached = await ch.query_all("SELECT key FROM loom.llm_response_cache")
     assert [r["key"] for r in cached] == ["k2"]
+    code = await ch.query_all("SELECT answer FROM loom.code_answers")
+    assert [r["answer"] for r in code] == ["other"]
     assert await ch.query_all("SELECT answer FROM loom.memory_ask_precedents") == []
 
 
@@ -337,7 +346,7 @@ async def test_a_retried_redact_scrubs_the_profile_rows_a_failed_one_left(monkey
     monkeypatch.setattr(curation, "_scrub_profile_derivatives", scrub_profiles)
     out = await curation.handle_memory_redact(redact)
 
-    assert out.redacted and out.cache_rows_deleted == 1 and out.precedent_rows_deleted == 1
+    assert out.redacted and out.cache_rows_deleted == 2 and out.precedent_rows_deleted == 1
     excerpts = await ch.query_all(
         "SELECT content_excerpt FROM loom.memory_embeddings WHERE memory_key = 'structured_profile'"
     )

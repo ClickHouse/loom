@@ -79,6 +79,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ),
     ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),
     ("ask_precedents.delete", ((D, "loom.memory_ask_precedents"),)),
+    ("code_answers.delete", ((L, "loom.code_answers"),)),
     ("summaries.tombstone", ((U, "loom.session_summaries"), (U, "loom.entity_summaries"))),
     (
         "records.tombstone",
@@ -99,6 +100,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (U, "loom.memory"),
             (D, "loom.llm_response_cache"),
             (D, "loom.memory_ask_precedents"),
+            (L, "loom.code_answers"),
         ),
     ),
     ("chunks.supersede", ((U, "loom.chunks"),)),
@@ -190,6 +192,7 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ),
     ("entity_communities.delete", ((D, "loom.entity_communities"),)),
     ("ask_precedents.delete", ((D, "loom.memory_ask_precedents"),)),
+    ("code_answers.delete", ((L, "loom.code_answers"),)),
     ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),
     ("procedure_runs.delete", ((D, "loom.procedure_runs"),)),
     ("query_nodes.delete", ((D, "loom.query_nodes"),)),
@@ -292,6 +295,7 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ),
     ("entity_communities.delete", ((D, "loom.entity_communities"),)),
     ("ask_precedents.delete", ((D, "loom.memory_ask_precedents"),)),
+    ("code_answers.delete", ((L, "loom.code_answers"),)),
     ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),
     ("procedure_runs.delete", ((D, "loom.procedure_runs"),)),
     ("query_nodes.delete", ((D, "loom.query_nodes"),)),
@@ -406,6 +410,7 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ),
     ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),
     ("ask_precedents.delete", ((D, "loom.memory_ask_precedents"),)),
+    ("code_answers.delete", ((L, "loom.code_answers"),)),
     (
         "summaries.tombstone",
         (

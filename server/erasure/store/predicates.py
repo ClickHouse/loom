@@ -65,7 +65,7 @@ CONFLICT_RECORD_IDS_IN = (
 )
 
 
-# The user scope reaches the three derived tables that carry no user_id
+# The user scope reaches the derived tables that carry no user_id
 # column through a parent-key predicate, as for the graph links. A cached
 # answer or a precedent quotes the memories of its window; `window_keys`
 # names them. The subject's keys are read from loom.memory with
@@ -106,6 +106,11 @@ USER_WINDOW_KEYS = f"hasAny(window_keys, {USER_QUOTED_KEY_LIST})"
 USER_PRECEDENT_KEYS = f"hasAny(arrayConcat(window_keys, cited_keys), {USER_QUOTED_KEY_LIST})"
 WINDOW_KEYS_IN = "hasAny(window_keys, {keys:Array(String)})"
 PRECEDENT_KEYS_IN = "hasAny(arrayConcat(window_keys, cited_keys), {keys:Array(String)})"
+# A cached code.ask answer names the memory it quoted (`memory_namespace`, `memory_keys`);
+# MEMORY_NS_EQ contains NS_EQ, so a namespace list rewrites it to `IN` the same way.
+MEMORY_NS_EQ = "memory_namespace = {ns:String}"
+USER_MEMORY_KEYS = f"hasAny(memory_keys, {USER_QUOTED_KEY_LIST})"
+MEMORY_KEYS_IN = "hasAny(memory_keys, {keys:Array(String)})"
 # A community row names an entity (and a label — the highest-degree member of
 # its community, another entity name). The entity belongs to the user when
 # every memory linking it in the co-occurrence graph is the user's and at

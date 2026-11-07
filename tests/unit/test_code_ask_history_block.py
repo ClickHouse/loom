@@ -87,7 +87,7 @@ def _ask(
     monkeypatch.setattr(ca, "_propose_identifiers", _propose)
 
     async def _mem(q):
-        return []
+        return ca.MemoryContext()
 
     monkeypatch.setattr(ca, "_inject_memory_context", _mem)
     import server.code.app.search as cs

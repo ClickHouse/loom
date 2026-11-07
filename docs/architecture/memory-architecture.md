@@ -1299,6 +1299,44 @@ than the scope costs only cache misses. The table is step-only (`idempotency.del
 counted: any search in the org refills it before the census could run. Each replica's
 process tier expires within `LOOM_EMBEDDING_CACHE_TTL_S`.
 
+`code.ask` with a bound memory namespace (`LOOM_CODE_ASK_MEMORY_NAMESPACE`) shows its
+synthesis excerpts of that namespace's memories, and a memoized answer can quote them. It
+searches that namespace alone (`namespace_scope="this"`, whatever the deployment's default)
+and drops a hit of any other, so every excerpt is the bound namespace's. The
+`loom.code_answers` row of such an answer carries `memory_namespace` and the excerpts'
+`memory_keys`: a fact's own key, a chunk's parent fact key. Its `namespace` is the code
+namespace the question was asked in. The `code_answers.delete` step deletes every version
+of the rows whose `memory_namespace` is an erased namespace or whose `memory_keys` hold
+one of an erased user's keys, tombstones included, since a tombstone version mirrors the
+text; `memory.redact` deletes the rows that hold the redacted key.
+
+An answer is memoized only when its memory namespace is in the asking org and every
+excerpt is a fact the user's keys reach or a chunk with a parent key, so these predicates
+reach every memoized answer that quoted memory. An answer that quoted a session summary,
+an entity summary, a digest, a chunk with no parent, or a fact written from other
+memories (tagged `consolidated` or `src:…`, stored under another identity) is served once
+and not cached, as for a non-public namespace: no key of the user's names that text. So is
+one whose search could not read a fact's tags (`retrieval_work.tags_unread`). Nor is one
+cached while an erasure of the org had not completed when the ask began, or completed
+since (`ledger_reads.unfinished_since`): that saga's `code_answers.delete` step may
+already have passed. A failed erasure holds this until it completes, so while one waits
+for `erasure_recovery` or a re-verify, no answer of the org that quoted memory is cached;
+a census that counts an answer whose own delete has not landed yet fails it that way.
+Nor is one that quoted a key with a redacted version, ever, since a stamp does not say
+when the redact finished scrubbing; every user's profile shares a profile key. An
+erasure registers its request, and a redact stamps the version, before either deletes the
+cached answers, so code.ask reads both again after storing an answer and, finding
+either, tombstones it and deletes the answers quoting its keys; a process killed between
+the two leaves the answer unchecked. A tombstone of an entry
+keeps no answer text, so one written after such a delete brings nothing back. Answers
+drawn from the code index alone name no memory and stay.
+
+An answer or tombstone written by a build before the columns existed names nothing, and so
+does a tombstone that build writes of a stamped entry while both builds serve; an erasure
+run before the cache is cleared can leave that text.
+The [upgrade procedure](../operations/upgrades.md#upgrade-procedure) clears the cache once
+the newer build serves alone.
+
 A bot's rule (`about="agent"`) is never written as a memory: `loom.bulk_write` files it
 to `loom.learnings_queue` as a candidate and adds a row with the user's quotes to
 `loom.learnings_supporters`. A supporter row carries the identity tuple, its `agent` the

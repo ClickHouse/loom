@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, NamedTuple
 
+from server.core.ch import sequential_reads
 from server.core.ch_params import FIELD_BYTES, chunks
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.mutations import (
@@ -21,6 +22,8 @@ from server.erasure.store.mutations import (
 from server.erasure.store.predicates import (
     COMMUNITY_ROWS_IN,
     CONFLICT_RECORD_IDS_IN,
+    MEMORY_KEYS_IN,
+    MEMORY_NS_EQ,
     NS_EQ,
     NS_IN,
     PARENT_KEYS_IN,
@@ -457,6 +460,7 @@ async def retire_memory_by_user(org: str, user_id: str, *, ch: _CHClient | None 
         )
     total += await delete_llm_response_cache_by_user(org, user_id, ch=ch)
     total += await delete_ask_precedents_by_user(org, user_id, ch=ch)
+    total += await delete_code_answers_by_user(org, user_id, ch=ch)
     if not purge_mode():
         return total + stamped
     for params in slices:
@@ -556,6 +560,26 @@ async def delete_llm_response_cache_by_namespace(
     )
 
 
+async def delete_code_answers_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """Cached code.ask answers that quoted the namespace's memories, in whatever code
+    namespace they were asked; a tombstone version an older build wrote mirrors the
+    text, so every version goes. A cache: the next ask synthesizes again. The count that
+    decides whether to delete reads sequentially, so it sees an answer another replica
+    just stored. A lightweight delete: the table carries a vector column a mutation would
+    rewrite."""
+    with sequential_reads():
+        return await delete_scoped(
+            "loom.code_answers",
+            org=org,
+            scope_where=MEMORY_NS_EQ,
+            params={"ns": namespace},
+            ch=ch,
+            lightweight=True,
+        )
+
+
 async def delete_entity_communities_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
@@ -603,6 +627,26 @@ async def delete_ask_precedents_by_user(
             params={"keys": part},
             ch=ch,
         )
+    return total
+
+
+async def delete_code_answers_by_user(
+    org: str, user_id: str, *, ch: _CHClient | None = None
+) -> int:
+    """Cached code.ask answers whose memory excerpts held any of the user's keys or a
+    summary built from them, read sequentially as for a namespace."""
+    ch = ch or _default_client()
+    total = 0
+    with sequential_reads():
+        for part in chunks(await user_quoted_keys(org, user_id, ch=ch)):
+            total += await delete_scoped(
+                "loom.code_answers",
+                org=org,
+                scope_where=MEMORY_KEYS_IN,
+                params={"keys": part},
+                ch=ch,
+                lightweight=True,
+            )
     return total
 
 

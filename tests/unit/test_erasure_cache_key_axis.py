@@ -359,6 +359,10 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
         deleted.append(("prec", org, key))
         return 1
 
+    async def _code(org, key, *, ch=None):
+        deleted.append(("code", org, key))
+        return 3
+
     monkeypatch.setattr(memory_repo, "find_history_target", _find)
     monkeypatch.setattr(memory_repo, "get_by_key", _head)
 
@@ -404,6 +408,7 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
     monkeypatch.setattr("server.memory.domain.lock.assert_unlocked", lambda *a, **kw: None)
     monkeypatch.setattr(memory_repo, "delete_llm_response_cache_by_key", _cache)
     monkeypatch.setattr(memory_repo, "delete_ask_precedents_by_key", _prec)
+    monkeypatch.setattr(memory_repo, "delete_code_answers_by_key", _code)
     inp = SimpleNamespace(
         org="o",
         memory_id=_MEMORY,
@@ -412,7 +417,8 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
         redacted_by="ops",
     )
     out = await cur.handle_memory_redact(inp)
-    assert out.redacted is True and out.cache_rows_deleted == 2 and out.precedent_rows_deleted == 1
+    # the model response cache's rows and code.ask's cached answers
+    assert out.redacted is True and out.cache_rows_deleted == 5 and out.precedent_rows_deleted == 1
     # The key and the live head the handler checked go with the scrub, for its
     # transaction to recheck.
     key = ("o", "n", "a", "u", "s", "user_employer")
@@ -427,6 +433,7 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
     ]
     assert deleted == [
         ("cache", "o", "user_employer"),
+        ("code", "o", "user_employer"),
         ("prec", "o", "user_employer"),
     ]
 

@@ -49,4 +49,4 @@ def test_the_default_synthesis_prompt_is_byte_identical() -> None:
 
 def test_the_answer_cache_prompt_version_is_pinned() -> None:
     """A new value retires every cached code.ask answer on deploy — change it on purpose."""
-    assert answers_entry.prompt_version() == "cbec4322b336539e"
+    assert answers_entry.prompt_version() == "171b63b7b6a64522"

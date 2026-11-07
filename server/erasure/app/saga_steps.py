@@ -261,10 +261,11 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("graph_links.delete", graph_steps.delete_graph_links_by_user),
     ("consolidated.tombstone", graph_steps.tombstone_consolidated_dependents_by_user),
     # The answer text that quoted the user's memories or a summary of them: the
-    # exact-prompt cache and the precedents, by the keys of the window each row
-    # rendered. After the summaries' tombstone, so no new answer can quote one.
+    # exact-prompt cache, the precedents and code.ask's answer cache, by the keys each
+    # row was shown. After the summaries' tombstone, so no new answer can quote one.
     ("llm_response_cache.delete", graph_steps.delete_llm_response_cache_by_user),
     ("ask_precedents.delete", graph_steps.delete_ask_precedents_by_user),
+    ("code_answers.delete", graph_steps.delete_code_answers_by_user),
     ("summaries.tombstone", graph_steps.tombstone_summaries_by_user),
     ("records.tombstone", graph_steps.tombstone_records_by_user),
     ("session_outcomes.delete", memory_steps.delete_session_outcomes_by_user),
@@ -315,6 +316,7 @@ NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
     ("entity_communities.delete", graph_steps.delete_entity_communities_by_namespace),
     ("ask_precedents.delete", graph_steps.delete_ask_precedents_by_namespace),
     ("llm_response_cache.delete", graph_steps.delete_llm_response_cache_by_namespace),
+    ("code_answers.delete", graph_steps.delete_code_answers_by_namespace),
     ("procedure_runs.delete", memory_steps.delete_procedure_runs_by_namespace),
     ("query_nodes.delete", memory_steps.delete_query_nodes_by_namespace),
     ("session_outcomes.delete", memory_steps.delete_session_outcomes_by_namespace),

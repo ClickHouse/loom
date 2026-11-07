@@ -1699,7 +1699,7 @@ Scrub the value of a historical memory row, preserving its audit entry.
 | `redacted` | `bool` | False when memory_id or that version is not found, or the caller is not admin of its namespace. |
 | `refused_head` | `bool` | True when the target was the live head |
 | `redacted_at` | `datetime \| None` | UTC time of the scrub; None when nothing was redacted. |
-| `cache_rows_deleted` | `int` | The cached answers whose window held the redacted key or a profile key the redact reached, deleted with it: the stored text that quoted the value. |
+| `cache_rows_deleted` | `int` | The cached answers (the model response cache and code.ask's) whose window or quoted memory keys held the redacted key or a profile key the redact reached, deleted with it: the stored text that quoted the value. |
 | `precedent_rows_deleted` | `int` | Stored `memory.ask` precedents that quoted the redacted key or a profile key the redact reached, deleted with it, across the org for a profile key. |
 
 ## `memory.reindex`

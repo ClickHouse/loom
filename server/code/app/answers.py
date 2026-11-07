@@ -22,7 +22,8 @@ import contextlib
 import logging
 import re
 import time
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, NamedTuple
 
 from server.code.app.answers_cache import (
     _exact_cached,
@@ -207,12 +208,12 @@ async def _grounded_answer(
     units = retrieval.units[:_MAX_CONTEXT_UNITS]
     if units:
         units = units + await _expand_mechanism(repo, org, ns, question, units, ctx.model)
-    mem_context = await _inject_memory_context(question)
+    memory = await _inject_memory_context(question)
     answer = await _synthesize(
         llm,
         question,
         units,
-        memories=mem_context,
+        memories=[f"[{m.label}] {m.text}" if m.label else m.text for m in memory.items],
         history=history,
     )
     # Cite what the answer USED, not everything it was shown: context units
@@ -224,9 +225,9 @@ async def _grounded_answer(
     # quality). "COVERAGE: none" answers are returned to the caller once
     # but NEVER memoized: a cached junk answer is served forever. An answer grounded in
     # a non-public memory namespace is served to this caller and never memoized for the
-    # next one.
+    # next one. A memoized one names the memory it quoted, for the erasure saga.
     answer, coverage = _split_coverage(answer)
-    memoize = coverage != "none" and (not mem_context or await _memory_context_cacheable())
+    memoize = coverage != "none" and await _memory_context_cacheable(org, memory)
     return AskResult(
         answer=answer,
         citations=citations,
@@ -238,6 +239,8 @@ async def _grounded_answer(
         # the files the synthesis was SHOWN: an entry is stale when any of them changes,
         # cited or not
         shown_paths=list(dict.fromkeys(u.path for u in units)),
+        memory_namespace=memory.namespace if memory.items else "",
+        memory_keys=list(dict.fromkeys(m.erasure_key for m in memory.items)),
     )
 
 
@@ -412,17 +415,36 @@ async def _synthesize(
     return str(res.text).strip()[:8000]
 
 
-async def _inject_memory_context(question: str) -> list[str]:
+class MemoryExcerpt(NamedTuple):
+    """One excerpt shown to the synthesis: `label` the hit key the prompt names it by,
+    `erasure_key` the loom.memory key an erasure finds it by ('' for none)."""
+
+    label: str
+    text: str
+    erasure_key: str
+
+
+@dataclass(frozen=True)
+class MemoryContext:
+    """The memory excerpts an ask showed its synthesis, all from the bound memory
+    namespace `namespace` of `org`, read once per ask."""
+
+    org: str = ""
+    namespace: str = ""
+    items: tuple[MemoryExcerpt, ...] = ()
+
+
+async def _inject_memory_context(question: str) -> MemoryContext:
     """Decision/rationale memories for a code question — the reverse of
     memory.ask's code enrichment. Gated by an explicit memory-namespace binding
-    (code_ask_memory_namespace); a no-op when unset. Returns short labelled
-    excerpts to ground code.ask's synthesis in WHY the code is the way it is.
-    Fail-open to []."""
+    (code_ask_memory_namespace); a no-op when unset. Returns short excerpts with
+    their keys to ground code.ask's synthesis in WHY the code is the way it is.
+    Fail-open to no excerpts."""
     from server.settings import settings as _s
 
     mem_ns = _s.code_ask_memory_namespace.strip()
     if not mem_ns:
-        return []
+        return MemoryContext()
     mem_org = (_s.code_ask_memory_org or _s.code_org or "").strip()
     # The bound memory namespace is read as the CURRENT principal, who was authorized
     # against the code namespace only. No right to read it → no enrichment, never a 403
@@ -432,33 +454,71 @@ async def _inject_memory_context(question: str) -> list[str]:
         from server.operations.base import Role
 
         if not await row_in_scope(mem_org, mem_ns, Role.VIEWER, hides_answer=False):
-            return []
+            return MemoryContext()
     except Exception as e:  # noqa: BLE001 — fail closed
         logger.debug("code.ask memory enrichment authorization failed: %s", e)
-        return []
+        return MemoryContext()
     shown = 3  # memory lines, one per key
     try:
         from server.memory.api.models_search import MemorySearchInput
         from server.memory.app.search import handle_memory_search
         from server.memory.app.search.scoring import one_per_key, per_key_fetch
 
+        # The bound namespace only, whatever the deployment's default scope: an excerpt
+        # of the caller's other namespaces would reach every reader of the code cache.
         out = await handle_memory_search(
             MemorySearchInput(
-                org=mem_org, namespace=mem_ns, query=question[:2000], top_k=per_key_fetch(shown)
+                org=mem_org,
+                namespace=mem_ns,
+                query=question[:2000],
+                top_k=per_key_fetch(shown),
+                namespace_scope="this",
+                include_tags=True,  # a consolidated row is told by its tags
             )
         )
     except Exception as e:  # noqa: BLE001 — additive, never fatal
         logger.debug("code.ask memory enrichment failed: %s", e)
-        return []
+        return MemoryContext()
     if getattr(out, "abstain", False):
-        return []
-    items: list[str] = []
-    for r in one_per_key(list(getattr(out, "results", None) or []), mem_ns, shown):
-        key = str(getattr(r, "memory_key", "") or "")
+        return MemoryContext()
+    # a hit names its namespace only on a cross-namespace search; one from another
+    # namespace is dropped all the same
+    hits = [
+        r
+        for r in getattr(out, "results", None) or []
+        if (getattr(r, "namespace", "") or mem_ns) == mem_ns
+    ]
+    # a fact whose tags the search could not read reads as [], like an untagged one
+    tags_read = not (getattr(out, "retrieval_work", None) or {}).get("tags_unread")
+    items: list[MemoryExcerpt] = []
+    for r in one_per_key(hits, mem_ns, shown):
         text = (getattr(r, "content_excerpt", "") or "").strip()[:400]
         if text:
-            items.append(f"[{key}] {text}" if key else text)
-    return items
+            label = str(getattr(r, "memory_key", "") or "")
+            items.append(MemoryExcerpt(label, text, _erasure_key(r, tags_read=tags_read)))
+    return MemoryContext(org=mem_org, namespace=mem_ns, items=tuple(items))
+
+
+def _erasure_key(hit: Any, *, tags_read: bool) -> str:
+    """The loom.memory key a user erasure or a redact finds the excerpt by: a fact's own
+    key, a chunk's parent fact's. None ('', which keeps an answer quoting it out of the
+    shared cache) for a summary, an entity summary, a digest, a chunk with no parent, and
+    a fact written from other memories (`consolidated` or a `src:` tag): that row stands
+    under another identity, so a user erasure does not reach its key. A fact whose tags
+    were not read (`tags_read` false, or none on the hit) counts as one of those."""
+    source = str(getattr(hit, "source", "fact") or "fact")
+    if source == "fact":
+        tags = getattr(hit, "tags", None)
+        if (
+            not tags_read
+            or tags is None
+            or any(t == "consolidated" or str(t).startswith("src:") for t in tags)
+        ):
+            return ""
+        return str(getattr(hit, "memory_key", "") or "")
+    if source == "chunk":
+        return str(getattr(hit, "parent_memory_key", "") or "")
+    return ""
 
 
 def _memory_read_narrowed() -> bool:
@@ -472,18 +532,19 @@ def _memory_read_narrowed() -> bool:
     return bool(_s.code_ask_memory_namespace.strip()) and request_narrowed()
 
 
-async def _memory_context_cacheable() -> bool:
-    """Whether an answer that carried memory excerpts may be memoized in `code_answers`.
-    The cache is per code namespace and is served to every reader of it; excerpts from
-    the bound memory namespace may ride along only when that namespace is standard AND
-    public — i.e. readable by every principal who can read the code namespace. Unknown
-    (lookup failed) counts as not cacheable."""
-    from server.settings import settings as _s
-
-    mem_ns = _s.code_ask_memory_namespace.strip()
-    if not mem_ns:
+async def _memory_context_cacheable(org: str, memory: MemoryContext) -> bool:
+    """Whether an answer asked in `org` that showed `memory` may be memoized in
+    `code_answers`. The cache is per code namespace and is served to every reader of
+    it; excerpts from the bound memory namespace may ride along only when that
+    namespace is standard AND public — i.e. readable by every principal who can read
+    the code namespace — in the same org, where an erasure of the memory finds the
+    entry, and when every excerpt has the key an erasure finds it by. Unknown (lookup
+    failed) counts as not cacheable."""
+    if not memory.items:
         return True
-    mem_org = (_s.code_ask_memory_org or _s.code_org or "").strip()
+    mem_org, mem_ns = memory.org, memory.namespace
+    if mem_org != org or not all(m.erasure_key for m in memory.items):
+        return False
     try:
         from server.identity.app.namespace_classification import is_restricted_cached
         from server.identity.app.namespace_visibility import visibility_map

@@ -39,7 +39,14 @@ async def copy_residue(
             params["namespaces"] = (
                 [scope_value] if isinstance(scope_value, str) else list(scope_value)
             )
-            predicates.append("namespace IN {namespaces:Array(String)}")
+            # a code.ask answer copy holds the memory it quoted under memory_namespace
+            if "memory_namespace" in columns:
+                predicates.append(
+                    "(namespace IN {namespaces:Array(String)} "
+                    "OR memory_namespace IN {namespaces:Array(String)})"
+                )
+            else:
+                predicates.append("namespace IN {namespaces:Array(String)}")
         elif scope_type == "user_id" and "user_id" in columns:
             params["user_id"] = scope_value
             predicates.append("user_id = {user_id:String}")

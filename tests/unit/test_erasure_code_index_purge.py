@@ -133,9 +133,10 @@ def test_the_static_table_set_matches_the_schema() -> None:
     assert static == _schema_code_tables_keyed_by_namespace(), (
         static ^ _schema_code_tables_keyed_by_namespace()
     )
-    # what stays out is configuration or telemetry, classified with a reason
-    for kept in ("loom.code_repos", "loom.code_answers"):
-        assert kept in erasure_census.NO_MEMORY_CONTENT
+    # what stays out is configuration, telemetry or the answer cache, classified apart
+    assert "loom.code_repos" in erasure_census.NO_MEMORY_CONTENT
+    answers = {s.table: s for s in erasure_census._CENSUS}["loom.code_answers"]
+    assert answers.ns_step == answers.user_step == "code_answers.delete"
     for kept in ("loom.code_search_trace", "loom.code_search_outcome"):
         assert kept in {s.table for s in erasure_census._CENSUS}
     # the content tables are the lightweight-delete ones; none of the rest is

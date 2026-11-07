@@ -159,8 +159,11 @@ from server.memory.store.records import (
 )
 from server.memory.store.redaction import (
     delete_ask_precedents_by_key,
+    delete_code_answers_by_key,
+    delete_code_answers_quoting,
     delete_llm_response_cache_by_key,
     key_derivative_scrubs,
+    keys_redacted,
     profile_keys_built_from,
     redact_versions,
     run_scrubs,
@@ -237,6 +240,8 @@ __all__ = [
     "CONTAINS_PREDICATE",
     "count_by_namespace",
     "delete_ask_precedents_by_key",
+    "delete_code_answers_by_key",
+    "delete_code_answers_quoting",
     "delete_llm_response_cache_by_key",
     "delete_procedure_runs_by_key",
     "divergent_namespaces",
@@ -321,6 +326,7 @@ __all__ = [
     "record_delete_check",
     "record_usage_event",
     "key_derivative_scrubs",
+    "keys_redacted",
     "set_chunk_count",
     "profile_keys_built_from",
     "redact_versions",

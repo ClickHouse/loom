@@ -167,6 +167,10 @@ class CodeRepoBase:
         """Mirror a live row into its tombstone version row."""
         row = _mirror_row(table, live_row)
         row["tombstoned_at"] = _now()
+        if table == "code_answers":
+            # A tombstone only hides the entry. Written after an erasure or a redact deleted
+            # the row it was read from, a copy of the text would bring back what they deleted.
+            row["answer"] = row["citations"] = ""
         return row
 
     @staticmethod

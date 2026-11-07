@@ -408,6 +408,24 @@ schema. These rules keep that safe. The operator procedure is in
       under another spelling of theirs neither sees nor revokes there a token made under
       the first, and N-1's dashboard lists a `*` token N minted by the names in its claim
       (it reads every namespace all the same).
+36. **The memory a cached `code.ask` answer quoted** (`loom.code_answers.memory_namespace`
+    and `memory_keys`, migration `086_code_answer_memory_scope.sql`): N-1 writes an
+    answer without them, and a tombstone N-1 writes of an entry N stamped (a stale entry,
+    a negative `code.outcome`) drops them, so its text stays where no erasure finds it.
+    N-1's saga, census and `memory.redact` do not know the table, so an erasure or redact
+    N-1 runs leaves the answers N stamped in its scope and still records `completed`. A
+    saga N-1 left `in_progress` runs `code_answers.delete` when N resumes it, since the
+    step is not in its `steps_completed`; one N-1 completed is not run again, and
+    `loom erasure-re-verify` does not reach this table. So an erasure N runs before the
+    cache is cleared can leave text in the cache. N also changes the answer policy in
+    the cache key, and each build reads an entry of another prompt version as dead:
+    it serves it to nobody and tombstones it on sight. While both serve, a question
+    asked of each in turn is synthesized again at every switch, and N-1's tombstones of
+    N's entries, which carry no stamp, are the main way the stamp is lost. Where a
+    memory namespace is bound, clear the cache once N serves alone
+    ([upgrade procedure](../operations/upgrades.md#upgrade-procedure), step 9); after a
+    rollback, clear it once N-1 serves alone and again once N serves again. No gate holds
+    the rollout.
 
 ## What checks them
 
