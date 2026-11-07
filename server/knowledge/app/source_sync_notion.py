@@ -447,7 +447,8 @@ async def _sync_page(
 
 async def _fetch_and_write(t: _Turn, f: dict[str, Any], uri: str) -> str:
     """Read one page's blocks, record its child pages, convert and write them:
-    `written`, `waiting`, `given_up` or `stop`, as `sync.sync_item` expects."""
+    `written`, `skipped` (another writer took the address during the fetch), `waiting`,
+    `given_up` or `stop`, as `sync.sync_item` expects."""
     result = t.result
     read_at = _now()
     try:

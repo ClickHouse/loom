@@ -301,7 +301,8 @@ async def _fetch_and_write(
     run: sync.Pass,
     result: sync.TurnResult,
 ) -> str:
-    """Read and write one recording's transcript: `written`, `waiting`, `given_up`,
+    """Read and write one recording's transcript: `written`, `skipped` (another writer
+    took the address during the fetch), `waiting`, `given_up`,
     `no_transcript` (a recent recording with none yet, its check given back to the
     pass bound) or `stop`, as `sync.sync_item` expects."""
     max_bytes = int(settings.knowledge_source_sync_max_file_bytes)

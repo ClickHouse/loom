@@ -115,8 +115,9 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
 async def _fetch_and_write(
     src: KnowledgeSource, key: str, f: dict[str, Any], result: sync.TurnResult
 ) -> str:
-    """Fetch and write one document: `written`, `waiting`, `given_up` or `stop`, as
-    `sync.sync_item` expects."""
+    """Fetch and write one document: `written`, `skipped` (another writer took the
+    address during the fetch), `waiting`, `given_up` or `stop`, as `sync.sync_item`
+    expects."""
     max_bytes = int(settings.knowledge_source_sync_max_file_bytes)
     try:
         doc = await linear.document(key, f["id"], max_bytes=max_bytes)

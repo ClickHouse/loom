@@ -548,3 +548,15 @@ def test_a_project_s_documents_are_mined_by_the_same_leg(world: _World, tracker:
     assert _detail(world)["mined"] == {uri: "2026-01-01T00:00:00.000Z"}
     _sync()
     assert len(world.mined) == 1
+
+
+def test_an_address_taken_during_the_fetch_is_counted_skipped(
+    world: _World, tracker: _Tracker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _taken(*a: Any, **kw: Any) -> bool:
+        return False  # another writer saved at the address while it was fetched
+
+    monkeypatch.setattr(source_sync, "write_document", _taken)
+    tracker.projects[PROJECT] = [_node(1, "2026-01-01T00:00:00.000Z")]
+    result = _sync()
+    assert (result.skipped, result.changed) == (1, 0)

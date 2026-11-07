@@ -1413,3 +1413,14 @@ def test_a_walk_with_an_unexpected_parent_keeps_the_child(
     uri = _moved_under_a_column(world, parent)
     _run(full=True)
     assert uri in world.docs and world.audits == []
+
+
+def test_a_page_whose_address_is_taken_during_the_fetch_is_counted_skipped(
+    world: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _taken(*a: Any, **kw: Any) -> bool:
+        return False  # another writer saved at the address while it was fetched
+
+    monkeypatch.setattr(source_sync, "write_document", _taken)
+    out = _run()
+    assert (out.skipped, out.changed) == (3, 0)

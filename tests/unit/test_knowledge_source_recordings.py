@@ -782,3 +782,24 @@ def test_a_transcript_is_mined_for_decisions_by_the_same_leg(
     assert _detail(world, "calls")["mined"] == {uri: revision}
     asyncio.run(source_sync.run_sync())
     assert len(world.mined) == 1
+
+
+def test_a_transcript_whose_address_is_taken_during_the_fetch_is_counted_skipped(
+    world: _World,  # noqa: F811
+    stores: _Stores,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _taken(*a: object, **kw: object) -> bool:
+        return False  # another writer saved at the address while it was fetched
+
+    monkeypatch.setattr(source_sync, "write_document", _taken)
+    world.sources = [_source("meet", [SPACE], MEET_KEY)]
+    stores.records = [_meet_record("r1", "2026-01-02T10:00:00Z", "2026-01-02T10:40:00Z")]
+    stores.transcripts["r1"] = _generated("r1", "t1")
+    stores.entries["t1"] = [
+        _entry("r1", "p1", "Hi.", "2026-01-02T10:01:00Z", "2026-01-02T10:01:01Z")
+    ]
+    asyncio.run(source_sync.run_sync())
+    detail = _detail(world, "calls")
+    assert (detail["skipped"], detail["changed"]) == (1, 0)
+    assert world.docs == {}

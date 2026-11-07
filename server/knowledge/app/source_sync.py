@@ -659,9 +659,9 @@ async def sync_item(
     address is skipped; one given up on this revision is unconverted; one at an
     address another writer holds is skipped; `before_fetch` (a kind's own checks)
     may settle it; then it costs one of the pass bound and `fetch_and_write` runs,
-    answering `written`, `unchanged` (fetched again and nothing to write), `waiting`,
-    `given_up` or `stop`. A written item that moved to a new address has its old one
-    retired. With `refetch`, a stored copy at this revision is fetched again all the
+    answering `written`, `unchanged` (fetched again and nothing to write), `skipped`,
+    `waiting`, `given_up` or `stop`. A written item that moved to a new address has its old
+    one retired. With `refetch`, a stored copy at this revision is fetched again all the
     same (a kind's own conversion changed)."""
     file_id = str(f["id"])
     revision = str(f.get("modifiedTime") or "")
@@ -778,10 +778,11 @@ async def _fetch_and_write(
     stored_content_sha256: str,
 ) -> str:
     """Fetch, convert and write one file: `written`, `unchanged` (a reconversion whose
-    text equals the stored copy), `waiting` (a failure that may pass holds the turn
-    for `_WAIT_PASSES` passes), `given_up` (a refusal gives the file up at once; for
-    both the wait entry is kept, and `start_waits` says when it is tried again) or
-    `stop` (the turn's own failure: a rate limit, a refused credential)."""
+    text equals the stored copy), `skipped` (another writer took the address during the
+    fetch), `waiting` (a failure that may pass holds the turn for `_WAIT_PASSES` passes),
+    `given_up` (a refusal gives the file up at once; for both the wait entry is kept, and
+    `start_waits` says when it is tried again) or `stop` (the turn's own failure: a rate
+    limit, a refused credential)."""
     try:
         fetched = await _fetch(token, f)
     except gdrive.RateLimited:
@@ -994,9 +995,9 @@ async def write_document(
         "ingested_format": ingested_format,
         **(extra_metadata or {}),
     }
-    pass_context.check_stop()  # a stopped pass or a lost lease writes nothing
     if not await _may_write(src, uri):
         return False
+    pass_context.check_stop()  # a stopped pass or a lost lease writes nothing
     await writes.handle_knowledge_upsert(
         KnowledgeUpsertInput(
             org=src.org,
@@ -1553,10 +1554,10 @@ __all__ = [
     "TurnResult",
     "capped",
     "client_error",
+    "counted",
     "full_due",
     "give_up",
     "require_current",
-    "counted",
     "retire",
     "retire_absent",
     "run_sync",
