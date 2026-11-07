@@ -49,7 +49,7 @@ fi
 image=${CLICKHOUSE_IMAGE:-}
 if [ -z "$image" ] && [[ $version != *-* ]]; then
   # An assignment, so a failure stops the script (inside `for` it would not).
-  candidates=$(python3 "$here/prepare.py" candidates "$version")
+  candidates=$(python3 "$here/prepare.py" candidates-on-head "$version")
   # A candidate whose run published no bundle: the next one down.
   for candidate in $candidates; do
     status=0

@@ -463,7 +463,7 @@ def test_the_merged_pull_requests_are_the_squash_merges_since_the_tag(tmp_path: 
     assert list(prepare.squash_merges("v1.0.0", tmp_path)) == [12, 13, 14]
 
 
-def test_a_cherry_picked_merge_keeps_its_merge_time(
+def test_the_author_date_not_the_committer_date_is_the_merge_time(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """On an older line the commit is new, the merge is not: gh's window starts at the merge."""
@@ -473,23 +473,18 @@ def test_a_cherry_picked_merge_keeps_its_merge_time(
     monkeypatch.setenv("GIT_AUTHOR_DATE", "2026-11-01T10:00:00+00:00")  # merged on main
     monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-11-20T10:00:00+00:00")  # picked later
     _commit(tmp_path, "A fix (#12)")
-    merged = datetime(2026, 11, 1, 10, tzinfo=UTC).timestamp()
+    merged = int(datetime(2026, 11, 1, 10, tzinfo=UTC).timestamp())
     assert prepare.squash_merges("v1.0.0", tmp_path) == {12: merged}
 
 
-def test_the_candidates_on_this_commit_are_listed_newest_first(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_candidates_on_this_commit_are_listed_newest_first(tmp_path: Path) -> None:
     git_repo.git(tmp_path, "init", "-q")
     _commit(tmp_path, "one")
     git_repo.git(tmp_path, "tag", "v1.2.0-rc.3")  # on another commit
     _commit(tmp_path, "two")
     for tag in ("v1.2.0-rc.9", "v1.2.0-rc.10", "v1.2.0-rc.10-x"):
         git_repo.git(tmp_path, "tag", tag)
-    monkeypatch.setattr(prepare, "ROOT", tmp_path)
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "candidates", "1.2.0"])
-    prepare.main()
-    assert capsys.readouterr().out == "v1.2.0-rc.10\nv1.2.0-rc.9\n"
+    assert prepare.candidates_on_head("1.2.0", tmp_path) == ["v1.2.0-rc.10", "v1.2.0-rc.9"]
 
 
 def _chart_repo(root: Path, chart_text: str, tag: str) -> Path:

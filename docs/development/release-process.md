@@ -287,9 +287,9 @@ A run that stopped in `clickhouse` published nothing.
   newer release, and tag the final there again; or dispatch the final with
   `-f allow_clickhouse_downgrade=true` and accept the downgrade for that patch's installs.
 
-A dispatch that is not a dry run also runs the `pypi` and `npm` jobs, so a dispatched candidate
-publishes its SDKs once their environments are approved; decline those approvals to publish only
-the images and the GitHub Release.
+Each dispatch above also runs the `pypi` and `npm` jobs, so a dispatched candidate publishes its
+SDKs once their environments are approved; decline those approvals to publish only the images and
+the GitHub Release.
 
 ## Installing from a GitHub Release
 

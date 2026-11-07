@@ -111,7 +111,7 @@ def test_a_stray_candidate_without_a_bundle_is_passed_over(resolve: Resolve) -> 
 
 
 def test_a_final_finds_its_annotated_candidate(resolve: Resolve) -> None:
-    """A release tag is annotated (signed); `--points-at` finds it as well."""
+    """A release tag is annotated (signed); its commit is the one it points at."""
     result = resolve("1.2.0", {"v1.2.0-rc.1": "ch:soaked"}, annotated=True)
     assert result.stdout == "ch:soaked\n", result.stderr
 

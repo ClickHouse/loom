@@ -12,7 +12,7 @@ python3 without the project's environment, need only the standard library:
     python3 scripts/release/prepare.py check-tag 1.2.0-rc.1  # candidate order
     python3 scripts/release/prepare.py check-chart 1.2.0     # the chart moved
     python3 scripts/release/prepare.py previous 1.2.0-rc.1   # the notes' base tag
-    python3 scripts/release/prepare.py candidates 1.2.0      # rc tags on this commit
+    python3 scripts/release/prepare.py candidates-on-head 1.2.0  # rc tags on this commit
 
 What each file carries, the chart rule, the release candidates and the notes:
 docs/development/release-process.md.
@@ -209,6 +209,12 @@ def previous_release(version: str, root: Path = ROOT) -> str:
     if not older:
         raise ValueError(f"no final release tag below {version} (are the tags fetched?)")
     return max(older, key=lambda t: parse(_version_of(t)))
+
+
+def candidates_on_head(final: str, root: Path = ROOT) -> list[str]:
+    """The candidate tags of `final` on the checked-out commit, newest first."""
+    head = _sha(root, "HEAD")
+    return [t for t in reversed(candidates(final, root)) if _tag_sha(root, t) == head]
 
 
 def candidates(final: str, root: Path = ROOT) -> list[str]:
@@ -529,11 +535,9 @@ def _fetch_tags() -> None:
     _git(ROOT, "fetch", "--quiet", "--force", "--tags", f"https://github.com/{REPOSITORY}.git")
 
 
-def _candidates(args: argparse.Namespace) -> None:
-    head = _sha(ROOT, "HEAD")
-    for tag in reversed(candidates(args.version, ROOT)):
-        if _tag_sha(ROOT, tag) == head:
-            print(tag)
+def _candidates_on_head(args: argparse.Namespace) -> None:
+    for tag in candidates_on_head(args.version):
+        print(tag)
 
 
 def _notes(args: argparse.Namespace) -> None:
@@ -615,10 +619,10 @@ def main() -> None:
     previous_cmd.add_argument("tag_version", type=_tag_version, help=tag_version_help)
     previous_cmd.set_defaults(run=_previous)
     candidates_cmd = commands.add_parser(
-        "candidates", help="the final's candidate tags on this commit, newest first"
+        "candidates-on-head", help="the final's candidate tags on this commit, newest first"
     )
     candidates_cmd.add_argument("version", type=_final_version, help="the release, X.Y.Z")
-    candidates_cmd.set_defaults(run=_candidates)
+    candidates_cmd.set_defaults(run=_candidates_on_head)
     args = parser.parse_args()
     # A refusal, a failed git or gh call, or a missing gh, git or file is one line;
     # in a check, an ::error:: annotation.
