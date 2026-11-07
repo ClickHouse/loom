@@ -1861,7 +1861,8 @@ def test_a_fault_on_the_next_revision_fails_typed_and_the_earlier_one_keeps_serv
     code: str,
 ) -> None:
     assert _run(world, _ingest(world, _upload(world))) == "ready"
-    (first,) = world.documents
+    assert len(world.documents) == 1
+    first = dict(world.documents[0])  # a copy: a change made to the row in place shows
     served = [(c["doc_version"], c["chunk_idx"]) for c in world.chunks]
     settings_override(knowledge_ingest_max_attempts=1)
     _fault(fault, world, monkeypatch, settings_override)
@@ -1871,7 +1872,7 @@ def test_a_fault_on_the_next_revision_fails_typed_and_the_earlier_one_keeps_serv
     assert job is not None and (job["state"], job["error_code"]) == ("failed", code)
     assert job["error_message"], "a failed job says why"
     # Revision 1 is the live row, and only its chunks are served.
-    assert world.documents == [first] and first.get("superseded_at") is None
+    assert world.documents == [first]
     live = [
         (c["doc_version"], c["chunk_idx"])
         for c in world.chunks
