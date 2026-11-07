@@ -1318,7 +1318,7 @@ External outcome signal for a memory row.
 | --- | --- | --- |
 | `recorded` | `bool` | False when the row was not found or the usage write failed. |
 | `evidence_count_after` | `int` | evidence_count after the bump (0 if unknown) |
-| `quarantined` | `bool` | Set when a negative outcome crossed memory_negative_demote_threshold and the memory was auto-quarantined (status -> 'rejected'); a quarantine never touches a locked row, and touches nothing when the named row is locked. |
+| `quarantined` | `bool` | Set when a negative outcome crossed memory_negative_demote_threshold and the memory was auto-quarantined (status -> 'rejected'); a locked memory is not. |
 
 ## `memory.outcome_run`
 

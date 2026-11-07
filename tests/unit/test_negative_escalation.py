@@ -45,7 +45,7 @@ class _StubCH:
 class _QuarantineCH(_StubCH):
     """Also answers the reject's reads: the identity's live ids and their vector rows."""
 
-    def __init__(self, query_one_returns, ids=("mid-1",)):
+    def __init__(self, query_one_returns, ids):
         super().__init__(query_one_returns)
         self.ids = list(ids)
 
@@ -75,82 +75,6 @@ class _QuarantineCH(_StubCH):
         return []
 
 
-async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
-    from server.memory.store import lifecycle
-    from server.settings import settings
-
-    monkeypatch.setattr(settings, "memory_negative_demote_threshold", 3)
-    ch = _QuarantineCH(
-        [
-            {"n": 3},  # rejection count reaches threshold
-            {"agent": "a", "user_id": "-", "memory_key": "k"},  # identity lookup
-            {"evidence_count": 0},  # evidence readback
-        ]
-    )
-    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
-    head = SimpleNamespace(
-        org="o",
-        namespace="n",
-        agent="a",
-        user_id="-",
-        session_id="s",
-        memory_key="k",
-        status="active",
-        version=1,
-        invalid_at=None,
-    )
-
-    async def get_by_id(memory_id, **kw):
-        return head
-
-    def build(row, **overrides):
-        keys = ("org", "namespace", "agent", "user_id", "session_id", "memory_key", "status")
-        return {**{k: getattr(row, k) for k in keys}, "invalid_at": None, **overrides}
-
-    monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
-    monkeypatch.setattr(lifecycle, "build_memory_version_row", build)
-    monkeypatch.setattr("server.memory.store.inserts.check_memory_rows", lambda rows: None)
-
-    out = await ops.handle_memory_outcome(
-        MemoryOutcomeInput(
-            org="o",
-            namespace="n",
-            memory_id="mid-1",
-            outcome="negative",
-            weight=1,
-        )
-    )
-    assert out.quarantined is True
-    written = {t: rows for t, rows in ch.inserts if t in ("loom.memory", "loom.memory_embeddings")}
-    (mem,) = written["loom.memory"]
-    assert mem["status"] == "rejected" and mem["version"] > 2
-    assert mem["rejection_reason"] == "auto-quarantine: 3 negative outcomes"
-    (emb,) = written["loom.memory_embeddings"]
-    assert emb["status"] == "rejected" and emb["memory_key"] == "k"
-    assert emb["version"] == mem["version"]
-    assert ch.executes == []  # no in-place UPDATE
-
-
-def _wire_quarantine(monkeypatch, heads):
-    """`heads`: the live rows of the identity by memory id, as the reject reads them."""
-    from server.memory.store import lifecycle
-
-    ch = _QuarantineCH(_crossing_threshold(), ids=list(heads))
-
-    async def get_by_id(memory_id, **kw):
-        return heads[memory_id]
-
-    def build(row, **overrides):
-        keys = ("org", "namespace", "agent", "user_id", "session_id", "memory_key", "status")
-        return {**{k: getattr(row, k) for k in keys}, "invalid_at": None, **overrides}
-
-    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
-    monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
-    monkeypatch.setattr(lifecycle, "build_memory_version_row", build)
-    monkeypatch.setattr("server.memory.store.inserts.check_memory_rows", lambda rows: None)
-    return ch
-
-
 def _session_row(session_id, lock_mode=""):
     return SimpleNamespace(
         org="o",
@@ -170,50 +94,77 @@ def _session_row(session_id, lock_mode=""):
 
 def _crossing_threshold():
     return [
-        {"n": 3},
-        {"agent": "a", "user_id": "-", "memory_key": "k"},
-        {"evidence_count": 0},
+        {"n": 3},  # rejection count reaches the threshold
+        {"agent": "a", "user_id": "-", "memory_key": "k"},  # identity lookup
+        {"evidence_count": 0},  # evidence readback
     ]
+
+
+def _wire_quarantine(monkeypatch, heads, named="mid-s1"):
+    """`heads`: the live rows of the identity by memory id, as the reject reads them;
+    `named` is the one the outcome names. The threshold is 3, which the count crosses."""
+    import server.memory.store as memory_repo
+    from server.memory.store import lifecycle
+    from server.settings import settings
+
+    ch = _QuarantineCH(_crossing_threshold(), ids=list(heads))
+
+    async def get_by_id(memory_id, **kw):
+        return heads[memory_id]
+
+    async def get_named(memory_id, **kw):
+        return heads[named]
+
+    def build(row, **overrides):
+        keys = ("org", "namespace", "agent", "user_id", "session_id", "memory_key", "status")
+        return {**{k: getattr(row, k) for k in keys}, "invalid_at": None, **overrides}
+
+    monkeypatch.setattr(settings, "memory_negative_demote_threshold", 3)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(memory_repo, "get_by_id", get_named)
+    monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
+    monkeypatch.setattr(lifecycle, "build_memory_version_row", build)
+    monkeypatch.setattr("server.memory.store.inserts.check_memory_rows", lambda rows: None)
+    return ch
+
+
+def _negative(memory_id="mid-s1"):
+    return MemoryOutcomeInput(
+        org="o", namespace="n", memory_id=memory_id, outcome="negative", weight=1
+    )
+
+
+async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
+    ch = _wire_quarantine(monkeypatch, {"mid-s1": _session_row("s1")})
+
+    out = await ops.handle_memory_outcome(_negative())
+    assert out.quarantined is True
+    written = {t: rows for t, rows in ch.inserts if t in ("loom.memory", "loom.memory_embeddings")}
+    (mem,) = written["loom.memory"]
+    assert mem["status"] == "rejected" and mem["version"] > 2
+    assert mem["rejection_reason"] == "auto-quarantine: 3 negative outcomes"
+    (emb,) = written["loom.memory_embeddings"]
+    assert emb["status"] == "rejected" and emb["memory_key"] == "k"
+    assert emb["version"] == mem["version"]
+    assert ch.executes == []  # no in-place UPDATE
 
 
 @pytest.mark.parametrize("mode", ["read_only", "no_delete"])
 async def test_a_locked_memory_is_not_quarantined(monkeypatch, mode):
-    import server.memory.store as memory_repo
-    from server.settings import settings
-
-    monkeypatch.setattr(settings, "memory_negative_demote_threshold", 3)
-    target = _session_row("s1", lock_mode=mode)
-
-    async def get_target(memory_id, **kw):
-        return target
-
-    monkeypatch.setattr(memory_repo, "get_by_id", get_target)
     # Its unlocked copy in another session stays too.
-    ch = _wire_quarantine(monkeypatch, {"mid-s1": target, "mid-s2": _session_row("s2")})
+    heads = {"mid-s1": _session_row("s1", lock_mode=mode), "mid-s2": _session_row("s2")}
+    ch = _wire_quarantine(monkeypatch, heads)
 
-    out = await ops.handle_memory_outcome(
-        MemoryOutcomeInput(org="o", namespace="n", memory_id="mid-s1", outcome="negative", weight=1)
-    )
+    out = await ops.handle_memory_outcome(_negative())
     assert out.recorded is True and out.quarantined is False
     assert [t for t, _ in ch.inserts] == ["loom.memory_usage_events"]
 
 
 async def test_a_quarantine_leaves_a_locked_copy_in_another_session(monkeypatch):
-    import server.memory.store as memory_repo
-    from server.settings import settings
+    heads = {"mid-s1": _session_row("s1"), "mid-s2": _session_row("s2", lock_mode="read_only")}
+    ch = _wire_quarantine(monkeypatch, heads)
 
-    monkeypatch.setattr(settings, "memory_negative_demote_threshold", 3)
-    target, locked = _session_row("s1"), _session_row("s2", lock_mode="read_only")
-
-    async def get_target(memory_id, **kw):
-        return target
-
-    monkeypatch.setattr(memory_repo, "get_by_id", get_target)
-    ch = _wire_quarantine(monkeypatch, {"mid-s1": target, "mid-s2": locked})
-
-    out = await ops.handle_memory_outcome(
-        MemoryOutcomeInput(org="o", namespace="n", memory_id="mid-s1", outcome="negative", weight=1)
-    )
+    out = await ops.handle_memory_outcome(_negative())
     assert out.quarantined is True
     written = {t: rows for t, rows in ch.inserts if t in ("loom.memory", "loom.memory_embeddings")}
     for table in ("loom.memory", "loom.memory_embeddings"):

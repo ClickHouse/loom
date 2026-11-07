@@ -296,8 +296,7 @@ class MemoryOutcomeOutput(BaseModel):
     recorded: bool
     evidence_count_after: int  # evidence_count after the bump (0 if unknown)
     # Set when a negative outcome crossed memory_negative_demote_threshold and
-    # the memory was auto-quarantined (status -> 'rejected'); a quarantine never
-    # touches a locked row, and touches nothing when the named row is locked.
+    # the memory was auto-quarantined (status -> 'rejected'); a locked memory is not.
     quarantined: bool = False
 
 

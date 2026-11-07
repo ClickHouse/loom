@@ -54,9 +54,7 @@ def effective_mode(row: Any, *, now: datetime | None = None) -> str:
 
 
 def refuses_retirement(row: Any) -> bool:
-    """A row another write may not supersede (the refines / newest_wins /
-    repair retirements): both modes refuse it — `read_only` refuses any
-    change, `no_delete` refuses consolidate-away."""
+    """A row no other write may retire: both lock modes refuse it."""
     return bool(effective_mode(row))
 
 
