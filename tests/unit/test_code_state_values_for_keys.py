@@ -119,3 +119,25 @@ def test_the_refresh_fills_both_snapshots_from_one_read(monkeypatch: Any) -> Non
         assert binding.tracker_namespaces_for("acme", "code-w-1-2") == ["tracker-w"]
     finally:
         binding.reset_overrides_for_tests()
+
+
+class _OneRow:
+    def __init__(self, row: dict[str, Any] | None) -> None:
+        self.row = row
+
+    async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
+        return self.row
+
+
+def test_get_state_or_none_tells_an_absent_row_from_an_empty_one() -> None:
+    """Removal writes "" only over a row that holds a value: an absent `qa_binding` must
+    stay absent, or the empty row would read as cleared and hide the operator's map."""
+
+    def read(row: dict[str, Any] | None) -> str | None:
+        repo = CodeRepo(_OneRow(row))  # type: ignore[arg-type]
+        return asyncio.run(repo.get_state_or_none("acme", "code-a", "qa_binding"))
+
+    assert read(None) is None
+    assert read({"state_value": ""}) == ""
+    assert read({"state_value": None}) == ""
+    assert read({"state_value": "tracker-a"}) == "tracker-a"
