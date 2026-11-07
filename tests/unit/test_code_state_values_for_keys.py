@@ -50,8 +50,8 @@ def test_tracker_binding_overrides_read_through_the_code_index(monkeypatch: Any)
     monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
     monkeypatch.setattr(reads_mod, "code_index", lambda: CodeRepo(ch))  # type: ignore[arg-type]
     try:
-        got = asyncio.run(binding.refresh_overrides(force=True))
-        assert got == {("acme", "code-a"): "tracker-a", ("acme", "code-b"): ""}
+        asyncio.run(binding.refresh_overrides(force=True))
+        assert binding._OVERRIDES == {("acme", "code-a"): "tracker-a", ("acme", "code-b"): ""}
         assert [p for _, p in ch.calls] == [{"keys": [binding.OVERRIDE_KEY, binding.BRANCH_OF_KEY]}]
     finally:
         binding.reset_overrides_for_tests()

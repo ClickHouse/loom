@@ -34,7 +34,7 @@ async def _may_read_tracker(
     read only with a grant on itself; a standard one by whoever may read it or any code
     namespace bound to it. `hides_answer`: the caller named it (see `row_in_scope`).
     `operator`: the operator's repositories (`binding.operator_repositories`) when the
-    caller read them once for many trackers; None reads them here."""
+    caller read them once for many trackers; None: `code_namespaces_linking` reads them."""
     from server.auth.authz import row_in_scope
     from server.operations.base import Role
     from server.tracker.app.binding import code_namespaces_linking

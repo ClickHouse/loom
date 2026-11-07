@@ -97,30 +97,29 @@ _OVERRIDES_AT = 0.0
 _FORGOTTEN = 0
 
 
-async def refresh_overrides(*, force: bool = False) -> dict[tuple[str, str], str]:
+async def refresh_overrides(*, force: bool = False) -> None:
     """Re-read the `OVERRIDE_KEY` and `BRANCH_OF_KEY` state rows when the snapshot is
     older than `code_repos_refresh_seconds` (or `force`); never raises — a directory
     that cannot be read keeps the last snapshot."""
     global _OVERRIDES, _BRANCH_OF, _OVERRIDES_AT
     now = time.monotonic()
     if not force and now - _OVERRIDES_AT < float(settings.code_repos_refresh_seconds):
-        return dict(_OVERRIDES)
+        return
     try:
         from server.code.app.reads import code_index
         from server.core.ch import get_client
 
         if getattr(get_client(), "_client", "absent") is None:
-            return dict(_OVERRIDES)
+            return
         forgotten = _FORGOTTEN
         rows = await code_index().state_values_for_keys([OVERRIDE_KEY, BRANCH_OF_KEY])
         if forgotten != _FORGOTTEN:
             _OVERRIDES_AT = 0.0  # the next call reads again
-            return dict(_OVERRIDES)
+            return
         _OVERRIDES, _BRANCH_OF = rows[OVERRIDE_KEY], rows[BRANCH_OF_KEY]
         _OVERRIDES_AT = now
     except Exception as e:  # noqa: BLE001 — keep the last snapshot
         log.warning("qa bindings: override refresh failed, keeping %d: %s", len(_OVERRIDES), e)
-    return dict(_OVERRIDES)
 
 
 def forget_links(org: str, code_namespace: str) -> None:

@@ -245,37 +245,69 @@ def test_a_discarded_refresh_leaves_the_next_call_to_read_again(monkeypatch) -> 
 
 
 @pytest.mark.parametrize("caller", ["pack", "brief", "risk_fit", "token_setup"])
-def test_every_reader_of_the_links_refreshes_them_first(monkeypatch, caller) -> None:
-    """A process that has served no admin op still reads current links, a branch's
-    `qa_branch_of` included: each reader refreshes the snapshot (cached for the refresh
-    interval) before its lookup."""
-    seen: list[str] = []
+def test_every_reader_of_the_links_sees_a_branch_from_an_empty_snapshot(
+    monkeypatch, caller
+) -> None:
+    """A process that has served no admin op starts with an empty snapshot; each reader
+    still finds a registered branch's operator root, and so its tracker. The tracker is
+    restricted here, so each reader's answer shows it found one."""
+    import server.code.app.reads as reads_mod
+    import server.core.ch as ch_mod
+    from server.identity.app import me_callers
+    from server.identity.app import namespace_classification as nc
 
-    async def _refresh(*, force: bool = False) -> dict[Any, str]:
-        seen.append("refresh")
-        return {}
+    branch = "code-widgets-26-8"
 
-    def _lookup(org: str, ns: str, **_: Any) -> Any:
-        seen.append("lookup")
-        return [] if caller == "token_setup" else ""
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            return [
+                {
+                    "org": ORG_X,
+                    "namespace": branch,
+                    "state_key": binding.BRANCH_OF_KEY,
+                    "state_value": CODE,
+                }
+            ]
 
-    monkeypatch.setattr(binding, "refresh_overrides", _refresh)
-    monkeypatch.setattr(binding, "tracker_namespace_for", _lookup)
-    monkeypatch.setattr(binding, "tracker_namespaces_for", _lookup)
+    async def _restricted(org: str, ns: str) -> bool:
+        return ns == "tracker-widgets"
+
+    async def _role(org: str, ns: str, subject: str) -> str:
+        return "viewer"
+
+    ch = _CH()
+    monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
+    monkeypatch.setattr(reads_mod, "code_index", lambda: CodeRepo(ch))  # type: ignore[arg-type]
+    monkeypatch.setattr(nc, "is_restricted", _restricted)
+    monkeypatch.setattr(me_callers, "caller_role_on", _role)
+    monkeypatch.setattr(
+        settings, "tracker_code_namespace_bindings_json", '{"code-widgets*": "tracker-widgets"}'
+    )
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        json.dumps([{"org": ORG_X, "namespace": CODE, "repo": "Acme/widgets"}]),
+    )
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    _set_registry(monkeypatch, [_entry(ORG_X, branch)])
     if caller == "pack":
         from server.code.app.index import packs
 
-        asyncio.run(packs.tracker_section_rows(ORG_X, CODE, 1, []))
+        got: Any = asyncio.run(packs.tracker_section_rows(ORG_X, branch, 1, []))
+        assert got == ("restricted", [])
     elif caller == "brief":
         from server.code.app.index import review_brief_sources
+        from server.code.app.index.review_brief import RESTRICTED
 
-        asyncio.run(review_brief_sources.tracker_pr_facts(ORG_X, CODE, 1))
+        got = asyncio.run(review_brief_sources.tracker_pr_facts(ORG_X, branch, 1))
+        assert got == (RESTRICTED, {})
     elif caller == "risk_fit":
         from server.code.app.index import risk_fit
 
-        asyncio.run(risk_fit._bound_tracker_namespace(ORG_X, CODE))
+        got = asyncio.run(risk_fit._bound_tracker_namespace(ORG_X, branch))
+        assert got == ("", "restricted")
     else:
         from server.identity.app import me_setup
 
-        asyncio.run(me_setup._with_bound_tracker(ORG_X, "alice", [CODE]))
-    assert seen == ["refresh", "lookup"]
+        got = asyncio.run(me_setup._with_bound_tracker(ORG_X, "alice", [branch]))
+        assert got == [branch, "tracker-widgets"]

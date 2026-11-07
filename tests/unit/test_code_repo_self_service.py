@@ -426,8 +426,8 @@ def _link_rows(plane: Any) -> list[tuple[str, str, str, str]]:
 def links(monkeypatch):
     from server.tracker.app import binding
 
-    async def _no_refresh(**_: Any) -> dict[Any, str]:
-        return {}
+    async def _no_refresh(**_: Any) -> None:
+        return None
 
     monkeypatch.setattr(binding, "refresh_overrides", _no_refresh)
     binding.reset_overrides_for_tests()

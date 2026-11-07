@@ -421,14 +421,9 @@ async def test_remove_empties_the_tracker_links_before_it_deactivates_or_purges(
 ) -> None:
     """The purge is detached: a namespace of the same name registered again before it
     runs must not follow the removed branch's source or links."""
-    from server.tracker.app import binding
-
-    async def _no_refresh(**_: Any) -> dict[Any, str]:
-        return {}
-
-    monkeypatch.setattr(binding, "refresh_overrides", _no_refresh)
     import server.erasure.app.saga as erasure_mod
     from server.knowledge.app import sources
+    from server.tracker.app import binding
 
     def _links() -> list[tuple[str, str, str, str]]:
         keys = (binding.OVERRIDE_KEY, binding.BRANCH_OF_KEY)
@@ -474,10 +469,6 @@ async def test_remove_writes_no_link_row_for_a_namespace_that_had_none(plane, mo
     links would hide the operator's map from a namespace of the same name until the purge."""
     from server.tracker.app import binding
 
-    async def _no_refresh(**_: Any) -> dict[Any, str]:
-        return {}
-
-    monkeypatch.setattr(binding, "refresh_overrides", _no_refresh)
     plane.stored[(ORG, "code-widgets", binding.BRANCH_OF_KEY)] = "code-root"
     await admin.handle_code_repo_remove(
         CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
