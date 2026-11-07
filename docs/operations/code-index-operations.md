@@ -248,7 +248,9 @@ submodule whose `.gitmodules` URL is an absolute https URL under the remote's ow
 needs no other credential. The owner is matched as written, case included, so an
 owner spelled in another case is fetched without the token. A relative URL resolves
 to a local path in the checkout, which has no remote; the tier refuses the `file`
-transport, so that submodule update fails.
+transport, so that submodule update fails. Whoever can commit to the repository's
+`.gitmodules` can point a submodule at any repository of that owner the token reads,
+so give an entry a token scoped to the repositories its submodules need.
 
 - **C/C++ delta cap.** The worker indexes changed translation units, including those
   that include a changed header, up to `LOOM_CODE_SCIP_DELTA_MAX_TUS` (200); above the

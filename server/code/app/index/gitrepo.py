@@ -225,9 +225,9 @@ async def _git(
 ) -> str:
     """A git command on the bare clone. With `remote` it talks to that remote, so it
     runs as a repository job (sandbox.run_job): the network only through the egress
-    proxy, the clone the one writable path, `token` for the remote's owner (`auth_env`). A local
-    command reads and writes `index_file` as its index when given. `timeout_s`
-    defaults to `code_git_timeout_s`."""
+    proxy, the clone the one writable path, `token` for the remote's owner
+    (`auth_env`). A local command reads and writes `index_file` as its index when
+    given. `timeout_s` defaults to `code_git_timeout_s`."""
     if timeout_s is None:
         timeout_s = settings.code_git_timeout_s
     extra = upload_pack_args(remote)
