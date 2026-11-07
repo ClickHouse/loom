@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.unit.git_repo import git
+from tests.unit import git_repo
 
 
 def _module():
@@ -201,8 +201,8 @@ def _run_step(tmp_path: Path, script: str, **env: str):
     # A copy, not a link: through a link, the script's ../../dev would be the
     # real dev/, not the stub written beside it.
     shutil.copytree(Path(__file__).parents[2] / "scripts" / "release", work / "scripts" / "release")
-    git(work, "init", "-q")
-    git(work, "commit", "-q", "--allow-empty", "-m", "release")
+    git_repo.git(work, "init", "-q")
+    git_repo.git(work, "commit", "-q", "--allow-empty", "-m", "release")
     other, _ = _module().build(
         "1.2.0", tmp_path / "other", "clickhouse/clickhouse-server:26.9.18.11"
     )

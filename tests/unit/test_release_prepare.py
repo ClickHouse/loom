@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests.unit.git_repo import git as _git
+from tests.unit import git_repo
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -44,8 +44,8 @@ def _copy(tmp_path: Path) -> Path:
 
 
 def _commit(root: Path, message: str) -> None:
-    _git(root, "add", ".")
-    _git(root, "commit", "-qm", message, "--allow-empty")
+    git_repo.git(root, "add", ".")
+    git_repo.git(root, "commit", "-qm", message, "--allow-empty")
 
 
 def _body(category: str, entry: str = "...", steps: str = "none") -> str:
@@ -122,9 +122,9 @@ def test_a_bump_moves_every_version_and_nothing_else(tmp_path: Path) -> None:
 
 def test_a_version_already_tagged_is_refused(tmp_path: Path) -> None:
     root = _copy(tmp_path)
-    _git(root, "init", "-q")
+    git_repo.git(root, "init", "-q")
     _commit(root, "files")
-    _git(root, "tag", "v98.0.0")
+    git_repo.git(root, "tag", "v98.0.0")
     with pytest.raises(ValueError, match="v98.0.0 is already tagged"):
         prepare.refuse_tagged("98.0.0", root)
     prepare.refuse_tagged("98.0.1", root)
@@ -214,9 +214,9 @@ def test_every_release_raises_the_chart_above_the_previous_releases(tmp_path: Pa
     chart = tmp_path / "deploy/helm/loom/Chart.yaml"
     chart.parent.mkdir(parents=True)
     chart.write_text('version: 0.1.0\nappVersion: "1.0.0"\n')
-    _git(tmp_path, "init", "-q")
+    git_repo.git(tmp_path, "init", "-q")
     _commit(tmp_path, "chart")
-    _git(tmp_path, "tag", "v1.0.0")
+    git_repo.git(tmp_path, "tag", "v1.0.0")
     chart.write_text('version: 0.1.0\nappVersion: "1.1.0"\n')
     _commit(tmp_path, "appVersion")
     error = prepare.check_chart("v1.0.0", tmp_path)
@@ -234,12 +234,12 @@ def test_the_chart_is_compared_with_the_release_it_ships_or_the_one_before(
     """On the tag's own run and for the next release, the release before; none on
     a dry run of a version that already shipped from another commit."""
     (tmp_path / "f").write_text("1")
-    _git(tmp_path, "init", "-q")
+    git_repo.git(tmp_path, "init", "-q")
     _commit(tmp_path, "one")
-    _git(tmp_path, "tag", "v1.0.0")
+    git_repo.git(tmp_path, "tag", "v1.0.0")
     (tmp_path / "f").write_text("2")
     _commit(tmp_path, "two")
-    _git(tmp_path, "tag", "v1.1.0")
+    git_repo.git(tmp_path, "tag", "v1.1.0")
     assert prepare.chart_baseline("1.1.0", tmp_path) == "v1.0.0"  # the tag's own run
     assert prepare.chart_baseline("1.2.0", tmp_path) == "v1.1.0"  # the next release
     assert prepare.chart_baseline("1.2.0-rc.1", tmp_path) == "v1.1.0"  # its candidate
@@ -428,10 +428,10 @@ def test_operator_steps_given_only_as_a_list_nest_under_their_pull_request() -> 
 
 
 def test_the_previous_release_is_the_highest_final_tag_below(tmp_path: Path) -> None:
-    _git(tmp_path, "init", "-q")
+    git_repo.git(tmp_path, "init", "-q")
     _commit(tmp_path, "x")
     for tag in ("v1.0.0", "v1.0.1", "v1.1.0", "v1.10.0", "v1.2.0-rc.1", "v2.0.0"):
-        _git(tmp_path, "tag", tag)
+        git_repo.git(tmp_path, "tag", tag)
     assert prepare.previous_release("1.2.0", tmp_path) == "v1.1.0"
     assert prepare.previous_release("1.11.0", tmp_path) == "v1.10.0"
     with pytest.raises(ValueError, match="no final release tag below 1.0.0"):
@@ -439,10 +439,10 @@ def test_the_previous_release_is_the_highest_final_tag_below(tmp_path: Path) -> 
 
 
 def test_the_merged_pull_requests_are_the_squash_merges_since_the_tag(tmp_path: Path) -> None:
-    _git(tmp_path, "init", "-q")
+    git_repo.git(tmp_path, "init", "-q")
     (tmp_path / "f").write_text("0")
     _commit(tmp_path, "before (#1)")
-    _git(tmp_path, "tag", "v1.0.0")
+    git_repo.git(tmp_path, "tag", "v1.0.0")
     for n, subject in enumerate(
         ["A change (#12)", 'Revert "A change (#12)" (#13)', "a commit with no number", "B (#14)"]
     ):
@@ -457,9 +457,9 @@ def test_the_merged_pull_requests_are_the_squash_merges_since_the_tag(tmp_path: 
 def _released(root: Path) -> Path:
     """v1.0.0, then #12, #13 and #14, and a wire changelog that leaves a mark."""
     root.mkdir()
-    _git(root, "init", "-q")
+    git_repo.git(root, "init", "-q")
     _commit(root, "before (#1)")
-    _git(root, "tag", "v1.0.0")
+    git_repo.git(root, "tag", "v1.0.0")
     for n in (12, 13, 14):
         _commit(root, f"Change {n} (#{n})")
     wire = root / "scripts/codegen/wire_changelog.py"
@@ -501,6 +501,26 @@ def test_the_notes_read_the_merged_pull_requests_in_one_call_in_merge_order(
     # A UTC day before the oldest merge since the tag: 2026-11-06T23:30Z.
     args = (gh / "args").read_text().splitlines()
     assert args[args.index("--search") + 1] == "merged:>=2026-11-05"
+
+
+def test_notes_with_nothing_merged_since_the_tag_ask_gh_for_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    git_repo.git(root, "init", "-q")
+    _commit(root, "before (#1)")
+    git_repo.git(root, "tag", "v1.0.0")
+    wire = root / "scripts/codegen/wire_changelog.py"
+    wire.parent.mkdir(parents=True)
+    wire.write_text("print('## What changed for clients: a → b\\n\\nNothing.')\n")
+    gh = tmp_path / "bin" / "gh"
+    gh.parent.mkdir()
+    gh.write_text("#!/bin/sh\nexit 1\n")
+    gh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{gh.parent}:{os.environ['PATH']}")
+    text = prepare.release_notes("1.0.1", "v1.0.0", root)
+    assert "### Operator steps\n\nNone.\n" in text
 
 
 def test_a_merged_pull_request_gh_does_not_list_stops_the_notes(
@@ -586,12 +606,12 @@ def test_a_version_tagged_on_the_remote_is_refused_after_the_fetch(
 ) -> None:
     """The clone had not fetched v98.0.0 yet: the refusal sees the remote's tags."""
     root = _copy(tmp_path)
-    _git(root, "init", "-q")
+    git_repo.git(root, "init", "-q")
     _commit(root, "files")
 
     def fetch(where: Path, *args: str) -> subprocess.CompletedProcess[str]:
         if args[0] == "fetch":
-            _git(root, "tag", "v98.0.0")  # what the remote has
+            git_repo.git(root, "tag", "v98.0.0")  # what the remote has
             return subprocess.CompletedProcess(args, 0, "", "")
         return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
 
@@ -668,21 +688,21 @@ def test_a_candidate_comes_before_its_final_and_the_final_goes_where_it_was_soak
     tmp_path: Path,
 ) -> None:
     (tmp_path / "f").write_text("a")
-    _git(tmp_path, "init", "-q")
+    git_repo.git(tmp_path, "init", "-q")
     _commit(tmp_path, "soaked")
-    _git(tmp_path, "tag", "v1.2.0-rc.1")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.1")
     assert prepare.check_tag("1.2.0-rc.1", tmp_path) is None  # the candidate's own run
-    _git(tmp_path, "tag", "v1.2.0")
+    git_repo.git(tmp_path, "tag", "v1.2.0")
     assert prepare.check_tag("1.2.0", tmp_path) is None  # the final on the soaked commit
-    _git(tmp_path, "tag", "-d", "v1.2.0")
+    git_repo.git(tmp_path, "tag", "-d", "v1.2.0")
     (tmp_path / "f").write_text("b")
     _commit(tmp_path, "a fix after the soak")
-    _git(tmp_path, "tag", "v1.2.0")
+    git_repo.git(tmp_path, "tag", "v1.2.0")
     error = prepare.check_tag("1.2.0", tmp_path)
     assert error and "v1.2.0 is not on v1.2.0-rc.1's commit" in error
-    _git(tmp_path, "tag", "v1.2.0-rc.2")  # the fix soaked as rc.2: its commit is HEAD
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.2")  # the fix soaked as rc.2: its commit is HEAD
     assert prepare.check_tag("1.2.0", tmp_path) is None
-    _git(tmp_path, "tag", "v1.2.0-rc.3")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.3")
     error = prepare.check_tag("1.2.0-rc.3", tmp_path)
     assert error == "v1.2.0-rc.3 is on v1.2.0's commit, which is released: run v1.2.0 instead"
     # A stray candidate on the final's own commit leaves the final's runs alone.
@@ -691,24 +711,24 @@ def test_a_candidate_comes_before_its_final_and_the_final_goes_where_it_was_soak
 
 def test_a_final_with_no_candidate_is_not_refused(tmp_path: Path) -> None:
     (tmp_path / "f").write_text("a")
-    _git(tmp_path, "init", "-q")
+    git_repo.git(tmp_path, "init", "-q")
     _commit(tmp_path, "one")
-    _git(tmp_path, "tag", "v1.3.0-rc.1-x")  # not a candidate, on an earlier commit
+    git_repo.git(tmp_path, "tag", "v1.3.0-rc.1-x")  # not a candidate, on an earlier commit
     _commit(tmp_path, "two")
-    _git(tmp_path, "tag", "v1.3.0")
+    git_repo.git(tmp_path, "tag", "v1.3.0")
     assert prepare.check_tag("1.3.0", tmp_path) is None
 
 
 def test_a_dry_run_after_a_candidate_shipped_is_not_refused(tmp_path: Path) -> None:
     (tmp_path / "f").write_text("a")
-    _git(tmp_path, "init", "-q")
+    git_repo.git(tmp_path, "init", "-q")
     _commit(tmp_path, "soaked")
-    _git(tmp_path, "tag", "v1.2.0-rc.1")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.1")
     (tmp_path / "f").write_text("b")
     _commit(tmp_path, "main moved on")
     assert not prepare.tag_on_head("1.2.0", tmp_path)  # no v1.2.0 tag: a dry run
     assert not prepare.tag_on_head("1.2.0-rc.1", tmp_path)  # the tag is not on HEAD
-    _git(tmp_path, "tag", "v1.3.0-rc.1")
+    git_repo.git(tmp_path, "tag", "v1.3.0-rc.1")
     assert prepare.tag_on_head("1.3.0-rc.1", tmp_path)
 
 
@@ -739,9 +759,9 @@ def test_a_chart_version_that_is_not_x_y_z_is_an_error_line(
     chart = tmp_path / "deploy/helm/loom/Chart.yaml"
     chart.parent.mkdir(parents=True)
     chart.write_text('version: 0.1.0\nappVersion: "1.1.0"\n')
-    _git(tmp_path, "init", "-q")
+    git_repo.git(tmp_path, "init", "-q")
     _commit(tmp_path, "chart")
-    _git(tmp_path, "tag", "v1.1.0")
+    git_repo.git(tmp_path, "tag", "v1.1.0")
     chart.write_text('version: "0.2.0"\nappVersion: "1.2.0"\n')  # quoted
     _commit(tmp_path, "quoted chart version")
     check_chart = prepare.check_chart
@@ -879,9 +899,9 @@ def test_a_chart_unreadable_at_a_tag_names_the_tag(
     chart = tmp_path / "deploy/helm/loom/Chart.yaml"
     chart.parent.mkdir(parents=True)
     chart.write_text(chart_text)
-    _git(tmp_path, "init", "-q")
+    git_repo.git(tmp_path, "init", "-q")
     _commit(tmp_path, "chart")
-    _git(tmp_path, "tag", "v1.0.0")
+    git_repo.git(tmp_path, "tag", "v1.0.0")
     with pytest.raises(ValueError, match=error):
         prepare.released_chart("v1.0.0", tmp_path)
 
@@ -889,17 +909,17 @@ def test_a_chart_unreadable_at_a_tag_names_the_tag(
 def test_a_soaked_candidate_run_again_after_its_final_is_not_told_to_delete_itself(
     tmp_path: Path,
 ) -> None:
-    _git(tmp_path, "init", "-q")
+    git_repo.git(tmp_path, "init", "-q")
     _commit(tmp_path, "one")
-    _git(tmp_path, "tag", "v1.2.0-rc.1")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.1")
     _commit(tmp_path, "the fix")
-    _git(tmp_path, "tag", "v1.2.0-rc.2")
-    _git(tmp_path, "tag", "v1.2.0")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.2")
+    git_repo.git(tmp_path, "tag", "v1.2.0")
     error = prepare.check_tag("1.2.0-rc.2", tmp_path)
     assert error == "v1.2.0-rc.2 is on v1.2.0's commit, which is released: run v1.2.0 instead"
     assert prepare.check_tag("1.2.0", tmp_path) is None  # rc.2 stays the last candidate
     _commit(tmp_path, "after the release")
-    _git(tmp_path, "tag", "v1.2.0-rc.3")  # a stray, on another commit than the final
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.3")  # a stray, on another commit than the final
     error = prepare.check_tag("1.2.0-rc.3", tmp_path)
     assert error and "v1.2.0 is already tagged" in error
     assert ":refs/tags/v1.2.0-rc.3" in error  # the stray tag to delete

@@ -154,8 +154,7 @@ def chart_baseline(tag_version: str, root: Path = ROOT) -> str | None:
     """The release before `tag_version`'s, or None when `vX.Y.Z` is on another
     commit (a dry run of a branch still naming a shipped release)."""
     version = final_of(tag_version)
-    tagged = _sha(root, f"v{version}")
-    if tagged and tagged != _sha(root, "HEAD"):
+    if _sha(root, f"v{version}") and not tag_on_head(version, root):
         return None
     return previous_release(version, root)
 
@@ -362,9 +361,9 @@ def changelog(body: str) -> tuple[str, str, str]:
 
 
 def merged_pull_requests(previous_tag: str, root: Path = ROOT) -> dict[int, int]:
-    """The squash merges since the previous release, oldest first, but a release
-    pull request's own (the one that moves the server's version): number to
-    commit time."""
+    """Pull request number to squash-merge commit time, oldest first, for the
+    merges since `previous_tag`; the release pull request's own merge (the one
+    that moves `__version__`) is left out."""
     log = _git(root, "log", "--reverse", "--format=%H %ct %s", f"{previous_tag}..HEAD")
     log.check_returncode()
     bumps = _git(

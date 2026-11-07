@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.unit.git_repo import git as _git
+from tests.unit import git_repo
 
 ROOT = Path(__file__).resolve().parents[2]
 NEWEST = "clickhouse/clickhouse-server:26.10.1.1"
@@ -56,15 +56,15 @@ def repo(tmp_path: Path) -> Path:
     for path, body in STUBS.items():
         (repo / path).parent.mkdir(parents=True, exist_ok=True)
         (repo / path).write_text(body)
-    _git(repo, "init", "-q")
-    _git(repo, "commit", "-q", "--allow-empty", "-m", "release")
+    git_repo.git(repo, "init", "-q")
+    git_repo.git(repo, "commit", "-q", "--allow-empty", "-m", "release")
     return repo
 
 
 @pytest.fixture
 def git(repo: Path) -> Git:
     """git in `repo`."""
-    return lambda *args: _git(repo, *args)
+    return lambda *args: git_repo.git(repo, *args)
 
 
 @pytest.fixture
