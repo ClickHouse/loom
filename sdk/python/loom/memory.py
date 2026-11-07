@@ -22,10 +22,10 @@ from __future__ import annotations
 import asyncio
 import builtins
 import json
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 if TYPE_CHECKING:
     from loom.agent import Agent
@@ -86,6 +86,9 @@ class _CoalesceWindow:
         self.identity = identity
 
 
+_T = TypeVar("_T")
+
+
 class _SetCoalescer:
     """Gathers burst `memory.set` calls of one identity into `memory.bulk_set`.
 
@@ -94,7 +97,7 @@ class _SetCoalescer:
     verdict, as the point path spells it) and `noop` (version 0: a merge, or
     a restatement the server skipped, wrote nothing). A set the server refused
     raises the error the same set alone would have raised, and a failed bulk
-    request fails every set it carried with the same exception. The sets the
+    request fails every set of its flush still waiting with the same exception. The sets the
     blacklist could not check in the batch go out again in order, in smaller
     batches."""
 
@@ -102,9 +105,9 @@ class _SetCoalescer:
         self._transport = transport
         self._windows: dict[tuple[str, ...], _CoalesceWindow] = {}
         self._inflight: set[asyncio.Task[None]] = set()
-        # The last flush of each identity: the next one, and a set alone, start after it,
-        # so a set sent again cannot land after a newer set of its key.
-        self._tails: dict[tuple[str, ...], asyncio.Task[None]] = {}
+        # The last request of each identity, a window's first sets and its flush alike: the
+        # next starts after it, so a set sent again cannot land after a newer set of its key.
+        self._tails: dict[tuple[str, ...], asyncio.Task[Any]] = {}
 
     def _key(self, identity: dict[str, str]) -> tuple[str, ...]:
         return tuple(str(identity.get(k, SENTINEL)) for k in _IDENTITY_KEYS)
@@ -116,15 +119,17 @@ class _SetCoalescer:
         now = loop.time()
         key = self._key(identity)
         window = self._windows.get(key)
-        if window is None or now - window.t0 >= COALESCE_WINDOW_S:
+        if window is not None and now - window.t0 >= COALESCE_WINDOW_S:
+            self._close(key, window)  # its timer has not run yet: its flush goes first
+            window = None
+        if window is None:
             window = _CoalesceWindow(now, identity)
             self._windows[key] = window
         window.count += 1
         if window.count < COALESCE_MIN_BURST:
-            tail = self._tails.get(key)
-            if tail is not None:
-                await asyncio.wait([tail])
-            direct: dict[str, Any] = await self._transport.post("/v1/memory.set", payload)
+            direct: dict[str, Any] = await self._chain(
+                key, lambda: self._transport.post("/v1/memory.set", payload)
+            )
             return direct
         fut: asyncio.Future[dict[str, Any]] = loop.create_future()
         window.pending.append((entry, fut))
@@ -144,28 +149,36 @@ class _SetCoalescer:
         if not window.pending:
             return
         batch, window.pending = window.pending, []
-        task = asyncio.get_running_loop().create_task(
-            self._flush_after(self._tails.get(key), window.identity, batch)
-        )
-        self._tails[key] = task
+        task = self._chain(key, lambda: self._flush_or_cancel(window.identity, batch))
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
-        task.add_done_callback(lambda done: self._forget_tail(key, done))
 
-    def _forget_tail(self, key: tuple[str, ...], task: asyncio.Task[None]) -> None:
+    def _chain(
+        self, key: tuple[str, ...], request: Callable[[], Awaitable[_T]]
+    ) -> asyncio.Task[_T]:
+        """Run `request()` once the identity's last request is done, as its new last one."""
+        before = self._tails.get(key)
+
+        async def after() -> _T:
+            if before is not None:
+                await asyncio.wait([before])
+            return await request()
+
+        task = asyncio.get_running_loop().create_task(after())
+        self._tails[key] = task
+        task.add_done_callback(lambda done: self._forget_tail(key, done))
+        return task
+
+    def _forget_tail(self, key: tuple[str, ...], task: asyncio.Task[Any]) -> None:
         if self._tails.get(key) is task:
             del self._tails[key]
 
-    async def _flush_after(
+    async def _flush_or_cancel(
         self,
-        before: asyncio.Task[None] | None,
         identity: dict[str, str],
         batch: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]],
     ) -> None:
-        """`_flush(identity, batch)` once the identity's flush `before` is done."""
         try:
-            if before is not None:
-                await asyncio.wait([before])
             await self._flush(identity, batch)
         except asyncio.CancelledError:
             for _, fut in batch:
@@ -177,13 +190,8 @@ class _SetCoalescer:
         identity: dict[str, str],
         batch: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]],
     ) -> None:
-        # The entries the blacklist could not check (the request's values together were
-        # too long for its regexes) go out again in order, in batches the size of what the
-        # last request checked. The server answers every later entry of an unchecked key
-        # unchecked too, so a key's entries stay in order and it ends at its last value.
-        # One unchecked at the front of a request is too long even first in one: it goes
-        # alone, and gets what a set alone answers.
-        # A request that checked nothing leaves no room: the rest go one at a time.
+        # Entries the blacklist could not check go out again in order, in batches the size
+        # of what the last request checked; one unchecked at the front of a request, alone.
         sizes = {id(fut): _value_bytes(entry) for entry, fut in batch}
         pending = batch
         room: int | None = None  # the value bytes the last request checked
@@ -194,7 +202,13 @@ class _SetCoalescer:
                 pending = pending[1:]
                 continue
             sent, pending = pending[:size], pending[size:]
-            unchecked, room = await self._bulk_round(identity, sent, sizes)
+            try:
+                unchecked, room = await self._bulk_round(identity, sent, sizes)
+            except Exception as e:  # noqa: BLE001 — every caller still waiting gets the failure
+                for _, fut in sent + pending:
+                    if not fut.done():
+                        fut.set_exception(e)
+                return
             if unchecked and unchecked[0][1] is sent[0][1]:
                 await self._set_alone(identity, *unchecked[0])
                 unchecked = unchecked[1:]
@@ -213,15 +227,7 @@ class _SetCoalescer:
         `sizes`, by future) of the ones it did check."""
         payload: dict[str, Any] = dict(identity)
         payload["entries"] = [entry for entry, _ in batch]
-        try:
-            res = await self._transport.post("/v1/memory.bulk_set", payload)
-        except BaseException as e:  # every caller in the batch gets the failure
-            for _, fut in batch:
-                if not fut.done():
-                    fut.set_exception(e)
-            if isinstance(e, asyncio.CancelledError):
-                raise
-            return [], 0
+        res = await self._transport.post("/v1/memory.bulk_set", payload)
         # Results are matched by key, in order, not by position: an older server leaves
         # a blacklisted entry out of `written`, which would shift every later result.
         rows_by_key: dict[str, list[dict[str, Any]]] = {}
@@ -267,11 +273,9 @@ class _SetCoalescer:
         """Send one entry as a memory.set and hand its caller the answer."""
         try:
             res = await self._transport.post("/v1/memory.set", {**identity, **entry})
-        except BaseException as e:  # the caller gets its own failure
+        except Exception as e:  # noqa: BLE001 — hand the caller its own failure
             if not fut.done():
                 fut.set_exception(e)
-            if isinstance(e, asyncio.CancelledError):
-                raise
             return
         if not fut.done():
             fut.set_result(res)
