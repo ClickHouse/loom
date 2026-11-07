@@ -26,8 +26,9 @@ from pydantic import BaseModel, Field
 
 from server.auth import attempts
 from server.auth.attempts import Attempts, address_key, client_address
+from server.auth.claim_codes import UNCLAIMED_SQL
 from server.auth.jwt import mint_token
-from server.auth.passwords import CLAIM_PREFIX, hash_password, verify_password_off_loop
+from server.auth.passwords import hash_password, verify_password_off_loop
 from server.core.ch import get_client
 
 log = logging.getLogger(__name__)
@@ -93,6 +94,11 @@ def _unknown_account_hash() -> str:
     return hash_password(secrets.token_urlsafe(24))
 
 
+async def verify_as_unknown(password: str) -> None:
+    """One full hash against no account, so a miss costs what a wrong password does."""
+    await verify_password_off_loop(await asyncio.to_thread(_unknown_account_hash), password)
+
+
 async def resolve_user_credentials(
     identifier: str, password: str, *, address: str = ""
 ) -> Identity | None:
@@ -145,7 +151,7 @@ async def _check_credentials(ident: str, password: str) -> Identity | None:
     if not ident:
         # Unclaimed agents' rows name no email: a blank identifier would test
         # the password against every one of them. Timed as an unknown account.
-        await verify_password_off_loop(await asyncio.to_thread(_unknown_account_hash), password)
+        await verify_as_unknown(password)
         return None
     ch = get_client()
     # An unclaimed agent's claim code is no password: it only claims
@@ -156,9 +162,9 @@ async def _check_credentials(ident: str, password: str) -> Identity | None:
         SELECT namespace, owner_email, org, password_hash, contact_email
         FROM loom.namespaces FINAL
         WHERE contact_email = {ident:String} AND active = 1 AND password_hash != ''
-          AND NOT startsWith(password_hash, {claim:String})
-        """,
-        params={"ident": ident, "claim": CLAIM_PREFIX},
+          AND NOT {unclaimed}
+        """.replace("{unclaimed}", UNCLAIMED_SQL),
+        params={"ident": ident},
     )
     if not rows:  # fallback: identifier is a namespace name
         rows = await ch.query_all(
@@ -166,12 +172,12 @@ async def _check_credentials(ident: str, password: str) -> Identity | None:
             SELECT namespace, owner_email, org, password_hash, contact_email
             FROM loom.namespaces FINAL
             WHERE namespace = {ident:String} AND active = 1 AND password_hash != ''
-              AND NOT startsWith(password_hash, {claim:String})
-            """,
-            params={"ident": ident, "claim": CLAIM_PREFIX},
+              AND NOT {unclaimed}
+            """.replace("{unclaimed}", UNCLAIMED_SQL),
+            params={"ident": ident},
         )
     if not rows:
-        await verify_password_off_loop(await asyncio.to_thread(_unknown_account_hash), password)
+        await verify_as_unknown(password)
         return None
     # The password proves one credential, not every row that shares the
     # email or name: sign in as the row it verifies, and mint only the

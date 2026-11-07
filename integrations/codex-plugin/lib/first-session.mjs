@@ -198,7 +198,8 @@ async function _signUp({ base, client, host, user, fetchImpl, now, configPath, d
     writePrivateFile(
       claimPath,
       `Loom namespace ${namespace} on ${base} was created for this machine by the ${client} plugin.\n` +
-        `To make it yours, sign in at ${claimUrl} with the namespace name (${namespace}) and this one-time code:\n` +
+        `To make it yours, open ${claimUrl} and enter the namespace name (${namespace}), this code and a password of your own.\n` +
+        `The code works once; afterwards you sign in with the namespace name and that password:\n` +
         `${claimCode}\n`,
     );
   }
@@ -215,8 +216,8 @@ export function renderFirstSessionNotice(result, serverUrl) {
       }
       return (
         `Loom: no credential was found, so this machine signed itself up as memory namespace ` +
-        `\`${result.namespace}\` on ${base}. Tell the user once: to make it theirs, sign in at ${result.claimUrl} ` +
-        `with namespace \`${result.namespace}\` and the one-time code saved in ${result.claimPath}; ` +
+        `\`${result.namespace}\` on ${base}. Tell the user once: to make it theirs, open ${result.claimUrl} and ` +
+        `enter namespace \`${result.namespace}\`, the code saved in ${result.claimPath} and a password of their own; ` +
         `until then memory is per-machine.`
       );
     case "unavailable":

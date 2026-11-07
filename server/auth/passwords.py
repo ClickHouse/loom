@@ -53,19 +53,3 @@ async def hash_password_off_loop(password: str) -> str:
 async def verify_password_off_loop(stored_hash: str, password: str) -> bool:
     """`verify_password` on a worker thread."""
     return await asyncio.to_thread(verify_password, stored_hash, password)
-
-
-# An agent's claim code is stored as CLAIM_PREFIX + its hash. No password
-# sign-in takes it (`verify_password` reads the value as malformed, and the
-# sign-in skips such rows); only the claim page does, once.
-CLAIM_PREFIX = "claim:"
-
-
-async def hash_claim_code_off_loop(code: str) -> str:
-    return CLAIM_PREFIX + await hash_password_off_loop(code)
-
-
-async def verify_claim_code_off_loop(stored_hash: str, code: str) -> bool:
-    if not stored_hash.startswith(CLAIM_PREFIX):
-        return False
-    return await verify_password_off_loop(stored_hash.removeprefix(CLAIM_PREFIX), code)

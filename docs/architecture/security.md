@@ -318,12 +318,20 @@ in [deployment](../operations/deployment.md). Never expose `single-user` beyond 
 local machine: auth is off. In `trust-network`, passwords are argon2id and there is no
 email verification or password reset. In `gateway`, Loom never sees a password.
 
-**Agent claims.** An agent's sign-up stores its claim code's hash under a `claim:` prefix,
-which no password sign-in accepts: until a person claims the namespace, only the agent's own
-service-account token acts in it. The claim page (`server/identity/app/agent_claim.py`)
-checks the code under the password sign-in limits and, holding the account from read to
-write, replaces it with the claimer's own password. A second claim finds no code and is
-refused, so whoever kept a copy of the code cannot sign in as the namespace afterwards.
+**Agent claims.** An agent account is unclaimed while its password is its claim code: a hash
+under a `claim:` prefix, which agent sign-up writes, or, for an account made before the
+prefix, a plain hash on an agent sign-up's shape (the `agent` tag, no email, the namespace
+its own owner) with no `agent-claimed` tag (`UNCLAIMED_SQL` in `server/auth/claim_codes.py`).
+No password sign-in (`/v1/auth/login`, the OAuth authorize form, the device grant) accepts
+an unclaimed account, so until a person claims it only the agent's own service-account token
+acts in the namespace. The claim page (`server/identity/app/agent_claim.py`) checks the code
+under the password sign-in limits, hashes the new password only once the code is proven, and,
+holding the account from read to write, replaces the code with the claimer's own password and
+adds the `agent-claimed` tag, which `namespace.register` carries forward and never takes from
+a form. A second claim finds no code and is refused, so whoever kept a copy of the code cannot
+sign in as the namespace afterwards. An account claimed by signing in with its code before
+the claim page existed is unclaimed by this rule: its owner claims it again with the same
+code, and the first claim wins.
 
 **Impersonation.** A subject in `LOOM_TRUSTED_CALLERS` may send `X-Loom-On-Behalf-Of`
 over HTTP to act as another principal. The header's subject becomes the effective

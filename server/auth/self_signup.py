@@ -33,9 +33,10 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from server.auth.attempts import Attempts, client_address
+from server.auth.claim_codes import AGENT_TAG, hash_claim_code_off_loop
 from server.auth.jwt import mint_token
 from server.auth.login import platform_roles
-from server.auth.passwords import hash_claim_code_off_loop, hash_password_off_loop
+from server.auth.passwords import hash_password_off_loop
 from server.core import grant_cache, leases
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now_seconds
@@ -529,7 +530,7 @@ async def _provision_agent(
         contact_email="",
         password_hash=await hash_claim_code_off_loop(claim_code),
         description=input.purpose.strip() or "Created via agent self-signup; unclaimed.",
-        tags=["agent"],
+        tags=[AGENT_TAG],
     )
     await ch.insert(
         "loom.namespace_grants",

@@ -1,11 +1,10 @@
 """A person claims an agent's namespace with the code its sign-up returned.
 
-Agent self-signup (`server.auth.self_signup.agent_signup`) stores the code's
-hash under `CLAIM_PREFIX`, which no password sign-in takes. This page checks
-the code and, while it holds the account, replaces it with a password the
-person chooses: the code works once, and from then on the person signs in as
-the namespace (its admin) with their own password. The agent's own token is a
-separate subject and keeps working.
+No password sign-in takes an unclaimed agent's code (`server.auth.claim_codes`).
+This page checks the code and, while it holds the account, replaces it with a
+password the person chooses and marks the account claimed: the code works once,
+and from then on the person signs in as the namespace (its admin) with their own
+password. The agent's own token is a separate subject and keeps working.
 """
 
 from __future__ import annotations
@@ -19,13 +18,10 @@ from fastapi.responses import Response
 
 from server.auth import oauth
 from server.auth.attempts import client_address
+from server.auth.claim_codes import CLAIMED_TAG, UNCLAIMED_SQL, verify_claim_code_off_loop
 from server.auth.grant_claims import account_change
-from server.auth.login import LoginThrottled, throttled
-from server.auth.passwords import (
-    CLAIM_PREFIX,
-    hash_password_off_loop,
-    verify_claim_code_off_loop,
-)
+from server.auth.login import LoginThrottled, throttled, verify_as_unknown
+from server.auth.passwords import hash_password_off_loop
 from server.core.ch import get_client
 from server.identity.store import namespaces
 from server.observability import audit
@@ -39,10 +35,9 @@ _TITLE = "Claim an agent's namespace"
 # The active accounts named `ns` that still hold a claim code, in every org.
 _UNCLAIMED = """
     SELECT org, namespace, password_hash FROM loom.namespaces FINAL
-    WHERE namespace = {ns:String} AND active = 1
-      AND startsWith(password_hash, {claim:String})
+    WHERE namespace = {ns:String} AND active = 1 AND {unclaimed}
     ORDER BY org
-"""
+""".replace("{unclaimed}", UNCLAIMED_SQL)
 
 
 def _form(namespace: str, error: str = "", status_code: int = 200) -> Response:
@@ -94,15 +89,16 @@ async def agent_claim(request: Request) -> Response:
         return _form(namespace, f"Use {_MIN_LENGTH} to {_MAX_LENGTH} characters.", 400)
     if password != f.get("repeat", ""):
         return _form(namespace, "The two passwords differ.", 400)
-    password_hash = await hash_password_off_loop(password)  # the slow step, before any claim
     try:
         # A code is a secret like a password: guesses count against the name
         # and the address under the sign-in limits.
         org = await throttled(
-            namespace, client_address(request), lambda: _claim(namespace, code, password_hash)
+            namespace, client_address(request), lambda: _claim(namespace, code, password)
         )
     except LoginThrottled as e:
-        return _form(namespace, e.message, 429)
+        page = _form(namespace, e.message, 429)
+        page.headers["Retry-After"] = str(e.retry_after_s)
+        return page
     if org is None:
         return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
     await audit.emit(
@@ -114,12 +110,17 @@ async def agent_claim(request: Request) -> Response:
     )
 
 
-async def _claim(namespace: str, code: str, password_hash: str) -> str | None:
+async def _claim(namespace: str, code: str, password: str) -> str | None:
     """The org whose `namespace` the code claimed, or None. The first claim
-    replaces the code with `password_hash`, so a second finds nothing."""
-    rows = await get_client().query_all(_UNCLAIMED, params={"ns": namespace, "claim": CLAIM_PREFIX})
+    replaces the code with the hash of `password`, so a second finds nothing."""
+    rows = await get_client().query_all(_UNCLAIMED, params={"ns": namespace})
+    if not rows:
+        await verify_as_unknown(code)  # timed like a wrong code
+        return None
     for r in rows:
         if await verify_claim_code_off_loop(r["password_hash"], code):
+            # Hashed only once the code is proven, so a guess costs one hash.
+            password_hash = await hash_password_off_loop(password)
             return await _replace_code(r["org"], namespace, r["password_hash"], password_hash)
     return None
 
@@ -136,7 +137,14 @@ async def _replace_code(org: str, namespace: str, code_hash: str, password_hash:
         # Insert-as-replace carrying every other column forward.
         await get_client().insert(
             "loom.namespaces",
-            [{**row, "password_hash": password_hash, "updated_at": max(now, row["updated_at"])}],
+            [
+                {
+                    **row,
+                    "password_hash": password_hash,
+                    "tags": [*row["tags"], CLAIMED_TAG],
+                    "updated_at": max(now, row["updated_at"]),
+                }
+            ],
         )
     return org
 

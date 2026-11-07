@@ -63,8 +63,8 @@ or with auth off, is dropped without asking.
 
 `loom init --agent NAME` signs an agent up on its own and prints a claim code a person enters
 once at `/oauth/agent-claim`, with a password of their own, to claim the namespace; they then
-sign in here with the namespace name and that password. The token sits in the browser's local storage;
-a stored token the server refuses (expired or revoked) ends the session on the next call, from
+sign in here with the namespace name and that password. The token sits in the browser's local
+storage; a stored token the server refuses (expired or revoked) ends the session on the next call, from
 any page, and so does another tab dropping the token; a sign-out in another tab reloads this
 one to the sign-in screen instead. Mid-session a card among the toasts says so, over any open
 dialog (a pointer reaches it at once; a keyboard user closes the dialog to reach it), and the
