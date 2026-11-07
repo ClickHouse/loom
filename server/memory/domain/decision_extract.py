@@ -42,15 +42,16 @@ from server.memory.domain.decision_statement import (
 # `[image tiles]`, text such as `[images are in the appendix]`, or a word `[imagine]`.
 # Alt text and a placeholder stop at the next `[`, a tag at the next `<`, a target at
 # its first `)` but never past the next `](`: a scan from every unclosed opener to the
-# end of the text would cost quadratic time.
-# One piece of a target `(...)`: none reads past a `)`, a line end outside a quoted
-# title, or the `](` that opens the next target.
+# end of the text would cost quadratic time. A quoted title holds no `]`, so it never
+# reaches the next `](`; a title holding `]` is read piece by piece, its line ends
+# counted with the target's.
+# One piece of a target `(...)`: none crosses a `)`, a line end outside a quoted title,
+# or a `](`.
 _TARGET_PIECE = r"""(?x:
     [^)\]\n"']++  # the destination and a title's text
   | \](?!\()      # a `]` that opens no target
-  | "[^")\]]*+"   # a quoted title, which may span lines; no `]`, so it never reaches the
-  | '[^')\]]*+'   # next `](`: a title holding `]` is read piece by piece, its line ends
-                  # counted with the target's
+  | "[^")\]]*+"   # a quoted title, which may span lines
+  | '[^')\]]*+'   # the same, in single quotes
   | ["']          # a lone quote: `it's.png`, or an unclosed title `"see (a`
 )"""
 # A target: its pieces, with up to three line ends anywhere, as many as CommonMark allows
