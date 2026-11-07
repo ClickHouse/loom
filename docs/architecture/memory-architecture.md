@@ -1243,8 +1243,8 @@ One user-scope step writes as well as deletes: before the user's rows of
 `loom.knowledge_ingest_cancels` go, a cancel the user asked for on another writer's
 pending or processing job is copied with no identity (`agent`, `user_id` and
 `session_id` `'-'`, `actor` empty) and no content, under sequential reads, so the job a
-writer still owns stays cancelled. The copy names nobody, so it is no write by a
-principal and carries no actor or source class.
+writer still owns stays cancelled. The copy names no principal, so its `actor` is
+empty; the table has no `source_class` column.
 
 The terminal row carries `residue_count`, `residue` (per table, and the object count) and
 `verified_at`. A resumed saga re-runs the owning step of any table the last census found

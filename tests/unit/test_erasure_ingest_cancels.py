@@ -32,14 +32,15 @@ ASKED = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S.123"
 
 
 class _LocalCH(KeptCH):
-    """KeptCH whose mutations run to the end before execute returns."""
+    """KeptCH whose mutations run to the end before execute returns, and which records
+    whether the cancel copy ran under sequential reads."""
+
+    copied_sequentially: bool | None = None
 
     async def query_all(self, sql, params=None):
         if "system.mutations" in sql:  # execute ran each mutation to the end
             return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
         return await super().query_all(sql, params)
-
-    copied_sequentially: bool | None = None
 
     async def execute(self, sql, params=None, *, settings=None):
         if sql == steps_memory._KEEP_OTHERS_CANCELS:
