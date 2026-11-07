@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 import server.observability.budgets as budgets
 import server.transport._common as common
+from server.core.hashing import served_content_sha256
 from server.identity.api.models import (
     NamespaceRestoreInput,
     NamespaceSnapshotOutput,
@@ -27,6 +28,7 @@ from server.memory.api.models_bulk import MemoryImportCuratedInput
 from server.memory.api.models_decision import DecisionRecordInput
 from server.memory.api.models_move import MemoryMoveInput
 from server.memory.api.models_records import MemoryRecordWriteInput
+from server.memory.api.models_webhook import WebhookRegisterInput
 from server.observability.audit import input_subject
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.transport import post_rows
@@ -104,6 +106,8 @@ def test_memory_move_audit_row_keeps_the_keys_and_hashes_the_value(monkeypatch) 
     assert SECRET not in json.dumps(subject)
     assert (subject["from_key"], subject["to_key"]) == ("k1", "k2")
     assert subject["value"] == _digest(SECRET)
+    # The hash is the one memory.get serves as the moved row's content_sha256.
+    assert subject["value"]["sha256"] == served_content_sha256(SECRET)
 
 
 @pytest.mark.parametrize("value", [185_000, 0.25, True])
@@ -222,3 +226,22 @@ def test_an_enum_and_an_optional_nested_model_are_shaped_by_their_type() -> None
         "inner": {"item_key": "k", "note": _digest(SECRET)},
         "stages": ["a"],
     }
+
+
+def test_a_webhook_registration_names_where_events_go_and_hashes_the_url(monkeypatch) -> None:
+    url = "https://hooks.example.com/services/T1/B2/the-token"
+    body = WebhookRegisterInput(
+        org="o",
+        namespace="n",
+        url=url,
+        secret_ref="LOOM_WEBHOOK_SECRET_O__CI",
+        events=["memory.written"],
+    )
+    subject = _audited_subject(monkeypatch, "webhook.register", body)
+    assert "the-token" not in json.dumps(subject)
+    assert subject["url_host"] == "https://hooks.example.com"
+    assert subject["url"] == _digest(url)
+    assert (subject["secret_ref"], subject["events"]) == (
+        "LOOM_WEBHOOK_SECRET_O__CI",
+        ["memory.written"],
+    )

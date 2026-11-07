@@ -590,7 +590,7 @@ function eventRow(row: AuditEntry, i: number): TableRowType {
   };
 }
 
-/** One event's summary and type, and its parsed input behind "Details". */
+/** One event's summary and type, and its parsed subject behind "Details". */
 function AuditEvent({ row }: { row: AuditEntry }) {
   const [expanded, setExpanded] = useState(false);
   // Parsed once, so the summary and the "Details" expansion read the same structured data.

@@ -152,11 +152,8 @@ async def emit_many(
         log.exception("audit.emit_many failed for event_type=%s: %s", event_type, e)
 
 
-# Input fields whose text an audit subject keeps: identity, principals, ids, keys, URIs
-# and versions (`memory.delete_version`'s is `int | str`, which the number rule misses),
-# which name what a call acted on and who acted. Every other text field (a value, a
-# reason, a payload) is kept as its SHA-256 and length, so `loom.audit_log` holds no text
-# an erasure must reach.
+# Fields that name what a call acted on and who acted, kept as sent; `version` is here
+# because `memory.delete_version`'s is `int | str`, which the number rule misses.
 _NAMING_FIELDS = frozenset(
     {
         "org",
