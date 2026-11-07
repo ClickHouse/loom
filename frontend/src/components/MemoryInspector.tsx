@@ -163,6 +163,10 @@ export function MemoryInspector({
   const [lineage, setLineage] = useState<LineageStep[] | null>(null);
   const [provenance, setProvenance] = useState<MemoryProvenance | null>(null);
   const [evidence, setEvidence] = useState<MemoryEvidenceItem[] | null>(null);
+  const [evidenceCut, setEvidenceCut] = useState(false);
+  // The inspection whose row `detail` holds: the section reads keyed to the row (Evidence)
+  // wait for it, since a key change leaves the previous row on screen for a render.
+  const detailOf = useRef(-1);
   const [links, setLinks] = useState<{ in: MemoryBacklinkEdge[]; out: MemoryBacklinkEdge[] } | null>(null);
   // The Lock or Mark-as-wrong dialog, over the drawer.
   const [reasonDialog, setReasonDialog] = useState<"lock" | "reject" | null>(null);
@@ -324,6 +328,7 @@ export function MemoryInspector({
     setLineage(null);
     setProvenance(null);
     setEvidence(null);
+    setEvidenceCut(false);
     setLinks(null);
     inspection.current += 1;
     shown.current = shownAs(identity, memoryKey);
@@ -335,6 +340,7 @@ export function MemoryInspector({
     getMemory(identity, memoryKey, { include_recall_breakdown: true })
       .then((res) => {
         if (!live) return;
+        detailOf.current = inspection.current;
         setDetail(res);
         setLoading(false);
       })
@@ -399,11 +405,12 @@ export function MemoryInspector({
     );
     // Evidence is looked up under the row's own identity (an extracted row carries its
     // session), so it waits for the row.
-    if (detail)
+    if (detail && detailOf.current === mine)
       want("evidence", () =>
         memoryEvidence(rowIdentity(identity, detail), k)
           .then((r) => {
             if (fresh()) setEvidence(r.items ?? []);
+            if (fresh()) setEvidenceCut(r.truncated);
           })
           .catch(() => {
             if (fresh()) setEvidence([]);
@@ -512,7 +519,8 @@ export function MemoryInspector({
   const onOutcome = async (outcome: "positive" | "negative") => {
     if (!detail) return;
     try {
-      const r = await recordMemoryOutcome(rowIdentity(identity, detail), memoryKey, outcome);
+      // By id: the op resolves a key in the `-` session only, and an extracted row has its own.
+      const r = await recordMemoryOutcome(identity, detail.memory_id ? { memoryId: detail.memory_id } : { memoryKey }, outcome);
       if (!r.recorded) {
         toast("This memory is no longer live", "error");
         return;
@@ -538,8 +546,11 @@ export function MemoryInspector({
     if (r.refused_head) throw new Error(`${label} is a live version; edit or delete the memory instead.`);
     if (!r.redacted) throw new Error(`${label} is no longer recorded.`);
     toast(`Redacted ${label}`, "ok");
+    const mine = inspection.current;
     memoryHistory(identity, memoryKey, 8)
-      .then((fresh) => setHistory(fresh.rows || []))
+      .then((fresh) => {
+        if (inspection.current === mine) setHistory(fresh.rows || []);
+      })
       .catch(() => {});
   };
 
@@ -547,10 +558,14 @@ export function MemoryInspector({
   // the drawer as it was; the write itself already landed.
   const reread = async () => {
     onChanged();
+    // A drawer moved to another key meanwhile keeps that key's row: this one under it
+    // would be what Edit, Pin and Verify then write back.
+    const mine = inspection.current;
     try {
-      setDetail(await getMemory(identity, memoryKey, { include_recall_breakdown: true }));
+      const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
+      if (inspection.current === mine) setDetail(fresh);
     } catch (e) {
-      toast(`Couldn't read the memory again: ${humanizeError(e)}`, "error");
+      if (inspection.current === mine) toast(`Couldn't read the memory again: ${humanizeError(e)}`, "error");
     }
   };
 
@@ -574,6 +589,21 @@ export function MemoryInspector({
   // demote removes that copy and leaves this row as it is.
   const onShare = async (share: boolean) => {
     if (!detail) return;
+    const ok = await confirmAction(
+      share
+        ? {
+            title: `Share ${memoryKey} with every agent in ${identity.namespace}?`,
+            message: "This value becomes the namespace's shared memory under the key, replacing any shared there now.",
+            confirmLabel: "Share",
+          }
+        : {
+            title: `Stop sharing ${memoryKey} in ${identity.namespace}?`,
+            message: "The namespace's shared memory under the key goes, whichever agent shared it. This memory stays.",
+            confirmLabel: "Stop sharing",
+            danger: true,
+          },
+    );
+    if (!ok) return;
     try {
       if (share) {
         const r = await shareMemory(rowIdentity(identity, detail), memoryKey);
@@ -1092,7 +1122,12 @@ export function MemoryInspector({
                   ) : evidence.length === 0 ? (
                     <SectionEmpty>No source turn is linked to this memory.</SectionEmpty>
                   ) : (
-                    <EvidenceList items={evidence} />
+                    <>
+                      <EvidenceList items={evidence} />
+                      {evidenceCut && (
+                        <p className="mt-2 text-xs text-text-muted">The first {evidence.length} turns.</p>
+                      )}
+                    </>
                   )}
                 </Disclosure>
 
@@ -1234,7 +1269,7 @@ export function MemoryInspector({
                                   prevLabel={`${label} (${writtenAt})`}
                                   nextLabel={`v${history.length} (current)`}
                                 />
-                                {canRedact && !h.redacted_at && h.memory_id && h.version_text && (
+                                {canRedact && !detail?.lock_mode && !h.redacted_at && h.memory_id && h.version_text && (
                                   <Button
                                     type="danger"
                                     htmlType="button"

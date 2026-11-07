@@ -1091,10 +1091,11 @@ export async function memoryBacklinks(
  *  `negative` records that relying on it went badly. */
 export async function recordMemoryOutcome(
   id: Identity,
-  memoryKey: string,
+  target: { memoryId: string } | { memoryKey: string },
   outcome: "positive" | "negative",
 ): Promise<{ recorded: boolean; quarantined: boolean }> {
-  return post("/v1/memory.outcome", { ...id, memory_key: memoryKey, outcome, source: "dashboard" });
+  const which = "memoryId" in target ? { memory_id: target.memoryId } : { memory_key: target.memoryKey };
+  return post("/v1/memory.outcome", { ...id, ...which, outcome, source: "dashboard" });
 }
 
 /** POST /v1/memory.redact (ADMIN): scrub one past version's value, keeping its row and

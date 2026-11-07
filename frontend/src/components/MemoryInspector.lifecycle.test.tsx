@@ -11,6 +11,8 @@ import { MemoryInspector } from "./MemoryInspector";
 
 const LIVE: MemoryDetail = {
   found: true,
+  memory_id: "m-live",
+  session_id: "sess-7",
   value: "oat milk, no sugar",
   memory_type: "preference",
   confidence: 0.8,
@@ -69,6 +71,7 @@ vi.mock("../api", async (importOriginal) => {
   };
 });
 import * as api from "../api";
+import { confirmAction } from "./ConfirmDialog";
 
 const grant = (role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace: "team",
@@ -87,7 +90,7 @@ const person: WhoAmI = {
   namespaces: ["team"],
 };
 const identity = { org: "dev", namespace: "team", agent: "loom-ui" };
-const row = { ...identity, agent: "claude-desktop", user_id: "alice", session_id: "-" };
+const row = { ...identity, agent: "claude-desktop", user_id: "alice", session_id: "sess-7" };
 
 async function open(role: MyNamespaceEntry["role"], detail: MemoryDetail = LIVE) {
   vi.mocked(api.getMemory).mockResolvedValue(detail);
@@ -174,12 +177,41 @@ describe("MemoryInspector lifecycle actions", () => {
     await waitFor(() => expect(api.rejectMemory).toHaveBeenCalledWith(row, "coffee_pref", "she switched to soy"));
   });
 
-  it("shares with every agent and stops sharing, for an admin", async () => {
+  it("shares with every agent and stops sharing, for an admin, each after a confirmation", async () => {
     await open("admin");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
     await waitFor(() => expect(api.shareMemory).toHaveBeenCalledWith(row, "coffee_pref"));
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Stop sharing" }));
     await waitFor(() => expect(api.unshareMemory).toHaveBeenCalledWith(identity, "coffee_pref"));
+    expect(confirmAction).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(confirmAction).mock.calls[1][0]).toMatchObject({ title: "Stop sharing coffee_pref in team?" });
+  });
+
+  it("shares nothing when the confirmation is declined", async () => {
+    vi.mocked(confirmAction).mockResolvedValueOnce(false);
+    await open("admin");
+    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
+    await waitFor(() => expect(confirmAction).toHaveBeenCalled());
+    expect(api.shareMemory).not.toHaveBeenCalled();
+  });
+
+  it("reads the evidence of the memory it moved to, under that memory's own identity", async () => {
+    const other = { ...LIVE, memory_id: "m-other", value: "black", agent: "cursor", user_id: "bob", session_id: "s9" };
+    vi.mocked(api.getMemory).mockImplementation(async (_id, key) => (key === "coffee_pref" ? LIVE : other));
+    useStore.setState({ authed: true, whoami: person, myNamespaces: [grant("viewer")], identity });
+    const { rerender } = render(
+      <MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />,
+    );
+    await screen.findByText("oat milk, no sugar");
+    await userEvent.click(screen.getByRole("button", { name: /Evidence/ }));
+    await waitFor(() => expect(api.memoryEvidence).toHaveBeenCalledWith(row, "coffee_pref"));
+    rerender(<MemoryInspector identity={identity} memoryKey="tea_pref" onClose={() => {}} onChanged={() => {}} />);
+    await screen.findByText("black");
+    await waitFor(() => expect(api.memoryEvidence).toHaveBeenCalledTimes(2));
+    expect(api.memoryEvidence).toHaveBeenLastCalledWith(
+      { ...identity, agent: "cursor", user_id: "bob", session_id: "s9" },
+      "tea_pref",
+    );
   });
 
   it("reads the evidence and the links only when their sections open", async () => {
@@ -260,7 +292,10 @@ describe("MemoryInspector lifecycle actions", () => {
   it("records a writer's verdict on the memory", async () => {
     await open("writer");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "This misled" }));
-    await waitFor(() => expect(api.recordMemoryOutcome).toHaveBeenCalledWith(row, "coffee_pref", "negative"));
+    // By id: the op resolves a key in the `-` session only, and this row has its own.
+    await waitFor(() =>
+      expect(api.recordMemoryOutcome).toHaveBeenCalledWith(identity, { memoryId: "m-live" }, "negative"),
+    );
   });
 
   it("reads the memory again when a bad outcome rejects it", async () => {

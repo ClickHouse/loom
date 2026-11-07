@@ -9,7 +9,7 @@ import { Alert, ChoiceGroup } from "../components/ui";
 
 const LOCK_MODES = [
   { value: "read_only", label: "Read only", hint: "No edit, no new expiry, no delete" },
-  { value: "no_delete", label: "No delete", hint: "Edits are allowed; delete, clear and merge are refused" },
+  { value: "no_delete", label: "No delete", hint: "Edits are allowed; delete, redact, clear and merge are refused" },
 ] as const;
 
 /** memory.lock: a mode and the reason, which every refused write then names. */
