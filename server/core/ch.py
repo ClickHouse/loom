@@ -154,15 +154,39 @@ def _apply_caller_ceilings(out: dict[str, Any], cls: str) -> None:
     out["read_overflow_mode"] = "throw"
 
 
+# An `insights.query` statement runs as the analyst user with the request's
+# signed scope as custom settings (`server.insights.domain.analysis`). Set
+# only by `as_analyst`; None everywhere else.
+_analyst_var: ContextVar[tuple[str, str, dict[str, Any]] | None] = ContextVar(
+    "ch_analyst", default=None
+)
+
+
+@contextmanager
+def as_analyst(user: str, password: str, extra: dict[str, Any]) -> Iterator[None]:
+    """Every statement in this block logs in as `user` and carries `extra`
+    (the signed scope and the caps), which win over every other setting."""
+    token = _analyst_var.set((user, password, dict(extra)))
+    try:
+        yield
+    finally:
+        _analyst_var.reset(token)
+
+
 def _reader_auth() -> dict[str, Any]:
     """Inside a `caller_shaped()` block with LOOM_CH_READER_USER set, the HTTP
     auth header that sends the read as that read-only user instead of `ch_user`.
     Only the query path sends it, where every statement is read-class and so
-    carries the caller-shaped ceilings too."""
-    user = settings.ch_reader_user
-    if not caller_shaped_var.get() or not user:
-        return {}
-    token = base64.b64encode(f"{user}:{settings.ch_password}".encode()).decode()
+    carries the caller-shaped ceilings too. Inside `as_analyst` it sends the
+    analyst user instead, always."""
+    analyst = _analyst_var.get()
+    if analyst is not None:
+        user, password = analyst[0], analyst[1]
+    else:
+        user, password = settings.ch_reader_user, settings.ch_password
+        if not caller_shaped_var.get() or not user:
+            return {}
+    token = base64.b64encode(f"{user}:{password}".encode()).decode()
     return {"transport_settings": {"Authorization": f"Basic {token}"}}
 
 
@@ -440,6 +464,9 @@ def statement_settings(
         for name, value in traffic_class_settings(tclass).items():
             out.setdefault(name, value)
     _apply_caller_ceilings(out, cls)
+    analyst = _analyst_var.get()
+    if analyst is not None:
+        out.update(analyst[2])
     return _with_request_query_id(out)
 
 
@@ -1033,6 +1060,15 @@ class CHClient:
     ) -> list[dict[str, Any]]:
         result = await self._query_fail_open("query_all", sql, params)
         return [dict(zip(result.column_names, row, strict=False)) for row in result.result_rows]
+
+    async def query_columns(
+        self, sql: str, params: dict[str, Any] | None = None
+    ) -> tuple[list[str], list[str], list[tuple[Any, ...]]]:
+        """A SELECT's column names, column type names and rows, for a statement
+        whose columns the caller does not know (two columns may share a name)."""
+        result = await self._query_fail_open("query_columns", sql, params)
+        types = [t.name for t in result.column_types]
+        return list(result.column_names), types, [tuple(r) for r in result.result_rows]
 
     async def raw_bytes(self, sql: str, params: dict[str, Any] | None = None) -> bytes:
         """A SELECT's whole output as bytes (`FORMAT RawBLOB` for one String

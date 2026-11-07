@@ -30,6 +30,10 @@ class _CHClient(Protocol):
         sql: str,
         params: dict[str, Any] | None = ...,
     ) -> list[dict[str, Any]]: ...
+    async def query_columns(
+        self, sql: str, params: dict[str, Any] | None = None
+    ) -> tuple[list[str], list[str], list[tuple[Any, ...]]]: ...
+
     async def execute(
         self,
         sql: str,

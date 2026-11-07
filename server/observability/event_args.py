@@ -55,6 +55,11 @@ IDENTIFIER_KEYS: frozenset[str] = frozenset(
         "long_task_ms",
         "inp_ms",
         "dom_nodes",
+        # insights.query: how many rows the statement returned, and the
+        # statement's digest, which a restricted namespace keeps when it drops
+        # the `sql` text key; the assistant's citation check reads it.
+        "row_count",
+        "sql_digest",
         "api_calls",
         "api_ms",
         "build",
@@ -308,6 +313,8 @@ TEXT_KEYS: frozenset[str] = frozenset(
         "content",
         "text",
         "query",
+        # insights.query's statement: its digest and length, never the text.
+        "sql",
         "question",
         "description",
         "reason",
@@ -418,6 +425,11 @@ def _text(value: Any) -> str | None:
     if payload == "":
         return None
     return f"sha256:{_digest(payload)}/{len(payload)}"
+
+
+def text_digest(value: Any) -> str:
+    """The ledger's `sha256:<hex>/<length>` for a text-class argument, '' for none."""
+    return _text(value) or ""
 
 
 def redact_args(raw_args: dict[str, Any] | None, org: str, namespace: str) -> dict[str, Any] | None:

@@ -3,8 +3,9 @@
 This page is the design of Loom's assistant, which will answer questions about what a
 namespace holds and how it is used, with a citation for every claim. It names the
 surfaces, how each caller's identity will reach the agent's tools, the analysis op and
-its isolation, the deployment, what will be stored and erased, and the cost. None of it
-is built yet; [the build order](#build-order) lists the parts.
+its isolation, the deployment, what will be stored and erased, and the cost. The
+analysis op and its analyst user are built; the rest is design, and
+[the build order](#build-order) lists the parts.
 
 LibreChat will be the assistant: it will host the agent (its model, instructions and
 tools) and run it headless beside Loom, reachable only from Loom. Loom will supply the
@@ -219,7 +220,7 @@ change.
 
 ## The analysis op
 
-`insights.query` will run one read-only SQL statement over an allowlisted set of Loom
+`insights.query` runs one read-only SQL statement over an allowlisted set of Loom
 tables and return its rows, capped. The agent uses it for questions no other read
 answers, such as which agents wrote the most contradicted facts last week or what a
 namespace holds by kind and age. Any token with `viewer` on the namespaces it names can
@@ -306,7 +307,7 @@ verified first, the namespaces are checked as on any read, and the call is ledge
 
 ### Provisioning
 
-The analyst user, its settings profiles, grants and policies will be written with SQL,
+The analyst user, its settings profiles, grants and policies are written with SQL,
 never in a ClickHouse config file, which would put the key in the repository. A server
 whose ClickHouse user has access management (the bundled ClickHouse's `loom` user, a
 self-managed admin) writes them itself, and draws the secrets row when there is none and
@@ -446,17 +447,21 @@ keeps:
   the length of the run; a replica that still holds the old password gets an
   authentication failure, which answers `ANALYSIS_UNAVAILABLE` too.
 
-A replica probes the analyst user at boot and then a minute after each probe, in the
-background, as the analyst itself, so the probe needs no access management:
+A replica probes the analyst user at boot and again before the first statement a minute
+or more after its last probe, as the analyst itself, so the probe needs no access
+management:
 
 - a signed read of `loom.analysis_canary`, whose one row sits in a reserved scope (the
   empty org and namespace, which `insights.query` refuses as a request's scope) under a
   policy with the same key, must return that row: the policies accept the key;
 - a signed read of each allowlisted table in that reserved scope must count no rows: no
-  extra policy widens what the analyst reads;
+  extra policy widens what the analyst reads (under the server default a table with no
+  analyst policy counts rows too, so a write is tried first, and what it leaves is a
+  policy for an admin);
 - a `system` table must be refused;
 - when the stored version is this build's: an unsigned read of each allowlisted table
-  must fail for want of the scope settings (the table has a policy that reads them), and
+  and of the canary must fail for want of the scope settings (the table has a policy
+  that reads them), and
   the analyst's own `SHOW GRANTS` must name nothing but the allowlist and the canary. A
   build older than the stored version skips these, since the entities are another
   build's.
@@ -498,7 +503,7 @@ statement after an erasure cannot read what it removed.
 
 ### The catalog
 
-`insights.catalog` will return the allowlisted tables, their columns, types and
+`insights.catalog` returns the allowlisted tables, their columns, types and
 comments, and the notes a correct query needs: which tables hold one live row per key
 and which one row per event. It is generated from the allowlist, so it never names a
 column the user cannot read, and it leaves out the probe's canary.
@@ -530,7 +535,7 @@ The rows are stored nowhere.
 ## Isolation proof
 
 `tests/integration/test_analysis_isolation.py`, in the style of
-`tests/integration/test_cross_principal_leakage.py`, will seed two orgs, each with a
+`tests/integration/test_cross_principal_leakage.py`, seeds two orgs, each with a
 canary memory and a canary ledger row, and call `insights.query` with the first org's
 viewer token. Each case must be refused or return no canary:
 
@@ -624,7 +629,11 @@ viewer token. Each case must be refused or return no canary:
   - a load balancer that pins every probe to one server, with no policy read, where
     every probe fails, for which it names both causes.
 
-The same file will show that a revoked token stops new calls and that an erased memory
+The cases for the key's rotation, the reseal races, lagging servers, `loom doctor`, two
+builds side by side and a Loom user without access management come with part 2 of
+[the build order](#build-order).
+
+The same file shows that a revoked token stops new calls and that an erased memory
 is gone from the next statement. A unit test pins the generated grants and policies to
 the allowlist. The bridge's tests will show that:
 
@@ -750,8 +759,9 @@ token never reads more than the caller's own.
 
 ## Rolling upgrades
 
-`assistant.ask`, `insights.query` and `insights.catalog` will be new ops and
-`/v1/assistant/chat/completions` a new route: a build that does not know them answers
+`insights.query` and `insights.catalog` are new ops, and `assistant.ask` and
+`/v1/assistant/chat/completions` will be a new op and route: a build that does not know
+them answers
 `UNKNOWN_OP` or 404, so a client points at them once every replica serves them. The
 analyst user, its grants and policies, `loom.analysis_secrets`, `loom.analysis_canary`
 and `loom.assistant_service` live in ClickHouse and are shared by every replica; the
@@ -760,17 +770,23 @@ by an older build.
 
 ## Build order
 
-1. `insights.query`, `insights.catalog` and the analyst user, with the isolation proof,
-   and `users_without_row_policies_can_read_rows = false` in the ClickHouse Loom
-   configures: a server-settings file (`config.d/`) under `deploy/clickhouse-config/`
-   mounted by `compose.yaml` and `dev/ci_start_clickhouse.sh`, and a key of the chart's
-   development ClickHouse ConfigMap with its `volumeMount`. CI's ClickHouse runs that
-   half of the dropped-policy case; the server-default half runs against a second
-   ClickHouse started without the file.
-2. LibreChat deployed headless, the seeded agent definition, re-qualified with analysis
+1. `insights.query`, `insights.catalog` and the analyst user, written at boot and by
+   `loom ch-setup` and probed, with the isolation proof's cases for them, and
+   `users_without_row_policies_can_read_rows = false` in the ClickHouse Loom configures:
+   `deploy/clickhouse-config/access_control.xml`, mounted by `compose.yaml` and
+   `dev/ci_start_clickhouse.sh`, and a key of the chart's development ClickHouse
+   ConfigMap with its `volumeMount`. The dropped-policy case reads the setting from the
+   server's behaviour and runs on either. Built.
+2. The key's rotation: `loom ch-setup --rotate-analysis-key` and `--live`, the printed
+   SQL as a complete rotation, the key read from the row before each statement, the
+   probe's deferral within three settle times, the policy read and `loom doctor`'s
+   outcomes, and the isolation proof's cases for them, for two builds side by side and
+   for a Loom user without access management, with CI running the dropped-policy case
+   on a second ClickHouse with the server default.
+3. LibreChat deployed headless, the seeded agent definition, re-qualified with analysis
    questions.
-3. The bridge: the chat route, `assistant.ask`, the SDK clients.
-4. The chat on the dashboard's Assistant page.
+4. The bridge: the chat route, `assistant.ask`, the SDK clients.
+5. The chat on the dashboard's Assistant page.
 
 Each part moves its section of this page from design to the description of what is
 built.

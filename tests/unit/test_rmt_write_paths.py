@@ -55,6 +55,15 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
     "agent_turn_usage": ("gap", "platform"),
     "blacklist": ("gap", "platform"),
     "blacklist_version": ("gap", "platform"),
+    "analysis_canary": (
+        "insert_once",
+        "one constant row (id 0) that every write inserts whole; the key collapses repeats",
+    ),
+    "analysis_secrets": (
+        "insert_once",
+        "one row written by the first boot under the analysis lease; a reseal re-inserts it "
+        "whole at a higher version",
+    ),
     "categories": ("gap", "platform"),
     "chunk_supersessions": ("gap", "platform"),
     "code_answers": ("gap", "code"),

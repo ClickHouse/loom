@@ -782,6 +782,19 @@
             ]
           }
         },
+        "insights": {
+          "class": "InsightsOps",
+          "methods": {
+            "catalog": [
+              "body",
+              "options"
+            ],
+            "query": [
+              "body",
+              "options"
+            ]
+          }
+        },
         "knowledge": {
           "class": "KnowledgeOps",
           "methods": {

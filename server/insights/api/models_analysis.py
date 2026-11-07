@@ -1,0 +1,75 @@
+"""Wire models of `insights.query` and `insights.catalog`: read-only SQL over
+the analysis allowlist, held to the token's org and namespace by ClickHouse."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+class InsightsQueryInput(BaseModel):
+    org: str
+    namespace: str
+    sql: str = Field(
+        ...,
+        min_length=1,
+        max_length=20_000,
+        description=(
+            "One SELECT or WITH statement over the tables insights.catalog lists; it reads "
+            "only this namespace's rows. No trailing FORMAT or SETTINGS widen anything."
+        ),
+    )
+    limit: int = Field(
+        default=100,
+        ge=1,
+        le=10_000,
+        description=(
+            "Rows to return at most (default 100); the deployment's cap "
+            "(LOOM_CH_ANALYSIS_MAX_RESULT_ROWS) wins when lower."
+        ),
+    )
+
+
+class AnalysisColumn(BaseModel):
+    name: str
+    type: str
+
+
+class InsightsQueryOutput(BaseModel):
+    columns: list[AnalysisColumn] = Field(default_factory=list)
+    # One list per row, in `columns` order; dates, UUIDs and decimals as strings.
+    rows: list[list[Any]] = Field(default_factory=list)
+    row_count: int = 0
+    # More rows matched than `limit`; narrow the statement or aggregate.
+    truncated: bool = False
+    # The digest the request ledger records for `sql` (`sha256:<hex>/<length>`),
+    # which a citation of the statement is checked against.
+    sql_digest: str = ""
+
+
+class InsightsCatalogInput(BaseModel):
+    org: str
+    namespace: str
+
+
+class CatalogColumn(BaseModel):
+    name: str
+    type: str
+    comment: str
+
+
+class CatalogTable(BaseModel):
+    name: str
+    comment: str
+    # How to read it correctly: FINAL, one row per version, a sum to take.
+    notes: str
+    columns: list[CatalogColumn]
+
+
+class InsightsCatalogOutput(BaseModel):
+    tables: list[CatalogTable]
+    # The caps a statement runs under, so a query can be sized before it runs.
+    max_result_rows: int
+    max_execution_s: float
+    max_rows_to_read: int

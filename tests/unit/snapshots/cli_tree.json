@@ -4962,6 +4962,21 @@
        "required": false,
        "help": "Print the SQL for an admin (password as a placeholder); change nothing.",
        "metavar": null
+      },
+      {
+       "option_strings": [
+        "--print-analyst-sql"
+       ],
+       "dest": "print_analyst_sql",
+       "action": "_StoreTrueAction",
+       "default": false,
+       "const": true,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "Print the SQL that writes insights.query's analyst user, for an admin where LOOM_CH_USER lacks access management. It holds the user's password and the scope key stored sealed in loom.analysis_secrets: run it, do not store it.",
+       "metavar": null
       }
      ]
     },

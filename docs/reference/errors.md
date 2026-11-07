@@ -217,6 +217,10 @@ HTTP 503, raised as `server.memory.store.pg_memory.AdmissionContendedError`. 503
 
 Raised in `server/memory/app/update.py`.
 
+#### `ANALYSIS_UNAVAILABLE`
+
+HTTP 503, raised as `server.core.errors.AnalysisUnavailableError`. 503 — `insights.query` cannot run: the analyst ClickHouse user is missing, differs from this build's allowlist, or failed the boot probe.
+
 #### `AUTH_INSUFFICIENT`
 
 HTTP 403, raised as `server.core.errors.AuthInsufficientError`. A public 403 that remains catchable as ``PermissionError`` internally. Category `auth`, retryable: no; when the check could not run, `dependency` and yes ([the error envelope](#the-error-envelope-over-http)). What to do: [common errors](#common-errors-and-what-to-do).

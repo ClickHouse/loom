@@ -153,6 +153,19 @@ Ceilings for the reads a caller shapes (code.grep, code.search with a pattern or
 | `LOOM_CH_CALLER_SHAPED_MAX_ROWS_TO_READ` | `int` | `500000000` |  | Rows one caller-shaped read may scan; past it the read fails (422), never a partial answer. 0 = no ceiling, so the loom_reader profile's cap applies. |
 | `LOOM_CH_READER_USER` | `str` | `''` |  | ClickHouse user the caller-shaped reads run as, with `ch_password`; the shipped config defines `loom_reader` (SELECT only). Empty = `ch_user`. |
 
+### Analysis statements (insights.query)
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_CH_ANALYSIS_MAX_EXECUTION_S` | `float` | `10.0` |  | Each cap is pinned as a MAX in the loom_analyst user's settings profile, which Loom rewrites at boot, so no statement can raise it. Seconds one insights.query statement may run. |
+| `LOOM_CH_ANALYSIS_MAX_ROWS_TO_READ` | `int` | `200000000` |  | Rows one statement may scan; past it the statement fails (422), never a partial answer. |
+| `LOOM_CH_ANALYSIS_MAX_MEMORY_BYTES` | `int` | `2000000000` |  | Bytes of memory one statement may use. |
+| `LOOM_CH_ANALYSIS_MAX_RESULT_ROWS` | `int` | `500` |  | Rows one statement returns at most; a longer result comes back cut, marked truncated. |
+| `LOOM_CH_ANALYSIS_MAX_RESULT_BYTES` | `int` | `4000000` |  | Bytes of result one statement may return; past it the statement fails (422). |
+| `LOOM_CH_ANALYSIS_MAX_CONCURRENT` | `int` | `8` |  | Statements the analyst user runs at once across every org and replica. |
+| `LOOM_CH_ANALYSIS_MAX_THREADS` | `int` | `4` |  | Threads one statement may use (pinned as a MAX, so a statement cannot take the host). |
+| `LOOM_CH_ANALYSIS_MAX_CONCURRENT_PER_ORG` | `int` | `2` |  | Statements one org runs at once on one replica; past it a call answers RATE_LIMITED. |
+
 ### Traffic classes
 
 | Variable | Type | Default | Live | Meaning |

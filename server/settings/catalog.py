@@ -643,6 +643,26 @@ class ClickHouseSettings(BaseModel):
     # shipped config defines `loom_reader` (SELECT only). Empty = `ch_user`.
     ch_reader_user: str = ""
 
+    # --- analysis statements (insights.query) ---
+    # Each cap is pinned as a MAX in the loom_analyst user's settings profile, which
+    # Loom rewrites at boot, so no statement can raise it.
+    # Seconds one insights.query statement may run.
+    ch_analysis_max_execution_s: float = Field(default=10.0, ge=0.1, le=300.0)
+    # Rows one statement may scan; past it the statement fails (422), never a partial answer.
+    ch_analysis_max_rows_to_read: int = Field(default=200_000_000, ge=1)
+    # Bytes of memory one statement may use.
+    ch_analysis_max_memory_bytes: int = Field(default=2_000_000_000, ge=1)
+    # Rows one statement returns at most; a longer result comes back cut, marked truncated.
+    ch_analysis_max_result_rows: int = Field(default=500, ge=1, le=10_000)
+    # Bytes of result one statement may return; past it the statement fails (422).
+    ch_analysis_max_result_bytes: int = Field(default=4_000_000, ge=1)
+    # Statements the analyst user runs at once across every org and replica.
+    ch_analysis_max_concurrent: int = Field(default=8, ge=1, le=256)
+    # Threads one statement may use (pinned as a MAX, so a statement cannot take the host).
+    ch_analysis_max_threads: int = Field(default=4, ge=1, le=64)
+    # Statements one org runs at once on one replica; past it a call answers RATE_LIMITED.
+    ch_analysis_max_concurrent_per_org: int = Field(default=2, ge=1, le=64)
+
     # --- traffic classes ---
     # JSON map {traffic class: ClickHouse settings} applied by
     # `server.core.ch.statement_settings` to every read (an explicit per-call
@@ -5716,6 +5736,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "cost.budget_status": 120,
     "cost.record_turns": 150,
     "cost.summary": 200,
+    "insights.query": 2000,
+    "insights.catalog": 20,
     "decision.chain": 500,
     "decision.outcome": 1500,
     "decision.precedents": 800,

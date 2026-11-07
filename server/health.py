@@ -70,6 +70,7 @@ def _health_provider_fields(
     from server.core.vectors import codes_state
     from server.embedding.embedder import effective_embedding_dim, embedder_is_fake
     from server.insights.app import provider_runtime
+    from server.insights.app.analysis import analysis_state
     from server.llm.client import llm_is_fake
     from server.observability import instance as _instance
     from server.observability import provider_health
@@ -106,6 +107,8 @@ def _health_provider_fields(
             repo_sandbox_refusal=LAYOUT_REFUSED if layout_refusal() else "",
             ch_reader_ok=reader_user_state(),
             ch_reader_error=reader_user_error(),
+            analysis_ok=analysis_state()[0],
+            analysis_error=analysis_state()[1],
             oauth_signin_state_full=signin_claims.keeper_full(),
             stale_participants=provider_barrier.stale_participants(),
             carry_pinned=tuple(rmt_carry.pinned_overdue()),

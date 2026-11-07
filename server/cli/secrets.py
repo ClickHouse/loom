@@ -32,6 +32,7 @@ SEALED: tuple[tuple[str, str, tuple[str, ...], str, str], ...] = (
         "provider-rebuild-views",
         "",
     ),
+    ("loom.analysis_secrets", "sealed", (), "analysis.secrets", ""),
     # A live session's identity-provider refresh token. Keeper's sealed copies
     # (a code, a device grant, an approval or link in flight) are not rewritten
     # here, see `in_flight`; a `family:<id>` key holds only "<generation>:<rid>".
@@ -51,6 +52,7 @@ _KEYS = {
     "loom.knowledge_sources": ("org", "namespace", "name"),
     "loom.provider_configuration": ("config_id",),
     "loom.oauth_state": ("record_type", "id"),
+    "loom.analysis_secrets": ("id",),
 }
 # A rebuild in these states rewrites its configuration row from one it read
 # earlier, which would put back what the reseal replaced.

@@ -358,6 +358,14 @@ def stored_caller_text(text: str) -> str:
         return kind
     return ""
 
+class AnalysisUnavailableError(LoomServerError):
+    """503 — `insights.query` cannot run: the analyst ClickHouse user is
+    missing, differs from this build's allowlist, or failed the boot probe.
+    `loom doctor` names the cause and the fix."""
+
+    code = "ANALYSIS_UNAVAILABLE"
+    status_code = 503
+
 
 # How a caller acts on an error without knowing its code: `category` says whose move it
 # is, `retryable` whether resending the same request unchanged can succeed later (after

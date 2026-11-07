@@ -159,6 +159,8 @@ OpName = Literal[
     "inbox.policy_set",
     "inbox.principals",
     "inbox.register",
+    "insights.catalog",
+    "insights.query",
     "knowledge.add",
     "knowledge.bulk_add",
     "knowledge.bulk_delete",
@@ -518,6 +520,8 @@ OP_NAMES: tuple[str, ...] = (
     "inbox.policy_set",
     "inbox.principals",
     "inbox.register",
+    "insights.catalog",
+    "insights.query",
     "knowledge.add",
     "knowledge.bulk_add",
     "knowledge.bulk_delete",
@@ -2196,6 +2200,30 @@ OPS: dict[str, OpSpec] = {
         800,
         True,
         False,
+    ),
+    "insights.catalog": OpSpec(
+        "insights.catalog",
+        "InsightsCatalogInput",
+        "InsightsCatalogBody",
+        "InsightsCatalogOutput",
+        True,
+        "viewer",
+        "experimental",
+        20,
+        False,
+        True,
+    ),
+    "insights.query": OpSpec(
+        "insights.query",
+        "InsightsQueryInput",
+        "InsightsQueryBody",
+        "InsightsQueryOutput",
+        True,
+        "viewer",
+        "experimental",
+        2000,
+        False,
+        True,
     ),
     "knowledge.add": OpSpec(
         "knowledge.add",
@@ -9900,6 +9928,63 @@ class InboxRegisterBody(TypedDict, total=False):
 class InboxRegisterOutput(TypedDict, total=False):
     inbox: Required["InboxPayload"]
     created: Required[bool]
+
+
+class InsightsCatalogInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+
+
+class InsightsCatalogBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+
+
+class InsightsCatalogOutput(TypedDict, total=False):
+    tables: Required[list["CatalogTable"]]
+    max_result_rows: Required[int]
+    max_execution_s: Required[float]
+    max_rows_to_read: Required[int]
+
+
+class CatalogTable(TypedDict, total=False):
+    name: Required[str]
+    comment: Required[str]
+    notes: Required[str]
+    columns: Required[list["CatalogColumn"]]
+
+
+class CatalogColumn(TypedDict, total=False):
+    name: Required[str]
+    type: Required[str]
+    comment: Required[str]
+
+
+class InsightsQueryInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    sql: Required[str]
+    limit: NotRequired[int]
+
+
+class InsightsQueryBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    sql: Required[str]
+    limit: NotRequired[int]
+
+
+class InsightsQueryOutput(TypedDict, total=False):
+    columns: NotRequired[list["AnalysisColumn"]]
+    rows: NotRequired[list[list[Any]]]
+    row_count: NotRequired[int]
+    truncated: NotRequired[bool]
+    sql_digest: NotRequired[str]
+
+
+class AnalysisColumn(TypedDict, total=False):
+    name: Required[str]
+    type: Required[str]
 
 
 class KnowledgeAddInput(TypedDict, total=False):

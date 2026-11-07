@@ -1,7 +1,7 @@
 {{- if .Values.devClickhouse.enabled }}
 {{- $name := include "loom.chHost" . }}
 {{- /* Single-node ClickHouse with embedded Keeper for test clusters: the
-keeper and MergeTree defaults of deploy/clickhouse-config. No lemmatizer, so
+keeper, MergeTree and access-control defaults of deploy/clickhouse-config. No lemmatizer, so
 the migrations skip the NLP columns. */}}
 apiVersion: v1
 kind: ConfigMap
@@ -26,6 +26,12 @@ data:
         <node><host>localhost</host><port>9181</port></node>
       </zookeeper>
       <keeper_map_path_prefix>/keeper_map_tables</keeper_map_path_prefix>
+    </clickhouse>
+  access_control.xml: |
+    <clickhouse>
+      <access_control_improvements>
+        <users_without_row_policies_can_read_rows>false</users_without_row_policies_can_read_rows>
+      </access_control_improvements>
     </clickhouse>
   merge_tree_settings.xml: |
     <clickhouse>
@@ -104,6 +110,9 @@ spec:
             - name: config
               mountPath: /etc/clickhouse-server/config.d/merge_tree_settings.xml
               subPath: merge_tree_settings.xml
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d/access_control.xml
+              subPath: access_control.xml
       volumes:
         - name: config
           configMap:

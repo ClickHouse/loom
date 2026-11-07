@@ -409,12 +409,45 @@ def _set_up(ch: Any, user: str, reader: str | None) -> int:
     elif not settings.ch_reader_user:
         print(f"  set LOOM_CH_READER_USER={reader} so caller-shaped reads run as it")
 
+    _write_analyst()
     print("· Keeper: present")
     print(
         "· lightweight UPDATE: "
         + ("on" if server.lightweight_updates else "off; Loom uses mutations")
     )
     return 0
+
+
+def _analyst_sql() -> list[str]:
+    """The analyst user's SQL with this deployment's key and password, which
+    the first call makes and stores (sealed) when there are none yet."""
+    from server.cli._ch import run_connected
+    from server.insights.app import analysis
+
+    async def _go(_ch: Any) -> list[str]:
+        async with analysis.lease():
+            await analysis.load_secrets(may_draw=True)
+        return analysis.entity_statements()
+
+    return run_connected(_go)
+
+
+def _write_analyst() -> None:
+    """Write insights.query's analyst user under this deployment's key, for a
+    deployment whose server user cannot (one with access management writes it
+    at boot), or to move the key once every replica runs a new secret."""
+    from server.cli._ch import run_connected
+    from server.insights.app.analysis import rewrite
+
+    try:
+        run_connected(lambda _ch: rewrite())
+    except Exception as e:  # noqa: BLE001 — insights.query is optional; the rest of setup stands
+        print(
+            f"· loom_analyst (insights.query): not written ({e}); have an admin run the SQL "
+            "`loom ch-setup --print-analyst-sql` prints"
+        )
+        return
+    print("· loom_analyst (insights.query): written")
 
 
 def _cmd_ch_setup(args: argparse.Namespace) -> int:
@@ -434,6 +467,10 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
     if reader and (problem := caps_problem()):
         print(f"✗ {problem}", file=sys.stderr)
         return 2
+    if args.print_analyst_sql:
+        for stmt in _analyst_sql():
+            print(f"{stmt};")
+        return 0
     if args.print_sql:
         for stmt in admin_sql(user, reader):
             print(stmt if stmt.startswith("--") else f"{stmt};")
@@ -461,5 +498,14 @@ def register_ch_setup_cli(sub: Any) -> None:
         "--print-sql",
         action="store_true",
         help="Print the SQL for an admin (password as a placeholder); change nothing.",
+    )
+    p.add_argument(
+        "--print-analyst-sql",
+        action="store_true",
+        help=(
+            "Print the SQL that writes insights.query's analyst user, for an admin where "
+            "LOOM_CH_USER lacks access management. It holds the user's password and the "
+            "scope key stored sealed in loom.analysis_secrets: run it, do not store it."
+        ),
     )
     p.set_defaults(func=_cmd_ch_setup)

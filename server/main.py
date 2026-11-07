@@ -243,6 +243,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     auth_loops = await boot.start_token_state()
     overrides_loop = boot.start_runtime_overrides()
     await probe_reader_user(ch)
+    from server.insights.app import analysis as _analysis
+
+    await _analysis.provision()
     tracker_sources_loop = boot.start_tracker_sources_refresher(ch)
     from server.code.app.index import repo_registry as _repo_registry
 

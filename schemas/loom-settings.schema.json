@@ -183,6 +183,59 @@
           "type": "number",
           "description": "Seconds between each replica's re-read of the shared calibration (loom.embedder_calibration), so every replica serves the same gates."
         },
+        "ch_analysis_max_concurrent": {
+          "default": 8,
+          "maximum": 256,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Statements the analyst user runs at once across every org and replica."
+        },
+        "ch_analysis_max_concurrent_per_org": {
+          "default": 2,
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Statements one org runs at once on one replica; past it a call answers RATE_LIMITED."
+        },
+        "ch_analysis_max_execution_s": {
+          "default": 10.0,
+          "maximum": 300.0,
+          "minimum": 0.1,
+          "type": "number",
+          "description": "Each cap is pinned as a MAX in the loom_analyst user's settings profile, which Loom rewrites at boot, so no statement can raise it. Seconds one insights.query statement may run."
+        },
+        "ch_analysis_max_memory_bytes": {
+          "default": 2000000000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Bytes of memory one statement may use."
+        },
+        "ch_analysis_max_result_bytes": {
+          "default": 4000000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Bytes of result one statement may return; past it the statement fails (422)."
+        },
+        "ch_analysis_max_result_rows": {
+          "default": 500,
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Rows one statement returns at most; a longer result comes back cut, marked truncated."
+        },
+        "ch_analysis_max_rows_to_read": {
+          "default": 200000000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Rows one statement may scan; past it the statement fails (422), never a partial answer."
+        },
+        "ch_analysis_max_threads": {
+          "default": 4,
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Threads one statement may use (pinned as a MAX, so a statement cannot take the host)."
+        },
         "ch_batched_insert_background_wait_max_ms": {
           "default": 200,
           "exclusiveMinimum": 0,

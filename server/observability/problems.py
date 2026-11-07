@@ -84,6 +84,10 @@ class HealthState:
     repo_sandbox_refusal: str = ""
     # Whether a read as LOOM_CH_READER_USER worked: None = not probed or unset.
     ch_reader_ok: bool | None = None
+    # insights.query's analyst user: None = not probed, False = unusable
+    # (`analysis_error` says why).
+    analysis_ok: bool | None = None
+    analysis_error: str = ""
     # ClickHouse's answer when that read failed.
     ch_reader_error: str = ""
     # Whether a sign-in lately found loom.oauth_signin_state at its key limit.
@@ -766,6 +770,25 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
     ]
 
 
+def _analysis_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """insights.query runs as the analyst user; while it is missing or wider
+    than the allowlist every analysis call answers ANALYSIS_UNAVAILABLE."""
+    del settings
+    if state.analysis_ok is not False:
+        return []
+    return [
+        Problem(
+            "analysis_user_failing",
+            "warn",
+            f"insights.query is unavailable: {state.analysis_error}",
+            "Give LOOM_CH_USER access management (the bundled ClickHouse's loom user has it) "
+            "and restart, or run `loom ch-setup --print-analyst-sql` and have an admin run "
+            "the SQL it prints.",
+            source="runtime",
+        )
+    ]
+
+
 def _oauth_claim_problems(settings: Any, state: HealthState) -> list[Problem]:
     """A full claims table turns new sign-ins away until the sweep frees keys.
     Nothing to say where sign-in is not mounted (auth off, no MCP connect)."""
@@ -878,6 +901,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _drift_problems(st)
         + _sandbox_problems(settings, st)
         + _reader_user_problems(settings, st)
+        + _analysis_problems(settings, st)
         + _oauth_claim_problems(settings, st)
         + _participant_problems(st)
         + _code_tier_problems(st)
