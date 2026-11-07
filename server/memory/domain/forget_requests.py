@@ -110,7 +110,9 @@ _FORGET_MSG_RE = re.compile(
 # "forget it", "forget about that, let's move on": no object to resolve.
 _FORGET_MSG_PRONOUNS = frozenset("it this that them those these everything anything all".split())
 # A longer sentence is not read as a request to forget.
-MAX_FORGET_SENTENCE_CHARS = 400  # not a setting: the bound the match's cost is held to
+MAX_FORGET_SENTENCE_CHARS = 400  # not a setting: a request is one short clause
+# Each request costs a candidate read and a pass over the batch.
+MAX_FORGET_REQUESTS = 50  # not a setting: more than a person asks to forget in one window
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
@@ -311,6 +313,8 @@ def forget_requests_from_messages(messages: list[dict[str, Any]]) -> list[dict[s
                 continue
             seen.add(low)
             out.append({"key": "", "value": what, "forget": True, "tags": ["forget"]})
+            if len(out) == MAX_FORGET_REQUESTS:
+                return out
     return out
 
 
@@ -332,9 +336,9 @@ def forget_sentences(
         others: list[str] = []
         for raw in sents:
             sent = raw.strip("\"'“”‘’")
-            # the length forget_requests_from_messages reads: the match is
-            # quadratic in a blank run inside the sentence. A longer sentence
-            # that opens like a request is no other sentence of the message.
+            # the length forget_requests_from_messages reads, so both see the
+            # same requests; a longer sentence that opens like a request is no
+            # other sentence of the message
             if len(sent) > MAX_FORGET_SENTENCE_CHARS:
                 if not same_sentence and not _FORGET_MSG_RE.match(sent[:MAX_FORGET_SENTENCE_CHARS]):
                     others.append(raw)
@@ -419,6 +423,14 @@ def forget_targets(
     content names. Empty when no entry asks to
     forget."""
     out: set[str] = set()
+    # The batch's own facts a request may name, gathered once for every request.
+    batch = [
+        {"memory_key": gk, "value": g.get("value") or ""}
+        for g in facts
+        if not is_forget_request(g)
+        and (gk := str(g.get("key") or "").strip())
+        and gk not in protected  # the replacement is not a target
+    ]
     for f in facts:
         if not is_forget_request(f):
             continue
@@ -444,15 +456,7 @@ def forget_targets(
             # the request names may be in this very batch, not yet written:
             # resolve against the batch's own facts too, and the write step
             # drops the ones named.
-            candidates: list[dict[str, Any]] = list(existing or [])
-            for g in facts:
-                if g is f or is_forget_request(g):
-                    continue
-                gk = str(g.get("key") or "").strip()
-                if gk in protected:  # the replacement is not a target
-                    continue
-                if gk:
-                    candidates.append({"memory_key": gk, "value": g.get("value") or ""})
+            candidates = [*(existing or []), *batch]
             if candidates:
                 out.update(forget_targets_by_content(f, candidates))
     return out

@@ -297,6 +297,21 @@ def test_a_forget_sentence_is_read_in_time_linear_in_its_blank_runs() -> None:
     assert _fastest_seconds(read, message(380)) < 8 * _fastest_seconds(read, message(95)) + _FLOOR_S
 
 
+def test_a_message_names_at_most_a_bounded_number_of_forget_requests() -> None:
+    text = "".join(f"forget jazz{i}. " for i in range(5_000))
+    requests = forget_requests.forget_requests_from_messages([{"role": "user", "content": text}])
+    assert len(requests) == forget_requests.MAX_FORGET_REQUESTS
+    assert requests[0]["value"] == "jazz0"
+
+
+def test_forget_targets_reads_the_batch_once_not_once_per_request() -> None:
+    def read(n: int) -> Callable[[str], object]:
+        facts = [{"key": "", "value": f"jazz{i}", "forget": True} for i in range(n)]
+        return lambda _: forget_requests.forget_targets(facts, [], set())
+
+    assert _fastest_seconds(read(8_000), "") < 8 * _fastest_seconds(read(2_000), "") + _FLOOR_S
+
+
 def test_a_deeply_qualified_name_is_retried_under_its_last_qualifiers_only() -> None:
     assert citations_app._shorter("A::B::C") == ["B::C", "C"]
     deep = citations_app._shorter("::".join(["a"] * 60_000))
@@ -383,6 +398,12 @@ _ORIGINAL = {
         r"miles|km|kg|lbs?|hours?|hrs|minutes?|mins|steps|calories|points|views|subscribers)\b",
         re.IGNORECASE,
     ),
+    "_REPLACEMENT_CUT_RE": re.compile(
+        r"\s+[—–]\s*|\s+-\s+|\s*;\s*|"
+        r",\s*(?=(?:i|i'm|i've|i'd|we|we're|we've|it|it's|its|my|our|now|they|he|she|"
+        r"that's|the\s+new|instead|but|and\s+(?:i|we|now))\b)",
+        re.IGNORECASE,
+    ),
     "_FAILED_ATTEMPT_RE": re.compile(
         r"\b(?:attempt|call|request|sequence|registration)\b[^.;]*?"
         r"\b(?:refused|could\s+not|couldn't|failed|was\s+rejected)\b",
@@ -465,6 +486,13 @@ def _names(p: re.Pattern[str], s: str, group: int) -> list[tuple[tuple[int, int]
             lambda p, s: [m.groups() for m in p.finditer(s)],
             lambda p, s: [m.groups() for m in p.finditer(s)],
             ["$", "1", ",", ".5", " ", "km", "usd", "x", "€", "9"],
+        ),
+        (
+            "_REPLACEMENT_CUT_RE",
+            forget_requests._REPLACEMENT_CUT_RE,
+            lambda p, s: p.split(s, maxsplit=1),
+            lambda p, s: p.split(s, maxsplit=1),
+            [" ", "\t", "—", "-", ";", ",", "I", "x", " now", "we"],
         ),
         (
             "_FAILED_ATTEMPT_RE",
