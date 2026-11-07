@@ -14,7 +14,7 @@ export async function decideProposal(
   id: Pick<Identity, "org" | "namespace">,
   memory_key: string,
   decision: "accept" | "reject",
-  reason = "",
+  reason: string,
 ): Promise<{ decided: number; results: ProposalDecision[] }> {
   return post("/v1/memory.proposal_decide", {
     org: id.org,

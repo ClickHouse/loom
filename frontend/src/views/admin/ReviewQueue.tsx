@@ -965,9 +965,11 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
       const at = rowsNow.current?.filter((r) => above.has(r.memory_key)).length ?? 0;
       if (clicked) decided.current.add(proposalId(clicked));
       // Off the list at once, so its buttons cannot send the decision again.
-      setRows((rs) => rs?.filter((r) => r.memory_key !== key) ?? rs);
+      // Only the proposal clicked: a newer one of the key that a re-read brought stays.
+      const shown = rowsNow.current?.some((r) => clicked && proposalId(r) === proposalId(clicked));
+      setRows((rs) => rs?.filter((r) => !clicked || proposalId(r) !== proposalId(clicked)) ?? rs);
       setReason(({ [key]: _gone, ...rest }) => rest);
-      setTotal((t) => Math.max(0, t - 1));
+      if (shown) setTotal((t) => Math.max(0, t - 1));
       // Only when focus is still in the decided row or was lost: never pull it away from
       // a field the person moved to while the decision was out.
       const active = document.activeElement;

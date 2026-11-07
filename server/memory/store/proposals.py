@@ -54,7 +54,7 @@ async def scan_proposals(
             LIMIT 1 BY memory_key
         )
         WHERE {is_wanted}
-        ORDER BY version DESC
+        ORDER BY version DESC, memory_key ASC
         LIMIT {{cap:UInt32}}
         """,
         params=params,

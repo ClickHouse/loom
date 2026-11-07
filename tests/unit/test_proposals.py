@@ -17,7 +17,7 @@ from server.memory.app import proposals_ops
 from server.memory.domain import proposal_policy as pp
 from server.memory.domain import temporal_sql as ts
 from server.memory.domain.proposal_policy import ProposalPolicy
-from server.memory.store import Identity, get_many_by_keys
+from server.memory.store import Identity, get_by_key, get_many_by_keys
 from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl
 
 
@@ -486,3 +486,12 @@ async def test_the_listing_and_the_decision_break_a_version_tie_alike(
     assert [(r.agent, r.memory_id) for r in out.proposals] == [
         ("a", "00000000-0000-0000-0000-000000000001")
     ]
+
+    # memory.get's namespace-wide read picks the same row.
+    class _OneCH:
+        async def query_one(self, sql: str, params: dict[str, Any] | None = None, **_: Any) -> Any:
+            rows = await ch.query_all(sql, params)
+            return rows[0] if rows else None
+
+    one = await get_by_key(ident, "k", scope=WHOLE_NAMESPACE, ch=_OneCH())  # type: ignore[arg-type]
+    assert one is not None and one.agent == "a"

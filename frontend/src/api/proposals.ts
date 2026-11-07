@@ -34,7 +34,7 @@ export interface ProposalList {
 
 export async function listProposals(
   id: Pick<Identity, "org" | "namespace">,
-  limit = 50,
+  limit: number,
   opts: RequestOpts = {},
 ): Promise<ProposalList> {
   return post<ProposalList>("/v1/memory.proposals", { org: id.org, namespace: id.namespace, limit }, opts.signal);
