@@ -253,7 +253,10 @@ memory the workers process has. The full index of such a tree takes about an hou
 
 - **C/C++ delta cap.** The worker indexes changed translation units, including those
   that include a changed header, up to `LOOM_CODE_SCIP_DELTA_MAX_TUS` (200); above the
-  cap it indexes only the changed `.cpp` files.
+  cap it indexes only the changed `.cpp` files. A delta that reconfigures CMake runs the
+  configure inside the same `LOOM_CODE_SCIP_DELTA_TIMEOUT_SECONDS` (3600) as the index;
+  a timed-out delta leaves `scip_commit` where it was, so the next pass retries a larger
+  window.
 - **C/C++ full index.** `code_scip_full` re-indexes one entry per pass: an entry whose
   `scip_commit` is not seeded yet (the delta skips it with "watermarks not seeded"), and
   every entry once its last applied full run is `LOOM_CODE_SCIP_FULL_EVERY_HOURS` (168)
