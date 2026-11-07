@@ -267,28 +267,62 @@ def test_an_answer_out_of_shape_mid_run_is_skipped_and_the_run_still_reports(
     assert "knowledge.query: nothing measured" in out["past_level"]
 
 
-def test_an_upload_or_ingest_out_of_shape_tallies_its_http_status_and_queues_nothing() -> None:
-    """An upload or ingest answered without its id is "not queued", whatever its
-    status: each call's tally records its HTTP status, and the run fails on the
-    small ingest, not on a call that answered."""
+@pytest.mark.parametrize(
+    ("upload", "ingest", "ingested"),
+    [
+        ({}, {"ingestion_id": "j"}, 0),  # an upload without its id: no ingest is sent
+        ([], {"ingestion_id": "j"}, 0),  # not an object either
+        ({"upload_id": "u"}, {}, 1),  # an ingest without its id
+    ],
+)
+def test_an_upload_or_ingest_without_its_id_tallies_its_status_and_is_not_queued(
+    upload: Any, ingest: Any, ingested: int
+) -> None:
+    """Each call's tally is its HTTP status; the small ingest it was for ends "not
+    queued", which is what fails the run."""
     import asyncio
 
     import httpx
 
     def answer(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("knowledge.upload"):
-            return httpx.Response(201, json={"upload_id": "u"})
-        return httpx.Response(200, json={})  # an ingest answer without its id
+            return httpx.Response(201, json=upload)
+        return httpx.Response(200, json=ingest)
 
-    async def go() -> tuple[str, load.Run]:
+    async def go() -> load.Run:
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(answer), base_url="http://x"
         ) as c:
             run = load.Run(c, "o", "ns", 0.0, load._fresh_tallies(), load.Counter())
-            state, _ = await run.ingest(b"x", "a.md", "repo://a.md")
-            return state, run
+            await run.small_ingest(1)
+            return run
 
-    state, run = asyncio.run(go())
-    assert state == "not queued"
+    run = asyncio.run(go())
+    assert run.small_states == {"not queued": 1}
     assert run.tallies["knowledge.upload"].summary()["ok"] == 1
-    assert run.tallies["knowledge.ingest"].summary()["ok"] == 1  # it answered 200
+    assert run.tallies["knowledge.ingest"].summary()["ok"] == ingested
+    report = {m: t.summary() for m, t in run.tallies.items()}
+    assert not [p for p in load.verdict(report, {"knowledge.upload": (1e9, 1e9)}) if p]
+
+
+def test_a_run_whose_small_ingests_are_not_queued_exits_1_and_names_them(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+
+    import httpx
+
+    ready = _server("ready")
+    uploads: list[int] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("knowledge.upload"):
+            uploads.append(1)
+            if len(uploads) > 1:  # the canary's upload works; the run's do not
+                return httpx.Response(201, json={})
+        return ready(request)
+
+    assert _main_against(answer, monkeypatch, "--json", "--ingest-rate", "5") == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["small_ingests"].get("not queued", 0) > 0
+    assert any(p.startswith(f"{load.INGEST_SMALL}: ended") for p in out["past_level"])

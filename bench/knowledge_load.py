@@ -224,9 +224,10 @@ class Run:
                 content=data,
             )
             status = up.status_code
-            upload_id = str(up.json().get("upload_id") or "") if status == 201 else ""
-        except (httpx.HTTPError, ValueError, AttributeError):
-            status, upload_id = 0, ""  # no answer, or one that is not an upload's
+            body = up.json() if status == 201 else {}
+        except (httpx.HTTPError, ValueError):
+            status, body = 0, {}  # no answer, or a 201 that is not JSON (as op() counts it)
+        upload_id = str(body.get("upload_id") or "") if isinstance(body, dict) else ""
         self.tallies["knowledge.upload"].add((time.perf_counter() - t0) * 1000, status)
         if status != 201 or not upload_id:
             return "not queued", 0.0
