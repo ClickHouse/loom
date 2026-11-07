@@ -437,9 +437,6 @@ def test_entry_lock_wrapper_runs_nothing_without_the_lease(no_clickhouse, tmp_pa
 class _Health:
     """The tier-health rows `entry-lock --tier` writes."""
 
-    def __init__(self, ch: Any = None) -> None:
-        pass
-
     writes: list[tuple[str, str]] = []
 
     async def get_state(self, org: str, ns: str, key: str) -> str:

@@ -285,11 +285,10 @@ async def _record_tier(
         error = f"harness exit {rc}: stopped by signal (the caller's time limit)"
     else:
         text = tail.decode("utf-8", "replace").strip()
-        modules = module_failures(text)
         if rc != 0:
             text = without_module_failures(text)
             error = f"harness exit {rc}: {text}" if text else f"harness exit {rc}"
-        elif modules:
+        elif modules := module_failures(text):
             error = "; ".join(modules)
     await tier_health.record(CodeRepo(), org, ns, tier, error)
 
@@ -360,7 +359,7 @@ async def _run_while_held(
             await asyncio.wait({run}, timeout=_ENTRY_STOP_GRACE_S)
     finally:
         stopping.cancel()
-        run.cancel()  # still running: communicate_or_kill SIGKILLs the group
+        run.cancel()  # still running: cancelling it SIGKILLs the group
         await asyncio.gather(run, return_exceptions=True)
     return int(proc.returncode or 0)
 
