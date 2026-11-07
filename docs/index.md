@@ -131,6 +131,7 @@ client sees one the server no longer reads.
 [Document extraction](architecture/document-extraction.md) ·
 [LLM and embeddings](architecture/llm-architecture.md) ·
 [Security](architecture/security.md) ·
+[Assistant design](architecture/assistant.md) ·
 [Failure and recovery](architecture/failure-and-recovery.md) ·
 [Rolling upgrades](architecture/rolling-upgrades.md)
 
