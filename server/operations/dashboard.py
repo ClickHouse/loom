@@ -35,9 +35,21 @@ CLIENT_CALL = (
     "not by a person"
 )
 
-NOT_IN_DASHBOARD: dict[str, str] = {
+
+def _named_once(*groups: dict[str, str]) -> dict[str, str]:
+    """The groups as one table; an op named in two is a mistake, refused here."""
+    table: dict[str, str] = {}
+    for group in groups:
+        for name, reason in group.items():
+            if name in table:
+                raise ValueError(f"{name} is named twice in NOT_IN_DASHBOARD")
+            table[name] = reason
+    return table
+
+
+NOT_IN_DASHBOARD: dict[str, str] = _named_once(
     # ---- code questions
-    **dict.fromkeys(
+    dict.fromkeys(
         (
             "code.ask",
             "code.backport_gap",
@@ -69,7 +81,7 @@ NOT_IN_DASHBOARD: dict[str, str] = {
         CODE_QUESTION,
     ),
     # ---- tracker questions
-    **dict.fromkeys(
+    dict.fromkeys(
         (
             "tracker.component",
             "tracker.duplicate_check",
@@ -82,7 +94,7 @@ NOT_IN_DASHBOARD: dict[str, str] = {
         TRACKER_QUESTION,
     ),
     # ---- an agent's working steps
-    **dict.fromkeys(
+    dict.fromkeys(
         (
             "context.fetch",
             "context.offload",
@@ -146,7 +158,7 @@ NOT_IN_DASHBOARD: dict[str, str] = {
         AGENT_STEP,
     ),
     # ---- client programs
-    **dict.fromkeys(
+    dict.fromkeys(
         (
             "code.coverage.unwatch",
             "code.coverage.watch",
@@ -167,7 +179,7 @@ NOT_IN_DASHBOARD: dict[str, str] = {
         CLIENT_CALL,
     ),
     # ---- a chat client's own feature
-    **dict.fromkeys(
+    dict.fromkeys(
         (
             "conversation.list_saved_messages",
             "conversation.save_message",
@@ -179,28 +191,30 @@ NOT_IN_DASHBOARD: dict[str, str] = {
         "messages there",
     ),
     # ---- the dashboard does this through another op
-    "memory.import": (
-        "run by the program that exports from another memory system; the dashboard imports "
-        "files with memory.import_curated"
-    ),
-    "memory.apply": (
-        "the Memories page's bulk actions call the per-row ops (memory.pin, memory.delete)"
-    ),
-    "memory.search_trace": "Recall Lab explains each ranking with memory.search explain=true",
-    "memory.update": "the memory drawer saves an edit with memory.set",
-    "memory.update_by_id": "the memory drawer saves an edit with memory.set",
-    "namespace.list": (
-        "the namespace picker lists namespace.list_mine and finds others with namespace.browse"
-    ),
-    "namespace.summary": (
-        "an agent's one-call orientation on a namespace; the Assistant page's overview reads "
-        "namespace.inventory"
-    ),
-    "search.query": (
-        "each page searches its own plane: Memories memory.search, the Library knowledge.search, "
-        "Conversations conversation.search"
-    ),
-}
+    {
+        "memory.import": (
+            "run by the program that exports from another memory system; the dashboard imports "
+            "files with memory.import_curated"
+        ),
+        "memory.apply": (
+            "the Memories page's bulk actions call the per-row ops (memory.pin, memory.delete)"
+        ),
+        "memory.search_trace": "Recall Lab explains each ranking with memory.search explain=true",
+        "memory.update": "the memory drawer saves an edit with memory.set",
+        "memory.update_by_id": "the memory drawer saves an edit with memory.set",
+        "namespace.list": (
+            "the namespace picker lists namespace.list_mine and finds others with namespace.browse"
+        ),
+        "namespace.summary": (
+            "an agent's one-call orientation on a namespace; the Assistant page's overview reads "
+            "namespace.inventory"
+        ),
+        "search.query": (
+            "each page searches its own plane: Memories memory.search, the Library "
+            "knowledge.search, Conversations conversation.search"
+        ),
+    },
+)
 
 DASHBOARD_PENDING: frozenset[str] = frozenset(
     {

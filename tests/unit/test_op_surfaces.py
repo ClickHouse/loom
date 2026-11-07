@@ -8,14 +8,13 @@ here it is tested case by case."""
 
 from __future__ import annotations
 
-import ast
 import re
 from types import SimpleNamespace
 
 import pytest
 
 from scripts.codegen import op_reach_census as census
-from server.core.paths import REPO_ROOT
+from server.operations import dashboard
 from server.operations.base import Role
 from server.operations.dashboard import (
     AGENT_STEP,
@@ -236,24 +235,13 @@ def test_the_pending_set_is_pinned():
     assert not left, f"{left} left DASHBOARD_PENDING: drop them from PENDING_PINNED too"
 
 
-def test_no_op_is_named_twice():
-    """`NOT_IN_DASHBOARD` merges its groups with `**`, where a second entry for an
-    op would silently replace the first."""
-    source = (REPO_ROOT / "server" / "operations" / "dashboard.py").read_text()
-    table = next(
-        node.value
-        for node in ast.parse(source).body
-        if isinstance(node, ast.AnnAssign) and node.target.id == "NOT_IN_DASHBOARD"
-    )
-    names = [key.value for key in table.keys if key is not None]
-    for spread in (v for k, v in zip(table.keys, table.values, strict=True) if k is None):
-        names += [elt.value for elt in spread.args[0].elts]
-    assert len(names) == len(NOT_IN_DASHBOARD)
+def test_an_op_named_twice_is_refused():
+    with pytest.raises(ValueError, match="code.ask is named twice"):
+        dashboard._named_once({"code.ask": "a"}, {"code.ask": "b"})
 
 
 def test_an_op_a_refusal_sends_the_agent_to_is_on_mcp():
     """Every op a refusal names is one the agent can call."""
     for name, instead in mcp_op._INSTEAD.items():
         for other in re.findall(r"[a-z_]+(?:\.[a-z_]+)+", instead):
-            if other in OPERATIONS_BY_NAME:
-                assert other not in _MCP_HIDDEN_OPS, (name, other)
+            assert other in OPERATIONS_BY_NAME and other not in _MCP_HIDDEN_OPS, (name, other)
