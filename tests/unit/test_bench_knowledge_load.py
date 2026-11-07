@@ -265,3 +265,30 @@ def test_an_answer_out_of_shape_mid_run_is_skipped_and_the_run_still_reports(
     assert out["measures"]["knowledge.search"]["ok"] > 0
     # Exit 1 for what the skipped dataset left: no query ran.
     assert "knowledge.query: nothing measured" in out["past_level"]
+
+
+def test_an_upload_or_ingest_out_of_shape_tallies_its_http_status_and_queues_nothing() -> None:
+    """An upload or ingest answered without its id is "not queued", whatever its
+    status: each call's tally records its HTTP status, and the run fails on the
+    small ingest, not on a call that answered."""
+    import asyncio
+
+    import httpx
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("knowledge.upload"):
+            return httpx.Response(201, json={"upload_id": "u"})
+        return httpx.Response(200, json={})  # an ingest answer without its id
+
+    async def go() -> tuple[str, load.Run]:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(answer), base_url="http://x"
+        ) as c:
+            run = load.Run(c, "o", "ns", 0.0, load._fresh_tallies(), load.Counter())
+            state, _ = await run.ingest(b"x", "a.md", "repo://a.md")
+            return state, run
+
+    state, run = asyncio.run(go())
+    assert state == "not queued"
+    assert run.tallies["knowledge.upload"].summary()["ok"] == 1
+    assert run.tallies["knowledge.ingest"].summary()["ok"] == 1  # it answered 200

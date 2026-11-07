@@ -22,10 +22,11 @@ loop), so a slow server meets the same load, and a rejected call is not retried.
 It reports, per op, the calls, p50 / p95 / p99 latency of the successful ones,
 errors by status and the rejected ones (429 and 503); per ingest, the time from
 its job's creation to its end (the server's timestamps, else the time polled);
-and the queue depth over the run. An answer the harness cannot read is skipped
-(no sample, no dataset to query) and never ends the run. It exits 1 when a
-measure is past its declared level or has calls that failed (not counting
-rejections), or a small-document ingest did not end ready.
+and the queue depth over the run. An answer the harness cannot read never ends
+the run: a 2xx that is not JSON is a failed call, and one out of shape is
+skipped (no sample, no dataset to query). It exits 1 when a measure is past its
+declared level or has calls that failed (not counting rejections), or a
+small-document ingest did not end ready.
 
 It exits 2 when the server cannot run the load: it does not answer, the token
 does not reach every tenant's org, knowledge.inspect reports the ingest worker
@@ -33,10 +34,10 @@ off or no extractor in this server's settings, or a canary document is not
 taken and published ready within CANARY_S.
 
 The deployment needs a process running the ingest worker (a server started with
-`LOOM_BACKGROUND_WORKERS=on`, or a deployment, `LOOM_DEPLOYMENT=1`, under `auto`)
-and an extractor (`LOOM_DOCUMENT_EXTRACTOR_URL`). Everything is written into a fresh
-`bench-…` namespace of `--org` and left there. Nothing calls a model provider:
-run the server on the fake embedder to spend nothing.
+`LOOM_BACKGROUND_WORKERS=on`, or a deployment, `LOOM_DEPLOYMENT=1`, under
+`auto`) and an extractor (`LOOM_DOCUMENT_EXTRACTOR_URL`). Everything is written
+into a fresh `bench-…` namespace of `--org` and left there. Nothing calls a
+model provider: run the server on the fake embedder to spend nothing.
 
     PYTHONPATH=$PWD .venv/bin/python bench/knowledge_load.py --base-url http://localhost:7777 \\
         --duration 120 --json > load.json
@@ -226,10 +227,8 @@ class Run:
             upload_id = str(up.json().get("upload_id") or "") if status == 201 else ""
         except (httpx.HTTPError, ValueError, AttributeError):
             status, upload_id = 0, ""  # no answer, or one that is not an upload's
-        if status == 201 and not upload_id:
-            status = 0
         self.tallies["knowledge.upload"].add((time.perf_counter() - t0) * 1000, status)
-        if status != 201:
+        if status != 201 or not upload_id:
             return "not queued", 0.0
         status, job = await self.op("knowledge.ingest", {"upload_id": upload_id, "source_uri": uri})
         if status != 200 or not job.get("ingestion_id"):
@@ -397,16 +396,18 @@ async def main(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
+        # Built before the clock starts: a large file takes a while to build.
+        large, table = _pdf(args.pdf_pages), _csv(args.csv_rows)
         start = time.monotonic()
         deadline = start + args.duration
         runs = [Run(c, org, ns, deadline, tallies, small_states) for org in orgs]
         tasks = [
             # One large PDF for the whole run; each tenant its own CSV to query.
-            runs[0].one_ingest("large pdf", _pdf(args.pdf_pages), "large.pdf", "repo://large.pdf"),
+            runs[0].one_ingest("large pdf", large, "large.pdf", "repo://large.pdf"),
         ]
         for run in runs:
             tasks += [
-                run.one_ingest("csv", _csv(args.csv_rows), "orders.csv", "repo://orders.csv"),
+                run.one_ingest("csv", table, "orders.csv", "repo://orders.csv"),
                 run.sampler(args.sample_seconds, start),
                 run.paced(args.ingest_rate, run.small_ingest),
                 run.paced(args.search_rate, run.search),
