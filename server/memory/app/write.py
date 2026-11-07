@@ -340,7 +340,7 @@ async def _set_expiry(
         # row the reads already hide.
         expires_at = existing.expires_at
     elif _lock.refuses(existing, "expire"):
-        # A read_only row takes no retention default, as in memory.bulk_set.
+        # A read_only lock refuses an expiry change, so the type's retention is not applied.
         expires_at = None
     else:
         # New row (or had no expiry) — apply per-type retention default

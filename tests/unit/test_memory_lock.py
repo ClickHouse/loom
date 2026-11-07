@@ -235,18 +235,15 @@ async def test_set_refuses_a_changed_value_under_read_only(monkeypatch: pytest.M
     assert e.value.detail["refused_action"] == "expire"
 
 
-def _thirty_day_type(monkeypatch: pytest.MonkeyPatch) -> None:
+async def _restate(monkeypatch: pytest.MonkeyPatch, existing: MemoryRow) -> dict[str, Any]:
+    """The loom.memory row a same-value memory.set writes over `existing`, under a type that keeps 30 days."""
+
     async def thirty_days(*_: Any) -> Any:
         return namespace_types.TypeConfig(
             retention_days=30, dedup_threshold=None, hot_quota=0, conflict_policy=""
         )
 
     monkeypatch.setattr(namespace_types, "get_type_config", thirty_days)
-
-
-async def _restate(monkeypatch: pytest.MonkeyPatch, existing: MemoryRow) -> dict[str, Any]:
-    """The loom.memory row a same-value memory.set writes over `existing`."""
-    _thirty_day_type(monkeypatch)
     ch = _stub_repo(monkeypatch, existing)
 
     # The whole write path runs: the blacklist passes and the conflict check reads from
