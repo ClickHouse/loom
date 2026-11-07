@@ -129,9 +129,10 @@ def test_first_import_under_a_patch():
 
 
 def test_a_patch_on_the_module_itself(monkeypatch):
-    # Runs after the test above: the fixture dropped both modules and the package's
-    # attribute for each, so `from package import` runs them again and they bind the
-    # real class. The patch below is undone before the fixture looks.
+    # Runs after the test above: the fixture dropped every module that test first imported
+    # (scip_delta, scip_full, the clock_fake helper) and the package's attribute for each,
+    # so `from package import` runs them again and they bind the real class. The patch
+    # below is undone before the fixture looks.
     assert "server.code.app.index.scip_delta" not in sys.modules
     assert "server.code.app.index.scip_full" not in sys.modules
     assert "tests.unit.clock_fake" not in sys.modules

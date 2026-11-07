@@ -653,11 +653,13 @@ def _double_bound_at_import(modules_before: set[str]) -> bool:
 
 @pytest.fixture(autouse=True)
 def _test_double_bound_at_import_dropped() -> Iterator[None]:
-    """After a test that left a test double bound in a source module it first imported,
-    drop every repository module first imported during the test, tests/ helpers included
-    (one may have bound a name from the poisoned module), from `sys.modules` and from its
-    package, so the next import binds the real names. Teardown runs after the test's own patches are undone. A module
-    first imported in a module-, class- or session-scoped fixture is outside the window."""
+    """After a test that left a test double bound in a source module it first imported, drop
+    every repository module first imported during the test, tests/ helpers included (one may
+    have bound a name from the poisoned module), from `sys.modules` and from its package, so
+    the next import binds the real names. Teardown runs after the test's own patches are
+    undone. A module first imported in a module-, class- or session-scoped fixture is
+    outside the window.
+    """
     before = set(sys.modules)
     yield
     if not _double_bound_at_import(before):
