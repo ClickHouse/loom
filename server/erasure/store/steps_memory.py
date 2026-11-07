@@ -1163,7 +1163,22 @@ async def delete_ingestions_by_namespace(
     return n
 
 
+# A cancel the user asked for on another writer's open job still cancels it: the
+# row is copied without the user's identity before the user's rows go.
+_KEEP_OTHERS_CANCELS = (
+    "INSERT INTO loom.knowledge_ingest_cancels (org, namespace, ingestion_id, requested_at)"
+    " SELECT org, namespace, ingestion_id, requested_at FROM loom.knowledge_ingest_cancels"
+    " WHERE org = {org:String} AND user_id = {uid:String}"
+    " AND (namespace, ingestion_id) IN ("
+    "SELECT namespace, ingestion_id FROM loom.knowledge_ingestions FINAL"
+    " WHERE org = {org:String} AND user_id != {uid:String}"
+    " AND state IN ('pending', 'processing'))"
+)
+
+
 async def delete_ingestions_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
+    ch = ch or _default_client()
+    await ch.execute(_KEEP_OTHERS_CANCELS, params={"org": org, "uid": user_id})
     n = 0
     for table in _INGESTION_TABLES:
         n += await count_then_mutate(

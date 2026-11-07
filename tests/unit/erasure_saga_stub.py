@@ -69,7 +69,10 @@ class _TraceCH:
             entry = ("LIGHTWEIGHT", m.group(1))
         else:
             entry = ("OTHER", sql.split()[0])
-            if sql.startswith("INSERT INTO "):  # a rewrite: its rows stop matching the count
+            # A rewrite: its rows stop matching the count. A copy whose columns leave
+            # out user_id is a row outside the scope, not a rewrite of the scope's rows.
+            columns = sql.split(" SELECT ", 1)[0]
+            if sql.startswith("INSERT INTO ") and ("user_id" in columns or "(" not in columns):
                 self.rewritten.add((_STEP.get(), sql.split()[2]))
         self.trace.setdefault(_STEP.get(), []).append(entry)
         self.executed.append(sql)

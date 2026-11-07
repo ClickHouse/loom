@@ -97,6 +97,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (D, "loom.document_blobs"),
             (U, "loom.documents"),
             (D, "loom.blob_uploads"),
+            ("OTHER", "INSERT"),  # the user's cancels on another writer's open job, kept
             (D, "loom.knowledge_uploads"),
             (D, "loom.knowledge_ingestions"),
             (D, "loom.knowledge_ingest_cancels"),
