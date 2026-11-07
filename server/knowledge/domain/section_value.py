@@ -69,7 +69,7 @@ _DECISION = re.compile(
     r"conclusion:|outcome:|opted (?:for|to)|concluded|not supporting|"
     r"defaults? to|"
     rf"we(?:'re| are|'ll| will| won't| will not)(?: not)? {_CHOICE_VERB}|"
-    # In the first person only a plan ("I'll remove the old flag", not "I'll move on").
+    # For "I", only a plan ("I'll remove the old flag", not "I'll move on").
     rf"(?:we|i)(?:'ll| will| won't| will not|'m going to| am going to|'re going to|"
     rf" are going to)(?: not)? {_PLAN_VERB}|"
     rf"let's {_PLAN_VERB}|we(?:'re| are) {_PLAN_ING}|"
@@ -279,7 +279,8 @@ def _below_title(name: str, section_path: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _same(heading: str, name: str) -> bool:
-    return " ".join(heading.split()).casefold() == " ".join(name.split()).casefold()
+    # Words only: an export may turn the title's hyphens into dashes.
+    return re.findall(r"\w+", heading.casefold()) == re.findall(r"\w+", name.casefold())
 
 
 def _decides(line: str, notes: bool) -> bool:

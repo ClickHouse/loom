@@ -464,10 +464,15 @@ def test_a_recorded_meetings_transcript_and_template_are_noise(
             ("Timeline", "14:05"),
             "Errors passed 5%.",
         ),
-        # a first heading that repeats the title in another case or spacing is the title
+        # a first heading that repeats the title in another case, spacing or dash is the title
         (
             "Planner sync - 2026-03-04 10:00 CET - Transcript",
             ("planner sync -  2026-03-04 10:00 CET - transcript", "Summary"),
+            "The team reviewed the fallback list.",
+        ),
+        (
+            "Planner sync - 2026-03-04 10:00 CET - Transcript",
+            ("Planner sync \u2013 2026-03-04 10:00 CET \u2013 Transcript", "Summary"),
             "The team reviewed the fallback list.",
         ),
         # a clock time without a transcript or notes-by mark names no recording
