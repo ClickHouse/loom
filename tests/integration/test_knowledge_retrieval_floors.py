@@ -20,7 +20,6 @@ the test skips.
 
 from __future__ import annotations
 
-import functools
 import hashlib
 import uuid
 from collections.abc import Iterator
@@ -219,11 +218,6 @@ QUERIES = [
 ]
 
 
-@functools.cache
-def _floors() -> dict[tuple[str, ...], float]:
-    return read_floors(DOC.read_text(), "## Retrieval floors", 3)
-
-
 @pytest.fixture
 def reference_extractor(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """The reference extractor in this process, as the job's only service."""
@@ -329,11 +323,11 @@ async def test_each_retrieval_slice_meets_its_floor(control_plane_url: str) -> N
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=10) as c:
         health = (await c.get("/v1/health")).json()
     # The server embeds the queries and this process the chunks: the same fake model.
-    same = (health.get("embedding_model"), health.get("embedding_dim_configured")) == (
+    same = (health["embedding_model"], health["embedding_dim_configured"]) == (
         settings.embedding_model,
         settings.embedding_dim,
     )
-    if not (health.get("fake_embedding") and embedder_is_fake() and same):
+    if not (health["fake_embedding"] and embedder_is_fake() and same):
         pytest.skip("the floors are measured with one fake n-gram embedder, here and in the server")
     org, ns = unique_org("retrieval-floors"), f"docs-{uuid.uuid4().hex[:6]}"
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
@@ -356,7 +350,7 @@ async def test_each_retrieval_slice_meets_its_floor(control_plane_url: str) -> N
             )
             results.append((q, out["results"]))
     measured = _measure(results)
-    floors = _floors()
+    floors = read_floors(DOC.read_text(), "## Retrieval floors", 3)
     assert set(floors) == set(measured), (
         f"rows no query measures: {sorted(set(floors) - set(measured))};"
         f" measured with no row: {sorted(set(measured) - set(floors))}"
