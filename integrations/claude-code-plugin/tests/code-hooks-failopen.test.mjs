@@ -334,11 +334,18 @@ test("blast radius and file context: 401 and a hanging server add nothing to the
         session_id: "s",
       };
       for (const hook of ["loom-blast-radius.mjs", "loom-file-context.mjs"]) {
-        const r = await run(hook, edit, { tmp, url, env: { LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" } });
-        assert.equal(r.code, 0, `${hook} ${status}`);
-        assert.equal(r.out, "", `${hook} ${status}`);
-        // From the hook's request to its exit, as for the Stop gates.
         const op = hook === "loom-blast-radius.mjs" ? "/v1/code.impact" : "/v1/memory.for_file";
+        // As for the Stop gates: a run whose git calls timed out never asked.
+        let r;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          arrived.delete(op);
+          r = await run(hook, edit, { tmp, url, env: { LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" } });
+          assert.equal(r.code, 0, `${hook} ${status}`);
+          assert.equal(r.out, "", `${hook} ${status}`);
+          if (arrived.has(op)) break;
+        }
+        // From the hook's request to its exit, as for the Stop gates.
+        assert.ok(arrived.has(op), `${hook} ${status}: never sent ${op} in three runs`);
         const after = r.closedAt - arrived.get(op);
         assert.ok(after < 1500, `${hook} ${status}: ${after} ms after its request (${r.ms} ms in all)`);
         assert.ok(r.ms < 7000, `${hook} ${status} took ${r.ms} ms`);

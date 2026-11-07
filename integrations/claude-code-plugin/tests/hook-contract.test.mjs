@@ -171,6 +171,10 @@ function runHook({ script, event, stdin, env, closeStdin = true }) {
     const started = Date.now();
     const child = spawn(process.execPath, [path.join(root, "hooks", script), event], {
       env,
+      // A payload with no cwd falls back to the hook's own: the sandbox's
+      // home, not the large checkout the suite runs from, whose git calls a
+      // loaded runner stretches past the bound.
+      cwd: env.HOME,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";

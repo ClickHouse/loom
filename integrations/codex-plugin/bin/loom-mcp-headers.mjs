@@ -8,9 +8,9 @@
 // starts a plugin's helper from the plugin root, so there the header does not
 // name the project's checkout (LOOM_CODE_REPO / `code_repo` still name one).
 // The resolved repository (the cache the shunt and the primer share, else one
-// bounded lookup) becomes
-// `X-Loom-Code-Scope: org/namespace`, which the server applies to every
-// loom_code_* call that names no namespace. LOOM_MCP_CODE_SCOPE=off disables.
+// bounded lookup) becomes `X-Loom-Code-Scope: org/namespace`, which the server
+// applies to every loom_code_* call that names no namespace.
+// LOOM_MCP_CODE_SCOPE=off disables.
 //
 // No token and not an agent → the helper waits for the SessionStart hook,
 // which Claude Code runs while it connects the MCP entry and which knows the
