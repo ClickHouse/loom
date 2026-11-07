@@ -554,9 +554,12 @@ def _process_state_left_as_found(request: pytest.FixtureRequest) -> Iterator[Non
 
 
 def _is_test_double(obj: object) -> bool:
-    """A client a test built: a class defined under tests/, or a mock."""
-    module = type(obj).__module__
-    return module.startswith(("tests.", "unittest.mock")) or module.startswith("test_")
+    """A mock, an instance of a class defined under tests/, or a function or class
+    a test file defined (a lambda included)."""
+    if type(obj).__module__.startswith(("tests.", "test_", "unittest.mock")):
+        return True
+    module = getattr(obj, "__module__", None)
+    return isinstance(module, str) and module.startswith(("tests.", "test_"))
 
 
 @pytest.fixture(autouse=True)
@@ -606,18 +609,6 @@ def _provider_clients_left_as_found() -> Iterator[None]:
         )
 
 
-def _bound_test_double(value: object) -> bool:
-    """A mock, or a function or class a test file defined (a lambda included)."""
-    if type(value).__module__.startswith("unittest.mock"):
-        return True
-    module = getattr(value, "__module__", None)
-    return (
-        isinstance(module, str)
-        and not isinstance(value, type(sys))
-        and module.startswith(("tests.", "test_"))
-    )
-
-
 def _doubles_bound_at_import(modules_before: set[str]) -> list[str]:
     """`module.name` for each name a server module imported since `modules_before`
     still holds a test double for.
@@ -633,7 +624,7 @@ def _doubles_bound_at_import(modules_before: set[str]) -> list[str]:
         if module is None or not name.startswith("server."):
             continue
         found += [
-            f"{name}.{attr}" for attr, value in vars(module).items() if _bound_test_double(value)
+            f"{name}.{attr}" for attr, value in vars(module).items() if _is_test_double(value)
         ]
     return found
 
@@ -642,11 +633,22 @@ def _doubles_bound_at_import(modules_before: set[str]) -> list[str]:
 def _no_test_double_bound_at_import() -> Iterator[None]:
     """Fail a test during which a server module was first imported with a test double
     bound to one of its names. Teardown runs after the test's own patches are undone,
-    so only a binding made at import survives to here. Import the module at the top of
-    the test file, before the patch, or patch the name where the module looks it up."""
+    so only a binding made at import survives to here. Each reported module is dropped
+    from `sys.modules` and from its package before failing, so the next import runs
+    it again and binds the real name instead of the later tests seeing the double.
+    Import the module at the top of the test file, before the patch, or patch the
+    name on that module."""
     before = set(sys.modules)
     yield
     bound = _doubles_bound_at_import(before)
+    for name in sorted({b.rsplit(".", 1)[0] for b in bound}):
+        sys.modules.pop(name, None)
+        # `from package import leaf` returns the package attribute when it is set,
+        # without importing again.
+        package, _, leaf = name.rpartition(".")
+        parent = sys.modules.get(package)
+        if parent is not None and hasattr(parent, leaf):
+            delattr(parent, leaf)
     if bound:
         pytest.fail(
             "a module first imported under a patch kept the test double: "

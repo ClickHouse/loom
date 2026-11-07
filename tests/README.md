@@ -36,7 +36,7 @@ Marks must be registered (`strict_markers`). An unknown mark fails collection.
   - environment variables, the working directory, `logging.disable` and non-daemon threads left running: use `monkeypatch`, and join what you start. The root logger (handlers, level and the CLI's logging latch) is reset after every test without failing it. `sys.path` is not checked, because bench modules insert their directory on first import;
   - pending tasks on the session loop;
   - the LLM and embedder singletons. A test double left in either cache fails the test, and the embedding cache is emptied after every test;
-  - a test double bound at import: a server module first imported while a test patches a name it imports (`from pkg import Name` under `patch("pkg.Name")`) keeps the double for the rest of the process. The test fails, naming the module and the name; import the module at the top of the test file, before any patch.
+  - a test double bound at import: a server module first imported while a test patches a name it imports (`from pkg import Name` under `patch("pkg.Name")`) keeps the double for the rest of the process. The test fails, naming the module and the name, and the module is dropped so the next import binds the real name; import the module at the top of the test file, before any patch, or patch the name on that module.
 
   They also empty the module caches (search key axis, corpus stats, error codes, deferred ledgers) before and after every test.
 
