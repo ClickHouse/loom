@@ -34,8 +34,11 @@ MAX_NEAR_PATHS = 50
 
 def normalize_path(p: str) -> str:
     p = str(p or "").strip()
-    while p.startswith("./"):
-        p = p[2:]
+    # step past every `./` before one slice: a slice per prefix copies the rest each time
+    i = 0
+    while p.startswith("./", i):
+        i += 2
+    p = p[i:]
     return p.lstrip("/")
 
 

@@ -114,6 +114,8 @@ CASES: list[tuple[str, Callable[[str], object], str, str]] = [
     ("citations._PATH_RE", _finditer(citations, "_PATH_RE"), "", "@"),
     ("citations._LOC_RE", _finditer(citations, "_LOC_RE"), "", "+"),
     ("citations._BARE_LOC_RE", _finditer(citations, "_BARE_LOC_RE"), "", "a+"),
+    ("citations diff prefixes", _then(citations.extract, "x.py"), "", "a/"),
+    ("citations fenced citations", citations.extract, "", "```a``` a/b.py "),
     ("query_trim._QUALIFIED_RE", _finditer(query_trim, "_QUALIFIED_RE"), "", "_"),
     ("similar.TRACE_SYMBOL_RE", _finditer(similar, "TRACE_SYMBOL_RE"), "", "a_"),
     ("similar.TRACE_FILELINE_RE", _finditer(similar, "TRACE_FILELINE_RE"), "", "a/"),

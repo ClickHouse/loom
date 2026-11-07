@@ -22,6 +22,7 @@ diff's new-side line ranges for the `in_pr_diff` check.
 
 from __future__ import annotations
 
+import bisect
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -257,14 +258,18 @@ class Extraction:
 
 def normalise_path(path: str) -> str:
     p = path.strip()
-    while p.startswith("./"):
-        p = p[2:]
-    p = p.lstrip("/")
-    while p.startswith(("a/", "b/")) and p.count("/") > 1 and not p.startswith(("a/b", "b/a")):
+    # each prefix is stepped past, not sliced off: a slice copies the rest of the path
+    i = 0
+    while p.startswith("./", i):
+        i += 2
+    p = p[i:].lstrip("/")
+    i, slashes = 0, p.count("/")
+    while p.startswith(("a/", "b/"), i) and slashes > 1 and not p.startswith(("a/b", "b/a"), i):
         # unified-diff prefixes; a real `a/` top-level directory is rare
         # enough that the loss is one citation read as unresolved
-        p = p[2:]
-    return p
+        i += 2
+        slashes -= 1
+    return p[i:]
 
 
 def _span(start: str | None, end: str | None) -> tuple[int, int]:
@@ -280,7 +285,10 @@ def _fence_spans(text: str) -> list[tuple[int, int]]:
 
 
 def _in_spans(pos: int, spans: list[tuple[int, int]]) -> bool:
-    return any(a <= pos < b for a, b in spans)
+    """`spans` are in order and do not overlap, so the one that could hold
+    `pos` is found by bisection, not by walking every fence."""
+    i = bisect.bisect_right(spans, pos, key=lambda span: span[0]) - 1
+    return i >= 0 and pos < spans[i][1]
 
 
 def _blank(text: str, spans: list[tuple[int, int]]) -> str:

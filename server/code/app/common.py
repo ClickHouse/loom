@@ -31,8 +31,11 @@ def repo_relative(path: str) -> str:
     `.github/workflows/ci.yml` KEPT. `str.lstrip("./")` would strip characters, not a
     prefix, and eat the dot of every dot-directory path."""
     p = path.strip().replace("\\", "/")
-    while p.startswith("./"):
-        p = p[2:]
+    # step past every `./` before one slice: a slice per prefix copies the rest each time
+    i = 0
+    while p.startswith("./", i):
+        i += 2
+    p = p[i:]
     return p.lstrip("/")
 
 

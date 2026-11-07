@@ -222,7 +222,7 @@ def extract_code_facets(text: str) -> tuple[list[str], list[str]]:
         if _BARE_FILE_RE.fullmatch(sym):
             continue
         _add_concept(sym, from_prose=True)
-    # Commit SHA (gated on a nearby commit/sha cue).
+    # Commit SHAs, only when the text has a commit cue.
     if _has_commit_cue(text):
         for m in _COMMIT_SHA_RE.finditer(text):
             if _looks_like_commit_sha(m.group(1)):

@@ -179,13 +179,15 @@ async def _mention_window_chunks(search_input: Any, question: str, ranked: list[
 
 
 # The humps are one run, as in _INJECT_HANDLE_RE.
-_TECH_PASCAL_RE = re.compile(r"\b[A-Z][a-z0-9]++[A-Z][a-zA-Z0-9]++(?:::\w+)?\b")
-_TECH_CAMEL_RE = re.compile(r"\b[a-z]{2,}[A-Z][A-Za-z0-9]+\b")
+_TECH_PASCAL_RE = re.compile(r"\b([A-Z][a-z0-9]++[A-Z][a-zA-Z0-9]++(?:::\w+)?)\b")
+_TECH_CAMEL_RE = re.compile(r"\b([a-z]{2,}[A-Z][A-Za-z0-9]+)\b")
+# group 1, read from a path's first word only, so a long path costs one pass
 _TECH_FILE_RE = re.compile(
-    r"\b[\w/.-]{1,255}\.(?:cpp|hpp|cc|cxx|h|py|sql|go|rs|cmake|sh|yml|yaml|reference|xml)(?::\d+)?\b"
+    r"(?<![\w/.-])[/.-]*+\b([\w/.-]+\.(?:cpp|hpp|cc|cxx|h|py|sql|go|rs|cmake|sh|yml|yaml|reference|xml)"
+    r"(?::\d+)?)\b"
 )
 _TECH_QUOTE_RE = re.compile(r"[\"“'‘]([^\"”'’\n]{8,120})[\"”'’]")
-_TECH_SNAKE_RE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b")
+_TECH_SNAKE_RE = re.compile(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+){1,})\b")
 # Product and prose words that match the shapes above but name nothing.
 _TECH_STOP = {
     "clickhouse",
@@ -223,9 +225,10 @@ def _technical_identifiers(text: str) -> list[str]:
 
     for m in _TECH_QUOTE_RE.finditer(t):
         _add(m.group(1))
+    # each pattern's identifier is its group 1
     for pat in (_TECH_FILE_RE, _TECH_PASCAL_RE, _TECH_CAMEL_RE, _TECH_SNAKE_RE):
         for m in pat.finditer(t):
-            _add(m.group(0))
+            _add(m.group(1))
     return out[:12]
 
 
