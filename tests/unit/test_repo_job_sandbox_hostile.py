@@ -18,9 +18,9 @@ from pathlib import Path
 
 import pytest
 
-import server.core.hosts as hosts
 from server.code.app.index import compiler_tier, egress, sandbox
 from server.code.app.index.gitrepo import auth_env
+from tests.unit._hosts import resolves
 
 _HAS_SANDBOX = sandbox.sandbox_available()
 
@@ -138,7 +138,7 @@ async def test_the_proxy_refuses_private_targets_and_redirects_to_them(
 
     monkeypatch.setattr(egress, "vet_host", vet)
     monkeypatch.setattr(egress.asyncio, "open_connection", open_connection)
-    monkeypatch.setattr(hosts, "_resolve", lambda h: ["10.0.0.5"] if "private" in h else [h])
+    resolves(monkeypatch, lambda h: ["10.0.0.5"] if "private" in h else [h])
     try:
         done = await _python(
             f"""
@@ -171,7 +171,7 @@ async def test_the_proxy_refuses_private_targets_and_redirects_to_them(
 async def test_submodule_urls_to_private_hosts_and_local_transports_fail(
     tmp_path: Path, caplog, monkeypatch
 ) -> None:
-    monkeypatch.setattr(hosts, "_resolve", lambda h: [h])  # address literals only
+    resolves(monkeypatch, lambda h: [h])  # address literals only
     ident = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t"}
     env = {**auth_env(), **ident, "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
@@ -282,7 +282,7 @@ async def test_an_orphan_does_not_outlive_its_job() -> None:
 async def test_the_ssh_relay_is_refused_a_private_host(monkeypatch) -> None:
     """ssh remotes go through the relay's connect mode (GIT_SSH_COMMAND's
     ProxyCommand), and the proxy refuses a host that resolves privately."""
-    monkeypatch.setattr(hosts, "_resolve", lambda h: ["10.0.0.5"])
+    resolves(monkeypatch, lambda h: ["10.0.0.5"])
     relay = [sys.executable, "-I", sandbox._RELAY_INSIDE, "connect"]
     done = await sandbox.run_sandboxed(
         [*relay, "git.private.example", "22", f"{sandbox._EGRESS_INSIDE}/proxy.sock"],

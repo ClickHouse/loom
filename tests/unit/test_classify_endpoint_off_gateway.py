@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -21,21 +22,11 @@ from server.memory.app import classify
 from server.memory.domain.classify_endpoints import check_classify_endpoint, classify_refusal
 from server.observability import degradations
 from server.settings import settings
+from tests.unit._hosts import resolves
 
 
 def _no_thread(host: str) -> list[str]:
     raise AssertionError(f"{host} was looked up in a thread")
-
-
-def _resolves(monkeypatch: pytest.MonkeyPatch, answer: Callable[[str], list[str]]) -> None:
-    """Both lookups answer with `answer`: the system's (a listed private host) and the
-    in-loop one (any other host off the gateway)."""
-
-    async def _in_loop(host: str) -> list[str]:
-        return answer(host)
-
-    monkeypatch.setattr("server.core.hosts._resolve", answer)
-    monkeypatch.setattr("server.core.hosts._resolve_in_loop", _in_loop)
 
 
 @pytest.fixture(autouse=True)
@@ -48,7 +39,7 @@ def _off_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "inference_gateway_required", False)
     monkeypatch.setattr(settings, "memory_classify_private_hosts", "")
     # An address literal resolves to itself; nothing here reaches a resolver.
-    _resolves(monkeypatch, lambda host: [host.strip("[]")])
+    resolves(monkeypatch, lambda host: [host.strip("[]")])
     monkeypatch.setattr(customer, "require", _anyone)
 
 
@@ -174,7 +165,7 @@ def test_a_public_looking_name_that_resolves_inward_is_never_posted_to(
     monkeypatch: pytest.MonkeyPatch, client: type[_Client]
 ) -> None:
     """The realistic attack: a name the admin controls resolves to a private address."""
-    _resolves(
+    resolves(
         monkeypatch,
         lambda host: ["10.1.2.3"] if host == "classifier.attacker.example" else [host],
     )
@@ -208,7 +199,7 @@ def test_a_listed_private_host_is_reached_by_name(
     monkeypatch: pytest.MonkeyPatch, client: type[_Client]
 ) -> None:
     monkeypatch.setattr(settings, "memory_classify_private_hosts", "classifier.local")
-    _resolves(monkeypatch, lambda host: ["10.0.0.9"])
+    resolves(monkeypatch, lambda host: ["10.0.0.9"])
     assert _classify("http://classifier.local:9000/c") == "note"
     (seen,) = client.seen
     assert seen["url"] == "http://classifier.local:9000/c"
@@ -431,7 +422,7 @@ def test_an_internationalized_host_is_posted_with_its_idna_form(
         return httpx.Response(200, stream=_Wire())
 
     real = httpx.AsyncClient
-    _resolves(monkeypatch, lambda host: ["93.184.215.14"])
+    resolves(monkeypatch, lambda host: ["93.184.215.14"])
     monkeypatch.setattr(
         classify.httpx,
         "AsyncClient",
@@ -482,7 +473,7 @@ def test_a_url_two_parsers_read_apart_is_refused_and_never_posted(
     """httpx (the gateway check) and urlsplit (the call) must read one host: each of
     these reads as off the gateway to one and reaches the gateway's host by the other."""
     monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
-    _resolves(monkeypatch, lambda host: ["93.184.215.14"])
+    resolves(monkeypatch, lambda host: ["93.184.215.14"])
     with pytest.raises(ValueError, match="classify_endpoint"):
         check_classify_endpoint(url)
     assert _classify(url) == "" and client.seen == []
@@ -509,7 +500,7 @@ def test_a_private_host_matches_in_either_spelling(
     monkeypatch: pytest.MonkeyPatch, client: type[_Client], listed: str, url: str
 ) -> None:
     monkeypatch.setattr(settings, "memory_classify_private_hosts", listed)
-    _resolves(monkeypatch, lambda host: ["10.0.0.9"])
+    resolves(monkeypatch, lambda host: ["10.0.0.9"])
     assert classify_refusal(url) == ""
     assert _classify(url) == "note"
     (seen,) = client.seen
@@ -538,7 +529,7 @@ def test_a_host_that_is_not_a_bare_name_or_address_is_refused_and_never_posted(
     monkeypatch: pytest.MonkeyPatch, url: str, client: type[_Client]
 ) -> None:
     monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
-    _resolves(monkeypatch, lambda host: ["93.184.215.14"])
+    resolves(monkeypatch, lambda host: ["93.184.215.14"])
     assert classify_refusal(url) == "it is not a valid URL"
     assert _classify(url) == "" and client.seen == []
 
@@ -548,7 +539,7 @@ def test_a_private_host_with_an_underscore_is_accepted(
 ) -> None:
     """A Compose service name: both parsers read the `_` alike."""
     monkeypatch.setattr(settings, "memory_classify_private_hosts", "my_classifier")
-    _resolves(monkeypatch, lambda host: ["172.18.0.4"])
+    resolves(monkeypatch, lambda host: ["172.18.0.4"])
     assert classify_refusal("http://my_classifier:8080/c") == ""
     assert _classify("http://my_classifier:8080/c") == "note"
     assert client.seen[0]["url"] == "http://my_classifier:8080/c"
@@ -641,18 +632,25 @@ def test_the_in_loop_lookup_reads_a_and_aaaa_and_fails_only_when_both_do(
             return self.text
 
     class _Resolver:
+        """As dnspython answers: a name it knows with no record of a kind is an empty
+        answer (NOERROR, no data: NoAnswer, not raised), one it does not is NXDOMAIN."""
+
         def __init__(self, zone: dict[tuple[str, str], list[str]]) -> None:
             self.zone = zone
 
-        async def resolve(self, host: str, kind: str, **_: Any) -> list[_Record]:
-            if (host, kind) not in self.zone:
+        async def resolve(self, host: str, kind: str, *, raise_on_no_answer: bool) -> Any:
+            if not any(name == host for name, _ in self.zone):
                 raise dns.resolver.NXDOMAIN
-            return [_Record(a) for a in self.zone[(host, kind)]]
+            records = [_Record(a) for a in self.zone.get((host, kind), [])]
+            if not records and raise_on_no_answer:
+                raise dns.resolver.NoAnswer
+            return records
 
     zone = {
         ("both.example", "A"): ["93.184.215.14"],
         ("both.example", "AAAA"): ["2606:2800:21f:cb07:6820:80da:af6b:8b2c"],
         ("v4.example", "A"): ["93.184.215.14"],
+        ("v6.example", "AAAA"): ["2606:2800:21f:cb07:6820:80da:af6b:8b2c"],
     }
     monkeypatch.setattr(hosts, "_async_resolver", lambda: _Resolver(zone))
     assert asyncio.run(hosts._resolve_in_loop("both.example")) == [
@@ -660,11 +658,142 @@ def test_the_in_loop_lookup_reads_a_and_aaaa_and_fails_only_when_both_do(
         "2606:2800:21f:cb07:6820:80da:af6b:8b2c",
     ]
     assert asyncio.run(hosts._resolve_in_loop("v4.example")) == ["93.184.215.14"]
+    assert asyncio.run(hosts._resolve_in_loop("v6.example")) == [
+        "2606:2800:21f:cb07:6820:80da:af6b:8b2c"
+    ]
     assert asyncio.run(hosts._resolve_in_loop("10.0.0.5")) == ["10.0.0.5"]  # a literal
     with pytest.raises(dns.resolver.NXDOMAIN):
         asyncio.run(hosts._resolve_in_loop("none.example"))
-    refusal, _ = asyncio.run(hosts.vet_host("none.example", in_loop=True))
+    refusal, _ = asyncio.run(hosts.vet_host("none.example"))
     assert refusal == "none.example does not resolve (NXDOMAIN)"
+
+
+class _Nameserver(asyncio.DatagramProtocol):
+    """A real nameserver on a local UDP socket: v4.example has an A record and no
+    AAAA (NOERROR, no data), a name under never.example is never answered, any
+    other is NXDOMAIN."""
+
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+        self.transport: asyncio.DatagramTransport | None = None
+
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        assert isinstance(transport, asyncio.DatagramTransport)
+        self.transport = transport
+
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        import dns.message
+        import dns.rcode
+        import dns.rdatatype
+        import dns.rrset
+
+        query = dns.message.from_wire(data)
+        question = query.question[0]
+        name = question.name.to_text()
+        self.asked.append(name)
+        if name.endswith("never.example."):
+            return
+        answer = dns.message.make_response(query)
+        if name == "v4.example.":
+            if question.rdtype == dns.rdatatype.A:
+                answer.answer.append(dns.rrset.from_text(name, 60, "IN", "A", "93.184.215.14"))
+        else:
+            answer.set_rcode(dns.rcode.NXDOMAIN)
+        assert self.transport is not None
+        self.transport.sendto(answer.to_wire(), addr)
+
+
+async def _with_nameserver(
+    monkeypatch: pytest.MonkeyPatch, lifetime: float, body: Callable[[], Any]
+) -> tuple[Any, _Nameserver, set[str], set[str]]:
+    """Run `body` with the in-loop lookup asking a real resolver at a local nameserver;
+    also the names of the threads before and after it."""
+    import threading
+
+    import dns.asyncresolver
+
+    from server.core import hosts
+
+    loop = asyncio.get_running_loop()
+    transport, server = await loop.create_datagram_endpoint(
+        _Nameserver, local_addr=("127.0.0.1", 0)
+    )
+    resolver = dns.asyncresolver.Resolver(configure=False)
+    resolver.nameservers = ["127.0.0.1"]
+    resolver.port = transport.get_extra_info("sockname")[1]
+    resolver.lifetime = lifetime
+    monkeypatch.setattr(hosts, "_resolve_in_loop", _REAL_RESOLVE_IN_LOOP)
+    monkeypatch.setattr(hosts, "_async_resolver", lambda: resolver)
+    monkeypatch.setattr(hosts, "_resolve", _no_thread)
+    before = {t.name for t in threading.enumerate()}
+    try:
+        result = await body()
+    finally:
+        transport.close()
+    return result, server, before, {t.name for t in threading.enumerate()}
+
+
+def test_a_real_lookup_reads_an_answer_with_no_aaaa_and_an_nxdomain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core import hosts
+
+    async def _both() -> tuple[tuple[str, str], tuple[str, str]]:
+        return await hosts.vet_host("v4.example"), await hosts.vet_host("none.example")
+
+    (found, missing), server, _, _ = asyncio.run(_with_nameserver(monkeypatch, 5.0, _both))
+    assert found == ("", "93.184.215.14")
+    assert missing == ("none.example does not resolve (NXDOMAIN)", "")
+    assert sorted(set(server.asked)) == ["none.example.", "v4.example."]
+
+
+def test_a_real_lookup_that_never_answers_ends_at_the_deadline_without_a_thread(
+    monkeypatch: pytest.MonkeyPatch, client: type[_Client]
+) -> None:
+    """dnspython waits on the event loop: the classifier's deadline, shorter than the
+    resolver's own lifetime, ends the lookup, and no thread was used or is left."""
+    monkeypatch.setattr(settings, "memory_classify_timeout_s", 0.3)
+
+    async def _timed() -> tuple[str, float]:
+        started = time.perf_counter()
+        label = await _call_never()
+        return label, time.perf_counter() - started
+
+    (label, waited), server, before, after = asyncio.run(
+        _with_nameserver(monkeypatch, 30.0, _timed)
+    )
+    assert label == "" and waited < 1.5 and client.seen == []
+    assert "never.example." in server.asked and after == before
+
+
+def test_the_resolvers_own_lifetime_ends_a_lookup_before_a_longer_deadline(
+    monkeypatch: pytest.MonkeyPatch, client: type[_Client]
+) -> None:
+    monkeypatch.setattr(settings, "memory_classify_timeout_s", 5.0)
+
+    async def _timed() -> tuple[str, float, list[str]]:
+        degradations.begin()
+        started = time.perf_counter()
+        label = await _call_never()
+        return label, time.perf_counter() - started, degradations.current()
+
+    (label, waited, noted), server, before, after = asyncio.run(
+        _with_nameserver(monkeypatch, 0.3, _timed)
+    )
+    assert label == "" and waited < 3.0 and client.seen == []
+    assert noted == ["classify: caller_type_kept (endpoint host refused)"]
+    assert "never.example." in server.asked and after == before
+
+
+async def _call_never() -> str:
+    return await classify.classify(
+        org="acme",
+        namespace="ns",
+        endpoint="https://never.example/c",
+        prompt_template="",
+        value="v",
+        valid_types=[],
+    )
 
 
 def test_a_listed_private_host_is_looked_up_by_the_system_resolver(
@@ -722,3 +851,29 @@ def test_a_lookup_cancelled_from_outside_leaves_nothing_and_the_namespace_classi
 
     left, again = asyncio.run(_cancel_then_again())
     assert left == [] and again == "note"
+
+
+def test_the_in_loop_resolver_is_read_again_when_resolv_conf_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A container's DNS server can move without a restart: the resolver follows the
+    file, and without one the lookup fails closed."""
+    import os
+
+    import dns.resolver
+
+    from server.core import hosts
+
+    conf = tmp_path / "resolv.conf"
+    conf.write_text("nameserver 192.0.2.1\n")
+    monkeypatch.setattr(hosts, "_RESOLV_CONF", str(conf))
+    monkeypatch.setattr(hosts, "_resolver", None)
+    first = hosts._async_resolver()
+    assert first.nameservers == ["192.0.2.1"] and hosts._async_resolver() is first
+    conf.write_text("nameserver 192.0.2.2\n")
+    later = os.stat(conf).st_mtime_ns + 1_000_000_000
+    os.utime(conf, ns=(later, later))
+    assert hosts._async_resolver().nameservers == ["192.0.2.2"]
+    conf.unlink()
+    with pytest.raises(dns.resolver.NoResolverConfiguration):
+        hosts._async_resolver()

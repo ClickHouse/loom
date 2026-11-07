@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import dns.asyncresolver
 import pytest
 
 # The unit suite runs as CI does: no dotenv, no LOOM_* or provider keys from
@@ -252,14 +253,17 @@ def _leaked_threads(before: set[threading.Thread]) -> list[str]:
     return [t.name for t in leaked if t.is_alive()]
 
 
-# Unit tests never reach the network. A connect to a non-loopback address, or a
-# name lookup of anything but a local name, is refused and recorded, and the
+# Unit tests never reach the network. A connect or a datagram to a non-loopback
+# address, or a name lookup of anything but a local name (by getaddrinfo, or by
+# dnspython at the system's nameservers, which may be a loopback stub that
+# forwards), is refused and recorded, and the
 # test fails at teardown naming the host: the code under test may swallow the
 # refusal (as "tracker unavailable", say), so the raise alone proves nothing.
 _LOCAL_NAMES = frozenset({"", "localhost", "localhost.localdomain", "testserver", "test"})
 _network_attempts: list[str] = []
 _real_connect = socket.socket.connect
 _real_connect_ex = socket.socket.connect_ex
+_real_sendto = socket.socket.sendto
 _real_getaddrinfo = socket.getaddrinfo
 
 
@@ -292,6 +296,11 @@ def _guarded_connect_ex(self: socket.socket, address: Any) -> int:
     return _real_connect_ex(self, address)
 
 
+def _guarded_sendto(self: socket.socket, data: Any, *args: Any) -> int:
+    _refuse_remote(self, args[-1])  # (data, address) or (data, flags, address)
+    return _real_sendto(self, data, *args)
+
+
 def _guarded_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
     name = host.decode() if isinstance(host, bytes) else host
     if not _is_local(name):
@@ -302,6 +311,21 @@ def _guarded_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
 
 socket.socket.connect = _guarded_connect  # type: ignore[method-assign]
 socket.socket.connect_ex = _guarded_connect_ex  # type: ignore[method-assign]
+socket.socket.sendto = _guarded_sendto  # type: ignore[method-assign,assignment]
+_real_dns_resolve = dns.asyncresolver.Resolver.resolve
+
+
+async def _guarded_dns_resolve(
+    self: dns.asyncresolver.Resolver, qname: Any, *a: Any, **kw: Any
+) -> Any:
+    name = str(qname).rstrip(".")
+    if self.port == 53 and not _is_local(name):  # a test's own nameserver is on another port
+        _network_attempts.append(f"resolve {name}")
+        raise OSError(f"unit tests may not resolve {name}")
+    return await _real_dns_resolve(self, qname, *a, **kw)
+
+
+dns.asyncresolver.Resolver.resolve = _guarded_dns_resolve  # type: ignore[method-assign]
 socket.getaddrinfo = _guarded_getaddrinfo
 
 

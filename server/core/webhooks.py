@@ -95,7 +95,6 @@ async def pinned_target(
     *,
     schemes: Collection[str] = ("http", "https"),
     private_hosts: Collection[str] = (),
-    in_loop: bool = False,
 ) -> tuple[str, str, str, str]:
     """(refusal, request URL, Host header, TLS server name) for a webhook URL.
 
@@ -104,8 +103,7 @@ async def pinned_target(
     here. A host named in `private_hosts` (an operator's allowlist, spelled as
     `ascii_host` spells it) may resolve to a private or loopback address and is
     reached by its name. The name is resolved, matched and sent (Host, SNI) in its
-    ASCII form: a Unicode one as its UTS 46 IDNA form. `in_loop` looks a public
-    host up on the event loop (`vet_host`)."""
+    ASCII form: a Unicode one as its UTS 46 IDNA form."""
     try:
         parts = urlsplit(url)
         host = parts.hostname or ""
@@ -123,9 +121,7 @@ async def pinned_target(
         host = ""
     if not host:
         return "the URL is not valid", "", "", ""
-    refusal, address = await vet_host(
-        host, allow_private=host in private_hosts, name_address=False, in_loop=in_loop
-    )
+    refusal, address = await vet_host(host, allow_private=host in private_hosts, name_address=False)
     if refusal:
         return refusal, "", "", ""
     suffix = f":{port}" if port else ""
@@ -164,9 +160,9 @@ async def post(
 
     One deadline, `ack_timeout_seconds` (each caller's own), covers the whole
     delivery: the DNS lookup, the connection and the response's status line.
-    The body of the answer is never read. A lookup cut by the deadline leaves
-    its resolver thread to finish on its own (Python cannot stop it); the
-    delivery does not wait for it. Each delivery has its own client: a pooled
+    The body of the answer is never read. A lookup cut by the deadline ends with
+    it (`vet_host` looks a host up on the event loop); only an allowlisted host's
+    lookup runs in a thread, which finishes on its own. Each delivery has its own client: a pooled
     connection is keyed by the pinned address, so a second registration on the
     same address would reuse a TLS session verified for another name."""
     try:

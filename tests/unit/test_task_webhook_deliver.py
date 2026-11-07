@@ -19,6 +19,7 @@ import pytest
 
 from server.core import webhooks
 from server.tasks.workers import webhook_deliver as wd
+from tests.unit._hosts import resolves
 
 SECRET = "whsec_" + base64.b64encode(b"0123456789abcdef0123456789abcdef").decode()
 NOW = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
@@ -511,7 +512,7 @@ async def test_a_webhook_to_a_non_public_address_is_never_sent(
     import server.core.hosts as hosts
 
     monkeypatch.setattr(webhooks, "vet_host", hosts.vet_host)
-    monkeypatch.setattr(hosts, "_resolve", lambda host: [resolves_to])
+    resolves(monkeypatch, lambda host: [resolves_to])
     fake.inboxes[0]["webhook_url"] = url
     seen: list[httpx.Request] = []
     async with _client(lambda r: seen.append(r) or httpx.Response(204)) as client:

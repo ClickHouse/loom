@@ -13,9 +13,9 @@ from typing import Any
 
 import pytest
 
-import server.core.hosts as hosts
 from server.code.app.index import egress
 from server.settings import settings
+from tests.unit._hosts import resolves
 
 PUBLIC = "93.184.215.14"
 NAMES = {
@@ -43,7 +43,7 @@ def _resolver(monkeypatch: pytest.MonkeyPatch) -> None:
             return NAMES[host]
         return [host]  # an address literal resolves to itself
 
-    monkeypatch.setattr(hosts, "_resolve", resolve)
+    resolves(monkeypatch, resolve)
 
 
 ALLOWED = egress.ALLOWED_PORTS

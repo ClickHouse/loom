@@ -12,6 +12,7 @@ import pytest
 
 import server.tracker.app.onboarding as ob
 from server.settings import settings
+from tests.unit._hosts import resolves
 from tests.unit.clickhouse_local import CLICKHOUSE, run
 
 REFUSED = [
@@ -50,6 +51,7 @@ def _resolving(monkeypatch: pytest.MonkeyPatch, table: dict[str, list[str]]) -> 
         ]
 
     monkeypatch.setattr(socket, "getaddrinfo", _gai)
+    resolves(monkeypatch, lambda host: [info[4][0] for info in _gai(host)])
 
 
 @pytest.fixture(autouse=True)

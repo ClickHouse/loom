@@ -44,6 +44,7 @@ from server.observability.budget_shape import current_budget_shape, note_budget_
 from server.settings import settings
 from server.settings.catalog import parse_backoff_steps
 from server.workers import pass_context
+from tests.unit._hosts import resolves
 from tests.unit.ch_fake import RecordingCH
 from tests.unit.clock_fake import ManualClock
 from tests.unit.schema_ddl import column_names
@@ -1901,9 +1902,8 @@ async def test_a_slow_name_lookup_is_inside_the_deadline(monkeypatch: pytest.Mon
 async def test_a_url_resolving_inward_is_refused_without_naming_the_address(
     monkeypatch: pytest.MonkeyPatch, url: str, resolves_to: str
 ) -> None:
-    import server.core.hosts as hosts
 
-    monkeypatch.setattr(hosts, "_resolve", lambda host: [resolves_to])
+    resolves(monkeypatch, lambda host: [resolves_to])
     monkeypatch.setattr(settings, "memory_webhook_private_hosts", "")
     refusal = await app.url_refusal(url)
     assert "a private or local address" in refusal and resolves_to not in refusal
@@ -1933,9 +1933,8 @@ async def test_http_and_userinfo_are_refused_unless_allowed(
 async def test_an_allowlisted_private_host_is_reached_by_its_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import server.core.hosts as hosts
 
-    monkeypatch.setattr(hosts, "_resolve", lambda host: ["127.0.0.1"])
+    resolves(monkeypatch, lambda host: ["127.0.0.1"])
     monkeypatch.setattr(settings, "memory_webhook_private_hosts", "Receiver.Local, 127.0.0.1")
     assert await app.url_refusal("https://receiver.local:8443/h") == ""
     assert await signed.pinned_target(

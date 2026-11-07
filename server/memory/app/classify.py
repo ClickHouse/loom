@@ -155,7 +155,6 @@ async def _post_vetted(endpoint: str, body: Mapping[str, object], *, scope: tupl
             endpoint,
             schemes=("https", "http"),
             private_hosts=settings.memory_classify_private_host_set(),
-            in_loop=True,
         )
         if refusal:
             if _REFUSED_LOGGED.first(("host", *scope)):
