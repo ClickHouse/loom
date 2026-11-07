@@ -3084,10 +3084,14 @@ def test_only_tag_shaped_markup_is_removed_from_a_caption() -> None:
         ('![x](f.png "see (a")', ['![x](f.png "see (a")']),
         ("![x](a(b.png) and 1) done", ["![x](a(b.png)"]),
         ("![x](it's.png)", ["![x](it's.png)"]),
-        # Only a quoted title runs onto the next line.
+        # One line end, before the destination or the title; a quoted title spans more.
+        ("![x](\nf.png)", ["![x](\nf.png)"]),
+        ('![x](f.png\n  "title")', ['![x](f.png\n  "title")']),
         ('![x](f.png "a\nb")', ['![x](f.png "a\nb")']),
         ("![x](f.png 'a\nb')", ["![x](f.png 'a\nb')"]),
-        ("![x](a(b.png\nand 1) done", []),
+        ("![x](a\nb\nc) done", []),
+        # A target never runs into the next one.
+        ("![x](a](b)", []),
         # Unclosed markup is no image.
         ("![open ![x](a.png) <img ](b", ["![x](a.png)"]),
     ],
@@ -3099,6 +3103,7 @@ def test_image_markup_matches(text: str, images: list[str]) -> None:
 def test_link_targets_are_removed_from_a_caption() -> None:
     text = "[notes](https://example.com/notes) and [ref][1], ](dangling"
     assert dx.caption_text(text) == "[notes] and [ref], ](dangling"
+    assert dx.caption_text("![x](a](b) done") == "![x](a] done"
 
 
 @pytest.mark.parametrize(
@@ -3106,11 +3111,12 @@ def test_link_targets_are_removed_from_a_caption() -> None:
     [
         "<img " * 30_000,
         "![" * 30_000,
+        "![x](a" * 30_000,
         "[image:" * 6_000,
         # Words and an image, so the caption is read and its link targets removed.
         "![x](y)" + "a](" * 40_000,
     ],
-    ids=["img-tag", "image-alt", "placeholder", "link-target"],
+    ids=["img-tag", "image-alt", "image-target", "placeholder", "link-target"],
 )
 def test_unclosed_image_markup_is_read_in_linear_time(body: str) -> None:
     # Each was a scan from every opener to the end of the text: seconds per document.

@@ -41,9 +41,20 @@ from server.memory.domain.decision_statement import (
 # a definition `[image]: x.png`, the label of `[the diagram][image]`, a shortcut link
 # `[image tiles]`, text such as `[images are in the appendix]`, or a word `[imagine]`.
 # Alt text and a placeholder stop at the next `[`, a tag at the next `<`, a target at
-# its first `)` but never past the next `](` or a line end outside a quoted title: a
-# scan from every unclosed opener to the end of the text would cost quadratic time.
-_PAREN_TARGET = r"\((?:[^)\]\n\"']++|\](?!\()|\"[^\")\]]*+\"|'[^')\]]*+'|[\"'])*+\)"
+# its first `)` but never past the next `](`: a scan from every unclosed opener to the
+# end of the text would cost quadratic time.
+# One piece of a target `(...)`: none reads past a `)`, a line end outside a quoted
+# title, or the `](` that opens the next target.
+_TARGET_PIECE = r"""(?x:
+    [^)\]\n"']++  # the destination and a title's text
+  | \](?!\()      # a `]` that opens no target
+  | "[^")\]]*+"   # a quoted title, which may span lines; no `]`: it stops at the next `](`
+  | '[^')\]]*+'
+  | ["']          # a lone quote: `it's.png`, or an unclosed title `"see (a`
+)"""
+# A target: its pieces, with at most one line end between them, which CommonMark allows
+# before the destination and between the destination and the title.
+_PAREN_TARGET = rf"\((?:{_TARGET_PIECE})*+(?:\n(?:{_TARGET_PIECE})*+)?\)"
 _IMAGE_MARKUP = re.compile(
     rf"!\[[^\[\]]*+\]{_PAREN_TARGET}"
     r"|!\[[^\[\]]*+\]\[[^\]]*\]"
