@@ -610,8 +610,8 @@ def _provider_clients_left_as_found() -> Iterator[None]:
 
 
 def _server_modules_since(modules_before: set[str]) -> list[str]:
-    """The server modules imported since `modules_before`, skipping the `None` entries
-    a failed or blocked import leaves in `sys.modules`."""
+    """The server modules imported since `modules_before`, skipping the `None` entries a
+    test sets in `sys.modules` to block an import."""
     return sorted(
         name
         for name in sys.modules.keys() - modules_before
@@ -661,7 +661,8 @@ def _no_test_double_bound_at_import() -> Iterator[None]:
         pytest.fail(
             "a module first imported under a patch kept the test double: "
             + ", ".join(bound)
-            + " — import it before patching, or patch the name on that module"
+            + " — import it before patching, patch the name on that module, or put it back"
+            + " (use monkeypatch)"
         )
 
 

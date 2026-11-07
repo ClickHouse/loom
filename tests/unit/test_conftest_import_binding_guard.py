@@ -50,13 +50,23 @@ def test_the_real_class_is_not_named(probe) -> None:
     assert _doubles_bound_at_import(before) == []
 
 
+def test_a_blocked_import_is_skipped() -> None:
+    before = set(sys.modules)
+    sys.modules[_PROBE] = None  # type: ignore[assignment]
+    try:
+        assert _doubles_bound_at_import(before) == []
+    finally:
+        sys.modules.pop(_PROBE, None)
+
+
 def test_a_module_imported_before_the_test_is_not_checked(probe) -> None:
     before = _fake_first_import(probe, CodeRepo=MagicMock()) | {_PROBE}
     assert _doubles_bound_at_import(before) == []
 
 
 # The fixture itself, in a fresh process: scip_delta binds CodeRepo when first imported,
-# and scip_full binds apply_delta from scip_delta, so its copy sees the module's names.
+# and scip_full holds scip_delta's apply_delta, which reads CodeRepo from scip_delta's
+# globals, so both are dropped.
 _INNER_CONFTEST = """
 from tests.unit.conftest import _no_test_double_bound_at_import  # noqa: F401
 """
