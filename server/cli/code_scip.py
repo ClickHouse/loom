@@ -159,6 +159,7 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
     from server.code.app.index import scip_full, tier_health
     from server.code.app.index.compiler_tier import (
         SANDBOX_REQUIRED_SKIP,
+        TierDegraded,
         stale_compdb,
         unsandboxed_skip,
     )
@@ -212,7 +213,7 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
         raise
     stale = stale_compdb(out)
     # a stale compile database fails the record, as the worker's run does
-    await tier_health.record(repo, org, ns, "clang_full", stale or None)
+    await tier_health.record(repo, org, ns, "clang_full", TierDegraded(stale) if stale else None)
     _write_tail(out)
     if getattr(args, "keep_delta", ""):
         print(f"delta kept at {args.keep_delta}")

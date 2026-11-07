@@ -328,8 +328,9 @@ def fix_for(kind: str, text: str) -> str:
         return (
             "CMake could not reconfigure the build tree: the error ends with its last "
             "lines. The tier indexes with the last compile database, so a translation "
-            "unit added since then answers from the Tree-sitter tier; the record clears "
-            "on the next run whose configure succeeds."
+            "unit added since then answers from the Tree-sitter tier until a configure "
+            "succeeds. The clang record clears on the next run whose configure succeeds, "
+            "which indexes those units; clang_full on the next full index."
         )
     if kind == "harness":
         return "The indexer failed: the error holds the tail of its output."

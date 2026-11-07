@@ -57,13 +57,36 @@ fi
 reconfigure() {
   if [[ -z "${CONFIGURED:-}" ]]; then
     echo ">> cmake reconfigure (compile_commands.json): $1"
+    # a delta also indexes the TUs the new database lists and the old did not (added
+    # while a configure failed, or pulled in by a build edit); a full index reads all
+    if [[ "$BASE" != "--full" ]]; then
+      compdb_files "$WORK/listed.before.txt"
+    fi
     rm -f "$STALE"
-    if ! cmake -B build -S . >"$WORK/cmake.log" 2>&1; then
+    if cmake -B build -S . >"$WORK/cmake.log" 2>&1; then
+      if [[ "$BASE" != "--full" ]]; then
+        compdb_files "$WORK/listed.after.txt"
+        LC_ALL=C comm -13 "$WORK/listed.before.txt" "$WORK/listed.after.txt" \
+          >"$WORK/newly_listed.txt"
+      fi
+    else
       : >"$STALE"
       tail -n 20 "$WORK/cmake.log" >"$WORK/cmake.tail"
       echo ">> CMake exited non-zero; indexing with the last compile_commands.json" >&2
     fi
   fi
+}
+
+# compdb_files <out>: the repository's source files compile_commands.json lists,
+# relative to the checkout, sorted.
+compdb_files() {
+  "$PYTHON" - build/compile_commands.json "$PWD/" >"$1" <<'PYEOF'
+import json, sys
+root = sys.argv[2]
+with open(sys.argv[1]) as fh:
+    files = {e["file"][len(root):] for e in json.load(fh) if e["file"].startswith(root)}
+sys.stdout.write("".join(f + "\n" for f in sorted(files) if f.startswith(("src/", "base/", "programs/"))))
+PYEOF
 }
 
 # report_stale: a run that indexed with a stale compile database says so in its
@@ -105,6 +128,9 @@ else
     base_hdr=$(basename "$hdr")
     git_paths grep -l -F -e "$base_hdr" -- 'src/*.cpp' 'programs/*.cpp' 'base/*.cpp' || true
   done | sort -u >>"$WORK/tus.txt"
+  if [[ -f "$WORK/newly_listed.txt" ]]; then
+    cat "$WORK/newly_listed.txt" >>"$WORK/tus.txt"
+  fi
   sort -u "$WORK/tus.txt" -o "$WORK/tus.txt"
 
   N_TUS=$(wc -l <"$WORK/tus.txt")

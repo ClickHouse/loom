@@ -82,6 +82,9 @@ _STALE_OUT = (
 @pytest.mark.asyncio
 async def test_a_full_run_on_a_stale_compile_database_fails_the_full_record(tmp_path, monkeypatch):
     """The harness's closing lines say it indexed with a stale compile database."""
+    from server.code.app.index.tier_health import error_text
+    from server.code.domain.index.tier_health import classify
+
     cfg = _cfg(tmp_path, "code-a")
     record = AsyncMock()
     with patch("server.code.app.index.tier_health.record", record):
@@ -90,16 +93,14 @@ async def test_a_full_run_on_a_stale_compile_database_fails_the_full_record(tmp_
         )
     assert res.deltas_applied == 1 and not res.errors
     (_, _, ns, tier, err) = record.await_args.args
-    from server.code.app.index.tier_health import error_text
-    from server.code.domain.index.tier_health import classify
-
     assert (ns, tier) == ("code-a", "clang_full") and "a package is missing" in str(err)
     assert classify(error_text(err)) == "cmake"
 
 
 @pytest.mark.asyncio
 async def test_a_manual_full_run_on_a_stale_compile_database_says_so(tmp_path, monkeypatch, capsys):
-    """`loom code scip-full` prints the stale database, as the workers' skip does."""
+    """`loom code scip-full` prints the stale database and fails clang_full, as the
+    full worker does."""
     import argparse
 
     from server.cli import code_scip
@@ -126,7 +127,7 @@ async def test_a_manual_full_run_on_a_stale_compile_database_says_so(tmp_path, m
     assert rc == 0
     assert "code-a: stale compile database: cmake reconfigure failed" in capsys.readouterr().err
     (_, _, _, tier, err) = record.await_args.args
-    assert tier == "clang_full" and "a package is missing" in err
+    assert tier == "clang_full" and "a package is missing" in str(err)
 
 
 @pytest.mark.asyncio

@@ -352,6 +352,24 @@ def test_a_failed_reconfigure_indexes_with_the_last_compile_database(tmp_path: P
     assert delta is not None and "src/a.cpp" in [f["path"] for f in delta["files"]]
 
 
+def test_a_translation_unit_added_while_cmake_failed_is_indexed_once_it_configures(
+    tmp_path: Path,
+) -> None:
+    """The window that adds src/c.cpp cannot configure, so its database lacks c.cpp; the
+    window whose configure succeeds indexes c.cpp although it changes only a.cpp."""
+    w = _CppWindow(tmp_path)
+    w.env["CMAKE_FAIL"] = "1"
+    (w.repo / "src" / "c.cpp").write_text("int c() { return 3; }\n")
+    w.run(_commit(w.repo, "add c"), [])
+    assert w.compdbs == []
+    del w.env["CMAKE_FAIL"]
+    w.base = _git(w.repo, "rev-parse", "HEAD")
+    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
+    delta = w.run(_commit(w.repo, "edit a"), ["src/a.cpp", "src/c.cpp"])
+    assert w.compdbs == [["a.cpp", "c.cpp"]]
+    assert delta is not None and "src/c.cpp" in [f["path"] for f in delta["files"]]
+
+
 def test_a_failed_reconfigure_is_retried_until_one_succeeds(tmp_path: Path) -> None:
     """After a failed reconfigure, a window that only edits a translation unit
     reconfigures again (and warns again), until a configure succeeds."""

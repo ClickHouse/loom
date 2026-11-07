@@ -241,10 +241,10 @@ a delta whose window adds a `.cpp`, `.cc` or `.cxx` file or adds, changes or del
 translation units of the tree it was configured on. When that configure fails, the
 harness indexes with the last compile database and closes its output with CMake's last
 lines, and the entry's `clang` tier (or `clang_full`, for a full index) reads failing
-with kind `cmake`. Every later run reconfigures; the `clang` record clears on the
-first configure that succeeds, and `clang_full` on the next full index that configures
-(weekly, or `loom code scip-full`), which also indexes a translation unit added
-meanwhile. A worker whose project prerequisites are absent records a skip in
+with kind `cmake`. Every later run reconfigures. A delta whose reconfigure succeeds
+also indexes the translation units the new compile database lists and the old one did
+not, and clears the `clang` record; `clang_full` clears on the next full index
+(weekly, or `loom code scip-full`). A worker whose project prerequisites are absent records a skip in
 `workers.status`; the Tree-sitter tier remains available. TypeScript projects have
 their dependencies installed automatically in their checkout.
 
