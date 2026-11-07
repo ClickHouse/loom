@@ -91,10 +91,7 @@ async def _resolve_in_loop(host: str) -> list[str]:
 
 
 async def vet_host(
-    host: str,
-    *,
-    allow_private: bool = False,
-    name_address: bool = True,
+    host: str, *, allow_private: bool = False, name_address: bool = True
 ) -> tuple[str, str]:
     """(refusal, address): refusal is "" when the host is acceptable, else one
     sentence saying why not; address is the validated one to connect to ("" when

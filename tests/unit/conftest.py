@@ -253,18 +253,18 @@ def _leaked_threads(before: set[threading.Thread]) -> list[str]:
     return [t.name for t in leaked if t.is_alive()]
 
 
-# Unit tests never reach the network. A connect or a datagram to a non-loopback
-# address, or a name lookup of anything but a local name (by getaddrinfo, or by
-# dnspython at the system's nameservers, which may be a loopback stub that
-# forwards), is refused and recorded, and the
-# test fails at teardown naming the host: the code under test may swallow the
-# refusal (as "tracker unavailable", say), so the raise alone proves nothing.
+# Unit tests never reach the network. A connect or a datagram to a non-loopback address,
+# a getaddrinfo lookup of anything but a local name, and any dnspython lookup at the
+# system's nameservers (which may be a loopback stub that forwards) are refused and
+# recorded, and the test fails at teardown naming the host: the code under test may
+# swallow the refusal (as "tracker unavailable", say), so the raise alone proves nothing.
 _LOCAL_NAMES = frozenset({"", "localhost", "localhost.localdomain", "testserver", "test"})
 _network_attempts: list[str] = []
 _real_connect = socket.socket.connect
 _real_connect_ex = socket.socket.connect_ex
 _real_sendto = socket.socket.sendto
 _real_getaddrinfo = socket.getaddrinfo
+_real_dns_resolve = dns.asyncresolver.Resolver.resolve
 
 
 def _is_local(host: object) -> bool:
@@ -309,12 +309,6 @@ def _guarded_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
     return _real_getaddrinfo(host, *args, **kwargs)
 
 
-socket.socket.connect = _guarded_connect  # type: ignore[method-assign]
-socket.socket.connect_ex = _guarded_connect_ex  # type: ignore[method-assign]
-socket.socket.sendto = _guarded_sendto  # type: ignore[method-assign,assignment]
-_real_dns_resolve = dns.asyncresolver.Resolver.resolve
-
-
 async def _guarded_dns_resolve(
     self: dns.asyncresolver.Resolver, qname: Any, *a: Any, **kw: Any
 ) -> Any:
@@ -327,8 +321,11 @@ async def _guarded_dns_resolve(
     return await _real_dns_resolve(self, qname, *a, **kw)
 
 
-dns.asyncresolver.Resolver.resolve = _guarded_dns_resolve  # type: ignore[method-assign]
+socket.socket.connect = _guarded_connect  # type: ignore[method-assign]
+socket.socket.connect_ex = _guarded_connect_ex  # type: ignore[method-assign]
+socket.socket.sendto = _guarded_sendto  # type: ignore[method-assign,assignment]
 socket.getaddrinfo = _guarded_getaddrinfo
+dns.asyncresolver.Resolver.resolve = _guarded_dns_resolve  # type: ignore[method-assign]
 
 
 @pytest.fixture(autouse=True)

@@ -225,7 +225,8 @@ def test_a_lookup_that_never_answers_is_cut_by_the_calls_deadline(
     monkeypatch.setattr("server.core.hosts._resolve_in_loop", _hangs)
     monkeypatch.setattr("server.core.hosts._resolve", _no_thread)
 
-    async def _timed() -> tuple[str, float, list[str]]:
+    async def _timed() -> tuple[str, float, list[str], list[str]]:
+        degradations.begin()
         started = time.perf_counter()
         label = await classify.classify(
             org="acme",
@@ -235,10 +236,11 @@ def test_a_lookup_that_never_answers_is_cut_by_the_calls_deadline(
             value="v",
             valid_types=[],
         )
-        return label, time.perf_counter() - started, list(running)
+        return label, time.perf_counter() - started, list(running), degradations.current()
 
-    label, waited, left = asyncio.run(_timed())
+    label, waited, left, noted = asyncio.run(_timed())
     assert label == "" and waited < 1.5 and left == []
+    assert noted == ["classify: caller_type_kept (TimeoutError)"]
 
 
 def test_an_answer_that_trickles_is_cut_by_the_calls_deadline(
