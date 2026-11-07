@@ -513,16 +513,12 @@ async def revoke_repo_maintainer(
             admins[str(r["namespace"])][str(r["subject"])] = r
     now = naive_utc_now()
     out: list[dict[str, Any]] = []
+    # An admin grant given on a branch added from the page still reaches them all.
+    keeps_added = own == "config" and _given_on_added(subject, admins, sources)
     for ns in branches:
         mine = admins[ns].get(subject)
-        if mine is None:
+        if mine is None or (keeps_added and sources[ns] == "registry"):
             continue
-        if (
-            own == "config"
-            and sources[ns] == "registry"
-            and _given_on_added(subject, admins, sources)
-        ):
-            continue  # a grant given on a branch added from the page still reaches it
         if len(admins[ns]) <= 1:
             log.warning(
                 "repo maintainers: %s/%s keeps %r — only admin of that branch",
