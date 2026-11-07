@@ -278,8 +278,8 @@ def _accepted(response: Response) -> Response:
     return Response(status_code=202, headers=dict(response.headers))
 
 
-# Entries one JSON-RPC batch may hold: only tool calls past `loom_activate` meet the rate
-# limiter, so the batch length bounds one request's work (MCP 2025-06-18 drops batching).
+# Entries one JSON-RPC batch may hold: only tools/call meets the rate limiter, and not
+# loom_activate or loom_op's catalog, so the batch length bounds one request's work.
 MAX_BATCH_ENTRIES = 64  # not a setting: a protocol bound, not a deployment's capacity
 
 
