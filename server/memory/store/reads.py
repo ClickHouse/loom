@@ -523,6 +523,11 @@ async def _session_writers(
     return out
 
 
+# The newest row of a key across identities, the one a namespace-wide key read answers
+# with; `memory_id` breaks a tie, since one write can stamp one version on several rows.
+KEY_HEAD_ORDER = "memory_key ASC, version DESC, created_at DESC, memory_id ASC"
+
+
 async def get_many_by_keys(
     identity: Identity,
     memory_keys: list[str],
@@ -579,7 +584,7 @@ async def get_many_by_keys(
     # newest row per key answers, the way `get_by_key`'s wildcard read orders
     # (version DESC, created_at DESC) and takes one.
     one_per_key = (
-        "ORDER BY memory_key ASC, version DESC, created_at DESC LIMIT 1 BY memory_key"
+        f"ORDER BY {KEY_HEAD_ORDER} LIMIT 1 BY memory_key"
         if not (agent_clause and user_clause and session_clause)
         else ""
     )

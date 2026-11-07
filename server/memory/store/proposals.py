@@ -8,6 +8,7 @@ from typing import Any
 
 from server.core.repo_base import _CHClient
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
+from server.memory.store.reads import KEY_HEAD_ORDER
 
 # The characters of a value a listed proposal shows (MemoryProposal.value_preview).
 PREVIEW_CHARS = 400
@@ -49,7 +50,7 @@ async def scan_proposals(
               AND memory_key IN (
                   SELECT memory_key FROM loom.memory FINAL WHERE {live_in_namespace} AND {is_wanted}
               )
-            ORDER BY memory_key, version DESC, created_at DESC
+            ORDER BY {KEY_HEAD_ORDER}
             LIMIT 1 BY memory_key
         )
         WHERE {is_wanted}
@@ -85,9 +86,7 @@ async def proposal_details(
                -- a high value is readable by key only
                if(sensitivity = 'high', '', substringUTF8(value_preview, 1, {{chars:UInt32}}))
                    AS preview,
-               -- value_preview holds 2048 bytes: a longer value is past any 400 characters
-               sensitivity != 'high'
-                   AND (value_len > 2048 OR lengthUTF8(value_preview) > {{chars:UInt32}}) AS cut,
+               sensitivity != 'high' AND lengthUTF8(value_preview) > {{chars:UInt32}} AS cut,
                sensitivity, tags, toString(created_at) AS created, conflict_with
         FROM loom.memory
         WHERE org = {{org:String}}

@@ -942,7 +942,7 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
   }, [error]);
 
   const decide = async (key: string, decision: "accept" | "reject") => {
-    const row = rowBoxes.current.get(key);
+    const rowBox = rowBoxes.current.get(key);
     // The proposal clicked, and the keys above it, before a re-read can change either.
     const clickedAt = rowsNow.current?.findIndex((r) => r.memory_key === key) ?? -1;
     const clicked = rowsNow.current?.[clickedAt];
@@ -971,7 +971,7 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
       // Only when focus is still in the decided row or was lost: never pull it away from
       // a field the person moved to while the decision was out.
       const active = document.activeElement;
-      if (!active || active === document.body || row?.contains(active)) focusAt.current = at;
+      if (!active || active === document.body || rowBox?.contains(active)) focusAt.current = at;
       setReload((n) => n + 1);
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");

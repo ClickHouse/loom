@@ -342,6 +342,7 @@ async def test_the_listing_offers_only_the_row_a_decision_takes(
     ident = Identity(org="o", namespace="n", agent="*", user_id="-", session_id="-")
     ch = proposals_ops.get_client()
     head = await get_many_by_keys(ident, ["k"], scope=WHOLE_NAMESPACE, ch=ch, strong=True)
+    assert [(r.agent, r.status) for r in head] == [("b", b_status)]
     if listed:
         assert [str(r.memory_id) for r in head] == [out.proposals[0].memory_id]
 
@@ -463,3 +464,21 @@ async def test_a_session_bounded_caller_sees_a_key_only_when_its_session_holds_t
     monkeypatch.setattr(proposals_ops, "request_scope", lambda: scope)
     out = await list_(MemoryProposalsInput(org="o", namespace="n"))
     assert [r.value_preview for r in out.proposals] == listed
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_the_listing_and_the_decision_break_a_version_tie_alike(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One write stamped one version on two identities' rows of `k`.
+    insert = _INSERT + ", ".join(
+        f"('o', 'n', '{agent}', '-', '-', '00000000-0000-0000-0000-00000000000{mid}', 'k', "
+        f"'semantic', '{agent} value', 'proposed', 5, '2026-01-01 00:00:00')"
+        for agent, mid in (("b", 2), ("a", 1))
+    )
+    out = await _listing(monkeypatch, insert)(MemoryProposalsInput(org="o", namespace="n"))
+    ident = Identity(org="o", namespace="n", agent="*", user_id="-", session_id="-")
+    ch = proposals_ops.get_client()
+    head = await get_many_by_keys(ident, ["k"], scope=WHOLE_NAMESPACE, ch=ch, strong=True)
+    assert [r.memory_id for r in out.proposals] == [str(r.memory_id) for r in head]
