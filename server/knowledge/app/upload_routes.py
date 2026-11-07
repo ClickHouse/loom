@@ -103,6 +103,9 @@ async def knowledge_upload(
     auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None and settings.auth_actually_required():
         raise missing_bearer()
+    name = filename.strip().replace("\\", "/").rsplit("/", 1)[-1]
+    if not name:
+        raise _refuse(400, "VALIDATION_FAILED", "filename is required")
     try:
         if auth is not None:
             auth = effective_auth(auth, request.headers.get("X-Loom-On-Behalf-Of") or "")
@@ -116,10 +119,6 @@ async def knowledge_upload(
     await note_restricted_access(
         auth, op="knowledge.upload", org=org, namespace=namespace, transport="http"
     )
-
-    name = filename.strip().replace("\\", "/").rsplit("/", 1)[-1]
-    if not name:
-        raise _refuse(400, "VALIDATION_FAILED", "filename is required")
     _admit(auth, org, namespace)
     with tenant_slots.hold(_bucket_org(auth, org)):
         return await _store(request, org, namespace, name, content_type, sha256)

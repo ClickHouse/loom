@@ -4,9 +4,11 @@
 `admin/claim_release` are not registry ops, so the transport gate
 (`server.transport.gates.authorize`) never runs for them: each authorizes
 itself and must write the `namespace.restricted_access` row the gate writes
-for an admitted op. The contract test holds every raw
-route to it: a route module that admits a caller to a namespace calls
-`note_restricted_access`.
+for an admitted op. The contract test holds every raw route to it: a route
+module that names one of the namespace checks in `_ADMISSION` calls
+`note_restricted_access`. It reads names per module, so a route that admits
+through a check under another name, or through a module-level helper of
+another file, needs its name added there.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from __future__ import annotations
 import ast
 import inspect
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +29,12 @@ import server.identity.app.namespace_classification as nc
 from server.auth.jwt import AuthInfo
 from server.operations.base import Role
 
-ORG, NS = "acme", "vault"
+ORG, NS, PLAIN = "acme", "vault", "plain"
 ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
-def audit_rows(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
+def audit_rows(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, dict[str, Any]]]]:
     """`NS` is restricted, alice's bearer verifies, and every audit row lands here."""
     from server.settings import settings
 
@@ -46,7 +49,11 @@ def audit_rows(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any
     monkeypatch.setattr("server.observability.audit.emit", _emit)
     monkeypatch.setattr(settings, "restricted_audit_inline", True)
     alice = AuthInfo(
-        subject="alice", org=ORG, namespaces=(NS,), roles=(Role.WRITER,), is_service_account=False
+        subject="alice",
+        org=ORG,
+        namespaces=(NS, PLAIN),
+        roles=(Role.WRITER,),
+        is_service_account=False,
     )
     monkeypatch.setattr("server.auth.bearer.verify_token", lambda token: alice)
     yield rows
@@ -175,8 +182,139 @@ async def test_an_admitted_inbox_watch_writes_the_audit_row_for_the_owner_namesp
     _assert_one_row(audit_rows, "task.watch")
 
 
-# What admits a caller to a namespace outside the op transport.
-_ADMISSION = {"check_authorized", "row_in_scope", "_in_scope", "restricted_allows"}
+@pytest.mark.asyncio
+async def test_the_real_check_fills_the_snapshot_the_audit_row_reads(
+    monkeypatch: pytest.MonkeyPatch, audit_rows: list[Any]
+) -> None:
+    """Cold classification cache, real `check_authorized`: the check reads the
+    directory, and the row is written from what it read."""
+    import server.auth.authz as authz
+    import server.core.ch as ch
+    from server.knowledge.app import download_routes
+    from server.knowledge.store import documents as documents_repo
+
+    nc.reset()
+
+    class _Directory:
+        _client = object()
+
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, str]]:
+            return [{"namespace": NS}]
+
+    async def _direct_grant(org: str, namespace: str, subject: str) -> Role:
+        return Role.WRITER
+
+    async def _no_doc(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(ch, "get_client", lambda: _Directory())
+    monkeypatch.setattr(authz, "grant_role_for", _direct_grant)
+    monkeypatch.setattr(documents_repo, "get_one", _no_doc)
+    async with _client(download_routes) as c:
+        r = await c.get(
+            "/v1/knowledge.download",
+            params={"org": ORG, "namespace": NS, "source_uri": "a.md"},
+            headers=BEARER,
+        )
+    assert r.status_code == 404, r.text
+    _assert_one_row(audit_rows, "knowledge.download")
+
+
+@pytest.mark.asyncio
+async def test_a_standard_namespace_writes_no_audit_row(
+    monkeypatch: pytest.MonkeyPatch, audit_rows: list[Any]
+) -> None:
+    from server.knowledge.app import download_routes
+    from server.knowledge.store import documents as documents_repo
+
+    _admit_all(monkeypatch, download_routes)
+
+    async def _no_doc(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(documents_repo, "get_one", _no_doc)
+    async with _client(download_routes) as c:
+        r = await c.get(
+            "/v1/knowledge.download",
+            params={"org": ORG, "namespace": PLAIN, "source_uri": "a.md"},
+            headers=BEARER,
+        )
+    assert r.status_code == 404
+    assert audit_rows == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("refusal", "filename", "status"),
+    [("unauthorized", "a.md", 403), ("no filename", "/", 400)],
+)
+async def test_a_refused_upload_writes_no_audit_row(
+    monkeypatch: pytest.MonkeyPatch,
+    audit_rows: list[Any],
+    refusal: str,
+    filename: str,
+    status: int,
+) -> None:
+    from server.knowledge.app import upload_routes
+
+    async def _refused(*_a: Any, **_k: Any) -> None:
+        raise PermissionError("cannot access")
+
+    if refusal == "unauthorized":
+        monkeypatch.setattr(upload_routes, "check_authorized", _refused)
+    else:
+        _admit_all(monkeypatch, upload_routes)
+    async with _client(upload_routes) as c:
+        r = await c.post(
+            "/v1/knowledge.upload",
+            params={"org": ORG, "namespace": NS, "filename": filename},
+            content=b"# a\n",
+            headers=BEARER,
+        )
+    assert r.status_code == status, r.text
+    assert audit_rows == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("reader", "status"), [(False, 404), (True, 403)])
+async def test_a_refused_inbox_watch_writes_no_audit_row(
+    monkeypatch: pytest.MonkeyPatch, audit_rows: list[Any], reader: bool, status: int
+) -> None:
+    from server.tasks.app import common as task_common
+    from server.tasks.app import watch_routes
+    from server.tasks.store import repo
+
+    async def _inbox(org: str, inbox: str) -> dict[str, Any]:
+        return {"org": org, "inbox": inbox, "owner_namespace": NS}
+
+    async def _in_scope(
+        org: str, namespace: str, *, write: bool, hides_answer: bool = True
+    ) -> bool:
+        return reader and not write
+
+    monkeypatch.setattr(repo, "fetch_inbox_row", _inbox)
+    monkeypatch.setattr(task_common, "_in_scope", _in_scope)
+    async with _client(watch_routes) as c:
+        r = await c.get(
+            "/v1/task/watch",
+            params={"org": ORG, "inbox": "bot", "max_seconds": 1},
+            headers=BEARER,
+        )
+    assert r.status_code == status
+    assert audit_rows == []
+
+
+# The checks that admit a caller to a namespace outside the op transport.
+_ADMISSION = {
+    "check_authorized",
+    "row_in_scope",
+    "_in_scope",
+    "restricted_allows",
+    "_may_release",
+    "_require_owner_side",
+    "_load_readable_inbox",
+    "authorize_op",
+}
 # The op transports admit through `gates.authorize`, which writes the row
 # (tests/unit/test_admission_parity.py).
 _OP_TRANSPORTS = {"server.transport.http", "server.transport.mcp"}
