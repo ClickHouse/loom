@@ -21,8 +21,7 @@ flowchart LR
     A["agent or script"] --> S["SDK / HTTP / MCP"]
     D --> B["Loom assistant bridge"]
     S --> B
-    B -->|"agents API: service key<br/>+ this answer's token"| LC["LibreChat,
-    headless<br/>(the Loom agent)"]
+    B -->|"agents API: service key<br/>+ this answer's token"| LC["LibreChat, headless<br/>(the Loom agent)"]
     LC -->|"MCP, that token"| T["assistant toolset"]
     T --> Q["insights.query"]
     Q --> U["ClickHouse user loom_analyst<br/>column grants + signed row policies"]
@@ -410,10 +409,14 @@ keeps:
   - Every probe fails and the policy read shows every server on one key, the row's or
     another: no server is behind the others, so the row itself is stale, a rotation
     stopped after the password change with a row a reseal put back, and it names
-    `--live`. If the servers disagree, the ones off the key most of them carry are
-    lagging, and it names them as above.
-  - Every probe fails and there is no policy read (an endpoint whose servers Loom cannot
-    list): the two causes look the same, so it names both.
+    `--live`. If the servers disagree, the row is stale and some servers are also
+    behind, and doctor cannot tell from the policies which key is older: it names both
+    groups of servers, says which carries the row's key, and names `--live` together
+    with the admin's problem. This rests on each server applying access changes in the
+    order they were written, so that a server on the new key also has the new password;
+    the isolation test probes it under Keeper replication.
+  - Every probe fails and there is no policy read (Loom's user cannot list the policies,
+    or cannot list every server's): the two causes look the same, so it names both.
 
 - **The caps apart.** The caps are deployment settings, kept in a second profile of
   their own: a write holding the lease (a boot, `loom ch-setup`) writes them when the
@@ -612,10 +615,13 @@ viewer token. Each case must be refused or return no canary:
   - past that, some probes passing and others failing, which it names as those servers'
     problem, with the servers where the policy read shows them;
   - a rotation stopped after the password change with a row a reseal put back, where
-    every probe fails to sign in, stopped before the policies (every server on the row's
-    key) and after them (every server on one other key): with the policy read, on a
-    cluster and on a single server, doctor names `--live`; servers that disagree, for
-    which it names the lagging ones; without the policy read, both causes;
+    every probe fails to sign in:
+    - stopped before the policies, every server on the row's key: with the policy read,
+      on a cluster and on a single server, doctor names `--live`;
+    - stopped after them, every server on one other key: it names `--live`;
+    - servers that disagree, most of them still on the row's old key: it names both
+      groups, which one carries the row's key, and `--live` with the admin's problem;
+    - without the policy read: it names both causes;
   - a load balancer that pins every probe to one server, with no policy read, where
     every probe fails, for which it names both causes.
 
