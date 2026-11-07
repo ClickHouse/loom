@@ -425,6 +425,21 @@ def test_a_first_configure_without_clang_on_path_fails_classified_cmake(tmp_path
     assert classify(f"harness exit 1: {proc.stdout[-2000:]}") == "cmake"
 
 
+def test_a_failed_configure_from_scratch_is_retried_on_the_next_run(tmp_path: Path) -> None:
+    """A failed configure still writes a cache; the old compile database is gone with the
+    old cache, so the next run, even of an edit-only window, configures again."""
+    w = _CppWindow(tmp_path)
+    (w.repo / "build" / "CMakeCache.txt").write_text(
+        "CMAKE_C_COMPILER:FILEPATH=/nonexistent/clang-18\nCMAKE_CXX_COMPILER:FILEPATH=/bin/sh\n"
+    )
+    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
+    head = _commit(w.repo, "edit a")
+    assert w.run_unchecked(head, CMAKE_FAIL="1", CC="cc", CXX="c++").returncode == 1
+    (w.repo / "build" / "CMakeCache.txt").write_text("CMAKE_CXX_COMPILER:FILEPATH=/bin/sh\n")
+    assert w.run_unchecked(head, ["src/a.cpp"], CC="cc", CXX="c++").returncode == 0
+    assert len(w.cmake_runs) == 2 and all("-G Ninja" in run for run in w.cmake_runs)
+
+
 def test_a_first_configure_is_not_followed_by_a_reconfigure(tmp_path: Path) -> None:
     w = _CppWindow(tmp_path)
     (w.repo / "build" / "compile_commands.json").unlink()

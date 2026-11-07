@@ -322,7 +322,8 @@ def fix_for(kind: str, text: str) -> str:
         )
     if kind == "cmake":
         return (
-            "CMake could not configure the build tree; its last lines are in the error. "
+            "CMake could not configure the build tree; the error ends with its first "
+            "error. "
             "The tier retries the run: fix the build, or give the host what the "
             "configure needs."
         )

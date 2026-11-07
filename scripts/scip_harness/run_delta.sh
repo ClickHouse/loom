@@ -27,10 +27,12 @@ cd "$CHECKOUT"
 HEAD_SHA=${HEAD_SHA:-$(git rev-parse HEAD)}
 
 # cmake_configure <cmake args...>: a configure that fails fails the run, with
-# CMake's last lines and one line the tier-health record classifies as `cmake`.
+# CMake's last lines, its first error (last, so a cut record keeps it) and one
+# line the tier-health record classifies as `cmake`.
 cmake_configure() {
   if ! cmake "$@" >"$WORK/cmake.log" 2>&1; then
     tail -n 20 "$WORK/cmake.log"
+    grep -m1 -A2 "CMake Error" "$WORK/cmake.log" || true
     echo ">> cmake configure failed" >&2
     exit 1
   fi
@@ -62,8 +64,10 @@ if [[ ! -f build/compile_commands.json || ! -f build/CMakeCache.txt ]] || cached
   fi
   echo ">> cmake configure (compile_commands.json) with $CXX_BIN…"
   # CMake refuses to switch compilers on an existing cache ("You have changed
-  # variables that require your cache to be deleted"), so start clean.
-  rm -rf build/CMakeCache.txt build/CMakeFiles
+  # variables that require your cache to be deleted"), so start clean. The compile
+  # database goes too: a failed configure still writes a cache, and the next run
+  # must configure again rather than index the old database.
+  rm -rf build/CMakeCache.txt build/CMakeFiles build/compile_commands.json
   cmake_configure -B build -S . -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DCMAKE_C_COMPILER="$CC_BIN" -DCMAKE_CXX_COMPILER="$CXX_BIN" \
