@@ -331,6 +331,21 @@ def test_degraded_server_warns_with_the_error_codes() -> None:
     )
 
 
+def test_a_repositorys_failing_tier_does_not_make_the_server_warn() -> None:
+    get_json, _, _ = _http(
+        health=(
+            200,
+            {
+                "status": "ok",
+                "build_commit": "b",
+                "problems": [{"code": "code_tier_failing", "severity": "error"}],
+            },
+        )
+    )
+    (name, grade, detail), _ = dc.server_check("https://h", "LOOM_BASE_URL", get_json)
+    assert grade == "PASS" and "status ok" in detail
+
+
 # ---- client wiring ----
 
 

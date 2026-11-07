@@ -153,6 +153,8 @@ def _published_lag(state: IndexState, tier: str) -> int:
         snap = json.loads(str((state.get(STATUS_SNAPSHOT_KEY) or {}).get("value") or "{}"))
     except ValueError:
         return -1
+    # The snapshot's own tip: `published_lags` then checks only that the watermark is
+    # the one it counted from, not that the tip has not moved since.
     tip = str(snap.get("clone_head") or "") if isinstance(snap, dict) else ""
     return published_lags(state, {key: mark}, tip)[key]
 

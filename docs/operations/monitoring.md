@@ -97,8 +97,8 @@ status.
 `clickhouse_reachable`, `otel_erasure_index`, `llm_provider`), then prints the
 `problems` list as `problem:<code>` lines. Every check is reported before it exits; the
 exit code is 1 when any line is `FAIL`. `--json` prints `{ok, checks, problems}`. With
-ClickHouse reachable it also reads the failing code-index tiers, and grades with the
-deployment's runtime overrides; `problem:code_tier_failing` is at most `WARN`, as it never
+code intelligence on and ClickHouse reachable it also reads the failing code-index tiers,
+and grades with the deployment's runtime overrides; `problem:code_tier_failing` is at most `WARN`, as it never
 degrades `status`.
 
 `--client` also checks this machine as a coding-agent client: the server URL and token

@@ -485,10 +485,10 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
 def _doctor_problems() -> list[Any]:
     """The shared problem list as the doctor sees it: settings, and the failing
     code-index tiers read once from ClickHouse — no probed dim, breaker, lease or
-    ledger before boot. When that read reaches ClickHouse it first adopts the
-    deployment's runtime setting overrides, so every problem is graded as the server
-    grades it. Empty when settings do not load (the `settings_load` check already says
-    so)."""
+    ledger before boot. When that read runs (code intelligence on, ClickHouse and the
+    registry read) it first adopts the deployment's runtime setting overrides, so every
+    problem is graded as the server grades it; otherwise the environment's values.
+    Empty when settings do not load (the `settings_load` check already says so)."""
     try:
         from server.code.app.index.sandbox import layout_refusal, sandbox_available
         from server.observability.problems import HealthState, Problem, collect_problems

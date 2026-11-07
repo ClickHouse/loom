@@ -101,11 +101,17 @@ def server_check(base_url: str, source: str, get_json: GetJson) -> tuple[Check, 
             ),
             {},
         )
+    from server.observability.problems import NOT_DEPLOYMENT_FAULTS
+
     problems = body.get("problems") if isinstance(body, dict) else None
+    # an error about the data the server holds (a repository's failing tier) is not one
+    # of the server's: it never degrades `status`
     errors = [
         p.get("code")
         for p in problems or []
-        if isinstance(p, dict) and p.get("severity") == "error"
+        if isinstance(p, dict)
+        and p.get("severity") == "error"
+        and p.get("code") not in NOT_DEPLOYMENT_FAULTS
     ]
     build = str(body.get("build_commit") or "?")[:9] if isinstance(body, dict) else "?"
     health = (
