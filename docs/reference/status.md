@@ -8,10 +8,11 @@ code: each op's `maturity` in the operation registry, and the boolean settings o
 
 ## Operations
 
-- **Stable** ops are [listed under the MCP `all` toolset](./operations.md#mcp-all-listing)
-  (the `code.*` ops also need `LOOM_MCP_CODE_TOOLS=true`); one hidden from MCP must have
-  another reach path (`server/operations/reach.py` lists the kinds; the reach census fails
-  it otherwise). They are meant to have production callers.
+- **Stable** ops not hidden from MCP are
+  [listed under the MCP `all` toolset](./operations.md#mcp-all-listing) (the `code.*` ops
+  also need `LOOM_MCP_CODE_TOOLS=true`); one hidden from MCP must have another reach path
+  (`server/operations/reach.py` lists the kinds; the reach census fails it otherwise). They
+  are meant to have production callers.
 - **Experimental** ops may have no production callers yet. One not hidden from MCP is still
   callable by name, and one a toolset names is listed on it (on core or atomic, also under
   `all`; [MCP toolsets](./mcp.md#toolsets)).
