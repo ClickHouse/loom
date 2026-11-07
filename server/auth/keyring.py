@@ -272,7 +272,8 @@ def weak_keys(cfg: Any = None) -> list[str]:
     (`end_user:<issuer>:<kid>`). A verifying RSA key's modulus is public, so one under
     2048 bits is as weak as a short root. Each key is loaded as the verifier loads it
     (PEM or OpenSSH); one it cannot load verifies nothing. A JWKS URL's keys arrive at
-    runtime and are not checked here, nor are machine-trust keys."""
+    runtime and are not checked here (end-user or machine-trust); an inline
+    machine-trust key is checked when its trust is registered."""
     cfg = cfg or settings
     out = ["LOOM_JWT_SECRET"] if root_is_weak(cfg) else []
     for kid, pem in sorted(cfg.jwt_public_key_map().items()):
