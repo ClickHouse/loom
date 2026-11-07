@@ -109,7 +109,7 @@ def graph_insert_settings(table: str, *, wait: bool, dedup_token: str) -> dict[s
 def edge_nodes(entry: Any, entity_map: dict[str, str]) -> list[str]:
     """The sorted graph nodes `write_entity_edges` pairs for `entry`: its resolved
     entities and its facet nodes. Fewer than two means it writes no edge."""
-    from server.memory.domain.graph_quality import canonical_entity_text, is_lexical_junk_entity
+    from server.memory.domain.graph_quality import graph_node_text, is_lexical_junk_entity
 
     # A pronoun, interjection or contraction fragment the
     # extractor emitted as an entity or topic is never a graph node.
@@ -130,11 +130,7 @@ def edge_nodes(entry: Any, entity_map: dict[str, str]) -> list[str]:
         *(getattr(entry, "concepts", None) or []),
         *(getattr(entry, "topics", None) or []),
     ]:
-        node = (
-            str(raw).lower()
-            if str(raw).lower().startswith(("commit:", "error:"))
-            else canonical_entity_text(str(raw))
-        )
+        node = graph_node_text(str(raw))
         if (
             len(node) >= 2
             and node not in ents

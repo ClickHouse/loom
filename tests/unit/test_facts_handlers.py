@@ -99,6 +99,22 @@ async def test_facts_traverse_defaults_edges_to_current_validity(
 
 
 @pytest.mark.asyncio
+async def test_facts_traverse_seeds_an_error_name_whole(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The write side stores "error:Timeouts" as the node "error:timeouts"; the walk
+    starts there, not at the singular a canonical entity would make of it."""
+    from server.memory.api.models_facts import FactsTraverseInput
+    from server.memory.app import facts as facts_handlers
+
+    ch = StubCH()
+    monkeypatch.setattr(facts_handlers, "get_client", lambda: ch)
+    out = await facts_handlers.handle_facts_traverse(
+        FactsTraverseInput(org="clickhouse", namespace="ns", seed_entity="error:Timeouts")
+    )
+    assert ch.query_all_calls[0][1]["frontier"] == ["error:timeouts"]
+    assert out.seed == "error:timeouts"
+
+
+@pytest.mark.asyncio
 async def test_facts_traverse_aggregates_edge_pairs_before_min_co_filter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
