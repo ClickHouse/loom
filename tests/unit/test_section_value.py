@@ -354,6 +354,7 @@ _TRANSCRIPT = "Planner sync — Transcript & notes — 2026-03-04 10.00.12 CET"
         (_TRANSCRIPT, ("Transcript", "00:01:02"), "**Ana:** okay let's start"),
         (_RECORDED, ("Transcript", "00:12:30"), "**Ana:** I'll move on to the next slide"),
         (_RECORDED, ("Transcript", "00:12:40"), "**Ana:** I'll raise that with Tomas"),
+        (_RECORDED, ("Transcript", "00:12:50"), "**Ana:** we'll raise that with the vendor"),
         ("Release sync — Transcript — 2026-03-04 10.00.12 CET", ("00:01:02",), "**Ana:** hi"),
         (_RECORDED, ("Planner sync \\- Transcript", "00:02:10"), "**Ana:** so, the numbers"),
         (_TRANSCRIPT, (_TRANSCRIPT, "Transcript", "00:01:02"), "**Ana:** okay, next one"),
@@ -393,6 +394,13 @@ def test_a_recorded_meetings_transcript_and_template_are_noise(
             "Errors passed 5%.",
         ),
         ("Incident 2026-03-04 14:00 UTC - notes by Ana", ("Action items",), "- Ana: add an alert"),
+        (
+            "Incident 2026-03-04 14:00 UTC - transcript export failing",
+            ("Timeline", "14:05"),
+            "Errors passed 5%.",
+        ),
+        (_RECORDED, ("Details",), "Please rate the three vendors by cost before Friday."),
+        (_RECORDED, ("Details",), "You should review Ana's notes on the cache budget first."),
         # a transcript segment that records a decision or a plan
         (_RECORDED, ("Transcript", "00:14:10"), "**Ana:** so the plan is to drop the cache"),
         (_RECORDED, ("Transcript", "00:15:02"), "**Ana:** I'm going to disallow warning alerts."),

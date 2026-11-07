@@ -50,7 +50,7 @@ _CHOICE_VERB = (
     r"keep|keeping|drop|dropping|"
     r"switch(?:ing)? to|move|moving|migrate|migrating|adopt|adopting|support|supporting|"
     r"ship|shipping|pick|choose|stick with|stay with|replace|replacing|"
-    r"enable|enabling|disable|disabling|lower|raise|remove|removing|deprecate|disallow|"
+    r"enable|enabling|disable|disabling|lower|remove|removing|deprecate|disallow|"
     r"roll out|rolling out))"
 )
 _CHOSE = (
@@ -131,7 +131,12 @@ _DAY = (
 _DATE_HEADING = re.compile(rf"^\W*{_DAY}\b\W*$", re.IGNORECASE)
 # A recorded meeting's title: a date with a clock time, and a transcript or notes-by mark.
 _RECORDED_STAMP = re.compile(rf"\b{_DAY}\s+\d{{1,2}}[:.]\d{{2}}\b", re.IGNORECASE)
-_TRANSCRIPT_MARK = re.compile(r"\btranscript\b", re.IGNORECASE)
+# A transcript mark is a whole part of the title ("Planner sync — Transcript & notes — ...",
+# "... - Transcript"); "Incident ... - transcript export failing" names a topic.
+_TRANSCRIPT_MARK = re.compile(
+    r"(?:^|[-\u2013\u2014|:])\s*transcript(?:\s*&\s*notes)?\s*(?:$|[-\u2013\u2014|:])",
+    re.IGNORECASE,
+)
 _NOTES_BY_MARK = re.compile(r"\bnotes by\b", re.IGNORECASE)
 # A transcript's segment (a clock-time heading such as "00:12:30"), the transcript itself
 # ("Transcript", "Planner sync - Transcript", "Transcription ended after ...") and the
@@ -148,8 +153,8 @@ _TRANSCRIPT_HEADING = re.compile(
 # demo" is a topic's text.
 _TEMPLATE_TEXT = re.compile(
     rf"^\W*(?:invited\s+\[|{_MONTH}\s+\d{{1,2}},\s+\d{{4}}(?:\s+\[|\W*$)|"
-    r"this editable transcript\b|please\W+rate\s+(?:these|the|this)\b|"
-    r"you should review\s+\S+'s\s+notes\b)",
+    r"this editable transcript\b|please\W+rate\s+(?:these|the|this)\s+(?:\w+\s+){0,2}notes\b|"
+    r"you should review\s+\S+'s\s+notes(?:\W*$|\s+(?:to make sure|for accuracy)\b))",
     re.IGNORECASE,
 )
 _DESIGN_TITLE = re.compile(
@@ -214,7 +219,7 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
         return True
     if recorded:
         # The title's own heading names the recording, not a part of it.
-        own = headings[1:] if headings and headings[0] == name else headings
+        own = _below_title(name, headings)
         return any(_TRANSCRIPT_HEADING.search(h) for h in own) or bool(
             prose and _TEMPLATE_TEXT.match(prose[0])
         )
@@ -233,8 +238,13 @@ def _unanswered(section_path: tuple[str, ...], prose: list[str], code: int) -> b
 def _top_heading(name: str, section_path: tuple[str, ...]) -> str:
     """The section's top heading below the document's own title (a first heading that
     repeats the title is the title): a running notes page dates each meeting there."""
-    path = section_path[1:] if section_path and section_path[0] == name else section_path
+    path = _below_title(name, section_path)
     return path[0] if path else ""
+
+
+def _below_title(name: str, section_path: tuple[str, ...]) -> tuple[str, ...]:
+    """The headings below a first heading that repeats the document's name."""
+    return section_path[1:] if section_path and section_path[0] == name else section_path
 
 
 def _decides(line: str, notes: bool) -> bool:
