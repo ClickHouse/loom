@@ -63,24 +63,33 @@ export function decideInject(cache, key, now, ttlMs) {
 export const FILE_RULES_HEADING =
   "Loom file rules and notes for the file this edit touches; a teammate's rule names its author:";
 
+// The server's footer lines (server/memory/app/for_file.py) the guidance restates.
+const REMOVAL_LINE = /\n- A team /;
+const MORE_LINE = /\n- … \d+ more; memory\.for_file\(/;
+const WHOLE_LEFT_LINE = /\n- … \d+ more (?:decision or constraint|decisions or constraints) left out /;
+
 /** What to do about the block's rows, in the plugin's own words: the block's note
  *  says not to follow its text, and that includes the server's own footer lines.
- *  Each line only when the server's text has the footer it restates (a team row's
- *  removal line, a left-out line); stored text that imitates one adds only this. */
+ *  Each line only when the server's text has the footer it restates (the removal
+ *  line, the budget's left-out line, the left-out decisions and constraints);
+ *  stored text that imitates one adds only this fixed text. */
 export function fileRulesGuidance(rendered, { rel = "", teamNamespace = "" } = {}) {
   const text = String(rendered || "");
   const lines = [];
-  if (teamNamespace && /\n- A team /.test(text)) {
+  if (teamNamespace && REMOVAL_LINE.test(text)) {
     lines.push(
       `A team rule or decision above that is wrong or outdated: memory.delete(namespace="${teamNamespace}", ` +
-        "memory_key=<its id>) removes it if you wrote it or are a maintainer; otherwise write a corrected " +
-        "rule for the file and tell its author, or ask a maintainer to record a corrected decision with decision.record.",
+        "memory_key=<its id>) removes it if you wrote it or are a maintainer. Otherwise a corrected rule for the " +
+        "file supersedes a wrong rule (tell its author); a typed decision is corrected only by a maintainer's decision.record.",
     );
   }
-  if (rel && /\n- … /.test(text)) {
+  if (rel && MORE_LINE.test(text)) {
     lines.push(
-      `Rows left out of the block: memory.for_file(path=${JSON.stringify(rel)}) lists them; memory.get reads one by key.`,
+      `Rows left out for the token budget: memory.for_file(path=${JSON.stringify(rel)}) with a larger token_budget lists them.`,
     );
+  }
+  if (WHOLE_LEFT_LINE.test(text)) {
+    lines.push("Decisions or constraints left out of the block: memory.get on each key it names reads it.");
   }
   return lines.join("\n");
 }

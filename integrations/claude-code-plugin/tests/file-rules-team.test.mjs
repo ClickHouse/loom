@@ -2,11 +2,14 @@
 // namespace (team file rules) beside the person's own, in one request.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { forFileBody, lookupFileContext, teamRulesLine, teamRulesNamespace } from "../lib/file-context.mjs";
-import { primaryNamespaceOf, readCache, resolveIndexedRepo } from "../lib/repo-scope.mjs";
+import { cachePathFor, primaryNamespaceOf, readCache, resolveIndexedRepo } from "../lib/repo-scope.mjs";
 
 const scope = { org: "clickhouse", namespace: "jdoe-ns", tags: ["project:ClickHouse", "repo:gh-1"] };
 const entry = {
@@ -124,4 +127,77 @@ test("teamRulesLine: one primer line naming the namespace, empty when none", () 
   assert.equal(line.includes("\n"), false);
   assert.equal(teamRulesLine({}), "");
   assert.equal(teamRulesLine(null), "");
+});
+
+test("the hook passes the file's path and the team namespace through to the guidance after the block", async () => {
+  const hook = fileURLToPath(new URL("../hooks/loom-file-context.mjs", import.meta.url));
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-fc-hook-")));
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-fc-tmp-")));
+  fs.mkdirSync(path.join(dir, "src"));
+  fs.writeFileSync(path.join(dir, "src/a.cpp"), "int x;\n");
+  const g = (...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...a], { cwd: dir });
+  g("init", "-q");
+  g("add", ".");
+  g("commit", "-qm", "c");
+  fs.writeFileSync(
+    cachePathFor(dir, tmp),
+    JSON.stringify({ ts: Date.now(), indexed: true, org: "o", namespace: "code-x-1", primaryNamespace: "code-x" }),
+  );
+  const seen = [];
+  const srv = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      seen.push({ url: req.url, body: raw ? JSON.parse(raw) : {} });
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify({
+          total: 2,
+          rendered:
+            "Loom: 2 memories anchored to src/a.cpp — read before editing:\n" +
+            "- Team rule (by alice, 2 days ago): keep the lock order [id: rules/a/lock]\n" +
+            '- … 1 more; memory.for_file(path="src/a.cpp") lists them.\n' +
+            '- A team rule wrong or outdated? memory.delete(namespace="code-x", memory_key=<id>) removes it if you wrote it or are a maintainer; otherwise write a corrected rule for the file and tell its author.',
+        }),
+      );
+    });
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  try {
+    const out = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [hook], {
+        cwd: dir,
+        env: {
+          PATH: process.env.PATH,
+          HOME: tmp,
+          TMPDIR: tmp,
+          LOOM_BASE_URL: `http://127.0.0.1:${srv.address().port}`,
+          LOOM_API_KEY: "t",
+          LOOM_ORG: "o",
+          LOOM_NAMESPACE: "me",
+        },
+      });
+      let stdout = "";
+      child.stdout.on("data", (c) => (stdout += c));
+      child.on("close", () => resolve(stdout));
+      child.stdin.end(
+        JSON.stringify({
+          tool_name: "Edit",
+          tool_input: { file_path: path.join(dir, "src/a.cpp") },
+          cwd: dir,
+          session_id: "s",
+        }),
+      );
+    });
+    const asked = seen.find((s) => s.url === "/v1/memory.for_file");
+    assert.deepEqual(asked.body.extra_namespaces, ["code-x"]);
+    const ctx = JSON.parse(out).hookSpecificOutput.additionalContext;
+    const after = ctx.slice(ctx.lastIndexOf("</loom-recalled-data"));
+    assert.match(after, /memory\.delete\(namespace="code-x", memory_key=<its id>\)/);
+    assert.match(after, /memory\.for_file\(path="src\/a\.cpp"\) with a larger token_budget/);
+  } finally {
+    srv.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });

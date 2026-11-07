@@ -275,7 +275,7 @@ function flushPending(repo) {
 function settle(repo, { tool, verdict, tokens, path = "", span = { start: 0, end: 0 } }) {
   const denied = Boolean(verdict.deny);
   if (denied) deny(verdict.deny);
-  const pending = logDecision(repo.pending, {
+  const unflushed = logDecision(repo.pending, {
     decision: denied ? "hit" : "pass",
     tool,
     tokensSaved: tokens,
@@ -285,7 +285,7 @@ function settle(repo, { tool, verdict, tokens, path = "", span = { start: 0, end
     startLine: span.start,
     endLine: span.end,
   });
-  if (shouldFlushShunt({ denied, pending })) flushPending(repo);
+  if (shouldFlushShunt({ denied, pending: unflushed })) flushPending(repo);
   return denied;
 }
 
