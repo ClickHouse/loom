@@ -672,7 +672,7 @@ def _by_content(fact: dict[str, Any], rows: list[dict[str, Any]]) -> set[str]:
     return fr._targets_by_words(fr._request_words(fact, {}), fr._row_words(rows))
 
 
-def test_forget_targets_by_content_finds_the_row_the_request_names() -> None:
+def test_a_forget_request_by_content_finds_the_row_the_request_names() -> None:
     from server.memory.domain.forget_requests import forget_targets
 
     existing = [
@@ -703,7 +703,7 @@ def test_forget_targets_by_content_finds_the_row_the_request_names() -> None:
     }
 
 
-def test_forget_targets_by_content_needs_real_overlap() -> None:
+def test_a_forget_request_by_content_needs_real_overlap() -> None:
     existing = [
         {"memory_key": "user_bible_reading", "value": "User reads the Bible every morning."}
     ]

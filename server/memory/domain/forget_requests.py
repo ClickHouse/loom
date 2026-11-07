@@ -370,13 +370,13 @@ def _request_words(fact: dict[str, Any], value_words: dict[str, set[str]]) -> se
     if value not in value_words:
         value_words[value] = _content_tokens(value)
     key = _content_tokens(_FORGET_KEY_RE.sub(" ", str(fact.get("key") or "").replace("_", " ")))
-    return value_words[value] if key <= value_words[value] else value_words[value] | key
+    return value_words[value] | key
 
 
-def _row_words(rows: list[dict[str, Any]] | None) -> list[tuple[str, set[str]]]:
+def _row_words(rows: list[dict[str, Any]]) -> list[tuple[str, set[str]]]:
     """Each keyed row with the content words of its value and key."""
     out = []
-    for row in rows or []:
+    for row in rows:
         key = str(row.get("memory_key") or "").strip()
         if key:
             words = _content_tokens(row.get("value") or "") | _content_tokens(key.replace("_", " "))
@@ -384,11 +384,9 @@ def _row_words(rows: list[dict[str, Any]] | None) -> list[tuple[str, set[str]]]:
     return out
 
 
-def _targets_by_words(
-    want: set[str], rows: list[tuple[str, set[str]]], *, min_overlap: float = 0.5
-) -> set[str]:
-    """The rows a request's words name: those holding at least `min_overlap`
-    of them, and at least two."""
+def _targets_by_words(want: set[str], rows: list[tuple[str, set[str]]]) -> set[str]:
+    """The rows a request's words name: those holding at least half of them,
+    and at least two (one, on a `user_` row, for a one-word request)."""
     if not want:
         return set()
     # A one-word request ("forget what I told you about my salary") resolves
@@ -399,7 +397,7 @@ def _targets_by_words(
         if need == 1 and not key.startswith("user_"):
             continue
         hit = len(want & have)
-        if hit >= need and hit / len(want) >= min_overlap:
+        if hit >= need and hit / len(want) >= 0.5:
             out.add(key)
     return out
 

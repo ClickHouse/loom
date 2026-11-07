@@ -298,6 +298,14 @@ def test_a_forget_sentence_is_read_in_time_linear_in_its_blank_runs() -> None:
     assert _fastest_seconds(read, message(380)) < 8 * _fastest_seconds(read, message(95)) + _FLOOR_S
 
 
+def test_a_repeated_forget_request_counts_at_its_latest_mention() -> None:
+    cap = forget_requests.MAX_FORGET_REQUESTS
+    turns = ["forget my salary."] + [f"forget jazz{i}." for i in range(cap)] + ["forget my salary."]
+    msgs = [{"role": "user", "content": t} for t in turns]
+    latest = forget_requests.forget_requests_from_messages(msgs)[-cap:]
+    assert latest[-1]["value"] == "my salary"
+
+
 def test_a_window_states_at_most_a_bounded_number_of_premises() -> None:
     turns = [
         {
