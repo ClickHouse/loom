@@ -1062,6 +1062,21 @@ def test_a_chart_unreadable_at_a_tag_names_the_tag(
         prepare.released_chart("v1.0.0", tmp_path)
 
 
+def test_an_older_candidate_run_after_its_final_is_not_told_to_delete_itself(
+    tmp_path: Path,
+) -> None:
+    """rc.1 was soaked and released before rc.2; the final went on rc.2's commit."""
+    git_repo.git(tmp_path, "init", "-q")
+    _commit(tmp_path, "rc.1")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.1")
+    _commit(tmp_path, "the fix")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.2")
+    git_repo.git(tmp_path, "tag", "v1.2.0")
+    git_repo.git(tmp_path, "checkout", "-q", "v1.2.0-rc.1")
+    error = prepare.check_tag("1.2.0-rc.1", tmp_path)
+    assert error == "v1.2.0-rc.1 is an older candidate of the released v1.2.0: nothing to run"
+
+
 def test_a_soaked_candidate_run_again_after_its_final_is_not_told_to_delete_itself(
     tmp_path: Path,
 ) -> None:

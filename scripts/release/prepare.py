@@ -169,18 +169,14 @@ def bump(version: str, chart: str, root: Path = ROOT) -> None:
         (root / path).write_text(text, encoding="utf-8")
 
 
-def _git(root: Path, *args: str, raise_on_error: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args], cwd=root, capture_output=True, text=True, check=raise_on_error
-    )
+def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=check)
 
 
 def _sha(root: Path, ref: str) -> str:
     """The commit `ref` names, or "" when there is none; a git that cannot read
     the repository raises."""
-    found = _git(
-        root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", raise_on_error=False
-    )
+    found = _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", check=False)
     if found.returncode not in (0, 1):  # 1 is "no such ref"
         found.check_returncode()
     return found.stdout.strip()
@@ -247,6 +243,9 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
             return (
                 f"v{tag_version} is on v{final}'s commit, which is released: run v{final} instead"
             )
+        if released and f"v{tag_version}" != candidates(final, root)[-1]:
+            # Soaked before a later candidate: its release is out, and its tag stays.
+            return f"v{tag_version} is an older candidate of the released v{final}: nothing to run"
         if released:
             return (
                 f"v{final} is already tagged: a candidate for it would publish after it;"
