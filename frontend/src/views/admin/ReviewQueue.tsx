@@ -27,7 +27,11 @@ import {
   type ResolveDecision,
   type LearningEntry,
   type LearningStatus,
+  proposeRevision,
+  type RevisionSuggestion,
 } from "../../api";
+import { DuplicatesPanel } from "./Duplicates";
+import { ProposalsPanel } from "./Proposals";
 import { useIdentity, useStore } from "../../lib/state";
 import { IconButton } from "../../components/IconButton";
 import { Panel } from "../../components/ui/Panel";
@@ -49,22 +53,29 @@ import { useRowNav } from "../../lib/useRowNav";
 import { PageContainer } from "../../layout/PageContainer";
 
 /**
- * Review queue — single operator surface for "memory decisions needing
- * a human."
- *
- * One page for Conflicts and Learnings: both are "operator looks at a list and
- * approves/rejects." Same gesture, same audience, same cadence. Two empty-ish peer tabs
- * forced the operator into the same workflow twice; one tabbed page does it once.
- *
- * Sub-tabs:
+ * Review queue — the memory decisions waiting for a person, one sub-tab each:
  *   - Conflicts:   pairs of memories that disagree on a value
  *   - Learnings:   facts the extractor proposed for promotion
  *   - Auto-resolved: memories Loom retired on its own (`memory.auto_supersede`), each
  *                    with an Undo (`memory.restore`)
  *   - Exceptions:  allowlist of pairs we've explicitly said may coexist
+ *   - Proposals:   facts on trial, accepted or rejected by hand
+ *   - Duplicates:  the dedup worker's pairs, memories and documents, and the repairs
+ *                  (admin only)
  */
 // Radix's tab panel attributes, cleared while Conflicts is the only panel.
 const LONE_PANEL = { role: undefined, "aria-labelledby": undefined, tabIndex: undefined };
+
+type QueueTab = "conflicts" | "learnings" | "auto" | "exceptions" | "proposals" | "duplicates";
+// One name per tab, for its trigger and the document title.
+const QUEUE_TABS: Record<QueueTab, string> = {
+  conflicts: "Conflicts",
+  learnings: "Learnings",
+  auto: "Auto-resolved",
+  exceptions: "Exceptions",
+  proposals: "Proposals",
+  duplicates: "Duplicates",
+};
 
 export function ReviewQueue() {
   const identity = useIdentity();
@@ -92,11 +103,28 @@ export function ReviewQueue() {
   const whoami = useStore((s) => s.whoami);
   const role = useNamespaceRole(identity.namespace);
   const autoReadable = canCall("memory.auto_retirements", role, whoami) && canCall("audit.list", role, whoami);
-  const tabbed = hasLearnings || hasExceptions || hasAuto;
-  // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
-  // they revealed) must not outlive it, or a namespace with neither sub-tab strands the
-  // viewer on a hidden panel.
-  const [tab, setTab] = useState("conflicts");
+  // The duplicate lists are ADMIN; the tab is there for an admin whether or not a pair waits,
+  // since its repairs run over the whole namespace.
+  const hasDuplicates = canCall("memory.dedup_list", role, whoami) && canCall("knowledge.dedup_list", role, whoami);
+  // Proposals are offered to a role that reads them, with no probe: the tab reads when it
+  // opens, so the page costs no read for them.
+  const hasProposals = canCall("memory.proposals", role, whoami);
+  const tabbed = hasLearnings || hasExceptions || hasAuto || hasProposals || hasDuplicates;
+  const [tab, setTab] = useState<QueueTab>("conflicts");
+  // A tab that is no longer offered (its probe found nothing, or its access went) hands the
+  // page back to Conflicts.
+  const offered: Record<QueueTab, boolean> = {
+    conflicts: true,
+    learnings: hasLearnings,
+    auto: hasAuto,
+    exceptions: hasExceptions,
+    proposals: hasProposals,
+    duplicates: hasDuplicates,
+  };
+  const tabOffered = offered[tab];
+  useEffect(() => {
+    if (!tabOffered) setTab("conflicts");
+  }, [tabOffered]);
   // A probe seeds its panel's first view once: a panel opened again (the tabs unmount an
   // inactive one) reads afresh, so a learning promoted or an exception removed since does
   // not come back from the probe.
@@ -106,6 +134,8 @@ export function ReviewQueue() {
       setProbedLearnings(null);
       setProbedExceptions(null);
       setSeedsUsed({ learnings: false, exceptions: false });
+      // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
+      // they revealed) must not outlive it.
       setTab("conflicts");
       setAutoOpened(false);
       listLearnings({ org: identity.org, namespace: identity.namespace }, "pending", LEARNINGS_READ, { signal })
@@ -129,8 +159,6 @@ export function ReviewQueue() {
     (_signal, live) => {
       setProbedAuto(null);
       if (!autoReadable) {
-        // The Auto-resolved tab goes with the access: leave it for Conflicts.
-        setTab((t) => (t === "auto" ? "conflicts" : t));
         setAutoOpened(false);
         return;
       }
@@ -146,40 +174,51 @@ export function ReviewQueue() {
 
   return (
     <PageContainer>
-      <PageHeader title="Review queue">
+      <PageHeader title="Review queue" tab={tabbed ? QUEUE_TABS[tab] : undefined}>
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
       <p className="text-sm text-text-muted mb-5 max-w-2xl">
-        Memory disputes needing a human decision — your agent flip-flopped on a fact, or the extractor wants to promote
-        one. Most users never see anything here; that's a feature.
+        Memory decisions waiting for a person: facts that disagree, learnings and proposals to accept or reject, and
+        duplicates to settle. Most of the time nothing waits here; that's a feature.
       </p>
       {/* Conflicts mounts (and reads) once, at once; the sub-tabs join it when a probe finds
-          rows. Until then the lone panel is the page itself, not a tab panel without tabs. */}
+          rows or the role reaches them. Until then the lone panel is the page itself, not a
+          tab panel without tabs. */}
       <Tabs
         value={tab}
         onValueChange={(t) => {
-          setTab(t);
+          setTab(t as QueueTab);
           if (t === "auto") setAutoOpened(true);
         }}
       >
         {tabbed && (
           <Tabs.TriggersList className="mb-5" aria-label="Review queue">
             <TabTrigger value="conflicts" icon="warning">
-              Conflicts
+              {QUEUE_TABS.conflicts}
             </TabTrigger>
             {hasLearnings && (
               <TabTrigger value="learnings" icon="sparkle">
-                Learnings
+                {QUEUE_TABS.learnings}
               </TabTrigger>
             )}
             {hasAuto && (
               <TabTrigger value="auto" icon="flash">
-                Auto-resolved
+                {QUEUE_TABS.auto}
               </TabTrigger>
             )}
             {hasExceptions && (
               <TabTrigger value="exceptions" icon="line-in-circle">
-                Exceptions
+                {QUEUE_TABS.exceptions}
+              </TabTrigger>
+            )}
+            {hasProposals && (
+              <TabTrigger value="proposals" icon="question">
+                {QUEUE_TABS.proposals}
+              </TabTrigger>
+            )}
+            {hasDuplicates && (
+              <TabTrigger value="duplicates" icon="copy">
+                {QUEUE_TABS.duplicates}
               </TabTrigger>
             )}
           </Tabs.TriggersList>
@@ -209,6 +248,17 @@ export function ReviewQueue() {
               initial={seedsUsed.exceptions ? null : probedExceptions}
               onSeedUsed={() => setSeedsUsed((u) => ({ ...u, exceptions: true }))}
             />
+          </Tabs.Content>
+        )}
+        {hasProposals && (
+          <Tabs.Content value="proposals">
+            {/* Keyed by namespace: another namespace's proposals are a new panel. */}
+            <ProposalsPanel key={scopeKey} />
+          </Tabs.Content>
+        )}
+        {hasDuplicates && (
+          <Tabs.Content value="duplicates">
+            <DuplicatesPanel />
           </Tabs.Content>
         )}
       </Tabs>
@@ -479,6 +529,8 @@ function ConflictsPanel() {
           placeholder="Optional — recorded in the audit trail"
           rows={3}
         />
+        {/* conflicts.propose_revision reads no high row, so a sensitive conflict gets none. */}
+        {current.sensitivity !== "high" && <RevisionHint key={current.memory_id} memoryId={current.memory_id} />}
         <div className="mt-4 flex items-center justify-end gap-2 flex-wrap">
           <Button
             type="empty"
@@ -530,6 +582,58 @@ function ConflictsPanel() {
           Load more
         </BusyButton>
       )}
+    </div>
+  );
+}
+
+/** A suggestion in the words of the buttons above it; every suggestion is about A, the
+ *  conflict on screen. */
+const SUGGESTION_LABEL: Record<RevisionSuggestion["decision"], string> = {
+  revise: "Keep A",
+  contract: "Drop A",
+  allow: "Allow both",
+};
+
+/** conflicts.propose_revision, read when asked: which decision fits the conflict, over
+ *  every peer. It changes nothing. */
+function RevisionHint({ memoryId }: { memoryId: string }) {
+  const identity = useIdentity();
+  // null until asked; `gone` when the conflict is no longer open.
+  const [hint, setHint] = useState<RevisionSuggestion[] | "gone" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const region = useRef<HTMLDivElement>(null);
+  const ask = async () => {
+    setBusy(true);
+    try {
+      const r = await proposeRevision({ org: identity.org, namespace: identity.namespace }, memoryId);
+      setHint(r.found ? r.suggestions : "gone");
+      // The link that had focus is gone; the answer takes it.
+      region.current?.focus();
+    } catch (e) {
+      toast(`Couldn't read a suggestion: ${humanizeError(e)}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-3 text-sm">
+      {hint === null && (
+        <Link component="button" size="sm" onClick={() => void ask()} disabled={busy}>
+          Suggest a decision
+        </Link>
+      )}
+      {/* Mounted empty, so the answer is announced when it fills in. */}
+      <div ref={region} role="status" tabIndex={-1} className="outline-none">
+        {hint === "gone" && "This conflict is no longer open."}
+        {Array.isArray(hint) && hint.length === 0 && "No suggestion for this conflict."}
+        {Array.isArray(hint) && hint.length > 0 && <p className="text-text-muted">“Target” in a reason means A.</p>}
+        {Array.isArray(hint) &&
+          hint.map((s) => (
+            <p key={s.decision}>
+              <strong>{SUGGESTION_LABEL[s.decision]}</strong>: {s.rationale}
+            </p>
+          ))}
+      </div>
     </div>
   );
 }

@@ -1,7 +1,15 @@
 import { act, cleanup, render, screen, waitFor, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import type { AllowlistRow, AutoResolvedRow, ConflictRow, LearningEntry, MyNamespaceEntry, WhoAmI } from "../../api";
+import type {
+  AllowlistRow,
+  AutoResolvedRow,
+  ConflictRow,
+  LearningEntry,
+  MemoryProposal,
+  MyNamespaceEntry,
+  WhoAmI,
+} from "../../api";
 import { resetNamespaceRoleCache } from "../../lib/namespaceRole";
 import { useStore } from "../../lib/state";
 import { invalidateShared } from "../../lib/sharedReads";
@@ -29,6 +37,11 @@ vi.mock("../../api", async (importOriginal) => {
     listUnsuperseded: vi.fn(),
     restoreMemory: vi.fn(),
     getMemoryById: vi.fn(),
+    listProposals: vi.fn(async () => ({ proposals: [], total: 0 })),
+    proposeRevision: vi.fn(),
+    listMemoryDuplicates: vi.fn(async () => ({ clusters: [] })),
+    listDocumentDuplicates: vi.fn(async () => ({ doc_clusters: [] })),
+    listMemoryAgents: vi.fn(async () => []),
   };
 });
 // The page's yes/no probe is shared with the sidebar and lives in api/audit.
@@ -50,7 +63,9 @@ import {
   listAutoResolved,
   listConflicts,
   listLearnings,
+  listProposals,
   listUnsuperseded,
+  proposeRevision,
   resolveConflict,
   restoreMemory,
 } from "../../api";
@@ -70,6 +85,17 @@ const conflict = (key: string): ConflictRow => ({
   content_sha256: "",
 });
 
+const proposal: MemoryProposal = {
+  memory_key: "deploy_window",
+  memory_id: "m1",
+  agent: "a",
+  value_preview: "Tuesdays",
+  sensitivity: "",
+  created_at: "2000-01-01 00:00:00",
+  graded_passes: 1,
+  graded_fails: 0,
+  ready: "",
+};
 const learning = (key: string): LearningEntry => ({
   candidate_id: `c-${key}`,
   memory_key: key,
@@ -146,6 +172,7 @@ describe("ReviewQueue", () => {
     vi.mocked(listConflicts).mockReset();
     vi.mocked(listAllowlist).mockReset();
     vi.mocked(listLearnings).mockReset();
+    vi.mocked(listProposals).mockReset();
     vi.mocked(listAllowlist).mockResolvedValue({ rows: [] });
     vi.mocked(listLearnings).mockResolvedValue({ rows: [] });
     vi.mocked(listAutoResolved).mockReset();
@@ -174,6 +201,116 @@ describe("ReviewQueue", () => {
   afterEach(() => {
     cleanup();
     useStore.setState({ whoami: null, myNamespaces: null });
+  });
+
+  it("shows Duplicates to an admin only, Proposals to a reader, and reads none for an unknown role", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of city", {}, WAIT);
+    expect(listProposals).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tab", { name: /Duplicates/ })).toBeNull();
+    cleanup();
+
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    // Proposals are offered to a reader and read only when the tab opens.
+    expect(await screen.findByRole("tab", { name: /Proposals/ }, WAIT)).toBeInTheDocument();
+    expect(listProposals).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tab", { name: /Duplicates/ })).toBeNull();
+    cleanup();
+
+    seed("ns-a", "admin");
+    render(<ReviewQueue />);
+    expect(await screen.findByRole("tab", { name: /Duplicates/ }, WAIT)).toBeInTheDocument();
+  });
+
+  it("hands the page back to Conflicts when the open Duplicates tab loses its access", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    seed("ns-a", "admin");
+    const user = userEvent.setup();
+    render(<ReviewQueue />);
+    await user.click(await screen.findByRole("tab", { name: /Duplicates/ }, WAIT));
+    expect(screen.getByRole("tab", { name: /Duplicates/ })).toHaveAttribute("aria-selected", "true");
+    act(() => {
+      useStore.setState({ myNamespaces: [member("ns-a", "writer"), member("ns-b", "writer")] });
+    });
+    resetNamespaceRoleCache();
+    await waitFor(() => expect(screen.queryByRole("tab", { name: /Duplicates/ })).toBeNull(), WAIT);
+    // No sub-tab is left, so the page is the conflict queue alone.
+    expect(screen.getByText("value of city")).toBeVisible();
+  });
+
+  it("offers no suggestion on a sensitive conflict", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({
+      rows: [{ ...conflict("vault"), sensitivity: "high" }],
+      next_before_version: null,
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("Sensitive: read it by key in Memories", {}, WAIT);
+    expect(screen.queryByRole("button", { name: "Suggest a decision" })).toBeNull();
+  });
+
+  it("says a conflict settled meanwhile is no longer open", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    vi.mocked(proposeRevision).mockResolvedValue({ found: false, suggestions: [] });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of city", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: "Suggest a decision" }));
+    expect(await screen.findByText("This conflict is no longer open.")).toBeInTheDocument();
+  });
+
+  it("shows no proposal of the namespace left after a switch", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    vi.mocked(listProposals).mockResolvedValueOnce({ proposals: [proposal], total: 1 });
+    seed("ns-a", "writer");
+    const user = userEvent.setup();
+    render(<ReviewQueue />);
+    await user.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    expect(await screen.findByText("Tuesdays")).toBeInTheDocument();
+    seed("ns-b", "writer");
+    // At once: the keyed panel starts empty, before any read or tab reset lands.
+    expect(screen.queryByText("Tuesdays")).toBeNull();
+    // Then let the switch settle: the page is back on Conflicts.
+    await waitFor(
+      () => expect(screen.getByRole("tab", { name: /Conflicts/ })).toHaveAttribute("aria-selected", "true"),
+      WAIT,
+    );
+  });
+
+  it("reads proposals each time the tab opens", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    vi.mocked(listProposals).mockResolvedValueOnce({ proposals: [proposal], total: 1 });
+    seed("ns-a", "writer");
+    const user = userEvent.setup();
+    render(<ReviewQueue />);
+    await user.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    expect(await screen.findByText("Tuesdays")).toBeInTheDocument();
+    expect(listProposals).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("tab", { name: /Conflicts/ }));
+    await user.click(screen.getByRole("tab", { name: /Proposals/ }));
+    expect(await screen.findByText("No proposals")).toBeInTheDocument();
+    expect(listProposals).toHaveBeenCalledTimes(2);
+  });
+
+  it("suggests a decision over every peer, in the words of the buttons", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    vi.mocked(proposeRevision).mockResolvedValue({
+      found: true,
+      suggestions: [{ decision: "contract", rationale: "a peer is pinned" }],
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of city", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: "Suggest a decision" }));
+    expect(await within(await screen.findByRole("status")).findByText("Drop A")).toBeInTheDocument();
+    expect(screen.getByText(/a peer is pinned/)).toBeInTheDocument();
+    expect(vi.mocked(proposeRevision).mock.calls[0]).toHaveLength(2);
+    // The link that was pressed is gone: the answer holds the focus.
+    expect(screen.getByRole("status")).toHaveFocus();
+    expect(resolveConflict).not.toHaveBeenCalled();
   });
 
   it("shows a high conflict as sensitive, not as an empty value", async () => {
@@ -1441,8 +1578,9 @@ describe("ReviewQueue", () => {
     const reason = screen.getByRole("textbox", { name: "Reason for the decision" });
     reason.focus();
     await user.keyboard("dup");
-    // The footer reads secondary first, primary last: Skip, Allow both, Drop A, Keep A.
-    for (const name of [/Skip/, /Allow both/, /Drop A/, /Keep A/]) {
+    // The suggestion comes before the decisions; the footer reads secondary first, primary
+    // last: Skip, Allow both, Drop A, Keep A.
+    for (const name of [/Suggest a decision/, /Skip/, /Allow both/, /Drop A/, /Keep A/]) {
       await user.tab();
       expect(document.activeElement).toBe(screen.getByRole("button", { name }));
     }

@@ -135,6 +135,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "conflicts.propose_revision": ("dashboard",),
     "conflicts.resolve": (
         "sdk_method",
         "dashboard",
@@ -245,8 +246,14 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "knowledge.dedup_list": ("sdk_method",),
-    "knowledge.dedup_resolve": ("sdk_method",),
+    "knowledge.dedup_list": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.dedup_resolve": (
+        "sdk_method",
+        "dashboard",
+    ),
     "knowledge.delete": (
         "sdk_method",
         "sdk_example",
@@ -306,6 +313,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "memory.agents_list": ("dashboard",),
     "memory.aggregate": ("sdk_method",),
     "memory.apply": ("sdk_method",),
     "memory.ask": ("sdk_method",),
@@ -323,10 +331,20 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "memory.consolidate": ("dashboard",),
     "memory.copy_to": ("dashboard",),
-    "memory.dedup_collapse": ("sdk_method",),
-    "memory.dedup_list": ("sdk_method",),
-    "memory.dedup_resolve": ("sdk_method",),
+    "memory.dedup_collapse": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.dedup_list": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.dedup_resolve": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.delete": (
         "sdk_method",
         "sdk_example",
@@ -375,6 +393,8 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "memory.promote": ("sdk_method",),
+    "memory.proposal_decide": ("dashboard",),
+    "memory.proposals": ("dashboard",),
     "memory.provenance": (
         "sdk_method",
         "dashboard",
@@ -389,6 +409,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "memory.resolve_orphan_duplicates": ("dashboard",),
     "memory.restore": (
         "sdk_method",
         "dashboard",

@@ -233,18 +233,6 @@ DASHBOARD_PENDING: frozenset[str] = frozenset(
         "memory.reject",
         "memory.touch",
         "memory.unlock",
-        # review
-        "conflicts.propose_revision",
-        "knowledge.dedup_list",
-        "knowledge.dedup_resolve",
-        "memory.agents_list",
-        "memory.consolidate",
-        "memory.dedup_collapse",
-        "memory.dedup_list",
-        "memory.dedup_resolve",
-        "memory.proposal_decide",
-        "memory.proposals",
-        "memory.resolve_orphan_duplicates",
         # settings
         "extraction_policy.clear",
         "extraction_policy.get",
