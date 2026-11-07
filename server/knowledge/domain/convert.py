@@ -386,6 +386,9 @@ _IMAGE_REF = re.compile(r"!\[([^\]\n]*)\](?:\[([^\]\n]+)\]|\(<?data:[^)\s>]*>?\)
 # What opens a list item, a quote line or a heading, kept in front of a marker that
 # replaces the line's pictures.
 _ITEM_LEAD = re.compile(r"[ \t]*(?:(?:[-*+]|\d{1,9}[.)]|#{1,6})[ \t]+|>[ \t]?)*")
+# An emphasis run closing the text before a picture, and one opening the text after it.
+_TRAILING_EMPHASIS = re.compile(r"[*_~]+$")
+_LEADING_EMPHASIS = re.compile(r"[*_~]+")
 _FENCE_OPEN = re.compile(r" {0,3}(`{3,}|~{3,})")
 
 
@@ -431,17 +434,19 @@ class _Pictures:
     def drop(self, line: str) -> str:
         """`line` with its pictures out: a picture becomes its alt text, and exactly one
         space stays between the neighbouring words (none at the line's ends, inside
-        brackets or emphasis, or before punctuation)."""
+        brackets or emphasis, or before punctuation); emphasis around a picture with
+        no alt text goes with it."""
         lead = _lead(line)  # a list marker or quote mark is not emphasis
-        out = lead
-        at = len(lead)
+        body, at = "", len(lead)
         for m in self.refs(line):
-            out = lead + (out[len(lead) :] + line[at : m.start()]).rstrip(" \t")
-            at = m.end()
-            while line[at : at + 1] in (" ", "\t"):
-                at += 1
-            out = lead + _joined(out[len(lead) :], m.group(1).strip(), line[at:])
-        return out + line[at:]
+            body = (body + line[at : m.start()]).rstrip(" \t")
+            at = _skip_blanks(line, m.end())
+            alt = m.group(1).strip()
+            if not alt and (run := _emptied_emphasis(body, line[at:])):
+                body = body[:-run].rstrip(" \t")
+                at = _skip_blanks(line, at + run)
+            body = _joined(body, alt, line[at:])
+        return lead + body + line[at:]
 
     def add(self, refs: list[re.Match[str]], lead: str) -> None:
         if not self.seen:
@@ -463,17 +468,31 @@ def _lead(line: str) -> str:
     return m.group(0)
 
 
-_EMPHASIS_RUN = re.compile(r"[*_~]+")
+def _skip_blanks(line: str, at: int) -> int:
+    while line[at : at + 1] in (" ", "\t"):
+        at += 1
+    return at
+
+
+def _emptied_emphasis(before: str, after: str) -> int:
+    """The length of an emphasis run that opens right before a removed picture and
+    closes right after it, so nothing is left inside it; 0 when there is none."""
+    head, tail = _TRAILING_EMPHASIS.search(before), _LEADING_EMPHASIS.match(after)
+    if head is None or tail is None or head.group() != tail.group():
+        return 0
+    opens = head.start() == 0 or before[head.start() - 1] in " \t"
+    closes = after[tail.end() : tail.end() + 1] in ("", " ", "\t")
+    return len(head.group()) if opens and closes else 0
 
 
 def _joined(before: str, alt: str, after: str) -> str:
     """`before` with a removed picture's alt text appended, spaced so the words on both
     sides of the picture stay one space apart: no space at a line's end, after an
     opening bracket or emphasis, or before punctuation or a closing one."""
-    head = re.search(r"[*_~]+$", before)
+    head = _TRAILING_EMPHASIS.search(before)
     opens = head is not None and (head.start() == 0 or before[head.start() - 1] in " \t")
     left = before[-1:] in ("", "(", "[", "{") or opens
-    tail = _EMPHASIS_RUN.match(after)
+    tail = _LEADING_EMPHASIS.match(after)
     closes = tail is not None and after[tail.end() : tail.end() + 1] in ("", " ", "\t")
     right = after[:1] in ("", *".,;:!?)]}") or closes
     if alt:

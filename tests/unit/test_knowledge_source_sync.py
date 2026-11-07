@@ -490,6 +490,20 @@ def test_a_definition_shown_in_code_is_fetched_but_neither_written_nor_mined_aga
     assert _detail(world)["mined"] == {uri: REV1}
 
 
+def test_a_given_up_flagged_copy_whose_address_moved_is_counted_unconverted(
+    world: _World,
+) -> None:
+    _stored(world, "doc1", DOCS, OLD_EXPORT)
+    moved = _file("doc1", DOCS, REV1, webViewLink="https://docs.example.com/document/d/doc1/v2")
+    world.files = [moved]
+    waits = {"doc1": [REV1, 3, "http_500"]}
+    listed = "2026-01-02T00:00:00+00:00"
+    detail = {"file_waits": waits, "full_listed_at": listed, "retry_granted_for": listed}
+    world.states["decks"] = {"state_value": REV1, "detail": json.dumps(detail)}
+    asyncio.run(source_sync.run_sync())
+    assert world.upserts == [] and _detail(world)["unconverted"] == 1
+
+
 def test_a_flagged_copy_whose_address_moved_is_written_at_the_new_one(world: _World) -> None:
     old = _stored(world, "doc1", DOCS, OLD_EXPORT)
     moved = _file("doc1", DOCS, REV1, webViewLink="https://docs.example.com/document/d/doc1/v2")
@@ -638,8 +652,8 @@ def test_a_document_export_keeps_its_text_and_marks_its_inlined_pictures() -> No
     assert convert.exported_markdown(emphasis) == (
         "> [image-only: 1 picture, rationale not extracted]\n\nx **Flow** y\n"
     )
-    private = "a \ue000 ![][image1] b\n\n[image1]: <data:a>\n"
-    assert convert.exported_markdown(private) == "a \ue000 b\n"
+    emptied = "x **![][image1]** y\n\n[image1]: <data:a>\n"
+    assert convert.exported_markdown(emptied) == "x y\n"
     bracketed = "see (![Fig][image1]) here\n\n[image1]: <data:a>\n"
     assert convert.exported_markdown(bracketed) == "see (Fig) here\n"
     ended = "The flow is ![][image1]. Then ![Flow][image1], done.\n\n[image1]: <data:a>\n"

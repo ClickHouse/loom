@@ -725,14 +725,15 @@ async def _sync_file(
             and prior.get("inline_pictures")
             and prior["source_revision"] == revision
             # Checked at this revision already: its conversion changed nothing.
-            and turn.kind_state.get(_PICTURES_CHECKED, {}).get(str(f["id"])) != revision
+            and turn.kind_state[_PICTURES_CHECKED].get(str(f["id"])) != revision
         )
-        if reconvert and prior["source_uri"] == uri:
+        same_address = prior["source_uri"] == uri
+        if reconvert and same_address:
             stored_content_sha256 = prior["stored_content_sha256"]
-    if reconvert and _given_up(turn, f):
-        # Its older copy is still served: not counted unconverted; the waits say when
-        # it is tried again.
-        return True
+        if reconvert and same_address and _given_up(turn, f):
+            # Its older copy is still served: not counted unconverted; the waits say
+            # when it is tried again.
+            return True
     before_fetch = functools.partial(_fetchable, f, run, turn)
     fetch_and_write = functools.partial(
         _fetch_and_write, src, token, f, uri, turn, stored_content_sha256=stored_content_sha256
@@ -814,8 +815,7 @@ async def _fetch_and_write(
         if sha256_text(fetched.content) == stored_content_sha256:
             # The stored text only shows a definition (in a code sample, say): nothing
             # to write, mine or embed again, and not fetched again at this revision.
-            checked = turn.kind_state.setdefault(_PICTURES_CHECKED, {})
-            checked[str(f["id"])] = str(f.get("modifiedTime") or "")
+            turn.kind_state[_PICTURES_CHECKED][str(f["id"])] = str(f.get("modifiedTime") or "")
             return "unchanged"
         # The mining step keys a document that carries a text hash by its revision and
         # that hash, so the converted text, written at the same revision, is mined again
