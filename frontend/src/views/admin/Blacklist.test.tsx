@@ -101,5 +101,11 @@ describe("privacy filters across a namespace switch", () => {
     expect(await screen.findByText("sk-")).toBeInTheDocument();
     act(() => useStore.setState({ identity: { org: "dev", namespace: "other", agent: "loom-ui" } }));
     expect(screen.queryByText("sk-")).toBeNull();
+    await waitFor(() =>
+      expect(listBlacklist).toHaveBeenLastCalledWith(
+        expect.objectContaining({ namespace: "other" }),
+        expect.anything(),
+      ),
+    );
   });
 });

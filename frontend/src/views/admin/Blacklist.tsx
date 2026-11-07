@@ -47,19 +47,13 @@ export function Blacklist() {
       <PageHeader title="Guardrails">
         <ScopeBadge kind="namespace" value={namespace} />
       </PageHeader>
-      {/* Keyed by namespace: a sweep still running belongs to the namespace it started in. */}
+      {/* Keyed by namespace: a switch starts with no rows and no sweep from the old one. */}
       <PrivacyFilters key={`${org}/${namespace}`} />
       {orgAdmin && <OrgGuardrails />}
     </PageContainer>
   );
 }
 
-/**
- * Inline form — manages "patterns Loom should never store." Lives in
- * two places now: this admin page (for operator-level org/global
- * patterns) and Setup.tsx's "Privacy filters" section (for end users
- * who want to keep specific values out of their memories).
- */
 /** A pattern offered as a one-click prefill of the add form. */
 export interface PrivacyFilterStarter {
   pattern: string;
@@ -68,7 +62,7 @@ export interface PrivacyFilterStarter {
 
 /** `compact` (the Settings → Memory tab): one add row, a divided list, one muted line
  *  when empty — no framed form, no icon block. The default shape is the Guardrails admin
- *  page's. */
+ *  page's. It reads its namespace once, so a caller keys it by org and namespace. */
 export function PrivacyFilters({
   compact = false,
   starters = [],

@@ -189,6 +189,22 @@ describe("Setup's 'Never save' panel", () => {
     expect(await screen.findByRole("heading", { name: "Webhooks" }, WAIT)).toBeInTheDocument();
   });
 
+  it("drops the previous namespace's patterns on a switch: the list is keyed by its namespace", async () => {
+    const admin: WhoAmI = { authenticated: true, subject: "a@x", org: ORG, roles: ["ADMIN"] };
+    seed(admin, [], MEMORY_NS);
+    render(<Setup />);
+    await openMemoryTab();
+    const remove = { name: "Remove pattern sk-[A-Za-z0-9]{20,}" };
+    expect(await screen.findByRole("button", remove, WAIT)).toBeInTheDocument();
+    vi.mocked(listBlacklist).mockImplementationOnce(() => new Promise(() => {}));
+    act(() => useStore.setState({ identity: { org: ORG, namespace: "other-ns", agent: "loom-ui" } }));
+    await waitFor(() => expect(screen.queryByRole("button", remove)).toBeNull(), WAIT);
+    expect(listBlacklist).toHaveBeenLastCalledWith(
+      expect.objectContaining({ namespace: "other-ns" }),
+      expect.anything(),
+    );
+  });
+
   it("drops the previous namespace's webhooks on a switch: the section is keyed by its namespace", async () => {
     const admin: WhoAmI = { authenticated: true, subject: "a@x", org: ORG, roles: ["ADMIN"] };
     const hook = {

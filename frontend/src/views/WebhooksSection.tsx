@@ -39,7 +39,7 @@ export function WebhooksSection() {
   const [reload, setReload] = useState(0);
   const [adding, setAdding] = useState(false);
   const [deliveries, setDeliveries] = useState<Webhook | null>(null);
-  const [removing, setRemoving] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set());
 
   useAbortableEffect(
     (signal, live) => {
@@ -55,7 +55,7 @@ export function WebhooksSection() {
   const remove = async (h: Webhook) => {
     if (!(await confirmAction({ title: `Stop sending events to ${h.url}?`, confirmLabel: "Remove", danger: true })))
       return;
-    setRemoving(h.webhook_id);
+    setRemoving((ids) => new Set(ids).add(h.webhook_id));
     try {
       const r = await removeWebhook(identity, h.webhook_id);
       toast(r.removed ? "Webhook removed" : "This webhook was already removed", r.removed ? "ok" : "info");
@@ -65,7 +65,11 @@ export function WebhooksSection() {
     } catch (e) {
       toast(`Remove failed: ${humanizeError(e)}`, "error");
     } finally {
-      setRemoving(null);
+      setRemoving((ids) => {
+        const left = new Set(ids);
+        left.delete(h.webhook_id);
+        return left;
+      });
     }
   };
 
@@ -114,7 +118,7 @@ export function WebhooksSection() {
                     {
                       label: "Remove",
                       danger: true,
-                      disabled: removing === h.webhook_id,
+                      disabled: removing.has(h.webhook_id),
                       onSelect: () => void remove(h),
                     },
                   ]}

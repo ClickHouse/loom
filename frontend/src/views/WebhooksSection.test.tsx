@@ -98,13 +98,15 @@ describe("WebhooksSection", () => {
     await waitFor(() => expect(api.listWebhooks).toHaveBeenCalledTimes(2));
   });
 
-  it("removes a webhook after a confirmation", async () => {
+  it("removes a webhook after a confirmation, off the list before the reread answers", async () => {
     render(<WebhooksSection />);
     await userEvent.click(await screen.findByRole("button", { name: `Actions for ${HOOK.url}` }));
+    vi.mocked(api.listWebhooks).mockImplementationOnce(() => new Promise(() => {}));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
     expect(confirmAction).toHaveBeenCalledWith(expect.objectContaining({ danger: true }));
     await waitFor(() => expect(api.removeWebhook).toHaveBeenCalledWith(expect.objectContaining(scope), "w1"));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Webhook removed", "ok"));
+    await waitFor(() => expect(screen.queryByText(HOOK.url)).toBeNull());
   });
 
   it("holds Remove while its call runs", async () => {
