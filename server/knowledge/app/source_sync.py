@@ -717,20 +717,20 @@ async def _sync_file(
     revision = str(f.get("modifiedTime") or "")
     reconvert = False
     # The stored content's hash, from the full listing's read: set for a reconversion at
-    # the stored address only; a moved file takes the ordinary write-and-retire path.
+    # the stored address; a moved file takes the ordinary write-and-retire path.
     stored_content_sha256 = ""
     if prior is not None:
         reconvert = bool(
             f.get("mimeType") == GDRIVE_MIME_TYPES["docs"]
             and prior.get("inline_pictures")
             and prior["source_revision"] == revision
+            and prior["source_uri"] == uri
             # Checked at this revision already: its conversion changed nothing.
             and turn.kind_state[_PICTURES_CHECKED].get(str(f["id"])) != revision
         )
-        same_address = prior["source_uri"] == uri
-        if reconvert and same_address:
+        if reconvert:
             stored_content_sha256 = prior["stored_content_sha256"]
-        if reconvert and same_address and _given_up(turn, f):
+        if reconvert and _given_up(turn, f):
             # Its older copy is still served: not counted unconverted; the waits say
             # when it is tried again.
             return True

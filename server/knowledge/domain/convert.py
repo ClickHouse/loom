@@ -380,7 +380,7 @@ def coverage_of(artifact: Artifact) -> dict[str, Any]:
 # which the stored-copy comparison then finds unchanged.
 _DATA_DEFINITION = re.compile(
     r" {0,3}\[([^\]\n]+)\]:[ \t]*<?data:[^\s>]*>?"
-    r"""(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)\n]*\)))?[ \t]*\r?"""
+    r"""(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)\n]*\)))?[ \t]*"""
 )
 _IMAGE_REF = re.compile(r"!\[([^\]\n]*)\](?:\[([^\]\n]+)\]|\(<?data:[^)\s>]*>?\))")
 # What opens a list item, a quote line or a heading, kept in front of a marker that
@@ -389,7 +389,9 @@ _ITEM_LEAD = re.compile(r"[ \t]*(?:(?:[-*+]|\d{1,9}[.)]|#{1,6})[ \t]+|>[ \t]?)*"
 # An emphasis run closing the text before a picture, and one opening the text after it.
 _TRAILING_EMPHASIS = re.compile(r"[*_~]+$")
 _LEADING_EMPHASIS = re.compile(r"[*_~]+")
-_FENCE_OPEN = re.compile(r" {0,3}(`{3,}|~{3,})")
+# Any indent, so a fence nested in a list item is code too; its close is matched the
+# same way.
+_FENCE_OPEN = re.compile(r"[ \t]*(`{3,}|~{3,})")
 
 
 def _fenced(lines: list[str]) -> list[bool]:

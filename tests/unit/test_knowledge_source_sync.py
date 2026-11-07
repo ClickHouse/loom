@@ -669,6 +669,10 @@ def test_a_document_export_keeps_its_text_and_marks_its_inlined_pictures() -> No
     )
     tilde = "~~~\n![][image1]\n~~~\n``` x ` ```\n\n[image1]: <data:image/png;base64,AAAA>\n"
     assert convert.exported_markdown(tilde) == "~~~\n![][image1]\n~~~\n``` x ` ```\n"
+    listed = "- Step\n\n    ```\n    ![][image1]\n    [image2]: <data:a>\n    ```\n"
+    assert convert.exported_markdown(listed) == listed
+    crlf = "Text.\r\n[image1]: <data:a>\r\n"
+    assert convert.exported_markdown(crlf) == crlf
     prose = "[Step 1]: data: the raw input\n\n[image1]: <data:a>\n"
     assert convert.exported_markdown(prose) == "[Step 1]: data: the raw input\n"
     emphasis = "*![][image1]*\n\nx **![Flow][image1]** y\n\n[image1]: <data:a>\n"
