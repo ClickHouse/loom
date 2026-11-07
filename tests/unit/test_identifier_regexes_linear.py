@@ -18,18 +18,18 @@ from server.memory.domain.decision_extract import _BARE_CAMEL
 from server.tracker.domain.catalogue import extract_anchors
 
 # Each input takes a backtracking pattern 2 to 10 s, so a regression fails here, not hangs.
-CASES: list[tuple[str, Callable[[str], Any], str]] = [
-    ("memory.ask technical identifiers", _technical_identifiers, "Ab" + "A" * 40 + "_"),
-    ("memory.ask injectable identifiers", _injectable_identifiers, "Ab" + "A" * 40 + "_"),
-    ("code.search PascalCase", embedded_idents, "Ab" + "A" * 27 + "_"),
-    ("code.search camelCase", embedded_idents, "ab" + "A" * 27 + "_"),
-    ("tracker.ask anchors", extract_anchors, "Ab" + "0" * 25 + "_"),
-    ("decision extract bare camel", _BARE_CAMEL.match, "Ab" + "A" * 27 + "_"),
-    ("fake model mentions", fake._CAMEL_RE.findall, "Ab" + "A" * 27 + "_"),
+CASES = [
+    pytest.param(_technical_identifiers, "Ab" + "A" * 40 + "_", id="memory.ask technical"),
+    pytest.param(_injectable_identifiers, "Ab" + "A" * 40 + "_", id="memory.ask injectable"),
+    pytest.param(embedded_idents, "Ab" + "A" * 27 + "_", id="code.search PascalCase"),
+    pytest.param(embedded_idents, "ab" + "A" * 27 + "_", id="code.search camelCase"),
+    pytest.param(extract_anchors, "Ab" + "0" * 25 + "_", id="tracker.ask anchors"),
+    pytest.param(_BARE_CAMEL.match, "Ab" + "A" * 27 + "_", id="decision extract bare camel"),
+    pytest.param(fake._CAMEL_RE.findall, "Ab" + "A" * 27 + "_", id="fake model mentions"),
 ]
 
 
-@pytest.mark.parametrize(("call", "text"), [c[1:] for c in CASES], ids=[c[0] for c in CASES])
+@pytest.mark.parametrize(("call", "text"), CASES)
 def test_a_long_identifier_run_is_matched_in_linear_time(
     call: Callable[[str], Any], text: str
 ) -> None:
