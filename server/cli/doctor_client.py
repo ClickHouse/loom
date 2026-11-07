@@ -602,6 +602,12 @@ def code_access_check(
     ]
 
 
+def _codex_plugin_cache(home: Path) -> Path:
+    """The loom marketplace's copies of the Codex plugin (`loom@loom`), the ones the skills
+    and the header helper read; another marketplace's copy is not this plugin."""
+    return home / ".codex" / "plugins" / "cache" / "loom" / "loom"
+
+
 def codex_checks(
     home: Path,
     base_url: str,
@@ -676,12 +682,8 @@ def codex_checks(
                 "[mcp_servers.loom] for a different server.",
             )
         )
-    # The loom marketplace's copy, the one the skills and the header helper read.
-    cache = home / ".codex" / "plugins" / "cache" / "loom" / "loom"
-    plugin = (
-        codex_plugin_enabled(text) and any(p.is_dir() for p in cache.glob("*"))
-        if cache.is_dir()
-        else False
+    plugin = codex_plugin_enabled(text) and any(
+        p.is_dir() for p in _codex_plugin_cache(home).glob("*")
     )
     out.append(
         ("client:codex:plugin", PASS, "the loom plugin (hooks + skills) is present")
@@ -715,7 +717,7 @@ def codex_plugin_mcp_url(home: Path, config_text: str) -> str:
     # at another server. The caller checks that entry separately.
     if "loom" in config.get("mcp_servers", {}):
         return ""
-    cache = home / ".codex" / "plugins" / "cache" / "loom" / "loom"
+    cache = _codex_plugin_cache(home)
     versions = sorted(
         cache.glob("*/.mcp.json"),
         key=lambda p: _plugin_version(p.parent.name),
@@ -944,7 +946,7 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     # codex_plugin_enabled checks loom@loom, so read that marketplace's cache.
     # Like the header helper, take the newest copy with a launcher; with none,
     # the newest copy, so a pre-launcher plugin is named.
-    cached = [p for p in home.glob(".codex/plugins/cache/loom/loom/*") if p.is_dir()]
+    cached = [p for p in _codex_plugin_cache(home).glob("*") if p.is_dir()]
     launched = [p for p in cached if (p / "bin" / "loom-node").is_file()]
     codex = max(launched or cached, key=lambda p: _plugin_version(p.name), default=None)
     enabled = codex_plugin_enabled(_read(home / ".codex" / "config.toml"))
