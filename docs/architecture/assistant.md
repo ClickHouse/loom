@@ -617,10 +617,10 @@ viewer token. Each case must be refused or return no canary:
     - stopped before the policies, every server on the row's key: with the policy read,
       on a cluster and on a single server, doctor names `--live`;
     - stopped after them, every server on one other key: it names `--live`;
-      - servers on two keys, the row's and another, on any split and behind a load
-        balancer that pins every probe to one of them: it names the admin's problem with
-        both groups and asks to be run again once they agree;
     - without the policy read: it names both causes;
+  - every probe failing with servers on two keys, the row's and another, on any split
+    and behind a load balancer that pins every probe to one of them: it names the
+    admin's problem with both groups and asks to be run again once they agree;
   - a load balancer that pins every probe to one server, with no policy read, where
     every probe fails, for which it names both causes.
 
