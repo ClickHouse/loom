@@ -7,7 +7,7 @@ write as no recall."""
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 import pytest
 
@@ -736,48 +736,3 @@ async def test_an_as_of_read_never_serves_a_high_row_past_its_window() -> None:
     assert await get_by_key(ident, "vault", **read) is None
     plain = await get_by_key(ident, "old", **read)
     assert plain is not None and plain.memory_key == "old"
-
-
-# Here for this file's `_memory` and `_row` builders.
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("only", "graded", "returned"), [("", 1, 1), ("ready", 2, 0)])
-async def test_proposals_grade_only_the_rows_they_can_return(
-    monkeypatch, only: Literal["", "ready"], graded: int, returned: int
-) -> None:
-    """A listing without `only` grades just the rows within `limit` (a badge's `limit=1`
-    reads one row's grades); `only="ready"` grades every row to choose."""
-    from server.memory.api.models_proposals import MemoryProposalsInput
-    from server.memory.app import proposals, proposals_ops
-
-    ch = _memory(
-        _row(_A, "trial/tea", "likes tea", status="proposed"),
-        _row(_B, "trial/door", "opens inward", status="proposed"),
-    )
-    asked: list[int] = []
-
-    async def _policy(*_a: Any, **_k: Any) -> Any:
-        from server.memory.domain.proposal_policy import ProposalPolicy
-
-        return ProposalPolicy()
-
-    async def _counts(_ch: Any, _o: str, _n: str, keys: list[str]) -> dict[str, Any]:
-        asked.append(len(keys))
-        return {}
-
-    used: list[int] = []
-
-    async def _usage(_ch: Any, _o: str, _n: str, ids: list[str]) -> dict[str, Any]:
-        used.append(len(ids))
-        return {}
-
-    monkeypatch.setattr(proposals_ops, "get_client", lambda: ch)
-    monkeypatch.setattr(proposals, "policy_for", _policy)
-    monkeypatch.setattr(proposals, "graded_counts", _counts)
-    monkeypatch.setattr(proposals_ops, "_usage_counts", _usage)
-    out = await proposals_ops.handle_memory_proposals(
-        MemoryProposalsInput(org="o", namespace="n", limit=1, only=only)
-    )
-    assert asked == used == [graded]
-    assert out.total == 2
-    # The default policy decides neither row, so `ready` returns none.
-    assert len(out.proposals) == returned

@@ -992,7 +992,7 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
         count={
           !error && rows !== null
             ? total > shown
-              ? `the newest ${shown} of ${total} proposals read`
+              ? `${shown} of ${total} proposals, newest first`
               : `${shown} ${shown === 1 ? "proposal" : "proposals"}`
             : undefined
         }

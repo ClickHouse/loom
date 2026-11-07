@@ -5,7 +5,7 @@ owner-set policy."""
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from pydantic import ValidationError
@@ -266,32 +266,54 @@ def test_a_proposal_supersedes_nothing_on_any_refines_path(monkeypatch: pytest.M
     assert n == 0
 
 
-_ROWS = (
+_ROW = (
+    "('o', 'n', '{agent}', '{user}', '-', '00000000-0000-0000-0000-00000000000{agent}', 'k', "
+    "'semantic', '{value}', '{status}', {version}, '2026-01-0{version} 00:00:00')"
+)
+_INSERT = (
     "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
     "memory_key, memory_type, value, status, version, created_at) VALUES "
-    "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-00000000000a', 'k', 'semantic', "
-    "'a revised', '{a_status}', 3, '2026-01-01 00:00:00'), "
-    "('o', 'n', 'b', '-', '-', '00000000-0000-0000-0000-00000000000b', 'k', 'semantic', "
-    "'b', 'proposed', 2, '2026-01-02 00:00:00')"
 )
 
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 @pytest.mark.parametrize(
-    ("a_status", "listed"), [("proposed", [("a", "a revised")]), ("active", [])]
+    ("b_status", "b_user", "scope_user", "listed"),
+    [
+        # a proposed `k` first, b later: b's row is the key's head.
+        ("proposed", "-", "", [("b", "b value")]),
+        # b's row was accepted: a's older proposal is past deciding.
+        ("active", "-", "", []),
+        # A caller bounded to user u1 sees a's proposal, but the head is u2's row.
+        ("active", "u2", "u1", []),
+        ("proposed", "u2", "u1", []),
+    ],
 )
 async def test_the_listing_offers_only_the_row_a_decision_takes(
-    monkeypatch: pytest.MonkeyPatch, a_status: str, listed: list[tuple[str, str]]
+    monkeypatch: pytest.MonkeyPatch,
+    b_status: str,
+    b_user: str,
+    scope_user: str,
+    listed: list[tuple[str, str]],
 ) -> None:
-    """Agent a proposed `k` first and revised it after b proposed. memory.proposal_decide
-    takes the key's newest row, a's: the listing offers that row while it is a proposal,
-    and nothing once a was accepted, since b's older proposal is past deciding."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
     from server.memory.api.models_proposals import MemoryProposalsInput
     from server.memory.app import proposals_ops
     from server.memory.domain.proposal_policy import ProposalPolicy
+    from server.memory.store import Identity, get_many_by_keys
 
-    ch = LocalCH(ddl("memory"), _ROWS.format(a_status=a_status))
+    a_user = "u1" if scope_user else "-"
+    rows = [
+        _ROW.format(agent="a", user=a_user, value="a value", status="proposed", version=1),
+        _ROW.format(agent="b", user=b_user, value="b value", status=b_status, version=2),
+    ]
+    ch = LocalCH(ddl("memory"), _INSERT + ", ".join(rows))
+    scope = (
+        ReadFilters(scope="own_user", user_id=scope_user, session_id=None)
+        if scope_user
+        else WHOLE_NAMESPACE
+    )
 
     async def _policy(*_a: Any, **_k: Any) -> Any:
         return ProposalPolicy()
@@ -300,9 +322,61 @@ async def test_the_listing_offers_only_the_row_a_decision_takes(
         return {}
 
     monkeypatch.setattr(proposals_ops, "get_client", lambda: ch)
+    monkeypatch.setattr(proposals_ops, "request_scope", lambda: scope)
     monkeypatch.setattr(p, "policy_for", _policy)
     monkeypatch.setattr(p, "graded_counts", _none)
     monkeypatch.setattr(proposals_ops, "_usage_counts", _none)
     out = await proposals_ops.handle_memory_proposals(MemoryProposalsInput(org="o", namespace="n"))
     assert [(r.agent, r.value_preview) for r in out.proposals] == listed
     assert out.total == len(listed)
+    # The row the decision reads is the one listed.
+    ident = Identity(org="o", namespace="n", agent="*", user_id="-", session_id="-")
+    head = await get_many_by_keys(ident, ["k"], scope=WHOLE_NAMESPACE, ch=ch, strong=True)
+    if listed:
+        assert [str(r.memory_id) for r in head] == [out.proposals[0].memory_id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.parametrize(("only", "graded", "returned"), [("", 1, 1), ("ready", 2, 0)])
+async def test_proposals_grade_only_the_rows_they_can_return(
+    monkeypatch: pytest.MonkeyPatch, only: Literal["", "ready"], graded: int, returned: int
+) -> None:
+    """A listing without `only` grades just the rows within `limit` (a badge's `limit=1`
+    reads one row's grades); `only="ready"` grades every row to choose."""
+    from server.memory.api.models_proposals import MemoryProposalsInput
+    from server.memory.app import proposals_ops
+    from server.memory.domain.proposal_policy import ProposalPolicy
+
+    rows = [
+        "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-00000000000a', 'trial/tea', "
+        "'semantic', 'likes tea', 'proposed', 1, '2026-01-01 00:00:00')",
+        "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-00000000000b', 'trial/door', "
+        "'semantic', 'opens inward', 'proposed', 2, '2026-01-02 00:00:00')",
+    ]
+    ch = LocalCH(ddl("memory"), _INSERT + ", ".join(rows))
+    asked: list[int] = []
+    used: list[int] = []
+
+    async def _policy(*_a: Any, **_k: Any) -> Any:
+        return ProposalPolicy()
+
+    async def _counts(_ch: Any, _o: str, _n: str, keys: list[str]) -> dict[str, Any]:
+        asked.append(len(keys))
+        return {}
+
+    async def _usage(_ch: Any, _o: str, _n: str, ids: list[str]) -> dict[str, Any]:
+        used.append(len(ids))
+        return {}
+
+    monkeypatch.setattr(proposals_ops, "get_client", lambda: ch)
+    monkeypatch.setattr(p, "policy_for", _policy)
+    monkeypatch.setattr(p, "graded_counts", _counts)
+    monkeypatch.setattr(proposals_ops, "_usage_counts", _usage)
+    out = await proposals_ops.handle_memory_proposals(
+        MemoryProposalsInput(org="o", namespace="n", limit=1, only=only)
+    )
+    assert asked == used == [graded]
+    assert out.total == 2
+    # The default policy decides neither row, so `ready` returns none.
+    assert len(out.proposals) == returned

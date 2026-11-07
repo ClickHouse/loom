@@ -778,7 +778,7 @@ describe("ReviewQueue", () => {
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
     await screen.findByText("a proposed fact", {}, WAIT);
-    expect(screen.getByText(/the newest 1 of 120 proposals read/)).toBeTruthy();
+    expect(screen.getByText(/1 of 120 proposals, newest first/)).toBeTruthy();
     await userEvent.type(screen.getByLabelText("Reason for the decision on k"), "wrong");
     await userEvent.click(screen.getByRole("button", { name: "Reject k" }));
     await waitFor(
