@@ -157,8 +157,9 @@ _TRANSCRIPT_HEADING = re.compile(
 _LINK_RUN = r"(?:\[[^\]]*\]\([^)]*\)[^\w\[]*)+"
 _LONG_DATE = rf"{_MONTH}\s+\d{{1,2}},\s+\d{{4}}"
 # A line of the template: the invite header's labelled links ("Invited [Ana](...)",
-# "Attachments [Planner sync](...)", "Mar 4, 2026 [Ana](...)"), the meeting's date alone,
-# the transcript's preamble, the footer that asks for a rating or a review of the notes.
+# "Attachments [Planner sync](...)", "Meeting records [Transcript](...)",
+# "Mar 4, 2026 [Ana](...)"), the meeting's date alone, the transcript's preamble,
+# the footer that asks for a rating or a review of the notes.
 # "Invited [Ana](...) to walk through the budget" is a topic's text.
 _TEMPLATE_TEXT = re.compile(
     rf"^[^\w\[]*(?:invited|attachments|meeting\s+records|{_LONG_DATE})\s+{_LINK_RUN}$|"
@@ -216,15 +217,12 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
     )
     # A transcript names a recording whatever else the title says; "notes by" also signs a
     # person's notes, so it needs a meeting word and no design-document word.
+    design = bool(_DESIGN_TITLE.search(name))
     recorded = bool(_RECORDED_STAMP.search(name)) and bool(
         _TRANSCRIPT_MARK.search(name)
-        or (
-            _NOTES_BY_MARK.search(name)
-            and _MEETING_TITLE.search(name)
-            and not _DESIGN_TITLE.search(name)
-        )
+        or (_NOTES_BY_MARK.search(name) and _MEETING_TITLE.search(name) and not design)
     )
-    notes = recorded or (dated and not _DESIGN_TITLE.search(name))
+    notes = recorded or (dated and not design)
     prose, code = _lines(text)
     # A heading is not in the section's text: a decision it states counts the same.
     # A heading that says no decision was reached is not one, in any document.

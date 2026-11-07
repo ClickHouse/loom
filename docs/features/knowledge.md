@@ -611,9 +611,9 @@ from a recording, titled with the meeting's date and clock time and a transcript
 notes-by mark, as in `Planner sync - 2026/03/04 10:00 CET - Notes by ...`, keep their
 summary and topic sections as content; there only the transcript, its clock-time
 segments and the template around it (the invite header, next steps, action items,
-attendees, the tool's footer) are noise. A notes-by mark names a recording only in a
-title with a meeting word and none of the words listed above; otherwise it signs a
-person's notes, read by the rule above. The rules leave a section as content when
+attendees, the tool's footer) are noise, each unless it records a decision. A notes-by
+mark names a recording only in a title with a meeting word and none of the words listed
+above; otherwise it signs a person's notes, read by the rule above. The rules leave a section as content when
 unsure.
 
 A hit reports `noise`. With `LOOM_KNOWLEDGE_NOISE_FILTER` on (the default), a noise hit

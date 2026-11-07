@@ -348,6 +348,7 @@ _TRANSCRIPT = "Planner sync — Transcript & notes — 2026-03-04 10.00.12 CET"
             "This editable transcript was computer generated and might contain errors.",
         ),
         (_RECORDED, ("Planner sync",), "Invited [Ana](mailto:ana@example.com)"),
+        (_RECORDED, ("Planner sync",), "Meeting records [Transcript](https://x.example)"),
         (_RECORDED, (), "You should review Assistant's notes for accuracy."),
         (
             _RECORDED,
