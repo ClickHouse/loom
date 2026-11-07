@@ -1,6 +1,7 @@
 """Which bot a request files rules for and is served promoted rules as, and the
 filter that keeps another bot's rules out of the knowledge hits of
-`context.pack`, `memory.stack`, `loom_search` and `memory.ask`. It reads the request's auth
+`context.pack`, `memory.stack`, `loom_search` and `memory.ask` (and, for `context.pack`
+and `memory.stack`, a caller's own filter: noise sections). It reads the request's auth
 context, so it lives in app; the tag rule is server.memory.domain.assistant_rules."""
 
 from __future__ import annotations
@@ -33,11 +34,17 @@ async def served_hits[H](
     tags_of: Callable[[H], list[str]],
     agent: str,
     top_k: int,
+    keep: Callable[[H], bool] | None = None,
 ) -> list[H]:
-    """The first `top_k` knowledge hits that serve `agent`. When another bot's rule
-    took a place among `hits` and more can be asked for, `widen(n)` searches again
-    for `n` hits; if that search fails, the hits served from the first pass answer."""
-    served = [h for h in hits if assistant_rules.serves_agent(tags_of(h), agent)]
+    """The first `top_k` knowledge hits that serve `agent` (and that `keep` keeps, when
+    given). When a dropped hit took a place among `hits` and more can be asked for,
+    `widen(n)` searches again for `n` hits; if that search fails, the hits served from
+    the first pass answer."""
+
+    def serves(h: H) -> bool:
+        return assistant_rules.serves_agent(tags_of(h), agent) and (keep is None or keep(h))
+
+    served = [h for h in hits if serves(h)]
     # A first pass can come back short of top_k and still leave hits out: a search
     # that folds sibling chunks of one section cuts to top_k after the fold. At the
     # cap a wider search would send the same query again.
@@ -45,7 +52,7 @@ async def served_hits[H](
     if len(served) < len(hits) and wider_k > top_k:
         try:
             wider = await widen(wider_k)
-            served = [h for h in wider if assistant_rules.serves_agent(tags_of(h), agent)]
+            served = [h for h in wider if serves(h)]
         except Exception as e:  # noqa: BLE001 — the first pass's served hits still answer
-            log.warning("knowledge search widened past other bots' rules failed: %s", e)
+            log.warning("knowledge search widened past dropped hits failed: %s", e)
     return served[:top_k]

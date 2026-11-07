@@ -422,6 +422,7 @@ async def _publish(
         org=org,
         namespace=ns,
         source_uri=uri,
+        title=job["title"],
         chunks=parsed.chunks,
         contexts=[_context(job, c) for c in parsed.chunks],
         embeddings=vectors,

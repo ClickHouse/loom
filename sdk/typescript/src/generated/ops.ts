@@ -3918,6 +3918,7 @@ export interface SearchHit {
   block_type?: string;
   locator?: Record<string, unknown> | null;
   keys_matched?: string[];
+  noise?: boolean;
 }
 
 export interface KnowledgeSearchOutput {

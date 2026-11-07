@@ -12,6 +12,7 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime
+from itertools import groupby, pairwise
 from typing import Any, TypedDict, cast
 from uuid import UUID
 
@@ -22,6 +23,7 @@ from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.domain.chunking import Chunk, embedding_text
 from server.knowledge.domain.extract.structural import StructuralChunk
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL, SUPERSESSIONS_TABLE
+from server.knowledge.domain.section_value import is_noise
 
 
 class ChunkRow(BaseModel):
@@ -80,6 +82,7 @@ def build_chunk_rows(
     org: str,
     namespace: str,
     source_uri: str,
+    title: str,
     chunks: Sequence[Chunk | StructuralChunk],
     contexts: Sequence[str],
     embeddings: Sequence[list[float]],
@@ -100,7 +103,8 @@ def build_chunk_rows(
     as (what a search hit and a citation name), exact keys and content hash (what
     upsert's duplicate count and the dedup report match on), and the document's
     provenance (`author`: agent, user_id, session_id, source_class) that search
-    returns and filters on."""
+    returns and filters on. A noise section's `chunk_metadata` also carries its
+    `section_value` label."""
     return [
         {
             "org": org,
@@ -112,7 +116,8 @@ def build_chunk_rows(
             "tags": tags,
             "doc_metadata": metadata,
             "chunk_metadata": json.dumps(
-                {**chunk.meta, "revision": revision, "format": doc_format}, sort_keys=True
+                {**chunk.meta, "revision": revision, "format": doc_format, **label},
+                sort_keys=True,
             ),
             "ingested_at": now,
             "doc_superseded_at": None,
@@ -131,8 +136,42 @@ def build_chunk_rows(
                 embedding_text(context, chunk.text).encode()
             ).hexdigest(),
         }
-        for chunk, context, embedding in zip(chunks, contexts, embeddings, strict=True)
+        for chunk, context, embedding, label in zip(
+            chunks, contexts, embeddings, _noise_labels(title, chunks), strict=True
+        )
     ]
+
+
+def _noise_labels(title: str, chunks: Sequence[Chunk | StructuralChunk]) -> list[dict[str, object]]:
+    """Per chunk, the `chunk_metadata` fields that label a noise section; none for
+    content. A section is judged whole: the windows of one section share its verdict,
+    read as the section's text once (`_section_text`)."""
+    out: list[dict[str, object]] = []
+    for _, run in groupby(chunks, key=_section_key):
+        part = list(run)
+        noise = is_noise(title, part[0].section_path, _section_text(part))
+        label: dict[str, object] = {"noise": True} if noise else {}
+        out += [label] * len(part)
+    return out
+
+
+def _section_key(chunk: Chunk | StructuralChunk) -> tuple[tuple[str, ...], int]:
+    # Text chunks of a repeated heading differ by their section index; an extracted
+    # file's adjacent repeated headings share one verdict, read as one text.
+    return chunk.section_path, chunk.section_idx if isinstance(chunk, Chunk) else 0
+
+
+def _section_text(part: list[Chunk | StructuralChunk]) -> str:
+    """The text of one section's windows: a text window continues the one before it
+    (`window` cuts slices of the document, overlapping or touching), with the part they
+    share left out; a file's packed blocks are joined whole, one per line."""
+    text = part[0].text
+    for prev, cur in pairwise(part):
+        overlap = -1
+        if isinstance(prev, Chunk) and isinstance(cur, Chunk) and prev.char_start < cur.char_start:
+            overlap = prev.char_start + len(prev.text) - cur.char_start
+        text += cur.text[overlap:] if overlap >= 0 else "\n" + cur.text
+    return text
 
 
 class DocDuplicateCluster(TypedDict):

@@ -584,6 +584,43 @@ besides the addressed one. The addressed namespace and the private ones are sear
 first, whatever the addressed one's visibility; public team namespaces are searched only
 when no hit in that first pass reaches a similarity of 0.30.
 
+**Noise sections.** Each section is labelled at ingest, with no model call. A section
+that records a decision ("Agreed: drop the cache, its memory cost is too high") is
+content wherever it is written. Otherwise a section is noise when it lists unanswered
+questions under an open-questions heading (`Open questions`, `Questions for reviewers`;
+not `Questions it answers`), when it is a deck's closing "Questions?", or when its
+document is meeting notes or a status report. A document is notes by its title: a
+meeting or progress word, optionally followed by notes, minutes, update or report, and
+a date (`2026-03-04`, `2026/03/04`, `3/4/26`, `March 4`, `4 March`) or a week after it,
+as in `Storage sync 2026-03-04` or `Parser team status - week 31`; a date first with the
+meeting word ending the title, as in `2026-03-04 Meeting notes`; or a meeting word in
+its title and a date as the top heading of each meeting. A document with no title is
+named by its first heading. A title that names a design document, a plan, a release, a
+migration or an incident is never notes, as in `Calendar sync design 2026-01-15` or
+`Release notes 2026-03-04`. In notes, a section that records no decision is noise, its
+bookkeeping (attendees, an agenda, action items) included. The rules leave a section as content when unsure.
+
+A hit reports `noise`. With `LOOM_KNOWLEDGE_NOISE_FILTER` on (the default), a noise hit
+moves below the last hit close to the query (cosine similarity 0.30 or more, or the
+embedder's calibrated noise floor where that is higher), among the hits the search
+reads: three times `top_k` with `collapse_sections`, `top_k` without, or a reranker's
+pool when larger. Every hit ranked above that one, close or not, comes before it, so a
+query about the noise itself still finds it when no close hit ranks below it.
+`context.pack` and `memory.stack` leave noise out, a noise hit does not end a
+private-first search before its public pass, and `knowledge.get` returns the whole
+document.
+
+The label is written with the chunks: a document stored before it existed, written
+through an earlier build during a rolling upgrade, or retitled by
+`knowledge.update_metadata` without `reindex=true`, keeps the chunks' earlier label
+(none reads as content) until its chunks are written again. Run the relabel once the
+last earlier build is gone; a sync writes only the files that changed.
+`loom rechunk --org O --namespace N --apply` rewrites every text document of a
+namespace, a synced one included, and every ingested file too, which it turns into a
+text document: in a namespace that holds ingested files, rechunk each text document
+with `--source-uri`, and relabel an ingested file by a new `knowledge.ingest` of its
+original.
+
 **Collapse and narrowing.** Collapsing keeps the best window of a long section, leaving room for another section.
 `narrow_spans` returns one sentence pair instead of a whole section, for one extra batched embed call.
 
@@ -1194,6 +1231,7 @@ curl -s localhost:7777/v1/knowledge.search -H "Authorization: Bearer $LOOM_API_K
 | `LOOM_KNOWLEDGE_CHUNK_SIZE`, `…_CHUNK_STRIDE`                                                                                                                                      | How documents are split ([Knowledge → Chunking](../reference/configuration.md#chunking)). `loom rechunk --org O --namespace N --apply` re-chunks existing documents after a change.                                                                                                   |
 | `LOOM_MEMORY_SEARCH_FANOUT_KINDS`                                                                                                                                                  | Which namespace kinds an `all_mine` search spans ([MemorySearch](../reference/configuration.md#memorysearch)).                                                                                                                                                                        |
 | `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES`                                                                                                                                         | How many of the caller's namespaces an `all_mine` search reads besides the addressed one ([MemorySearch](../reference/configuration.md#memorysearch)).                                                                                                                                |
+| `LOOM_KNOWLEDGE_NOISE_FILTER`                                                                                                                                                      | Whether [noise sections](#searching) rank below the hits close to the query and stay out of `context.pack` and `memory.stack` ([Knowledge](../reference/configuration.md#knowledge)).                                                                                                 |
 | `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY`                                                                                                                                    | The floor for knowledge hits in `loom_search` ([Mcp](../reference/configuration.md#mcp)).                                                                                                                                                                                             |
 | `LOOM_MEMORY_ASK_KNOWLEDGE_TOP_K`, `LOOM_MEMORY_ASK_SYNTHESIZE_ROUTE_MAX_DOCS`                                                                                                     | Whether and how `memory.ask` reads knowledge ([MemoryAsk](../reference/configuration.md#memoryask)).                                                                                                                                                                                  |
 | `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE`, `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S`                                                                                                | How many document sources one repository namespace may register, and how long a source's probe may take ([Knowledge](../reference/configuration.md#knowledge)).                                                                                                                       |

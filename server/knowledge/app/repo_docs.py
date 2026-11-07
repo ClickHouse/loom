@@ -70,7 +70,9 @@ async def search_repo_docs(
 
 def merge_hits(base: list[_SearchHit], extra: list[_SearchHit], top_k: int) -> list[_SearchHit]:
     """One knowledge list: both legs' hits, one per (namespace, document,
-    chunk), by fused score, then similarity."""
+    chunk), by fused score, then similarity, the noise sections last (`noise_last`)."""
+    from server.knowledge.app.knowledge_search import noise_last
+
     seen: set[tuple[str, str, int]] = set()
     out: list[_SearchHit] = []
     for h in sorted(
@@ -83,7 +85,7 @@ def merge_hits(base: list[_SearchHit], extra: list[_SearchHit], top_k: int) -> l
             continue
         seen.add(key)
         out.append(h)
-    return out[: max(1, int(top_k))]
+    return noise_last(out)[: max(1, int(top_k))]
 
 
 async def knowledge_with_repo_docs(
@@ -93,7 +95,7 @@ async def knowledge_with_repo_docs(
     code scope names a repository the caller may read (`repo_namespace`,
     from `repo_namespace_in_scope`; "" for none) — its documents, merged
     into the one section. Raises only what the base search raises."""
-    from server.knowledge.app.knowledge_search import handle_knowledge_search
+    from server.knowledge.app.knowledge_search import handle_knowledge_search, noise_last
 
     if not repo_namespace:
         return await handle_knowledge_search(know_input)
@@ -109,10 +111,11 @@ async def knowledge_with_repo_docs(
     picked = merge_hits(list(base.results), extra, top_k)
     if base.reranked_by:
         # The fused scores still decide which repository hits earn a place; a reranked
-        # answer keeps its own order, and those hits follow it.
+        # answer keeps its own order, those hits follow it, and noise sections go below
+        # the close ones of both (`noise_last`).
         listed = {(h.namespace, h.source_uri, h.chunk_idx) for h in base.results}
         repo = [h for h in picked if (h.namespace, h.source_uri, h.chunk_idx) not in listed]
-        results = [*base.results[: top_k - len(repo)], *repo]
+        results = noise_last([*base.results[: top_k - len(repo)], *repo])
         return base.model_copy(update={"results": results})
     return base.model_copy(update={"results": picked})
 

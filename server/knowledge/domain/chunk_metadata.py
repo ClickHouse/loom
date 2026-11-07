@@ -2,7 +2,8 @@
 place: the section path the outline reads and its depth (and, for text, its
 section's index and where the chunk starts), the document revision and format the
 chunk was written as, and for a chunk of an extracted file its blocks' type and
-where it sits in the source (the locator a citation opens). Pure.
+where it sits in the source (the locator a citation opens), and whether the section is
+noise (`section_value`). Pure.
 
 A field the row does not carry reads empty: a chunk written before it was
 recorded, or metadata that does not parse.
@@ -30,6 +31,10 @@ class ChunkStructure:
     # For an extracted file's chunk: its blocks' type and its place in the source.
     block_type: str = ""
     locator: dict[str, Any] | None = None
+    # The section is noise (unanswered questions alone, or a dated meeting-notes or status
+    # document's section with no decision): ranked below close hits and left out of
+    # context.pack and memory.stack. False for a chunk written before it was recorded.
+    noise: bool = False
 
 
 def read_structure(chunk_metadata: object) -> ChunkStructure:
@@ -52,6 +57,7 @@ def read_structure(chunk_metadata: object) -> ChunkStructure:
         format=str(meta.get("format") or ""),
         block_type=str(meta.get("block_type") or ""),
         locator=locator if isinstance(locator, dict) else None,
+        noise=meta.get("noise") is True,
     )
 
 

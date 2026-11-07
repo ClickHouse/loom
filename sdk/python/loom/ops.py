@@ -10930,6 +10930,7 @@ class SearchHit(TypedDict, total=False):
     block_type: NotRequired[str]
     locator: NotRequired[Optional[dict[str, Any]]]
     keys_matched: NotRequired[list[str]]
+    noise: NotRequired[bool]
 
 
 class KnowledgeSourceAddInput(TypedDict, total=False):

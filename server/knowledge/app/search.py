@@ -86,6 +86,8 @@ class ChunkHit:
     locator: dict[str, Any] | None = None
     # The query's keys this chunk defines or reads (the exact-key leg).
     keys_matched: tuple[str, ...] = ()
+    # The chunk's section is labelled noise (`section_value`).
+    noise: bool = False
 
     @property
     def section(self) -> str:
@@ -150,6 +152,7 @@ def _structure(chunk_metadata: object) -> dict[str, Any]:
         "format": meta.format,
         "block_type": meta.block_type,
         "locator": meta.locator,
+        "noise": meta.noise,
     }
 
 

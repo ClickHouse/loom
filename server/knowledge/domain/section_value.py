@@ -1,0 +1,199 @@
+"""Whether a document section is design content or noise: meeting notes and status reports,
+their bookkeeping included, that carry nothing an engineer changing the code needs. Pure
+and deterministic; no model call.
+
+The label is on content, not on document type: a section of meeting notes that records a
+decision ("agreed: drop the cache, its memory cost is too high") is content, and the
+attendee list of a meeting note is noise. The rules leave a section as content when
+unsure: a noise section missed only ranks higher than it should, while a design section
+labelled noise leaves the context an agent is handed.
+
+A section with a line that records a decision is content. Otherwise it is noise when it
+lists questions with no answer under an open-questions heading (or is a deck's closing
+"Questions?"), or when the document is meeting notes or a status report: there a section
+that records no decision is discussion or bookkeeping (attendees, agenda, action items,
+...), not design.
+
+A document is notes by its title, in one of three shapes:
+- a meeting or progress word, optionally followed by notes, minutes, update or report,
+  then a date (2026-03-04, 2026/03/04, 3/4/26, March 4, 4 March) or a week: "Planner
+  sync 2026-09-24", "Parser team status - week 31";
+- a date first and the meeting word last: "2026-03-04 Meeting notes", "2026-03-04
+  Storage sync";
+- a meeting word in the title and a date as the top heading of each meeting (a running
+  notes page).
+Without a date the same words name a topic as often ("Standup reminder bot", "Order
+sync 24/7"), and a title holding a design-document, release or incident word
+("Calendar sync design 2026-01-15", "Release notes 2026-03-04") is never notes. A
+document with no title is named by its first heading. Lines inside a fenced code block
+are code, never questions.
+"""
+
+from __future__ import annotations
+
+import re
+
+from server.knowledge.domain.chunking import closes_fence, fence_marker
+
+# A choice a team states for itself: "we'll go with", "we're switching to", "we picked",
+# "let's use". A bare "we keep" is left out: "suggested we keep X" proposes, not decides.
+_CHOICE_VERB = (
+    r"(?:(?:going to |be )?(?:go(?:ing)?(?: ahead)? with|proceed(?:ing)? with|use|using|"
+    r"keep|keeping|drop|dropping|"
+    r"switch(?:ing)? to|move|moving|migrate|migrating|adopt|adopting|support|supporting|"
+    r"ship|shipping|pick|choose|stick with|stay with|replace|replacing))"
+)
+_CHOSE = (
+    r"(?:picked|chose|selected|switched to|moved to|migrated to|adopted|went with|dropped|"
+    r"replaced|rejected|accepted)"
+)
+# A recorded decision: content wherever it is written. A phrase saying none was reached
+# (`_UNDECIDED`) is not one, in meeting notes.
+_DECISION = re.compile(
+    r"\b(?:decided|decision|agreed|agreement|consensus|settled on|approved|signed off|"
+    r"going with|going ahead with|proceeding with|went with|chosen|ruled out|resolved:|"
+    r"conclusion:|outcome:|opted (?:for|to)|concluded|not supporting|"
+    r"defaults? to|"
+    rf"we(?:'re| are|'ll| will| won't| will not)(?: not)? {_CHOICE_VERB}|"
+    rf"(?:we|the team)(?:'ve| have| had)? {_CHOSE}|"
+    r"(?:was|were|is|are) (?:picked|selected)|"
+    r"(?:option|proposal|approach)\b[^.;]{0,80}\b(?:accepted|rejected)\b|"
+    rf"let's {_CHOICE_VERB})",
+    re.IGNORECASE,
+)
+# A line of meeting notes that says the discussion reached no decision.
+_UNDECIDED = re.compile(
+    r"\b(?:no (?:conclusion|decision|consensus|agreement)|undecided|"
+    r"not (?:yet )?(?:decided|concluded|agreed)|"
+    r"to be decided|(?:haven't|hasn't|have not|has not)(?: yet)?(?: been)? decided|"
+    r"decision (?:pending|needed|deferred)|needs? a decision|"
+    r"decisions?\W+(?:tbd|tbc|none yet|pending|open)\b)",
+    re.IGNORECASE,
+)
+# The title shapes of meeting notes and status reports (the module docstring).
+_MONTH = (
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|"
+    r"sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+)
+_DATE = (
+    r"\b(?:\d{4}[-/]\d{2}[-/]\d{2}|\d{1,2}/\d{1,2}/(?:\d{4}|\d{2})\b|w(?:ee)?k\s?\d+|"
+    rf"{_MONTH}\s+\d{{1,2}}\b|\d{{1,2}}\s+{_MONTH}\b)"
+)
+_MEETING = (
+    r"\b(?:meeting|sync|status|weekly|daily|bi-?weekly|check-in|standup|stand-up|planning|"
+    r"retro(?!-)|retrospective|all[- ]hands|office hours|1:1)\b"
+)
+# "Sync notes 2026-09-24", "Status report - week 31": a record word after the meeting
+# word; alone ("Implementation notes 2026-03-04") it names a document's topic.
+_RECORD = r"(?:\W+(?:notes|minutes|update|report))?"
+_NOTES_TITLE = re.compile(
+    rf"{_MEETING}{_RECORD}\W+{_DATE}"
+    rf"|{_DATE}\W+(?:\w+\W+){{0,2}}{_MEETING}{_RECORD}\W*(?:\.\w+)?$",
+    re.IGNORECASE,
+)
+# A running notes document: a meeting word in the title, one dated heading per meeting.
+_MEETING_TITLE = re.compile(_MEETING, re.IGNORECASE)
+_DAY = (
+    rf"(?:\d{{4}}[-/]\d{{2}}[-/]\d{{2}}|\d{{1,2}}/\d{{1,2}}/(?:\d{{4}}|\d{{2}})|"
+    rf"{_MONTH}\s+\d{{1,2}}|\d{{1,2}}\s+{_MONTH})"
+)
+_DATE_HEADING = re.compile(rf"^\W*{_DAY}\b\W*$", re.IGNORECASE)
+_DESIGN_TITLE = re.compile(
+    r"\b(?:design|rfc|proposal|spec|specification|architecture|adr|plan|runbook|release|"
+    r"upgrade|migration|incident|postmortem|changelog)\b",
+    re.IGNORECASE,
+)
+
+# A heading over open questions ("Open questions", a bare "Questions"; not "Questions it
+# answers"), and a deck's closing line.
+_QUESTIONS_HEADING = re.compile(
+    r"^\W*(?:(?:open|unresolved|outstanding|remaining)\s+)?(?:questions|q&a)\W*$"
+    r"|\bquestions\s+(?:for (?:discussion|review|reviewers|the team)|to resolve|left)\b",
+    re.IGNORECASE,
+)
+_CLOSING_QUESTION = re.compile(r"^(?:any\s+)?questions\s*\?+$", re.IGNORECASE)
+# A heading that lists decisions: content whatever its lines say, and the sections under it.
+_DECISIONS_HEADING = re.compile(
+    r"^\W*(?:slide\s+\d+\s*:\s*)?(?:decisions?|decided|agreed|outcomes?)\b", re.IGNORECASE
+)
+
+# Where one sentence of a line ends and the next begins.
+_SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
+# A list marker, a table pipe or a quote mark opening a line, dropped before the
+# line is read.
+_LINE_LEAD = re.compile(r"^\s*(?:[-+>|]|\*(?!\*)|\d{1,3}[.)])\s*")
+# A table's separator row, an empty table row and a horizontal rule carry no text.
+_RULE = re.compile(r"^[\s|:\-=*_]*$")
+
+
+def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
+    """Whether one section is noise: `text` under the heading path `section_path` in the
+    document titled `title`."""
+    # A document stored with no title is named by its first heading.
+    name = title or (section_path[0] if section_path else "")
+    dated = bool(_NOTES_TITLE.search(name)) or (
+        bool(_MEETING_TITLE.search(name))
+        and bool(_DATE_HEADING.match(_top_heading(name, section_path)))
+    )
+    notes = dated and not _DESIGN_TITLE.search(name)
+    prose, code = _lines(text)
+    # A heading is not in the section's text: a decision it states counts the same.
+    headings = [h.replace("\u2019", "'") for h in section_path]
+    if any(_decides(line, notes) for line in (*prose, *headings)):
+        return False
+    if any(_DECISIONS_HEADING.match(h) for h in section_path):
+        return False
+    if not prose and not code:
+        # A heading with no body under it (a deck's title slide) has nothing to hide.
+        return False
+    if _unanswered(section_path, prose, code):
+        return True
+    return notes
+
+
+def _unanswered(section_path: tuple[str, ...], prose: list[str], code: int) -> bool:
+    """An "Open questions" list with no answer, or a deck's closing "Questions?"; a
+    design section that lists the questions a system answers is not one."""
+    if code or not prose or not all(line.endswith("?") for line in prose):
+        return False
+    heading = section_path[-1] if section_path else ""
+    return bool(_QUESTIONS_HEADING.search(heading) or _CLOSING_QUESTION.match(" ".join(prose)))
+
+
+def _top_heading(name: str, section_path: tuple[str, ...]) -> str:
+    """The section's top heading below the document's own title (a first heading that
+    repeats the title is the title): a running notes page dates each meeting there."""
+    path = section_path[1:] if section_path and section_path[0] == name else section_path
+    return path[0] if path else ""
+
+
+def _decides(line: str, notes: bool) -> bool:
+    # Sentence by sentence: a question records no decision ("Are we going with Redis?"),
+    # and in notes "no decision" is none; "agreed: X; Y is not decided" still is one.
+    return any(
+        not sentence.endswith("?")
+        and _DECISION.search(_UNDECIDED.sub("", sentence) if notes else sentence)
+        for sentence in _SENTENCE_END.split(line.strip())
+    )
+
+
+def _lines(text: str) -> tuple[list[str], int]:
+    """The section's prose lines, without list markers and rules, and how many lines of
+    fenced code it holds."""
+    prose: list[str] = []
+    code = 0
+    fence = ""
+    for raw in text.splitlines():
+        if fence:
+            if closes_fence(raw, fence):
+                fence = ""
+            else:
+                code += 1
+            continue
+        if marker := fence_marker(raw):
+            fence = marker
+            continue
+        line = _LINE_LEAD.sub("", raw).replace("\u2019", "'").strip()
+        if line and not _RULE.match(line):
+            prose.append(line)
+    return prose, code

@@ -2423,6 +2423,10 @@ settings:
   # loom.namespaces.kind): the memory fan-out's, and the caller's collections. [live]
   # knowledge_search_fanout_kinds: "memory,collection,personal"
 
+  # True: noise sections rank below the knowledge hits close to the query and stay out
+  # of context.pack and memory.stack. False: they are served like any section. [live]
+  # knowledge_noise_filter: true
+
   # Reranker knowledge.search uses when the request names none (same values as the
   # per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON;
   # rerank="none" turns it off for a call). Empty = no default rerank. [live]
