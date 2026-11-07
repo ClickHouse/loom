@@ -26,7 +26,7 @@ import {
   worthSaving,
 } from "../lib/session-brief.mjs";
 
-// The block's per-call id, removed so its text can be compared.
+// The block's id (derived from its text), removed so text around it can be compared.
 const noIds = (t) => String(t).replace(/ id="[0-9a-f]{16}"/g, "");
 
 process.env.LOOM_HOOK_NO_MAIN = "1";

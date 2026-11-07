@@ -19,7 +19,7 @@ import path from "node:path";
 
 import { redactHead } from "./loom-client.mjs";
 import { sessionRunId } from "./run-hook.mjs";
-import { readPrivateFile } from "./tmp-state.mjs";
+import { readPrivateFile, removeFile, writePrivateFile } from "./tmp-state.mjs";
 export const RECALL_SECTIONS = ["memories", "decisions", "procedures"];
 export const SEEN_CAP = 60;
 export const DEFAULT_MAX_CHARS = 1200;
@@ -34,7 +34,7 @@ const recalledNote = (id) =>
 
 // Common lookalikes of the tag's letters (l o m r e c a d t), as they read once
 // folded to lower case: Cyrillic, Greek, Armenian, Coptic, Cherokee, Lisu and
-// Latin small capitals. Not complete; the block's per-call id is what ends it.
+// Latin small capitals. Not complete; the block's id (blockId) is what ends it.
 const TAG_CONFUSABLES = new Map(
   Object.entries({
     l: "ӏłʟιꓡꮮ",
@@ -70,7 +70,7 @@ function foldForTag(c) {
  *  letters spell it once folded (foldForTag): any case, fullwidth, mathematical
  *  or other compatibility letters, accents, common lookalikes from other
  *  scripts, and any separator or invisible character between them. A second
- *  layer under the block's per-call id; `<` and `>` stay as written (`Vec<T>`). */
+ *  layer under the block's id (blockId); `<` and `>` stay as written (`Vec<T>`). */
 export function neutraliseTagName(text) {
   const chars = Array.from(String(text || ""));
   let folded = "";
@@ -95,50 +95,63 @@ export function neutraliseTagName(text) {
   return out + chars.slice(i).join("");
 }
 
-/** $HOME/.loom/recall-key: this install's secret for block ids. */
-export function recallKeyPath(home = process.env.HOME || os.homedir()) {
+/** ~/.loom/recall-key: this install's secret for block ids. os.homedir() honours HOME. */
+export function recallKeyPath(home = os.homedir()) {
   return path.join(home, ".loom", "recall-key");
 }
 
-/** The 32-byte secret in `file`, created once (O_EXCL, 0600) when missing; null
- *  when it cannot be read or written, or the path is a link or another user's
- *  file (readPrivateFile's checks), and then a block's id is random. */
-export function loadRecallKey(file = recallKeyPath()) {
-  const read = () => {
-    const key = Buffer.from(readPrivateFile(file).trim(), "hex");
-    return key.length === 32 ? key : null;
-  };
-  try {
-    return read();
-  } catch {
-    /* missing, or not ours: try to create it */
-  }
+const KEY_HEX = /^[0-9a-f]{64}$/;
+
+/** A new key written to a private temporary name, then linked into place: the link
+ *  never replaces a key another hook put there first. null when it cannot be made. */
+function createRecallKey(file) {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    const c = fs.constants;
-    const fd = fs.openSync(file, c.O_WRONLY | c.O_CREAT | c.O_EXCL | (c.O_NOFOLLOW ?? 0), 0o600);
     const key = randomBytes(32);
+    const tmp = `${file}.${process.pid}.${randomBytes(6).toString("hex")}`;
+    writePrivateFile(tmp, key.toString("hex"));
     try {
-      fs.writeSync(fd, key.toString("hex"));
-    } finally {
-      fs.closeSync(fd);
-    }
-    return key;
-  } catch {
-    try {
-      return read(); // another hook created it first
+      fs.linkSync(tmp, file);
+      return key;
     } catch {
-      return null;
+      return null; // one exists already (or the directory refuses it)
+    } finally {
+      removeFile(tmp);
     }
+  } catch {
+    return null;
   }
 }
 
-let recallKey; // loaded once per process
+/** The 32-byte secret in `file`, created once when missing. A file of ours that is
+ *  empty or the wrong length (a write that failed) is removed and made again. null,
+ *  and then a block's id is random, when the key cannot be read or made, or the path
+ *  is a link, a hard link or another user's file (readPrivateFile's checks). */
+export function loadRecallKey(file = recallKeyPath()) {
+  for (let pass = 0; pass < 3; pass++) {
+    let text = null;
+    try {
+      text = readPrivateFile(file).trim();
+    } catch (e) {
+      if (!e || e.code !== "ENOENT") return null; // not ours: refused
+    }
+    if (text !== null) {
+      if (KEY_HEX.test(text)) return Buffer.from(text, "hex");
+      if (!removeFile(file)) return null;
+    }
+    const made = createRecallKey(file);
+    if (made) return made;
+    // Another hook linked its key first: read that one on the next pass.
+  }
+  return null;
+}
+
+let recallKey; // loaded once per process; null (no usable key) is kept too
 
 /** The block id for `text`: an HMAC of it under the install's secret, so the same
  *  text gets the same id (the primer stays cacheable across sessions) and the
  *  text's writer cannot compute it; random when there is no secret. */
-export function blockId(text, key = (recallKey ??= loadRecallKey())) {
+export function blockId(text, key = recallKey === undefined ? (recallKey = loadRecallKey()) : recallKey) {
   if (!key) return randomBytes(8).toString("hex");
   return createHmac("sha256", key).update(text).digest("hex").slice(0, 16);
 }

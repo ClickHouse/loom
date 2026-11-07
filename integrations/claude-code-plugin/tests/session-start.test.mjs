@@ -14,7 +14,7 @@ import {
 } from "../lib/session-start.mjs";
 import { recalledDataBlock } from "../lib/prompt-recall.mjs";
 
-// The block's per-call id, removed so its text can be compared.
+// The block's id (derived from its text), removed so text around it can be compared.
 const noIds = (t) => String(t).replace(/ id="[0-9a-f]{16}"/g, "");
 
 const scope = { org: "o", namespace: "coding", agent: "claude-code", project: "loom", tags: [] };
@@ -148,8 +148,8 @@ test("renderPrimer: notices, then the primer under its heading, the repo tag, th
     recordingLine: "Recording is on.",
   });
   assert.equal(
-    noIds(full),
-    `Signed up.\n\nDuplicate MCP entry.\n\n# Loom memory primer — project: app\n\n${repoLine}${noIds(recalledDataBlock("facts here"))}\n\nCODE\n\n2 tasks waiting\n\n3 saved briefs\n\nRecording is on.\n`,
+    full,
+    `Signed up.\n\nDuplicate MCP entry.\n\n# Loom memory primer — project: app\n\n${repoLine}${recalledDataBlock("facts here")}\n\nCODE\n\n2 tasks waiting\n\n3 saved briefs\n\nRecording is on.\n`,
   );
   // No primer: no heading, the rest in the same order; no notices, no repo.
   assert.equal(

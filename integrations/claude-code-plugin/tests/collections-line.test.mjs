@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MAX_NAMED, READ, listBody, renderCollectionsLine, toolsetAllows } from "../lib/collections-line.mjs";
 
-// The block's per-call id, removed so its text can be compared.
+// The block's id (derived from its text), removed so text around it can be compared.
 const noIds = (t) => String(t).replace(/ id="[0-9a-f]{16}"/g, "");
 
 const col = (namespace, over = {}) => ({

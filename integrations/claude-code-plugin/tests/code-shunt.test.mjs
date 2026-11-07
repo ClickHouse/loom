@@ -651,7 +651,7 @@ test("deny texts carry the repository's namespace without suggesting an unsuppor
 
 import { UNRESOLVED_TTL_MS, cacheIsFresh, repoLookupOutcome } from "../lib/repo-scope.mjs";
 
-// The block's per-call id, removed so its text can be compared.
+// The block's id (derived from its text), removed so text around it can be compared.
 const noIds = (t) => String(t).replace(/ id="[0-9a-f]{16}"/g, "");
 
 test("a lookup that did not answer is unresolved, not 'not indexed'", () => {

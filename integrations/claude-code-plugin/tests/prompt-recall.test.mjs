@@ -1,6 +1,7 @@
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,7 +17,7 @@ import {
   SEEN_CAP,
 } from "../lib/prompt-recall.mjs";
 
-// The block's per-call id, removed so its text can be compared.
+// The block's id (derived from its text), removed so text around it can be compared.
 const noIds = (t) => String(t).replace(/ id="[0-9a-f]{16}"/g, "");
 
 const PACK = {
@@ -167,7 +168,13 @@ test("a planted close tag without the block's id does not end it", () => {
 });
 
 const posix = process.platform !== "win32";
-const keyDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "loom-recall-key-"));
+/** A temporary directory removed when the test ends. */
+const keyDir = (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-recall-key-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+};
+const keyFile = (t) => path.join(keyDir(t), ".loom", "recall-key");
 
 test("a block's id is the same for the same text and differs for other text", () => {
   assert.equal(recalledDataBlock("facts here"), recalledDataBlock("facts here"), "the primer stays cacheable");
@@ -175,18 +182,53 @@ test("a block's id is the same for the same text and differs for other text", ()
   assert.notEqual(id("facts here"), id("other facts"));
 });
 
-test("the recall key is created once, 0600, and gives stable ids", { skip: !posix }, () => {
-  const file = path.join(keyDir(), ".loom", "recall-key");
+test("the recall key is created once, 0600, and gives stable ids", { skip: !posix }, (t) => {
+  const file = keyFile(t);
   const key = loadRecallKey(file);
   assert.equal(key.length, 32);
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   assert.match(fs.readFileSync(file, "utf8"), /^[0-9a-f]{64}$/);
   assert.deepEqual(loadRecallKey(file), key, "read back, not created again");
   assert.equal(blockId("x", key), blockId("x", loadRecallKey(file)));
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), ["recall-key"], "no temporary file is left");
 });
 
-test("a symlink planted at the recall key is refused, and ids fall back to random", { skip: !posix }, () => {
-  const dir = keyDir();
+test("an empty or wrong-length key file of ours is replaced with a new key", { skip: !posix }, (t) => {
+  for (const left of ["", "abc", "a".repeat(63), `${"a".repeat(64)}ff`]) {
+    const file = keyFile(t);
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(file, left, { mode: 0o600 });
+    const key = loadRecallKey(file);
+    assert.equal(key && key.length, 32, JSON.stringify(left));
+    assert.equal(fs.readFileSync(file, "utf8"), key.toString("hex"));
+  }
+});
+
+test("two hooks creating the key at once end with one key", { skip: !posix }, async (t) => {
+  const file = keyFile(t);
+  const lib = new URL("../lib/prompt-recall.mjs", import.meta.url).href;
+  const script = `import(${JSON.stringify(lib)}).then((m) => { const k = m.loadRecallKey(${JSON.stringify(file)}); process.stdout.write(k ? k.toString("hex") : "null"); });`;
+  const run = () =>
+    new Promise((resolve) => {
+      const child = spawn(process.execPath, ["--input-type=module", "-e", script]);
+      let out = "";
+      child.stdout.on("data", (c) => (out += c));
+      child.on("close", () => resolve(out));
+    });
+  const got = await Promise.all(Array.from({ length: 4 }, run));
+  const stored = fs.readFileSync(file, "utf8");
+  assert.match(stored, /^[0-9a-f]{64}$/);
+  // A hook that reads during another's link sees a second link for a moment and refuses
+  // it (null: random ids for that process); every key handed out is the stored one.
+  assert.ok(got.includes(stored), got.join(" "));
+  for (const k of got) assert.ok(k === stored || k === "null", k);
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), ["recall-key"]);
+});
+
+// A key file another user owns is refused by the same readPrivateFile check; making
+// one needs a second account (chown is root-only), so only the link case runs here.
+test("a symlink planted at the recall key is refused, and ids fall back to random", { skip: !posix }, (t) => {
+  const dir = keyDir(t);
   const victim = path.join(dir, "victim");
   fs.writeFileSync(victim, "a".repeat(64));
   fs.mkdirSync(path.join(dir, ".loom"));
@@ -194,5 +236,6 @@ test("a symlink planted at the recall key is refused, and ids fall back to rando
   fs.symlinkSync(victim, file);
   assert.equal(loadRecallKey(file), null);
   assert.equal(fs.readFileSync(victim, "utf8"), "a".repeat(64));
+  assert.ok(fs.lstatSync(file).isSymbolicLink(), "the link is left, not replaced");
   assert.notEqual(blockId("x", null), blockId("x", null));
 });
