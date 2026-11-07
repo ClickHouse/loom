@@ -14,7 +14,6 @@ from types import SimpleNamespace
 import pytest
 
 from scripts.codegen import op_reach_census as census
-from server.operations import dashboard
 from server.operations.base import Role
 from server.operations.dashboard import (
     AGENT_STEP,
@@ -22,6 +21,7 @@ from server.operations.dashboard import (
     DASHBOARD_PENDING,
     NOT_IN_DASHBOARD,
     TRACKER_QUESTION,
+    _named_once,
 )
 from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
 from server.operations.toolsets import _MCP_HIDDEN_OPS
@@ -237,7 +237,7 @@ def test_the_pending_set_is_pinned():
 
 def test_an_op_named_twice_is_refused():
     with pytest.raises(ValueError, match="code.ask is named twice"):
-        dashboard._named_once({"code.ask": "a"}, {"code.ask": "b"})
+        _named_once({"code.ask": "a"}, {"code.ask": "b"})
 
 
 def test_an_op_a_refusal_sends_the_agent_to_is_on_mcp():

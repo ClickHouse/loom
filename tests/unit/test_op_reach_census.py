@@ -108,8 +108,8 @@ def test_manifest_matches_the_tree():
 
 
 def test_scan_of_a_checkout_under_a_tests_directory_still_finds_reach(tmp_path):
-    """Only `tests` directories inside the scanned tree are skipped; the
-    checkout's own location does not matter."""
+    """Only `tests` and `test` directories inside the scanned tree are skipped;
+    the checkout's own location does not matter."""
     root = tmp_path / "tests" / "loom"
     sdk = root / "sdk" / "python" / "loom"
     sdk.mkdir(parents=True)
@@ -142,7 +142,7 @@ def test_a_dashboard_call_site_is_a_quoted_path(tmp_path):
         "post(`/v1/memory.unpin`, body);\n"
         '// see "/v1/memory.lock"\n'
         "/** POST the bytes (`/v1/memory.touch?...`) */\n"
-        'fetch("https://host/v1/x", {}); // `/v1/memory.reject`\n'
+        'fetch("https://host/v1/memory.history", {}); // `/v1/memory.reject`\n'
         'onClick={() => pin()} // posts "/v1/memory.lock"\n'
         'bar(); /* "/v1/memory.demote" */ baz();\n'
         "const r = /^spaces\\//; post('/v1/memory.verify');\n"
@@ -151,7 +151,7 @@ def test_a_dashboard_call_site_is_a_quoted_path(tmp_path):
         'const hint = "**/generated/**, third_party/**";\n'
         'post("/v1/memory.redact", body);\n'
         '{/* the drawer posts\n   post("/v1/memory.unlock") */}\n'
-        'const LABEL = "memory.redact";\n'
+        'const LABEL = "memory.restore";\n'
     )
     (src / "test" / "stub.ts").write_text('post("/v1/memory.touch", {});\n')
     (src / "Page.test.tsx").write_text('post("/v1/memory.unlock", {});\n')
