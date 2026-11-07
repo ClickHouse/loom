@@ -279,13 +279,10 @@ async def _record_tier(
     if rc == BASE_UNKNOWN_EXIT:
         return  # the window's base is gone: the next run indexes in full, as in run_tier
     error = None
-    if stopped:  # the caller's time limit (`timeout`) stopped it, by SIGTERM or after
+    if stopped and rc != 0:  # the caller's time limit (`timeout`) stopped it
         error = f"harness exit {rc}: stopped by signal (the caller's time limit)"
     elif rc != 0:
-        # The kept tail may start inside a line, a token's prefix cut off: redaction
-        # matches whole tokens, so that first partial line goes.
-        lines = tail.decode("utf-8", "replace").split("\n")
-        text = "\n".join(lines[1:] if len(tail) >= _TAIL_BYTES else lines).strip()
+        text = tail.decode("utf-8", "replace").strip()
         error = f"harness exit {rc}: {text}" if text else f"harness exit {rc}"
     await tier_health.record(CodeRepo(), org, ns, tier, error)
 

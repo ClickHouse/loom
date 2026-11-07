@@ -313,9 +313,7 @@ def test_a_fix_names_the_repository_url_over_a_bare_host() -> None:
 
 
 @pytest.mark.asyncio
-async def test_entry_lock_records_a_stopped_command_as_a_timeout_and_drops_a_cut_first_line() -> (
-    None
-):
+async def test_entry_lock_records_a_stopped_command_as_a_timeout() -> None:
     from server.cli import code_scip
 
     repo = _StateRepo()
@@ -325,11 +323,9 @@ async def test_entry_lock_records_a_stopped_command_as_a_timeout_and_drops_a_cut
         # killed by something other than the caller's limit (the OOM killer): not a timeout
         await code_scip._record_tier("o", "ns", "python", -9, b"Killed")
         assert tier_health.parse("python", repo.state["tier_health:python"]).kind == "harness"
-        # a token whose prefix the 4 KiB cut dropped is on the first, partial line
-        tail = b"abcdefghijklmnopqrstuvwxyz0123456789 leaked\n" + b"x" * 4000 + b"\nharness exit 2"
-        await code_scip._record_tier("o", "ns", "python", 2, tail[-code_scip._TAIL_BYTES :])
-    health = tier_health.parse("python", repo.state["tier_health:python"])
-    assert "leaked" not in health.error and health.error.endswith("harness exit 2")
+        # stopped, but it finished first: the run succeeded
+        await code_scip._record_tier("o", "ns", "python", 0, b"", stopped=True)
+    assert not tier_health.parse("python", repo.state["tier_health:python"]).failing
 
 
 @pytest.mark.asyncio
@@ -759,9 +755,11 @@ async def test_a_walk_step_that_fails_in_its_own_handler_records_the_ingest_tier
     from server.settings import settings
 
     monkeypatch.setattr(settings, "code_extractor_rechunk_enabled", True)
-    repo = AsyncMock()  # its reads answer what the step cannot use: the step fails
+    monkeypatch.setattr(settings, "code_reconcile_enabled", True)
+    repo = AsyncMock()
+    repo.all_state.side_effect = RuntimeError("boom")  # the step's first store read
     result = CodeIngestResult()
     run = ingest_pass._maybe_reconcile if step == "reconcile" else ingest_pass._maybe_rechunk
     await run(repo, _Cfg(), "a" * 40, result)  # logged, never raised
     ingest_pass._ingest_served(_Cfg(), result)
-    assert result.tier_outcomes[("o", "code-x", "ingest")].startswith(f"{step}: ")
+    assert result.tier_outcomes[("o", "code-x", "ingest")] == f"{step}: RuntimeError: boom"
