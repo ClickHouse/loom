@@ -117,11 +117,15 @@ def test_a_long_name_keeps_all_of_itself() -> None:
 
 
 @pytest.mark.parametrize(
-    "raw", ["İstanbul/" + "a" * 191, "İ" * 200, "ß" * 50 + "S", "\ufb01" * 128, "\ufb01" * 129]
+    "raw", ["İstanbul/" + "a" * 191, "İ" * 200, "ß" * 50 + "S", "\ufb01" * 128]
 )
 def test_text_lowercasing_lengthens_is_a_fixed_point_too(raw: str) -> None:
     once = canonical_entity_text(raw)
-    assert canonical_entity_text(once) == once
+    assert once and canonical_entity_text(once) == once
+
+
+def test_text_normalised_one_past_the_cap_is_no_entity() -> None:
+    assert canonical_entity_text("\ufb01" * 129) == ""  # 258 characters once normalised
 
 
 @pytest.mark.parametrize(

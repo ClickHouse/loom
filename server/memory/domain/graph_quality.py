@@ -239,8 +239,8 @@ _FIRST_PERSON_FORMS = frozenset(
 SELF_SUBJECT = "user"
 # The most triples one memory row states; the triple writer keeps the first ones.
 MAX_TRIPLES_PER_ROW = 8  # not a setting: a wire bound of `relations`
-# The longest entity name kept, as written. Longer text is not a name, and a read binds
-# names as query parameters, which ClickHouse caps at 128 KiB each.
+# The longest entity name kept, as written and once normalised. Longer text is not a
+# name, and a read binds names as query parameters, which ClickHouse caps at 128 KiB each.
 MAX_ENTITY_CHARS = 256  # not a setting: a wire bound of a triple's subject and object
 
 # Singularize the head noun so distinct-thing COUNTs don't split on

@@ -274,9 +274,7 @@ def _canonical_at_least(min_chars: int, canonical: Any, dropped: str, needs: str
 
 def _fits_entity(raw: str) -> str:
     if not fits_entity(raw):
-        raise ValueError(
-            f"{raw[:40]!r}… is longer than {MAX_ENTITY_CHARS} characters once normalised"
-        )
+        raise ValueError(f"{raw!r} is longer than {MAX_ENTITY_CHARS} characters once normalised")
     return raw
 
 

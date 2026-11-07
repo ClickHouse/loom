@@ -530,8 +530,9 @@ def test_an_entity_filter_of_only_long_names_falls_back_to_the_parsed_entities()
     from server.memory.app.search.scope import _entity_filter
     from server.memory.domain.graph_quality import MAX_ENTITY_CHARS
 
-    long = "x" * (MAX_ENTITY_CHARS + 1)
-    own = MemorySearchInput(org="o", namespace="n", query="q", entity_filter=[long, "Ann"])
-    assert _entity_filter(own, ["Bob"]) == ["Ann"]
-    only_long = MemorySearchInput(org="o", namespace="n", query="q", entity_filter=[long])
-    assert _entity_filter(only_long, ["Bob", long]) == ["Bob"]
+    # the ligature run is short as written, past the cap once normalised
+    for long in ("x" * (MAX_ENTITY_CHARS + 1), "\ufb01" * (MAX_ENTITY_CHARS // 2 + 1)):
+        own = MemorySearchInput(org="o", namespace="n", query="q", entity_filter=[long, "Ann"])
+        assert _entity_filter(own, ["Bob"]) == ["Ann"]
+        only_long = MemorySearchInput(org="o", namespace="n", query="q", entity_filter=[long])
+        assert _entity_filter(only_long, ["Bob", long]) == ["Bob"]
