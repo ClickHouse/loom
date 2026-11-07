@@ -47,13 +47,18 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
 ## Cutting the release
 
 1. Check that a scheduled run of `.github/workflows/docker-smoke.yml` on `main` from the past week
-   passed (`gh run list -R ClickHouse/loom --workflow docker-smoke.yml --event schedule --branch main
--L 1 --json conclusion,createdAt,headSha`), or start a fresh one with
-   `gh workflow run docker-smoke.yml -R ClickHouse/loom --ref main` and read it with
-   `--event workflow_dispatch` in place of `--event schedule`. It scans both images as the release
-   does, and a scheduled run's failure notifies only the last editor of its schedule. A red scan
-   names the package: move the pin that brings it in (a `Dockerfile` `ARG` or base-image digest, or a
-   lock file) on `main` first; a Debian package fixed upstream needs only a fresh build.
+   passed:
+
+   ```bash
+   gh run list -R ClickHouse/loom --workflow docker-smoke.yml --event schedule --branch main -L 1 --json conclusion,createdAt,headSha
+   ```
+
+   Or start a fresh one with `gh workflow run docker-smoke.yml -R ClickHouse/loom --ref main` and read
+   it with `--event workflow_dispatch` in place of `--event schedule`. It scans both images as the
+   release does, and a scheduled run's failure notifies only the last editor of its schedule. A red
+   scan names the package: move the pin that brings it in (a `Dockerfile` `ARG` or base-image digest,
+   or a lock file) on `main` first; a Debian package fixed upstream needs only a fresh build.
+
 2. On a branch from `main`, open a pull request that sets the version everywhere above, with the
    [release notes](#release-notes) section in its description. CI must pass, including
    `make schema-check` and the strict migration dry run.
