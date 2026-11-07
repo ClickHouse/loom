@@ -211,11 +211,11 @@ def _shapes(text: str, level: str) -> tuple[str, ...]:
     # and `email` rows by default. An IBAN-only row is `other`, applied by the operator's run.
     if level == HIGH:
         shapes.append("credential")
-    from server.memory.domain.sensitivity import _MEDIUM_PATTERNS
+    from server.memory.domain.sensitivity import PHONE, has_email
 
-    if _MEDIUM_PATTERNS[0].search(text):  # the detector's own email shape
+    if has_email(text):  # the detector's own shapes
         shapes.append("email")
-    if _MEDIUM_PATTERNS[1].search(text):
+    if PHONE.search(text):
         shapes.append("phone")
     return tuple(shapes) or ("other",)
 

@@ -35,6 +35,7 @@ from __future__ import annotations
 import bisect
 import json
 import re
+import string
 from collections.abc import Callable, Hashable, Iterable, Iterator, Sequence
 from typing import Any, Final, Literal, TypeGuard, get_args
 
@@ -102,15 +103,32 @@ _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(rf"(?i)\b(?:{ASSIGNMENT_WORDS})\b\s*[:=]\s*[\"']?{_ASSIGNMENT_VALUE_CHAR}{{8,}}"),
 )
 
-_MEDIUM_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # Email, its parts bounded by RFC 5321's lengths: an unbounded local part
-    # rescans a long run with no `@` from every word boundary (quadratic).
-    re.compile(r"\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}\b"),
-    # Phone numbers: E.164 (+14155550123) or grouped national forms with at
-    # least 10 digits — separators allowed, so "415-555-0123" and
-    # "(415) 555 0123" match but a 4-digit year or a 6-digit count does not.
-    re.compile(r"(?<![\w.])(?:\+?\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?![\w.])"),
-)
+# An email is `<local>@<domain>`, its parts bounded by RFC 5321's lengths: a local part of
+# 1-64 of these characters that starts at a word boundary, a domain of at most 253 with a
+# 2-24 letter top level. It is found from its `@`: a regex starting at every word boundary
+# rescans up to 64 characters from each one, and its domain again from each start.
+_EMAIL_LOCAL_CHARS = string.ascii_letters + string.digits + "._%+-"
+_EMAIL_DOMAIN = re.compile(r"@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}\b")
+_WORD_BOUNDARY = re.compile(r"\b")
+
+
+def has_email(text: str) -> bool:
+    """Whether `text` holds an email address; reads each `@` with a domain once."""
+    for m in _EMAIL_DOMAIN.finditer(text):
+        at = m.start()
+        before = text[max(0, at - 64) : at]
+        local = len(before) - len(before.rstrip(_EMAIL_LOCAL_CHARS))
+        if local:
+            start = _WORD_BOUNDARY.search(text, at - local, at)
+            if start is not None and start.start() < at:
+                return True
+    return False
+
+
+# Phone numbers: E.164 (+14155550123) or grouped national forms with at least 10 digits —
+# separators allowed, so "415-555-0123" and "(415) 555 0123" match but a 4-digit year or a
+# 6-digit count does not.
+PHONE = re.compile(r"(?<![\w.])(?:\+?\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?![\w.])")
 
 # The patterns below are ASCII-only (`re.ASCII`), as RE2 is in the sweep's coarse filter,
 # so a row the write path labels is a row the sweep can select.
@@ -405,7 +423,7 @@ def detect_sensitivity(text: str) -> Sensitivity:
         return ""
     if _reads_high_text(text):
         return HIGH
-    if any(pat.search(text) for pat in _MEDIUM_PATTERNS) or _iban_spans(text):
+    if has_email(text) or PHONE.search(text) or _iban_spans(text):
         return MEDIUM
     return ""
 

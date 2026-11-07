@@ -28,6 +28,7 @@ class _FakeTransport:
         self.row_extra: dict[str, dict[str, Any]] = {}
         # Values that get no result row at all, as N-1 answers a blacklisted entry.
         self.dropped_values: set[str] = set()
+        self.refused = {"blacklisted", "blacklist_unchecked"}
 
     async def post(
         self, op_path: str, payload: dict[str, Any], idempotency_key=None, *, timeout_s=None
@@ -50,6 +51,8 @@ class _FakeTransport:
                         "version": 0
                         if e["memory_key"] in self.bulk_extra.get("merged", [])
                         or str(e["value"]) in self.unchanged_values
+                        # a refused entry writes no row (version 0), as the server answers
+                        or self.value_verdicts.get(str(e["value"])) in self.refused
                         else 100 + i,
                         "conflict_verdict": self.value_verdicts.get(
                             str(e["value"]), self.row_verdicts.get(e["memory_key"], "")
@@ -137,6 +140,50 @@ async def test_a_coalesced_set_the_blacklist_could_not_check_is_sent_alone(agent
     assert t.paths()[-1] == "/v1/memory.set" and t.calls[-1][1]["memory_key"] == "d"
     alone = results["abcde".index("d")]
     assert alone["version"] == 7 and "coalesced" not in alone
+
+
+async def _sets_of_one_key(agent: Agent, values: list[str]) -> list[Any]:
+    """Two point writes, then `values` as sets of key `k` in one batch."""
+    sets = [agent.memory.set("a", "a"), agent.memory.set("b", "b")]
+    sets += [agent.memory.set("k", v) for v in values]
+    return list(await asyncio.gather(*sets, return_exceptions=True))
+
+
+def _alone_values(t: Any) -> list[str]:
+    return [
+        p["value"] for path, p in t.calls if path == "/v1/memory.set" and p["memory_key"] == "k"
+    ]
+
+
+async def test_an_unchecked_set_a_later_set_of_its_key_overwrote_is_not_resent(
+    agent: Agent,
+) -> None:
+    # Resending the older value alone would land it after the newer one the batch wrote.
+    t: Any = agent.transport
+    t.value_verdicts = {"old": "blacklist_unchecked"}
+    *_, old, new = await _sets_of_one_key(agent, ["old", "new"])
+    assert _alone_values(t) == []
+    assert old["noop"] is True and old["conflict_verdict"] == "blacklist_unchecked"
+    assert new["noop"] is False
+
+
+async def test_of_two_unchecked_sets_of_one_key_only_the_last_is_resent(agent: Agent) -> None:
+    t: Any = agent.transport
+    t.value_verdicts = {"old": "blacklist_unchecked", "new": "blacklist_unchecked"}
+    *_, old, new = await _sets_of_one_key(agent, ["old", "new"])
+    assert _alone_values(t) == ["new"]
+    assert old["noop"] is True and new["version"] == 7
+
+
+async def test_an_unchecked_set_whose_later_set_was_refused_is_resent(agent: Agent) -> None:
+    # The refused value never landed, so the key's last value is the unchecked one.
+    from loom.errors import ValidationError
+
+    t: Any = agent.transport
+    t.value_verdicts = {"old": "blacklist_unchecked", "new": "blacklisted"}
+    *_, old, new = await _sets_of_one_key(agent, ["old", "new"])
+    assert _alone_values(t) == ["old"]
+    assert old["version"] == 7 and isinstance(new, ValidationError)
 
 
 async def test_a_coalesced_set_against_a_pinned_row_raises_as_alone(agent: Agent) -> None:

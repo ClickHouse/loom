@@ -229,7 +229,7 @@ async def test_an_entry_the_blacklist_could_not_check_says_so(
 
     async def _find(*, org: str, namespace: str, value: str) -> Any:
         if "Friday" in value:
-            return bl._over_budget(org, namespace, "namespace", len(value), 300)
+            return bl._over_budget(org, namespace, "namespace", len(value), 300, alone=False)
         if "Monday" in value:
             return bl.BlacklistPattern("p1", org, namespace, "Monday", "substring", "namespace", "")
         return None

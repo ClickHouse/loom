@@ -1066,7 +1066,7 @@ Write exported evidence chunks and digests into a namespace, re-embedded here an
 | `embedding_dim` | `int` | Vector length of the written embeddings; 0 when nothing was embedded (every item read as high, or none was written). |
 | `edited` | `list[str]` | Chunks whose body did not hash to the content_sha256 they arrived with. |
 | `skipped` | `int` | Items not written: empty, unembeddable, or refused by a blacklist pattern (Refuse). |
-| `unchecked` | `int` | Of the skipped, those the blacklist could not check: the request's values are too long for its regexes; sent in a smaller request they are checked. |
+| `unchecked` | `int` | Of the skipped, those the blacklist could not check: the request's values are too long for its regexes; sent in a smaller request they are checked, unless one is too long alone, which must be shortened. |
 
 ## `memory.inspect`
 

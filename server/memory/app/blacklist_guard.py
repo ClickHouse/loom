@@ -11,14 +11,12 @@ scope first, so a namespace pattern beats an org pattern beats a global one.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import threading
 import time
-from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from fastapi import HTTPException
@@ -26,7 +24,7 @@ from fastapi import HTTPException
 from server.core.caller_regex import compile_caller_regex
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now_seconds
-from server.core.errors import ValidationError
+from server.core.errors import OverloadedError, ValidationError
 from server.memory.store import blacklist as _repo
 from server.settings import settings
 
@@ -48,13 +46,22 @@ REGEX_PROGRAM_PER_SCOPE = 3_000  # not a setting: with the budget below, bounds 
 # together), about a second of a matcher thread at worst; a value past it is refused,
 # as if a pattern matched.
 REGEX_WORK_BUDGET = 250_000_000  # not a setting: what keeps one write from holding them
-# Regex matching runs on its own few threads (RE2 releases the GIL), so a long value
-# under many patterns waits for these, never the event loop or the shared pool.
-_MATCHERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="loom-blacklist")
-# Searches one org may run on them at once: the rest of its requests wait their turn
-# here, so another org's write finds a free thread (a running search cannot be stopped).
-MATCHERS_PER_ORG = 2  # not a setting: half of _MATCHERS, so one org never holds them all
+# Regex matching runs on its own few threads per process (RE2 releases the GIL), so a
+# long value under many patterns waits for these, never the event loop or the shared pool.
+MATCHER_THREADS = 4
+_MATCHERS = ThreadPoolExecutor(max_workers=MATCHER_THREADS, thread_name_prefix="loom-blacklist")
+# Searches one org may run on them at once in a process: the rest of its requests wait
+# their turn, so another org's write finds a free thread. A search holds its turn until
+# its thread is done, even when its request is cancelled, since RE2 cannot be stopped.
+MATCHERS_PER_ORG = MATCHER_THREADS // 2
+# A turn on a thread per org, kept for the process's life: orgs come from verified
+# tokens, so they are few.
 _org_slots: dict[str, asyncio.Semaphore] = {}
+_thread_slots = asyncio.Semaphore(MATCHER_THREADS)
+# How long a search waits for its turn before the write is refused as overloaded: a few
+# times the longest search (the work budget, about a second), so a write waits out the
+# searches ahead of it but never queues without end.
+MATCHER_WAIT_S = 5.0  # not a setting: follows from the work budget's second
 # Bytes x instructions this request's regexes scanned, a bulk write's entries together;
 # bound by the transports for each op. A worker binds none: there the budget is per value.
 _request_work: ContextVar[list[int] | None] = ContextVar("blacklist_regex_work", default=None)
@@ -258,24 +265,50 @@ async def find_match(
         return _over_budget(org, namespace, widest, len(data), program, alone=alone)
     if spent_box is not None:
         spent_box[0] = spent
-    async with _org_slot(org):
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(_MATCHERS, _first_match, applicable, value, data)
+    return await _search(org, applicable, value, data)
 
 
-@contextlib.asynccontextmanager
-async def _org_slot(org: str) -> AsyncIterator[None]:
-    """One of `org`'s MATCHERS_PER_ORG turns on the matcher threads; an org with
-    nothing running or waiting holds no entry."""
-    slots = _org_slots.get(org)
-    if slots is None:
-        slots = _org_slots[org] = asyncio.Semaphore(MATCHERS_PER_ORG)
+async def _search(
+    org: str, applicable: list[BlacklistPattern], value: str, data: bytes
+) -> BlacklistPattern | None:
+    """`_first_match` on a matcher thread, after one of `org`'s MATCHERS_PER_ORG turns
+    and a free thread; 503 OVERLOADED (the write refused) past `MATCHER_WAIT_S`."""
+    org_slots = _org_slots.get(org)
+    if org_slots is None:
+        org_slots = _org_slots[org] = asyncio.Semaphore(MATCHERS_PER_ORG)
+    held: list[asyncio.Semaphore] = []
     try:
-        async with slots:
-            yield
-    finally:
-        if _org_slots.get(org) is slots and slots._value == MATCHERS_PER_ORG:
-            del _org_slots[org]
+        async with asyncio.timeout(MATCHER_WAIT_S):
+            for slots in (org_slots, _thread_slots):
+                await slots.acquire()
+                held.append(slots)
+    except BaseException as e:
+        for slots in held:
+            slots.release()
+        if isinstance(e, TimeoutError):
+            raise OverloadedError(
+                "every blacklist matcher this org may use is busy; retry shortly",
+                retry_after_s=1,
+            ) from None
+        raise
+
+    def _done(fut: asyncio.Future[BlacklistPattern | None]) -> None:
+        for slots in held:
+            slots.release()
+        if not fut.cancelled():
+            fut.exception()  # read, so a cancelled caller's failed search logs nothing
+
+    try:
+        fut = asyncio.get_running_loop().run_in_executor(
+            _MATCHERS, _first_match, applicable, value, data
+        )
+    except BaseException:
+        for slots in held:
+            slots.release()
+        raise
+    fut.add_done_callback(_done)
+    # The turns are released when the thread is done, not when this request is cancelled.
+    return await asyncio.shield(fut)
 
 
 def _first_match(
@@ -293,35 +326,47 @@ def _first_match(
     )
 
 
+@dataclass(frozen=True)
+class OverBudget(BlacklistPattern):
+    """The refusal of a value too long for the regexes its scopes hold to check: no
+    stored pattern (pattern_id ""), `scope` the widest that holds one."""
+
+    size: int = 0  # the value's bytes
+    program: int = 0  # the RE2 instructions of the regexes that apply
+    alone: bool = False  # the value by itself is past the budget: no smaller request checks it
+
+    def message(self, *, narrowed: bool) -> str:
+        """The refusal's text; under a narrowed token without the instruction count,
+        which sums other principals' patterns."""
+        advice = (
+            "shorten the value, or remove regex patterns"
+            if self.alone
+            else "send less in one request, or remove regex patterns"
+        )
+        counts = "" if narrowed else f" ({self.size} bytes here, {self.program} RE2 instructions)"
+        return (
+            "this request's values are too long to check against the blacklist regexes "
+            f"that apply{counts}; {advice}"
+        )
+
+
 def _over_budget(
-    org: str, namespace: str, scope: str, size: int, program: int, *, alone: bool = False
-) -> BlacklistPattern:
-    """The refusal of a value too long for the regexes its scopes hold to check;
-    `scope` is the widest that holds one, and `alone` says the value by itself is past
-    the budget, so no smaller request checks it."""
-    advice = (
-        "shorten the value, or remove regex patterns"
-        if alone
-        else "send less in one request, or remove regex patterns"
-    )
-    return BlacklistPattern(
+    org: str, namespace: str, scope: str, size: int, program: int, *, alone: bool
+) -> OverBudget:
+    """The refusal of a `size`-byte value under regexes of `program` instructions."""
+    refusal = OverBudget(
         pattern_id="",
         org=org,
         namespace=namespace,
         pattern="",
         pattern_type="regex",
         scope=scope,
-        reason=(
-            "this request's values are too long to check against the blacklist regexes "
-            f"that apply ({size} bytes here, {program} RE2 instructions); {advice}"
-        ),
+        reason="",
+        size=size,
+        program=program,
+        alone=alone,
     )
-
-
-def _without_program(reason: str) -> str:
-    """An over-budget reason without its byte and instruction counts."""
-    head, _, rest = reason.partition(" (")
-    return head + rest[rest.find(");") + 1 :] if ");" in rest else reason
+    return replace(refusal, reason=refusal.message(narrowed=False))
 
 
 # Refusals per pattern since its last hit-count write, and when that was.
@@ -388,11 +433,10 @@ async def enforce_on_insert(
     await note_hit(hit.pattern_id)
     from server.identity.app.request_scope import request_narrowed
 
-    if not hit.pattern_id:  # no stored pattern matched: the value is too long to check
-        # The instruction count sums other principals' patterns: not for a narrowed token.
+    if isinstance(hit, OverBudget):  # no stored pattern matched: the value is too long to check
         detail = {
             "code": "BLACKLISTED",
-            "message": _without_program(hit.reason) if request_narrowed() else hit.reason,
+            "message": hit.message(narrowed=request_narrowed()),
             "scope": hit.scope,
             "pattern_id": "",
         }

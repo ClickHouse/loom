@@ -23,6 +23,7 @@ from server.memory.domain.sensitivity import (
     contact_intent,
     detect_sensitivity,
     detector_text,
+    has_email,
     high_spans,
     reads_high,
     resolve_sensitivity,
@@ -316,7 +317,7 @@ def test_detector_text_reads_plain_values_as_written_and_never_recurses() -> Non
     assert detector_text(deep) == "sk-" + "a" * 24
 
 
-def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatch) -> None:
     # The write path detects on the decoded value, not the stored JSON.
     from types import SimpleNamespace
 
@@ -324,7 +325,7 @@ def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatc
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_sensitivity_autodetect", True)
-    level, _tags = _update_sensitivity(
+    level, _tags = await _update_sensitivity(
         SimpleNamespace(sensitivity=""), json.dumps({"note": "token:\n" + _TOKEN}), []
     )
     assert level == "high"
@@ -748,11 +749,54 @@ def _read_long_runs(n: int) -> None:
     assert detect_sensitivity("PIN for" + " " * n + "x") == ""
     assert detect_sensitivity("PIN for the" + " " * n + "door") == ""
     assert detect_sensitivity("GB82WEST12345698765432 " * (n // 10)) == "medium"
-    # a run of local-part or token characters with no `@` / `.` is scanned at most 64
-    # characters from each word boundary, not to its end (the email and JWT shapes)
+    # an email is read from its `@`, so a run of local-part characters is never rescanned;
+    # a JWT starts only where a run of its characters starts, so a run is read once
     assert detect_sensitivity("a-" * (n // 2)) == ""
     assert detect_sensitivity("a@" + "b." * (n // 2)) == ""
     assert detect_sensitivity("eyJ-" * (n // 4)) == ""
+
+
+# The email shape as one regex: a local part of 1-64 characters from a word boundary.
+_EMAIL_AS_REGEX = re.compile(r"\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}\b")
+
+
+def test_has_email_finds_what_the_email_regex_finds() -> None:
+    import random
+
+    rng = random.Random(7)
+    alphabet = "aZ9.-_%+@ /\u00e9"
+    for _ in range(20_000):
+        text = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 90)))
+        if rng.random() < 0.3:
+            text = "a-" * rng.randint(20, 50) + text  # a local-part run past 64
+        if rng.random() < 0.5:
+            text += "@ab.cd"
+        assert has_email(text) == bool(_EMAIL_AS_REGEX.search(text)), text
+    assert has_email("a-" * 40 + "b@x.com")  # the last 64 characters before `@` count
+    assert not has_email("x" * 65 + "@x.com")
+
+
+def _fastest(read: Callable[[str], object], text: str) -> float:
+    times = []
+    for _ in range(3):
+        started = time.perf_counter()
+        read(text)
+        times.append(time.perf_counter() - started)
+    return min(times)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        ("a-" * 32 + "@" + "ab1." * 63) * 300,  # local-part runs, each with a long domain
+        ("@" + "a." * 126 + "a") * 400,  # domains with a dot at every other character
+    ],
+)
+def test_an_email_is_read_once_from_its_at(text: str) -> None:
+    # A regex starting at every word boundary rescans up to 64 characters, and the domain
+    # again, from each one: about a hundred times one pass over the text.
+    one_pass = _fastest(re.compile(r"[^\x00-\x7f]").search, text)
+    assert _fastest(has_email, text) < 20 * one_pass
 
 
 def _read_escaped_quotes(n: int) -> None:
@@ -1014,3 +1058,25 @@ def test_an_email_and_a_jwt_still_read_as_before() -> None:
     jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJib2IifQ.c2lnbmF0dXJlLXZhbHVl"
     assert detect_sensitivity(f"token {jwt}") == "high"
     assert detect_sensitivity(f"Authorization: Bearer {jwt}") == "high"
+
+
+async def test_a_long_value_is_labelled_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Detection reads up to about a second per megabyte: past ON_LOOP_CHARS of one
+    # request's values it runs on a worker thread, the event loop's thread kept free.
+    import threading
+
+    from server.memory.app import sensitivity_level
+
+    threads: list[bool] = []
+
+    def _resolve(requested: str | None, text: str) -> str:
+        threads.append(threading.current_thread() is threading.main_thread())
+        return ""
+
+    monkeypatch.setattr(sensitivity_level, "resolve_sensitivity", _resolve)
+    limit = sensitivity_level.ON_LOOP_CHARS
+    await sensitivity_level.resolve_level("", "x" * limit)
+    await sensitivity_level.resolve_level("", "x" * (limit + 1))
+    # a bulk write's entries count together
+    await sensitivity_level.resolve_level("", "x", read_before=limit)
+    assert threads == [True, False, False]

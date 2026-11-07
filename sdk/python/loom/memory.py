@@ -161,13 +161,10 @@ class _SetCoalescer:
         rows_by_key: dict[str, list[dict[str, Any]]] = {}
         for written_row in res.get("written") or []:
             rows_by_key.setdefault(str(written_row.get("memory_key")), []).append(written_row)
-        unchecked: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]] = []
+        resolved: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]], dict[str, Any]]] = []
         for entry, fut in batch:
             rows = rows_by_key.get(str(entry["memory_key"])) or []
-            if fut.done():
-                if rows:
-                    rows.pop(0)  # keep the next entry of this key on its own row
-                continue
+            # popped even for a caller gone: the next entry of this key keeps its own row
             row = dict(rows.pop(0)) if rows else {"memory_key": entry["memory_key"], "version": 0}
             row["coalesced"] = True
             # Only the verdict the server stamped on this row counts. The key
@@ -175,22 +172,39 @@ class _SetCoalescer:
             # unstamped row (unchecked, or a restatement skipped) is clear.
             row["conflict_verdict"] = row.get("conflict_verdict") or "clear"
             row["noop"] = int(row.get("version") or 0) == 0
+            resolved.append((entry, fut, row))
+        # Read from the last entry back, so an entry knows whether a later one of its key
+        # landed: a value the blacklist could not check (the batch's values together were
+        # too long for its regexes) is sent alone, as a set alone would be checked, unless
+        # a later entry of the key landed or is sent alone, which a resend would undo.
+        resend: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]] = []
+        superseded: set[str] = set()
+        for entry, fut, row in reversed(resolved):
+            key = str(entry["memory_key"])
+            verdict = row["conflict_verdict"]
+            if verdict == "blacklist_unchecked":
+                if key in superseded:
+                    if not fut.done():
+                        fut.set_result(row)  # a no-op: a later value of the key holds
+                else:
+                    superseded.add(key)
+                    resend.append((entry, fut))
+                continue
             # A refused entry (a pinned or read_only key, a blacklisted value, a write
             # close to a pinned row) raises what the same set alone would have. The row
             # says so, not the key's list, since a restatement of the same key in the
             # batch is not refused.
-            if row["conflict_verdict"] == "blacklist_unchecked":
-                # The batch's values together were too long to check against the
-                # blacklist regexes; this one is checked, as a set alone would be.
-                unchecked.append((entry, fut))
+            refusal = _COALESCED_REFUSALS.get(verdict)
+            if refusal is None:
+                superseded.add(key)
+            if fut.done():
                 continue
-            refusal = _COALESCED_REFUSALS.get(row["conflict_verdict"])
             if refusal is not None:
                 status, detail = _refusal_detail(row, *refusal)
                 fut.set_exception(from_response({"detail": detail}, status))
-                continue
-            fut.set_result(row)
-        for entry, fut in unchecked:
+            else:
+                fut.set_result(row)
+        for entry, fut in reversed(resend):
             await self._set_alone(identity, entry, fut)
 
     async def _set_alone(

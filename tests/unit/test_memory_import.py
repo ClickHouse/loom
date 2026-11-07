@@ -1279,7 +1279,7 @@ async def test_an_entry_the_blacklist_could_not_check_names_that_reason(
 
     async def _find(*, org: str, namespace: str, value: str) -> Any:
         if "too long" in value:
-            return bl._over_budget(org, namespace, "namespace", len(value), 300)
+            return bl._over_budget(org, namespace, "namespace", len(value), 300, alone=False)
         return None
 
     monkeypatch.setattr("server.memory.app.blacklist_guard.find_match", _find)

@@ -778,6 +778,7 @@ def test_one_org_holds_at_most_its_share_of_the_matcher_threads(monkeypatch) -> 
     def _applies(p: Any, org: str, namespace: str) -> bool:
         return True
 
+    _fresh_slots(monkeypatch)
     monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
     monkeypatch.setattr(bl, "_first_match", _blocking)
     monkeypatch.setattr(bl, "_applies_to", _applies)
@@ -796,7 +797,99 @@ def test_one_org_holds_at_most_its_share_of_the_matcher_threads(monkeypatch) -> 
 
     asyncio.run(scene())
     assert most["a"] == bl.MATCHERS_PER_ORG
-    assert bl._org_slots == {}  # an idle org keeps no entry
+    # an org keeps its one semaphore, every turn back
+    assert set(bl._org_slots) == {"org-a", "org-b"}
+    assert all(not slots.locked() for slots in bl._org_slots.values())
+
+
+def _fresh_slots(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turns of this test's own: a semaphore a test waited on is bound to its loop."""
+    import server.memory.app.blacklist_guard as bl
+
+    monkeypatch.setattr(bl, "_org_slots", {})
+    monkeypatch.setattr(bl, "_thread_slots", asyncio.Semaphore(bl.MATCHER_THREADS))
+
+
+def _blocking_search(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, dict[str, int]]:
+    """`_first_match` replaced by a search that holds its thread until the returned
+    event is set, counting the searches running at once."""
+    import threading
+
+    import server.memory.app.blacklist_guard as bl
+
+    release = threading.Event()
+    counts = {"running": 0, "most": 0}
+    lock = threading.Lock()
+
+    def _blocking(patterns: Any, value: str, data: Any) -> Any:
+        with lock:
+            counts["running"] += 1
+            counts["most"] = max(counts["most"], counts["running"])
+        release.wait(10)
+        with lock:
+            counts["running"] -= 1
+        return None
+
+    _fresh_slots(monkeypatch)
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "_first_match", _blocking)
+    monkeypatch.setattr(bl, "_cache", [_pattern("r", "namespace", "x+", "regex")])
+    return release, counts
+
+
+def test_a_cancelled_search_keeps_its_turn_until_its_thread_is_done(monkeypatch) -> None:
+    """RE2 cannot be stopped: a cancelled request's search still runs, so its turn is
+    given back when the thread is done, and the org never runs more than its share."""
+    import server.memory.app.blacklist_guard as bl
+
+    release, counts = _blocking_search(monkeypatch)
+
+    async def scene() -> None:
+        first = [
+            asyncio.create_task(bl.find_match(org=ORG, namespace=NS, value="x"))
+            for _ in range(bl.MATCHERS_PER_ORG)
+        ]
+        await asyncio.sleep(0.2)
+        for task in first:
+            task.cancel()
+        later = [
+            asyncio.create_task(bl.find_match(org=ORG, namespace=NS, value="x"))
+            for _ in range(bl.MATCHERS_PER_ORG)
+        ]
+        await asyncio.sleep(0.2)
+        assert counts["running"] == bl.MATCHERS_PER_ORG  # the later ones still wait
+        release.set()
+        await asyncio.gather(*first, *later, return_exceptions=True)
+
+    asyncio.run(scene())
+    assert counts["most"] == bl.MATCHERS_PER_ORG
+
+
+def test_a_search_that_waits_too_long_for_its_turn_refuses_the_write(monkeypatch) -> None:
+    """A write never queues without end behind its org's searches, and never passes
+    unchecked: past MATCHER_WAIT_S it is refused 503 OVERLOADED."""
+    import server.memory.app.blacklist_guard as bl
+    from server.core.errors import OverloadedError
+
+    release, _counts = _blocking_search(monkeypatch)
+    monkeypatch.setattr(bl, "MATCHER_WAIT_S", 0.2)
+
+    async def scene() -> None:
+        busy = [
+            asyncio.create_task(bl.find_match(org=ORG, namespace=NS, value="x"))
+            for _ in range(bl.MATCHERS_PER_ORG)
+        ]
+        await asyncio.sleep(0.05)
+        try:
+            with pytest.raises(OverloadedError):
+                await bl.enforce_on_insert(org=ORG, namespace=NS, value="x")
+        finally:
+            release.set()
+            await asyncio.gather(*busy)
+        # every turn is back: the next search runs
+        assert await bl.find_match(org=ORG, namespace=NS, value="x") is None
+
+    asyncio.run(scene())
 
 
 def test_a_blacklist_regex_keeps_no_captures_and_a_small_memory() -> None:
