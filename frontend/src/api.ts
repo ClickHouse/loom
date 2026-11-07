@@ -1523,6 +1523,7 @@ export async function getTaxonomy(
 export * from "./api/knowledge";
 export * from "./api/conversations";
 export * from "./api/admin";
+export * from "./api/review";
 // The audit-log read the sidebar badge calls, kept apart from admin.ts so the shell carries only it.
 export * from "./api/audit";
 export * from "./api/autoResolve";

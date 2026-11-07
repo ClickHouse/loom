@@ -27,7 +27,13 @@ import {
   type ResolveDecision,
   type LearningEntry,
   type LearningStatus,
+  listProposals,
+  proposeRevision,
+  type MemoryProposal,
+  type RevisionSuggestion,
 } from "../../api";
+import { DuplicatesPanel } from "./Duplicates";
+import { ProposalsPanel } from "./Proposals";
 import { useIdentity, useStore } from "../../lib/state";
 import { IconButton } from "../../components/IconButton";
 import { Panel } from "../../components/ui/Panel";
@@ -62,6 +68,9 @@ import { PageContainer } from "../../layout/PageContainer";
  *   - Auto-resolved: memories Loom retired on its own (`memory.auto_supersede`), each
  *                    with an Undo (`memory.restore`)
  *   - Exceptions:  allowlist of pairs we've explicitly said may coexist
+ *   - Proposals:   facts on trial, accepted or rejected by hand
+ *   - Duplicates:  the dedup worker's pairs, memories and documents, and the repairs
+ *                  (admin only)
  */
 // Radix's tab panel attributes, cleared while Conflicts is the only panel.
 const LONE_PANEL = { role: undefined, "aria-labelledby": undefined, tabIndex: undefined };
@@ -92,7 +101,12 @@ export function ReviewQueue() {
   const whoami = useStore((s) => s.whoami);
   const role = useNamespaceRole(identity.namespace);
   const autoReadable = canCall("memory.auto_retirements", role, whoami) && canCall("audit.list", role, whoami);
-  const tabbed = hasLearnings || hasExceptions || hasAuto;
+  // The duplicate lists are ADMIN; the tab is there for an admin whether or not a pair waits,
+  // since its repairs run over the whole namespace.
+  const hasDuplicates = canCall("memory.dedup_list", role, whoami) && canCall("knowledge.dedup_list", role, whoami);
+  const [probedProposals, setProbedProposals] = useState<{ rows: MemoryProposal[]; scope: string } | null>(null);
+  const hasProposals = probedProposals?.scope === scopeKey && probedProposals.rows.length > 0;
+  const tabbed = hasLearnings || hasExceptions || hasAuto || hasProposals || hasDuplicates;
   // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
   // they revealed) must not outlive it, or a namespace with neither sub-tab strands the
   // viewer on a hidden panel.
@@ -124,6 +138,20 @@ export function ReviewQueue() {
         });
     },
     [identity.org, identity.namespace],
+  );
+  // Proposals read once the role is known to reach them; the probe keeps its scope, so a
+  // namespace switch hides the previous namespace's tab.
+  const proposalsReadable = canCall("memory.proposals", role, whoami);
+  useAbortableEffect(
+    (signal, live) => {
+      if (!proposalsReadable) return;
+      listProposals({ org: identity.org, namespace: identity.namespace }, { signal })
+        .then((r) => {
+          if (live()) setProbedProposals({ rows: r.proposals ?? [], scope: scopeKey });
+        })
+        .catch(() => {});
+    },
+    [identity.org, identity.namespace, proposalsReadable],
   );
   useAbortableEffect(
     (_signal, live) => {
@@ -182,6 +210,16 @@ export function ReviewQueue() {
                 Exceptions
               </TabTrigger>
             )}
+            {hasProposals && (
+              <TabTrigger value="proposals" icon="question">
+                Proposals
+              </TabTrigger>
+            )}
+            {hasDuplicates && (
+              <TabTrigger value="duplicates" icon="copy">
+                Duplicates
+              </TabTrigger>
+            )}
           </Tabs.TriggersList>
         )}
         <Tabs.Content value="conflicts" {...(!tabbed && LONE_PANEL)}>
@@ -209,6 +247,16 @@ export function ReviewQueue() {
               initial={seedsUsed.exceptions ? null : probedExceptions}
               onSeedUsed={() => setSeedsUsed((u) => ({ ...u, exceptions: true }))}
             />
+          </Tabs.Content>
+        )}
+        {hasProposals && (
+          <Tabs.Content value="proposals">
+            <ProposalsPanel initial={probedProposals.rows} />
+          </Tabs.Content>
+        )}
+        {hasDuplicates && (
+          <Tabs.Content value="duplicates">
+            <DuplicatesPanel />
           </Tabs.Content>
         )}
       </Tabs>
@@ -505,6 +553,7 @@ function ConflictsPanel() {
             Keep A
           </Button>
         </div>
+        <RevisionHint key={current.memory_id} memoryId={current.memory_id} peerId={peerId} />
       </Panel>
 
       <SectionHeading
@@ -530,6 +579,55 @@ function ConflictsPanel() {
           Load more
         </BusyButton>
       )}
+    </div>
+  );
+}
+
+/** A suggestion in the words of the buttons above it: A is the conflict on screen
+ *  (local id 1), any other target is named by its key. */
+function suggestionLabel(s: RevisionSuggestion, keys: Map<number, string>): string {
+  if (s.decision === "allow") return "Allow both";
+  const target = s.target_local_id === 1 ? "A" : (keys.get(s.target_local_id) ?? "the peer");
+  return `${s.decision === "revise" ? "Keep" : "Drop"} ${target}`;
+}
+
+/** conflicts.propose_revision for the conflict on screen, read when asked: which of the
+ *  three decisions fits and why. It changes nothing. */
+function RevisionHint({ memoryId, peerId }: { memoryId: string; peerId?: string }) {
+  const identity = useIdentity();
+  const [hint, setHint] = useState<{ suggestions: RevisionSuggestion[]; keys: Map<number, string> } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const ask = async () => {
+    setBusy(true);
+    try {
+      const r = await proposeRevision({ org: identity.org, namespace: identity.namespace }, memoryId, peerId);
+      setHint({
+        suggestions: r.suggestions ?? [],
+        keys: new Map((r.memories ?? []).map((m) => [m.local_id, m.memory_key])),
+      });
+    } catch (e) {
+      toast(`Couldn't read a suggestion: ${humanizeError(e)}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (hint === null)
+    return (
+      <div className="mt-3">
+        <Link component="button" size="sm" onClick={() => void ask()} disabled={busy}>
+          Suggest a decision
+        </Link>
+      </div>
+    );
+  return (
+    <div className="mt-3 text-sm" role="status">
+      {hint.suggestions.length === 0
+        ? "No suggestion for this conflict."
+        : hint.suggestions.map((s) => (
+            <p key={`${s.decision}-${s.target_local_id}`}>
+              <strong>{suggestionLabel(s, hint.keys)}</strong>: {s.rationale}
+            </p>
+          ))}
     </div>
   );
 }

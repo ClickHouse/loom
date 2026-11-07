@@ -126,6 +126,12 @@ export const OP_MIN_ROLE = {
   "policy.decisions": VIEWER,
   "consolidations.list": VIEWER,
   "conflicts.allowlist_list": VIEWER,
+  // The Review queue's Duplicates tab.
+  "memory.dedup_list": ADMIN,
+  "knowledge.dedup_list": ADMIN,
+  // The Review queue's Proposals tab: read by a viewer, decided by a writer.
+  "memory.proposals": VIEWER,
+  "memory.proposal_decide": WRITER,
   // The task inbox plane. The header bell polls `task.counts` only for a known role; the
   // Tasks view offers each action to a role that reaches it (the handler still authorizes
   // against the inbox's owner namespace).

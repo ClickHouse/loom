@@ -29,6 +29,11 @@ vi.mock("../../api", async (importOriginal) => {
     listUnsuperseded: vi.fn(),
     restoreMemory: vi.fn(),
     getMemoryById: vi.fn(),
+    listProposals: vi.fn(async () => ({ proposals: [], total: 0 })),
+    proposeRevision: vi.fn(),
+    listMemoryDuplicates: vi.fn(async () => ({ clusters: [] })),
+    listDocumentDuplicates: vi.fn(async () => ({ doc_clusters: [] })),
+    listWritingAgents: vi.fn(async () => []),
   };
 });
 // The page's yes/no probe is shared with the sidebar and lives in api/audit.
@@ -51,6 +56,7 @@ import {
   listConflicts,
   listLearnings,
   listUnsuperseded,
+  proposeRevision,
   resolveConflict,
   restoreMemory,
 } from "../../api";
@@ -174,6 +180,25 @@ describe("ReviewQueue", () => {
   afterEach(() => {
     cleanup();
     useStore.setState({ whoami: null, myNamespaces: null });
+  });
+
+  it("suggests a decision in the words of the buttons, naming a peer by its key", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    vi.mocked(proposeRevision).mockResolvedValue({
+      found: true,
+      memories: [
+        { local_id: 1, memory_id: "id-city", memory_key: "city" },
+        { local_id: 2, memory_id: "peer-000000000000", memory_key: "home_city" },
+      ],
+      suggestions: [{ decision: "contract", target_local_id: 2, peer_local_ids: [1], rationale: "A is pinned" }],
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of city", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: "Suggest a decision" }));
+    expect(await screen.findByText("Drop home_city")).toBeInTheDocument();
+    expect(screen.getByText(/A is pinned/)).toBeInTheDocument();
+    expect(resolveConflict).not.toHaveBeenCalled();
   });
 
   it("shows a high conflict as sensitive, not as an empty value", async () => {
