@@ -50,7 +50,7 @@ _IMAGE_MARKUP = re.compile(
 _LETTER = re.compile(r"[^\W\d_]")
 _PR_NUMBER = re.compile(r"^(?:#|PR\s*#?)\d+$", re.I)
 _SETTING_NAME = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")
-_BARE_CAMEL = re.compile(r"^[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+$")
+_BARE_CAMEL = re.compile(r"^[A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*$")
 
 SYSTEM = (
     "You read a design document and list the design decisions it records, for a store "

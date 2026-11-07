@@ -41,7 +41,7 @@ _VERSION_RE = re.compile(r"(?<![\d.])(\d{2}\.\d{1,2})(?![\d.]\d)")
 _PATH_RE = re.compile(r"\b((?:src|tests|programs|base|utils|docs)/[A-Za-z0-9_./-]+)")
 _HANDLE_RE = re.compile(r"@\s?([A-Za-z0-9][A-Za-z0-9-]{1,38})")
 _QUOTED_RE = re.compile(r"[\"'“‘]([^\"'”’]{3,120})[\"'”’]")
-_CAMEL_RE = re.compile(r"\b([A-Z][a-z0-9]+(?:[A-Z0-9][a-z0-9]*)+)\b")
+_CAMEL_RE = re.compile(r"\b([A-Z][a-z0-9][a-z]*[A-Z0-9][A-Za-z0-9]*)\b")
 _CUSTOMER_RE = re.compile(
     r"(?i)\b(?:customer|org|organisation|organization|account|tenant)\s+(?:named\s+|called\s+)?"
     r"[\"'“]?([A-Z][A-Za-z0-9&_-]*(?:\s+[A-Z][A-Za-z0-9&_-]*){0,3})[\"'”]?"
