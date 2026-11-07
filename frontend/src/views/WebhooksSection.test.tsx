@@ -104,6 +104,17 @@ describe("WebhooksSection", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
     expect(confirmAction).toHaveBeenCalledWith(expect.objectContaining({ danger: true }));
     await waitFor(() => expect(api.removeWebhook).toHaveBeenCalledWith(expect.objectContaining(scope), "w1"));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Webhook removed", "ok"));
+  });
+
+  it("holds Remove while its call runs", async () => {
+    vi.mocked(api.removeWebhook).mockImplementationOnce(() => new Promise(() => {}));
+    render(<WebhooksSection />);
+    await userEvent.click(await screen.findByRole("button", { name: `Actions for ${HOOK.url}` }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
+    await waitFor(() => expect(api.removeWebhook).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole("button", { name: `Actions for ${HOOK.url}` }));
+    expect(await screen.findByRole("menuitem", { name: "Remove" })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("removes nothing when the confirmation is declined", async () => {

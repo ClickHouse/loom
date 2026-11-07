@@ -59,6 +59,8 @@ export function WebhooksSection() {
     try {
       const r = await removeWebhook(identity, h.webhook_id);
       toast(r.removed ? "Webhook removed" : "This webhook was already removed", r.removed ? "ok" : "info");
+      // Off the list at once, so no second Remove reaches it before the reread answers.
+      setHooks((hs) => hs && hs.filter((x) => x.webhook_id !== h.webhook_id));
       refresh();
     } catch (e) {
       toast(`Remove failed: ${humanizeError(e)}`, "error");

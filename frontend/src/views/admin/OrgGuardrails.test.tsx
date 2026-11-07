@@ -68,7 +68,9 @@ describe("OrgGuardrails", () => {
     );
     // The org's rules are set, so its panel offers Remove; the namespace's only once saved.
     await userEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
-    expect(confirmAction).toHaveBeenCalledWith(expect.objectContaining({ confirmLabel: "Remove", danger: true }));
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Remove the extraction rules for acme?", confirmLabel: "Remove", danger: true }),
+    );
     await waitFor(() => expect(api.clearExtractionPolicy).toHaveBeenCalledWith(expect.objectContaining(scope), "org"));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Rules removed for acme", "ok"));
   });
@@ -137,5 +139,6 @@ describe("OrgGuardrails", () => {
     render(<OrgGuardrails />);
     expect(await screen.findByRole("switch", { name: "Model calls" })).toBeDisabled();
     expect(screen.getByText(/only they can switch them on/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Reason (sent with the switch)")).toBeNull();
   });
 });

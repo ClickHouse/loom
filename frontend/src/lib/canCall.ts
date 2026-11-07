@@ -64,9 +64,9 @@ export const OP_MIN_ROLE = {
   // not list the blacklist for every visitor — that is one AUTH_INSUFFICIENT per page
   // load from a viewer token with no memory namespace. The blacklist ops are
   // namespace-scoped (`server/memory/api/ops_blacklist.py`: list VIEWER, add and sweep
-  // WRITER, remove ADMIN); the panel reads only when the role is known, and shows the add form / remove
-  // buttons only to a role that reaches them. Setup's `memory.list` total for the
-  // checklist is gated the same way.
+  // WRITER, remove ADMIN); the panel reads only when the role is known, and shows the add
+  // form and remove buttons only to a role that reaches them. Setup's `memory.list` total
+  // for the checklist is gated the same way.
   "blacklist.list": VIEWER,
   "blacklist.add": WRITER,
   "blacklist.remove": ADMIN,

@@ -104,15 +104,6 @@ export function PrivacyFilters({
   const [loadError, setLoadError] = useState<unknown>(null);
   const [reads, setReads] = useState(0);
   const reload = () => setReads((n) => n + 1);
-  // Another namespace's patterns are not this one's: start from the skeleton, during
-  // render, so the old namespace's rows (and their Remove buttons) never paint under it.
-  const scopeKey = `${identity.org}/${identity.namespace}`;
-  const [rowsFor, setRowsFor] = useState(scopeKey);
-  if (rowsFor !== scopeKey) {
-    setRowsFor(scopeKey);
-    setRows(null);
-    setLoadError(null);
-  }
   useAbortableEffect(
     (signal, live) => {
       if (!canList) return;
@@ -132,7 +123,7 @@ export function PrivacyFilters({
           if (live()) setRefreshing(false);
         });
     },
-    [scopeKey, canList, reads],
+    [canList, reads],
   );
 
   const add = async () => {
