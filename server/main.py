@@ -72,25 +72,28 @@ async def _shutdown_drains(lease: Any, supervisor: Any, emitter: Any) -> None:
     # with the code issued while the claim was landing: alongside the drains
     # below, so it has the whole budget.
     claims = asyncio.create_task(_agent_claim.drain())
-    await _leader.shutdown(lease, supervisor)
-    # The service-side writes still in flight land while what they use is
-    # open: a write's after-write tasks use the shared HTTP pool and emit
-    # through the event emitter.
-    # MCP session runs still being begun land first, so the session-run
-    # sweep can close them (boot sits below the transport).
-    from server.transport import mcp_runs
+    try:
+        await _leader.shutdown(lease, supervisor)
+        # The service-side writes still in flight land while what they use is
+        # open: a write's after-write tasks use the shared HTTP pool and emit
+        # through the event emitter.
+        # MCP session runs still being begun land first, so the session-run
+        # sweep can close them (boot sits below the transport).
+        from server.transport import mcp_runs
 
-    with contextlib.suppress(TimeoutError):
-        # not a setting: one shutdown step
-        await asyncio.wait_for(mcp_runs.drain_ledger_writes(), 5.0)
-    await boot.drain_writes()
-    # The judge emits a cost event and posts scores: it stops before the
-    # emitter and the score queue drain, and both before the HTTP clients close.
-    from server.observability import langfuse_scores, retrieval_judge
+        with contextlib.suppress(TimeoutError):
+            # not a setting: one shutdown step
+            await asyncio.wait_for(mcp_runs.drain_ledger_writes(), 5.0)
+        await boot.drain_writes()
+        # The judge emits a cost event and posts scores: it stops before the
+        # emitter and the score queue drain, and both before the HTTP clients close.
+        from server.observability import langfuse_scores, retrieval_judge
 
-    await retrieval_judge.stop()
-    await langfuse_scores.drain(timeout_s=5.0)
-    await claims
+        await retrieval_judge.stop()
+        await langfuse_scores.drain(timeout_s=5.0)
+        await claims
+    finally:
+        claims.cancel()  # a no-op once it is done
     await emitter.stop()
     _otel.shutdown()
     from server.clients import _http as _http_clients

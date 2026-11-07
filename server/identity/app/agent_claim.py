@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
-import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -28,8 +27,14 @@ from server.auth.claim_codes import CLAIMED_TAG, UNCLAIMED_SQL, verify_claim_cod
 from server.auth.grant_claims import account_change
 from server.auth.login import LoginThrottled, throttled, verify_as_unknown
 from server.auth.passwords import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, hash_password_off_loop
+from server.auth.self_signup import AGENT_NAME_PREFIX
 from server.core.ch import get_client, own_write_reads
-from server.core.errors import BackendUnavailableError, GrantBusyError
+from server.core.errors import (
+    BackendTimeoutError,
+    BackendUnavailableError,
+    GrantBusyError,
+    OverloadedError,
+)
 from server.identity.app import account_admin
 from server.identity.store import grants, namespaces
 from server.observability import audit
@@ -39,6 +44,8 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 _TITLE = "Claim an agent's namespace"
+# What ClickHouse or the account's lease answer when a step cannot run now.
+_BUSY = (GrantBusyError, BackendUnavailableError, BackendTimeoutError, OverloadedError)
 _REASON = "agent namespace claimed"
 
 # The active accounts named `ns` that still hold a claim code, in every org.
@@ -115,7 +122,7 @@ async def agent_claim(request: Request) -> Response:
         page = _form(namespace, e.message, 429)
         page.headers["Retry-After"] = str(e.retry_after_s)
         return page
-    except BackendUnavailableError:
+    except _BUSY:
         return _retry_later(namespace, "The code could not be checked: submit again in a minute.")
     if proven is None:
         return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
@@ -124,7 +131,7 @@ async def agent_claim(request: Request) -> Response:
     password_hash = await hash_password_off_loop(password)
     try:
         outcome, cutoff = await claim_shielded(org, namespace, code_hash, password_hash)
-    except (GrantBusyError, BackendUnavailableError):
+    except _BUSY:
         return _retry_later(
             namespace,
             "An earlier submit may still be claiming this namespace: wait a minute and sign "
@@ -165,18 +172,29 @@ async def _grants_notice(org: str, namespace: str) -> str:
     return f"<p>These subjects also hold grants on it: {names}.</p>{review}"
 
 
+# The agent's own token, as its sign-up stored it: a name under the agent prefix,
+# which no person's token can take, made by the namespace itself.
+_AGENT_TOKENS = """
+    SELECT sa_subject FROM loom.service_accounts FINAL
+    WHERE org = {org:String} AND created_by = {ns:String} AND client = 'agent-signup'
+      AND startsWith(name, {prefix:String})
+"""
+
+
 async def _other_grants(org: str, namespace: str) -> list[str]:
     """The subjects with an active grant on the namespace, besides its own
-    subject and the agent's token (`sa:<namespace>-<6 hex>`) while it holds the
-    writer role sign-up gave it."""
-    agent = re.compile(re.escape(f"sa:{namespace}-") + "[0-9a-f]{6}")
+    subject and the agent's token while it holds the writer role sign-up gave it."""
+    agents = await get_client().query_all(
+        _AGENT_TOKENS, params={"org": org, "ns": namespace, "prefix": AGENT_NAME_PREFIX}
+    )
+    agent_tokens = {str(r["sa_subject"]) for r in agents}
     rows = await grants.active_on(org, namespace)
     return sorted(
         {
             str(r["subject"])
             for r in rows
             if str(r["subject"]) != namespace
-            and not (agent.fullmatch(str(r["subject"])) and r["role"] == "writer")
+            and not (str(r["subject"]) in agent_tokens and r["role"] == "writer")
         }
     )
 
@@ -212,9 +230,14 @@ def _done(task: asyncio.Task[Any]) -> None:
         log.warning("agent claim: the claim's task failed: %r", task.exception())
 
 
-# The longest one claim runs: the lease's wait and bound, the read-back and the
-# skew wait before its last cutoff.
-DRAIN_S = grant_claims.WAIT_S + grant_claims.CHANGE_S + _READ_BACK_S + revocation.CLOCK_SKEW_S
+# The longest one claim runs: the lease's wait and bound, the steps after it and
+# the skew wait.
+DRAIN_S = (
+    grant_claims.WAIT_S
+    + grant_claims.CHANGE_S
+    + 3 * _READ_BACK_S  # a landed check, the read-back, a margin for the last cutoff
+    + revocation.CLOCK_SKEW_S
+)
 
 
 async def drain(timeout_s: float = DRAIN_S) -> None:
@@ -242,7 +265,7 @@ async def _replace_code(
     when a claim landed first, as an earlier submit of the same form does;
     ("refused", None), the only outcome without a cutoff, when the row changed
     otherwise (a release)."""
-    subject, written = "", False
+    subject, sent, written = "", False, False
     # Held from the read to the write, as a release or a password link holds the
     # account; the cutoffs after the write need no lease and run after it.
     try:
@@ -255,13 +278,26 @@ async def _replace_code(
                     return "refused", None
                 return "taken", _past_a_claim_landed_now()
             subject = str(row["owner_email"])
-            await _write(row, subject, namespace, password_hash)
+            # Before the write, so a write that fails leaves the code to retry with,
+            # never a spent code and live tokens. A subject cutoff also ends every
+            # OAuth and device session the code started (`oauth.issue_tokens`).
+            await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
+            sent = True
+            await _write(row, password_hash)
             written = True
-    except BackendUnavailableError as e:
-        # A write can land and still report a failure (a timeout after it was
-        # applied): the row decides whether the claim is written.
-        if not written and not (subject and await _landed(org, namespace, password_hash)):
+    except Exception as e:  # once the write is sent, the row decides what it did
+        if not sent:
             raise
+        # A write can land and still report a failure (a timeout after it was
+        # applied, the lease's bound after it).
+        if not written and not await _landed(org, namespace, password_hash):
+            # It may still land: the cutoff after it runs anyway, and the person
+            # is told to try their password before submitting again.
+            log.warning("agent claim of %s/%s: the write did not confirm: %r", org, namespace, e)
+            await _after_write(org, namespace, subject, password_hash)
+            raise BackendUnavailableError(
+                "the claim's write did not confirm", operation="agent_claim"
+            ) from e
         log.warning(
             "agent claim of %s/%s: the backend failed after the write: %r", org, namespace, e
         )
@@ -282,13 +318,8 @@ async def _landed(org: str, namespace: str, password_hash: str) -> bool:
     return (row or {}).get("password_hash") == password_hash
 
 
-async def _write(row: dict[str, Any], subject: str, namespace: str, password_hash: str) -> None:
-    """Cut off the subject's tokens, then replace the code with the claimer's
-    password and mark the account claimed."""
-    # Before the write, so a write that fails leaves the code to retry with,
-    # never a spent code and live tokens. A subject cutoff also ends every
-    # OAuth and device session the code started (`oauth.issue_tokens`).
-    await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
+async def _write(row: dict[str, Any], password_hash: str) -> None:
+    """Replace the code with the claimer's password and mark the account claimed."""
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     # Insert-as-replace carrying every other column forward.
     await get_client().insert(

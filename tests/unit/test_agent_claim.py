@@ -61,15 +61,9 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
     monkeypatch.setattr(settings, "self_signup", "open")
     monkeypatch.setattr(settings, "oauth_login_provider", "password")
     monkeypatch.setattr(settings, "self_signup_org", "dev")
-    ch = KeptCH(tmp_path / "ch", ddl("namespaces"), ddl("namespace_grants"))
-    ch.tables.add("loom.service_accounts")  # written by the sign-up, read by no test here
-    original_insert = ch.insert
-
-    async def insert(table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
-        if table != "loom.service_accounts":
-            await original_insert(table, rows, settings)
-
-    ch.insert = insert  # type: ignore[method-assign]
+    ch = KeptCH(
+        tmp_path / "ch", ddl("namespaces"), ddl("namespace_grants"), ddl("service_accounts")
+    )
     for module in (ss, agent_claim, login):
         monkeypatch.setattr(module, "get_client", lambda: ch)
     monkeypatch.setattr(namespaces, "_default_client", lambda: ch)
@@ -575,8 +569,20 @@ def test_the_agent_token_is_named_once_it_holds_more_than_writer(world) -> None:
     assert kw["subject"] == {"other_grants": [agent]}
 
 
-def test_a_write_that_lands_but_reports_a_failure_still_claims(world, monkeypatch) -> None:
+def _timed_out() -> Exception:
+    from server.core.errors import BackendTimeoutError
+
+    return BackendTimeoutError("insert ran past its deadline", statement_class="write", timeout_s=1)
+
+
+def _unavailable() -> Exception:
     from server.core.errors import BackendUnavailableError
+
+    return BackendUnavailableError("the insert timed out after it landed")
+
+
+@pytest.mark.parametrize("failure", [_unavailable, _timed_out, lambda: RuntimeError("driver")])
+def test_a_write_that_lands_but_reports_a_failure_still_claims(world, monkeypatch, failure) -> None:
     from server.identity.app import account_admin
 
     real_end, cutoffs = account_admin.end_tokens, []
@@ -590,7 +596,7 @@ def test_a_write_that_lands_but_reports_a_failure_still_claims(world, monkeypatc
     async def insert(table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
         await real_insert(table, rows, settings)
         if table == "loom.namespaces":
-            raise BackendUnavailableError("the insert timed out after it landed")
+            raise failure()
 
     monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
     monkeypatch.setattr(ch, "insert", insert)
@@ -600,11 +606,51 @@ def test_a_write_that_lands_but_reports_a_failure_still_claims(world, monkeypatc
     assert len(cutoffs) == 2 and world["waited"] == cutoffs[1:]
 
 
-def test_a_backend_failure_during_the_code_check_answers_the_page(world, monkeypatch) -> None:
-    from server.core.errors import BackendUnavailableError
+def test_a_write_that_does_not_confirm_still_cuts_off_after_it(world, monkeypatch) -> None:
+    # The insert fails before it lands and the read-back cannot find it: the
+    # code stays, the cutoff after the write still runs, and the page says wait.
+    from server.identity.app import account_admin
 
+    real_end, cutoffs = account_admin.end_tokens, []
+
+    async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
+        cutoffs.append(await real_end(subject, by=by, reason=reason))
+        return cutoffs[-1]
+
+    ch, real_insert = world["ch"], world["ch"].insert
+
+    async def insert(table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
+        if table == "loom.namespaces":
+            raise _timed_out()
+        await real_insert(table, rows, settings)
+
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+    monkeypatch.setattr(ch, "insert", insert)
+    r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
+    assert r.status_code == 503 and "An earlier submit may still be claiming" in r.text
+    assert len(cutoffs) == 2 and world["events"] == []
+    assert passwords.verify_password(_row(world, _LEGACY)["password_hash"], world["legacy_code"])
+
+
+def test_a_personal_token_named_like_the_agent_is_named(world) -> None:
+    # Only the token sign-up stored is the agent's; one a person named after the
+    # namespace, with the same subject shape, is another holder.
+    from server.identity.app.me_service_accounts import new_token_subject
+
+    lookalike = new_token_subject("dev", _NS, _NS)
+    asyncio.run(world["ch"].insert("loom.namespace_grants", [_grant(_NS, lookalike, "writer")]))
+    r = _claim(_app(), world["code"], "correct horse")
+    assert r.status_code == 200 and lookalike in r.text
+    [(_, kw)] = world["events"]
+    assert kw["subject"] == {"other_grants": [lookalike]}
+
+
+@pytest.mark.parametrize("failure", [_unavailable, _timed_out])
+def test_a_backend_failure_during_the_code_check_answers_the_page(
+    world, monkeypatch, failure
+) -> None:
     async def unavailable(namespace: str, code: str) -> Any:
-        raise BackendUnavailableError("ClickHouse is unreachable")
+        raise failure()
 
     monkeypatch.setattr(agent_claim, "_proven", unavailable)
     r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
