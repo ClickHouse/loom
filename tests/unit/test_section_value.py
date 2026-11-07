@@ -409,6 +409,14 @@ def test_a_recorded_meetings_transcript_and_template_are_noise(
             "Errors passed 5%.",
         ),
         ("Incident 2026-03-04 14:00 UTC - notes by Ana", ("Action items",), "- Ana: add an alert"),
+        ("Outage 2026-03-04 14:00 UTC - notes by Ana", ("Timeline", "14:05"), "Errors passed 5%."),
+        (
+            "Customer call 2026-03-04 14:00 - notes by Ana",
+            ("Action items",),
+            "- Ana: send the quote",
+        ),
+        (_RECORDED, ("Next steps for the cache rollout",), "Ana showed the p99 numbers."),
+        (_RECORDED, ("Attendees API pagination",), "Ana showed the page sizes."),
         (
             "Incident 2026-03-04 14:00 UTC - transcript export failing",
             ("Timeline", "14:05"),

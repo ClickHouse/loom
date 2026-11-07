@@ -30,11 +30,13 @@ heading. Lines inside a fenced code block are code, never questions.
 
 Notes a meeting tool writes from a recording carry the meeting's date and clock time and
 a transcript or notes-by mark in their title ("Planner sync - 2026/03/04 10:00 CET -
-Notes by ..."); a notes-by mark beside a design, release or incident word is a person's
-notes and keeps the rule above. Their summary and topic sections are the tool's account
-of the meeting and stay content; only the transcript (its clock-time segments) and the
-template around it (the invite header, next steps, action items, attendees, the tool's
-footer) are noise, each unless it records a decision.
+Notes by ..."). A notes-by mark names a recording only beside a meeting word and none of
+the design-document words above; otherwise it signs a person's notes ("Outage 2026-03-04
+14:00 UTC - notes by Ana"), which keep the rule above. A recording's summary and topic
+sections are the tool's account of the meeting and stay content; only the transcript
+(its clock-time segments) and the template around it (the invite header, next steps,
+action items, attendees, the tool's footer) are noise, each unless it records a
+decision.
 """
 
 from __future__ import annotations
@@ -145,7 +147,7 @@ _NOTES_BY_MARK = re.compile(r"\bnotes by\b", re.IGNORECASE)
 _TRANSCRIPT_HEADING = re.compile(
     r"^\W*\d{1,2}:\d{2}(?::\d{2})?\W*$|^\W*transcript\W*$|^\W*transcription ended\b"
     r"|\s\\?[-\u2013\u2014|:]\s*transcript\W*$"
-    r"|^\W*(?:suggested\s+)?(?:next\s+steps|action\s+items|attendees)\b",
+    r"|^\W*(?:suggested\s+)?(?:next\s+steps|action\s+items|attendees)\W*$",
     re.IGNORECASE,
 )
 # Links and the separators between them; a separator never holds a "[", which keeps the
@@ -209,10 +211,14 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
         and bool(_DATE_HEADING.match(_top_heading(name, headings)))
     )
     # A transcript names a recording whatever else the title says; "notes by" also signs a
-    # person's incident or release notes, which a design word keeps as they are.
+    # person's notes, so it needs a meeting word and no design-document word.
     recorded = bool(_RECORDED_STAMP.search(name)) and bool(
         _TRANSCRIPT_MARK.search(name)
-        or (_NOTES_BY_MARK.search(name) and not _DESIGN_TITLE.search(name))
+        or (
+            _NOTES_BY_MARK.search(name)
+            and _MEETING_TITLE.search(name)
+            and not _DESIGN_TITLE.search(name)
+        )
     )
     notes = recorded or (dated and not _DESIGN_TITLE.search(name))
     prose, code = _lines(text)
