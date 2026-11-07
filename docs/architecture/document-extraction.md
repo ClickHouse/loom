@@ -135,7 +135,7 @@ in undeclared UTF-8 text (behind a byte-order mark or not) is binary; neither is
 | ---------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | Markdown   | a block parser after CommonMark's heading, fence and HTML-block rules | headings, paragraphs, lists, fenced code, front matter                       |
 | Plain text | a paragraph splitter                                                  | one paragraph per run of non-blank lines (a `#` line is text, not a heading) |
-| HTML       | the standard library's parser                                         | headings, paragraphs, list items, table cells, quotes, definitions, `pre`    |
+| HTML       | the standard library's parser                                         | headings, paragraphs, list items, tables, quotes, definitions, `pre`         |
 | SQL        | `sqlglot`, never executed                                             | one block per statement                                                      |
 | TOML       | `tomllib` and a line scanner                                          | one block per table header and per key                                       |
 | PDF        | `pypdf`: its text runs' positions and the lines it draws; OCR         | per page: headings, paragraphs, lists, code, tables; furniture left out      |
@@ -173,9 +173,31 @@ the item's text. A block whose end tag is left out closes at the next block, its
 (a container inside a block leaves it open; `br`, `hr` and a container's start separate words), and an unclosed `head`
 closes at the first body element or text. A block's line span runs from its first text line to its last. `script`,
 `style`, `template`, `noscript`, `svg`, `title` and `head` are dropped from the blocks (the `<title>` text is the
-artifact's `attrs.title`); coverage counts the visible characters outside them and how many the blocks hold, a guard of
-the same kind. Neither counts what a block loses within itself, such as stripped inline tags. A hidden element left open
-hides the rest of the document; the text inside it is counted as not read, with a failure naming the open elements.
+artifact's `attrs.title`); coverage counts the visible characters outside them and how many the blocks hold (the pipes
+joining a table's cells aside), a guard of the same kind. Neither counts what a block loses within itself, such as
+stripped inline tags. A hidden element left open hides the rest of the document; the text inside it is counted as not
+read, with a failure naming the open elements.
+
+**HTML tables.** A `<table>` is one block, a row per line with its cells joined by a pipe and `attrs.table` its `rows`
+and `columns`, as a DOCX table is, but for its rows with no text, which are dropped. A cell after a row's end starts the
+next row, and a row group's start or end (`thead`, `tbody`, `tfoot`) ends the open row. Its captions, with any heading
+or list inside them, and its text in no cell (between rows) are paragraphs before it, in their order, as a browser shows
+them apart; a table inside a caption, like a heading or list there, is read as the caption's text.
+
+Cells are placed in columns as HTML places them: a span (`colspan`, `rowspan`) is read as HTML reads a non-negative
+integer, and a cell a `rowspan` carries down holds its columns in the rows below, as an empty cell there, until its row
+group ends. A column that only empty cells and cells spanning several columns fill is a spacer and is dropped, unless a
+cell with text is carried down into it. Placing counts each row's cells and the cells carried down into it; a table past
+a million of those keeps every cell. A table left with one column holds no grid: its rows are one paragraph without
+`attrs.table`, as a page wrapped in a table (an email) is.
+
+A table whose cell holds a heading, a list, a `pre`, a table or a second paragraph lays out a page instead (an email, a
+page set in a table's cells): its cells, captions and text in no cell are read as the blocks they hold, in order, and a
+table inside one is a table. A heading, list, list item, definition, `pre` or table in no cell ends the table, its
+`</table>` left out or not, and rows after it are read as paragraphs, so a table left open does not hold the rest of the
+page. The end of an element the table is inside is no end of it, as HTML holds a table as a scope of its own: what
+follows in no cell is shown before the table, as a browser shows it, and a caption left open holds it. Each paragraph or
+container's text in no cell is its own.
 
 **SQL statements.** A statement is split on the dialect's tokens, so a `;` in a string or comment does not end it. A
 client's own command lines (`GO`, a lone `/`, `DELIMITER ;;`, backslash commands) are not SQL: a script that holds

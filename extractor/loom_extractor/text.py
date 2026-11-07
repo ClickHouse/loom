@@ -4,17 +4,22 @@ Markdown keeps its headings (ATX, setext, a one-line `<hN>`), paragraphs,
 lists and fenced code blocks, each with its line span and character offsets;
 a code block's span is its body, without the fence lines. HTML keeps the same
 block kinds from its elements, with line spans, closing a block whose end tag
-HTML lets the writer leave out; script, style and other invisible elements are
-dropped. Plain text is paragraphs: a `#` line in a log is not a heading.
+HTML lets the writer leave out; a data table is one block, a row per line
+with its cells joined by a pipe, as a DOCX table is, and a table laying out a
+page (a heading, list, `pre`, table or a second paragraph in a cell) is the
+blocks its cells hold; script, style and other invisible elements are dropped.
+Plain text is paragraphs: a `#` line in a log is not a heading.
 
 Pure and I/O-free.
 """
 
 from __future__ import annotations
 
+import bisect
 import re
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
+from typing import NamedTuple
 
 from loom_extractor.artifact import (
     Artifact,
@@ -41,7 +46,7 @@ from loom_extractor.markdown import (
 
 # Bumped whenever these parsers' output changes, including through the heading,
 # fence and title rules in `markdown`, so a changed artifact is a new one.
-PARSER_VERSION = "1"
+PARSER_VERSION = "2"
 
 # A list item that may interrupt a paragraph (CommonMark): a bullet, or an ordered
 # item numbered 1, with text. A wrapped line that starts "2019. The" stays prose.
@@ -245,6 +250,7 @@ _BLOCK_TAGS: dict[str, BlockType] = {
     "pre": "code",
     "li": "list",
     "blockquote": "paragraph",
+    # A cell outside a table, or in one that lays out a page.
     "td": "paragraph",
     "th": "paragraph",
     "dd": "paragraph",
@@ -270,7 +276,7 @@ _CONTAINERS = {
     "form",
     "details",
     "summary",
-    "caption",
+    "caption",  # outside a table a container: it opens no block
 }
 
 
@@ -284,6 +290,12 @@ class _Open:
     containers: int = 0  # containers opened inside it and not closed yet
     has_paragraphs: bool = False  # its own `<p>`s, for `<li><p>a</p><p>b</p></li>`
     open_paragraphs: int = 0  # those not closed yet
+    colspan: int = 1  # the columns a table cell spans
+    rowspan: int = 1  # the rows it spans
+
+    def text(self) -> str:
+        """Its text, each run of spacing one space."""
+        return " ".join("".join(self.parts).split())
 
     def take(self, data: str, line: int) -> None:
         """Append `data`, which starts on `line`."""
@@ -300,6 +312,171 @@ class _Open:
 
 def _visible(text: str) -> int:
     return len("".join(text.split()))
+
+
+# A table whose cell holds one of these lays out a page rather than holding data: its
+# cells are read as the blocks they hold, as any other element's are.
+_LAYOUT = {*_HEADINGS, "pre", "ul", "ol", "dl", "table"}
+# A second paragraph in a cell lays the table out too: a page set in a table's cells (an
+# email, an old page) keeps its paragraphs, where one paragraph a cell is still data.
+_PARAGRAPHS = {"p", "blockquote"}
+_ROW_GROUPS = {"thead", "tbody", "tfoot"}
+_CELLS = {"td", "th"}
+_ENDS_CAPTION = {"caption", "tr", *_CELLS, *_ROW_GROUPS}  # what ends a caption left open
+_SPANS = {"colspan": 1_000, "rowspan": 65_534}  # HTML's own bounds
+_MAX_PLACING = 1_000_000  # the steps placing a table's cells may take; past it every cell is kept
+# HTML's non-negative integer: ASCII spacing, then `+`, or `-` before a zero (`-0` is 0).
+_DIGITS = re.compile(r"[\t\n\f\r ]*(?:\+|-(?=0+(?![0-9])))?0*([0-9]+)")
+# More digits than either bound has: a longer number is past both, so it is not read.
+_SPAN_DIGITS = len(str(max(_SPANS.values()))) + 1
+
+
+def _span(attrs: list[tuple[str, str | None]], name: str) -> int:
+    """A cell's `colspan` or `rowspan` as HTML reads it: after ASCII spacing and a
+    `+` (or the `-` of `-0`), its leading digits (`2px` is 2), 1 when it has none or
+    is negative, at most HTML's bound; a rowspan of 0 reaches to the end of its row
+    group."""
+    # the first of a repeated attribute, as HTML keeps it
+    m = _DIGITS.match(next((v for k, v in attrs if k == name), None) or "")
+    if m is None:
+        return 1
+    n = int(m.group(1)) if len(m.group(1)) <= _SPAN_DIGITS else _SPANS[name]
+    return _SPANS[name] if n == 0 and name == "rowspan" else min(max(n, 1), _SPANS[name])
+
+
+class _Placed(NamedTuple):
+    """A cell where HTML places it, or the columns a `rowspan` carries down into a
+    row (an empty cell there)."""
+
+    start: int  # the first column it fills
+    span: int  # the columns it fills
+    text: str
+    kept: bool  # kept whatever its columns: it, or the cell carried down, holds text
+
+
+class _Held(NamedTuple):
+    """Columns a `rowspan` holds in the rows below the cell's own."""
+
+    start: int
+    end: int  # past the last column
+    rows: int  # the rows below it still holds
+    kept: bool  # whether the cell holds text, so what it carries down is kept
+
+
+def _grid(t: _Table, texts: list[list[str]]) -> list[list[_Placed]] | None:
+    """The table's rows with each cell where HTML places it: a cell a `rowspan`
+    carries down holds its columns in the rows below, as an empty cell there, until
+    its row group ends. None past `_MAX_PLACING` steps, for a table built to cost
+    more."""
+    held: list[_Held] = []
+    out: list[list[_Placed]] = []
+    steps = 0
+    for i, (row, row_texts) in enumerate(zip(t.rows, texts, strict=True)):
+        if i in t.groups:
+            held = []
+        held.sort()
+        at, k = 0, 0
+        cells: list[_Placed] = []
+        below: list[_Held] = []
+        for cell, text in zip(row, row_texts, strict=True):
+            while k < len(held) and held[k].start <= at:
+                if held[k].end > at:
+                    cells.append(_Placed(at, held[k].end - at, "", held[k].kept))
+                    at = held[k].end
+                k += 1
+            cells.append(_Placed(at, cell.colspan, text, bool(text)))
+            if cell.rowspan > 1:
+                below.append(_Held(at, at + cell.colspan, cell.rowspan - 1, bool(text)))
+            at += cell.colspan
+        steps += len(held) + len(row)
+        if steps > _MAX_PLACING:
+            return None
+        out.append(cells)
+        held = [h._replace(rows=h.rows - 1) for h in held if h.rows > 1] + below
+    return out
+
+
+def _holds_own(own: list[int], at: int, span: int) -> bool:
+    """Whether a column from `at` across `span` is one a cell of its own fills
+    (`own`, sorted)."""
+    i = bisect.bisect_left(own, at)
+    return i < len(own) and own[i] < at + span
+
+
+# One of these in no cell ends the table, its end tag left out or not, so a table left
+# open does not hold the rest of the page.
+_ENDS_TABLE = {*_LAYOUT, "li", "dd", "dt"}
+# The tags that separate the words around them; inline markup (`b`, `a`) does not.
+_SEPARATING = {*_BLOCK_TAGS, *_CONTAINERS, *_HEADINGS, "br", "hr"}
+
+
+@dataclass
+class _Table:
+    """A table being read: its rows, each its cells."""
+
+    rows: list[list[_Open]] = field(default_factory=list)
+    cell: _Open | None = None  # the cell text goes to; None between cells
+    row_open: bool = False  # a row started and not ended: a cell joins it
+    caption: _Open | None = None  # an open `<caption>`
+    # Its cells, captions and runs of text in no cell (as a browser shows apart), in order.
+    order: list[_Open] = field(default_factory=list)
+    loose: _Open | None = None  # the run of text in no cell read now
+    caption_tables: int = 0  # tables opened inside its open caption: their text is the caption's
+    groups: set[int] = field(default_factory=set)  # the rows a row group starts at
+
+    def end_cell_or_caption(self) -> None:
+        self.cell, self.caption = None, None
+
+    def open_row(self) -> None:
+        self.end_cell_or_caption()
+        self.rows.append([])
+        self.row_open, self.loose = True, None
+
+    def end_row(self) -> None:
+        self.end_cell_or_caption()
+        self.row_open = False
+
+    def end_group(self) -> None:
+        """A row group starts or ends: the open row ends, and so does any rowspan."""
+        self.end_row()
+        self.groups.add(len(self.rows))
+
+    def open_caption(self, line: int) -> None:
+        """A caption, which ends one still open (as HTML ends it)."""
+        self.end_group()  # a caption ends the open row and its row group, as HTML ends them
+        self.loose, self.caption = None, _Open("caption", line)
+        self.order.append(self.caption)
+
+    def open_cell(self, tag: str, line: int, colspan: int, rowspan: int) -> None:
+        self.end_cell_or_caption()
+        if not self.row_open:
+            self.open_row()  # a cell after a row ended starts the next row, as HTML says
+        self.cell, self.loose = _Open(tag, line, colspan=colspan, rowspan=rowspan), None
+        self.rows[-1].append(self.cell)
+        self.order.append(self.cell)
+
+    def text_target(self, line: int) -> _Open:
+        """What the table's text goes to now."""
+        if self.caption is not None:
+            return self.caption
+        if self.cell is not None:
+            return self.cell
+        if self.loose is None:
+            self.loose = _Open("", line)
+            self.order.append(self.loose)
+        return self.loose
+
+    def separate(self, tag: str, line: int) -> None:
+        """The words around `tag` kept apart, if it is one that separates them; a
+        paragraph or a container's text in no cell is a run of its own."""
+        if (
+            self.cell is None
+            and self.caption is None
+            and (tag in _BLOCK_TAGS or tag in _CONTAINERS)
+        ):
+            self.loose = None  # the next text in no cell starts a run: nothing to keep apart
+        elif tag in _SEPARATING:
+            self.text_target(line).take("\n", line)
 
 
 class _HTMLBlocks(HTMLParser):
@@ -320,11 +497,13 @@ class _HTMLBlocks(HTMLParser):
         self.title = ""  # the text of the page's `<title>`
         self._open: _Open | None = None
         self._loose: _Open | None = None  # text outside any block element
+        self._table: _Table | None = None
+        self.separators = 0  # the pipes joining table cells, which are no text of the page
         self.seen = 0
 
     def _flush_loose(self) -> None:
         if self._loose is not None:
-            text = " ".join("".join(self._loose.parts).split())
+            text = self._loose.text()
             if text:
                 self.acc.add("paragraph", text, self._loose.span())
             self._loose = None
@@ -332,8 +511,62 @@ class _HTMLBlocks(HTMLParser):
     def close(self) -> None:
         """The end of the document closes whatever is still open."""
         super().close()
+        self._close_table()
         self._close_open()
         self._flush_loose()
+
+    def _close_table(self) -> None:
+        """The table as one block, a row per line and its cells joined by a pipe; its
+        captions and text in no cell are paragraphs before it, in order."""
+        t, self._table = self._table, None
+        if t is None:
+            return
+        self._emit_runs(t, cells=False)
+        cells = [c for row in t.rows for c in row if c.first_line]
+        texts = [[c.text() for c in row] for row in t.rows]
+        if not any(any(r) for r in texts):
+            return
+        # A column no cell of its own fills (a spacer; a cell spanning columns fills none
+        # of its own) holds nothing, and one column holds no grid: a page wrapped in a
+        # table (an email) is its paragraph. Past the placing bound every cell is kept.
+        grid = _grid(t, texts)
+        if grid is None:
+            rows = [r for r in texts if any(r)]
+        else:
+            own = sorted({c.start for r in grid for c in r if c.text and c.span == 1})
+            rows = [
+                [c.text for c in r if c.kept or _holds_own(own, c.start, c.span)]
+                for r in grid
+                if any(c.text for c in r)
+            ]
+        self.separators += sum(len(r) - 1 for r in rows)
+        first, last = min(c.first_line for c in cells), max(c.last_line for c in cells)
+        columns = max(len(r) for r in rows)
+        shape = {"table": {"rows": len(rows), "columns": columns}} if columns > 1 else {}
+        self.acc.add(
+            "paragraph",
+            "\n".join(" | ".join(r) for r in rows),
+            Locator(line_start=first, line_end=last),
+            **shape,
+        )
+
+    def _lay_out_table(self, t: _Table) -> None:
+        """The table lays out a page: what it read so far is blocks, in order, and the
+        cell open now goes on as any open block does."""
+        self._table = None
+        self._emit_runs(t, cells=True)
+        self._open = t.cell
+
+    def _emit_runs(self, t: _Table, *, cells: bool) -> None:
+        """The table's captions and text in no cell as paragraphs, in order, and with
+        `cells` its cells too, but the one open now."""
+        for run in t.order:
+            if not run.tag:
+                self._loose = run
+                self._flush_loose()
+            elif run.tag == "caption" or (cells and run is not t.cell):
+                self._open = run
+                self._close_open()
 
     def _close_open(self) -> None:
         o, self._open = self._open, None
@@ -345,13 +578,14 @@ class _HTMLBlocks(HTMLParser):
             if raw.strip("\n"):
                 self.acc.add("code", raw.strip("\n"), loc)
             return
-        text = " ".join(raw.split())
+        text = o.text()
         if not text:
             return
         if o.tag in _HEADINGS:
             self.acc.heading(_HEADINGS[o.tag], text, loc)
         else:
-            self.acc.add(_BLOCK_TAGS[o.tag], text, loc)
+            # A table's caption, which only the table opens, is a paragraph of its own.
+            self.acc.add(_BLOCK_TAGS.get(o.tag, "paragraph"), text, loc)
 
     def open_hidden(self) -> list[str]:
         return sorted(self._hidden)
@@ -374,6 +608,13 @@ class _HTMLBlocks(HTMLParser):
             self._hidden[tag] = self._hidden.get(tag, 0) + 1
             return
         if self._hidden:
+            return
+        if self._table is not None and self._table_start(self._table, tag, attrs):
+            return
+        if tag == "table":
+            self._close_open()
+            self._flush_loose()
+            self._table = _Table()
             return
         o = self._open
         if (
@@ -402,11 +643,66 @@ class _HTMLBlocks(HTMLParser):
             if active is not None:
                 active.take("\n", self.getpos()[0])
 
+    def _table_start(self, t: _Table, tag: str, attrs: list[tuple[str, str | None]]) -> bool:
+        """A start tag inside a table; False when it is to be read as outside one,
+        because it lays the table out (`_LAYOUT`, `_PARAGRAPHS`) or ends it (`_ENDS_TABLE`)."""
+        line = self.getpos()[0]
+        if t.caption is not None and (t.caption_tables or tag not in _ENDS_CAPTION):
+            if tag == "table":
+                t.caption_tables += 1
+            t.separate(tag, line)
+            return True
+        if t.cell is not None and (
+            tag in _LAYOUT or (tag in _PARAGRAPHS and t.cell.first_line > 0)
+        ):
+            self._lay_out_table(t)
+            return False
+        if tag in _ENDS_TABLE and t.cell is None:
+            self._close_table()
+            return False
+        if tag == "caption":
+            t.open_caption(line)
+        elif tag == "tr":
+            t.open_row()
+        elif tag in _ROW_GROUPS:
+            t.end_group()
+        elif tag in _CELLS:
+            t.open_cell(tag, line, _span(attrs, "colspan"), _span(attrs, "rowspan"))
+        else:
+            t.separate(tag, line)
+        return True
+
+    def _table_end(self, t: _Table, tag: str) -> None:
+        """An end tag inside a table. The end of an element the table is inside is no
+        end of the table, as HTML holds the table as a scope of its own."""
+        line = self.getpos()[0]
+        if tag == "caption" and t.caption is None:
+            pass  # no caption open: ignored, as a browser ignores it
+        elif tag == "caption" and not t.caption_tables:
+            t.end_cell_or_caption()
+        elif t.caption is not None and (t.caption_tables or tag != "table"):
+            if tag == "table":  # what a caption holds ends inside it
+                t.caption_tables -= 1
+            t.separate(tag, line)
+        elif tag == "table":
+            self._close_table()
+        elif tag == "tr":
+            t.end_row()
+        elif tag in _ROW_GROUPS:
+            t.end_group()
+        elif tag in _CELLS:
+            t.end_cell_or_caption()
+        else:
+            t.separate(tag, line)
+
     def handle_endtag(self, tag: str) -> None:
         if tag in _HIDDEN:
             self._unhide(tag)
             return
         if self._hidden:
+            return
+        if self._table is not None:
+            self._table_end(self._table, tag)
             return
         if tag == "p" and self._open is not None and self._open.open_paragraphs:
             self._open.open_paragraphs -= 1
@@ -432,7 +728,12 @@ class _HTMLBlocks(HTMLParser):
             return
         self.seen += _visible(data)
         line = self.getpos()[0]
-        if self._open is not None:
+        if self._table is not None:
+            t = self._table
+            # Spacing between cells or rows starts no run of text; within one it parts words.
+            if data.strip() or t.cell is not None or t.caption is not None or t.loose is not None:
+                t.text_target(line).take(data, line)
+        elif self._open is not None:
             self._open.take(data, line)
         elif data.strip():
             if self._loose is None:
@@ -451,7 +752,7 @@ def _html(text: str) -> tuple[list[Block], Coverage, dict[str, object]]:
     # The visible characters the blocks hold, of those outside hidden elements: a
     # guard against a parser change that loses text, not a measure of loss within
     # a block.
-    held = sum(_visible(b.text) for b in p.acc.blocks)
+    held = sum(_visible(b.text) for b in p.acc.blocks) - p.separators
     if p.open_hidden() and p.hidden_seen:
         # A hidden element left open hides the rest of the document; a browser
         # would show some of that text, so it is counted as not read.

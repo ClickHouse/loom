@@ -5,11 +5,11 @@ file, and write the normalized parses `score` reads, one JSON line per file:
 `{"rows", "page_start", "page_end"}` (its header row first).
 
 A table's row blocks count once, as its cells, where its first row block sits;
-a DOCX or PPTX table block (`attrs.table`, cells joined by ` | `) is read as its
-grid. Another parser is compared by writing the same shape; the scorer counts a
-table's words from `tables` and leaves a block of type `table` out, so a table
-written both ways counts once. A file whose parse fails or passes TIMEOUT_S is
-`{"error": ...}`, scored 0.
+a DOCX, PPTX or HTML table block (`attrs.table`, cells joined by ` | `) is
+read as its grid. Another parser is compared by writing the same shape; the
+scorer counts a table's words from `tables` and leaves a block of type `table`
+out, so a table written both ways counts once. A file whose parse fails or
+passes TIMEOUT_S is `{"error": ...}`, scored 0.
 """
 
 from __future__ import annotations
