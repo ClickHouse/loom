@@ -66,13 +66,34 @@ _QUOTED = re.compile(r"""["']([a-z_]+(?:\.[a-z_]+){1,2})["']""")
 # A dashboard call site: the path as a string literal (`post("/v1/<op>", …)`), outside
 # a comment. A bare op name there is an audit label, not a call.
 _DASHBOARD_CALL = re.compile(r"""["'`]/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b""")
-# TS comments by shape, not by parsing strings: a block comment's lines, a JSX
-# comment, and a `//` not right after `:` or a quote (a URL, a string). A block
-# comment line not starting with `*` still reads as code.
-_TS_COMMENT = re.compile(
-    r"^[ \t]*(?:/\*|\*)[^\n]*|\{/\*[\s\S]*?\*/\}|(?<![:\"'`])//[^\n]*", re.MULTILINE
-)
+
 _SDK_CALL = re.compile(r"\.([a-z_]+)\.([a-z_]+)\(")
+
+
+def _without_comments(code: str) -> str:
+    """TypeScript `code` with its `//` and `/* */` comments dropped and its strings
+    kept. A regex literal is read as code: none in the dashboard holds a comment
+    marker."""
+    out: list[str] = []
+    i, n = 0, len(code)
+    while i < n:
+        c = code[i]
+        if c in "\"'`":
+            end = i + 1
+            while end < n and code[end] != c:
+                end += 2 if code[end] == "\\" else 1
+            out.append(code[i : end + 1])
+            i = end + 1
+        elif code.startswith("//", i):
+            end = code.find("\n", i)
+            i = n if end < 0 else end
+        elif code.startswith("/*", i):
+            end = code.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 def _files(root: Path, rel: str, suffixes: tuple[str, ...]) -> list[Path]:
@@ -183,7 +204,7 @@ def derive_static_reach(root: Path | None = None) -> dict[str, tuple[str, ...]]:
 
     # dashboard: a quoted /v1/<op> call site in the dashboard source.
     for path in _files(root, _DASHBOARD_DIR, _DASHBOARD_SUFFIXES):
-        code = _TS_COMMENT.sub("", path.read_text(encoding="utf-8", errors="replace"))
+        code = _without_comments(path.read_text(encoding="utf-8", errors="replace"))
         for m in _DASHBOARD_CALL.finditer(code):
             hit(m.group(1), "dashboard")
 

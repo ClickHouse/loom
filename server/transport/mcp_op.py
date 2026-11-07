@@ -162,13 +162,13 @@ _INSTEAD: dict[str, str] = {
         "call loom_search with explain=true; each memory hit carries its ranking terms"
     ),
     "memory.outcome": (
-        "call memory.outcome_run (loom_op) to record whether the memories a run recalled helped"
+        "call memory.outcome_run (loom_op) with memory_keys=[the key] and the outcome"
     ),
     # Ops a client program calls, not a person: the agent's nearest op, or nothing to call.
     "ui.vitals": "the dashboard posts its own paint timings; nothing to call",
     "code.outcome": "the plugin's hooks report what was done with a code answer; nothing to call",
     "code.coverage.watch": "call code.index_status (loom_op) for what the index covers now",
-    "code.coverage.unwatch": "call code.index_status (loom_op) for what the index covers now",
+    "code.coverage.unwatch": "a bot's watch on its own inbox; nothing to call",
     "code.scip_ingest": "a CI job uploads the SCIP index; nothing to call",
     "code.scip_status": "a CI job uploads the SCIP index and polls its batch; nothing to call",
 }
@@ -195,7 +195,7 @@ def hidden_refusal(name: str) -> dict[str, Any] | None:
         return None
     default = _NEEDS_THE_USER if "dashboard" in op.reach else _NEEDS_AN_OPERATOR
     return {
-        "error": f"{name} exists but is kept for the user and operators, not agents",
+        "error": f"{name} exists but is not on MCP",
         "code": "OP_NOT_ON_MCP",
         "instead": _INSTEAD.get(name, default),
     }

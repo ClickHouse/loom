@@ -1,7 +1,8 @@
 """Reach of an operation: every path a caller can take to it.
 
 An op that is declared, described, tested and migrated but reachable from no
-listed tool, no SDK method, no example and no plugin hook is dark, and dark
+listed tool, no SDK method, no example, no plugin hook and no dashboard call
+site is dark, and dark
 ops go uncalled. This module derives, per op, the set of reach kinds:
 
 ``mcp_core``     listed on the default ``core`` MCP toolset (or with the code
@@ -19,7 +20,8 @@ ops go uncalled. This module derives, per op, the set of reach kinds:
                  and shim integrations (``integrations/``).
 ``dashboard``    the dashboard posts it: a quoted ``"/v1/<op>"`` call site in
                  ``frontend/src`` (tests and test helpers aside). An op without
-                 it is named in ``server.operations.dashboard`` with the reason.
+                 it is in ``server.operations.dashboard``: ``NOT_IN_DASHBOARD``
+                 with the reason, or ``DASHBOARD_PENDING``.
 ``http_only``    none of the above — a raw ``/v1/*`` POST is the only path.
 
 The MCP kinds derive live from ``server.operations.toolsets``. The file-scan

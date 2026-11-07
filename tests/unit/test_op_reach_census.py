@@ -144,6 +144,7 @@ def test_a_dashboard_call_site_is_a_quoted_path(tmp_path):
         "/** POST the bytes (`/v1/memory.touch?...`) */\n"
         'fetch("https://host/v1/x", {}); // `/v1/memory.reject`\n'
         'onClick={() => pin()} // posts "/v1/memory.lock"\n'
+        'bar(); /* "/v1/memory.demote" */ baz();\n'
         'const hint = "**/generated/**, third_party/**";\n'
         'post("/v1/memory.redact", body);\n'
         '{/* the drawer posts\n   post("/v1/memory.unlock") */}\n'

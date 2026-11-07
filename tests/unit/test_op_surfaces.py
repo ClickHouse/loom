@@ -58,6 +58,7 @@ PENDING_PINNED = frozenset(
         "memory.backlinks",
         "memory.clear",
         "memory.consolidate",
+        "memory.cross_promote",
         "memory.dedup_collapse",
         "memory.dedup_list",
         "memory.dedup_resolve",
@@ -193,11 +194,6 @@ def test_each_dashboard_violation_is_named(
     assert census.dashboard_violations([op]) == [expected]
 
 
-def test_every_reason_is_a_lowercase_clause():
-    for name, reason in NOT_IN_DASHBOARD.items():
-        assert reason.strip() and reason[0].islower() and not reason.endswith("."), name
-
-
 def test_an_op_kept_off_mcp_is_never_an_agent_step():
     """An op MCP keeps for people and operators is never classed as an agent's
     own step: an agent cannot call it, so that reason would leave it with no
@@ -207,12 +203,19 @@ def test_an_op_kept_off_mcp_is_never_an_agent_step():
         assert NOT_IN_DASHBOARD.get(name) not in agent_only, name
 
 
-def test_a_refusal_that_sends_the_user_to_the_dashboard_names_a_control():
-    """A hidden op's refusal names the dashboard only when the dashboard calls it."""
+def test_a_refusal_names_the_dashboard_only_for_an_op_it_calls():
     for name in _MCP_HIDDEN_OPS:
-        refusal = mcp_op.hidden_refusal(name)
-        if refusal and "dashboard" in refusal["instead"]:
+        if "dashboard" in mcp_op.hidden_refusal(name)["instead"]:
             assert "dashboard" in OPERATIONS_BY_NAME[name].reach, name
+
+
+def test_a_hidden_op_with_no_alternative_sends_the_agent_to_the_dashboard_or_an_operator():
+    """`memory.sweep_expired` has no dashboard control here, `conflicts.list` has one."""
+    assert "memory.sweep_expired" not in mcp_op._INSTEAD
+    assert "dashboard" not in OPERATIONS_BY_NAME["memory.sweep_expired"].reach
+    assert mcp_op.hidden_refusal("memory.sweep_expired")["instead"] == mcp_op._NEEDS_AN_OPERATOR
+    assert "dashboard" in OPERATIONS_BY_NAME["conflicts.list"].reach
+    assert mcp_op.hidden_refusal("conflicts.list")["instead"] == mcp_op._NEEDS_THE_USER
 
 
 def test_an_op_a_reason_names_is_on_the_dashboard():

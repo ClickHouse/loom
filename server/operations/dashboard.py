@@ -37,9 +37,8 @@ CLIENT_CALL = (
 
 NOT_IN_DASHBOARD: dict[str, str] = {
     # ---- code questions
-    **{
-        name: CODE_QUESTION
-        for name in (
+    **dict.fromkeys(
+        (
             "code.ask",
             "code.backport_gap",
             "code.backport_gaps",
@@ -66,12 +65,12 @@ NOT_IN_DASHBOARD: dict[str, str] = {
             "code.trace",
             "code.verify",
             "code.verify_citations",
-        )
-    },
+        ),
+        CODE_QUESTION,
+    ),
     # ---- tracker questions
-    **{
-        name: TRACKER_QUESTION
-        for name in (
+    **dict.fromkeys(
+        (
             "tracker.component",
             "tracker.duplicate_check",
             "tracker.flaky",
@@ -79,12 +78,12 @@ NOT_IN_DASHBOARD: dict[str, str] = {
             "tracker.release",
             "tracker.similar",
             "tracker.test_signal",
-        )
-    },
+        ),
+        TRACKER_QUESTION,
+    ),
     # ---- an agent's working steps
-    **{
-        name: AGENT_STEP
-        for name in (
+    **dict.fromkeys(
+        (
             "context.fetch",
             "context.offload",
             "context.pack",
@@ -143,12 +142,12 @@ NOT_IN_DASHBOARD: dict[str, str] = {
             "working_memory.render",
             "working_memory.replace",
             "working_memory.set",
-        )
-    },
+        ),
+        AGENT_STEP,
+    ),
     # ---- client programs
-    **{
-        name: CLIENT_CALL
-        for name in (
+    **dict.fromkeys(
+        (
             "code.coverage.unwatch",
             "code.coverage.watch",
             "code.outcome",
@@ -164,22 +163,21 @@ NOT_IN_DASHBOARD: dict[str, str] = {
             "observe.crystallize",
             "observe.record",
             "ops.capabilities",
-        )
-    },
+        ),
+        CLIENT_CALL,
+    ),
     # ---- a chat client's own feature
-    **{
-        name: (
-            "a chat client calls it for the message its user picks, and the user finds saved "
-            "messages there"
-        )
-        for name in (
+    **dict.fromkeys(
+        (
             "conversation.list_saved_messages",
             "conversation.save_message",
             "conversation.saved_status",
             "conversation.search_saved_messages",
             "conversation.unsave_message",
-        )
-    },
+        ),
+        "a chat client calls it for the message its user picks, and the user finds saved "
+        "messages there",
+    ),
     # ---- the dashboard does this through another op
     "memory.import": (
         "run by the program that exports from another memory system; the dashboard imports "
@@ -187,10 +185,6 @@ NOT_IN_DASHBOARD: dict[str, str] = {
     ),
     "memory.apply": (
         "the Memories page's bulk actions call the per-row ops (memory.pin, memory.delete)"
-    ),
-    "memory.cross_promote": (
-        "the admin's copy by memory id with a lineage link, which an agent makes for its "
-        "user; the memory drawer copies with memory.copy_to"
     ),
     "memory.search_trace": "the Recall lab explains each ranking with memory.search explain=true",
     "memory.update": "the memory drawer saves an edit with memory.set",
@@ -218,6 +212,7 @@ DASHBOARD_PENDING: frozenset[str] = frozenset(
         "memory.exposure_summary",
         "memory.owner_report",
         # the memory drawer
+        "memory.cross_promote",
         "memory.backlinks",
         "memory.demote",
         "memory.evidence",
