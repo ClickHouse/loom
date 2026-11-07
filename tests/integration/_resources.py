@@ -7,7 +7,7 @@ across every MergeTree table with an `org` column, then counts again to prove
 nothing is left. Only ids of the minted shape are ever purged, so a shared
 dev stack keeps every other tenant's rows. `memory_rows` reads a tenant's
 memory rows for a check that an op wrote nothing. `minted_identity` gives a test a
-fresh org and a writer token for it, minted with the test process's JWT secret.
+fresh org and a writer token for it.
 """
 
 from __future__ import annotations
