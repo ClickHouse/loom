@@ -244,7 +244,10 @@ and build tree is about 30 GB beside the mirror, and scip-clang holds a translat
 unit's AST per job (a few GB each), so `LOOM_CODE_SCIP_CLANG_JOBS` should fit the
 memory the workers process has. The full index of such a tree takes about an hour.
 The C/C++ tier fetches submodule pins with the entry's access token, so a private
-submodule of the repository's owner needs no other credential.
+submodule whose `.gitmodules` URL is an absolute https URL under the remote's owner
+needs no other credential. The owner is matched as written, case included, and a
+relative URL resolves against the checkout, which has no remote, so neither gets the
+token.
 
 - **C/C++ delta cap.** The worker indexes changed translation units, including those
   that include a changed header, up to `LOOM_CODE_SCIP_DELTA_MAX_TUS` (200); above the

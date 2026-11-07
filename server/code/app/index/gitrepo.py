@@ -97,7 +97,9 @@ def auth_env(token: str = "", remote: str = "https://github.com/") -> dict[str, 
     `token` rides an `http.<url>.extraheader` keyed to the remote's owner
     (`https://host/owner/`), so it appears in no argv, no remote URL, no stored
     config and no `code_index_state.repo_remote`, and git sends it to that
-    owner's repositories only: a submodule URL elsewhere on the host gets none."""
+    owner's repositories only: a submodule URL elsewhere on the host gets none.
+    Git matches the prefix byte for byte, so an owner spelled in another case
+    gets none either."""
     env = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "TMPDIR") if k in os.environ}
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_CONFIG_NOSYSTEM"] = "1"
@@ -112,8 +114,9 @@ def auth_env(token: str = "", remote: str = "https://github.com/") -> dict[str, 
         add_git_config(env, "protocol.file.allow", "always")
     if not token or not remote.startswith(("https://", "http://")):
         return env
-    host = remote.split("/")[2]
-    owner = remote.split("/")[3] if len(remote.split("/")) > 4 else ""
+    parts = remote.split("/")
+    host = parts[2]
+    owner = parts[3] if len(parts) > 4 else ""
     username = {
         "github.com": "x-access-token",
         "gitlab.com": "oauth2",

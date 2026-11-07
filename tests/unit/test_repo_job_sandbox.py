@@ -686,7 +686,7 @@ async def test_scip_full_runs_in_the_clang_tree_when_clang_is_an_extra_tier(
 async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, monkeypatch) -> None:
     """The fetch reads the bare clone, which the sandbox mounts only when named,
     and the submodule pins come from the network with the repository's token, so
-    a private submodule on the repository's host is fetched."""
+    a private submodule of the repository's owner is fetched."""
     from server.code.app.index import compiler_tier, scip_full
     from tests.unit.code_fixtures import repo_config
 
@@ -708,11 +708,11 @@ async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, mo
 
 
 @pytest.mark.asyncio
-async def test_a_networked_compiler_tier_git_authenticates_to_the_repository_host(
+async def test_a_networked_compiler_tier_git_authenticates_to_the_repository_owner(
     tmp_path: Path, monkeypatch
 ) -> None:
     """`git(..., token=, remote=)` hands the job the token as an extraheader for the
-    remote's host, never in argv; without a token the job carries no credential."""
+    remote's owner, never in argv; without a token the job carries no credential."""
     from server.code.app.index import compiler_tier
 
     envs: list[dict[str, str]] = []

@@ -34,6 +34,7 @@ def test_auth_env_carries_the_token_as_an_extraheader() -> None:
         ("https://github.com/o/r.git", "http.https://github.com/o/.extraheader"),
         ("https://gitlab.com/group/sub/r.git", "http.https://gitlab.com/group/.extraheader"),
         ("https://git.example.com/r.git", "http.https://git.example.com/.extraheader"),
+        ("https://github.com/o", "http.https://github.com/.extraheader"),
     ],
 )
 def test_the_token_is_sent_only_under_the_remote_owner(remote: str, key: str) -> None:
