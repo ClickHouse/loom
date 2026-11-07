@@ -75,8 +75,10 @@ _UNDECIDED = re.compile(
     # "Decision: open", "Decision: deferred to next sync". "Decision: open the replica to
     # reads", "Decision: deferred the rewrite", "Decision: open-source the parser" and
     # "Decision: no consensus on Kafka, so we stay on Redis" keep the label, and so does
-    # "Decision: no consensus on Kafka": content when unsure.
-    rf"\b(?:outcome|conclusion|resolved|decisions?)\s*(?::\s*)?"
+    # "Decision: no consensus on Kafka": content when unsure. A deferral to a target of
+    # more than 40 characters keeps the label too. The label may be bold or dashed
+    # ("**Decision:** deferred", "Decision - open").
+    rf"\b(?:outcome|conclusion|resolved|decisions?)\W*"
     rf"(?:{_NO_DECISION}|none|pending|open|deferred(?: (?:to|until) [^.;,]{{0,40}}?)?)"
     rf"{_LABEL_END}|"
     r"\bdecisions?\W+(?:tbd|tbc)\b|"

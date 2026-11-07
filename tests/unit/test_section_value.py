@@ -95,6 +95,12 @@ def test_the_labelled_set_scores_as_measured() -> None:
         ("Storage sync 2026-03-04", ("Cache",), "Decision: deferred to next sync"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: open - revisit next week"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: open -- revisit next week"),
+        ("Storage sync 2026-03-04", ("Cache",), "**Decision:** deferred to next sync"),
+        ("Storage sync 2026-03-04", ("Cache",), "**Decision**: deferred"),
+        ("Storage sync 2026-03-04", ("Cache",), "Decision - deferred to Q3"),
+        ("Storage sync 2026-03-04", ("Cache",), "Decision (deferred)"),
+        ("Storage sync 2026-03-04", ("Cache",), "**Decision:** none"),
+        ("Storage sync 2026-03-04", ("Cache",), "**Outcome:** no decision yet"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: not decided yet"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: no decision"),
         ("Storage sync 2026-03-04", ("Decision: not decided",), "- Revisit next week."),
@@ -182,6 +188,12 @@ def test_bookkeeping_and_discussion_without_a_decision_are_noise(
         ("Storage sync 2026-03-04", ("Cache",), "Decision: pending-write queue goes first."),
         # A label over a topic keeps the label: content when unsure.
         ("Storage sync 2026-03-04", ("Cache",), "Decision: no consensus on Kafka."),
+        # A deferral to a target of more than 40 characters keeps the label.
+        (
+            "Storage sync 2026-03-04",
+            ("Cache",),
+            "Decision: deferred until the vendor confirms pricing for the enterprise tier",
+        ),
         (
             "Storage sync 2026-03-04",
             ("Cache",),
@@ -682,5 +694,6 @@ def test_a_long_line_is_judged_in_linear_time() -> None:
     is_noise("Disk set", ("X",), "option " * 20_000)
     is_noise("Storage sync 2026-03-04", ("X",), "outcome: decision: " * 20_000)
     is_noise("Storage sync 2026-03-04", ("X",), "Decision" + " " * 20_000 + "x")
+    is_noise("Storage sync 2026-03-04", ("X",), "Decision" + "*:" * 20_000 + "x")
     is_noise("Storage sync 2026-03-04", ("X",), "Decision: deferred to " + "x " * 20_000)
     assert time.perf_counter() - started < 5.0
