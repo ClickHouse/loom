@@ -51,6 +51,7 @@ from server.core.grant_sql import LIVE_GRANT
 log = logging.getLogger(__name__)
 
 GRANTED_BY_PREFIX = "repo-maintainers:"
+_ACTIVE = ("", "active")
 # The namespaces whose sync waited for the registry read, logged once each per process.
 _UNSYNCED: set[tuple[str, str]] = set()
 
@@ -58,9 +59,6 @@ _UNSYNCED: set[tuple[str, str]] = set()
 def reset_for_tests() -> None:
     """Forget which namespaces logged a skipped sync."""
     _UNSYNCED.clear()
-
-
-_ACTIVE = ("", "active")
 
 
 def _branches(org: str, repo: str) -> dict[str, str]:

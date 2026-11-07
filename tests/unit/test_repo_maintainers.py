@@ -593,6 +593,33 @@ async def test_grants_create_admin_fans_out_and_viewer_does_not(
     assert _handler_env["sync"] == [("clickhouse", "code-x")]
 
 
+async def test_a_replace_that_takes_no_admin_needs_no_registry_read(
+    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _writer(*_a: Any, **_k: Any) -> GrantState:
+        return GrantState.from_row(
+            {"subject": "dave", "role": "writer", "status": "active", "granted_by": "ops"}
+        )
+
+    async def _failed(_ch: Any = None) -> bool:
+        return False
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _writer)
+    monkeypatch.setattr(repo_registry, "read_registry", _failed)
+    await grants_mod.handle_grants_create(
+        GrantsCreateInput(
+            org="clickhouse",
+            namespace="code-x",
+            subject="dave",
+            role="viewer",
+            granted_by="ops",
+            replace=True,
+        )
+    )
+    assert [r["role"] for r in _handler_env["rows"]] == ["viewer"]
+    assert _handler_env["revoke"] == []
+
+
 async def test_grants_approve_as_maintainer_fans_out(
     _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:

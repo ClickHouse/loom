@@ -221,12 +221,16 @@ async def _create_grant(
     async def _write(_row: GrantState | None) -> datetime:
         return await _write_grant(input, subject, may_replace)
 
-    if input.replace and input.role != "admin":
-        # Only `replace=true` lowers a grant (else 409): it may take admin.
-        now = await _taking_admin(input, subject, _write, lowered_to=input.role)
-    else:
-        async with grant_change(input.org, input.namespace, subject):
+    now: datetime | None = None
+    async with grant_change(input.org, input.namespace, subject):
+        row = None
+        if input.replace and input.role != "admin":
+            row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
+        if row is None or not _active_admin(row):
             now = await _write_grant(input, subject, may_replace)
+    if now is None:
+        # Only `replace=true` lowers a grant (else 409): this one takes admin.
+        now = await _taking_admin(input, subject, _write, lowered_to=input.role)
     if input.role == "admin":
         # The admin grant reaches the repository's branches the sync passes it to.
         from server.code.app.index import maintainers
