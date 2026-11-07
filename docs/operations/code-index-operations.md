@@ -238,13 +238,13 @@ the repository's CMake configure (compile database only, no build) on the first 
 a tree. It runs the configure again on the existing cache before a full index and for a
 delta whose window adds a `.cpp`, `.cc` or `.cxx` file or adds, changes or deletes a
 `CMakeLists.txt` or `.cmake` file, because the compile database lists only the
-translation units of the tree it was configured on. A configure that fails fails the
-run, as a failed first configure does: the entry's `clang` record (`clang_full` for a
-full index) reads failing with kind `cmake` and CMake's last lines, its watermark
-stays, and the window is retried every pass until the build configures again. A
-worker whose project prerequisites are absent records a skip in `workers.status`; the
-Tree-sitter tier remains available. TypeScript projects have their dependencies
-installed automatically in their checkout.
+translation units of the tree it was configured on. A reconfigure that fails fails the
+run with CMake's last lines, and the entry's `clang` record (`clang_full` for a full
+index) reads failing with kind `cmake`. A delta moves no watermark, so its window, with
+the translation units it adds, is retried every pass; a full index is retried 6 hours
+later, as any failed full run is. A worker whose project prerequisites are absent
+records a skip in `workers.status`; the Tree-sitter tier remains available. TypeScript
+projects have their dependencies installed automatically in their checkout.
 
 A large C++ tree is the heavy case: a ClickHouse-sized checkout with its submodules
 and build tree is about 30 GB beside the mirror, and scip-clang holds a translation

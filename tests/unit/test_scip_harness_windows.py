@@ -253,21 +253,24 @@ class _CppWindow:
 
     def run(self, head: str, index_docs: list[str]) -> dict | None:
         _write_index(self.index, index_docs)
-        self.out = subprocess.run(
+        subprocess.run(
             ["bash", str(_HARNESS / "run_delta.sh"), str(self.repo), self.base, head, "-"],
             env=self.env,
             check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            capture_output=True,
             text=True,
-        ).stdout
+        )
         return json.loads(self.delta.read_text()) if self.delta.exists() else None
 
-    def run_unchecked(self, head: str) -> subprocess.CompletedProcess[str]:
-        _write_index(self.index, [])
+    def run_unchecked(
+        self, head: str = "", index_docs: tuple[str, ...] = (), **env: str
+    ) -> subprocess.CompletedProcess[str]:
+        """One run, its output merged; no `head` is a full index."""
+        _write_index(self.index, list(index_docs))
+        window = [self.base, head] if head else ["--full", ""]
         return subprocess.run(
-            ["bash", str(_HARNESS / "run_delta.sh"), str(self.repo), self.base, head, "-"],
-            env=self.env,
+            ["bash", str(_HARNESS / "run_delta.sh"), str(self.repo), *window, "-"],
+            env={**self.env, **env},
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -377,15 +380,7 @@ def test_a_window_whose_configure_failed_indexes_what_it_adds_once_it_configures
 
 def test_a_full_index_whose_reconfigure_fails_fails(tmp_path: Path) -> None:
     w = _CppWindow(tmp_path)
-    w.env["CMAKE_FAIL"] = "1"
-    proc = subprocess.run(
-        ["bash", str(_HARNESS / "run_delta.sh"), str(w.repo), "--full", "", "-"],
-        env=w.env,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
+    proc = w.run_unchecked(CMAKE_FAIL="1")
     assert proc.returncode == 1 and w.compdbs == []
     assert "cmake reconfigure failed" in proc.stdout
 
@@ -393,13 +388,8 @@ def test_a_full_index_whose_reconfigure_fails_fails(tmp_path: Path) -> None:
 def test_a_first_configure_is_not_followed_by_a_reconfigure(tmp_path: Path) -> None:
     w = _CppWindow(tmp_path)
     (w.repo / "build" / "compile_commands.json").unlink()
-    _write_index(w.index, ["src/a.cpp", "src/b.cpp"])
-    subprocess.run(
-        ["bash", str(_HARNESS / "run_delta.sh"), str(w.repo), "--full", "", "-"],
-        env={**w.env, "CC": "cc", "CXX": "c++"},
-        check=True,
-        capture_output=True,
-        text=True,
+    assert (
+        w.run_unchecked(index_docs=("src/a.cpp", "src/b.cpp"), CC="cc", CXX="c++").returncode == 0
     )
     assert len(w.cmake_runs) == 1 and "-G Ninja" in w.cmake_runs[0]
     assert w.compdbs == [["a.cpp", "b.cpp"]]
@@ -409,14 +399,7 @@ def test_a_full_index_reconfigures_before_it_reads_the_compile_database(tmp_path
     w = _CppWindow(tmp_path)
     (w.repo / "src" / "c.cpp").write_text("int c() { return 3; }\n")
     _commit(w.repo, "add c")
-    _write_index(w.index, ["src/a.cpp", "src/b.cpp", "src/c.cpp"])
-    subprocess.run(
-        ["bash", str(_HARNESS / "run_delta.sh"), str(w.repo), "--full", "", "-"],
-        env=w.env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    assert w.run_unchecked(index_docs=("src/a.cpp", "src/b.cpp", "src/c.cpp")).returncode == 0
     assert w.cmake_runs == ["cmake -B build -S ."]
     assert w.compdbs == [["a.cpp", "b.cpp", "c.cpp"]]
 

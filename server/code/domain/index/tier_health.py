@@ -323,8 +323,8 @@ def fix_for(kind: str, text: str) -> str:
     if kind == "cmake":
         return (
             "CMake could not reconfigure the build tree; its last lines are in the error. "
-            "The tier's watermark stays, so the window is retried every pass: fix the "
-            "build, or give the host what the configure needs."
+            "The tier retries the run: fix the build, or give the host what the "
+            "configure needs."
         )
     if kind == "harness":
         return "The indexer failed: the error holds the tail of its output."

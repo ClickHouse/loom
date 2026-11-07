@@ -27,6 +27,7 @@ cd "$CHECKOUT"
 HEAD_SHA=${HEAD_SHA:-$(git rev-parse HEAD)}
 
 # 1. compile_commands.json — cmake configure only (no build).
+CONFIGURED=
 if [[ ! -f build/compile_commands.json ]]; then
   # ClickHouse's CMake refuses GCC ("Compiler GNU is not supported"), and a
   # fresh checkout has no cache to remember the compiler — pin clang
