@@ -436,3 +436,9 @@ async def test_a_correction_past_the_forget_cap_keeps_its_replacement(monkeypatc
     assert "user_editor" in deleted
     # the per-request candidate reads stop at the cap, on the latest requests
     assert len(fetched[0]) == cap and "I use Vim" not in fetched[0]
+    # the words of every request, resolved or not, guard what is a replacement
+    msgs = [{"role": r, "content": t} for r, t in turns]
+    restated = {"key": "user_vim", "value": "use Vim", "source_message_indices": [0]}
+    requests = forget.forget_requests_from_messages(msgs)
+    _, protected, _ = forget.replacement_facts([restated], requests, [], msgs, keep_said=False)
+    assert "user_vim" not in protected

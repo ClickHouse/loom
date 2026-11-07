@@ -290,8 +290,8 @@ def forget_requests_from_messages(messages: list[dict[str, Any]]) -> list[dict[s
     change something ("don't forget to remind me", "stop using emojis") is
     not a request to forget; a clause with no content word ("forget it") is
     dropped here."""
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    # a repeated request moves to its latest mention, so the latest requests are the last
+    out: dict[str, dict[str, Any]] = {}
     for m in messages or []:
         if str(m.get("role") or "").lower() != "user":
             continue
@@ -314,11 +314,9 @@ def forget_requests_from_messages(messages: list[dict[str, Any]]) -> list[dict[s
                 continue
             if not _content_tokens(what):
                 continue
-            if low in seen:
-                continue
-            seen.add(low)
-            out.append({"key": "", "value": what, "forget": True, "tags": ["forget"]})
-    return out
+            out.pop(low, None)
+            out[low] = {"key": "", "value": what, "forget": True, "tags": ["forget"]}
+    return list(out.values())
 
 
 def forget_sentences(
@@ -365,29 +363,14 @@ _FIRST_PERSON_RE = re.compile(
 )
 
 
-def forget_targets_by_content(
-    fact: dict[str, Any], existing: list[dict[str, Any]], *, min_overlap: float = 0.5
-) -> set[str]:
-    """Existing memories a forget request is about, found by content when the
-    extractor did not link them: the request's content
-    words ("jazz blues performance") against each existing row's value and
-    key; a row whose tokens cover at least `min_overlap` of the request's
-    (and at least two of them) is a target. The candidates are the rows the
-    pipeline already fetched as semantically relevant to this batch."""
-    return _targets_by_words(_request_words(fact), _row_words(existing), min_overlap=min_overlap)
-
-
-def _request_words(
-    fact: dict[str, Any], value_words: dict[str, set[str]] | None = None
-) -> set[str]:
+def _request_words(fact: dict[str, Any], value_words: dict[str, set[str]]) -> set[str]:
     """The content words of a forget entry's value and of its key less the
     marker; `value_words` holds values already read (split entries share one)."""
     value = str(fact.get("value") or "")
-    memo = {} if value_words is None else value_words
-    if value not in memo:
-        memo[value] = _content_tokens(value)
+    if value not in value_words:
+        value_words[value] = _content_tokens(value)
     key = _content_tokens(_FORGET_KEY_RE.sub(" ", str(fact.get("key") or "").replace("_", " ")))
-    return memo[value] if key <= memo[value] else memo[value] | key
+    return value_words[value] if key <= value_words[value] else value_words[value] | key
 
 
 def _row_words(rows: list[dict[str, Any]] | None) -> list[tuple[str, set[str]]]:
@@ -404,6 +387,8 @@ def _row_words(rows: list[dict[str, Any]] | None) -> list[tuple[str, set[str]]]:
 def _targets_by_words(
     want: set[str], rows: list[tuple[str, set[str]]], *, min_overlap: float = 0.5
 ) -> set[str]:
+    """The rows a request's words name: those holding at least `min_overlap`
+    of them, and at least two."""
     if not want:
         return set()
     # A one-word request ("forget what I told you about my salary") resolves
