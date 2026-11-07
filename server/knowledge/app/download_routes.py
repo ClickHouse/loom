@@ -13,6 +13,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from server.auth.authz import check_authorized
 from server.auth.bearer import missing_bearer, verify_bearer_header
+from server.auth.context import set_current_auth
 from server.auth.gateway import effective_auth, personal_namespace
 from server.core.ch import sequential_reads
 from server.identity.app.restricted_access import note_restricted_access
@@ -52,6 +53,7 @@ async def knowledge_download(
     try:
         if auth is not None:
             auth = effective_auth(auth, request.headers.get("X-Loom-On-Behalf-Of") or "")
+        set_current_auth(auth)  # the reader, as an op's transport binds it (the audit row's token)
         namespace = personal_namespace(auth, org, namespace)
         await check_authorized(auth, Role.VIEWER, org=org, namespace=namespace)
     except ValueError as e:

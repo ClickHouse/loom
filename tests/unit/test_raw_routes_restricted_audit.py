@@ -77,7 +77,10 @@ def _assert_one_row(rows: list[tuple[str, dict[str, Any]]], op: str, namespace: 
 
 def _client(module: Any) -> AsyncClient:
     app = FastAPI()
-    module.attach(app)
+    if hasattr(module, "attach"):
+        module.attach(app)
+    else:
+        app.include_router(module.router)
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://t")
 
 
@@ -347,6 +350,106 @@ async def test_a_refused_inbox_watch_writes_no_audit_row(
     assert audit_rows == []
 
 
+class _Delegated:
+    """What `delegate` hands a mint: a token naming the restricted namespace."""
+
+    namespaces = (NS,)
+    ns_roles = {NS: "viewer"}
+
+    def mint(self, subject: str) -> str:
+        return "jwt"
+
+    def expires_at(self, now: Any) -> None:
+        return None
+
+    def as_auth(self, subject: str) -> AuthInfo:
+        return AuthInfo(
+            subject=subject,
+            org=ORG,
+            namespaces=self.namespaces,
+            roles=(Role.VIEWER,),
+            is_service_account=True,
+        )
+
+
+@pytest.fixture
+def mint_env(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Auth on; `delegate` admits, and the grant write grants `NS`."""
+    from contextlib import asynccontextmanager
+
+    import server.auth.grant_claims as grant_claims
+    from server.identity.app import me_service_accounts, me_setup, token_grants
+    from server.settings import settings
+
+    async def _delegate(*_a: Any, **_k: Any) -> _Delegated:
+        return _Delegated()
+
+    async def _nothing(*_a: Any, **_k: Any) -> None:
+        return None
+
+    async def _granted(org: str, sa_subject: str, creator: str, ns_roles: Any) -> list[str]:
+        return [ns for ns in ns_roles if ns == NS]
+
+    @asynccontextmanager
+    async def _change(*_a: Any) -> Any:
+        yield
+
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
+    monkeypatch.setattr(grant_claims, "service_account_change", _change)
+    monkeypatch.setattr(token_grants, "grant_restricted_to_token", _granted)
+    for module in (me_service_accounts, me_setup):
+        monkeypatch.setattr(module, "delegate", _delegate)
+    monkeypatch.setattr(me_service_accounts, "refuse_taken_name", _nothing)
+    monkeypatch.setattr(me_service_accounts, "save_token", _nothing)
+    return me_service_accounts, me_setup
+
+
+@pytest.mark.asyncio
+async def test_a_service_account_mint_onto_a_restricted_namespace_writes_the_audit_row(
+    mint_env: Any, audit_rows: list[Any]
+) -> None:
+    me_service_accounts, _ = mint_env
+    async with _client(me_service_accounts) as c:
+        r = await c.post(
+            "/v1/me/service_accounts.create",
+            json={"name": "bot", "namespaces": [NS]},
+            headers=BEARER,
+        )
+    assert r.status_code == 200, r.text
+    _assert_one_row(audit_rows, "me.service_accounts.create")
+
+
+@pytest.mark.asyncio
+async def test_a_setup_mint_onto_a_restricted_namespace_writes_the_audit_row(
+    monkeypatch: pytest.MonkeyPatch, mint_env: Any, audit_rows: list[Any]
+) -> None:
+    _, me_setup = mint_env
+
+    async def _restricted(org: str, subject: str, raw: object) -> list[str]:
+        return [NS]
+
+    async def _saved(**_k: Any) -> tuple[str, str, None]:
+        return "jwt", "sa:cursor-x", None
+
+    async def _no_default(*_a: Any) -> str:
+        return ""
+
+    monkeypatch.setattr(me_setup, "_validate_restricted_request", _restricted)
+    monkeypatch.setattr(me_setup, "_save_mcp_token", _saved)
+    monkeypatch.setattr(me_setup, "default_namespace", _no_default)
+    monkeypatch.setattr(
+        "server.auth.public_url.public_base_url", lambda request: "https://loom.example.com"
+    )
+    async with _client(me_setup) as c:
+        r = await c.post(
+            "/v1/me/setup/mcp_config",
+            json={"client": "cursor", "restricted_namespaces": [NS]},
+            headers=BEARER,
+        )
+    assert r.status_code == 200, r.text
+    _assert_one_row(audit_rows, "me.setup.mcp_config")
+
+
 # The checks that admit a caller to a namespace outside the op transport.
 _ADMISSION = {
     "check_authorized",
@@ -357,6 +460,7 @@ _ADMISSION = {
     "grant_restricted_to_token",
     "delegate",
 }
+_AUDIT = {"note_restricted_access", "note_restricted_grants"}
 # The op transports admit through `gates.authorize`, which writes the row
 # (tests/unit/test_admission_parity.py).
 _OP_TRANSPORTS = {"server.transport.http", "server.transport.mcp"}
@@ -394,10 +498,10 @@ def test_every_raw_route_that_admits_to_a_namespace_writes_the_audit_row() -> No
     for name in sorted(modules):
         path = Path(inspect.getfile(sys.modules[name]))
         names = _names(path)
-        if names & _ADMISSION and "note_restricted_access" not in names:
+        if names & _ADMISSION and not names & _AUDIT:
             missing.append(str(path.relative_to(ROOT)))
     assert not missing, (
-        "these route modules name a namespace check but never call "
-        "server.identity.app.restricted_access.note_restricted_access (checked per "
-        "module, not per route): " + ", ".join(missing)
+        "these route modules name a namespace check but never write the row through "
+        "server.identity.app.restricted_access (checked per module, not per route): "
+        + ", ".join(missing)
     )

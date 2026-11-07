@@ -21,7 +21,7 @@ from server.auth.service_accounts import hand_down_lineage, revoked_row
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.app import me_callers, token_grants
-from server.identity.app.restricted_access import note_restricted_access
+from server.identity.app.restricted_access import note_restricted_grants
 from server.operations.base import GRANT_ROLES, Role, grant_rank
 from server.settings import settings
 
@@ -345,10 +345,12 @@ async def me_service_accounts_create(
     restricted_granted = await token_grants.grant_restricted_to_token(
         org, sa_subject, subject, ns_roles
     )
-    for ns in restricted_granted:
-        await note_restricted_access(
-            parent, op="me.service_accounts.create", org=org, namespace=ns, transport="http"
-        )
+    await note_restricted_grants(
+        parent if settings.auth_actually_required() else None,  # auth off: no caller, no row
+        op="me.service_accounts.create",
+        org=org,
+        namespaces=restricted_granted,
+    )
 
     return {
         "token": minted,

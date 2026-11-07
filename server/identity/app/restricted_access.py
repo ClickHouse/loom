@@ -117,4 +117,17 @@ async def note_restricted_access(
         return False
 
 
-__all__ = ["EVENT_TYPE", "digest_text", "drain", "note_restricted_access"]
+async def note_restricted_grants(
+    auth: Any, *, op: str, org: str, namespaces: list[str], transport: str = "http"
+) -> None:
+    """The row of each restricted namespace a token mint granted, written
+    together so the inline inserts share one batch."""
+    await asyncio.gather(
+        *(
+            note_restricted_access(auth, op=op, org=org, namespace=ns, transport=transport)
+            for ns in namespaces
+        )
+    )
+
+
+__all__ = ["EVENT_TYPE", "digest_text", "drain", "note_restricted_access", "note_restricted_grants"]
