@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from server.code.app.index.compiler_tier import (
     compiler_target,
-    note_stale_compdb,
+    raise_if_stale_compdb,
     resolve_binary,
     resolve_checkout,
     run_tier,
@@ -113,9 +113,9 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipFullResult)
         timeout_s=settings.code_scip_full_timeout_seconds,
         jobs=settings.code_scip_clang_jobs,
     )
-    await note_stale_compdb("code_scip_full", cfg, checkout, result.skipped)
     result.deltas_applied += 1
     logger.info(
         "code_scip_full: %s at %s applied %s", cfg.namespace, target[:8], stats.model_dump()
     )
+    await raise_if_stale_compdb(cfg, checkout)
     return True

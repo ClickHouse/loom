@@ -71,6 +71,11 @@ FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).t
             "2d70290e18f5. Direct fetching of that commit failed.",
             "network",
         ),
+        (
+            "code-a: cmake reconfigure failed; compile database stale\n"
+            "CMake Error: Could not resolve host: h",
+            "cmake",
+        ),
         ("RuntimeError: harness timed out after 600.0s", "timeout"),
         ("TimeoutError: git fetch origin in /c exceeded 600s", "timeout"),
         ("write error: No space left on device", "disk"),

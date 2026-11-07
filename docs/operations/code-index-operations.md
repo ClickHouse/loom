@@ -239,10 +239,10 @@ a tree. It runs the configure again on the existing cache before a full index an
 a delta whose window adds a `.cpp`, `.cc` or `.cxx` file or adds, changes or deletes a
 `CMakeLists.txt` or `.cmake` file, because the compile database lists only the
 translation units of the tree it was configured on. When that configure fails, the
-harness indexes with the last compile database, and the pass records the skip
-`cmake reconfigure failed; compile database stale` for the entry. Every later run
-reconfigures and records the skip again until a configure succeeds; a translation unit
-added meanwhile is indexed by the next full index. A worker whose project prerequisites
+harness indexes with the last compile database, and the entry's `clang` tier (or
+`clang_full`, for a full index) reads failing with kind `cmake` and CMake's last
+lines. Every later run reconfigures, and the record clears on the first configure
+that succeeds; a translation unit added meanwhile is indexed by the next full index. A worker whose project prerequisites
 are absent records a skip in `workers.status`; the Tree-sitter tier remains available.
 TypeScript projects have their dependencies installed automatically in their checkout.
 

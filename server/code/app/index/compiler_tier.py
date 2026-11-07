@@ -263,15 +263,13 @@ async def stale_compdb(namespace: str, checkout: Path) -> tuple[str, str]:
     return f"{namespace}: cmake reconfigure failed; compile database stale", tail
 
 
-async def note_stale_compdb(
-    worker: str, cfg: RepoConfig, checkout: Path, skipped: list[str]
-) -> None:
-    """A stale compile database is a skip, first, so workers.status keeps it among
-    the skips it shows; the log carries why CMake failed."""
+async def raise_if_stale_compdb(cfg: RepoConfig, checkout: Path) -> None:
+    """After a run whose harness indexed with a stale compile database, applied and
+    moved its watermark: `TierDegraded`, so the tier's record reads failing, with why
+    CMake failed, until a configure succeeds."""
     reason, tail = await stale_compdb(cfg.namespace, checkout)
     if reason:
-        logger.warning("%s: %s\n%s", worker, reason, tail)
-        skipped.insert(0, reason)
+        raise TierDegraded(f"{reason}\n{tail}")
 
 
 async def restart_full(

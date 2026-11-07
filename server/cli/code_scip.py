@@ -210,13 +210,16 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
     except Exception as e:
         await tier_health.record(repo, org, ns, "clang_full", e)
         raise
-    await tier_health.record(repo, org, ns, "clang_full")
+    stale, cmake_tail = await stale_compdb(ns, checkout)
+    # a stale compile database fails the record, as the worker's run does
+    await tier_health.record(
+        repo, org, ns, "clang_full", f"{stale}\n{cmake_tail}" if stale else None
+    )
     _write_tail(out)
     if getattr(args, "keep_delta", ""):
         print(f"delta kept at {args.keep_delta}")
     print(f"applied: {stats.model_dump()}")
     print(f"{scip_full.WATERMARK} -> {git_head[:12]}")
-    stale, _ = await stale_compdb(ns, checkout)
     if stale:
         print(stale, file=sys.stderr)
     _note(head=git_head[:12], harness_exit=0, stale_compdb=bool(stale), **stats.model_dump())

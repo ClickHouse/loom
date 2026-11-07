@@ -74,17 +74,20 @@ async def test_an_unseeded_entry_gets_its_first_index_and_a_checkout(tmp_path, m
 
 
 @pytest.mark.asyncio
-async def test_a_full_run_on_a_stale_compile_database_is_a_skip_on_the_pass(tmp_path, monkeypatch):
+async def test_a_full_run_on_a_stale_compile_database_fails_the_full_record(tmp_path, monkeypatch):
     """The harness leaves its marker in the checkout when CMake cannot reconfigure."""
     from server.code.app.index.compiler_tier import STALE_COMPDB_MARKER
 
     cfg = _cfg(tmp_path, "code-a")
     marker = tmp_path / "checkout-code-a" / STALE_COMPDB_MARKER
     marker.parent.mkdir(parents=True)
-    marker.touch()
-    res, _ = await _full_pass(tmp_path, monkeypatch, {("code-a", "git_head"): "a" * 40}, [cfg])
+    marker.write_text("CMake Error: a package is missing\n")
+    record = AsyncMock()
+    with patch("server.code.app.index.tier_health.record", record):
+        res, _ = await _full_pass(tmp_path, monkeypatch, {("code-a", "git_head"): "a" * 40}, [cfg])
     assert res.deltas_applied == 1 and not res.errors
-    assert res.skipped == ["code-a: cmake reconfigure failed; compile database stale"]
+    (_, _, ns, tier, err) = record.await_args.args
+    assert (ns, tier) == ("code-a", "clang_full") and "a package is missing" in str(err)
 
 
 @pytest.mark.asyncio
@@ -106,12 +109,19 @@ async def test_a_manual_full_run_on_a_stale_compile_database_says_so(tmp_path, m
     monkeypatch.setattr(settings, "code_scip_clang_path", str(clang))
     monkeypatch.setattr(app, "full_index", AsyncMock(return_value=(ScipApplyStats(), "")))
     args = argparse.Namespace(checkout=str(checkout), apply_delta="", jobs=0, keep_delta="")
-    with patch(
-        "server.code.store.index.CodeRepo", return_value=_repo({("code-a", "git_head"): "a" * 40})
+    record = AsyncMock()
+    with (
+        patch(
+            "server.code.store.index.CodeRepo",
+            return_value=_repo({("code-a", "git_head"): "a" * 40}),
+        ),
+        patch("server.code.app.index.tier_health.record", record),
     ):
         rc = await code_scip._scip_full_locked(args, "o", "code-a", cfg)
     assert rc == 0
     assert "code-a: cmake reconfigure failed; compile database stale" in capsys.readouterr().err
+    (_, _, _, tier, err) = record.await_args.args
+    assert tier == "clang_full" and "cmake reconfigure failed" in err
 
 
 @pytest.mark.asyncio

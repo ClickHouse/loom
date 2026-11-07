@@ -158,6 +158,9 @@ _MODULE_FAILED = re.compile(r"go mod download failed|scip-go failed", re.IGNOREC
 # First match wins: a missing credential also makes the submodule pin look missing
 # ("did not contain <sha>"), so the credential test comes before the pin test.
 _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    # the C/C++ harness indexed with its last compile database: CMake's own last lines
+    # follow, and can read as any other kind
+    ("cmake", re.compile(r"cmake reconfigure failed", re.IGNORECASE)),
     # A Go module the harness skipped because it would not build: its line ends with the
     # module's own last log line, which can read as any other kind.
     ("module", _MODULE_FAILED),
@@ -316,6 +319,13 @@ def fix_for(kind: str, text: str) -> str:
             "A Go module did not build: the error names it and why. The rest of the "
             "repository is indexed; the record clears on the next run that builds the "
             "modules it changes."
+        )
+    if kind == "cmake":
+        return (
+            "CMake could not reconfigure the build tree: the error ends with its last "
+            "lines. The tier indexes with the last compile database, so a translation "
+            "unit added since then answers from the Tree-sitter tier; the record clears "
+            "on the next run whose configure succeeds."
         )
     if kind == "harness":
         return "The indexer failed: the error holds the tail of its output."

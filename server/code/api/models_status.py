@@ -114,7 +114,7 @@ class CodeTierHealth(BaseModel):
     tier: str
     state: str = "ok"  # ok | failing
     # credential | pin_missing | submodule_url | egress | network | timeout | disk | harness |
-    # module | unknown
+    # module | cmake | unknown
     kind: str = ""
     error: str = ""  # the end of the error output, credentials redacted
     fix: str = ""

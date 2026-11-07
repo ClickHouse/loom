@@ -36,7 +36,7 @@ from server.code.app.index.compiler_tier import (
     compiler_target,
     git,
     harness_failure,
-    note_stale_compdb,
+    raise_if_stale_compdb,
     resolve_binary,
     resolve_checkout,
     run_harness,
@@ -154,13 +154,13 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
         if returncode != 0:
             # base unknown clears scip_commit: code_scip_full re-indexes the entry
             raise harness_failure(returncode, out[-2000:])
-        await note_stale_compdb("code_scip_delta", cfg, checkout, result.skipped)
 
         if not await asyncio.to_thread(delta_path.exists):
             # harness legitimately exits 0 with no delta when no C++ TU changed
             logger.info("code_scip_delta: %s no C++ changes in window", cfg.namespace)
             check_held()
             await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
+            await raise_if_stale_compdb(cfg, checkout)
             return
 
         from server.code.app.index.scip_delta import ScipDelta, apply_delta
@@ -179,3 +179,4 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
         target[:8],
         stats.model_dump(),
     )
+    await raise_if_stale_compdb(cfg, checkout)

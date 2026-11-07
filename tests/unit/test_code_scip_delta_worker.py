@@ -126,52 +126,55 @@ async def test_fetch_does_not_recurse_submodules(monkeypatch, tmp_path):
     assert sub["token"] == "ghs_test" and sub["remote"] == "https://github.com/o/private"
 
 
-@pytest.mark.asyncio
-async def test_a_delta_on_a_stale_compile_database_is_a_skip_on_the_pass(monkeypatch, tmp_path):
-    """The harness exits 0 and leaves its marker in the checkout when CMake cannot
-    reconfigure; the pass names the entry, since translation units added since the last
-    configure are not indexed."""
+async def _stale_pass(monkeypatch, tmp_path, *, stale: bool) -> tuple[Any, AsyncMock]:
+    """One delta pass whose harness exits 0, with or without the stale marker."""
     from server.code.app.index.compiler_tier import STALE_COMPDB_MARKER
     from server.code.app.index.sandbox import JobResult
     from server.code.workers import scip_delta as w
     from server.settings import settings
 
-    for name in ("checkout", "bare.git"):
-        (tmp_path / name).mkdir()
+    marker = tmp_path / "checkout" / STALE_COMPDB_MARKER
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "bare.git").mkdir(exist_ok=True)
     (tmp_path / "scip-clang").touch()
-    (tmp_path / "checkout" / STALE_COMPDB_MARKER).parent.mkdir()
-    (tmp_path / "checkout" / STALE_COMPDB_MARKER).touch()
+    if stale:
+        marker.write_text("CMake Error: a package is missing\n")
+    else:
+        marker.unlink(missing_ok=True)
     monkeypatch.setattr(settings, "code_scip_checkout_dir", str(tmp_path / "checkout"))
     monkeypatch.setattr(settings, "code_git_dir", str(tmp_path / "bare.git"))
     monkeypatch.setattr(settings, "code_scip_clang_path", str(tmp_path / "scip-clang"))
     monkeypatch.setattr(w, "git", AsyncMock())
-    harness = AsyncMock(return_value=JobResult(0, b"", b""))
+    record = AsyncMock()
+    repo = _repo("a" * 40, "b" * 40)
     with (
-        patch("server.code.store.index.CodeRepo", return_value=_repo("a" * 40, "b" * 40)),
+        patch("server.code.store.index.CodeRepo", return_value=repo),
         patch("server.code.domain.index.repos.configured_repos", return_value=[_Cfg()]),
-        patch("server.code.app.index.compiler_tier.run_job", harness),
+        patch(
+            "server.code.app.index.compiler_tier.run_job",
+            AsyncMock(return_value=JobResult(0, b"", b"")),
+        ),
+        patch("server.code.app.index.tier_health.record", record),
     ):
         res = await run_pass()
-    assert not res.errors
-    assert res.skipped == ["code-clickhouse: cmake reconfigure failed; compile database stale"]
+    return res, record
 
 
 @pytest.mark.asyncio
-async def test_the_stale_compile_database_skip_comes_before_other_skips_on_the_pass(tmp_path):
-    from server.code.app.index.compiler_tier import (
-        STALE_COMPDB_MARKER,
-        note_stale_compdb,
-        tier_outcome,
-    )
-    from server.code.workers.scip_delta import CodeScipDeltaResult
+async def test_a_delta_on_a_stale_compile_database_fails_the_tier_record(monkeypatch, tmp_path):
+    """The harness exits 0 and leaves its marker, with CMake's last lines, when CMake
+    cannot reconfigure: the watermark moves, the pass is no error, and the clang record
+    reads failing with why; the next run whose configure succeeds clears it."""
+    res, record = await _stale_pass(monkeypatch, tmp_path, stale=True)
+    assert not res.errors
+    (_, org, ns, tier, err) = record.await_args.args
+    assert (ns, tier) == ("code-clickhouse", "clang")
+    assert "cmake reconfigure failed" in str(err) and "a package is missing" in str(err)
+    from server.code.domain.index.tier_health import classify
 
-    (tmp_path / STALE_COMPDB_MARKER).parent.mkdir()
-    (tmp_path / STALE_COMPDB_MARKER).touch()
-    result = CodeScipDeltaResult(skipped=[f"code-{n}: watermarks not seeded" for n in range(5)])
-    await note_stale_compdb("code_scip_delta", _Cfg(), tmp_path, result.skipped)
-    stale = "code-clickhouse: cmake reconfigure failed; compile database stale"
-    outcome = tier_outcome(result)
-    assert outcome["skipped"][0] == stale and outcome["reason"] == stale
+    assert classify(str(err)) == "cmake"
+    res, record = await _stale_pass(monkeypatch, tmp_path, stale=False)
+    assert not res.errors and record.await_args.args[3:] == ("clang",)
 
 
 @pytest.mark.asyncio
