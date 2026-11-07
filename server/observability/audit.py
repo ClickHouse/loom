@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from server.core.ch import get_client
 from server.core.ch_writes import batched_insert_settings
+from server.core.hashing import sha256_value
 from server.observability.instance import stamp_row
 
 log = logging.getLogger(__name__)
@@ -168,6 +169,7 @@ _NAMING_FIELDS = frozenset(
         "key",
         "keys",
         "name",
+        "version",
     }
 )
 _NAMING_SUFFIXES = (
@@ -200,6 +202,16 @@ def _is_vocabulary(annotation: Any) -> bool:
     return False
 
 
+def _is_number(annotation: Any) -> bool:
+    """True for an int, float or bool annotation, alone or inside Optional/Union. A
+    number in a field typed `Any` (a memory value) is content, and is hashed."""
+    if annotation in (int, float, bool):
+        return True
+    if get_origin(annotation) in (Union, UnionType):
+        return all(a is type(None) or _is_number(a) for a in get_args(annotation))
+    return False
+
+
 def _nested_model(annotation: Any) -> type[BaseModel] | None:
     """The model a field holds, alone or inside Optional."""
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
@@ -211,10 +223,10 @@ def _nested_model(annotation: Any) -> type[BaseModel] | None:
 
 
 def _digest(value: Any) -> dict[str, Any]:
-    """A value's SHA-256 and length: a string's own UTF-8, anything else as the JSON
-    `json.dumps(value, sort_keys=True)` writes (default separators)."""
-    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
-    return {"sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "chars": len(text)}
+    """A value's `sha256_value` (so a memory value's matches its `content_sha256`) and
+    length: a string's characters, else its compact JSON's."""
+    size = len(value) if isinstance(value, str) else len(json.dumps(value, separators=(",", ":")))
+    return {"sha256": sha256_value(value), "chars": size}
 
 
 def _shape(model: type[BaseModel], dumped: dict[str, Any]) -> dict[str, Any]:
@@ -231,7 +243,7 @@ def _shape(model: type[BaseModel], dumped: dict[str, Any]) -> dict[str, Any]:
             continue
         keep = (
             value in (None, "", [], {})
-            or isinstance(value, bool | int | float)
+            or (annotation is not None and _is_number(annotation))
             or name in _NAMING_FIELDS
             or name.endswith(_NAMING_SUFFIXES)
             or (annotation is not None and _is_vocabulary(annotation))

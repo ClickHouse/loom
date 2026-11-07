@@ -35,8 +35,9 @@ SECRET = "the merger closes on 12 March at 40 dollars a share"
 
 
 def _digest(value: Any) -> dict[str, Any]:
-    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
-    return {"sha256": hashlib.sha256(text.encode()).hexdigest(), "chars": len(text)}
+    text = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    size = len(value) if isinstance(value, str) else len(text)
+    return {"sha256": hashlib.sha256(text.encode()).hexdigest(), "chars": size}
 
 
 def _audited_subject(monkeypatch: pytest.MonkeyPatch, op_name: str, body: Any) -> dict[str, Any]:
@@ -83,7 +84,7 @@ def test_decision_record_audit_row_holds_no_decision_text(monkeypatch) -> None:
     subject = _audited_subject(monkeypatch, "decision.record", body)
     assert SECRET not in json.dumps(subject)
     assert subject["scenario"] == _digest(SECRET)
-    assert subject["alternatives"] == _digest(json.dumps([SECRET]))
+    assert subject["alternatives"] == _digest([SECRET])
     assert subject["decision_maker"] == _digest("cfo")
     assert (subject["org"], subject["namespace"], subject["agent"]) == ("o", "n", "a")
     assert subject["confidence"] == 0.75
@@ -99,6 +100,15 @@ def test_memory_move_audit_row_keeps_the_keys_and_hashes_the_value(monkeypatch) 
     assert SECRET not in json.dumps(subject)
     assert (subject["from_key"], subject["to_key"]) == ("k1", "k2")
     assert subject["value"] == _digest(SECRET)
+
+
+@pytest.mark.parametrize("value", [185_000, 0.25, True])
+def test_a_number_in_a_field_typed_any_is_hashed(monkeypatch, value: Any) -> None:
+    body = MemoryMoveInput(
+        org="o", namespace="n", agent="a", from_key="k1", to_key="pay", value=value
+    )
+    subject = _audited_subject(monkeypatch, "memory.move", body)
+    assert subject["value"] == _digest(value)
 
 
 def test_import_curated_audit_row_holds_no_document(monkeypatch) -> None:

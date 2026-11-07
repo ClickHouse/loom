@@ -48,8 +48,9 @@ function subjectRecord(raw: unknown): Record<string, unknown> {
  *
  * The raw `subject` blob is the event's subject: for an audited op without
  * its own `audit_subject`, its input with text values hashed
- * (`audit.input_subject`) — useful for debugging but unreadable in a feed. This formatter pulls 1-3
- * load-bearing fields per event type and synthesizes a sentence.
+ * (`audit.input_subject`) — useful for debugging but unreadable in a feed.
+ * This formatter pulls 1-3 load-bearing fields per event type and
+ * synthesizes a sentence.
  *
  * Unknown event types fall through to a generic, readable fallback.
  */

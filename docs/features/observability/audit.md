@@ -37,16 +37,16 @@ insert is logged and loses the row; the operation still succeeds.
 For an `audit=True` op the subject is its `audit_subject` when it declares one, else the
 validated input as `audit.input_subject` shapes it. Fields that name what the call acted
 on or who acted (the identity fields, principals, and names ending in an id, key, URI,
-name, org, agent, namespace or `_by` suffix), numbers, booleans and Literal or Enum values
-stay as sent; a field holding one nested model follows the same rule, and a list of
-models is hashed whole. Every other value (a memory value, a decision's reasoning, a
-reason, a record's fields, the rows of a restored snapshot) is stored as its SHA-256 and
-length (a non-string value as the JSON `json.dumps(value, sort_keys=True)` writes),
-since erasure does not reach `loom.audit_log`. A hash of a short value can be
-recovered by guessing; the rule keeps long text out of the trail, not every word.
-An op whose input carries a credential (a tracker source's password, a repository's
-access token) declares an `audit_subject` that leaves it out.
-Grant `loom.audit_log` like the data it describes.
+name, org, agent, namespace or `_by` suffix) and fields typed as a number, a boolean, a
+Literal or an Enum stay as sent; a field holding one nested model follows the same rule,
+and a list of models is hashed whole. Every other value (a memory value, a decision's
+reasoning, a reason, a record's fields, the rows of a restored snapshot) is stored as its
+SHA-256 and length (the hash a memory's `content_sha256` would carry, so a moved value's
+matches it), since erasure does not reach `loom.audit_log`. A hash of a short value can be
+recovered by guessing; the rule keeps long text out of the trail, not every word. An op
+whose input carries a credential (a tracker source's password, a repository's access
+token) declares an `audit_subject` that leaves it out. Grant `loom.audit_log` like the
+data it describes.
 
 ## The row
 
