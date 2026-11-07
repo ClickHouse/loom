@@ -281,17 +281,19 @@ user, Loom's own included, reading the tables as before, whatever the server's
 The key and the analyst's password are random and kept together, as one sealed value, in
 one row of `loom.analysis_secrets`, sealed with `server/core/secrets_at_rest.py` in the
 shape `loom secrets reseal` rewrites (`SEALED` in `server/cli/secrets.py`, whose reads
-part 1 moves under `own_write_reads`, so a reseal never writes back a lagging replica's
-row). The first write draws them under the lease below and every replica reads the same
-row. A root-secret rotation only reseals them, so the policies never change key; when
-the key cannot be read, [provisioning](#provisioning) says what happens. The analyst
-user cannot read the key: it has no grant on `system.row_policies` or on
-`loom.analysis_secrets`, and it cannot run `EXPLAIN`. Every statement that carries the
-key runs with `log_queries = 0`, so the key is not in `system.query_log`. It is in
-ClickHouse's own access storage (on disk, or in Keeper when access is replicated), in a
-backup of the access entities, in the distributed DDL queue of a cluster that writes
-access `ON CLUSTER`, in `system.row_policies` and in the server log at `debug` level:
-all read only by whoever administers the ClickHouse host, who can read every row anyway.
+part 1 moves under `own_write_reads` and which re-reads the row before it writes and
+skips it when the version moved, so a reseal never writes back a lagging replica's row
+or one a rotation replaced meanwhile). The first write draws them under the lease below
+and every replica reads the same row. A root-secret rotation only reseals them, so the
+policies never change key; when the key cannot be read, [provisioning](#provisioning)
+says what happens. The analyst user cannot read the key: it has no grant on
+`system.row_policies` or on `loom.analysis_secrets`, and it cannot run `EXPLAIN`. Every
+statement that carries the key runs with `log_queries = 0`, so the key is not in
+`system.query_log`. It is in ClickHouse's own access storage (on disk, or in Keeper when
+access is replicated), in a backup of the access entities, in the distributed DDL queue
+of a cluster that writes access `ON CLUSTER`, in `system.row_policies` and in the server
+log at `debug` level: all read only by whoever administers the ClickHouse host, who can
+read every row anyway.
 
 **Why not ClickHouse credentials in LibreChat.** A ClickHouse login in the agent would
 read every org, skip the request ledger and the exposure records, and keep no link to
@@ -304,9 +306,9 @@ The analyst user, its settings profiles, grants and policies will be written wit
 never in a ClickHouse config file, which would put the key in the repository. A server
 whose ClickHouse user has access management (the bundled ClickHouse's `loom` user, a
 self-managed admin) writes them itself, and draws the secrets row when there is none and
-it sees no analyst user, in the order the version rule below gives, so a first install
-cut short is a row without a user, which the next boot finishes with the stored key.
-Elsewhere an admin uses one of two commands:
+it sees no analyst user, in the order that _the order of a write_, below, gives, so a
+first install cut short is a row without a user, which the next boot finishes with the
+stored key. Elsewhere an admin uses one of two commands:
 
 - `loom ch-setup`, run as a user with access management, writes the entities under the
   rules below (it holds the lease and writes unless the stored version is newer than its
@@ -317,15 +319,18 @@ Elsewhere an admin uses one of two commands:
   no access management to print (where `--print-sql` prints the admin SQL
   `loom ch-setup` would run, with the reader's password as a placeholder). It proves its
   `LOOM_JWT_SECRET` as the rotation below does, draws a fresh key and password, and
-  prints a complete rotation: `SET log_queries = 0`, a delete of the secrets row, the
-  full entity set under the new key, and last the `INSERT` of the new sealed row at a
-  version above the one it read. Run in full, it starts analysis on a first install,
-  recovers it after a lost row and rotates a healthy key alike. It is outside the lease
-  and the version rule, so it is printed by the newest build's CLI, and it is run, not
-  kept.
+  prints a complete rotation, with the command that runs it in one session
+  (`clickhouse-client --log_queries=0 --multiquery --queries-file <file>`): a delete of
+  the secrets row, the full entity set under the new key, and last the `INSERT` of the
+  new sealed row at a version above the one it read. Run in full, it starts analysis on
+  a first install, recovers it after a lost row and rotates a healthy key alike. It is
+  outside the lease and the version rule, so it is printed by the newest build's CLI,
+  and it is run, not kept.
 
 From the printed delete on, replicas have no key and answer `ANALYSIS_UNAVAILABLE`, so a
-printed rotation run only in part is never an empty answer.
+printed rotation run only in part is never an empty answer. Its statements must run in
+that one session: ClickHouse takes no per-statement settings on an access statement, and
+a console that sends them one by one would log the key in `system.query_log`.
 
 The allowlist lives in code with the column comments that become the agent's catalog, so
 the grants, the policies and the catalog come from one definition. The rules a write
@@ -335,20 +340,21 @@ keeps:
   (`server/core/leases.py`), waiting for it when another holds it, and reads what the
   entities hold once it has it. `loom secrets reseal` takes the same lease.
 - **Never over a newer build.** The analyst's main settings profile carries the stored
-  version, the last of the entities: a rotation stores its new secrets row after it, and
-  a first draw by a boot or `loom ch-setup`, made while no analyst user exists, stores
-  the row before it creates the user (the printed SQL, outside these rules, inserts it
-  last); a version names exactly one set of grants and policies (a unit test pins it),
+  version; a version names exactly one set of grants and policies (a unit test pins it),
   so a change to either is a new version. A build writes when there is no stored version
   or its own is newer, and at its own version only to repair (below) or as
   `loom ch-setup`, so during a rolling upgrade a build N-1 never narrows N's grants or
   loosens N's policies. N-1 keeps answering on N's entities: its statements that name a
-  column N dropped are refused until the roll forward. The caps are deployment settings,
-  kept in a second profile of their own: a write holding the lease (a boot,
-  `loom ch-setup`) writes them when the stored ones differ from its settings, the
-  printed SQL always writes them, and nothing else does, so they never touch the
-  version. They are read at boot, not live, and `loom doctor` reports a caps profile
-  that differs from the server's settings.
+  column N dropped are refused until the roll forward.
+- **The order of a write.** The version is the last of the entities. A rotation stores
+  its new secrets row after it; a first draw by a boot or `loom ch-setup`, made while no
+  analyst user exists, stores the row before it creates the user; the printed SQL,
+  outside these rules, inserts its row last.
+- **The caps apart.** The caps are deployment settings, kept in a second profile of
+  their own: a write holding the lease (a boot, `loom ch-setup`) writes them when the
+  stored ones differ from its settings, the printed SQL always writes them, and nothing
+  else does, so they never touch the version. They are read at boot, not live, and
+  `loom doctor` reports a caps profile that differs from the server's settings.
 - **No granted table without its policy.** By default ClickHouse lets a user with no
   policy on a table read every row of it, so each policy is replaced in place before any
   grant is given, every grant outside the allowlist and the canary is revoked after, and
@@ -506,7 +512,8 @@ viewer token. Each case must be refused or return no canary:
   the row to writing the version, each of which leaves `ANALYSIS_UNAVAILABLE` or a state
   the next run finishes with the stored key, never an empty answer;
 - `loom.analysis_secrets` and `loom.analysis_canary` read directly, and neither the
-  statement's text nor the key in `system.query_log`.
+  statement's text nor the key in `system.query_log`, the printed SQL run as printed
+  included; a reseal running beside a printed rotation, which leaves the new key.
 
 The same file will show that a revoked token stops new calls and that an erased memory
 is gone from the next statement. A unit test pins the generated grants and policies to
