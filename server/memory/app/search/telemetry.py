@@ -276,7 +276,13 @@ async def _staged(ctx: SearchContext, name: str, coro: Awaitable[None], *, activ
     from server.observability.otel import traced
 
     before = len(ctx.all_hits)
-    with traced(f"search.{name}", **{"loom.search.namespaces": len(ctx.namespaces)}) as span:
+    # A retrieval step: Langfuse shows it as a retriever, which also puts the
+    # search on its agent-graph view.
+    stage_attrs = {
+        "loom.search.namespaces": len(ctx.namespaces),
+        "langfuse.observation.type": "retriever",
+    }
+    with traced(f"search.{name}", **stage_attrs) as span:
         try:
             await coro
         finally:

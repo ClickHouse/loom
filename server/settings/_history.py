@@ -14,7 +14,8 @@ from typing import Any
 
 @dataclass(frozen=True)
 class DefaultChange:
-    # The Loom release that ships the new default (pyproject.toml's version).
+    # The Loom release that ships the new default: the next release when the change
+    # lands on main, since pyproject.toml still names the release already out.
     version: str
     name: str
     old: Any
@@ -33,6 +34,17 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
             "A failed replay now waits 15 s, 1, 5, then 30 minutes before the next attempt, "
             "and an unreachable provider spends none: eight attempts span about two hours "
             "instead of three back to back."
+        ),
+    ),
+    DefaultChange(
+        version="1.2.0",
+        name="clickstack_user_id_keys",
+        old="user_id,user.id,enduser.id",
+        new="user_id,user.id,enduser.id,loom.user_id,langfuse.user.id",
+        why=(
+            "A user-scoped ClickStack erasure also matches the user-id keys Loom's own "
+            "child spans carry, so they are erased with the request span. A deployment "
+            "that sets the variable keeps its own list and should add both keys."
         ),
     ),
 )

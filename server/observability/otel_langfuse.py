@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.observability import genai
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -165,6 +166,12 @@ def _langfuse_processor_class() -> Any:
         # can fail a request. Losing telemetry is always the better failure.
 
         def on_start(self, span: Any, parent_context: Any = None) -> None:
+            try:
+                # Set at start, while the span is still writable; the ClickHouse
+                # export sees these keys too, but only when Langfuse is configured.
+                genai.stamp_identity(span)
+            except Exception as e:  # noqa: BLE001 — identity is additive; the span still exports
+                self._suppress("identity", e)
             try:
                 self._inner.on_start(span, parent_context)
             except Exception as e:  # noqa: BLE001 — the Langfuse processor never fails a span

@@ -492,7 +492,16 @@ class ClickStackBackend:
         ("hyperdx_sessions", "ResourceAttributes"),
     ]
 
-    DEFAULT_USER_ID_KEYS: ClassVar[list[str]] = ["user_id", "user.id", "enduser.id"]
+    # Loom's request span carries `enduser.id`. Its model-call spans carry
+    # `loom.user_id` and `langfuse.user.id`, and with Langfuse configured every
+    # other span does too, always beside `loom.org` for the org guard.
+    DEFAULT_USER_ID_KEYS: ClassVar[list[str]] = [
+        "user_id",
+        "user.id",
+        "enduser.id",
+        "loom.user_id",
+        "langfuse.user.id",
+    ]
     NAMESPACE_KEY = "service.namespace"
     # Loom's exporter sets service.namespace to the constant "loom" (the
     # deployment, per OTel semconv) and carries the tenant namespace as the

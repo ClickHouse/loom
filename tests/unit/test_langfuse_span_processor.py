@@ -50,6 +50,16 @@ class _RecordingInner:
         self.shut = True
 
 
+@pytest.fixture(autouse=True)
+def _no_request_identity() -> Any:
+    """Each test starts outside a request; another file's identity must not leak in."""
+    from server.observability import genai
+
+    token = genai._identity.set({})
+    yield
+    genai._identity.reset(token)
+
+
 def _proc(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> Any:
     defaults = {
         "langfuse_sample_rate": 1.0,
@@ -424,3 +434,47 @@ def test_a_raising_filter_does_not_stop_export(
     proc.on_end(_FakeSpan("llm.hyde"))
     assert inner.ended == ["llm.hyde"]
     assert proc.errors == 1
+
+
+class _WritableSpan(_FakeSpan):
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.attributes: dict[str, Any] = {}
+
+    def set_attribute(self, key: str, value: Any) -> None:
+        self.attributes[key] = value
+
+
+def test_every_forwarded_span_carries_the_request_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Langfuse 4 reads user, session and tags per observation, not from the root; the
+    tenant keys come along so ClickStack's erasure org guard can read them."""
+    from server.observability import genai
+
+    proc, inner = _proc(monkeypatch)
+    genai.set_identity(
+        org="o", namespace="ns", user_id="u1", session_id="s1", operation="memory.search"
+    )
+    span = _WritableSpan("search.anchor_pool")
+    proc.on_start(span, None)
+    assert span.attributes == {
+        "loom.operation": "memory.search",
+        "loom.org": "o",
+        "loom.namespace": "ns",
+        "loom.user_id": "u1",
+        "langfuse.session.id": "s1",
+        "langfuse.user.id": "u1",
+        "langfuse.trace.tags": ["org:o", "namespace:ns"],
+        "langfuse.trace.name": "memory.search",
+    }
+    assert inner.started == 1
+
+
+def test_a_span_that_rejects_attributes_still_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.observability import genai
+
+    proc, inner = _proc(monkeypatch)
+    genai.set_identity(org="o", namespace="ns")
+    proc.on_start(_FakeSpan("x"), None)  # no set_attribute
+    assert inner.started == 1 and proc.errors == 1

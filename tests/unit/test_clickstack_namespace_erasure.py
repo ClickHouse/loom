@@ -245,7 +245,10 @@ async def test_clickstack_user_erasure_never_matches_another_org(monkeypatch):
     rows = {
         "own_org": {"user_id": "bob", "loom.org": "acme"},
         "untagged": {"enduser.id": "bob"},
+        "child_span": {"loom.user_id": "bob", "loom.org": "acme"},
+        "langfuse_child": {"langfuse.user.id": "bob", "loom.org": "acme"},
         "other_org": {"user.id": "bob", "loom.org": "globex"},
+        "other_org_child": {"langfuse.user.id": "bob", "loom.user_id": "bob", "loom.org": "globex"},
         "other_user": {"user_id": "carol", "loom.org": "acme"},
     }
     values = ", ".join(f"('{t}', map({_map(a)}))" for t, a in rows.items())
@@ -257,7 +260,19 @@ async def test_clickstack_user_erasure_never_matches_another_org(monkeypatch):
             f"INSERT INTO loom.{table} VALUES {values}",
         ]
         got = run(setup, f"SELECT tag FROM loom.{table} WHERE {where} ORDER BY tag", params)
-        assert [r["tag"] for r in got] == ["own_org", "untagged"], table
+        assert [r["tag"] for r in got] == [
+            "child_span",
+            "langfuse_child",
+            "own_org",
+            "untagged",
+        ], table
+
+
+def test_the_backend_default_user_keys_are_the_setting_default() -> None:
+    from server.settings.catalog import ErasureSettings
+
+    keys = ErasureSettings.model_fields["clickstack_user_id_keys"].default.split(",")
+    assert keys == ClickStackBackend.DEFAULT_USER_ID_KEYS
 
 
 _ROWS = {

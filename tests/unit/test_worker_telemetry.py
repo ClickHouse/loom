@@ -166,6 +166,21 @@ def test_worker_identity_merges_and_yields_to_a_request() -> None:
     genai.set_identity()
 
 
+def test_a_pass_does_not_inherit_the_previous_pass_tenant() -> None:
+    """Pass N's last per-item call set org A; pass N+1 starts with no tenant, so
+    the spans it opens before its own first item carry no org A tag."""
+    genai.set_identity()
+    with st.record_pass("code_summary"):
+        genai.set_worker_identity("code_summary", org="acme", namespace="code-a")
+    with st.record_pass("code_summary"):
+        assert genai._identity.get() == {"operation": "worker.code_summary"}
+    # Inside a request the request's identity still wins.
+    genai.set_identity(org="acme", namespace="code-x", operation="code.refresh")
+    with st.record_pass("code_ingest"):
+        assert (genai._identity.get() or {})["operation"] == "code.refresh"
+    genai.set_identity()
+
+
 # --- supervisor streak gauge -------------------------------------------------
 
 

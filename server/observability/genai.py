@@ -192,8 +192,10 @@ def set_identity(
     """Record the active request's identity for provider spans to stamp.
 
     Set once per request from the transport layer. Deliberately a plain `set`
-    with no reset: each request runs in its own context, so there is nothing to
-    leak into, and a contextmanager here would have to wrap the whole handler.
+    with no reset: each HTTP request runs in its own context, so there is
+    nothing to leak into, and a contextmanager here would have to wrap the
+    whole handler. A caller that shares one task across entries (an MCP
+    JSON-RPC batch) clears it with `set_identity()` before publishing its own.
     """
     ident = {
         k: v
@@ -244,7 +246,9 @@ def request_identity() -> dict[str, str]:
     return dict(_identity.get() or {}) if request_org() else {}
 
 
-def set_worker_identity(name: str, *, org: str = "", namespace: str = "") -> None:
+def set_worker_identity(
+    name: str, *, org: str = "", namespace: str = "", fresh: bool = False
+) -> None:
     """Identity for a background pass: ``operation=worker.<name>`` plus tenant.
 
     Without it worker generations (`llm.code_describe`, `llm.code_summary`, the
@@ -257,12 +261,16 @@ def set_worker_identity(name: str, *, org: str = "", namespace: str = "") -> Non
     the caller paid for those generations. A worker-set identity (operation
     already ``worker.*``) or no identity at all is overwritten/merged freely, so
     a per-repo call can add org/namespace after the supervisor set the name.
+
+    `fresh` starts from no tenant at all, for the start of a pass: otherwise the
+    org and namespace of the previous pass's last item would label this pass's
+    spans until its first per-item call.
     """
     current = _identity.get() or {}
     op = current.get("operation", "")
     if op and not op.startswith("worker."):
         return
-    ident = dict(current)
+    ident = {} if fresh else dict(current)
     ident["operation"] = f"worker.{name}"
     if org and org != "-":
         ident["org"] = org
@@ -364,8 +372,16 @@ def _identity_tags(ident: dict[str, str]) -> list[str]:
     return [f"{k}:{ident[k]}" for k in ("org", "namespace") if ident.get(k)]
 
 
-def _stamp_identity(span: Any) -> None:
-    """Put tenant + Langfuse identity on a provider span."""
+def stamp_identity(span: Any) -> None:
+    """Put the request's tenant and Langfuse identity on a span.
+
+    Called for each model-call span, and by the Langfuse span processor for every
+    span it starts. Langfuse 4 reads the user, session, tags and trace name from
+    each observation, not from the trace root. The tenant keys come with them:
+    ClickStack's user erasure matches `langfuse.user.id`, and its org guard reads
+    `loom.org`, so a span carrying the user without the org could be erased for
+    another org's user of the same id.
+    """
     ident = _identity.get()
     if not ident:
         return
@@ -378,9 +394,7 @@ def _stamp_identity(span: Any) -> None:
     ):
         if ident.get(key):
             span.set_attribute(attr, ident[key])
-    # Langfuse's own keys. It groups observations into sessions and users by
-    # these, and they must be on the observation itself — OTel children do not
-    # inherit the root span's attributes.
+    # OTel children do not inherit the root span's attributes.
     if ident.get("session_id"):
         span.set_attribute("langfuse.session.id", ident["session_id"])
     if ident.get("user_id"):
@@ -693,7 +707,7 @@ def _provider_span(name: str, attrs: dict[str, Any]) -> Iterator[Any]:
         span = span_cm.__enter__()
         for key, value in attrs.items():
             span.set_attribute(key, value)
-        _stamp_identity(span)
+        stamp_identity(span)
     except Exception:  # noqa: BLE001 — no OTel, or a shape change: degrade quietly
         span_cm = None
         span = None

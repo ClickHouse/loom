@@ -2196,7 +2196,7 @@ settings:
 
   # Comma-separated OTel Map attribute keys holding user_id, ORed in the delete.
   # [restart]
-  # clickstack_user_id_keys: "user_id,user.id,enduser.id"
+  # clickstack_user_id_keys: "user_id,user.id,enduser.id,loom.user_id,langfuse.user.id"
 
   # Per-request seconds for external trace/chat backend lookups and deletes during
   # erasure. [restart]

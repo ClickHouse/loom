@@ -120,7 +120,7 @@ def record_pass(name: str) -> Iterator[_PassRecord]:
     """
     rec = _PassRecord()
     started = time.monotonic()
-    set_worker_identity(name)
+    set_worker_identity(name, fresh=True)
     with _pass_span(name) as span:
         try:
             yield rec
@@ -188,7 +188,9 @@ def _record_metrics(name: str, *, success: bool, duration_ms: int) -> None:
         pass
 
 
-def set_worker_identity(name: str, *, org: str = "", namespace: str = "") -> None:
+def set_worker_identity(
+    name: str, *, org: str = "", namespace: str = "", fresh: bool = False
+) -> None:
     """Attribute this task's provider spans to ``worker.<name>`` (+ tenant).
 
     Thin wrapper so workers import one module for status + identity; the
@@ -204,7 +206,7 @@ def set_worker_identity(name: str, *, org: str = "", namespace: str = "") -> Non
     try:
         from server.observability import genai as _genai
 
-        _genai.set_worker_identity(name, org=org, namespace=namespace)
+        _genai.set_worker_identity(name, org=org, namespace=namespace, fresh=fresh)
     except Exception:  # noqa: BLE001 — span attribution never blocks a pass
         pass
 

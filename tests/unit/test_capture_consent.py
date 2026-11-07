@@ -214,7 +214,7 @@ def test_unresolved_consent_falls_back_to_the_server_default(
 def test_consent_is_not_leaked_as_a_span_attribute() -> None:
     """`capture_io` lives in the identity dict but must not be stamped on spans.
 
-    `_stamp_identity` iterates an explicit key list; this guards that a future edit
+    `stamp_identity` iterates an explicit key list; this guards that a future edit
     does not start echoing an internal decision onto every generation.
     """
     genai.set_identity(org="o", namespace="ns", capture_level="off")
@@ -227,7 +227,7 @@ def test_consent_is_not_leaked_as_a_span_attribute() -> None:
             self.attrs[k] = v
 
     span = _Span()
-    genai._stamp_identity(span)
+    genai.stamp_identity(span)
     assert not any("capture" in k for k in span.attrs)
 
 

@@ -23,6 +23,7 @@ from server.core import llm_free
 from server.core.errors import LoomServerError
 from server.core.naming import named, present
 from server.identity.app.caller_home import home_namespace
+from server.observability import genai
 from server.observability.consumer import ASSISTANT_CONSUMER
 from server.operations.base import Operation
 from server.operations.toolsets import (
@@ -295,11 +296,10 @@ async def _call_tool(
             _ident["capture_level"] = "off"
         _otel_pre.set_loom_attributes(**_ident)
     except Exception:  # noqa: BLE001 — identity stamping must not fail a tool call
-        from server.observability import genai as _genai
-
-        # Not the previous batch entry's org: this entry's model calls name no org,
-        # so they skip the model caches and refuse.
-        _genai.set_identity(operation=op.name, capture_level="off")
+        # The identity could not be built: capture nothing, and name the op so its
+        # spans stay findable. Its model calls name no org, so they skip the model
+        # caches and refuse.
+        genai.set_identity(operation=op.name, capture_level="off")
 
     start = time.perf_counter()
     try:

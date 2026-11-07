@@ -82,7 +82,11 @@ so the backend (`ClickStackBackend` in `server/erasure/app/backends.py`) runs li
 | `hyperdx_sessions`                                                               | `ResourceAttributes`      |
 
 - **A user scope** matches any of the keys in `LOOM_CLICKSTACK_USER_ID_KEYS` (default
-  `user_id,user.id,enduser.id`), ORed, since SDKs disagree on the key name.
+  `user_id,user.id,enduser.id,loom.user_id,langfuse.user.id`), ORed, since SDKs disagree
+  on the key name. Loom's request span carries `enduser.id`; its model-call spans carry
+  `loom.user_id` and `langfuse.user.id`, and with Langfuse configured every other span of
+  the request does too. Each of them also carries `loom.org`, so the org guard below
+  applies.
 - **A namespace scope** matches `loom.namespace` or `service.namespace`. Loom's exporter
   sets `service.namespace` to the constant `loom` and carries the tenant in
   `loom.namespace`; `service.namespace` covers other emitters writing into the same
@@ -117,14 +121,14 @@ belongs to.
 
 ## Settings
 
-| Setting                            | Default                      | Effect                                       |
-| ---------------------------------- | ---------------------------- | -------------------------------------------- |
-| `LOOM_OTEL_EXPORTER`               | `""`                         | `ch`, `otlp`, or auto                        |
-| `LOOM_OTEL_EXPORTER_OTLP_ENDPOINT` | `""`                         | collector base URL                           |
-| `LOOM_OTEL_EXPORTER_OTLP_HEADERS`  | `""`                         | comma-separated `K=V` headers                |
-| `LOOM_OTEL_ENABLED`                | `true`                       | master switch                                |
-| `LOOM_CLICKSTACK_DATABASE`         | `""`                         | the OTel tables' database; enables erasure   |
-| `LOOM_CLICKSTACK_USER_ID_KEYS`     | `user_id,user.id,enduser.id` | attribute keys a user-scoped erasure matches |
+| Setting                            | Default                                                    | Effect                                       |
+| ---------------------------------- | ---------------------------------------------------------- | -------------------------------------------- |
+| `LOOM_OTEL_EXPORTER`               | `""`                                                       | `ch`, `otlp`, or auto                        |
+| `LOOM_OTEL_EXPORTER_OTLP_ENDPOINT` | `""`                                                       | collector base URL                           |
+| `LOOM_OTEL_EXPORTER_OTLP_HEADERS`  | `""`                                                       | comma-separated `K=V` headers                |
+| `LOOM_OTEL_ENABLED`                | `true`                                                     | master switch                                |
+| `LOOM_CLICKSTACK_DATABASE`         | `""`                                                       | the OTel tables' database; enables erasure   |
+| `LOOM_CLICKSTACK_USER_ID_KEYS`     | `user_id,user.id,enduser.id,loom.user_id,langfuse.user.id` | attribute keys a user-scoped erasure matches |
 
 ## Related
 
