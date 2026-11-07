@@ -179,9 +179,15 @@ def _sha(root: Path, ref: str) -> str:
     return found.stdout.strip()
 
 
+def _tag_sha(root: Path, tag: str) -> str:
+    """The commit tag `tag` names, or "" when there is none; a branch of the same
+    name is not a tag."""
+    return _sha(root, f"refs/tags/{tag}")
+
+
 def tag_on_head(tag_version: str, root: Path = ROOT) -> bool:
     """`v<tag_version>` is the checked-out commit (a run on the tag's ref)."""
-    own = _sha(root, f"v{tag_version}")
+    own = _tag_sha(root, f"v{tag_version}")
     return bool(own) and own == _sha(root, "HEAD")
 
 
@@ -198,7 +204,7 @@ def previous_release(version: str, root: Path = ROOT) -> str:
 def refuse_tagged(version: str, root: Path = ROOT) -> None:
     """A bump for a version already tagged would rename a shipped release. The
     notes alone may be made again for it."""
-    if _sha(root, f"v{version}"):
+    if _tag_sha(root, f"v{version}"):
         raise ValueError(f"v{version} is already tagged: prepare the next version")
 
 
@@ -208,7 +214,7 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
     candidate."""
     final = final_of(tag_version)
     if tag_version != final:  # a candidate: _tag_version admits no other prerelease
-        released = _sha(root, f"v{final}")
+        released = _tag_sha(root, f"v{final}")
         if released == _sha(root, "HEAD"):
             # No deletion advice: the final's runs may read this tag as the one soaked.
             return (
@@ -228,7 +234,7 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
         (t for t in listed if CANDIDATE.fullmatch(t[1:])),
         key=lambda t: int(t.rsplit(".", 1)[1]),
     )
-    if candidates and _sha(root, candidates[-1]) != _sha(root, "HEAD"):
+    if candidates and _tag_sha(root, candidates[-1]) != _sha(root, "HEAD"):
         return (
             f"v{final} is not on {candidates[-1]}'s commit: delete {candidates[-1]}"
             f" (git push origin :refs/tags/{candidates[-1]}) if it is a stray;"
@@ -255,7 +261,7 @@ def chart_baseline(tag_version: str, root: Path = ROOT) -> str | None:
     """The release before `tag_version`'s, or None when `vX.Y.Z` is on another
     commit (a dry run of a branch still naming a shipped release)."""
     version = final_of(tag_version)
-    own = _sha(root, f"v{version}")
+    own = _tag_sha(root, f"v{version}")
     if own and own != _sha(root, "HEAD"):
         return None
     return previous_release(version, root)

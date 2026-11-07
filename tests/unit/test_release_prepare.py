@@ -780,14 +780,6 @@ def test_a_tag_run_off_its_tag_is_refused(monkeypatch: pytest.MonkeyPatch) -> No
         prepare.main()
 
 
-def test_a_dry_run_on_the_tag_still_checks_the_order(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(prepare, "tag_on_head", lambda version: True)
-    monkeypatch.setattr(prepare, "check_tag", lambda version: "out of order")
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "check-tag", "--dry-run", "1.2.0"])
-    with pytest.raises(SystemExit, match="^::error::out of order$"):
-        prepare.main()
-
-
 @pytest.mark.parametrize("command", ["check", "check-tag", "check-chart", "previous"])
 def test_a_tag_check_takes_only_a_final_or_a_candidate(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], command: str
@@ -799,12 +791,23 @@ def test_a_tag_check_takes_only_a_final_or_a_candidate(
     assert "'1.2.0-beta.1' is not X.Y.Z or X.Y.Z-rc.N" in capsys.readouterr().err
 
 
-def test_a_tag_out_of_candidate_order_is_an_error_line(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("dry_run", [[], ["--dry-run"]])
+def test_a_tag_on_head_out_of_order_is_an_error_with_or_without_dry_run(
+    monkeypatch: pytest.MonkeyPatch, dry_run: list[str]
+) -> None:
     monkeypatch.setattr(prepare, "tag_on_head", lambda tag_version: True)
     monkeypatch.setattr(prepare, "check_tag", lambda tag_version: "out of order")
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "check-tag", "1.2.0"])
-    with pytest.raises(SystemExit, match="::error::out of order"):
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "check-tag", *dry_run, "1.2.0"])
+    with pytest.raises(SystemExit, match="^::error::out of order$"):
         prepare.main()
+
+
+def test_a_branch_named_like_a_release_is_not_its_tag(tmp_path: Path) -> None:
+    git_repo.git(tmp_path, "init", "-q")
+    _commit(tmp_path, "one")
+    git_repo.git(tmp_path, "branch", "v1.2.0")
+    assert not prepare.tag_on_head("1.2.0", tmp_path)
+    prepare.refuse_tagged("1.2.0", tmp_path)  # a branch is not a shipped release
 
 
 def test_a_chart_without_its_version_names_the_file_once(
@@ -923,7 +926,7 @@ def test_the_release_runs_every_check_on_the_tag_with_its_tags() -> None:
     (checkout,) = [s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout@")]
     assert checkout["with"]["fetch-depth"] == 0  # the candidate order and the chart read tags
     script = "\n".join(s.get("run", "") for s in job["steps"])
-    # check-tag first: it refuses every tag run that check-chart would skip.
+    # check-tag before check-chart: it refuses every tag run that check-chart would skip.
     lines = [
         'python3 scripts/release/prepare.py check "$VERSION"',
         'python3 scripts/release/prepare.py check-tag "${dry_run[@]}" "$VERSION"',

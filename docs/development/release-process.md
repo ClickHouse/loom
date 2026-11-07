@@ -50,7 +50,8 @@ since the highest final tag below the release:
   that name no step;
 - the wire diff ([code generation](./code-generation.md#wire-changelog)).
 
-A fix that a patch release of an older line already shipped is listed again; the author drops it.
+A fix that a patch release of an older line already shipped is listed again, and so is a pull
+request reverted in the same range, beside its revert; the author drops them.
 
 It fetches the upstream repository's tags itself, reads the pull requests with `gh` and the wire
 diff through the server's registry, so it needs a signed-in `gh` and the project's environment

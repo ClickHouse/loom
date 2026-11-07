@@ -1,9 +1,14 @@
-"""scripts/codegen/wire_changelog.py's registry probe runs against a real
-revision: the release notes' wire diff depends on it."""
+"""scripts/codegen/wire_changelog.py's registry probe reads the operation
+registry where it lives: the release notes' wire diff depends on it. The probe
+runs in process here; tests/integration/test_wire_changelog_snapshot.py runs it
+against an archived revision."""
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,9 +24,11 @@ def _module():
     return module
 
 
-def test_the_probe_reads_this_revisions_registry() -> None:
-    """HEAD's registry, as committed."""
-    snap = _module().snapshot_at("HEAD", repo=ROOT)
-    assert {"memory.set", "memory.search", "memory.get", "code.search"} <= set(snap["ops"])
-    assert all(op["path"] == f"/v1/{name}" for name, op in snap["ops"].items())
-    assert "memory_key" in snap["ops"]["memory.set"]["request_fields"]
+def test_the_probe_reads_the_registry() -> None:
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        exec(_module()._PROBE, {})
+    ops = json.loads(out.getvalue())["ops"]
+    assert {"memory.set", "memory.search", "memory.get", "code.search"} <= set(ops)
+    assert all(op["path"] == f"/v1/{name}" for name, op in ops.items())
+    assert "memory_key" in ops["memory.set"]["request_fields"]
