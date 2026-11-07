@@ -329,6 +329,12 @@ async def test_each_retrieval_slice_meets_its_floor(control_plane_url: str) -> N
                 **q.filters,
             )
             results.append((q, out["results"]))
+    # The long CSV is two blocks: its two rows are found in different chunks, so the
+    # table slice measures a row's block, not just the file.
+    firsts = {q.holds: hits[0] for q, hits in results if q.source == "repo://regions.csv" and hits}
+    late, early = firsts["region: zone-25;"], firsts["region: zone-03;"]
+    assert late["locator"] != early["locator"], (late["locator"], early["locator"])
+    assert "region: zone-03;" not in late["content"] and "region: zone-25;" not in early["content"]
     measured = _measure(results)
     floors = read_floors(DOC.read_text(), "## Retrieval floors", 3)
     assert set(floors) == set(measured), (
