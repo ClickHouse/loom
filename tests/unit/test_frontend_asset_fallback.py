@@ -122,6 +122,12 @@ def test_the_miss_memory_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     frontend_assets.cache_clear()
 
 
+def test_an_asset_path_longer_than_any_bundle_path_is_a_404_before_any_read(setup) -> None:
+    client, fake = setup
+    assert client.get("/assets/" + "a/" * 600 + "index-otherbuild.js").status_code == 404
+    assert fake.reads == 0
+
+
 def test_local_files_win_and_unknown_paths_stay_404(setup) -> None:
     client, fake = setup
     r = client.get("/assets/index-localbeef.js")

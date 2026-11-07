@@ -23,6 +23,8 @@ from server.core.paths import FRONTEND_DIST
 from server.settings import settings
 
 _FRONTEND_DIST = FRONTEND_DIST
+# Resolving a path on disk costs its length times its depth.
+MAX_ASSET_PATH_CHARS = 1024  # not a setting: longer than any bundle path
 
 # The first URL segment of every dashboard view: `viewToPath` over `ALL_VIEWS`
 # in frontend/src/lib/state.ts (a unit test keeps the two equal).
@@ -206,6 +208,8 @@ class _BundleAssets(StaticFiles):
         during a rolling upgrade) from the bundle every replica publishes."""
         from starlette.exceptions import HTTPException
 
+        if len(path) > MAX_ASSET_PATH_CHARS:
+            raise HTTPException(status_code=404)
         try:
             return await super().get_response(path, scope)
         except HTTPException as e:

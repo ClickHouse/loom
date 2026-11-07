@@ -56,7 +56,7 @@ registered (at most 16; an HTTP `hook.*` step is refused). See the
 **Keys** are minted from a fact's subject and attribute, never its value. A later
 session that states the same attribute lands on the same key and revises the row. When
 the user asks to forget something, the matching rows are retired and named in
-`forgotten` / `forgotten_keys`.
+`forgotten` / `forgotten_keys` (a window's latest 50 requests are matched by content).
 
 **Coding captures** are requests whose `extra_tags` carry `source:claude-code`,
 `source:codex` or `source:cursor` (the plugins tag every capture), or a trajectory replay
