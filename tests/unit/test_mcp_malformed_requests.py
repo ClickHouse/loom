@@ -134,7 +134,6 @@ def test_a_batch_past_its_cap_or_empty_is_refused_before_any_entry_runs(
 def test_an_oversized_batch_is_refused_before_the_bearer_is_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-
     listing = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}  # needs a bearer
     client = _client(monkeypatch, auth=True)
     for headers in ({}, {"Authorization": "Bearer not-a-token"}):
@@ -145,7 +144,6 @@ def test_an_oversized_batch_is_refused_before_the_bearer_is_read(
 def test_an_unsupported_protocol_version_answers_400_before_the_batch_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-
     ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
     r = _client(monkeypatch, auth=False).post(
         "/mcp",
@@ -156,7 +154,6 @@ def test_an_unsupported_protocol_version_answers_400_before_the_batch_cap(
 
 
 def test_every_refusal_echoes_the_session_id(monkeypatch: pytest.MonkeyPatch) -> None:
-
     client = _client(monkeypatch, auth=True)
     session = {"Mcp-Session-Id": "s-refused"}
     ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
