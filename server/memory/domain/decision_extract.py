@@ -40,11 +40,14 @@ from server.memory.domain.decision_statement import (
 # Not a placeholder: link text `[image tiles](tiles.md)`, a reference link `[image][1]`,
 # a definition `[image]: x.png`, the label of `[the diagram][image]`, a shortcut link
 # `[image tiles]`, text such as `[images are in the appendix]`, or a word `[imagine]`.
+# Each part stops at the next opener (`[`, `(`, `<`): a scan from every unclosed one to
+# the end of the text would cost quadratic time on a document of them.
+_PAREN_TARGET = r"\([^()]*+(?:\([^()]*+\)[^()]*+)*+\)"
 _IMAGE_MARKUP = re.compile(
-    r"!\[[^\]]*\]\([^)]*\)"
-    r"|!\[[^\]]*\]\[[^\]]*\]"
-    r"|<img\b[^>]*>"
-    r"|(?<!\])\[(?:image|picture)s?(?:[\s_]?\d+|:[^\]]*)?\](?![(\[:])",
+    rf"!\[[^\[\]]*+\]{_PAREN_TARGET}"
+    r"|!\[[^\[\]]*+\]\[[^\]]*\]"
+    r"|<img\b[^<>]*+>"
+    r"|(?<!\])\[(?:image|picture)s?(?:[\s_]?\d+|:[^\[\]]*+)?\](?![(\[:])",
     re.I,
 )
 _LETTER = re.compile(r"[^\W\d_]")
@@ -163,7 +166,7 @@ def no_words(body: str) -> bool:
 # followed by a space, `/` or `>`: `x < 10k and y > 80%` and `Option<A>` are text. Any
 # name, not only inline ones: a badge often sits in a `<p>` or a `<div>`.
 _HTML_TAG = re.compile(r"</?[a-z][a-z0-9-]*(?=[\s/>])[^<>\n]*>")
-_LINK_TARGET = re.compile(r"\]\([^)]*\)|\]\[[^\]]*\]")
+_LINK_TARGET = re.compile(rf"\]{_PAREN_TARGET}|\]\[[^\]]*\]")
 _URL = re.compile(r"https?://\S+")
 # What a link around an image leaves once the image is gone: `[ ]`.
 _EMPTY_BRACKETS = re.compile(r"\[\s*\]")

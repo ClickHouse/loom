@@ -3067,6 +3067,53 @@ def test_only_tag_shaped_markup_is_removed_from_a_caption() -> None:
     assert dx.caption_text(text) == "Returns Option<A>, Map<a, b> when x < 10k and y > 80%."
 
 
+@pytest.mark.parametrize(
+    ("text", "images"),
+    [
+        ("See ![x](a.png) and ![y](b.png).", ["![x](a.png)", "![y](b.png)"]),
+        ('![t](f.png "a title")', ['![t](f.png "a title")']),
+        ("![a\nwrapped alt](f.png)", ["![a\nwrapped alt](f.png)"]),
+        ("![diagram][fig1]", ["![diagram][fig1]"]),
+        ("[![build](badge.svg)](https://ci.example.com)", ["![build](badge.svg)"]),
+        ('<img\n  src="flow.png"\n  alt="flow"\n/>', ['<img\n  src="flow.png"\n  alt="flow"\n/>']),
+        ("<IMG SRC=c.png>", ["<IMG SRC=c.png>"]),
+        ("[image: the spill path] [Image 3]", ["[image: the spill path]", "[Image 3]"]),
+        # A target with a pair of parentheses, as a wiki page name has, is read whole.
+        (
+            "![x](https://wiki.example.com/Run_(sort))",
+            ["![x](https://wiki.example.com/Run_(sort))"],
+        ),
+        # Unclosed markup is no image.
+        ("![open ![x](a.png) <img ](b", ["![x](a.png)"]),
+    ],
+)
+def test_image_markup_matches(text: str, images: list[str]) -> None:
+    assert [m.group(0) for m in dx._IMAGE_MARKUP.finditer(text)] == images
+
+
+def test_link_targets_are_removed_from_a_caption() -> None:
+    text = "[notes](https://example.com/a_(b)) and [ref][1], ](dangling"
+    assert dx.caption_text(text) == "[notes] and [ref], ](dangling"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "<img " * 30_000,
+        "![" * 30_000,
+        "[image:" * 6_000,
+        # Words and an image, so the caption is read and its link targets removed.
+        "![x](y)" + "a](" * 40_000,
+    ],
+    ids=["img-tag", "image-alt", "placeholder", "link-target"],
+)
+def test_unclosed_image_markup_is_read_in_linear_time(body: str) -> None:
+    # Each was a scan from every opener to the end of the text: seconds per document.
+    start = time.process_time()
+    dx.image_only_sections(body)
+    assert time.process_time() - start < 0.5
+
+
 @pytest.mark.asyncio
 async def test_a_linked_badge_and_caption_preamble_is_not_sent(monkeypatch) -> None:
     from server.knowledge.app import document_reads
