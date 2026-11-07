@@ -18,6 +18,18 @@ import { invalidateShared } from "../lib/sharedReads";
 // that badge it — exist only for an admin of the current namespace, so a viewer-only
 // token sees no admin entry and draws no AUTH_INSUFFICIENT 403s.
 
+// Each icon wrapped in its name, so a test can tell which one an entry shows.
+vi.mock("@clickhouse/click-ui/Icon", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@clickhouse/click-ui/Icon")>();
+  return {
+    ...real,
+    Icon: (props: Parameters<typeof real.Icon>[0]) => (
+      <span data-icon={props.name}>
+        <real.Icon {...props} />
+      </span>
+    ),
+  };
+});
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
@@ -206,6 +218,11 @@ describe("Sidebar admin drawer", () => {
     await painted();
     expect(listProposals).toHaveBeenCalledWith({ org: "dev", namespace: "team-a" }, 1);
     expect(screen.getByRole("link", { name: /Review queue/ })).not.toHaveTextContent(/\d/);
+    // Proposals alone take the Proposals tab's icon.
+    expect(screen.getByRole("link", { name: /Review queue/ }).querySelector("[data-icon]")).toHaveAttribute(
+      "data-icon",
+      "user",
+    );
   });
 
   it("hides the Review queue with no open conflict, recent auto-resolution or waiting proposal", async () => {

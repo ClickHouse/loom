@@ -396,8 +396,10 @@ async def test_the_listing_filters_by_prefix_and_tags_and_cuts_by_character(
     by_prefix = await list_(MemoryProposalsInput(org="o", namespace="n", prefix="lesson/"))
     assert [r.memory_key for r in by_prefix.proposals] == ["lesson/tea"]
     assert by_prefix.proposals[0].value_preview == "é" * 400
+    assert by_prefix.proposals[0].preview_cut
     by_tag = await list_(MemoryProposalsInput(org="o", namespace="n", tags=["ops"]))
     assert [r.memory_key for r in by_tag.proposals] == ["trial/door"]
+    assert not by_tag.proposals[0].preview_cut
 
 
 @pytest.mark.asyncio
@@ -442,3 +444,22 @@ async def test_the_listing_orders_by_version_not_by_creation(
     )
     out = await _listing(monkeypatch, insert)(MemoryProposalsInput(org="o", namespace="n"))
     assert [r.memory_key for r in out.proposals] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.parametrize(("session", "listed"), [("s1", []), ("s2", ["b value"])])
+async def test_a_session_bounded_caller_sees_a_key_only_when_its_session_holds_the_head(
+    monkeypatch: pytest.MonkeyPatch, session: str, listed: list[str]
+) -> None:
+    insert = _INSERT + (
+        "('o', 'n', 'a', 'u1', 's1', '00000000-0000-0000-0000-000000000001', 'k', 'semantic', "
+        "'a value', 'proposed', 1, '2026-01-01 00:00:00'), "
+        "('o', 'n', 'b', 'u1', 's2', '00000000-0000-0000-0000-000000000002', 'k', 'semantic', "
+        "'b value', 'proposed', 2, '2026-01-02 00:00:00')"
+    )
+    list_ = _listing(monkeypatch, insert)
+    scope = ReadFilters(scope="own_session", user_id="u1", session_id=session)
+    monkeypatch.setattr(proposals_ops, "request_scope", lambda: scope)
+    out = await list_(MemoryProposalsInput(org="o", namespace="n"))
+    assert [r.value_preview for r in out.proposals] == listed

@@ -13,6 +13,8 @@ export interface MemoryProposal {
   memory_type?: string;
   /** The value's first PREVIEW_CHARS characters (server/memory/store/proposals.py); "" for a high row. */
   value_preview?: string;
+  /** The value runs past the preview. */
+  preview_cut?: boolean;
   sensitivity?: string;
   tags?: string[];
   created_at?: string;

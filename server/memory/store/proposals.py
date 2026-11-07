@@ -28,7 +28,7 @@ async def scan_proposals(
     newest row of any status, so an older proposal under a decided key is left out: no
     decision could take it."""
     params: dict[str, Any] = {"org": org, "ns": namespace, "cap": cap}
-    in_namespace = "org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL"
+    live_in_namespace = "org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL"
     # A wanted row: a proposal this caller may read, matching the listing's filters.
     filters = ["status = 'proposed'", *scope_where(scope, params)]
     if prefix:
@@ -41,12 +41,13 @@ async def scan_proposals(
     return await ch.query_all(
         f"""
         SELECT memory_key, mid, version FROM (
+            -- the newest row's id and the columns `is_wanted` reads
             SELECT memory_key, toString(memory_id) AS mid, version, status, tags,
                    user_id, session_id
             FROM loom.memory FINAL
-            WHERE {in_namespace}
+            WHERE {live_in_namespace}
               AND memory_key IN (
-                  SELECT memory_key FROM loom.memory FINAL WHERE {in_namespace} AND {is_wanted}
+                  SELECT memory_key FROM loom.memory FINAL WHERE {live_in_namespace} AND {is_wanted}
               )
             ORDER BY memory_key, version DESC, created_at DESC
             LIMIT 1 BY memory_key
@@ -84,6 +85,9 @@ async def proposal_details(
                -- a high value is readable by key only
                if(sensitivity = 'high', '', substringUTF8(value_preview, 1, {{chars:UInt32}}))
                    AS preview,
+               -- value_preview holds 2048 bytes: a longer value is past any 400 characters
+               sensitivity != 'high'
+                   AND (value_len > 2048 OR lengthUTF8(value_preview) > {{chars:UInt32}}) AS cut,
                sensitivity, tags, toString(created_at) AS created, conflict_with
         FROM loom.memory
         WHERE org = {{org:String}}

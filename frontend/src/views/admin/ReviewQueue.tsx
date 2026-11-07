@@ -861,10 +861,6 @@ function trialLabel(r: MemoryProposal): string {
   return r.ready ? `${graded} · the policy would ${r.ready} it` : graded;
 }
 
-// The characters of a proposal's value `memory.proposals` sends: the server's
-// PREVIEW_CHARS (server/memory/store/proposals.py).
-const PREVIEW_CHARS = 400;
-
 const proposalId = (p: MemoryProposal) => `${p.memory_id}@${p.version ?? 0}`;
 
 function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null; onSeedUsed: () => void }) {
@@ -1060,9 +1056,8 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
               ) : (
                 <div className="text-sm text-text mb-2 whitespace-pre-wrap break-words">
                   {r.value_preview ?? ""}
-                  {/* The server sends the first PREVIEW_CHARS characters, so a value of exactly
-                      that length is marked too: the key opens the whole value. */}
-                  {[...(r.value_preview ?? "")].length >= PREVIEW_CHARS && "…"}
+                  {/* The key opens the whole value. */}
+                  {r.preview_cut && "…"}
                 </div>
               )}
               <div className="text-xs text-text-muted mb-2">

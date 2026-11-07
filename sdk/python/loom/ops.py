@@ -14097,6 +14097,7 @@ class MemoryProposal(TypedDict, total=False):
     session_id: NotRequired[str]
     memory_type: NotRequired[str]
     value_preview: NotRequired[str]
+    preview_cut: NotRequired[bool]
     sensitivity: NotRequired[str]
     tags: NotRequired[list[str]]
     created_at: NotRequired[str]

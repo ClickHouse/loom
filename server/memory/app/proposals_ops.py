@@ -25,11 +25,12 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
     from server.memory.app import proposals as _p
 
     ch = get_client()
+    scope = request_scope()
     rows = await proposals_repo.scan_proposals(
         ch,
         input.org,
         input.namespace,
-        scope=request_scope(),
+        scope=scope,
         cap=settings.memory_proposals_scan_cap,
         prefix=input.prefix,
         tags=input.tags,
@@ -38,7 +39,7 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
     # `ready` grades every row to choose which to return.
     to_show = rows if input.only == "ready" else rows[: input.limit]
     details = await proposals_repo.proposal_details(
-        ch, input.org, input.namespace, to_show, scope=request_scope()
+        ch, input.org, input.namespace, to_show, scope=scope
     )
     # A row merged away between the scan and the fetch drops out (`total` still counts it).
     listed = [{**r, **details[r["mid"]]} for r in to_show if r["mid"] in details]
@@ -63,6 +64,7 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
                 session_id=str(r.get("session_id") or "-"),
                 memory_type=str(r.get("memory_type") or ""),
                 value_preview=str(r.get("preview") or ""),
+                preview_cut=bool(r.get("cut")),
                 sensitivity=str(r.get("sensitivity") or ""),
                 tags=[str(t) for t in (r.get("tags") or [])],
                 created_at=str(r.get("created") or ""),

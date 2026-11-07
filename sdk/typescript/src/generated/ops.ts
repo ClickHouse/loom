@@ -6123,6 +6123,7 @@ export interface MemoryProposal {
   session_id?: string;
   memory_type?: string;
   value_preview?: string;
+  preview_cut?: boolean;
   sensitivity?: string;
   tags?: string[];
   created_at?: string;

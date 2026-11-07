@@ -931,7 +931,15 @@ describe("ReviewQueue", () => {
     const long = "x".repeat(400);
     vi.mocked(listProposals).mockResolvedValue({
       proposals: [
-        { memory_key: "k", memory_id: "m1", value_preview: long, agent: "claude", user_id: "u1", session_id: "s1" },
+        {
+          memory_key: "k",
+          memory_id: "m1",
+          value_preview: long,
+          preview_cut: true,
+          agent: "claude",
+          user_id: "u1",
+          session_id: "s1",
+        },
       ],
       total: 1,
     });

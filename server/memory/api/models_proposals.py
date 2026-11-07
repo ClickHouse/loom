@@ -46,6 +46,8 @@ class MemoryProposal(BaseModel):
     # The first 400 characters of the value (server.memory.store.proposals.PREVIEW_CHARS);
     # "" for a high row, read by key (memory.get).
     value_preview: str = ""
+    # The value runs past the preview.
+    preview_cut: bool = False
     # Sensitivity tier ('' | low | medium | high).
     sensitivity: str = ""
     tags: list[str] = Field(default_factory=list)
