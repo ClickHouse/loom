@@ -173,14 +173,14 @@ export function clearStrayLinks(target, keyFile) {
 
 /** `target`'s text with readPrivateFile's checks, clearing this install's own stray
  *  links (clearStrayLinks) when they are what refused it, in at most KEY_PASSES
- *  reads. Throws when it stays refused, or is missing. */
+ *  reads. Throws on any other refusal at once, when it stays refused, or is missing. */
 function readKeyText(target, keyFile) {
   for (let pass = 0; ; pass++) {
     try {
       return readPrivateFile(target).trim();
     } catch (e) {
-      const missing = e && e.code === "ENOENT";
-      if (missing || pass + 1 >= KEY_PASSES || clearStrayLinks(target, keyFile) !== "retry") throw e;
+      const linked = e && e.code === "ELINKED";
+      if (!linked || pass + 1 >= KEY_PASSES || clearStrayLinks(target, keyFile) !== "retry") throw e;
     }
   }
 }

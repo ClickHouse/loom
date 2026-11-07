@@ -302,3 +302,15 @@ test("a good key still linked under its creator's temporary name is put back, no
   assert.deepEqual(fs.readdirSync(path.dirname(file)), ["recall-key"]);
   assert.deepEqual(loadRecallKey(file), key);
 });
+
+test("a key of ours that cannot be opened is refused on the first read, not retried", {
+  skip: !posix || process.getuid() === 0,
+}, (t) => {
+  const file = keyFile(t);
+  loadRecallKey(file);
+  fs.chmodSync(file, 0);
+  const opens = t.mock.method(fs, "openSync");
+  assert.equal(loadRecallKey(file), null);
+  assert.equal(opens.mock.calls.filter((c) => c.arguments[0] === file).length, 1);
+  assert.ok(fs.existsSync(file), "left in place");
+});

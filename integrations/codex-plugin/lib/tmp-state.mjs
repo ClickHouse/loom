@@ -51,7 +51,7 @@ export function readPrivateFile(file) {
   try {
     const st = fs.fstatSync(fd);
     if (!st.isFile()) throw new Error(`${file} is not a regular file`);
-    if (st.nlink !== 1) throw new Error(`${file} has other hard links`);
+    if (st.nlink !== 1) throw Object.assign(new Error(`${file} has other hard links`), { code: "ELINKED" });
     if (typeof process.getuid === "function" && st.uid !== process.getuid()) {
       throw new Error(`${file} belongs to another user`);
     }
@@ -103,7 +103,7 @@ export function writePrivateFile(file, text, { append = false } = {}) {
   try {
     const st = fs.fstatSync(fd);
     if (!st.isFile()) throw new Error(`${file} is not a regular file`);
-    if (st.nlink !== 1) throw new Error(`${file} has other hard links`);
+    if (st.nlink !== 1) throw Object.assign(new Error(`${file} has other hard links`), { code: "ELINKED" });
     if (typeof process.getuid === "function" && st.uid !== process.getuid()) {
       throw new Error(`${file} belongs to another user`);
     }
