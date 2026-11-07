@@ -268,18 +268,22 @@ def test_an_answer_out_of_shape_mid_run_is_skipped_and_the_run_still_reports(
 
 
 @pytest.mark.parametrize(
-    ("upload", "ingest", "upload_tally", "ingested"),
+    ("upload", "ingest", "upload_ok", "upload_errors", "ingested"),
     [
         # An answer without its id tallies its status; no ingest is sent.
-        ({"json": {}}, {"ingestion_id": "j"}, {"201": 1}, 0),
-        ({"json": []}, {"ingestion_id": "j"}, {"201": 1}, 0),
+        ({"json": {}}, {"ingestion_id": "j"}, 1, {}, 0),
+        ({"json": []}, {"ingestion_id": "j"}, 1, {}, 0),
         # A 201 that is not JSON is no answer: tallied 0, as op() counts it.
-        ({"text": "<html>proxy</html>"}, {"ingestion_id": "j"}, {"0": 1}, 0),
-        ({"json": {"upload_id": "u"}}, {}, {"201": 1}, 1),  # an ingest without its id
+        ({"text": "<html>proxy</html>"}, {"ingestion_id": "j"}, 0, {"0": 1}, 0),
+        ({"json": {"upload_id": "u"}}, {}, 1, {}, 1),  # an ingest without its id
     ],
 )
 def test_an_upload_or_ingest_without_its_id_tallies_its_status_and_is_not_queued(
-    upload: dict[str, Any], ingest: Any, upload_tally: dict[str, int], ingested: int
+    upload: dict[str, Any],
+    ingest: Any,
+    upload_ok: int,
+    upload_errors: dict[str, int],
+    ingested: int,
 ) -> None:
     """Each call's tally is its status (0 for a 2xx that is not JSON); the small
     ingest it was for ends "not queued", which is what fails the run."""
@@ -303,8 +307,8 @@ def test_an_upload_or_ingest_without_its_id_tallies_its_status_and_is_not_queued
     run = asyncio.run(go())
     assert run.small_states == {"not queued": 1}
     tally = run.tallies["knowledge.upload"]
-    assert tally.summary()["ok"] == upload_tally.get("201", 0)  # timed as an answer
-    assert dict(tally.errors) == {c: n for c, n in upload_tally.items() if c != "201"}
+    assert tally.summary()["ok"] == upload_ok
+    assert dict(tally.errors) == upload_errors
     assert run.tallies["knowledge.ingest"].summary()["ok"] == ingested
 
 
