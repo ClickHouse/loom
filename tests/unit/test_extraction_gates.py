@@ -11,7 +11,6 @@ import datetime as dt
 import functools
 import io
 import json
-import re
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -23,6 +22,7 @@ from bench.docparse.normalize import normalize
 from bench.docparse.score import heading_scores, score_file, text_scores
 from loom_extractor import Options, ocr, service
 from loom_extractor import extract as _extract
+from tests.fixtures.floor_tables import read_floors
 from tests.fixtures.xlsx_files import cell, sheet, workbook
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,29 +30,9 @@ DOC = ROOT / "docs" / "architecture" / "document-extraction.md"
 CORPUS = ROOT / "bench" / "docparse" / "corpus"
 
 
-def _floors_in(text: str) -> dict[tuple[str, str, str], float]:
-    """(format, slice, metric) to floor, from the table under `## Qualification`.
-    A row it cannot read, or one repeated, is an error: a row skipped would go
-    ungated while the page still lists it."""
-    section = text.split("\n## Qualification\n", 1)[1].split("\n## ", 1)[0]
-    rows = [line.strip() for line in section.splitlines() if line.strip().startswith("|")]
-    floors: dict[tuple[str, str, str], float] = {}
-    for line in rows[2:]:  # past the header and its rule
-        cells = [c.strip() for c in line.strip("|").split("|")]
-        if len(cells) != 4 or not re.fullmatch(r"[01]\.\d+", cells[3]):
-            raise ValueError(f"not a (format, slice, metric, floor) row: {line}")
-        key = (cells[0], cells[1], cells[2])
-        if key in floors:
-            raise ValueError(f"a repeated row: {line}")
-        floors[key] = float(cells[3])
-    if not floors:
-        raise ValueError("no floors under ## Qualification")
-    return floors
-
-
 @functools.cache
-def _floors() -> dict[tuple[str, str, str], float]:
-    return _floors_in(DOC.read_text())
+def _floors() -> dict[tuple[str, ...], float]:
+    return read_floors(DOC.read_text(), "## Qualification", 4)
 
 
 def extract(data: bytes, name: str, options: Options | None = None) -> Any:
@@ -701,29 +681,6 @@ def test_every_slice_meets_its_floor() -> None:
     ]
     assert not missing, f"rows with no measurement: {missing}"
     assert not under, "\n".join(under)
-
-
-@pytest.mark.parametrize(
-    ("row", "why"),
-    [
-        ("| pdf | text layer | text recall | 1 |", "not a"),
-        ("| pdf | text layer | text recall | 0.97 | extra |", "not a"),
-        (
-            "| pdf | text layer | text recall | 0.97 |\n| pdf | text layer | text recall | 0.98 |",
-            "repeated",
-        ),
-    ],
-)
-def test_a_floor_row_that_cannot_be_read_is_an_error(row: str, why: str) -> None:
-    page = f"\n## Qualification\n\n| Format | Slice | Metric | Floor |\n| --- | --- | --- | --- |\n{row}\n"
-    with pytest.raises(ValueError, match=why):
-        _floors_in(page)
-
-
-def test_a_floor_row_is_read_as_its_key_and_floor() -> None:
-    row = "| pdf | text layer | text recall | 0.975 |"
-    page = f"\n## Qualification\n\n| Format | Slice | Metric | Floor |\n| --- | --- | --- | --- |\n{row}\n"
-    assert _floors_in(page) == {("pdf", "text layer", "text recall"): 0.975}
 
 
 async def test_the_reference_extractor_declares_only_formats_with_floors() -> None:
