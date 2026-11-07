@@ -1,9 +1,9 @@
 """The tier harnesses in the workers' output-file mode, over a real git window, a stub
 indexer and the real converter: a modified file is re-read, a deleted or renamed-away
 file is tombstoned, and a window with nothing for the tier writes no delta, and neither
-it nor a window with only deletions runs the indexer. The C/C++ harness's CMake
-configure runs against a stub `cmake`: when the compile database is configured or
-reconfigured, and that a configure that fails fails the run."""
+it nor a window with only deletions runs the indexer. The C/C++ harness runs against a
+stub `cmake`: the tests check when it configures or reconfigures the compile database,
+and that a failed configure fails the run."""
 
 from __future__ import annotations
 
