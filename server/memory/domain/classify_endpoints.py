@@ -23,18 +23,6 @@ from server.settings import settings
 from server.settings.catalog import ascii_host, is_bare_host, url_host
 
 
-def _gateway_branch(host: str) -> bool:
-    """Whether a classifier at `host` (as `ascii_host` spells it) is a model call,
-    through the gateway: while the gateway is required, or at one of its listed hosts."""
-    return settings.gateway_required() or host in settings.gateway_hosts()
-
-
-def via_gateway(url: str) -> bool:
-    """`_gateway_branch` for `url`'s host. Read only for a URL `classify_refusal`
-    passes, so httpx's host, `urlsplit`'s and the call's are one."""
-    return _gateway_branch(url_host(url.strip()))
-
-
 def _one_host(url: str) -> tuple[str, SplitResult | None, str]:
     """(refusal, parts, host): `url` as `urlsplit` parts and the one host httpx (the
     gateway check, the model call) and `urlsplit` (the off-gateway call,
@@ -58,29 +46,37 @@ def _one_host(url: str) -> tuple[str, SplitResult | None, str]:
     return "", parts, host
 
 
-def classify_refusal(url: str) -> str:
-    """Why a classifier at `url` is refused; "" when it may be called (a host off the
-    gateway's network is still vetted at the call)."""
+def classify_route(url: str) -> tuple[str, bool]:
+    """(refusal, via gateway) for a classifier at `url`, from its one host: refusal is
+    "" when it may be called (a host off the gateway's network is still vetted at the
+    call); via gateway, whether it is a model call, through the gateway (the gateway
+    is required, or the host is one of its listed hosts)."""
     url = url.strip()
     if not url:
-        return ""
+        return "", False
     refusal, parts, host = _one_host(url)
     if parts is None:
-        return refusal
+        return refusal, False
     # The call drops them, and namespace.get would hand the credential back.
     if parts.username is not None or parts.password is not None:
-        return "the URL may not carry a user name or password"
-    if not _gateway_branch(host):
+        return "the URL may not carry a user name or password", False
+    gateway_hosts = settings.gateway_hosts()
+    if not (settings.gateway_required() or host in gateway_hosts):
         private = host in settings.memory_classify_private_host_set()
         if parts.scheme != "https" and not (private and parts.scheme == "http"):
-            return "it must be https"
-        return ""
-    if host not in settings.gateway_hosts():
-        return f"{host} is not in LOOM_INFERENCE_GATEWAY_HOSTS"
+            return "it must be https", False
+        return "", False
+    if host not in gateway_hosts:
+        return f"{host} is not in LOOM_INFERENCE_GATEWAY_HOSTS", True
     # urlsplit reads an explicit :443 as 443; httpx, which sends it, as the default port
     if parts.scheme != "https" or parts.port not in (None, 443):
-        return "it must be https at the default port"
-    return ""
+        return "it must be https at the default port", True
+    return "", True
+
+
+def classify_refusal(url: str) -> str:
+    """Why a classifier at `url` is refused (`classify_route`); "" when it may be called."""
+    return classify_route(url)[0]
 
 
 def check_classify_endpoint(value: str | None) -> str | None:

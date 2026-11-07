@@ -587,7 +587,7 @@ def test_lookups_that_never_answer_hold_at_most_the_classifiers_own_threads(
             *(
                 classify.classify(
                     org="acme",
-                    namespace="ns",
+                    namespace=f"burst{i % 3}",
                     endpoint=f"https://never{i}.example/c",
                     prompt_template="",
                     value="v",
@@ -602,5 +602,57 @@ def test_lookups_that_never_answer_hold_at_most_the_classifiers_own_threads(
         # another test's cut lookup may still hold a thread of the pool
         assert 1 <= running[1] <= classify._LOOKUP_THREADS < 12
         assert all(name.startswith("classify-dns") for name in threads)
+    finally:
+        release.set()
+
+
+def test_one_namespace_holds_at_most_its_share_of_the_lookup_threads(
+    monkeypatch: pytest.MonkeyPatch, client: type[_Client]
+) -> None:
+    """A namespace whose names never answer holds two lookup threads and no more, its
+    excess is refused at once as busy, and another namespace's classifier still runs."""
+    import threading
+
+    release = threading.Event()
+    lock = threading.Lock()
+    hung = [0, 0]  # now, most at once
+
+    def _resolve(host: str) -> list[str]:
+        if host.startswith("never"):
+            with lock:
+                hung[0] += 1
+                hung[1] = max(hung[1], hung[0])
+            release.wait(10)
+            with lock:
+                hung[0] -= 1
+        return ["93.184.215.14"]
+
+    monkeypatch.setattr(settings, "memory_classify_timeout_s", 0.5)
+    monkeypatch.setattr("server.core.hosts._resolve", _resolve)
+
+    async def _call(namespace: str, host: str) -> tuple[str, list[str]]:
+        degradations.begin()
+        label = await classify.classify(
+            org="acme",
+            namespace=namespace,
+            endpoint=f"https://{host}/c",
+            prompt_template="",
+            value="v",
+            valid_types=[],
+        )
+        return label, degradations.current()
+
+    async def _both() -> list[tuple[str, list[str]]]:
+        hogs = [_call("hog", f"never{i}.example") for i in range(6)]
+        await asyncio.sleep(0)
+        return await asyncio.gather(*hogs, _call("other", "classifier.example"))
+
+    try:
+        *hogs, other = asyncio.run(_both())
+        assert other == ("note", [])
+        assert hung[1] == classify._LOOKUPS_PER_NAMESPACE
+        busy = [notes for label, notes in hogs if "endpoint busy" in notes[0]]
+        assert len(busy) == 6 - classify._LOOKUPS_PER_NAMESPACE
+        assert all(label == "" for label, _ in hogs)
     finally:
         release.set()

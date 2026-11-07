@@ -5,7 +5,7 @@ POSTs the value to that URL and uses the response as memory_type. A namespace
 admin owns the URL, the model and the prompt; Loom owns the data plane, and
 checks the URL at registration and at every call (`classify_refusal`).
 
-A URL through the gateway (`via_gateway`: the gateway is required, or the host
+A URL through the gateway (`classify_route`: the gateway is required, or the host
 is one of its listed hosts) is a model call, on the model client with the
 call's identity headers. Any other is posted on its own client to the public
 address its host was vetted to, with no redirect, no identity headers and a
@@ -37,8 +37,10 @@ import asyncio
 import functools
 import json
 import logging
-from collections.abc import Mapping
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from collections import Counter
+from collections.abc import Callable, Mapping
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from typing import Any
 
 import httpx
@@ -47,7 +49,7 @@ from server.clients import _http
 from server.core import webhooks
 from server.llm import customer
 from server.memory.app.log_once import LogOnce
-from server.memory.domain.classify_endpoints import classify_refusal, via_gateway
+from server.memory.domain.classify_endpoints import classify_refusal, classify_route
 from server.observability import degradations as _degradations
 from server.observability import provider_health as _provider_health
 from server.settings import settings
@@ -73,13 +75,14 @@ async def classify(
     value: str,
     valid_types: list[str],
 ) -> str:
-    """Call the operator's classifier. Returns "" on any error or
+    """Call the namespace's classifier. Returns "" on any error or
     when the response's memory_type isn't in valid_types (when
     valid_types is non-empty).
     """
     endpoint = endpoint.strip()
-    if not endpoint or classify_refusal(endpoint):
-        # Refused (see classify_refusal): no call; the caller's type stays.
+    refusal, via_gateway = classify_route(endpoint)
+    if not endpoint or refusal:
+        # Refused (see classify_route): no call; the caller's type stays.
         return ""
     body = {
         "value": value,
@@ -89,7 +92,7 @@ async def classify(
     # Outside the fail-open: a refused call is an error, not a kept type.
     who = await customer.require()
     try:
-        if via_gateway(endpoint):
+        if via_gateway:
             # The model client, never redirected (the URL is a namespace's): its hook refuses
             # a host off the gateway, sends the identity headers only to the gateway's hosts,
             # and reads a gateway's refusal of the call's identity (server/clients/_http.py).
@@ -104,7 +107,7 @@ async def classify(
             payload = resp.json()
         else:
             payload = await _post_vetted(endpoint, body, scope=(org, namespace))
-    except _HostRefused:
+    except _NotCalled:
         return ""  # noted and logged where it was refused
     except customer.HOLDS:
         raise  # the gateway refused or held the call's identity: never "kept the caller's type"
@@ -133,20 +136,57 @@ async def classify(
     return candidate
 
 
-class _HostRefused(Exception):
-    """The endpoint's host is refused at the call: kept apart from any answer, a JSON
-    null included."""
+class _NotCalled(Exception):
+    """The call is refused before it is sent (the host, or the namespace's lookups
+    are all taken): kept apart from any answer, a JSON null included."""
 
 
 # Concurrent name lookups for classifiers off the gateway. A lookup cut by the deadline
 # keeps its thread until the resolver gives up, and the names are a namespace admin's:
 # a burst at a name that never answers fills this pool, never asyncio's shared one.
+# One namespace holds at most _LOOKUPS_PER_NAMESPACE of its threads, pending or
+# running, so it cannot take every thread from the other namespaces; a call past
+# that is refused at once.
 _LOOKUP_THREADS = 4  # not a setting: a bound on what an admin's names can hold
+_LOOKUPS_PER_NAMESPACE = 2  # not a setting: half the pool, so two tenants always fit
+_lookups: Counter[tuple[str, str]] = Counter()  # (org, namespace) -> lookups held
+_lookups_lock = threading.Lock()  # released from the pool's threads
 
 
 @functools.cache
 def _lookup_pool() -> ThreadPoolExecutor:
     return ThreadPoolExecutor(max_workers=_LOOKUP_THREADS, thread_name_prefix="classify-dns")
+
+
+def _take_lookup(scope: tuple[str, str]) -> bool:
+    with _lookups_lock:
+        if _lookups[scope] >= _LOOKUPS_PER_NAMESPACE:
+            return False
+        _lookups[scope] += 1
+        return True
+
+
+def _release_lookup(scope: tuple[str, str]) -> None:
+    with _lookups_lock:
+        _lookups[scope] -= 1
+        if _lookups[scope] <= 0:
+            del _lookups[scope]
+
+
+class _NamespaceLookup(Executor):
+    """The lookup pool, for one call of one namespace: the slot `_take_lookup` took
+    is released when the lookup's thread is done (or it is cancelled before it
+    starts), not when the call's deadline cuts the wait."""
+
+    def __init__(self, scope: tuple[str, str]) -> None:
+        self.scope = scope
+        self.submitted = False
+
+    def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
+        self.submitted = True
+        future = _lookup_pool().submit(fn, *args, **kwargs)
+        future.add_done_callback(lambda _: _release_lookup(self.scope))
+        return future
 
 
 # The largest classifier answer read: {"memory_type": ...} is a few dozen bytes.
@@ -157,16 +197,25 @@ async def _post_vetted(endpoint: str, body: Mapping[str, object], *, scope: tupl
     """POST to a classifier off the gateway and return its decoded answer: to the public
     address its host resolves to (vetted here and connected to, so a rebinding name
     cannot move it), with no redirect and no identity headers. The lookup, the call
-    and the answer, at most `_MAX_ANSWER_BYTES`, are under one deadline. _HostRefused,
-    noted, when the host is refused (logged once per `scope`, the (org, namespace))."""
+    and the answer, at most `_MAX_ANSWER_BYTES`, are under one deadline. _NotCalled,
+    noted, when the host is refused (logged once per `scope`, the (org, namespace)) or
+    the namespace already holds its share of the lookup pool."""
+    if not _take_lookup(scope):
+        _degradations.note("classify", "caller_type_kept", "endpoint busy")
+        raise _NotCalled
+    lookup = _NamespaceLookup(scope)
     async with asyncio.timeout(settings.memory_classify_timeout_s):
-        refusal, url, host, server_name = await webhooks.pinned_target(
-            # http only for a listed host: classify_refusal refused it for any other
-            endpoint,
-            schemes=("https", "http"),
-            private_hosts=settings.memory_classify_private_host_set(),
-            pool=_lookup_pool(),
-        )
+        try:
+            refusal, url, host, server_name = await webhooks.pinned_target(
+                # http only for a listed host: classify_refusal refused it for any other
+                endpoint,
+                schemes=("https", "http"),
+                private_hosts=settings.memory_classify_private_host_set(),
+                pool=lookup,
+            )
+        finally:
+            if not lookup.submitted:  # refused before any lookup: the slot is free now
+                _release_lookup(scope)
         if refusal:
             if _REFUSED_LOGGED.first(("host", *scope)):
                 log.warning(
@@ -175,7 +224,7 @@ async def _post_vetted(endpoint: str, body: Mapping[str, object], *, scope: tupl
                     refusal,
                 )
             _degradations.note("classify", "caller_type_kept", "endpoint host refused")
-            raise _HostRefused
+            raise _NotCalled
         async with (
             httpx.AsyncClient(follow_redirects=False, verify=webhooks.tls()) as client,
             client.stream(

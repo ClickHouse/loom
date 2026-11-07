@@ -4,8 +4,8 @@ It resolves, and every address it resolves to is globally reachable
 (`ipaddress.is_global`, not multicast) once an IPv4 address carried inside
 IPv6 (mapped, compatible, NAT64) is unwrapped. The caller connects to the
 address vetted here, so a second lookup cannot swap in another. Tracker
-sources, task and memory webhooks and the repository-job egress proxy share
-this gate.
+sources, task and memory webhooks, a namespace's classifier and the
+repository-job egress proxy share this gate.
 """
 
 from __future__ import annotations
@@ -62,10 +62,7 @@ async def vet_host(
     if not h:
         return "host is required", ""
     try:
-        if pool is None:
-            addrs = await asyncio.to_thread(_resolve, h)
-        else:
-            addrs = await asyncio.get_running_loop().run_in_executor(pool, _resolve, h)
+        addrs = await asyncio.get_running_loop().run_in_executor(pool, _resolve, h)
     except Exception as e:  # noqa: BLE001 — a name that does not resolve
         return f"{h} does not resolve ({type(e).__name__})", ""
     if not addrs:
