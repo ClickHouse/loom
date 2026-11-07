@@ -96,10 +96,20 @@ def require_final(version: str) -> None:
     raise ValueError(f"{version!r} is not X.Y.Z")
 
 
+class PinError(ValueError):
+    """A version file that cannot be read: its path, and why apart, so a check's
+    annotation names the file once."""
+
+    def __init__(self, path: str, reason: str) -> None:
+        super().__init__(f"{path}: {reason}")
+        self.path = path
+        self.reason = reason
+
+
 def _match(pin: Pin, text: str) -> re.Match[str]:
     found = list(re.finditer(pin.pattern, text, re.MULTILINE))
     if len(found) != 1:
-        raise ValueError(f"{pin.path}: {pin.pattern!r} matches {len(found)} times, not once")
+        raise PinError(pin.path, f"{pin.pattern!r} matches {len(found)} times, not once")
     return found[0]
 
 
@@ -107,7 +117,7 @@ def _text(path: str, root: Path) -> str:
     try:
         return (root / path).read_text(encoding="utf-8")
     except FileNotFoundError:
-        raise ValueError(f"{path}: missing") from None
+        raise PinError(path, "missing") from None
 
 
 def read(pin: Pin, root: Path = ROOT) -> str:
@@ -119,8 +129,8 @@ def check(tag_version: str | None = None, root: Path = ROOT) -> list[tuple[str, 
     for the server's version when it is not the final `tag_version` names."""
     try:
         want = read(SERVER, root)
-    except ValueError as e:
-        return [(SERVER.path, str(e).removeprefix(f"{SERVER.path}: "))]
+    except PinError as e:
+        return [(e.path, e.reason)]
     errors = []
     final = final_of(tag_version) if tag_version else want
     if want != final:
@@ -128,8 +138,8 @@ def check(tag_version: str | None = None, root: Path = ROOT) -> list[tuple[str, 
     for pin in FOLLOWERS:
         try:
             got = read(pin, root)
-        except ValueError as e:
-            errors.append((pin.path, str(e).removeprefix(f"{pin.path}: ")))
+        except PinError as e:
+            errors.append((e.path, e.reason))
             continue
         if got != want:
             errors.append((pin.path, f"names {got}, {SERVER.path} {want}"))
@@ -146,7 +156,7 @@ def validate(version: str, root: Path = ROOT) -> None:
     try:
         parse(chart)
     except ValueError as e:  # the next chart version is planned from it
-        raise ValueError(f"{CHART.path}: {e}") from None
+        raise PinError(CHART.path, str(e)) from None
     current = read(SERVER, root)
     if parse(version) < parse(current):
         raise ValueError(f"{version} is below the current version {current}")
@@ -241,8 +251,10 @@ def released_chart(tag: str, root: Path = ROOT) -> str:
     try:
         version = _match(CHART, shown.stdout).group("v")
         parse(version)
+    except PinError as e:
+        raise PinError(CHART.path, f"{e.reason} (at {tag})") from None
     except ValueError as e:
-        raise ValueError(f"{e} (at {tag})") from None
+        raise PinError(CHART.path, f"{e} (at {tag})") from None
     return version
 
 
@@ -250,7 +262,8 @@ def chart_baseline(tag_version: str, root: Path = ROOT) -> str | None:
     """The release before `tag_version`'s, or None when `vX.Y.Z` is on another
     commit (a dry run of a branch still naming a shipped release)."""
     version = final_of(tag_version)
-    if _sha(root, f"v{version}") and not tag_on_head(version, root):
+    own = _sha(root, f"v{version}")
+    if own and own != _sha(root, "HEAD"):
         return None
     return previous_release(version, root)
 
@@ -490,7 +503,9 @@ def _check_chart(args: argparse.Namespace) -> None:
         chart_error = check_chart(baseline)
     except subprocess.CalledProcessError as e:
         chart_error = f"could not read the chart at {baseline}: {e.stderr.strip()}"
-    except ValueError as e:  # a chart version missing or not X.Y.Z
+    except PinError as e:  # a chart version missing, here or at the baseline
+        chart_error = e.reason
+    except ValueError as e:  # the working tree's chart version is not X.Y.Z
         chart_error = str(e)
     if chart_error:
         raise SystemExit(f"::error file={CHART.path}::{chart_error}")
@@ -540,20 +555,28 @@ def main() -> None:
     notes_cmd = commands.add_parser("notes", help="only print the release notes")
     notes_cmd.add_argument("version", help="the release, X.Y.Z")
     notes_cmd.set_defaults(run=_notes)
-    for name, help_text, run in (
-        ("check", "every file names the tag's final version", _check),
-        ("check-chart", "the chart's version is above the previous release's", _check_chart),
-        ("check-tag", "a candidate before its final, the final on its last candidate's commit",
-         _check_tag),
-        ("previous", "the highest final release tag below the tag's version", _previous),
-    ):  # fmt: skip
-        command = commands.add_parser(name, help=help_text)
-        command.add_argument("tag_version", help="the tag's version, X.Y.Z or X.Y.Z-rc.N")
-        command.set_defaults(run=run)
-        if name in ("check-chart", "check-tag"):
-            command.add_argument(
-                "--dry-run", action="store_true", help="skip, with a notice, off the tag's commit"
-            )
+    tag_version = "the tag's version, X.Y.Z or X.Y.Z-rc.N"
+    dry_run = "skip, with a notice, off the tag's commit"
+    check_cmd = commands.add_parser("check", help="every file names the tag's final version")
+    check_cmd.add_argument("tag_version", help=tag_version)
+    check_cmd.set_defaults(run=_check)
+    tag_cmd = commands.add_parser(
+        "check-tag", help="a candidate before its final, the final on its last candidate's commit"
+    )
+    tag_cmd.add_argument("tag_version", help=tag_version)
+    tag_cmd.add_argument("--dry-run", action="store_true", help=dry_run)
+    tag_cmd.set_defaults(run=_check_tag)
+    chart_cmd = commands.add_parser(
+        "check-chart", help="the chart's version is above the previous release's"
+    )
+    chart_cmd.add_argument("tag_version", help=tag_version)
+    chart_cmd.add_argument("--dry-run", action="store_true", help=dry_run)
+    chart_cmd.set_defaults(run=_check_chart)
+    previous_cmd = commands.add_parser(
+        "previous", help="the highest final release tag below the tag's version"
+    )
+    previous_cmd.add_argument("tag_version", help=tag_version)
+    previous_cmd.set_defaults(run=_previous)
     args = parser.parse_args()
     # A refusal, a failed git or gh call, or a missing gh, git or file is one line;
     # in a check, an ::error:: annotation.

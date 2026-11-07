@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,7 @@ prepare = _module()
 # The real functions, which the `prepared` fixture and some tests replace.
 VALIDATE = prepare.validate
 CHECK = prepare.check
+CHECK_CHART = prepare.check_chart
 
 TEMPLATE = (ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md").read_text()
 
@@ -765,7 +767,10 @@ def test_a_tag_check_off_its_commit_says_it_skipped(
     ],
 )
 def test_a_tag_run_off_its_tag_is_refused(
-    monkeypatch: pytest.MonkeyPatch, command: str, patch: tuple, error: str
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    patch: tuple[str, Callable[..., object]],
+    error: str,
 ) -> None:
     """Outside a dry run the tag is the checked-out commit; one moved after the push fails."""
     monkeypatch.setattr(prepare, *patch)
@@ -782,6 +787,22 @@ def test_a_tag_out_of_candidate_order_is_an_error_line(monkeypatch: pytest.Monke
         prepare.main()
 
 
+def test_a_chart_without_its_version_names_the_file_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chart = tmp_path / "deploy/helm/loom/Chart.yaml"
+    chart.parent.mkdir(parents=True)
+    chart.write_text('appVersion: "1.2.0"\n')
+    monkeypatch.setattr(prepare, "chart_baseline", lambda version: "v1.1.0")
+    monkeypatch.setattr(prepare, "check_chart", lambda baseline: CHECK_CHART(baseline, tmp_path))
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "check-chart", "1.2.0"])
+    with pytest.raises(SystemExit) as exited:
+        prepare.main()
+    message = str(exited.value)
+    assert message.startswith("::error file=deploy/helm/loom/Chart.yaml::")
+    assert message.endswith("matches 0 times, not once") and message.count("Chart.yaml") == 1
+
+
 def test_a_chart_version_that_is_not_x_y_z_is_an_error_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -793,9 +814,8 @@ def test_a_chart_version_that_is_not_x_y_z_is_an_error_line(
     git_repo.git(tmp_path, "tag", "v1.1.0")
     chart.write_text('version: "0.2.0"\nappVersion: "1.2.0"\n')  # quoted
     _commit(tmp_path, "quoted chart version")
-    check_chart = prepare.check_chart
     monkeypatch.setattr(prepare, "chart_baseline", lambda version: "v1.1.0")
-    monkeypatch.setattr(prepare, "check_chart", lambda baseline: check_chart(baseline, tmp_path))
+    monkeypatch.setattr(prepare, "check_chart", lambda baseline: CHECK_CHART(baseline, tmp_path))
     monkeypatch.setattr(sys, "argv", ["prepare.py", "check-chart", "1.2.0"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
@@ -875,9 +895,12 @@ def test_a_tag_check_git_cannot_read_is_an_error(
         prepare.tag_on_head("1.2.0-rc.1", tmp_path)
 
 
+def _release_workflow() -> dict:
+    return yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+
+
 def _release_version_job() -> dict:
-    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    return workflow["jobs"]["version"]
+    return _release_workflow()["jobs"]["version"]
 
 
 def test_the_release_runs_every_check_on_the_tag_with_its_tags() -> None:
@@ -885,15 +908,18 @@ def test_the_release_runs_every_check_on_the_tag_with_its_tags() -> None:
     (checkout,) = [s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout@")]
     assert checkout["with"]["fetch-depth"] == 0  # the candidate order and the chart read tags
     script = "\n".join(s.get("run", "") for s in job["steps"])
-    assert 'python3 scripts/release/prepare.py check "$VERSION"\n' in script
-    for command in ("check-chart", "check-tag"):
-        line = f'python3 scripts/release/prepare.py {command} "${{dry_run[@]}}" "$VERSION"\n'
-        assert line in script, command
+    # check-tag before check-chart: a stray candidate gets the candidate-order refusal.
+    lines = [
+        'python3 scripts/release/prepare.py check "$VERSION"',
+        'python3 scripts/release/prepare.py check-tag "${dry_run[@]}" "$VERSION"',
+        'python3 scripts/release/prepare.py check-chart "${dry_run[@]}" "$VERSION"',
+    ]
+    assert "\n".join(lines) + "\n" in script
 
 
 def test_the_github_release_notes_start_at_the_previous_final() -> None:
     """A final on its candidate's commit would otherwise list nothing."""
-    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    workflow = _release_workflow()
     job = workflow["jobs"]["version"]
     assert job["outputs"]["previous"] == "${{ steps.checks.outputs.previous }}"
     (checks,) = [s for s in job["steps"] if s.get("id") == "checks"]

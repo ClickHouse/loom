@@ -128,8 +128,8 @@ jobs:
           dry_run=()
           [ "$DRY_RUN" != true ] || dry_run=(--dry-run)
           python3 scripts/release/prepare.py check "$VERSION"
-          python3 scripts/release/prepare.py check-chart "${dry_run[@]}" "$VERSION"
           python3 scripts/release/prepare.py check-tag "${dry_run[@]}" "$VERSION"
+          python3 scripts/release/prepare.py check-chart "${dry_run[@]}" "$VERSION"
           previous=$(python3 scripts/release/prepare.py previous "$VERSION")
           echo "previous=$previous" >> "$GITHUB_OUTPUT"
 
