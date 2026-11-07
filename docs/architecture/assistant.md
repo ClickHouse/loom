@@ -39,8 +39,9 @@ Each request names its namespace: the `X-Loom-Namespace` header on the chat rout
 token's default namespace when absent), the `namespace` field on `assistant.ask`. The
 caller needs `viewer` there, and the answer's model spend is charged there.
 
-`loom_assistant_ask` is in no curated MCP roster: each call spends model budget, so an
-agent calls it by name on purpose, as every unlisted op can be called. It is never in
+`loom_assistant_ask` is in no curated MCP roster and, while `experimental`, not in the
+`all` listing either: each call spends model budget, so an agent calls it by name on
+purpose, as every unlisted op can be called. It is never in
 the [assistant toolset](../reference/mcp.md#the-assistant-toolset), so the agent cannot
 call itself.
 
@@ -94,31 +95,34 @@ The bridge (`server/assistant/`) will serve a request in five steps:
    caller's stored token ends at its access token's expiry and at sign-out, as a
    third-party client's already does. The stored token is not listed in
    `loom.service_accounts`; it is the account's.
-3. Find the account in `loom.assistant_accounts`, a KeeperMap table, or create it. The
-   account key is the org and a hash of what the delegated token can read as: `sub`,
-   `creator`, `parent_subjects`, the namespace and role, the end user and the
-   service-account flag. Ids, times and `parent_iats` are left out, so a caller whose
-   access token is refreshed keeps its account, and a caller who reads as someone else
-   gets another. A replica that creates an account inserts its row with
-   `keeper_map_strict_mode = 1`: the org, the subject, a LibreChat user name (the key's
-   hash and the row's generation), a random password sealed with
-   `server/core/secrets_at_rest.py`, and the time of the claim. Only one insert lands.
-   That replica registers the user, signs in, creates its agents API key and stores the
-   key sealed on the row. A replica whose insert lost waits up to 30 seconds for the
-   key; after that it finishes the claim itself with the row's password (signing in, and
-   registering first when the sign-in fails), so a replica that died mid-claim strands
-   nothing. LibreChat's registration is open only on its internal network.
+3. Find the account in `loom.assistant_accounts`, a KeeperMap table, or create it. An
+   account belongs to one caller credential in one namespace: the caller's sign-in
+   session when it has one (a dashboard or `loom login` session keeps its id across
+   access-token refreshes), else the caller's token id. So two tokens, even of one
+   subject, never share an account or its stored token. A row's key is the org, that
+   id, the namespace and a generation number, and it holds the subject, the LibreChat
+   user name and email (`<hash>@assistant.invalid`, from the key), a random password
+   and, once created, the agents API key, both sealed with
+   `server/core/secrets_at_rest.py`, the stored token's expiry, the claim time and
+   the last use. A replica that creates an account inserts its row with
+   `keeper_map_strict_mode = 1`, so only one insert lands. That replica registers the
+   user, signs in, creates its agents API key and stores the key sealed on the row. A
+   replica whose insert lost waits up to 30 seconds for the key; after that it
+   finishes the claim itself with the row's password (signing in, and registering
+   first when the sign-in fails), so a replica that died mid-claim strands nothing.
+   LibreChat's registration is open only on its internal network.
 4. Store the delegated token as the account's `LOOM_TOKEN` when the row says the stored
-   one expires within 15 minutes or was delegated from a different caller token; the row
-   records both. The bridge signs in as the account's user (keeping that session in
-   memory until LibreChat refuses it) and calls `POST /api/user/plugins` with
-   `pluginKey: "mcp_loom"`, `action: "install"` and `auth: {LOOM_TOKEN}`, the call
-   LibreChat's own settings dialog makes. The old token is not revoked: a tool call
-   already using it still succeeds, and it runs out within the hour.
+   one expires within 15 minutes. The bridge signs in as the account's user (keeping
+   that session in memory until LibreChat refuses it) and calls `POST /api/user/plugins`
+   with `pluginKey: "mcp_loom"`, `action: "install"` and `auth: {LOOM_TOKEN}`, the call
+   LibreChat's own settings dialog makes. The old token is not revoked; it runs out
+   within the hour. LibreChat ends that call by cancelling the user's MCP connections
+   still being opened, so an answer of the same account that was opening its connection
+   at that moment fails, and the bridge retries it once.
 5. Call LibreChat's agents API with the account's key, the seeded agent's id in place of
    any `model` the caller names, the text of the caller's `user` and `assistant`
    messages (no `system` message, which would override the agent's instructions, and no
-   files or images), and the namespace as context, and stream the response back with
+   files or images), and stream the response back with
    `Accept-Encoding: identity`. A caller that disconnects, or the chat's stop button,
    closes the upstream request, and LibreChat aborts the run. The bridge drops any
    `conversation_id` in the caller's body: on this path LibreChat stores no
@@ -127,10 +131,16 @@ The bridge (`server/assistant/`) will serve a request in five steps:
 A stored token reads no more than the caller's own token, ends no later than it, and is
 ended with it: revoking the caller's token, its subject, its sign-in session or a subject
 in its `creator` or `parent_subjects` chain ends the stored token too, since delegation
-puts each of them in the stored token's revocation check. The LibreChat user that owns
-the agent definition registers first (LibreChat makes its first user an administrator),
-stores no Loom token, and so the agent itself reads nothing; only a caller's own account
-can make it read.
+puts each of them in the stored token's revocation check.
+
+The LibreChat user that owns the agent definition stores no Loom token, so the agent
+itself reads nothing; only a caller's own account can make it read. LibreChat makes the
+first user it registers an administrator, which the owner must be to grant the agent to
+every user. So the owner is claimed like any account (its own row, its sealed password),
+registered before any caller's account, and checked to hold the `ADMIN` role after it
+signs in; until the owner exists, holds that role and has shared the agent, the bridge
+creates no caller account and answers `ASSISTANT_UNAVAILABLE`, and a LibreChat whose
+first user is not the owner is a `loom doctor` problem.
 
 A worker keeps the accounts:
 
@@ -138,8 +148,9 @@ A worker keeps the accounts:
   LibreChat's `DELETE /api/user/delete` as that user, and its row with it; the row keeps
   its last use for that.
 - A row sealed under a secret that `LOOM_JWT_SECRET_PREVIOUS` still names is resealed
-  under the current one. A row that no secret opens is replaced by the next generation,
-  which registers a new LibreChat user; the stranded user holds no Loom token that is
+  under the current one. A row that no secret opens is replaced by the next generation:
+  a strict insert of the key with the generation one higher, which only one replica
+  wins. It registers a new LibreChat user; the stranded user holds no Loom token that is
   still valid, so it reads nothing.
 
 **Conversations live with the caller.** LibreChat's agents API (the OpenAI-compatible
@@ -157,9 +168,12 @@ it ran. The bridge checks each against Loom: a memory key and version must be re
 by the caller and current, a document section must exist in a live document, and a
 `sql` block's digest must match an `insights.query` call ledgered under the account's
 token during this answer. The agent's MCP server sends the answer's message id on each
-tool call (`requestHeaders` with `{{LIBRECHAT_BODY_MESSAGEID}}`, which the agents API
-fills with the same id every chunk carries), so the bridge reads the answer's ledger
-rows, and its steps (each tool call, its arguments and whether it answered), by that id.
+tool call as `X-Loom-Run-Id` (`requestHeaders` with `{{LIBRECHAT_BODY_MESSAGEID}}`,
+which the agents API fills with the same id every chunk carries). On the assistant
+toolset the MCP transport labels the call's ledger row with that header, in
+`agent_events.run_id`, as HTTP already does, so the bridge reads the answer's rows, and
+its steps (each tool call, its arguments and whether it answered), by the org, the
+namespace and that run id.
 Ledger rows are written in the background and a tool call can land on another replica,
 so the bridge waits up to five seconds for the rows; a citation whose row has not arrived
 by then, or was dropped, comes back unverified. Each citation comes back marked
@@ -207,24 +221,27 @@ call it directly, on any transport, and it joins the
 The statement runs as a dedicated ClickHouse user, `loom_analyst`, never as Loom's own
 user or the reader user. Loom does not parse or rewrite the statement to scope it. It
 sends the scope as settings and runs the statement as a subquery,
-`SELECT * FROM (<statement>)`, so that ClickHouse parses only a `SELECT` or `WITH`
+`SELECT * FROM (` and `)` on lines of their own, so a trailing `--` comment ends at
+the newline and ClickHouse parses only a `SELECT` or `WITH`
 there and reports a syntax error for anything else. The wrapper is not what isolates
 orgs; the user's grants, settings profile and row policies are:
 
-| What the statement tries                                           | What stops it                                                                                              |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| a table or column outside the allowlist (tokens, secrets, keys)    | grants: `SELECT(col, …)` on each allowlisted table, nothing else                                           |
-| another org or namespace, through a filter, `JOIN` or subquery     | a row policy on every allowlisted table, checked on each row read (below)                                  |
-| a deleted or erased row, or a version a later one replaced         | the row policy carries the table's live predicate and applies after `FINAL` (below)                        |
-| `system.*`, `information_schema`, `SHOW`, `DESCRIBE`, `KILL QUERY` | no grant on `system` tables, `SHOW COLUMNS` or `system.processes`                                          |
-| `EXPLAIN`, whose estimates count other orgs' rows                  | inside the subquery, `EXPLAIN` needs `CREATE TEMPORARY TABLE`, which the user lacks                        |
-| `mergeTreeIndex()` and other index readers                         | ClickHouse refuses them on a table with a row policy                                                       |
-| `url()`, `file()`, `s3()`, `remote()`, `cluster()`, `executable()` | no `READ ON URL`, `FILE`, `S3`, `REMOTE` and no `CREATE TEMPORARY TABLE` grant                             |
-| `aiGenerate()` and the other AI functions, which send rows out     | they take credentials only from a named collection, and the user has no `NAMED COLLECTION` grant           |
-| a write, DDL or a temporary table                                  | `readonly = 2`, held `CONST` in the user's settings profile                                                |
-| `SETTINGS` that widen time, memory, rows read or result size       | the profile's `MAX` constraints; `result_overflow_mode` and `read_overflow_mode` are `'throw'` and `CONST` |
-| `SETTINGS use_query_cache = 1`                                     | `use_query_cache = 0`, `CONST`                                                                             |
-| `SETTINGS` that rename the scope                                   | the row policy's signature check fails, so the statement reads no rows                                     |
+| What the statement tries                                            | What stops it                                                                                              |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| a table or column outside the allowlist (tokens, secrets, keys)     | grants: `SELECT(col, …)` on each allowlisted table, nothing else                                           |
+| another org or namespace, through a filter, `JOIN` or subquery      | a row policy on every allowlisted table, checked on each row read (below)                                  |
+| a deleted or erased row, or a version a later one replaced          | the row policy carries the table's live predicate and applies after `FINAL` (below)                        |
+| `system.*`, `information_schema`, `SHOW`, `DESCRIBE`, `KILL QUERY`  | no grant on `system` tables, `SHOW COLUMNS` or `system.processes`                                          |
+| `EXPLAIN`, whose estimates count other orgs' rows                   | inside the subquery, `EXPLAIN` needs `CREATE TEMPORARY TABLE`, which the user lacks                        |
+| `mergeTreeIndex()` and other index readers                          | ClickHouse refuses them on a table with a row policy                                                       |
+| `url()`, `file()`, `s3()`, `remote()`, `cluster()`, `executable()`  | no `READ ON URL`, `FILE`, `S3`, `REMOTE` and no `CREATE TEMPORARY TABLE` grant                             |
+| `aiGenerate()` and the other AI functions, which send rows out      | they take credentials only from a named collection, and the user has no `NAMED COLLECTION` grant           |
+| a write, DDL or a temporary table                                   | `readonly = 2`, held `CONST` in the user's settings profile                                                |
+| `SETTINGS` that widen time, memory, rows read or result size        | the profile's `MAX` constraints; `result_overflow_mode` and `read_overflow_mode` are `'throw'` and `CONST` |
+| `SETTINGS use_query_cache = 1` or `use_query_condition_cache = 1`   | both `0`, `CONST`, so no cached result or granule map crosses from one scope to another                    |
+| `SETTINGS send_logs_level = 'trace'`, whose log lines quote the key | `send_logs_level = 'none'`, `CONST`                                                                        |
+| `SETTINGS max_threads = 256`, taking the host's CPU                 | `max_threads` pinned as `MAX`                                                                              |
+| `SETTINGS` that rename the scope                                    | the row policy's signature check fails, so the statement reads no rows                                     |
 
 **Signed row policies.** Loom sends four custom settings with each statement: the org
 (`SQL_loom_org`), the namespaces (`SQL_loom_ns`), an expiry a minute ahead
@@ -278,18 +295,24 @@ The analyst user, its settings profile, grants and policies will be written with
 never in a ClickHouse config file, which would put the key in the repository. A server
 whose ClickHouse user has access management (the bundled ClickHouse's `loom` user, a
 self-managed admin) writes them at boot. Elsewhere `loom ch-setup` writes them, or
-prints the SQL for an admin, as it does for the reader user. The analyst's settings
-profile carries two custom settings: the allowlist's version and a digest of what the
-entities hold, keys and password hashes included. A build rewrites the entities when its
-version is newer, or the same with another digest (a key replaced, a previous secret
-added or dropped); it never writes over a newer version, so during a rolling upgrade a
-build N-1 never narrows N's grants, and each build's catalog names only the columns the
-grants in place allow. At boot Loom probes the analyst user
-with one signed statement, checks that a `system` table is refused, and compares the
-grants with the allowlist; a missing or older user is a `loom doctor` problem, and
-`insights.query` answers `ANALYSIS_UNAVAILABLE` until it is fixed. The allowlist lives
-in code with the column comments that become the agent's catalog, so the grants, the
-policies and the catalog come from one definition.
+prints the SQL for an admin, as it does for the reader user.
+
+The analyst's settings profile carries three custom settings: the allowlist's version, a
+digest of the grants, policies and caps, and the fingerprints of the signing keys it
+accepts. A build rewrites the entities at boot when its version is newer, or the same
+with another digest, or when the entities lack one of its keys; it never writes over a
+newer version. So during a rolling upgrade a build N-1 never narrows N's grants, and
+each build's catalog names only the columns the grants in place allow. During a secret
+rotation a replica on the new secret (with `LOOM_JWT_SECRET_PREVIOUS` set) writes both
+keys, and a replica still on the old secret finds its key accepted and leaves them; no
+boot removes a key. The last step of a rotation, once every replica runs the new secret,
+is `loom ch-setup`, which writes the entities with exactly this build's keys.
+
+At boot Loom probes the analyst user with one signed statement, checks that a `system`
+table is refused, and compares the grants with the allowlist; a missing or older user is
+a `loom doctor` problem, and `insights.query` answers `ANALYSIS_UNAVAILABLE` until it is
+fixed. The allowlist lives in code with the column comments that become the agent's
+catalog, so the grants, the policies and the catalog come from one definition.
 
 ### What it can read
 
@@ -317,14 +340,15 @@ column the user cannot read.
 A statement runs under the caps the profile pins as `MAX`: execution time, rows read,
 memory and result rows, each a setting in the catalog. A statement over a cap fails with
 the cap it hit and how to narrow the query. Every org's statements run as the one
-analyst user, so fairness between orgs comes from Loom: `insights.query` is rate-limited
-per namespace, org and actor like every op (`server/core/ratelimit.py`), and the
-profile's `max_concurrent_queries_for_user` bounds the analyst user's share of
-ClickHouse. Each replica also runs at most a set number of statements per org at once (a
-catalog setting, default 2). That limit is per replica, so one org can hold that many
-times the replica count; with the defaults (8 for the user, 2 per org) an org holds half
-the share on two replicas and all of it on four, and a deployment with more replicas
-lowers the per-org setting or raises the user's.
+analyst user, so fairness between orgs comes from Loom: `insights.query` and
+`assistant.ask` each get their own rate-limit class (`server/core/ratelimit.py`), so
+neither spends the budget of the ops filed under `default`, and the profile's
+`max_concurrent_queries_for_user` bounds the analyst user's share of ClickHouse. Each
+replica also runs at most a set number of statements per org at once (a catalog setting,
+default 2). That limit is per replica, so one org can hold that many times the replica
+count; with the defaults (8 for the user, 2 per org) an org holds half the share on two
+replicas and all of it on four, and a deployment with more replicas lowers the per-org
+setting or raises the user's.
 
 Each call writes one `agent_events` row with its row count and latency (identifier keys
 in `server/observability/event_args.py`) and the statement's digest and length. The
@@ -333,7 +357,8 @@ restricted namespace drops text keys from the ledger, so the op also records the
 as `sql_digest`, an identifier key, which the citation check reads. The profile holds
 `log_queries = 0` `CONST`, so the statement text is not in `system.query_log` either;
 ClickHouse's server log records it at its `debug` level, as it records every statement.
-The rows are stored nowhere.
+The rows are stored nowhere. A test with two replicas mid-rotation, one without the new
+secret, shows both keep answering.
 
 ## Isolation proof
 
@@ -354,6 +379,8 @@ viewer token. Each case must be refused or return no canary:
 - on `loom.memory` itself: a deleted memory, a memory tombstoned by an erasure, and a
   version a later one replaced, with `SETTINGS final = 0` and
   `apply_row_policy_after_final = 0`;
+- `SETTINGS send_logs_level`, `use_query_condition_cache` or `max_threads` past the
+  profile;
 - `SETTINGS` that change the scope, the caps, `readonly` or `use_query_cache`, the same
   statement text run first by one org with the query cache and then by the other, and
   a scope sent with an expired or forged signature;
@@ -366,15 +393,18 @@ viewer token. Each case must be refused or return no canary:
 
 The same file will show that a revoked token stops new calls and that an erased memory
 is gone from the next statement. A unit test pins the generated grants and policies to
-the allowlist. The bridge's tests will show that two callers never share an account, a
-caller whose access token is refreshed keeps its account, a stored token is never wider
-than the caller's or longer-lived, a dashboard caller's stored token ends at sign-out,
-revoking the caller's token or its creator ends the stored token, two replicas creating
-one account register one LibreChat user, an account whose creating replica died is
-finished by the next, more callers than LibreChat's default registration limit register
-in an hour, a `sql` citation verifies in a restricted namespace and when its tool call
-landed on another replica, and a revoked caller, an org-wide token and an org with model
-calls switched off are refused before LibreChat is called.
+the allowlist. The bridge's tests will show that two callers never share an account, two
+tokens of one subject get two accounts, the owner registers before any caller and a
+LibreChat whose first user is someone else is refused, two answers of one account
+survive a token re-store, a caller whose access token is refreshed keeps its account, a
+stored token is never wider than the caller's or longer-lived, a dashboard caller's
+stored token ends at sign-out, revoking the caller's token or its creator ends the
+stored token, two replicas creating one account register one LibreChat user, an account
+whose creating replica died is finished by the next, more callers than LibreChat's
+default registration limit register in an hour, a `sql` citation verifies in a
+restricted namespace and when its tool call landed on another replica, and a revoked
+caller, an org-wide token and an org with model calls switched off are refused before
+LibreChat is called.
 
 A probe of this boundary on ClickHouse 26.9, with a scratch table, user and policy of
 this shape, showed each refusal in the table above, the query cache keeping the two
@@ -387,7 +417,9 @@ brought back neither's earlier version, and refused `SETTINGS
 apply_row_policy_after_final = 0`. Loom's own user kept ClickHouse's trivial count
 optimization on a table with the `USING 1` policy. With the policy after `FINAL`, one
 org of a thousand in a five-million-row table read 49,152 rows: the policy's `org`
-filter still selects the parts and granules to read.
+filter still selects the parts and granules to read. The profile's `CONST` and `MAX`
+pins refused `send_logs_level = 'trace'`, `use_query_condition_cache = 1` and a
+`max_threads` above the cap, and admitted a lower one.
 
 ## Deployment
 
@@ -402,8 +434,10 @@ only from Loom:
   assistant routes answer `ASSISTANT_UNAVAILABLE` and the Assistant page shows no chat.
   LibreChat's model key (`ANTHROPIC_API_KEY`) is set in its own environment.
 
-LibreChat's configuration keeps the integration's memory off and search index out, and
-turns sharing on for the one seeded agent. Its log level stays at `info`, which writes
+LibreChat's configuration keeps the integration's memory off and search index out, turns
+sharing on for the one seeded agent, and gives the agents endpoint no capability but
+tools (no code execution, file search, skills, subagents or web search), so the agent's
+only way out is Loom's tools. Its log level stays at `info`, which writes
 no message text. Every call to LibreChat comes from Loom's few pod addresses, so the
 per-address limits LibreChat applies to registration (`REGISTER_MAX`, 5 an hour) and
 sign-in (`LOGIN_MAX`, 7 in 5 minutes) would throttle the bridge and could ban it: the
@@ -413,13 +447,13 @@ nothing there.
 
 ## Stored data and erasure
 
-| Where                     | What the assistant leaves                                                                                         | How it is deleted                                                                      |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `loom.assistant_accounts` | per account: the org, the claim-set hash, LibreChat user id, the stored token's expiry and parent, sealed secrets | holds no memory content (a `NO_MEMORY_CONTENT` entry); dropped with its LibreChat user |
-| `loom.agent_events`       | one row per bridge request and per tool call, under the account's token                                           | as every ledger row                                                                    |
-| LibreChat `transactions`  | token counts per answer and its conversation id, no content                                                       | kept; deleted with the LibreChat user                                                  |
-| LibreChat logs            | user ids, request ids and token ids (`jti`), no message text                                                      | one file per day, kept 14 days                                                         |
-| the dashboard             | the current chat, in the tab's memory                                                                             | gone when the tab closes                                                               |
+| Where                     | What the assistant leaves                                                                                  | How it is deleted                                                                      |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `loom.assistant_accounts` | per account: the step 3 key and columns (subject, LibreChat name, sealed secrets, token expiry, use times) | holds no memory content (a `NO_MEMORY_CONTENT` entry); dropped with its LibreChat user |
+| `loom.agent_events`       | one row per bridge request and per tool call, under the account's token                                    | as every ledger row                                                                    |
+| LibreChat `transactions`  | token counts per answer and its conversation id, no content                                                | kept; deleted with the LibreChat user                                                  |
+| LibreChat logs            | user ids, request ids and token ids (`jti`), no message text                                               | one file per day, kept 14 days                                                         |
+| the dashboard             | the current chat, in the tab's memory                                                                      | gone when the tab closes                                                               |
 
 The agents API stores no questions, answers or tool outputs, so LibreChat holds nothing
 an erasure must reach. An answer is computed from the rows the account's token reads at
@@ -442,8 +476,9 @@ spend to the same budget as its own model calls:
   need. Both surfaces record their spend under one operation, `assistant.ask`, which
   the share check sums.
 - The check reads spend already recorded, so answers running at once could each pass
-  it; the bridge runs at most a set number of answers per namespace at once (a catalog
-  setting, default 2), which bounds the overshoot to that many answers.
+  it; each replica runs at most a set number of answers per namespace at once (a
+  catalog setting, default 2), which bounds the overshoot to that many answers per
+  replica, each at most the per-answer ceiling.
 - When the answer ends, the bridge prices the token usage of the agents API's final
   chunk with the model's rate and records it as `upstream_cost_usd` on the answer's
   `agent_events` row, where every model spend is counted. An answer cut before its
@@ -451,11 +486,11 @@ spend to the same budget as its own model calls:
   for, is charged a per-answer ceiling (a catalog setting) instead, so no answer spends
   for free.
 
-At the default cap of $1 a day, half of it buys about 16 answers at the $0.03 per answer
-that the [qualification](../features/integrations/librechat.md#qualification) of the
-assistant toolset measured on that model; a namespace that asks more raises its
-`daily_cost_cap_usd`. The deployed agent is re-qualified with analysis questions before
-it ships.
+At the default cap of $1 a day, half of it buys about 15 answers at the mean of $0.033
+per answer that the [qualification](../features/integrations/librechat.md#qualification)
+of the assistant toolset measured on that model, and 11 at its maximum of $0.043; a
+namespace that asks more raises its `daily_cost_cap_usd`. The deployed agent is
+re-qualified with analysis questions before it ships.
 
 ## Who can use it
 
