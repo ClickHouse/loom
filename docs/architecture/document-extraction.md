@@ -504,25 +504,33 @@ and PPTX are scored on the parsing bench's corpus (`bench/docparse/corpus`, its 
 | pdf      | text layer, every slice | text recall    | 0.97  |
 | pdf      | text layer, every slice | reading order  | 0.95  |
 | pdf      | text layer, every slice | heading F1     | 0.95  |
+| pdf      | text layer, every slice | heading level  | 0.95  |
 | pdf      | text layer, every slice | table cell F1  | 0.95  |
 | pdf      | text layer, every slice | locator        | 0.90  |
 | pdf      | scanned                 | failed units   | 1.00  |
 | pdf      | every slice             | announced loss | 1.00  |
 | docx     | documents               | text recall    | 0.98  |
 | docx     | documents               | heading F1     | 0.98  |
+| docx     | documents               | heading level  | 0.98  |
 | docx     | documents               | table cell F1  | 0.98  |
 | pptx     | decks                   | text recall    | 0.95  |
 | pptx     | decks                   | heading F1     | 0.98  |
+| pptx     | decks                   | heading level  | 0.98  |
 | pptx     | decks                   | locator        | 0.90  |
 | pptx     | decks                   | notes          | 1.00  |
 | pptx     | decks                   | announced loss | 1.00  |
 | markdown | fixtures                | text recall    | 1.00  |
+| markdown | fixtures                | text precision | 1.00  |
 | markdown | fixtures                | heading F1     | 1.00  |
+| markdown | fixtures                | heading level  | 1.00  |
 | markdown | fixtures                | locator        | 1.00  |
 | html     | fixtures                | text recall    | 1.00  |
+| html     | fixtures                | text precision | 1.00  |
 | html     | fixtures                | heading F1     | 1.00  |
+| html     | fixtures                | heading level  | 1.00  |
 | html     | fixtures                | table rows     | 1.00  |
 | text     | fixtures                | text recall    | 1.00  |
+| text     | fixtures                | text precision | 1.00  |
 | text     | fixtures                | locator        | 1.00  |
 | sql      | fixtures                | statements     | 1.00  |
 | sql      | fixtures                | locator        | 1.00  |
@@ -538,20 +546,25 @@ and PPTX are scored on the parsing bench's corpus (`bench/docparse/corpus`, its 
 
 The metrics:
 
-- **text recall**, **reading order**, **heading F1**, **table cell F1** and **locator** are the bench scorer's: the
-  share of the gold's words the parse holds, of its blocks in order, of its headings found at their level, of its table
-  cells, and of its blocks cited on their page or slide; for a text format, locator is the share of gold lines whose
-  block's line span holds them.
+- **text recall**, **text precision**, **reading order**, **heading F1**, **heading level**, **table cell F1** and
+  **locator** are the bench scorer's: the share of the gold's words the parse holds, of the parse's words the gold
+  holds, of the gold's blocks in order, of its headings found (by their text), of the found headings at their level (by
+  rank), of its table cells, and of its blocks cited on their page or slide. For Markdown, HTML, text and SQL, locator
+  is the share of gold blocks or statements found with exactly their line span; for TOML, of keys whose block's span
+  holds their line.
 - **failed units**: the share of a scanned file's pages the artifact reads with OCR (`attrs.ocr_pages`) or reports
   failed, never read as empty; with OCR off, every page is a failed unit.
-- **announced loss**: the share of the gold's text drawn inside images whose page or slide the artifact reads with OCR
-  or names as not read, in `coverage.failed`, `attrs.images_unread` or its warnings.
+- **announced loss**: per bench category, the share of the gold's text drawn inside images whose page or slide the
+  artifact reads with OCR or names as not read, in `coverage.failed` or `attrs.images_unread`.
 - **notes**: the share of speaker notes held as notes, on their slide.
 - **table rows**: the share of an HTML table's rows held as one row, its cells in order.
 - **statements**, **names**, **key paths**: the share of SQL statements found whole, of the objects they define or read
   among their keys, and of TOML key paths found as keys.
 - **typed cells** and **headers**: the share of a table's cells read with their value and type, and of its columns read
-  with their names.
+  with their names, over the gold's count or the extraction's, whichever is larger, so an extra row, column or table
+  counts as a miss.
+
+The gates run with OCR off, so they read the same whether or not the OCR engine is installed.
 
 What is not qualified, and so the reference extractor does not claim: the words OCR reads (it reads a scanned page and a
 large picture where the extractor image carries the engine, and the scanned and announced-loss gates count a page it

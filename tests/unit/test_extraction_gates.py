@@ -19,8 +19,10 @@ from typing import Any
 import httpx
 import pytest
 
+from bench.docparse.normalize import normalize
 from bench.docparse.score import heading_scores, score_file, text_scores
-from loom_extractor import Options, extract, service
+from loom_extractor import Options, ocr, service
+from loom_extractor import extract as _extract
 from tests.fixtures.xlsx_files import cell, sheet, workbook
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,74 +30,52 @@ DOC = ROOT / "docs" / "architecture" / "document-extraction.md"
 CORPUS = ROOT / "bench" / "docparse" / "corpus"
 
 
-@functools.cache
-def _floors() -> dict[tuple[str, str, str], float]:
-    """(format, slice, metric) to floor, from the first table under `## Qualification`."""
-    text = DOC.read_text()
+def _floors_in(text: str) -> dict[tuple[str, str, str], float]:
+    """(format, slice, metric) to floor, from the table under `## Qualification`.
+    A row it cannot read, or one repeated, is an error: a row skipped would go
+    ungated while the page still lists it."""
     section = text.split("\n## Qualification\n", 1)[1].split("\n## ", 1)[0]
-    floors = {}
-    for line in section.splitlines():
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) == 4 and re.fullmatch(r"\d\.\d\d", cells[3]):
-            floors[(cells[0], cells[1], cells[2])] = float(cells[3])
+    rows = [line.strip() for line in section.splitlines() if line.strip().startswith("|")]
+    floors: dict[tuple[str, str, str], float] = {}
+    for line in rows[2:]:  # past the header and its rule
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) != 4 or not re.fullmatch(r"[01]\.\d+", cells[3]):
+            raise ValueError(f"not a (format, slice, metric, floor) row: {line}")
+        key = (cells[0], cells[1], cells[2])
+        if key in floors:
+            raise ValueError(f"a repeated row: {line}")
+        floors[key] = float(cells[3])
+    if not floors:
+        raise ValueError("no floors under ## Qualification")
     return floors
 
 
+@functools.cache
+def _floors() -> dict[tuple[str, str, str], float]:
+    return _floors_in(DOC.read_text())
+
+
+def extract(data: bytes, name: str, options: Options | None = None) -> Any:
+    """The reference extractor with OCR off: the floors are measured without it,
+    so the gates read the same wherever the OCR engine is installed or not."""
+    saved = (ocr._config.enabled, ocr._config.languages, ocr._config.max_images)
+    ocr.configure(False, saved[1], saved[2])
+    try:
+        return _extract(data, name, options) if options else _extract(data, name)
+    finally:
+        ocr.configure(*saved)
+
+
 def _parse(artifact: dict[str, Any]) -> dict[str, Any]:
-    """An artifact in the shape the bench scorer reads (bench/docparse/run.py's), with
-    its warnings and failed units: a table's row blocks count once, as its cells; a
-    DOCX, PPTX or HTML table block (`attrs.table`) is read as its grid."""
-    tables_by_id = {t["id"]: t for t in artifact.get("tables", [])}
-    blocks: list[dict[str, Any]] = []
-    tables: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for b in artifact["blocks"]:
-        loc, attrs = b.get("locator", {}), b.get("attrs", {})
-        out = {
-            "type": b["type"],
-            "text": b["text"],
-            "page_start": loc.get("page_start", 0),
-            "page_end": loc.get("page_end", 0),
-            "line_start": loc.get("line_start", 0),
-            "line_end": loc.get("line_end", 0),
-            "level": b.get("depth", 0),
-            "keys": b.get("keys", []),
-            "key_path": loc.get("key_path", ""),
-            "notes": bool(attrs.get("notes")),
-        }
-        tid = attrs.get("table_id")
-        if tid in tables_by_id:
-            if tid in seen:
-                continue
-            seen.add(tid)
-            t = tables_by_id[tid]
-            head = [[c["name"] for c in t["columns"]]] if t.get("header_rows", 1) else []
-            rows = head + [["" if v is None else str(v) for v in r] for r in t["rows"]]
-            tl = t.get("locator", {})
-            out.update(
-                type="table", page_start=tl.get("page_start", 0), page_end=tl.get("page_end", 0)
-            )
-            tables.append(
-                {"rows": rows, "page_start": out["page_start"], "page_end": out["page_end"]}
-            )
-        elif "table" in attrs:
-            rows = [line.split(" | ") for line in b["text"].split("\n")]
-            tables.append(
-                {"rows": rows, "page_start": out["page_start"], "page_end": out["page_end"]}
-            )
-            out["type"] = "table"
-        blocks.append(out)
-    coverage, facts = artifact["coverage"], artifact.get("attrs", {})
+    """The artifact as the bench reads it (`bench.docparse.normalize`), with its
+    failed units, OCR-read units and units holding unread images named as
+    `page 3` / `slide 2`."""
+    parse = normalize(artifact)
     unit = "slide" if artifact["format"] == "pptx" else "page"
-    return {
-        "complete": coverage["complete"],
-        "blocks": blocks,
-        "tables": tables,
-        "failed": [f["unit"] for f in coverage.get("failed", [])],
-        "warnings": list(artifact.get("warnings", [])),
-        "unread": [f"{unit} {n}" for n in facts.get("images_unread", [])],
-        "ocr": [f"{unit} {n}" for n in facts.get("ocr_pages", facts.get("ocr_slides", []))],
-    }
+    parse["failed_units"] = [f["unit"] for f in parse["failed"]]
+    parse["unread"] = [f"{unit} {n}" for n in parse["images_unread"]]
+    parse["ocr"] = [f"{unit} {n}" for n in parse["ocr_pages"]]
+    return parse
 
 
 # The bench's categories as the table's slices.
@@ -111,6 +91,7 @@ _BENCH_METRICS = {
     "text recall": "text_recall",
     "reading order": "order_acc",
     "heading F1": "heading_f1",
+    "heading level": "heading_level_acc",
     "table cell F1": "table_cell_f1",
     "locator": "locator_acc",
     "notes": "notes_acc",
@@ -130,14 +111,8 @@ def _corpus() -> list[tuple[dict[str, Any], dict[str, Any]]]:
 
 def _names_unit(parse: dict[str, Any], unit: str) -> bool:
     """Whether the parse reads `unit` (`page 3`, `slide 2`) with OCR or says it was
-    not read: a failed unit, one `attrs.images_unread` lists, or a warning naming it."""
-    pattern = re.compile(rf"\b{unit}\b")
-    return (
-        unit in parse["failed"]
-        or unit in parse["unread"]
-        or unit in parse["ocr"]
-        or any(pattern.search(w) for w in parse["warnings"])
-    )
+    not read: a failed unit, or one `attrs.images_unread` lists."""
+    return unit in parse["failed_units"] or unit in parse["unread"] or unit in parse["ocr"]
 
 
 def _announced(gold: dict[str, Any], parse: dict[str, Any]) -> tuple[int, int]:
@@ -154,7 +129,7 @@ def _bench_measures() -> dict[tuple[str, str, str], list[tuple[str, float]]]:
     """Each (format, slice, metric) the corpus measures: its value per bench category,
     so a slice of every category is checked category by category."""
     per: dict[tuple[str, str, str], dict[str, list[float]]] = {}
-    announced: dict[tuple[str, str], list[int]] = {}
+    announced: dict[tuple[str, str, str], list[int]] = {}  # (format, slice, category): hit, n
     for gold, parse in _corpus():
         fmt, slice_ = _slice(gold["category"])
         scores = score_file(gold, parse)
@@ -166,23 +141,23 @@ def _bench_measures() -> dict[tuple[str, str, str], list[tuple[str, float]]]:
         if slice_ == "scanned":
             pages = range(1, gold["pages"] + 1)
             # read with OCR or failed, never complete and empty
-            read_or_failed = set(parse["failed"]) | set(parse["ocr"])
+            read_or_failed = set(parse["failed_units"]) | set(parse["ocr"])
             failed = sum(f"page {n}" in read_or_failed for n in pages) / len(pages)
             per.setdefault((fmt, slice_, "failed units"), {}).setdefault(
                 gold["category"], []
             ).append(failed)
         hit, n = _announced(gold, parse)
         loss_slice = "every slice" if fmt == "pdf" else slice_
-        tally = announced.setdefault((fmt, loss_slice), [0, 0])
+        tally = announced.setdefault((fmt, loss_slice, gold["category"]), [0, 0])
         tally[0] += hit
         tally[1] += n
     out = {
         key: [(cat, sum(v) / len(v)) for cat, v in sorted(cats.items())]
         for key, cats in per.items()
     }
-    for (fmt, slice_), (hit, n) in announced.items():
-        if n:
-            out[(fmt, slice_, "announced loss")] = [(slice_, hit / n)]
+    for (fmt, slice_, category), (hit, n) in sorted(announced.items()):
+        if n:  # a category with text in images, each on its own
+            out.setdefault((fmt, slice_, "announced loss"), []).append((category, hit / n))
     return out
 
 
@@ -321,13 +296,17 @@ def _text_gold(blocks: list[tuple[str, str, int, int, int]]) -> dict[str, Any]:
 def _text_measures() -> dict[tuple[str, str, str], list[tuple[str, float]]]:
     out: dict[tuple[str, str, str], list[tuple[str, float]]] = {}
     for fmt, cases in _TEXT_CASES.items():
-        recall, headings, located, n = [], [], 0, 0
+        recall, precision, headings, levels, located, n = [], [], [], [], 0, 0
         for name, source, gold_blocks in cases:
             parse = _parse(extract(source.encode(), name).to_dict())
             gold = _text_gold(gold_blocks)
-            recall.append(text_scores(gold, parse)["text_recall"])
+            words = text_scores(gold, parse)
+            recall.append(words["text_recall"])
+            precision.append(words["text_precision"])
             if any(k == "heading" for k, *_ in gold_blocks):
-                headings.append(heading_scores(gold, parse)["heading_f1"])
+                found = heading_scores(gold, parse)
+                headings.append(found["heading_f1"])
+                levels.append(found["heading_level_acc"] or 0.0)
             for _, text, first, last, _lv in gold_blocks:
                 n += 1
                 # Cited right: a block holding the gold's text whose lines are the gold's.
@@ -337,8 +316,10 @@ def _text_measures() -> dict[tuple[str, str, str], list[tuple[str, float]]]:
                     for b in parse["blocks"]
                 )
         out[(fmt, "fixtures", "text recall")] = [("fixtures", sum(recall) / len(recall))]
+        out[(fmt, "fixtures", "text precision")] = [("fixtures", sum(precision) / len(precision))]
         if headings:
             out[(fmt, "fixtures", "heading F1")] = [("fixtures", sum(headings) / len(headings))]
+            out[(fmt, "fixtures", "heading level")] = [("fixtures", sum(levels) / len(levels))]
         out[(fmt, "fixtures", "locator")] = [("fixtures", located / n)]
     name, source, rows = _HTML_TABLE
     parse = _parse(extract(source.encode(), name).to_dict())
@@ -674,22 +655,27 @@ def _same(got: Any, want: Any, kind: str) -> bool:
 
 
 def _table_measures() -> dict[tuple[str, str, str], list[tuple[str, float]]]:
+    """Cells read with their value and type, and columns with their name, over
+    the gold's or the extraction's count, whichever is larger: an extra row,
+    column or table counts as a miss."""
     out: dict[tuple[str, str, str], list[tuple[str, float]]] = {}
     for fmt, cases in _TABLE_CASES.items():
         cells = right = names = n_names = 0
         for name, data, options, tables in cases:
             got = extract(data, name, options).to_dict().get("tables", [])
+            for extra in got[len(tables) :]:
+                n_names += len(extra["columns"])
+                cells += len(extra["rows"]) * len(extra["columns"])
             for i, (columns, rows) in enumerate(tables):
-                n_names += len(columns)
-                cells += sum(len(r) for r in rows)
-                if i >= len(got):
-                    continue
-                held = [(c["name"], c["type"]) for c in got[i]["columns"]]
+                g_rows = got[i]["rows"] if i < len(got) else []
+                held = [(c["name"], c["type"]) for c in got[i]["columns"]] if i < len(got) else []
+                n_names += max(len(columns), len(held))
+                cells += max(len(rows), len(g_rows)) * max(len(columns), len(held))
                 names += sum(a == b for (a, _), (b, _) in zip(columns, held, strict=False))
                 for r, row in enumerate(rows):
                     for c, want in enumerate(row):
-                        if r < len(got[i]["rows"]) and c < len(held) and held[c] == columns[c]:
-                            right += _same(got[i]["rows"][r][c], want, columns[c][1])
+                        if r < len(g_rows) and c < len(held) and held[c] == columns[c]:
+                            right += _same(g_rows[r][c], want, columns[c][1])
         out[(fmt, "fixtures", "typed cells")] = [("fixtures", right / cells)]
         out[(fmt, "fixtures", "headers")] = [("fixtures", names / n_names)]
     return out
@@ -706,13 +692,38 @@ def _measures() -> dict[tuple[str, str, str], list[tuple[str, float]]]:
     }
 
 
-@pytest.mark.parametrize("gate", sorted(_floors()), ids=lambda g: " / ".join(g))
-def test_each_slice_meets_its_floor(gate: tuple[str, str, str]) -> None:
-    measured = _measures().get(gate)
-    assert measured, f"{gate}: no measurement for this row of the table"
-    floor = _floors()[gate]
-    under = [(label, round(v, 3)) for label, v in measured if v < floor]
-    assert not under, f"{gate}: under the floor {floor}: {under}"
+def test_every_slice_meets_its_floor() -> None:
+    """One test for every row, so the corpus is extracted once per run rather than
+    once per worker; the message names each row under its floor."""
+    measures = _measures()
+    missing = [" / ".join(g) for g in _floors() if not measures.get(g)]
+    under = [
+        f"{' / '.join(g)} under {floor}: {[(label, round(v, 3)) for label, v in measures[g] if v < floor]}"
+        for g, floor in _floors().items()
+        if measures.get(g) and any(v < floor for _, v in measures[g])
+    ]
+    assert not missing, f"rows with no measurement: {missing}"
+    assert not under, "\n".join(under)
+
+
+@pytest.mark.parametrize(
+    ("row", "why"),
+    [
+        ("| pdf | text layer | text recall | 1 |", "not a"),
+        ("| pdf | text layer | text recall | 0.97 | extra |", "not a"),
+        (
+            "| pdf | text layer | text recall | 0.97 |\n| pdf | text layer | text recall | 0.98 |",
+            "repeated",
+        ),
+    ],
+)
+def test_a_floor_row_that_cannot_be_read_is_an_error(row: str, why: str) -> None:
+    page = f"\n## Qualification\n\n| Format | Slice | Metric | Floor |\n| --- | --- | --- | --- |\n{row}\n"
+    with pytest.raises(ValueError, match=why):
+        _floors_in(page)
+    good = "| pdf | text layer | text recall | 0.97 |"
+    page = f"\n## Qualification\n\n| Format | Slice | Metric | Floor |\n| --- | --- | --- | --- |\n{good}\n"
+    assert _floors_in(page) == {("pdf", "text layer", "text recall"): 0.97}
 
 
 async def test_the_reference_extractor_declares_only_formats_with_floors() -> None:
