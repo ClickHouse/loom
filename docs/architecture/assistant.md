@@ -284,10 +284,9 @@ shape `loom secrets reseal` rewrites (`SEALED` in `server/cli/secrets.py`). Part
 the reseal's reads under `own_write_reads` and has it skip a row that is gone. The CLI
 rotation and the reseal both hold the analysis lease, so they never interleave; the
 printed SQL, which takes no lease, stores its row at a version from ClickHouse's clock
-at insert time in nanoseconds, far above any reseal's `version + 1`. The
-[order of a write](#provisioning) keeps a statement signed from a row a reseal puts back
-from ever reading under the wrong key: once the password changed it cannot sign in. The
-first write draws them under the lease below and every replica reads the same row. A
+at insert time in nanoseconds, far above any reseal's `version + 1`. A row a reseal puts
+back during a rotation is handled by the [order of a write](#provisioning). The first
+write draws them under the lease below and every replica reads the same row. A
 root-secret rotation only reseals them, so the policies never change key; when the key
 cannot be read, [provisioning](#provisioning) says what happens. The analyst user cannot
 read the key: it has no grant on `system.row_policies` or on `loom.analysis_secrets`,
@@ -318,25 +317,24 @@ stored key. Elsewhere an admin uses one of two commands:
   own), so it is also the repair on a server that cannot write them. It draws the row
   only when there is none and no analyst user exists; over a lost row with the user
   still there, it refuses and names `--rotate-analysis-key`.
-- `loom ch-setup --print-analyst-sql` prints SQL for an admin to run by hand, and
-  needs no access management to print (where `--print-sql` prints the admin SQL `loom
-ch-setup` would run, with the reader's password as a placeholder). It proves its
+- `loom ch-setup --print-analyst-sql` prints SQL for an admin to run by hand, and needs
+  no access management to print (where `--print-sql` prints the admin SQL
+  `loom ch-setup` would run, with the reader's password as a placeholder). It proves its
   `LOOM_JWT_SECRET` as the rotation below does, draws a fresh key and password, and
-  prints a complete rotation, in the order of a write, with the command that runs it
-  in one session
-  (`clickhouse-client --log_queries=0 --lightweight_deletes_sync=2 --multiquery --queries-file <file>`):
-  the delete, the new password, a wait of `SELECT sleep(...)` statements, the rest
-  of the entity set under the new key, and last the `INSERT` of the new sealed row at
-  a version from ClickHouse's clock in nanoseconds. Run in full, it starts analysis on
-  a first install, recovers it after a lost row and rotates a healthy key alike. It is
-  outside the lease and the rules below, so it is printed by the newest build's CLI,
-  and it is run, not kept.
+  prints a complete rotation, in the order of a write, with the command that runs it in
+  one session
+  (`clickhouse-client --log_queries=0 --distributed_ddl_output_mode=throw --multiquery --queries-file <file>`):
+  the delete, the new password, a wait of `SELECT sleep(...)` statements, the rest of
+  the entity set under the new key, and last the `INSERT` of the new sealed row at a
+  version from ClickHouse's clock in nanoseconds. Run in full, it starts analysis on a
+  first install, recovers it after a lost row and rotates a healthy key alike. It is
+  outside the lease and the rules below, so it is printed by the newest build's CLI, and
+  it is run, not kept.
 
-A printed rotation run only in part is never an empty answer: after the delete, new
-statements find no key (or, from a row a reseal put back, fail to sign in once the
-password changed) and answer `ANALYSIS_UNAVAILABLE`. Its statements must run in that one
-session: ClickHouse takes no per-statement settings on an access statement, and a
-console that sends them one by one would log the key in `system.query_log`.
+A printed rotation run only in part is never an empty answer, by the order of a write
+below. Its statements must run in that one session: ClickHouse takes no per-statement
+settings on an access statement, and a console that sends them one by one would log the
+key in `system.query_log`.
 
 The allowlist lives in code with the column comments that become the agent's catalog, so
 the grants, the policies and the catalog come from one definition. The rules a write
@@ -355,13 +353,21 @@ keeps:
 - **The order of a write.** The version is the last of the entities. A first draw by a
   boot or `loom ch-setup`, made while no analyst user exists, stores the secrets row
   before it creates the user. A rotation, by the CLI or the printed SQL, replaces a key
-  in this order: it deletes the secrets row, synchronously on every replica
-  (`lightweight_deletes_sync = 2`, and a replica that cannot confirm it stops the
-  rotation there); it sets the new password, so no statement signs in with the old one
-  from then on, wherever its key came from; it waits longer than a statement may run
-  (the catalog's upper bound for `ch_analysis_max_execution_s`, plus a margin), so the
-  statements already running have finished; it writes the policies and the rest of the
-  entities under the new key; and it stores the new row last.
+  in this order: 1. It deletes the secrets row, so a rotation cut short reads as a lost
+  row, which `loom doctor` maps to `--rotate-analysis-key`, rather than as a row whose
+  password no longer works. From the delete on, a Loom replica that reads the row finds
+  no key and answers `ANALYSIS_UNAVAILABLE`. 2. It sets the new password and confirms it
+  on every ClickHouse server before going on (on a cluster, `ON CLUSTER` with
+  `distributed_ddl_output_mode = throw`; with access replicated through Keeper, by
+  trying the old password on each server until each refuses it), and stops if a server
+  cannot confirm. From then on no statement signs in with the old credentials, wherever
+  its key came from: read before the delete, held in a queue, or from a row a reseal put
+  back. Until then such a statement reads under the old policies, which still match its
+  key. 3. It waits out the statements already running: twice the catalog's upper bound
+  for `ch_analysis_max_execution_s`, since ClickHouse checks the time between blocks and
+  a statement can run past it. That wait is the least a rotation, `--live` included,
+  keeps analysis unavailable. 4. It writes the policies and the rest of the entities
+  under the new key, and stores the new row last.
 - **The caps apart.** The caps are deployment settings, kept in a second profile of
   their own: a write holding the lease (a boot, `loom ch-setup`) writes them when the
   stored ones differ from its settings, the printed SQL always writes them, and nothing
@@ -533,7 +539,9 @@ viewer token. Each case must be refused or return no canary:
   row, on a second ClickHouse replica too, which finishes with the right rows before the
   policies change; a statement whose key was read before the delete and sent after the
   password change, and one signed from a row a reseal put back during the wait, each of
-  which answers `ANALYSIS_UNAVAILABLE`.
+  which answers `ANALYSIS_UNAVAILABLE`; a second ClickHouse server that applies the
+  password change late, which the rotation waits for, and one that cannot confirm it,
+  which stops the rotation before the wait.
 
 The same file will show that a revoked token stops new calls and that an erased memory
 is gone from the next statement. A unit test pins the generated grants and policies to
@@ -557,12 +565,12 @@ the allowlist. The bridge's tests will show that:
 
 A probe of this boundary on ClickHouse 26.9, with a scratch table, user and policy of
 this shape, showed each refusal in the table above, the query cache keeping the two
-orgs' results apart, `EXPLAIN PLAN` printing the folded filter (`has(['a1'], namespace)
-AND org = 'acme'`) with no key, and `aiGenerate()` refused for want of a
-`NAMED COLLECTION` grant. On a `ReplacingMergeTree(version)` table with `tombstoned_at`,
-as `loom.memory` is, the live predicate under forced `FINAL` hid a key whose latest
-version was a tombstone and a key an `ALTER … UPDATE tombstoned_at` erased on every
-version, brought back neither's earlier version, and refused
+orgs' results apart, `EXPLAIN PLAN` printing the folded filter
+(`has(['a1'], namespace) AND org = 'acme'`) with no key, and `aiGenerate()` refused for
+want of a `NAMED COLLECTION` grant. On a `ReplacingMergeTree(version)` table with
+`tombstoned_at`, as `loom.memory` is, the live predicate under forced `FINAL` hid a key
+whose latest version was a tombstone and a key an `ALTER … UPDATE tombstoned_at` erased
+on every version, brought back neither's earlier version, and refused
 `SETTINGS apply_row_policy_after_final = 0`. Loom's own user kept ClickHouse's trivial
 count optimization on a table with the `USING 1` policy. With the policy after `FINAL`,
 one org of a thousand in a five-million-row table read 49,152 rows: the policy's `org`
