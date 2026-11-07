@@ -6,6 +6,7 @@ is Invalid Params — with and without a bearer (the authenticated
 pre-dispatch screen reads `arguments`), so one bad entry never answers
 HTTP 500 for the whole batch. A batch outside 1 to 64 entries is one Invalid Request,
 answered after the protocol-version check and before the bearer or any entry.
+Every answer, refusals included, echoes the request's `Mcp-Session-Id`.
 """
 
 from __future__ import annotations
@@ -18,10 +19,11 @@ from fastapi.testclient import TestClient
 
 from server.auth.jwt import mint_token
 from server.settings import settings
-from server.transport.mcp_config import UNSUPPORTED_PROTOCOL_VERSION
-
-INVALID_REQUEST = -32600
-INVALID_PARAMS = -32602
+from server.transport.mcp_config import (
+    INVALID_PARAMS,
+    INVALID_REQUEST,
+    UNSUPPORTED_PROTOCOL_VERSION,
+)
 
 
 def _client(monkeypatch: pytest.MonkeyPatch, *, auth: bool) -> TestClient:
@@ -152,3 +154,25 @@ def test_an_unsupported_protocol_version_answers_400_before_the_batch_cap(
         headers={"MCP-Protocol-Version": "1999-01-01"},
     )
     assert r.status_code == 400 and r.json()["error"]["code"] == UNSUPPORTED_PROTOCOL_VERSION
+
+
+def test_every_refusal_echoes_the_session_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.transport import mcp as mcp_mod
+
+    client = _client(monkeypatch, auth=True)
+    session = {"Mcp-Session-Id": "s-refused"}
+    ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    refusals = [
+        (client.post("/mcp", content=b"{", headers=session), 200),
+        (
+            client.post(
+                "/mcp", json=ping, headers={**session, "MCP-Protocol-Version": "1999-01-01"}
+            ),
+            400,
+        ),
+        (client.post("/mcp", json=[ping] * (mcp_mod.MAX_BATCH_ENTRIES + 1), headers=session), 200),
+        (client.post("/mcp", json={**ping, "method": "tools/list"}, headers=session), 401),
+    ]
+    for r, status in refusals:
+        assert r.status_code == status
+        assert r.headers.get("Mcp-Session-Id") == "s-refused"

@@ -315,6 +315,15 @@ def attach(app: FastAPI) -> None:
     async def mcp_endpoint(request: Request, response: Response) -> Any:
         from server.auth.jwt import TokenError
 
+        # `Mcp-Session-Id` correlates the `initialize` handshake (carrying
+        # `clientInfo.name`) with later `tools/call` POSTs. Server-assigned at
+        # initialize (in _dispatch) and echoed on every response, refusals
+        # included, so clients keep sending it — that round-trip drives the
+        # provenance cache.
+        session_id = request.headers.get("mcp-session-id") or request.headers.get("Mcp-Session-Id")
+        if session_id:
+            response.headers["Mcp-Session-Id"] = session_id
+
         try:
             payload = await request.json()
         except Exception:  # noqa: BLE001 — any body read failure answers PARSE_ERROR
@@ -335,14 +344,6 @@ def attach(app: FastAPI) -> None:
                 INVALID_REQUEST,
                 f"A batch holds 1 to {MAX_BATCH_ENTRIES} requests; send larger work in parts",
             )
-
-        # `Mcp-Session-Id` correlates the `initialize` handshake (carrying
-        # `clientInfo.name`) with later `tools/call` POSTs. Server-assigned at
-        # initialize (in _dispatch) and echoed on every response so clients
-        # keep sending it — that round-trip drives the provenance cache.
-        session_id = request.headers.get("mcp-session-id") or request.headers.get("Mcp-Session-Id")
-        if session_id:
-            response.headers["Mcp-Session-Id"] = session_id
 
         # Verify the bearer once per request (single or batch). In open mode tolerate a
         # stale/malformed bearer — clients template Authorization from env vars that may
