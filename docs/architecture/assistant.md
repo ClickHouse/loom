@@ -21,7 +21,8 @@ flowchart LR
     A["agent or script"] --> S["SDK / HTTP / MCP"]
     D --> B["Loom assistant bridge"]
     S --> B
-    B -->|"agents API: service key<br/>+ this answer's token"| LC["LibreChat, headless<br/>(the Loom agent)"]
+    B -->|"agents API: service key<br/>+ this answer's token"| LC["LibreChat,
+    headless<br/>(the Loom agent)"]
     LC -->|"MCP, that token"| T["assistant toolset"]
     T --> Q["insights.query"]
     Q --> U["ClickHouse user loom_analyst<br/>column grants + signed row policies"]
@@ -296,7 +297,8 @@ access storage (on disk, or in Keeper when access is replicated), in a backup of
 access entities, in the distributed DDL queue of a cluster that writes access
 `ON CLUSTER`, in `system.row_policies` and in the server log at `debug` level: all read
 only by whoever administers the ClickHouse host, who can read every row anyway, and by
-Loom's own user where it has `SHOW ROW POLICIES`, which holds the key sealed already.
+Loom's own user where it has `SHOW ROW POLICIES`; that user can already open the sealed
+row.
 
 **Why not ClickHouse credentials in LibreChat.** A ClickHouse login in the agent would
 read every org, skip the request ledger and the exposure records, and keep no link to
@@ -395,22 +397,23 @@ keeps:
   `now()`, and always by probes: a few dozen signed reads, each on a new connection so
   that a load balancer spreads them. A probe that signs in reports the server it reached
   (`hostName()`); one that fails to sign in runs nothing and names no server. Where
-  Loom's user can read `clusterAllReplicas(<cluster>, system.row_policies)` (it needs the
-  `REMOTE` and `CREATE TEMPORARY TABLE` grants and `SHOW ROW POLICIES`), doctor also
-  reads whether each server's policy carries the stored row's key. Within three settle
+  Loom's user can list policies, doctor also reads which key each server's policy
+  carries: through `clusterAllReplicas(<cluster>, system.row_policies)` on a cluster (it
+  needs the `REMOTE` and `CREATE TEMPORARY TABLE` grants and `SHOW ROW POLICIES`), or
+  from the local `system.row_policies` on a single server. Within three settle
   times of the stored time, any failure is a server still applying the rotation, and it
   names a longer settle time. Past that:
 
   - Some probes pass and others fail: some servers are not applying access changes, an
     admin's problem, which it names (with the servers, where the policy read shows
     them) instead of `--live`, since a new rotation would not reach them either.
-  - Every probe fails and the policy read shows every server's policy on the stored
-    row's key: the policies match the row but no probe signs in, which is a rotation
+  - Every probe fails and the policy read shows every server on one key, the row's or
+    another: no server is behind the others, so the row itself is stale, a rotation
     stopped after the password change with a row a reseal put back, and it names
-    `--live`. If the policy read shows a server on another key, that server is lagging,
-    and it names it as above.
-  - Every probe fails and there is no policy read, on one server or many: the two
-    causes look the same, so it names both.
+    `--live`. If the servers disagree, the ones off the key most of them carry are
+    lagging, and it names them as above.
+  - Every probe fails and there is no policy read (an endpoint whose servers Loom cannot
+    list): the two causes look the same, so it names both.
 
 - **The caps apart.** The caps are deployment settings, kept in a second profile of
   their own: a write holding the lease (a boot, `loom ch-setup`) writes them when the
@@ -609,10 +612,12 @@ viewer token. Each case must be refused or return no canary:
   - past that, some probes passing and others failing, which it names as those servers'
     problem, with the servers where the policy read shows them;
   - a rotation stopped after the password change with a row a reseal put back, where
-    every probe fails to sign in: with the policy read showing every server on the row's
-    key, doctor names `--live`; without it, it names both causes;
-  - one server, or a load balancer that pins every probe to one server, where every
-    probe fails with no policy read, for which it names both causes.
+    every probe fails to sign in, stopped before the policies (every server on the row's
+    key) and after them (every server on one other key): with the policy read, on a
+    cluster and on a single server, doctor names `--live`; servers that disagree, for
+    which it names the lagging ones; without the policy read, both causes;
+  - a load balancer that pins every probe to one server, with no policy read, where
+    every probe fails, for which it names both causes.
 
 The same file will show that a revoked token stops new calls and that an erased memory
 is gone from the next statement. A unit test pins the generated grants and policies to
