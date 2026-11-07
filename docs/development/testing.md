@@ -54,8 +54,8 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
   under one embedder are invisible to reads under another.
 - Each test gets a wildcard-org writer token in `LOOM_API_KEY` unless you exported one
   (the `agent` fixture uses it), and the `mint_test_token` fixture mints a token for a
-  test's own org. Both sign with
-  the test process's `LOOM_JWT_SECRET`, which must match the server's.
+  test's own org. Both sign with the test process's `LOOM_JWT_SECRET`, which must match
+  the server's.
 - Run the server with `LOOM_BACKGROUND_WORKERS=off`: tests that exercise a worker call its
   `run_pass` in-process against their own namespace, and a live supervisor's workers have
   no namespace filter and would drain those tests' rows. A worker whose pass takes one item
