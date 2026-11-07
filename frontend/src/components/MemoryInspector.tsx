@@ -308,7 +308,7 @@ export function MemoryInspector({
       return;
     }
     if (typing || e.metaKey || e.ctrlKey || e.altKey || shortcutOff(e.nativeEvent)) return;
-    if (e.key === "e" && !editing && !valueLocked) {
+    if (e.key === "e" && !editing && !renaming && !valueLocked) {
       e.preventDefault();
       onStartEdit();
     } else if (e.key === "d" && !deleteLocked) {
@@ -324,7 +324,6 @@ export function MemoryInspector({
     setLoading(true);
     // Another key: an edit or a rename of the one left does not carry over.
     setEditing(false);
-    setDraft("");
     setRenaming(false);
     setRestoring(false);
     setDetail(null);
@@ -731,6 +730,8 @@ export function MemoryInspector({
 
   const onSaveEdit = async () => {
     if (!detail) return;
+    // A save that answers after the drawer moved leaves the next key's editor open.
+    const mine = inspection.current;
     try {
       // Parse JSON if it looks like an object/array; else keep the string.
       let nextValue: unknown = draft;
@@ -748,7 +749,7 @@ export function MemoryInspector({
         charLimit: detail.char_limit ?? undefined,
       });
       toast("Saved", "ok");
-      setEditing(false);
+      if (inspection.current === mine) setEditing(false);
     } catch (e) {
       toast(`Save failed: ${humanizeError(e)}`, "error");
       return;
@@ -1359,7 +1360,7 @@ export function MemoryInspector({
               they wrap to two rows on a narrow drawer. */}
           {detail && detail.found && (
             <footer className="px-5 py-3 border-t border-border bg-surface flex items-center gap-2 shrink-0">
-              {!editing && !valueLocked && (
+              {!editing && !renaming && !valueLocked && (
                 <Button type="secondary" htmlType="button" iconLeft="pencil" onClick={onStartEdit}>
                   Edit
                 </Button>

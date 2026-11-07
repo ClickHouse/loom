@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryDetail, MyNamespaceEntry, WhoAmI } from "../api";
@@ -295,6 +295,37 @@ describe("MemoryInspector lifecycle actions", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Lock" }));
     await waitFor(() => expect(screen.queryByTestId("rename-form")).toBeNull());
     expect(toast).toHaveBeenCalledWith("Locked read only: the open rename was closed", "info");
+  });
+
+  it("carries no open edit to an unlocked next key, and a late save leaves its editor alone", async () => {
+    let finish: (v: { version: number; pinned: boolean }) => void = () => {};
+    vi.mocked(api.setMemory).mockImplementationOnce(() => new Promise((r) => (finish = r)));
+    vi.mocked(api.getMemory).mockResolvedValue(LIVE);
+    useStore.setState({ authed: true, whoami: person, myNamespaces: [grant("writer")], identity });
+    const view = render(
+      <MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />,
+    );
+    await screen.findByText("oat milk, no sugar");
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Save new version" }));
+    vi.mocked(api.getMemory).mockResolvedValue({ ...LIVE, memory_id: "m-other", value: "black" });
+    view.rerender(
+      <MemoryInspector identity={identity} memoryKey="morning_routine" onClose={() => {}} onChanged={() => {}} />,
+    );
+    await screen.findByText("black");
+    // The editor did not follow the drawer to the next key.
+    expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    act(() => finish({ version: 4, pinned: false }));
+    expect(await screen.findByRole("button", { name: "Save new version" })).toBeInTheDocument();
+    expect(api.setMemory).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers no Edit while a rename is open", async () => {
+    await open("writer");
+    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Rename" }));
+    await screen.findByTestId("rename-form");
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
   });
 
   it("drops an open edit when the drawer moves to another key, without a lock toast", async () => {
