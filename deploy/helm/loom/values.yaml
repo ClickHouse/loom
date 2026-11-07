@@ -344,9 +344,9 @@ networkPolicy:
   # ingress controller's namespace). [] = any source.
   ingressFrom: []
   # Addresses outside the cluster's pods that a policy keeps the Loom pods off (the
-  # full one, or `guardMetadata`'s; a policy engine enforces it, and an extraEgress
-  # rule or the full policy's DNS and Pod Identity rules can reopen them): the
-  # instance metadata service, so repository code a pod builds cannot take the
+  # full one, or `guardMetadata`'s; a policy engine enforces it, and in the full
+  # policy an extraEgress rule or its DNS and Pod Identity rules can reopen them):
+  # the instance metadata service, so repository code a pod builds cannot take the
   # node's cloud role. 169.254.169.254 serves most clouds, the IPv6 entries AWS and
   # GCE; add your provider's address if it differs, any other host endpoint or
   # metadata proxy that hands out node credentials, and node or other non-pod ranges
@@ -358,7 +358,8 @@ networkPolicy:
   # when your own policies limit the pods' egress: NetworkPolicies add up, so this
   # one would let the pods reach everything else. Deny `egressExcept` there instead.
   guardMetadata: true
-  # More egress rules, e.g. SSH git remotes or an OTLP collector.
+  # More egress rules for the full policy (enabled: true), e.g. SSH git remotes or
+  # an OTLP collector.
   extraEgress: []
 
 # A single-node ClickHouse with embedded Keeper inside the release, for kind or
