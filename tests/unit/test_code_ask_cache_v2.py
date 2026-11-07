@@ -430,7 +430,7 @@ def test_memory_of_another_org_is_never_memoized(
         # a session summary names no loom.memory key: served once, never cached
         ({"memory_key": "summary:s1", "source": "summary"}, None),
         ({"memory_key": "alice/why", "source": "fact", "tags": []}, ["alice/why"]),
-        # a consolidated row is another identity's: a user erasure misses its key
+        # a consolidated row is written from other memories: a redact of a source misses it
         (
             {"memory_key": "merged", "source": "fact", "tags": ["consolidated", "src:alice/why"]},
             None,

@@ -503,8 +503,9 @@ def _erasure_key(hit: Any, *, tags_read: bool) -> str:
     """The loom.memory key a user erasure or a redact finds the excerpt by: a fact's own
     key, a chunk's parent fact's. None ('', which keeps an answer quoting it out of the
     shared cache) for a summary, an entity summary, a digest, a chunk with no parent, and
-    a fact written from other memories (`consolidated` or a `src:` tag): that row stands
-    under another identity, so a user erasure does not reach its key. A fact whose tags
+    a fact written from other memories (`consolidated` or a `src:` tag): a redact of a
+    source memory does not reach that row's key, nor a user erasure a `src:` row that is
+    not `consolidated`. A fact whose tags
     were not read (`tags_read` false, or none on the hit) counts as one of those."""
     source = str(getattr(hit, "source", "fact") or "fact")
     if source == "fact":

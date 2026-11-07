@@ -1314,8 +1314,8 @@ An answer is memoized only when its memory namespace is in the asking org and ev
 excerpt is a fact the user's keys reach or a chunk with a parent key, so these predicates
 reach every memoized answer that quoted memory. An answer that quoted a session summary,
 an entity summary, a digest, a chunk with no parent, or a fact written from other
-memories (tagged `consolidated` or `src:…`, stored under another identity) is served once
-and not cached, as for a non-public namespace: no key of the user's names that text. So is
+memories (tagged `consolidated` or `src:…`) is served once and not cached, as for a
+non-public namespace: a redact of a source memory does not name that row's key. So is
 one whose search could not read a fact's tags (`retrieval_work.tags_unread`). Nor is one
 cached while an erasure of the org had not completed when the ask began, or completed
 since (`ledger_reads.unfinished_since`): that saga's `code_answers.delete` step may

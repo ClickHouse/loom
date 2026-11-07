@@ -150,8 +150,8 @@ def _hit(key: str, source: str, parent: str = "", tags: Any = ()) -> SimpleNames
     ("hit", "key"),
     [
         (_hit("user_decision", "fact"), "user_decision"),
-        # a consolidated row is written under another identity: a user erasure misses
-        # its own key, so it names none
+        # a consolidated row is written from other memories: a redact of a source does
+        # not reach its key, so it names none
         (_hit("merged_fact", "fact", tags=("consolidated", "src:user_decision")), ""),
         (_hit("derived_fact", "fact", tags=("src:summary:s1",)), ""),
         (_hit("untagged_fact", "fact", tags=None), ""),  # tags not read: fail closed
