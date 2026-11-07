@@ -699,12 +699,12 @@ reports p50, p95 and p99 per op, errors and rejected calls (429, 503), and exits
 level.
 
 Ingest is bounded for the whole deployment: one process runs the ingest worker (the supervisor that holds the workers'
-lease under `LOOM_BACKGROUND_WORKERS=auto`), it runs one job per pass, and it waits
-`LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` between passes even after one that did work, so the deployment finishes fewer
-than one job per interval however many replicas serve, and a job queued behind a large file waits for it. A pass that
-found no job waits `LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS` (15 s) instead, so on a quiet deployment a document
-waits up to that long before its job starts. The small-document level allows for that wait, and holds only while small
-documents arrive slower than the worker's interval.
+lease under `LOOM_BACKGROUND_WORKERS=auto`) and it runs one job at a time, so the deployment finishes jobs no faster
+than they run one after another, however many replicas serve, and a job queued behind a large file waits for it. A pass
+that ran a job is followed by the next after `LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` (0: at once); one that found no
+job waits `LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS` (15 s), so on a quiet deployment a document waits up to that
+long before its job starts. The small-document level allows for that wait, and holds only while small documents arrive
+slower than the worker finishes them.
 
 ## Datasets
 

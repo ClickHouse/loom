@@ -714,6 +714,19 @@ def test_the_ingest_worker_runs_on_its_settings(settings_override: Any) -> None:
     assert "knowledge_ingest" not in {w.name for w in registry.enabled_workers()}
 
 
+def test_by_default_the_worker_takes_the_next_job_at_once_and_waits_only_when_idle() -> None:
+    """A pass that ran a job is followed at once, so a queue drains at the speed of
+    its jobs; one that found none waits the idle interval."""
+    from server.workers import pass_context, registry
+    from server.workers.supervisor import next_interval_seconds
+
+    spec = next(w for w in registry.enabled_workers() if w.name == "knowledge_ingest")
+    busy, idle = (pass_context.PassContext("knowledge_ingest") for _ in range(2))
+    idle.idle = True
+    assert next_interval_seconds(spec, busy) == 0
+    assert next_interval_seconds(spec, idle) == 15
+
+
 def test_a_pass_runs_one_job_passing_over_one_another_process_holds(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:

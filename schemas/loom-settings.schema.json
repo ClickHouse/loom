@@ -2802,9 +2802,9 @@
           "description": "Seconds between passes when the last one found nothing to do."
         },
         "knowledge_ingest_interval_seconds": {
-          "default": 2,
+          "default": 0,
           "type": "integer",
-          "description": "Seconds between ingestion passes while jobs wait."
+          "description": "Seconds between ingestion passes while jobs wait; 0 takes the next job as soon as one ends, so the queue drains at the speed of its jobs."
         },
         "knowledge_ingest_max_attempts": {
           "default": 5,
