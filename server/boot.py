@@ -94,6 +94,7 @@ def require_safe_bind(
     (`weak_keys`: the root secret, gateway or end-user keys below the minimum key size
     of RFC 7518, an HMAC secret under 32 bytes or an RSA key under 2048 bits).
     A loopback bind is not checked."""
+    from server.auth import keyring
     from server.auth.public_url import is_loopback_host
 
     if is_loopback_host(bind_host):
@@ -128,9 +129,10 @@ def require_safe_bind(
         raise InsecureBindRefused(
             f"refusing to start: {where} and {', '.join(weak_keys)} "
             f"{'is' if len(weak_keys) == 1 else 'are'} below the minimum key size (an HMAC "
-            "secret shorter than 32 bytes or an RSA key under 2048 bits). Use 32 or more "
-            "random bytes or 2048-bit keys, bind 127.0.0.1, or set LOOM_ALLOW_INSECURE=1 if "
-            "the port is not actually reachable."
+            f"secret shorter than {keyring.MIN_HMAC_BYTES} bytes or an RSA key under "
+            f"{keyring.MIN_RSA_BITS} bits). Use {keyring.MIN_HMAC_BYTES} or more random bytes "
+            f"or {keyring.MIN_RSA_BITS}-bit keys, bind 127.0.0.1, or set LOOM_ALLOW_INSECURE=1 "
+            "if the port is not actually reachable."
         )
 
 

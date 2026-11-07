@@ -288,15 +288,16 @@ def weak_keys(cfg: Any = None) -> list[str]:
 
 def weak_rsa(public_key: str) -> bool:
     """Whether `public_key` is an RSA key under 2048 bits as PyJWT loads it for
-    RS256 (PEM or OpenSSH, as given; it refuses a key that is not RSA); anything it
-    cannot load verifies nothing."""
+    RS256 (PEM or OpenSSH, as given); anything it cannot load verifies nothing.
+    PyJWT 2.10 returns an EC or Ed25519 key here unchecked, so the type is tested."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
     from jwt.algorithms import RSAAlgorithm
 
     try:
         key = RSAAlgorithm(RSAAlgorithm.SHA256).prepare_key(public_key)
     except Exception:  # noqa: BLE001 — a key PyJWT cannot load verifies nothing
         return False
-    return key.key_size < MIN_RSA_BITS
+    return isinstance(key, (rsa.RSAPublicKey, rsa.RSAPrivateKey)) and key.key_size < MIN_RSA_BITS
 
 
 def _keys(view: _View) -> dict[str, SigningKey]:
