@@ -479,42 +479,47 @@ def test_a_one_cell_table_is_a_paragraph_not_a_table(page: bytes) -> None:
     assert a.coverage.to_dict()["complete"]
 
 
-def test_a_table_of_one_column_of_text_beside_spacer_columns_holds_no_grid() -> None:
-    page = (
-        b"<table><tr><td></td><td>Hi,</td><td></td></tr>"
-        b"<tr><td></td><td>Body.</td><td></td></tr></table>"
-    )
+_EMAIL = b"<table><tr><td></td><td>Hi,</td><td></td></tr><tr><td></td><td>Body.</td><td></td></tr>"
+
+
+@pytest.mark.parametrize(
+    ("page", "want"),
+    [
+        # one column of text between two spacer columns
+        (_EMAIL + b"</table>", ("Hi,\nBody.", {})),
+        # a full-width footer fills no column of its own: the spacers still go
+        (_EMAIL + b'<tr><td colspan="3">Footer</td></tr></table>', ("Hi,\nBody.\nFooter", {})),
+        # a spacer a rowspan carries down holds its column in the rows below
+        (
+            b'<table><tr><td rowspan="2"></td><td>Hi,</td><td rowspan="2"></td></tr>'
+            b"<tr><td>Body.</td></tr></table>",
+            ("Hi,\nBody.", {}),
+        ),
+        # a column empty in every row is dropped from a data table too
+        (
+            b"<table><tr><td>a<td><td>b<tr><td>c<td><td>d</table>",
+            ("a | b\nc | d", {"table": {"rows": 2, "columns": 2}}),
+        ),
+        # a spanning cell beside spacers keeps the columns it spans; a colspan that is
+        # no number is 1
+        (
+            b'<table><tr><td>a<td><td>b<tr><td colspan="2">c<td>d<tr><td colspan="x">e<td><td>f</table>',
+            ("a | b\nc | d\ne | f", {"table": {"rows": 3, "columns": 2}}),
+        ),
+        # a span that is no ASCII number is 1
+        (
+            b'<table><tr><td colspan="\xc2\xb2">a</td><td>b</td></tr></table>',
+            ("a | b", {"table": {"rows": 1, "columns": 2}}),
+        ),
+    ],
+    ids=["one column", "footer", "rowspan spacer", "empty column", "colspan", "odd span"],
+)
+def test_a_spacer_column_is_dropped_and_one_column_holds_no_grid(
+    page: bytes, want: tuple[str, dict[str, object]]
+) -> None:
     a = extract(page, "m.html")
-    assert [(b.text, b.attrs) for b in a.blocks] == [("Hi,\nBody.", {})]
+    assert [(b.text, b.attrs) for b in a.blocks] == [want]
     assert a.coverage.to_dict()["complete"]
-    # a full-width footer fills no column of its own: the spacers still go
-    footer = page.replace(b"</table>", b'<tr><td colspan="3">Footer</td></tr></table>')
-    a = extract(footer, "f.html")
-    assert [(b.text, b.attrs) for b in a.blocks] == [("Hi,\nBody.\nFooter", {})]
-    # a spanning cell beside spacers in a data table keeps the columns it spans; a
-    # colspan that is no number is 1
-    a = extract(
-        b'<table><tr><td>a<td><td>b<tr><td colspan="2">c<td>d<tr><td colspan="x">e<td><td>f</table>',
-        "s.html",
-    )
-    assert [(b.text, b.attrs) for b in a.blocks] == [
-        ("a | b\nc | d\ne | f", {"table": {"rows": 3, "columns": 2}})
-    ]
-    # a spacer a rowspan carries down holds its column in the rows below
-    rowspan = (
-        b'<table><tr><td rowspan="2"></td><td>Hi,</td><td rowspan="2"></td></tr>'
-        b"<tr><td>Body.</td></tr></table>"
-    )
-    a = extract(rowspan, "r.html")
-    assert [(b.text, b.attrs) for b in a.blocks] == [("Hi,\nBody.", {})]
-    # a span that is no ASCII number is 1
-    odd = b'<table><tr><td colspan="\xc2\xb2">a</td><td>b</td></tr></table>'
-    assert [b.text for b in extract(odd, "o.html").blocks] == ["a | b"]
-    # a column empty in every row is dropped from a data table too
-    a = extract(b"<table><tr><td>a<td><td>b<tr><td>c<td><td>d</table>", "d.html")
-    assert [(b.text, b.attrs) for b in a.blocks] == [
-        ("a | b\nc | d", {"table": {"rows": 2, "columns": 2}})
-    ]
 
 
 @pytest.mark.parametrize(
@@ -531,30 +536,46 @@ def test_a_row_group_ends_the_open_row(page: bytes) -> None:
     ]
 
 
-def test_a_cell_a_rowspan_carries_down_holds_its_column_in_the_rows_below() -> None:
-    page = (
-        b"<table><tr><th>Region<th>Team<th>Owner"
-        b"<tr><td rowspan=2>EMEA<td>Ops<td>Ann<tr><td>Data<td>Bob</table>"
-    )
-    a = extract(page, "r.html")
-    # each value stays under its header, as a DOCX merged cell keeps its place
-    assert [b.text for b in a.blocks] == ["Region | Team | Owner\nEMEA | Ops | Ann\n | Data | Bob"]
-    # so does one spanning columns too, under a header that spans them
-    wide = (
-        b"<table><tr><th colspan=2>Region<th>Owner"
-        b"<tr><td colspan=2 rowspan=2>EMEA<td>Ann<tr><td>Bob</table>"
-    )
-    assert [b.text for b in extract(wide, "w.html").blocks] == [
-        "Region | Owner\nEMEA | Ann\n | Bob"
-    ]
-    # a rowspan ends with its row group, and one of 0 reaches to the group's end
-    groups = (
-        b"<table><tbody><tr><td rowspan=5>EMEA<td>Ops</tbody>"
-        b"<tbody><tr><td>APAC<td>Data</tbody></table>"
-    )
-    assert [b.text for b in extract(groups, "g.html").blocks] == ["EMEA | Ops\nAPAC | Data"]
-    zero = b"<table><tr><td rowspan=0></td><td>a<td>b<tr><td>c<td>d</table>"
-    assert [b.text for b in extract(zero, "z.html").blocks] == ["a | b\nc | d"]
+@pytest.mark.parametrize(
+    ("page", "want"),
+    [
+        # each value stays under its header, as a DOCX merged cell keeps its place
+        (
+            b"<table><tr><th>Region<th>Team<th>Owner"
+            b"<tr><td rowspan=2>EMEA<td>Ops<td>Ann<tr><td>Data<td>Bob</table>",
+            ["Region | Team | Owner\nEMEA | Ops | Ann\n | Data | Bob"],
+        ),
+        # so does one spanning columns too, under a header that spans them
+        (
+            b"<table><tr><th colspan=2>Region<th>Owner"
+            b"<tr><td colspan=2 rowspan=2>EMEA<td>Ann<tr><td>Bob</table>",
+            ["Region | Owner\nEMEA | Ann\n | Bob"],
+        ),
+        # a rowspan ends with its row group
+        (
+            b"<table><tbody><tr><td rowspan=5>EMEA<td>Ops</tbody>"
+            b"<tbody><tr><td>APAC<td>Data</tbody></table>",
+            ["EMEA | Ops\nAPAC | Data"],
+        ),
+        # one of 0 reaches to the group's end
+        (b"<table><tr><td rowspan=0></td><td>a<td>b<tr><td>c<td>d</table>", ["a | b\nc | d"]),
+        # a caption between rows ends the row group, as HTML ends it
+        (
+            b"<table><tr><td rowspan=2>X<td>a<caption>c</caption><tr><td>b<td>d</table>",
+            ["c", "X | a\nb | d"],
+        ),
+        # a row group ends a caption left open: its text after is no caption's
+        (
+            b"<table><caption>c<tbody>x<tr><td>a<td>b</table>",
+            ["c", "x", "a | b"],
+        ),
+    ],
+    ids=["text", "wide", "row groups", "zero", "caption", "caption ended"],
+)
+def test_a_cell_a_rowspan_carries_down_holds_its_column_in_the_rows_below(
+    page: bytes, want: list[str]
+) -> None:
+    assert [b.text for b in extract(page, "r.html").blocks] == want
 
 
 @pytest.mark.parametrize(

@@ -19,6 +19,7 @@ import bisect
 import re
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
+from typing import NamedTuple
 
 from loom_extractor.artifact import (
     Artifact,
@@ -323,7 +324,7 @@ _PARAGRAPHS = {"p", "blockquote"}
 _ROW_GROUPS = {"thead", "tbody", "tfoot"}
 _CELLS = {"td", "th"}
 _SPANS = {"colspan": 1_000, "rowspan": 65_534}  # HTML's own bounds
-_MAX_PLACING = 1_000_000  # not a setting: the steps a table's cells are placed in
+_MAX_PLACING = 1_000_000  # the steps placing a table's cells may take; past it every cell is kept
 _DIGITS = re.compile(r"[\t\n\f\r ]*\+?0*([0-9]+)")  # HTML's integer: ASCII spacing, a sign
 
 
@@ -339,10 +340,23 @@ def _span(attrs: list[tuple[str, str | None]], name: str) -> int:
     return _SPANS[name] if n == 0 and name == "rowspan" else min(max(n, 1), _SPANS[name])
 
 
-# A placed cell: the first column it fills, the columns it spans, its text, and
-# whether it is kept whatever its columns (it, or the cell carried down into it,
-# holds text).
-_Placed = tuple[int, int, str, bool]
+class _Placed(NamedTuple):
+    """A cell where HTML places it, or the columns a `rowspan` carries down into a
+    row (an empty cell there)."""
+
+    start: int  # the first column it fills
+    span: int  # the columns it fills
+    text: str
+    kept: bool  # kept whatever its columns: it, or the cell carried down, holds text
+
+
+class _Held(NamedTuple):
+    """Columns a `rowspan` holds in the rows below the cell's own."""
+
+    start: int
+    end: int  # past the last column
+    rows: int  # the rows below it still holds
+    text: bool  # whether the cell holds text
 
 
 def _grid(t: _Table, texts: list[list[str]]) -> list[list[_Placed]] | None:
@@ -350,8 +364,7 @@ def _grid(t: _Table, texts: list[list[str]]) -> list[list[_Placed]] | None:
     carries down holds its columns in the rows below, as an empty cell there, until
     its row group ends. None past `_MAX_PLACING` steps, for a table built to cost
     more."""
-    # (first column, past the last, rows held, whether the cell holds text)
-    held: list[tuple[int, int, int, bool]] = []
+    held: list[_Held] = []
     out: list[list[_Placed]] = []
     steps = 0
     for i, (row, row_texts) in enumerate(zip(t.rows, texts, strict=True)):
@@ -360,22 +373,22 @@ def _grid(t: _Table, texts: list[list[str]]) -> list[list[_Placed]] | None:
         held.sort()
         at, k = 0, 0
         cells: list[_Placed] = []
-        below: list[tuple[int, int, int, bool]] = []
+        below: list[_Held] = []
         for cell, text in zip(row, row_texts, strict=True):
-            while k < len(held) and held[k][0] <= at:
-                if held[k][1] > at:
-                    cells.append((at, held[k][1] - at, "", held[k][3]))
-                    at = held[k][1]
+            while k < len(held) and held[k].start <= at:
+                if held[k].end > at:
+                    cells.append(_Placed(at, held[k].end - at, "", held[k].text))
+                    at = held[k].end
                 k += 1
-            cells.append((at, cell.colspan, text, bool(text)))
+            cells.append(_Placed(at, cell.colspan, text, bool(text)))
             if cell.rowspan > 1:
-                below.append((at, at + cell.colspan, cell.rowspan - 1, bool(text)))
+                below.append(_Held(at, at + cell.colspan, cell.rowspan - 1, bool(text)))
             at += cell.colspan
         steps += len(held) + len(row)
         if steps > _MAX_PLACING:
             return None
         out.append(cells)
-        held = [(a, b, n - 1, kept) for a, b, n, kept in held if n > 1] + below
+        held = [h._replace(rows=h.rows - 1) for h in held if h.rows > 1] + below
     return out
 
 
@@ -426,7 +439,7 @@ class _Table:
 
     def open_caption(self, line: int) -> None:
         """A caption, which ends one still open (as HTML ends it)."""
-        self.end_row()  # a caption ends the open row, as HTML ends it
+        self.end_group()  # a caption ends the open row and its row group, as HTML ends them
         self.loose, self.caption = None, _Open("caption", line)
         self.order.append(self.caption)
 
@@ -516,11 +529,11 @@ class _HTMLBlocks(HTMLParser):
         if grid is None:
             rows = [r for r in texts if any(r)]
         else:
-            own = sorted({at for r in grid for at, span, text, _ in r if text and span == 1})
+            own = sorted({c.start for r in grid for c in r if c.text and c.span == 1})
             rows = [
-                [text for at, span, text, kept in r if kept or _holds_own(own, at, span)]
+                [c.text for c in r if c.kept or _holds_own(own, c.start, c.span)]
                 for r in grid
-                if any(text for _, _, text, _ in r)
+                if any(c.text for c in r)
             ]
         self.separators += sum(len(r) - 1 for r in rows)
         first, last = min(c.first_line for c in cells), max(c.last_line for c in cells)
@@ -629,8 +642,9 @@ class _HTMLBlocks(HTMLParser):
         """A start tag inside a table; False when it is to be read as outside one,
         because it lays the table out (`_LAYOUT`, `_PARAGRAPHS`) or ends it (`_ENDS_TABLE`)."""
         line = self.getpos()[0]
-        # A caption left open ends at the next caption, row or cell.
-        if t.caption is not None and (t.caption_tables or tag not in {"caption", "tr", *_CELLS}):
+        # A caption left open ends at the next caption, row group, row or cell.
+        ends_caption = {"caption", "tr", *_CELLS, *_ROW_GROUPS}
+        if t.caption is not None and (t.caption_tables or tag not in ends_caption):
             if tag == "table":
                 t.caption_tables += 1
             t.separate(tag, line)
