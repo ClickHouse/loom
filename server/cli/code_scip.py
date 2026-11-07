@@ -105,15 +105,50 @@ def _write_tail(out: str) -> None:
     sys.stdout.write(tail if not tail or tail.endswith("\n") else tail + "\n")
 
 
+async def _scip_apply_recorded(
+    args: argparse.Namespace, repo: Any, org: str, ns: str, git_head: str
+) -> int:
+    """`--apply-delta`, recording its outcome as the full run's tier."""
+    from server.code.app.index import tier_health
+    from server.code.app.index.entry_lock import EntryLockLost
+
+    try:
+        rc = await _scip_apply_only(args, repo, org, ns, git_head)
+    except EntryLockLost:
+        raise  # the entry is another host's now: no further write
+    except Exception as e:
+        await tier_health.record(repo, org, ns, "clang_full", e)
+        raise
+    await tier_health.record(repo, org, ns, "clang_full")  # the full run's index applied
+    return rc
+
+
+def _scip_full_paths(args: argparse.Namespace, cfg: Any) -> tuple[Path, Path, Path, list[str]]:
+    """The checkout, bare repository and scip-clang binary, and what is missing.
+
+    Absolute, as every path the sandbox mounts must be: bwrap runs the job in
+    another directory. Without --checkout the tier's own tree, made if missing."""
+    from server.code.app.index import scip_full
+    from server.code.app.index.compiler_tier import resolve_binary, resolve_checkout
+    from server.settings import settings
+
+    bare, missing = Path(cfg.git_dir), []
+    if args.checkout:
+        checkout = Path(args.checkout)
+        missing = [str(p) for p in (checkout, bare) if not p.exists()]
+    else:
+        checkout, bare, why = resolve_checkout(cfg, scip_full.PRODUCER)
+        missing = [why] if why else []
+    scip_clang = resolve_binary(settings.code_scip_clang_path)
+    if not scip_clang.exists():
+        missing.append(str(scip_clang))
+    return checkout.resolve(), bare.resolve(), scip_clang.resolve(), missing
+
+
 async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: Any) -> int:
     """One entry's full compiler-tier run; the caller holds the entry lock."""
     from server.code.app.index import scip_full, tier_health
-    from server.code.app.index.compiler_tier import (
-        SANDBOX_REQUIRED_SKIP,
-        resolve_binary,
-        resolve_checkout,
-        unsandboxed_skip,
-    )
+    from server.code.app.index.compiler_tier import SANDBOX_REQUIRED_SKIP, unsandboxed_skip
     from server.code.app.index.entry_lock import EntryLockLost
     from server.code.store.index import CodeRepo
     from server.settings import settings
@@ -125,32 +160,9 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
         return 2
 
     if getattr(args, "apply_delta", ""):
-        try:
-            rc = await _scip_apply_only(args, repo, org, ns, git_head)
-        except EntryLockLost:
-            raise  # the entry is another host's now: no further write
-        except Exception as e:
-            await tier_health.record(repo, org, ns, "clang_full", e)
-            raise
-        await tier_health.record(repo, org, ns, "clang_full")  # the full run's index applied
-        return rc
+        return await _scip_apply_recorded(args, repo, org, ns, git_head)
 
-    def _paths() -> tuple[Path, Path, Path, list[str]]:
-        # Absolute, as every path the sandbox mounts must be: bwrap runs the job
-        # in another directory. Without --checkout the tier's own tree, made if missing.
-        bare, missing = Path(cfg.git_dir), []
-        if args.checkout:
-            checkout = Path(args.checkout)
-            missing = [str(p) for p in (checkout, bare) if not p.exists()]
-        else:
-            checkout, bare, why = resolve_checkout(cfg, scip_full.PRODUCER)
-            missing = [why] if why else []
-        scip_clang = resolve_binary(settings.code_scip_clang_path)
-        if not scip_clang.exists():
-            missing.append(str(scip_clang))
-        return checkout.resolve(), bare.resolve(), scip_clang.resolve(), missing
-
-    checkout, bare, scip_clang, missing = await asyncio.to_thread(_paths)
+    checkout, bare, scip_clang, missing = await asyncio.to_thread(_scip_full_paths, args, cfg)
     if missing:
         print(f"missing: {', '.join(missing)}", file=sys.stderr)
         return 2
