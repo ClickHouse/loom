@@ -3084,14 +3084,20 @@ def test_only_tag_shaped_markup_is_removed_from_a_caption() -> None:
         ('![x](f.png "see (a")', ['![x](f.png "see (a")']),
         ("![x](a(b.png) and 1) done", ["![x](a(b.png)"]),
         ("![x](it's.png)", ["![x](it's.png)"]),
-        # One line end, before the destination or the title; a quoted title spans more.
+        # A line end after `(`, before the title and before `)`; a quoted title spans more.
         ("![x](\nf.png)", ["![x](\nf.png)"]),
         ('![x](f.png\n  "title")', ['![x](f.png\n  "title")']),
+        ('![x](\nf.png\n"t")', ['![x](\nf.png\n"t")']),
+        ('![x](f.png\n"t"\n)', ['![x](f.png\n"t"\n)']),
         ('![x](f.png "a\nb")', ['![x](f.png "a\nb")']),
         ("![x](f.png 'a\nb')", ["![x](f.png 'a\nb')"]),
-        ("![x](a\nb\nc) done", []),
+        ("![x](a\nb\nc\nd\ne) done", []),
         # A target never runs into the next one.
         ("![x](a](b)", []),
+        # A placeholder or a tag stops at the next opener; the image is the later span.
+        ("[image: a [b] c]", []),
+        ('<img alt="a<b">', []),
+        ("![a [<img ](x) >", ["<img ](x) >"]),
         # Unclosed markup is no image.
         ("![open ![x](a.png) <img ](b", ["![x](a.png)"]),
     ],
