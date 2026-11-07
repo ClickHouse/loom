@@ -249,6 +249,7 @@ async def _proven(namespace: str, code: str) -> tuple[str, str] | None:
 # cancelled request does not drop them.
 _running = TaskSet()
 # The longest the read-back after a claim's write may take.
+# not a setting: a second submit's wait (`_past_a_claim_landed_now`) is derived from it
 _READ_BACK_S = 5.0
 
 
@@ -259,8 +260,8 @@ def _done(task: asyncio.Task[Any]) -> None:
         log.warning("agent claim: the claim's task failed: %r", task.exception())
 
 
-# The most a shutdown waits for the claims still running: not a setting, one
-# shutdown step inside its drain budget.
+# The most a shutdown waits for the claims still running.
+# not a setting: one share of the shutdown's fixed drain budget
 SHUTDOWN_WAIT_S = 20.0
 
 
