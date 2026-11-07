@@ -123,6 +123,66 @@ async def set_stage(repo: Any, org: str, ns: str, stage: str, **detail: Any) -> 
     await repo.set_state(org, ns, STAGE_KEY, stage, detail=json.dumps(detail) if detail else "")
 
 
+async def awaits_first_index(cfg: Any, repo: Any) -> bool:
+    """True for a configured entry with no `git_head` yet. Its first index waits for
+    `loom code backfill`, and so does every worker that writes the repository's content,
+    so the operator can restrict the namespace before anything of it is readable. A
+    self-service entry was classified when it was added and builds its own first index."""
+    if cfg.source == "registry":
+        return False
+    return not str(await repo.get_state(cfg.org, cfg.namespace, "git_head") or "")
+
+
+# Paths whose chmod failed, logged once each: the check runs every pass.
+_CHMOD_FAILED: set[str] = set()
+
+
+def restrict_dir(path: str) -> None:
+    """Mode 0700 on one of a restricted entry's directories, so only the server's user
+    reads it. A host that does not hold the directory has nothing to change."""
+    if not path:
+        return
+    try:
+        if os.stat(path).st_mode & 0o077:
+            os.chmod(path, 0o700)
+            logger.warning("bootstrap: %s set to mode 0700 (the entry is restricted)", path)
+    except FileNotFoundError:
+        return
+    except OSError as e:
+        if path not in _CHMOD_FAILED:
+            _CHMOD_FAILED.add(path)
+            logger.warning("bootstrap: could not set %s to mode 0700: %s", path, e)
+
+
+def restrict_entry(cfg: Any) -> None:
+    """Mode 0700 on the entry's bare mirror and on every compiler-tier checkout it may
+    have (`checkout_for` each producer). Sync: callers run it in a thread."""
+    from server.code.app.index.producer_inference import PRODUCERS
+    from server.code.domain.index.repos import checkout_for
+
+    restrict_dir(cfg.git_dir)
+    if cfg.scip_checkout_dir or settings.code_scip_checkout_dir:
+        for producer in PRODUCERS:
+            restrict_dir(checkout_for(cfg, producer))
+
+
+async def restrict_if_restricted(cfg: Any) -> None:
+    """`restrict_entry` when the entry is restricted by its config, by a maintainer's
+    access row or by its directory row alone. Run on every ingest pass and every host's
+    mirror round, so a directory created before the restriction is tightened on each
+    host that holds it. An unreadable classification skips the call: tightening every
+    entry on an outage could not be undone, and the next pass retries."""
+    from server.auth.directory import ClassificationUnavailable
+    from server.identity.app.namespace_classification import is_restricted
+
+    try:
+        restricted = await is_restricted(cfg.org, cfg.namespace)
+    except ClassificationUnavailable:
+        return
+    if restricted:
+        await asyncio.to_thread(restrict_entry, cfg)
+
+
 async def clone_if_missing(cfg: Any, repo: Any) -> bool:
     """True when the mirror exists after the call. A failed clone records
     stage=error with the reason and returns False; the next pass retries."""
@@ -193,7 +253,9 @@ async def clone_mirror(cfg: Any, *, pin: bool = False) -> str:
             mirror = partial_mirror(stale)
             if mirror is not None and os.path.basename(mirror) == os.path.basename(git_dir):
                 await asyncio.to_thread(shutil.rmtree, stale, True)
-        await asyncio.to_thread(os.makedirs, tmp)
+        # 0700 for every entry: a restricted one is never readable by another user, and
+        # a standard one loses nothing (only the server's user reads a mirror).
+        await asyncio.to_thread(os.makedirs, tmp, 0o700)
         # The clone runs as a repository job: the empty target its one writable path.
         done = await run_job(
             ["git", "clone", "-c", "gc.auto=0", "-c", "maintenance.auto=false"]
@@ -209,8 +271,8 @@ async def clone_mirror(cfg: Any, *, pin: bool = False) -> str:
             stderr = done.stderr.decode(errors="replace").strip()[-600:]
             logger.warning("mirror clone exited %s: %s", done.returncode, stderr)
             return f"git clone failed (exit {done.returncode})"
-        if cfg.classification == "restricted":
-            await asyncio.to_thread(os.chmod, tmp, 0o700)
+        # Whatever mode the clone left on the directory, the mirror is the server's alone.
+        await asyncio.to_thread(os.chmod, tmp, 0o700)
         await asyncio.to_thread(os.rename, tmp, git_dir)
         if pin:
             await _pin_ledger_merges(cfg)

@@ -24,10 +24,7 @@ _DEFAULT_LIMIT = 50
 
 class AuditListInput(BaseModel):
     org: str
-    # When namespace is None, the handler fans out across the caller's
-    # accessible namespaces. Platform / org admin sees everything;
-    # everyone else is scoped to their membership. A single-namespace
-    # request reads that namespace (the per-namespace Activity tab).
+    # None: every namespace the caller may read; naming one it cannot read gives an empty page.
     namespace: str | None = None
     event_type: str | None = None  # exact match
     since: datetime | None = None  # only rows ts >= since

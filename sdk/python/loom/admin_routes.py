@@ -118,7 +118,7 @@ class AdminRoutes:
         )
 
     async def namespace_adopt(self, body: dict[str, Any] | None = None) -> Any:
-        """`POST /v1/admin/namespace.adopt` (org_admin). Install a new admin on a namespace that has no remaining active admin grant."""
+        """`POST /v1/admin/namespace.adopt` (org_admin). Install a new admin on a standard namespace that has no remaining active admin grant: the recovery path for an orphaned one."""
         return await self._agent.transport.request_json(
             "POST", "/v1/admin/namespace.adopt", json=body or {}
         )

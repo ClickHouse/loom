@@ -325,10 +325,10 @@ async def every_namespace_scope(org: str, *, column: str = "namespace") -> OrgSc
 
 async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeFilter:
     """WHERE fragment scoping an org-wide read to the namespaces the caller
-    may see. Org/platform admins get `every_namespace_scope`'s exclusions,
-    the auth-off path an empty filter; everyone else is constrained to
-    `resolve_my_namespaces`, and a caller with no accessible namespaces
-    yields ``accessible=False`` to short-circuit.
+    may see. Platform admins and org admins whose claim is `*` get
+    `every_namespace_scope`'s exclusions, the auth-off path an empty filter;
+    everyone else is constrained to `resolve_my_namespaces`, and a caller with
+    no accessible namespaces yields ``accessible=False`` to short-circuit.
 
     Single source of truth for the privacy filter shared by the org-wide
     rollup ops — a bug here leaks one tenant's data to another. The
@@ -341,8 +341,12 @@ async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeF
     if auth is None or not auth.subject:
         return OrgScopeFilter(accessible=True, where="", params={})
     # An org admin administers its own org; only a platform admin spans orgs.
+    # An org admin whose token lists namespaces reads as a member does: the
+    # gate admits it to no other namespace by name. A platform admin reads
+    # the org whole whatever its claim: its dashboard session lists only the
+    # person's own namespaces (`login._identity_from_rows`).
     if auth.has_role(Role.PLATFORM_ADMIN) or (
-        auth.has_role(Role.ORG_ADMIN) and auth.org in ("*", org)
+        auth.has_role(Role.ORG_ADMIN) and auth.org in ("*", org) and "*" in auth.namespaces
     ):
         return await every_namespace_scope(org, column=column)
     ns_list = await rollup_member_namespaces(org)

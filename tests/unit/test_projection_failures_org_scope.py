@@ -24,7 +24,7 @@ def org_admin_with_hidden(monkeypatch: pytest.MonkeyPatch) -> RecordingCH:
     admin = AuthInfo(
         subject="ops",
         org="dev",
-        namespaces=("own-ns",),
+        namespaces=("*",),
         roles=(Role.ORG_ADMIN,),
         is_service_account=False,
     )

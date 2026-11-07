@@ -33,10 +33,14 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     context.set_current_auth(None)
 
 
-def _scope(org_of_token: str, role: Role, org: str) -> Any:
+def _scope(org_of_token: str, role: Role, org: str, namespaces: tuple[str, ...] = ("*",)) -> Any:
     context.set_current_auth(
         AuthInfo(
-            subject="op", org=org_of_token, namespaces=(), roles=(role,), is_service_account=False
+            subject="op",
+            org=org_of_token,
+            namespaces=namespaces,
+            roles=(role,),
+            is_service_account=False,
         )
     )
     return asyncio.run(context.resolve_org_scope(org))
@@ -66,3 +70,17 @@ def test_a_platform_admin_spans_orgs_whole() -> None:
 
 def test_a_wildcard_org_admin_spans_orgs_but_their_unread_collections() -> None:
     assert _scope("*", Role.ORG_ADMIN, "b").where == _UNREAD_COLLECTIONS
+
+
+def test_an_org_admin_whose_claim_lists_namespaces_reads_as_a_member() -> None:
+    """The gate admits such a token to no other namespace by name, so the org-wide
+    rollup does not reach one either."""
+    out = _scope("a", Role.ORG_ADMIN, "a", namespaces=("own-ns",))
+    assert out.where == " AND namespace IN {ns_list:Array(String)}"
+    assert out.params == {"ns_list": ["own-ns"]}
+
+
+def test_a_platform_admin_whose_session_lists_its_namespaces_reads_the_org_whole() -> None:
+    """A platform admin's dashboard session names only the person's own namespaces."""
+    out = _scope("a", Role.PLATFORM_ADMIN, "b", namespaces=("own-ns",))
+    assert out.accessible and "ns_list" not in out.params  # no member filter

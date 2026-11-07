@@ -298,6 +298,33 @@ No org-readable rule, `visibility=public`, `org_admin` or `platform_admin` bypas
 refusal is the generic "cannot access". If the classification cannot be read, access is
 denied.
 
+The org-admin routes that change who administers a namespace (`/v1/admin/namespace.adopt`,
+`/v1/admin/claim_release`) follow the same rule. On a restricted namespace where the
+restricted gate refuses the caller at admin (it needs a token naming the namespace and a
+direct admin grant), they answer `NAMESPACE_NOT_FOUND`. So an org admin cannot adopt an
+orphaned restricted namespace, or a restricted repository no one holds a grant on.
+`namespace.adopt` gives the same answer for a name with no directory row and for a
+namespace whose classification cannot be read (counted as restricted, as release counts
+it), so none of the three can be told apart.
+
+A tracker source's admin ops (`tracker.source.set_mapping`, `rotate` and `remove`) need
+admin on every namespace of the source, since each changes what all of them read;
+`inspect` by name needs one, even on a source that also feeds a restricted namespace:
+it lists the tables, columns and row counts the source's one credential reads, which an
+admin of any of its namespaces already relies on, and returns no record. They decide a
+restricted namespace of the source by these rules but one: the token need not name the
+namespace, since the registrant's token is minted before the namespace exists. A read
+claim that leaves the namespace out therefore admits, while a write claim (`ns_write`)
+that leaves it out refuses, and a trusted caller acting for a person
+(`X-Loom-On-Behalf-Of`) keeps the naming rule, since it carries its own claims. A
+namespace the source registered as restricted counts as one until its directory row is
+written; the row then decides, as it does for every read. The token's own role there
+still caps the grant, so a dashboard session of anyone but a platform admin (a `writer`
+token) cannot change or retire a private tracker even though its person holds the admin
+grant: that takes a token with the `admin` role, which an operator mints with
+`loom mint-token --roles admin`
+([tracker sources](../features/tracker/record-contract.md#adding-a-tracker-source)).
+
 Every request admitted to the restricted namespace it names, through an op or a raw route,
 writes a `namespace.restricted_access` audit row; an inbox watch writes it for the inbox's
 owner namespace, the MCP primer (audit `op` `mcp.primer`) for the default namespace whose

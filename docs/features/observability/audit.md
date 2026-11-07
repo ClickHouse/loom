@@ -158,16 +158,20 @@ a page can hold more than `limit` rows.
 | Field        | Meaning                                                              |
 | ------------ | -------------------------------------------------------------------- |
 | `org`        | required                                                             |
-| `namespace`  | one namespace; omit for every namespace the caller can read          |
+| `namespace`  | one namespace the caller can read (else an empty page); omit for all |
 | `event_type` | exact match                                                          |
 | `since`      | rows with `ts >= since`                                              |
 | `limit`      | 1–500, default 50                                                    |
 | `cursor`     | `next_cursor` from the previous page; pass the filters again with it |
 | `fields`     | project the output rows to these fields                              |
 
-The op needs `viewer` and scopes itself: a platform or org admin sees the whole org,
-anyone else the namespaces their token or grants reach. A restricted namespace the caller
-cannot pass is hidden. Naming a namespace you cannot read returns an empty page, not a 403.
+The op needs `viewer` and scopes itself. A named namespace passes the same gate as a read of
+it; naming one you cannot read returns an empty page, not a 403. With no `namespace`, an org
+admin whose token claims `*` reads the org except the restricted namespaces and collections
+it cannot read, and a platform admin reads the org except the restricted namespaces it
+cannot read, whatever its claim (a dashboard session names only the person's own
+namespaces). Any other caller, an org admin whose token lists namespaces included, reads
+the namespaces its token or grants reach.
 
 ```bash
 curl -s "$LOOM_BASE_URL/v1/audit.list" \

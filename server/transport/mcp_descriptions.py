@@ -548,7 +548,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "tightens; this is the one loosening path."
     ),
     "memory.sweep_expired": (
-        "Run one expiry-sweep pass now for an org/namespace (admin): applies "
+        "Run one expiry-sweep pass now over one namespace (admin): applies "
         "each expired row's on_expire (tombstone | demote | anonymize). "
         "dry_run reports what would happen."
     ),
@@ -1691,13 +1691,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "tracker.source.rotate": (
         "Replace a registered tracker source's read-only credential; the new one "
-        "passes the same grant and contract checks first. Registrant or a "
-        "namespace admin only."
+        "passes the same grant and contract checks first. Needs admin on every "
+        "namespace of the source: a live grant, or a token whose admin role "
+        "covers it; on a restricted one, an admin token and a live direct admin "
+        "grant."
     ),
     "tracker.source.remove": (
         "Retire a registered tracker source and its namespaces (`confirm` = the "
-        "name). Registrant or a namespace admin only; a source the deployment "
-        "configures is changed there instead."
+        "name). Needs admin on every one of its namespaces, as rotate decides "
+        "it; a source the deployment configures is changed there instead."
     ),
     "tracker.source.list": (
         "The tracker sources of an org: each configured source with its record-"

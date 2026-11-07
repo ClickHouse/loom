@@ -23,6 +23,7 @@ import server.tracker.store.source.qa_intel as qi
 from server.auth.context import current_auth_var
 from server.auth.jwt import AuthInfo, Role
 from server.core.errors import AuthInsufficientError, ValidationError
+from server.identity.app import namespace_classification as nc
 from server.settings import settings
 from server.tracker.api.models import (
     TrackerSourceAddInput,
@@ -88,7 +89,6 @@ class _Ch:
         self.namespace_rows: list[dict[str, Any]] = []
         self.grant_rows: list[dict[str, Any]] = []
         self.active_sources = 0
-        self.admin_of: set[tuple[str, str]] = set()  # (subject, namespace)
 
     def _sources(self) -> list[dict[str, Any]]:
         latest: dict[tuple[str, str], dict[str, Any]] = {}
@@ -100,6 +100,8 @@ class _Ch:
         p = dict(params or {})
         if "FROM loom.qa_sources" in sql:
             return self._sources()
+        if "classification = 'restricted'" in sql:  # the directory's restricted set
+            return [r for r in self.namespace_rows if r.get("classification") == "restricted"]
         if "FROM loom.namespaces" in sql:
             return [r for r in self.namespace_rows if r["namespace"] in p.get("names", [])]
         if "FROM loom.namespace_grants" in sql:
@@ -110,13 +112,28 @@ class _Ch:
         p = dict(params or {})
         if "count() AS n FROM loom.qa_sources" in sql:
             return {"n": self.active_sources + len(self._sources())}
-        if "FROM loom.namespace_grants" in sql and "role = 'admin'" in sql:
-            ok = any((p["sub"], ns) in self.admin_of for ns in p["names"])
-            return {"one": 1} if ok else None
+        if "SELECT role FROM loom.namespace_grants" in sql:  # the gate's grant read
+            live = [
+                g
+                for g in self.grant_rows
+                if g["namespace"] == p["ns"]
+                and g["subject"].lower() in p["subs"]
+                and g.get("revoked_at") is None
+            ]
+            return {"role": live[0]["role"]} if live else None
         if "FROM loom.namespaces" in sql:
             ns = p.get("ns")
             return next((r for r in self.namespace_rows if r["namespace"] == ns), None)
         raise AssertionError(sql)
+
+    def grant_admin(self, subject: str, namespace: str) -> None:
+        self.grant_rows.append(
+            {"subject": subject, "namespace": namespace, "role": "admin", "revoked_at": None}
+        )
+
+    def revoke_all(self) -> None:
+        for g in self.grant_rows:
+            g["revoked_at"] = "2026-01-02 00:00:00"
 
     async def insert(self, table: str, rows: list[dict[str, Any]], *a: Any, **kw: Any) -> None:
         self.inserted.setdefault(table, []).extend(rows)
@@ -126,9 +143,9 @@ class _Ch:
             self.grant_rows.extend(rows)
 
 
-def _auth(subject: str = "alice") -> AuthInfo:
+def _auth(subject: str = "alice", role: Role = Role.ADMIN) -> AuthInfo:
     return AuthInfo(
-        subject=subject, org=ORG, namespaces=(PUB,), roles=(Role.VIEWER,), is_service_account=False
+        subject=subject, org=ORG, namespaces=(PUB,), roles=(role,), is_service_account=False
     )
 
 
@@ -206,11 +223,13 @@ def _cfg(monkeypatch):
     resolves(monkeypatch, lambda host: ["93.184.215.14"])
     ch = _Ch()
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    nc.reset()  # the directory's restricted set, read from this fake
     monkeypatch.setattr(ob, "host_refusal", _public)
     monkeypatch.setattr(ob, "probe_credential", _probe())
     token = current_auth_var.set(_auth())
     yield ch
     current_auth_var.reset(token)
+    nc.reset()
     qi.reset_for_tests()
     src.reset_cache_for_tests()
     reports.reset_for_tests()
@@ -546,7 +565,7 @@ async def test_check_runs_the_contract_now_and_says_unreachable(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_rotate_needs_the_registrant_or_a_namespace_admin_and_reconnects(_cfg, monkeypatch):
+async def test_rotate_needs_a_namespace_admin_and_reconnects(_cfg, monkeypatch):
     ch = _cfg
     await handle_tracker_source_add(_add_input())
     qi._slot("clickstack").client = object()  # a live connection with the old password
@@ -558,14 +577,20 @@ async def test_rotate_needs_the_registrant_or_a_namespace_admin_and_reconnects(_
     assert qi._slot("clickstack").client is None  # dropped: the next read reconnects
     rows = ch.inserted["loom.qa_sources"]
     assert len(rows) == 2 and rows[-1]["user"] == "loom_ro2" and rows[-1]["created_by"] == "alice"
-    # bob: neither registrant nor admin → refused; with an admin grant → allowed
+    # bob: no admin grant on any of its namespaces → refused; on the standard one
+    # only → refused (a change reaches the restricted one too); on both → allowed
     token = current_auth_var.set(_auth("bob"))
     try:
         with pytest.raises(AuthInsufficientError):
             await handle_tracker_source_rotate(
                 TrackerSourceRotateInput(org=ORG, name="clickstack", user="x", password="y")
             )
-        ch.admin_of.add(("bob", "tracker-clickstack"))
+        ch.grant_admin("bob", "tracker-clickstack")
+        with pytest.raises(AuthInsufficientError):
+            await handle_tracker_source_rotate(
+                TrackerSourceRotateInput(org=ORG, name="clickstack", user="x", password="y")
+            )
+        ch.grant_admin("bob", "tracker-stack-private")
         out = await handle_tracker_source_rotate(
             TrackerSourceRotateInput(org=ORG, name="clickstack", user="x", password="y")
         )
@@ -578,6 +603,74 @@ async def test_rotate_needs_the_registrant_or_a_namespace_admin_and_reconnects(_
             TrackerSourceRotateInput(org=ORG, name="qa", user="a", password="b")
         )
     assert ei.value.to_detail()["code"] == "SOURCE_FROM_CONFIG"
+
+
+@pytest.mark.asyncio
+async def test_a_registrant_whose_admin_grants_were_revoked_holds_the_source_no_more(
+    _cfg, monkeypatch
+) -> None:
+    """Registering made alice admin of the source's namespaces; those grants, read
+    through the gate, not her name on the row, are her authority. She rotates the
+    source; revoked, she can neither rotate, remap nor retire it, and retiring would
+    have deleted its namespaces past their gate."""
+    from server.tracker.api.models import TrackerSourceSetMappingInput
+    from server.tracker.app.sources import handle_tracker_source_set_mapping
+
+    ch = _cfg
+    await handle_tracker_source_add(_add_input())
+    assert ch.inserted["loom.qa_sources"][-1]["created_by"] == "alice"
+    await handle_tracker_source_rotate(
+        TrackerSourceRotateInput(org=ORG, name="clickstack", user="x", password="y")
+    )
+    assert qs.credentials_for("clickstack") == ("x", "y")
+    ch.revoke_all()
+    deleted: list[str] = []
+
+    async def _delete(inp: Any) -> Any:
+        deleted.append(inp.namespace)
+        return type("O", (), {"deleted": True})()
+
+    monkeypatch.setattr("server.identity.app.namespace.handle_namespace_delete", _delete)
+    with pytest.raises(AuthInsufficientError):
+        await handle_tracker_source_rotate(
+            TrackerSourceRotateInput(org=ORG, name="clickstack", user="z", password="w")
+        )
+    assert qs.credentials_for("clickstack") == ("x", "y")
+    with pytest.raises(AuthInsufficientError):
+        await handle_tracker_source_set_mapping(
+            TrackerSourceSetMappingInput(org=ORG, name="clickstack", mapping=None)
+        )
+    with pytest.raises(AuthInsufficientError):
+        await handle_tracker_source_remove(
+            TrackerSourceRemoveInput(org=ORG, name="clickstack", confirm="clickstack")
+        )
+    assert deleted == [] and rs.find(ORG, "clickstack") is not None
+
+
+@pytest.mark.asyncio
+async def test_remove_needs_an_admin_of_every_namespace_it_retires(_cfg, monkeypatch) -> None:
+    """Retiring deletes every namespace of the source: an admin of one of them may
+    rotate it, not retire it, and the refusal names no namespace."""
+    ch = _cfg
+    await handle_tracker_source_add(_add_input())
+    deleted: list[str] = []
+
+    async def _delete(inp: Any) -> Any:
+        deleted.append(inp.namespace)
+        return type("O", (), {"deleted": True})()
+
+    monkeypatch.setattr("server.identity.app.namespace.handle_namespace_delete", _delete)
+    ch.grant_admin("bob", "tracker-clickstack")
+    token = current_auth_var.set(_auth("bob"))
+    try:
+        with pytest.raises(AuthInsufficientError) as ei:
+            await handle_tracker_source_remove(
+                TrackerSourceRemoveInput(org=ORG, name="clickstack", confirm="clickstack")
+            )
+    finally:
+        current_auth_var.reset(token)
+    assert "tracker-" not in str(ei.value)
+    assert deleted == [] and rs.find(ORG, "clickstack") is not None
 
 
 @pytest.mark.asyncio
@@ -691,3 +784,421 @@ async def test_a_check_slower_than_its_timeout_says_unreachable(monkeypatch) -> 
     reports.reset_for_tests()
     out = await handle_tracker_source_check(TrackerSourceCheckInput(org=ORG, name="qa"))
     assert not out.reachable and out.contract["ok"] is None
+
+
+def _restricted_only() -> TrackerSourceAddInput:
+    return _add_input(
+        namespaces=[
+            TrackerSourceNamespaceSpec(
+                namespace="tracker-stack-private",
+                repos=["ClickHouse/stack-private"],
+                restricted=True,
+            )
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_restricted_only_source_is_managed_by_its_registrants_direct_grant(
+    _cfg, monkeypatch
+) -> None:
+    """The registrant's admin token predates the restricted namespace and cannot
+    name it; the direct admin grant the add wrote is what admits her, and its
+    revocation ends it. Her viewer token is refused for all the grant, as the
+    restricted gate caps a grant at the token's own role; an org-wide token with
+    no grant there is refused."""
+    ch = _cfg
+    await handle_tracker_source_add(_restricted_only())
+    await handle_tracker_source_rotate(
+        TrackerSourceRotateInput(org=ORG, name="clickstack", user="x", password="y")
+    )
+    assert qs.credentials_for("clickstack") == ("x", "y")
+    with pytest.raises(AuthInsufficientError):
+        await _rotate_as(_auth("alice", Role.VIEWER))
+    wildcard = AuthInfo(
+        subject="ops", org=ORG, namespaces=("*",), roles=(Role.ORG_ADMIN,), is_service_account=False
+    )
+    token = current_auth_var.set(wildcard)
+    try:
+        with pytest.raises(AuthInsufficientError):
+            await handle_tracker_source_rotate(
+                TrackerSourceRotateInput(org=ORG, name="clickstack", user="o", password="p")
+            )
+    finally:
+        current_auth_var.reset(token)
+    ch.revoke_all()
+    with pytest.raises(AuthInsufficientError):
+        await handle_tracker_source_rotate(
+            TrackerSourceRotateInput(org=ORG, name="clickstack", user="z", password="w")
+        )
+    assert qs.credentials_for("clickstack") == ("x", "y")
+
+
+@pytest.mark.asyncio
+async def test_the_registrant_retires_a_mixed_source_and_both_its_namespaces(
+    _cfg, monkeypatch
+) -> None:
+    """Through the gate: the standard namespace by the gate at admin, the restricted
+    one by the registrant's direct grant; neither is left live without its source."""
+    await handle_tracker_source_add(_add_input())
+    deleted: list[str] = []
+
+    async def _delete(inp: Any) -> Any:
+        deleted.append(inp.namespace)
+        return type("O", (), {"deleted": True})()
+
+    monkeypatch.setattr("server.identity.app.namespace.handle_namespace_delete", _delete)
+    out = await handle_tracker_source_remove(
+        TrackerSourceRemoveInput(org=ORG, name="clickstack", confirm="clickstack")
+    )
+    assert out.deactivated
+    assert deleted == out.namespaces_retired == ["tracker-clickstack", "tracker-stack-private"]
+
+
+_PRIVATE = "tracker-stack-private"
+
+
+async def _rotate_as(token: AuthInfo) -> None:
+    reset = current_auth_var.set(token)
+    try:
+        await handle_tracker_source_rotate(
+            TrackerSourceRotateInput(org=ORG, name="clickstack", user="o", password="p")
+        )
+    finally:
+        current_auth_var.reset(reset)
+
+
+def _token(**over: Any) -> AuthInfo:
+    base: dict[str, Any] = {
+        "subject": "sa:bot",
+        "org": ORG,
+        "namespaces": (),
+        "roles": (Role.ADMIN,),
+        "is_service_account": True,
+    }
+    base.update(over)
+    return AuthInfo(**base)
+
+
+@pytest.fixture()
+def _active_creator(monkeypatch):
+    import server.auth.delegation as delegation
+
+    async def _active(org: str, creator: str) -> bool:
+        return True
+
+    monkeypatch.setattr(delegation, "creator_account_active", _active)
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        # flat delegated admin whose claim does not reach the restricted namespace
+        {"creator": "alice", "namespaces": ("team-a",)},
+        # a flat delegated child whose own role there is below admin
+        {"creator": "alice", "namespaces": (_PRIVATE,), "roles": (Role.WRITER,)},
+        # a token of alice's own whose write claim leaves the namespace out
+        {"subject": "alice", "is_service_account": False, "write_namespaces": ("team-a",)},
+    ],
+    ids=["delegated-flat-claim-misses", "delegated-writer", "own-write-claim-misses"],
+)  # fmt: skip
+@pytest.mark.asyncio
+async def test_a_token_whose_own_ceiling_misses_the_restricted_namespace_is_refused(
+    _cfg, _active_creator, token
+) -> None:
+    """The token's own role on the restricted namespace caps what the grant gives,
+    as at the restricted gate: alice (the creator, or the subject) holds admin there."""
+    await handle_tracker_source_add(_restricted_only())
+    with pytest.raises(AuthInsufficientError):
+        await _rotate_as(_token(**token))
+
+
+@pytest.mark.asyncio
+async def test_a_delegated_token_needs_its_own_grant_and_its_creators(
+    _cfg, _active_creator
+) -> None:
+    """As at the restricted gate for a delegated token: the subject's own direct
+    admin grant and its creator's, within the token's own role there."""
+    ch = _cfg
+    await handle_tracker_source_add(_restricted_only())  # alice holds admin there
+    child = _token(creator="alice", namespaces=(_PRIVATE,))
+    with pytest.raises(AuthInsufficientError):
+        await _rotate_as(child)  # the child holds no grant of its own
+    ch.grant_admin("sa:bot", _PRIVATE)
+    await _rotate_as(child)
+    assert qs.credentials_for("clickstack") == ("o", "p")
+    ch.revoke_all()
+    ch.grant_admin("sa:bot", _PRIVATE)  # its own grant alone, the creator's gone
+    with pytest.raises(AuthInsufficientError):
+        await _rotate_as(child)
+
+
+@pytest.mark.asyncio
+async def test_a_change_needs_every_namespace_and_inspect_needs_one(_cfg, monkeypatch) -> None:
+    """set_mapping and rotate change what every namespace of the source reads, so
+    they need all of them, the public one too; inspecting by name reads the
+    credential, one."""
+    from server.tracker.api.models import TrackerSourceInspectInput, TrackerSourceSetMappingInput
+    from server.tracker.app.sources import (
+        handle_tracker_source_inspect,
+        handle_tracker_source_set_mapping,
+    )
+
+    ch = _cfg
+    await handle_tracker_source_add(_add_input())
+    ch.grant_admin("bob", "tracker-clickstack")
+    token = current_auth_var.set(_auth("bob"))
+    try:
+        with pytest.raises(AuthInsufficientError):
+            await handle_tracker_source_set_mapping(
+                TrackerSourceSetMappingInput(org=ORG, name="clickstack", mapping=None)
+            )
+        out = await handle_tracker_source_inspect(
+            TrackerSourceInspectInput(org=ORG, name="clickstack")
+        )
+    finally:
+        current_auth_var.reset(token)
+    assert out.database == "loom_qa"
+    # carol administers the private namespace only: no rotate either
+    ch.grant_admin("carol", "tracker-stack-private")
+    token = current_auth_var.set(_auth("carol"))
+    try:
+        with pytest.raises(AuthInsufficientError):
+            await handle_tracker_source_rotate(
+                TrackerSourceRotateInput(org=ORG, name="clickstack", user="o", password="p")
+            )
+    finally:
+        current_auth_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_the_restricted_kill_switch_refuses_the_registrant(_cfg, monkeypatch) -> None:
+    await handle_tracker_source_add(_restricted_only())
+    monkeypatch.setattr(settings, "restricted_serve", False)
+    with pytest.raises(AuthInsufficientError):
+        await handle_tracker_source_rotate(
+            TrackerSourceRotateInput(org=ORG, name="clickstack", user="o", password="p")
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_classification_refuses_and_is_the_servers(_cfg, monkeypatch) -> None:
+    from server.auth import fail_closed
+    from server.auth.directory import ClassificationUnavailable
+    from server.core import request_work
+
+    await handle_tracker_source_add(_add_input())
+
+    async def _unreadable(org: str, namespace: str) -> bool:
+        raise ClassificationUnavailable(org)
+
+    monkeypatch.setattr(nc, "is_restricted", _unreadable)
+    request_work.begin()
+    with pytest.raises(AuthInsufficientError):
+        await handle_tracker_source_rotate(
+            TrackerSourceRotateInput(org=ORG, name="clickstack", user="o", password="p")
+        )
+    assert fail_closed.answered_unverified()
+
+
+@pytest.mark.asyncio
+async def test_a_scoped_token_is_refused_at_the_transport_gate() -> None:
+    """These ops name no namespace for the gate (`skip_namespace_authz`), and a token
+    with `ns_roles` cannot be applied without one: it never reaches the handler."""
+    from server.core.errors import IdentityIncompleteError
+    from server.operations.registry import ALL_OPERATIONS
+    from server.transport import gates
+
+    op = next(o for o in ALL_OPERATIONS if o.name == "tracker.source.rotate")
+    scoped = _token(
+        subject="alice",
+        is_service_account=False,
+        ns_roles=((_PRIVATE, "admin"),),
+        namespaces=(_PRIVATE,),
+    )
+    target = gates.authz_target(op, org=ORG, namespace=None, auth=scoped)
+    with pytest.raises(IdentityIncompleteError):
+        await gates.authorize(op, scoped, target, transport="http")
+
+
+@pytest.mark.parametrize("restricted_only", [True, False], ids=["private", "mixed"])
+@pytest.mark.asyncio
+async def test_a_dashboard_session_cannot_change_or_retire_a_private_tracker(
+    _cfg, monkeypatch, restricted_only
+) -> None:
+    """A dashboard session is a primary flat writer token; its person holds the admin
+    grants the add wrote. The restricted namespace caps them at the token's role, so
+    rotate, set_mapping and remove are refused; on a mixed source inspect still reads
+    through the public namespace's grant."""
+    from server.tracker.api.models import TrackerSourceInspectInput, TrackerSourceSetMappingInput
+    from server.tracker.app.sources import (
+        handle_tracker_source_inspect,
+        handle_tracker_source_set_mapping,
+    )
+
+    await handle_tracker_source_add(_restricted_only() if restricted_only else _add_input())
+
+    async def _delete(inp: Any) -> Any:
+        raise AssertionError("a refused retire deletes nothing")
+
+    monkeypatch.setattr("server.identity.app.namespace.handle_namespace_delete", _delete)
+    session = current_auth_var.set(_auth("alice", Role.WRITER))
+    try:
+        with pytest.raises(AuthInsufficientError):
+            await handle_tracker_source_rotate(
+                TrackerSourceRotateInput(org=ORG, name="clickstack", user="o", password="p")
+            )
+        with pytest.raises(AuthInsufficientError):
+            await handle_tracker_source_set_mapping(
+                TrackerSourceSetMappingInput(org=ORG, name="clickstack", mapping=None)
+            )
+        with pytest.raises(AuthInsufficientError):
+            await handle_tracker_source_remove(
+                TrackerSourceRemoveInput(org=ORG, name="clickstack", confirm="clickstack")
+            )
+        inspect = handle_tracker_source_inspect(
+            TrackerSourceInspectInput(org=ORG, name="clickstack")
+        )
+        if restricted_only:
+            with pytest.raises(AuthInsufficientError):
+                await inspect
+        else:
+            assert (await inspect).database == "loom_qa"
+    finally:
+        current_auth_var.reset(session)
+
+
+@pytest.mark.asyncio
+async def test_a_namespace_the_source_registered_restricted_stays_so_without_its_row(
+    _cfg, monkeypatch
+) -> None:
+    """Until the directory row of a restricted namespace is written, the source's own
+    flag keeps it restricted, so an org-wide admin token with no grant there does
+    not reach it the way a standard namespace would. Once the row is written and
+    reads standard, the row decides, as it does for every read."""
+    ch = _cfg
+    await handle_tracker_source_add(_restricted_only())
+    rows = list(ch.namespace_rows)
+    ch.namespace_rows.clear()
+
+    async def _not_restricted(org: str, namespace: str) -> bool:
+        return False
+
+    monkeypatch.setattr(nc, "is_restricted", _not_restricted)
+    wildcard = AuthInfo(
+        subject="ops", org=ORG, namespaces=("*",), roles=(Role.ORG_ADMIN,), is_service_account=False
+    )
+    with pytest.raises(AuthInsufficientError):
+        await _rotate_as(wildcard)
+    # a row another replica restricted, newer than this process's snapshot
+    ch.namespace_rows.extend(rows)
+    with pytest.raises(AuthInsufficientError):
+        await _rotate_as(wildcard)
+    for row in rows:
+        row["classification"] = "standard"
+    await _rotate_as(wildcard)
+
+
+@pytest.mark.asyncio
+async def test_a_trusted_caller_acting_for_the_registrant_keeps_the_naming_rule(_cfg) -> None:
+    """Impersonation keeps the bearer's claims with the subject's grants: the
+    caller reaches alice's private tracker only with a token naming it."""
+    await handle_tracker_source_add(_restricted_only())
+    acting = _token(subject="alice", impersonated_by="svc", is_service_account=False)
+    with pytest.raises(AuthInsufficientError):
+        await _rotate_as(acting)
+    await _rotate_as(_token(subject="alice", impersonated_by="svc", namespaces=(_PRIVATE,)))
+    assert qs.credentials_for("clickstack") == ("o", "p")
+
+
+@pytest.mark.parametrize(
+    ("results", "server_s"),
+    [
+        # one refused outright, one unreadable: refused either way, the caller's
+        ({"tracker-clickstack": "no", "tracker-stack-private": "failed"}, False),
+        # the only refusal is the unreadable one: the server's
+        ({"tracker-clickstack": "yes", "tracker-stack-private": "failed"}, True),
+    ],
+    ids=["refused-and-failed", "only-failed"],
+)
+@pytest.mark.asyncio
+async def test_a_refusal_is_the_servers_only_when_a_failed_read_decided_it(
+    _cfg, monkeypatch, results, server_s
+) -> None:
+    import server.tracker.app.sources as h
+    from server.auth import fail_closed
+    from server.core import request_work
+
+    await handle_tracker_source_add(_add_input())
+
+    async def _admits(auth: Any, org: str, namespace: str, *, flagged: bool) -> bool:
+        if results[namespace] == "failed":
+            fail_closed.note_unreadable()
+        return results[namespace] == "yes"
+
+    monkeypatch.setattr(h, "_admits", _admits)
+    request_work.begin()
+    with pytest.raises(AuthInsufficientError):
+        await handle_tracker_source_rotate(
+            TrackerSourceRotateInput(org=ORG, name="clickstack", user="o", password="p")
+        )
+    assert fail_closed.answered_unverified() is server_s
+
+
+@pytest.mark.parametrize("op", ["rotate", "set_mapping", "remove", "inspect"])
+@pytest.mark.asyncio
+async def test_a_source_whose_namespaces_did_not_parse_is_refused(_cfg, monkeypatch, op) -> None:
+    """A damaged `namespaces_json` reads as no namespace; "every namespace" of none
+    admits nobody, so each op refuses rather than reading `all([])` as admin."""
+    from server.auth import fail_closed
+    from server.core import request_work
+    from server.tracker.api.models import TrackerSourceInspectInput, TrackerSourceSetMappingInput
+    from server.tracker.app.sources import (
+        handle_tracker_source_inspect,
+        handle_tracker_source_set_mapping,
+    )
+
+    ch = _cfg
+    await handle_tracker_source_add(_add_input())
+    ch.inserted["loom.qa_sources"][-1]["namespaces_json"] = "{not json"
+    request_work.begin()
+    calls = {
+        "rotate": lambda: handle_tracker_source_rotate(
+            TrackerSourceRotateInput(org=ORG, name="clickstack", user="o", password="p")
+        ),
+        "set_mapping": lambda: handle_tracker_source_set_mapping(
+            TrackerSourceSetMappingInput(org=ORG, name="clickstack", mapping=None)
+        ),
+        "remove": lambda: handle_tracker_source_remove(
+            TrackerSourceRemoveInput(org=ORG, name="clickstack", confirm="clickstack")
+        ),
+        "inspect": lambda: handle_tracker_source_inspect(
+            TrackerSourceInspectInput(org=ORG, name="clickstack")
+        ),
+    }
+    with pytest.raises(AuthInsufficientError):
+        await calls[op]()
+    found = rs.find(ORG, "clickstack")
+    assert found is not None and found.namespaces == {}  # still registered, no namespace
+    assert fail_closed.answered_unverified() is False  # the caller's refusal, not the server's
+
+
+@pytest.mark.asyncio
+async def test_the_listing_reports_the_classification_the_checks_use(_cfg) -> None:
+    """The card reads `classification` as `_admits` and every read do: the directory
+    row once written, the source's own flag until then."""
+    ch = _cfg
+    await handle_tracker_source_add(_restricted_only())
+    rows = list(ch.namespace_rows)
+    ch.namespace_rows.clear()
+
+    async def classifications() -> list[str]:
+        listed = await handle_tracker_source_list(TrackerSourceListInput(org=ORG))
+        [src_view] = [s for s in listed.sources if s["name"] == "clickstack"]
+        return [n["classification"] for n in src_view["namespaces"]]
+
+    assert await classifications() == ["restricted"]
+    for row in rows:
+        row["classification"] = "standard"
+    ch.namespace_rows.extend(rows)
+    assert await classifications() == ["standard"]

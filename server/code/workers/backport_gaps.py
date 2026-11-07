@@ -121,6 +121,7 @@ async def _run(
     runner: Any = None,
 ) -> None:
     from server.code.app.backport import run_backport_gap
+    from server.code.app.index.bootstrap import awaits_first_index
     from server.code.store.backport_gaps import CodeBackportGapsRepo
     from server.code.store.index import CodeRepo
 
@@ -130,6 +131,8 @@ async def _run(
     run = runner or run_backport_gap
     for cfg, sibs in trunks():
         try:
+            if await awaits_first_index(cfg, code_repo):
+                continue
             await refresh_namespace(
                 cfg,
                 sibs,

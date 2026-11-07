@@ -16,10 +16,12 @@ import {
   operatorOwned,
   trackerAnchor,
   trackerStatus,
+  trackerVerbs,
   type TrackerSource,
   type TrackerSourceCheckResult,
   type TrackerTone,
 } from "../lib/trackerSources";
+import { useStore } from "../lib/state";
 import { toast } from "../components/Toast";
 import { Loading, SectionHeading, TipTarget } from "../components/ui";
 
@@ -108,6 +110,8 @@ function TrackerRow({
   onChanged: () => void;
 }) {
   const status = trackerStatus(s);
+  const whoami = useStore((st) => st.whoami);
+  const verbs = trackerVerbs(s, org, whoami);
   const f = freshnessOf(s);
   const repos = [...new Set(s.namespaces.flatMap((n) => n.repos))];
   const [check, setCheck] = useState<{ busy: boolean; result?: TrackerSourceCheckResult; error?: string }>({
@@ -187,15 +191,16 @@ function TrackerRow({
             <Button type="empty" htmlType="button" loading={check.busy} onClick={() => void runCheck()}>
               Check now
             </Button>
-            <Button type="empty" htmlType="button" onClick={() => setDialog("mapping")}>
+            <Button type="empty" htmlType="button" disabled={!verbs.manage} onClick={() => setDialog("mapping")}>
               Edit mapping
             </Button>
-            <Button type="empty" htmlType="button" onClick={() => setDialog("rotate")}>
+            <Button type="empty" htmlType="button" disabled={!verbs.manage} onClick={() => setDialog("rotate")}>
               Rotate credential
             </Button>
-            <Button type="danger" htmlType="button" onClick={() => setDialog("retire")}>
+            <Button type="danger" htmlType="button" disabled={!verbs.manage} onClick={() => setDialog("retire")}>
               Retire
             </Button>
+            {verbs.reason && <span className="text-xs text-text-muted basis-full">{verbs.reason}</span>}
           </div>
         )}
       </div>

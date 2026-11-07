@@ -539,7 +539,7 @@ Raised in `server/transport/mcp_auth.py`.
 
 #### `NAMESPACE_NOT_FOUND`
 
-Raised in `server/identity/app/claim_release.py`.
+Raised in `server/identity/app/claim_release.py`, `server/insights/app/admin_routes.py`.
 
 #### `NAMESPACE_TAKEN`
 
@@ -646,6 +646,10 @@ Raised in `server/code/app/repo_admin.py`.
 Raised in `server/code/app/repo_admin.py`.
 
 #### `REPO_FROM_CONFIG`
+
+Raised in `server/code/app/repo_admin.py`.
+
+#### `REPO_NOT_INDEXED`
 
 Raised in `server/code/app/repo_admin.py`.
 

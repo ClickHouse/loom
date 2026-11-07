@@ -1265,6 +1265,10 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
         ("server/tasks/app/common.py", "_owner_check", never),
         # A listing the caller did not scope.
         ("server/tasks/app/inboxes.py", "handle_inbox_list", never),
+        # (a remote's indexed branches, naming only namespaces the caller reads)
+        ("server/code/app/repo_admin.py", "_indexed_branches", never),
+        # One namespace of a tracker source: marked when the source is refused.
+        ("server/tracker/app/sources.py", "_admits", never),
     }
 
 
@@ -1529,12 +1533,16 @@ def test_audit_list_naming_a_restricted_namespace_it_cannot_verify_is_the_server
     )
     mine_read_fails = {"value": False}
 
-    async def _mine(org: str) -> list[str]:
+    async def _no_cap(*a: Any, **k: Any) -> None:
+        return None
+
+    async def _no_grant(org: str, namespace: str, subject: str) -> None:
         if mine_read_fails["value"]:
             fail_closed.note_unreadable()
-        return []
+        return None
 
-    monkeypatch.setattr(context, "resolve_my_namespaces", _mine)
+    monkeypatch.setattr(authz, "claim_cap", _no_cap)
+    monkeypatch.setattr(authz, "grant_role_for", _no_grant)
 
     async def _member_list(noted_before: bool = False) -> tuple[int, bool]:
         request_work.begin()

@@ -348,6 +348,157 @@ def test_namespace_adopt_stays_inside_the_admins_org(monkeypatch: pytest.MonkeyP
     assert err.value.status_code == 403
 
 
+def _adopt(
+    monkeypatch: pytest.MonkeyPatch,
+    namespace: str,
+    *,
+    directory: str = "read",
+    granted: bool = False,
+    claim: tuple[str, ...] = ("*",),
+) -> Any:
+    """Run namespace.adopt as an org admin of acme, its token's claim `claim`, whose
+    directory holds `ops` and the restricted `repo-secret`; the caller holds a
+    direct admin grant on the latter only when `granted`. The restricted gate
+    itself decides."""
+    import asyncio
+    from datetime import datetime
+
+    from server.auth.directory import ClassificationUnavailable
+    from server.auth.jwt import AuthInfo
+    from server.identity.app import grants, registration
+    from server.identity.app import namespace_classification as nc
+    from server.insights.app import admin_models
+    from server.insights.app import admin_routes as admin
+    from server.operations.base import Role
+
+    async def org_admin(_request: object) -> AuthInfo:
+        return AuthInfo(
+            subject="eve",
+            org="acme",
+            namespaces=claim,
+            roles=(Role.ORG_ADMIN,),
+            is_service_account=False,
+        )
+
+    async def row(org: str, ns: str, **_: object) -> dict[str, str] | None:
+        known = ("ops", "repo-secret", "col-u-alice", "just-restricted")
+        if ns not in known:
+            return None
+        # restricted on another replica after this one's classification snapshot
+        fresh = "restricted" if ns == "just-restricted" else "standard"
+        return {"org": org, "namespace": ns, "classification": fresh}
+
+    async def is_restricted(org: str, ns: str) -> bool:
+        if directory == "unreadable":
+            raise ClassificationUnavailable(org)
+        return ns == "repo-secret"
+
+    async def direct_grant(org: str, ns: str, subject: str) -> Role | None:
+        return Role.ADMIN if granted and ns == "repo-secret" else None
+
+    adopted: list[tuple[str, str, str]] = []
+
+    async def adopt(org: str, ns: str, new_admin: str, *, actor: str) -> datetime | None:
+        if granted and ns == "repo-secret":
+            return None  # the caller's own grant is an active admin: nothing written
+        assert ns == "ops", "a refused adoption writes nothing"
+        adopted.append((org, ns, new_admin))
+        return datetime(2026, 1, 1)
+
+    monkeypatch.setattr(admin, "require_org_admin", org_admin)
+    monkeypatch.setattr(registration, "namespace_row", row)
+    monkeypatch.setattr(nc, "is_restricted", is_restricted)
+    monkeypatch.setattr("server.auth.authz.grant_role_for", direct_grant)
+    monkeypatch.setattr(grants, "adopt_namespace", adopt)
+    inp = admin_models.NamespaceAdoptInput(org="acme", namespace=namespace, new_admin="dan")
+    out = asyncio.run(admin.admin_namespace_adopt(object(), inp))  # type: ignore[arg-type]
+    assert adopted == [("acme", namespace, "dan")]
+    return out
+
+
+def test_namespace_adopt_answers_a_restricted_namespace_as_a_missing_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An orphaned restricted namespace has no direct admin, and an org admin is no
+    admin of it: adopting it would install one past the restricted gate. It gets
+    the very answer a name with no directory row gets, before any write, so the
+    answer tells neither apart."""
+    from fastapi import HTTPException
+
+    answers = []
+    for namespace in ("repo-secret", "never-registered", "col-u-alice", "just-restricted"):
+        with pytest.raises(HTTPException) as err:
+            _adopt(monkeypatch, namespace)
+        detail = dict(err.value.detail)  # type: ignore[call-overload]
+        detail["message"] = detail["message"].replace(namespace, "<ns>")
+        answers.append((err.value.status_code, detail))
+    assert answers[0] == answers[1] == answers[2] == answers[3]
+    assert answers[0][0] == 404 and answers[0][1]["code"] == "NAMESPACE_NOT_FOUND"
+
+
+def test_namespace_adopt_with_an_unreadable_classification_answers_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Counted as restricted: no answer during an outage tells the names apart."""
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as err:
+        _adopt(monkeypatch, "ops", directory="unreadable")
+    assert err.value.status_code == 404
+    assert err.value.detail["code"] == "NAMESPACE_NOT_FOUND"  # type: ignore[index]
+
+
+def test_a_restricted_namespace_is_never_adopted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The restricted gate admits only a caller with a token naming the namespace and
+    a direct admin grant there, and that grant is an active admin: the answer is
+    409, as for any namespace with an admin. A `*` claim does not name it, so the
+    same grant behind a `*` token gets the 404."""
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as err:
+        _adopt(monkeypatch, "repo-secret", granted=True, claim=("ops", "repo-secret"))
+    assert err.value.status_code == 409
+    with pytest.raises(HTTPException) as err:
+        _adopt(monkeypatch, "repo-secret", granted=True)
+    assert err.value.status_code == 404
+
+
+def test_an_admitted_adoption_of_a_restricted_namespace_writes_the_access_audit_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import HTTPException
+
+    from server.identity.app import namespace_classification as nc
+    from server.settings import settings
+
+    rows: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(event_type: str, **kw: Any) -> str:
+        rows.append((event_type, kw))
+        return "hash"
+
+    monkeypatch.setattr("server.observability.audit.emit", emit)
+    monkeypatch.setattr(settings, "restricted_audit_inline", True)
+    monkeypatch.setattr(nc, "is_restricted_cached", lambda org, ns: ns == "repo-secret")
+    with pytest.raises(HTTPException):  # refused: nothing was reached
+        _adopt(monkeypatch, "repo-secret", granted=True)
+    assert rows == []
+    with pytest.raises(HTTPException):  # admitted; the caller's own grant answers 409
+        _adopt(monkeypatch, "repo-secret", granted=True, claim=("ops", "repo-secret"))
+    ((event, kw),) = rows
+    assert event == "namespace.restricted_access"
+    assert (kw["org"], kw["namespace"]) == ("acme", "repo-secret")
+    assert kw["subject"]["op"] == "admin.namespace.adopt"
+
+
+def test_namespace_adopt_installs_an_admin_on_a_standard_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The restricted rule leaves the recovery path for every other namespace."""
+    out = _adopt(monkeypatch, "ops")
+    assert out["adopted"] is True
+
+
 def test_ratelimit_set_writes_the_override_through_and_applies_it_here(
     client: TestClient,
 ) -> None:

@@ -113,7 +113,7 @@ the same routes), and the curated `agent.deployment` methods over them.
 | `POST /v1/admin/models/reset` | `platform_admin` | Go back to the model settings the environment gives. |
 | `POST /v1/admin/models/retry` | `platform_admin` | Run a failed model transition again. |
 | `POST /v1/admin/models/validate` | `platform_admin` | Check a model setup against the providers before saving it. |
-| `POST /v1/admin/namespace.adopt` | `org_admin` | Install a new admin on a namespace that has no remaining active admin grant. |
+| `POST /v1/admin/namespace.adopt` | `org_admin` | Install a new admin on a standard namespace that has no remaining active admin grant: the recovery path for an orphaned one. |
 | `POST /v1/admin/prompts.evaluate` | `platform_admin` | Compute a should-promote verdict for one prompt version. |
 | `POST /v1/admin/ratelimit.set` | `platform_admin` | Install a per-(namespace\|org) rate-limit override. |
 | `GET /v1/admin/revocations` | `platform_admin` | The unexpired revocations, newest first, at most `limit` (1000 by default); `?subject=` narrows them to one subject's own row, an operator cutoff's and SCIM's, `?since=` to those written since (see `loom revoke-token --list`). |

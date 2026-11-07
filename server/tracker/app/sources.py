@@ -15,10 +15,14 @@ import asyncio
 import dataclasses
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
 
-from server.auth.context import current_caller
+from server.auth import authz
+from server.auth.context import current_auth, current_caller
 from server.core.errors import AuthInsufficientError, ValidationError, caller_text
+from server.identity.api.models import NamespaceDeleteInput
+from server.identity.app import namespace as namespace_ops
+from server.operations.base import Role
 from server.settings import settings
 from server.tracker.api.models import (
     TrackerContractInput,
@@ -42,6 +46,9 @@ from server.tracker.app import contract
 from server.tracker.domain import contract as record_contract
 from server.tracker.domain.sources import SOURCE_NAME_RE
 from server.tracker.store.source import contract_reports
+
+if TYPE_CHECKING:
+    from server.auth.jwt import AuthInfo
 
 logger = logging.getLogger(__name__)
 
@@ -719,7 +726,7 @@ async def handle_tracker_source_inspect(
     _require_self_service()
     _require_same_org(input.org)
     if str(input.name or "").strip():
-        src = await _authority(input.org, str(input.name).strip().lower())
+        src = await _authority(input.org, str(input.name).strip().lower(), "one")
         host, port, secure, database = src.host, src.port, src.secure, src.database
         user, password = src.user, src.password
     else:
@@ -770,7 +777,7 @@ async def handle_tracker_source_set_mapping(
 
     _require_self_service()
     name = str(input.name).strip().lower()
-    src = await _authority(input.org, name)
+    src = await _authority(input.org, name, "every")
     mp = _parsed_mapping(input.mapping)
     dry_run = bool(input.dry_run)
     _probe, report = await _probe_or_refuse(
@@ -795,11 +802,21 @@ async def handle_tracker_source_set_mapping(
     )
 
 
-async def _authority(org: str, name: str) -> Any:
-    """The registry row, once the caller is its registrant or an admin of one
-    of its namespaces. A source the operator's JSON owns is retired by
+# How much of a source a caller must administer: inspecting it reads its
+# credential, one namespace; rotating, remapping or retiring it changes what
+# every namespace of it reads, all of them.
+Need = Literal["one", "every"]
+
+
+def _decides(need: Need, admitted: list[bool]) -> bool:
+    return any(admitted) if need == "one" else all(admitted)
+
+
+async def _authority(org: str, name: str, need: Need) -> Any:
+    """The registry row, once the caller administers what `need` names of its
+    namespaces (`_admits`). A source the operator's JSON owns is retired by
     editing the deployment, not from the page."""
-    from server.core.ch import get_client
+    from server.auth.fail_closed import note_answered_unverified, reset, unreadable
     from server.tracker.app import registry_sources
     from server.tracker.domain import sources
 
@@ -814,29 +831,89 @@ async def _authority(org: str, name: str) -> Any:
     src = registry_sources.find(org, name)
     if src is None:
         raise ValidationError(f"{name!r} is not a registered tracker source", code="NOT_A_SOURCE")
-    subject, _ = current_caller()
-    if not subject:
+    auth = current_auth()
+    if auth is None:
         return src  # auth off: dev mode
-    if subject == src.created_by:
-        return src
-    from server.auth.aliases import subject_aliases
-
-    subs = await subject_aliases(org, subject)
-    row = await get_client().query_one(
-        """
-        SELECT 1 AS one FROM loom.namespace_grants FINAL
-        WHERE org = {org:String} AND subject IN {subs:Array(String)} AND role = 'admin'
-          AND status = 'active' AND revoked_at IS NULL
-          AND namespace IN {names:Array(String)}
-        LIMIT 1
-        """,
-        params={"org": org, "sub": subject, "subs": subs, "names": sorted(src.namespaces)},
+    subject, _ = current_caller()
+    # Names no namespace: the caller may not see them all.
+    refusal = AuthInsufficientError(
+        f"principal {subject!r} does not administer tracker source {name!r}"
     )
-    if row is None:
-        raise AuthInsufficientError(
-            f"principal {subject!r} does not administer tracker source {name!r}"
-        )
+    if not src.namespaces:
+        # A row whose namespaces did not parse names none, and nobody
+        # administers none (`all([])` would admit it).
+        raise refusal
+    admitted: list[bool] = []
+    failed: list[bool] = []
+    for ns, spec in sorted(src.namespaces.items()):
+        reset()
+        admitted.append(await _admits(auth, org, ns, flagged=bool(spec.get("restricted"))))
+        failed.append(unreadable())
+    if not _decides(need, admitted):
+        # The server's refusal only when the reads that failed decided it.
+        if _decides(need, [a or f for a, f in zip(admitted, failed, strict=True)]):
+            note_answered_unverified()
+        raise refusal
     return src
+
+
+async def _admits(auth: AuthInfo, org: str, namespace: str, *, flagged: bool) -> bool:
+    """Whether the caller administers one namespace of a source: a standard one
+    by the gate at admin (a live grant, or a token whose admin role covers it),
+    a restricted one by `_administers_restricted`. Restricted when the directory
+    says so, as every read decides it, or, while its row is not written yet, when
+    the source registered it so (`flagged`), so a missing row does not open it.
+    An unreadable classification refuses, noted as the server's."""
+    from server.auth.directory import ClassificationUnavailable, directory
+    from server.auth.fail_closed import note_unreadable
+    from server.identity.app.registration import namespace_row
+
+    try:
+        restricted = await directory().is_restricted(org, namespace)
+        if flagged and not restricted:
+            # The row read here may be newer than the classification snapshot.
+            row = await namespace_row(org, namespace)
+            restricted = row is None or row.get("classification") == "restricted"
+    except ClassificationUnavailable:
+        note_unreadable()
+        return False
+    except Exception as e:  # noqa: BLE001 — an unreadable directory row must refuse
+        logger.warning("tracker source: directory row of %s/%s unreadable: %s", org, namespace, e)
+        note_unreadable()
+        return False
+    if not restricted:
+        return await authz.row_in_scope(org, namespace, Role.ADMIN, hides_answer=False)
+    return await _administers_restricted(auth, org, namespace)
+
+
+async def _administers_restricted(auth: AuthInfo, org: str, namespace: str) -> bool:
+    """`authz._check_restricted` at admin, mirrored rule for rule but the naming
+    rule; the rules and why: docs/architecture/security.md, Restricted namespaces."""
+    from server.auth.delegation import ceiling_role, creator_account_active
+
+    if not settings.restricted_serve or auth.org != org:
+        return False
+    # A trusted caller acting for a subject carries its own claims, not the
+    # subject's: it is held to the naming rule the subject's registration lifts.
+    if auth.impersonated_by and not authz.names_namespace(auth, org, namespace):
+        return False
+    if auth.write_namespaces and not auth.can_write(org, namespace):
+        return False
+    own = ceiling_role(auth, org, namespace, write=True)
+    if own is None or own.value < Role.ADMIN.value:
+        return False
+    if not await _holds_admin(org, namespace, auth.subject):
+        return False
+    if auth.creator:
+        if not await creator_account_active(org, auth.creator):
+            return False
+        return await _holds_admin(org, namespace, auth.creator)
+    return True
+
+
+async def _holds_admin(org: str, namespace: str, subject: str) -> bool:
+    grant = await authz.grant_role_for(org, namespace, subject)
+    return grant is not None and grant.value >= Role.ADMIN.value
 
 
 _DB_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
@@ -902,7 +979,7 @@ async def handle_tracker_source_rotate(
 
     _require_self_service()
     name = str(input.name).strip().lower()
-    src = await _authority(input.org, name)
+    src = await _authority(input.org, name, "every")
     _probe, report = await _probe_or_refuse(
         host=src.host,
         port=src.port,
@@ -947,7 +1024,6 @@ def source_rotate_audit_subject(input: TrackerSourceRotateInput, response: Any) 
 async def handle_tracker_source_remove(
     input: TrackerSourceRemoveInput,
 ) -> TrackerSourceRemoveOutput:
-    from server.identity.api.models import NamespaceDeleteInput
     from server.tracker.app import registry_sources
     from server.tracker.store.source import qa_intel
 
@@ -957,16 +1033,18 @@ async def handle_tracker_source_remove(
         raise ValidationError(
             f"type the source name ({name}) in `confirm` to retire it", code="CONFIRM_REQUIRED"
         )
-    src = await _authority(input.org, name)
+    # Retiring deletes every namespace of the source without `namespace.delete`'s
+    # own ADMIN gate, so the caller must administer all of them.
+    src = await _authority(input.org, name, "every")
     deactivated = await registry_sources.deactivate_source(input.org, name)
     await registry_sources.refresh_db_sources(force=True)
     await qa_intel.forget(name)
     retired: list[str] = []
-    from server.identity.app.namespace import handle_namespace_delete
-
     for ns in sorted(src.namespaces):
         try:
-            out = await handle_namespace_delete(NamespaceDeleteInput(org=input.org, namespace=ns))
+            out = await namespace_ops.handle_namespace_delete(
+                NamespaceDeleteInput(org=input.org, namespace=ns)
+            )
             if getattr(out, "deleted", False):
                 retired.append(ns)
         except Exception as e:  # noqa: BLE001 — the source is retired either way

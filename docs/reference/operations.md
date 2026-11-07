@@ -497,7 +497,7 @@ Fields for every `memory` op: [operations/memory.md](operations/memory.md).
 | [`memory.set_from_messages`](operations/memory.md#memoryset_from_messages) | Run LLM extraction on `messages` and write the extracted facts. | writer | write | yes |  |
 | [`memory.stack`](operations/memory.md#memorystack) | Compose a token-budgeted recall bundle for agent wake-up. | viewer | read | no |  |
 | [`memory.statuses`](operations/memory.md#memorystatuses) | The current status of some memories, by id: which automatic retirements still stand (the Review queue's Auto-resolved tab reads it). | viewer | read | no |  |
-| [`memory.sweep_expired`](operations/memory.md#memorysweep_expired) | Run one expiry-sweep pass now — the same pass the `memory_expiry_sweep` worker runs on its interval, scoped to an org and optionally a namespace. | admin | idempotent | no | yes |
+| [`memory.sweep_expired`](operations/memory.md#memorysweep_expired) | Run one expiry-sweep pass now — the same pass the `memory_expiry_sweep` worker runs on its interval, scoped to one namespace. | admin | idempotent | no | yes |
 | [`memory.timeline`](operations/memory.md#memorytimeline) | Return memories about an entity (or matching a tag filter) in strict temporal order — newest first, with optional since/until windows. | viewer | read | no |  |
 | [`memory.touch`](operations/memory.md#memorytouch) | Change only a memory's expiry: set a new TTL (`ttl_seconds`) or clear it (`clear_expiry`), for one key or up to 1,000 (`memory_keys`), without rewriting its value, entities, conflict state or… | writer | write | no |  |
 | [`memory.unlock`](operations/memory.md#memoryunlock) | Lift a memory.lock (admin). | admin | idempotent | no | yes |

@@ -253,7 +253,9 @@ def _client_patched(ch: RecordingCH) -> Iterator[None]:
 
 
 @contextlib.contextmanager
-def _auth_context() -> Iterator[None]:
+def _auth_context(claim: str = "listed") -> Iterator[None]:
+    """An org admin's token: its claim lists two namespaces, or (`claim="*"`)
+    spans the org, which renders an org-wide rollup's other branch."""
     from server.auth.context import current_auth_var
     from server.auth.jwt import AuthInfo
     from server.operations.base import Role
@@ -262,7 +264,7 @@ def _auth_context() -> Iterator[None]:
         AuthInfo(
             subject="corpus@example.test",
             org="o",
-            namespaces=("n", "n2"),
+            namespaces=("*",) if claim == "*" else ("n", "n2"),
             roles=(Role.ORG_ADMIN,),
             is_service_account=False,
         )
@@ -319,7 +321,8 @@ async def run_case(case: Case) -> CaseRun:
         _drop_read_caches()
         ch = RecordingCH(case.rows)
         setting_values = {k: v for k, v in combo.items() if k in fields}
-        with _settings_applied(setting_values), _client_patched(ch), _auth_context():
+        claim = combo.get("claim", "listed")
+        with _settings_applied(setting_values), _client_patched(ch), _auth_context(claim):
             try:
                 await case.drive(ch, combo)
             except Exception as exc:  # noqa: BLE001 — a builder that stops after its first statement still rendered it

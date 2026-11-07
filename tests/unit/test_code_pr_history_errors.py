@@ -29,7 +29,11 @@ async def test_github_error_is_logged_and_counted(caplog: pytest.LogCaptureFixtu
 
     get_registry().reset()
     repo = AsyncMock()
-    repo.get_state.return_value = ""
+
+    async def _state(org: str, ns: str, key: str) -> str:
+        return "a" * 40 if key == "git_head" else ""  # indexed; no PR cursor yet
+
+    repo.get_state.side_effect = _state
 
     async def _fail(*_: Any, **__: Any) -> Any:
         raise GitHubError("404 Not Found: Org/Repo")

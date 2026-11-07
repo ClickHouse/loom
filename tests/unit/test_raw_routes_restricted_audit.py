@@ -607,7 +607,7 @@ _ADMISSION = {
     "row_in_scope",
     "_in_scope",
     "restricted_allows",
-    "_may_release",
+    "may_administer",
     "grant_restricted_to_token",
     "delegate",
     "admits",

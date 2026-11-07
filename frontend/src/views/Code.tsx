@@ -1366,8 +1366,12 @@ export function AddRepositoryDialog({
                     const on = taken || picked.has(b.name);
                     const release = remote.suggested.includes(b.name);
                     const suffix = taken ? " · indexed" : release ? " · release" : "";
+                    // The namespace is blank where this session cannot read it.
+                    const holder = remote.indexed.find((x) => x.branch === b.name)?.namespace;
                     const tip = taken
-                      ? `Already indexed here as ${remote.indexed.find((x) => x.branch === b.name)?.namespace}`
+                      ? holder
+                        ? `Already indexed here as ${holder}`
+                        : "Already indexed here"
                       : release
                         ? "Release branch"
                         : b.name === remote.default_branch

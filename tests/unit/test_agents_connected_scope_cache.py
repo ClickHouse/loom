@@ -42,8 +42,10 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 def _as(role: Role) -> None:
+    # An admin reads the whole org through a `*` claim; a listed claim reads as a member.
+    claim = ("*",) if role.value >= Role.ORG_ADMIN.value else ()
     context.set_current_auth(
-        AuthInfo(subject="who", org=ORG, namespaces=(), roles=(role,), is_service_account=False)
+        AuthInfo(subject="who", org=ORG, namespaces=claim, roles=(role,), is_service_account=False)
     )
 
 

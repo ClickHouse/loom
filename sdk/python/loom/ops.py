@@ -15257,7 +15257,7 @@ class MemorySweepExpiredInput(TypedDict, total=False):
     "Run one expiry-sweep pass now \u2014 the same pass the"
 
     org: Required[str]
-    namespace: NotRequired[Optional[str]]
+    namespace: Required[str]
     limit: NotRequired[int]
     dry_run: NotRequired[bool]
 
@@ -15266,7 +15266,7 @@ class MemorySweepExpiredBody(TypedDict, total=False):
     "Run one expiry-sweep pass now \u2014 the same pass the"
 
     org: NotRequired[str]
-    namespace: NotRequired[Optional[str]]
+    namespace: NotRequired[str]
     limit: NotRequired[int]
     dry_run: NotRequired[bool]
 
@@ -19521,7 +19521,7 @@ class TrackerSourceListOutput(TypedDict, total=False):
 
 
 class TrackerSourceRemoveInput(TypedDict, total=False):
-    "Retire a registered tracker source and its namespaces. The"
+    "Retire a registered tracker source and its namespaces. An admin of"
 
     org: Required[str]
     name: Required[str]
@@ -19529,7 +19529,7 @@ class TrackerSourceRemoveInput(TypedDict, total=False):
 
 
 class TrackerSourceRemoveBody(TypedDict, total=False):
-    "Retire a registered tracker source and its namespaces. The"
+    "Retire a registered tracker source and its namespaces. An admin of"
 
     org: NotRequired[str]
     name: Required[str]
@@ -19543,7 +19543,7 @@ class TrackerSourceRemoveOutput(TypedDict, total=False):
 
 
 class TrackerSourceRotateInput(TypedDict, total=False):
-    "Replace a registered source's credential. The"
+    "Replace a registered source's credential. An admin of every one"
 
     org: Required[str]
     name: Required[str]
@@ -19552,7 +19552,7 @@ class TrackerSourceRotateInput(TypedDict, total=False):
 
 
 class TrackerSourceRotateBody(TypedDict, total=False):
-    "Replace a registered source's credential. The"
+    "Replace a registered source's credential. An admin of every one"
 
     org: NotRequired[str]
     name: Required[str]

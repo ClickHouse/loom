@@ -20,12 +20,13 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from server.auth import agents, aliases, machines, revocation, sso_links
-from server.auth.authz import Role
-from server.auth.jwt import AuthInfo
+from server.auth.sharing import is_collection
 from server.core import grant_cache
 from server.core.ch import CHClient, get_client
 from server.core.errors import BackendUnavailableError
 from server.identity.app import account_admin
+from server.identity.app.namespace_classification import may_administer
+from server.identity.app.registration import namespace_row
 from server.identity.app.restricted_access import note_restricted_access
 from server.identity.domain.account_ties import kept_aliases
 from server.identity.store import grants as grants_repo
@@ -68,11 +69,18 @@ async def claim_release(
             "message": f"{input.namespace!r} is not claimed in org {input.org!r}",
         },
     )
+    # A collection is reached by its grants alone, never by an org role, and its
+    # name may carry an end user's id: answered like a missing name, as adopt does.
+    if is_collection(input.namespace):
+        raise not_found
     # A restricted namespace's admins are its direct grantees, not the org's:
     # an org admin who could release it would take over what the restricted
     # gate withholds. Refused exactly like a missing name.
-    if info is not None and not await _may_release(info, input.org, input.namespace):
-        raise not_found
+    if info is not None:
+        # The row read here may be newer than the classification snapshot.
+        row = await namespace_row(input.org, input.namespace, ch=get_client())
+        if not await may_administer(info, input.org, input.namespace, row=row):
+            raise not_found
     await note_restricted_access(
         info, op="admin.claim_release", org=input.org, namespace=input.namespace, transport="http"
     )
@@ -252,20 +260,6 @@ def _agent_owner(row: dict[str, Any]) -> str:
         if trust != str(t) and owner.startswith(agents.subject(trust, "")):
             return owner
     return ""  # never a person's own sessions
-
-
-async def _may_release(info: AuthInfo, org: str, namespace: str) -> bool:
-    """False for a restricted namespace the caller holds no direct admin grant
-    on; an unreadable directory counts as restricted."""
-    from server.auth.authz import restricted_allows
-    from server.auth.directory import ClassificationUnavailable
-    from server.identity.app.namespace_classification import is_restricted
-
-    try:
-        restricted = await is_restricted(org, namespace)
-    except ClassificationUnavailable:
-        restricted = True
-    return not restricted or await restricted_allows(info, Role.ADMIN, org, namespace)
 
 
 def attach(app: Any) -> None:
