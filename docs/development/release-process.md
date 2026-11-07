@@ -57,7 +57,8 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
    it with `--event workflow_dispatch` in place of `--event schedule`. It scans both images as the
    release does, and a scheduled run's failure notifies only the last editor of its schedule. A red
    scan names the package: move the pin that brings it in (a `Dockerfile` `ARG` or base-image digest,
-   or a lock file) on `main` first; a Debian package fixed upstream needs only a fresh build.
+   or a lock file) on `main` first. The base image's own packages move only with a new base-image
+   digest; a package an `apt-get install` layer adds moves with any uncached build.
 
 2. On a branch from `main`, open a pull request that sets the version everywhere above, with the
    [release notes](#release-notes) section in its description. CI must pass, including
