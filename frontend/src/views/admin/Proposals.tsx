@@ -78,7 +78,7 @@ export function ProposalsPanel({
       const result = r.results[0];
       if (r.decided === 0)
         // Not a proposal any more: decided by the policy or by someone else first.
-        toast(`Not decided: ${result?.reason || "it is no longer a proposal"}`, "info");
+        toast(`Not decided: ${result.reason || "it is no longer a proposal"}`, "info");
       else if (result.status === "conflicted")
         toast("Accepted; it contradicts another fact, so it waits in Conflicts", "ok");
       else toast(decision === "accept" ? "Accepted" : "Rejected", "ok");
@@ -118,64 +118,67 @@ export function ProposalsPanel({
             noDataMessage={rows === null ? <TableSkeleton label="Loading proposals" /> : undefined}
             size="sm"
             headers={HEADERS}
-            rows={(rows ?? []).map((p) => ({
-              id: p.memory_id,
-              items: [
-                {
-                  label: (
-                    <div className="min-w-0">
-                      <div className="font-mono text-xs">{p.memory_key}</div>
-                      {p.sensitivity === "high" ? (
-                        <Badge text="sensitive" state="neutral" size="sm" />
-                      ) : (
-                        <div className="text-sm line-clamp-2">{p.value_preview}</div>
-                      )}
-                    </div>
-                  ),
-                  overflowMode: "wrap",
-                },
-                { label: <AgentBadge agent={p.agent} /> },
-                {
-                  label: (
-                    <span className="inline-flex items-center gap-1.5 tabular">
-                      {p.graded_passes} passed · {p.graded_fails} failed
-                      {p.ready && <Badge text={`ready to ${p.ready}`} state="info" size="sm" />}
-                    </span>
-                  ),
-                },
-                { label: <ListTime time={p.created_at} quiet /> },
-                {
-                  label: canDecide && (
-                    <span className="inline-flex items-center gap-2">
-                      <Unavailable reason={perKey.get(p.memory_key)! > 1 ? SHARED_KEY : null}>
-                        <Button
-                          type="secondary"
-                          htmlType="button"
-                          disabled={held}
-                          aria-label={`Accept ${p.memory_key}`}
-                          onClick={() => void decide(p.memory_key, "accept")}
-                        >
-                          Accept
-                        </Button>
-                      </Unavailable>
-                      {perKey.get(p.memory_key) === 1 && (
-                        <RowMenu
-                          name={p.memory_key}
-                          items={[
-                            {
-                              label: "Reject",
-                              danger: true,
-                              disabled: held,
-                              onSelect: () => void decide(p.memory_key, "reject"),
-                            },
-                          ]}
-                        />
-                      )}
-                    </span>
-                  ),
-                },
-              ],
-            }))}
+            rows={(rows ?? []).map((p) => {
+              const lone = perKey.get(p.memory_key) === 1;
+              return {
+                id: p.memory_id,
+                items: [
+                  {
+                    label: (
+                      <div className="min-w-0">
+                        <div className="font-mono text-xs">{p.memory_key}</div>
+                        {p.sensitivity === "high" ? (
+                          <Badge text="sensitive" state="neutral" size="sm" />
+                        ) : (
+                          <div className="text-sm line-clamp-2">{p.value_preview}</div>
+                        )}
+                      </div>
+                    ),
+                    overflowMode: "wrap",
+                  },
+                  { label: <AgentBadge agent={p.agent} /> },
+                  {
+                    label: (
+                      <span className="inline-flex items-center gap-1.5 tabular">
+                        {p.graded_passes} passed · {p.graded_fails} failed
+                        {p.ready && <Badge text={`ready to ${p.ready}`} state="info" size="sm" />}
+                      </span>
+                    ),
+                  },
+                  { label: <ListTime time={p.created_at} quiet /> },
+                  {
+                    label: canDecide && (
+                      <span className="inline-flex items-center gap-2">
+                        <Unavailable reason={lone ? null : SHARED_KEY}>
+                          <Button
+                            type="secondary"
+                            htmlType="button"
+                            disabled={held}
+                            aria-label={`Accept ${p.memory_key}`}
+                            onClick={() => void decide(p.memory_key, "accept")}
+                          >
+                            Accept
+                          </Button>
+                        </Unavailable>
+                        {lone && (
+                          <RowMenu
+                            name={p.memory_key}
+                            items={[
+                              {
+                                label: "Reject",
+                                danger: true,
+                                disabled: held,
+                                onSelect: () => void decide(p.memory_key, "reject"),
+                              },
+                            ]}
+                          />
+                        )}
+                      </span>
+                    ),
+                  },
+                ],
+              };
+            })}
           />
           {rows !== null && total > rows.length && (
             <p className="mt-2 text-xs text-text-muted">
