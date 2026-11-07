@@ -1,7 +1,7 @@
-"""The identifier shapes read from a question, a code query or a stored excerpt match in
-linear time. Each one used to repeat a group whose body could also continue the previous
-repetition (`(?:[A-Z][a-zA-Z0-9]+)+`), so a run of capitals or digits that ended in a word
-character backtracked through every way to split it: a 40-character token took seconds."""
+"""The identifier shapes read from a question, a code query or a stored excerpt match a
+run of capitals or digits ending in a word character in linear time. A repeated group whose
+body can continue the previous repetition, `(?:[A-Z][a-zA-Z0-9]+)+`, backtracks through
+every split of such a run instead: seconds at 25 to 40 characters, doubling per character."""
 
 from __future__ import annotations
 
@@ -17,21 +17,19 @@ from server.memory.app.ask.identifiers import _injectable_identifiers, _technica
 from server.memory.domain.decision_extract import _BARE_CAMEL
 from server.tracker.domain.catalogue import extract_anchors
 
-# Each split point doubled the old patterns' work; at 2,000 characters they never finish.
-HOSTILE = ("Ab" + "A" * 2_000 + "_", "ab" + "A" * 2_000 + "_", "Ab" + "0" * 2_000 + "_")
+# Each input takes a backtracking pattern 2 to 10 s, so a regression fails here, not hangs.
+CASES: list[tuple[str, Callable[[str], Any], str]] = [
+    ("memory.ask technical identifiers", _technical_identifiers, "Ab" + "A" * 40 + "_"),
+    ("memory.ask injectable identifiers", _injectable_identifiers, "Ab" + "A" * 40 + "_"),
+    ("code.search PascalCase", embedded_idents, "Ab" + "A" * 27 + "_"),
+    ("code.search camelCase", embedded_idents, "ab" + "A" * 27 + "_"),
+    ("tracker.ask anchors", extract_anchors, "Ab" + "0" * 25 + "_"),
+    ("decision extract bare camel", _BARE_CAMEL.match, "Ab" + "A" * 27 + "_"),
+    ("fake model mentions", fake._CAMEL_RE.findall, "Ab" + "A" * 27 + "_"),
+]
 
-CALLS: dict[str, Callable[[str], Any]] = {
-    "memory.ask technical identifiers": _technical_identifiers,
-    "memory.ask injectable identifiers": _injectable_identifiers,
-    "code.search embedded identifiers": embedded_idents,
-    "tracker.ask anchors": extract_anchors,
-    "decision extract bare camel": _BARE_CAMEL.match,
-    "fake model mentions": fake._CAMEL_RE.findall,
-}
 
-
-@pytest.mark.parametrize("call", CALLS.values(), ids=CALLS.keys())
-@pytest.mark.parametrize("text", HOSTILE, ids=["capitals", "camel", "digits"])
+@pytest.mark.parametrize(("call", "text"), [c[1:] for c in CASES], ids=[c[0] for c in CASES])
 def test_a_long_identifier_run_is_matched_in_linear_time(
     call: Callable[[str], Any], text: str
 ) -> None:
