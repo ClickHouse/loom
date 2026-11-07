@@ -149,16 +149,18 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
                     params={"org": input.org, "ns": input.namespace, "mid": memory_id},
                 )
                 if idr:
-                    await reject_by_identity(
+                    # A locked row stays as it is: quarantined only if a row was rejected.
+                    rejected = await reject_by_identity(
                         input.org,
                         input.namespace,
                         str(idr["agent"]),
                         str(idr["user_id"]),
                         str(idr["memory_key"]),
                         f"auto-quarantine: {int((cnt or {}).get('n') or 0)} negative outcomes",
+                        locked="skip",
                         ch=ch,
                     )
-                    quarantined = True
+                    quarantined = rejected > 0
 
     usage = await ch.query_one(
         """

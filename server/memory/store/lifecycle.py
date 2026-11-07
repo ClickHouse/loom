@@ -12,7 +12,7 @@ import logging
 import math
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from server.core.datetimes import naive_utc_now, naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
@@ -227,17 +227,27 @@ async def reject_by_identity(
     memory_key: str,
     reason: str,
     *,
+    locked: Literal["refuse", "skip"] = "refuse",
     ch: _CHClient | None = None,
 ) -> int:
     """Mark the live rows of `memory_key` in every session of the identity
-    `rejected`, by version re-emit on loom.memory and its vector rows. Never a
-    lightweight UPDATE: on loom.memory_embeddings it leaves a patch part, and
+    `rejected`. A locked row is never rejected: `refuse` raises 423 LOCKED before
+    any row is written (a person's reject), `skip` leaves it and rejects the rest (an
+    automatic quarantine). Rows are marked by version re-emit on loom.memory and its
+    vector rows. Never a lightweight UPDATE: on loom.memory_embeddings it leaves a patch part, and
     the fact leg's codes-first read stays off while one exists
     (`server.core.vectors.patch_parts`). The rows land at one version drawn
     before the read: a write drawn after it stays the head, and it sits above
     any vector row an earlier metadata copy left at read + 1 (`reemit_version`).
     A failed vector write raises: recall reads the vector row. Returns the rows
     written."""
+    from server.memory.domain.lock import assert_unlocked, refuses_retirement
+
+    def reject(row: MemoryRow) -> dict[str, Any]:
+        # Every row is built before any is written, so a refusal writes nothing.
+        assert_unlocked(row, "delete", op="memory.reject")
+        return {"status": "rejected", "rejection_reason": reason, "version": version}
+
     ch = ch or _default_client()
     version = next_version()
     rows = await ch.query_all(
@@ -254,8 +264,9 @@ async def reject_by_identity(
     return await write_versions_by_ids(
         org,
         [str(r["memory_id"]) for r in rows],
-        lambda row: {"status": "rejected", "rejection_reason": reason, "version": version},
+        reject,
         ch=ch,
+        skip=refuses_retirement if locked == "skip" else None,
         strong=True,
         strict=True,
     )
