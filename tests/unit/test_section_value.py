@@ -457,6 +457,19 @@ def test_a_recorded_meetings_transcript_and_template_are_noise(
         # a transcript segment that records a decision or a plan
         (_RECORDED, ("Transcript", "00:14:10"), "**Ana:** so the plan is to drop the cache"),
         (_RECORDED, ("Transcript", "00:15:02"), "**Ana:** I'm going to disallow warning alerts."),
+        (_RECORDED, ("Transcript", "00:15:40"), "**Ana:** we won't remove the old flag yet"),
+        # a hyphen-joined "transcript-..." word names a topic, not a transcript part
+        (
+            "Incident 2026-03-04 14:00 UTC - transcript-export failing",
+            ("Timeline", "14:05"),
+            "Errors passed 5%.",
+        ),
+        # a first heading that repeats the title in another case or spacing is the title
+        (
+            "Planner sync - 2026-03-04 10:00 CET - Transcript",
+            ("planner sync -  2026-03-04 10:00 CET - transcript", "Summary"),
+            "The team reviewed the fallback list.",
+        ),
         # a clock time without a transcript or notes-by mark names no recording
         ("Cutover 2026-03-04 10:00", ("Transcript",), "Ana walked through the steps."),
     ],

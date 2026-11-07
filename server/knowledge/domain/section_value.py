@@ -70,7 +70,8 @@ _DECISION = re.compile(
     r"defaults? to|"
     rf"we(?:'re| are|'ll| will| won't| will not)(?: not)? {_CHOICE_VERB}|"
     # In the first person only a plan ("I'll remove the old flag", not "I'll move on").
-    rf"(?:we|i)(?:'ll| will|'m going to| am going to|'re going to| are going to) {_PLAN_VERB}|"
+    rf"(?:we|i)(?:'ll| will| won't| will not|'m going to| am going to|'re going to|"
+    rf" are going to)(?: not)? {_PLAN_VERB}|"
     rf"let's {_PLAN_VERB}|we(?:'re| are) {_PLAN_ING}|"
     r"the plan is to|"
     rf"(?:we|the team)(?:'ve| have| had)? {_CHOSE}|"
@@ -137,7 +138,8 @@ _RECORDED_STAMP = re.compile(rf"\b{_DAY}\s+\d{{1,2}}[:.]\d{{2}}\b", re.IGNORECAS
 # A transcript mark is a whole part of the title ("Planner sync — Transcript & notes — ...",
 # "... - Transcript"); "Incident ... - transcript export failing" names a topic.
 _TRANSCRIPT_MARK = re.compile(
-    r"(?:^|[-\u2013\u2014|:])\s*transcript(?:\s*&\s*notes)?\s*(?:$|[-\u2013\u2014|:])",
+    # A hyphen separates only with a space beside it: "transcript-export" is one word.
+    r"(?:^|[\u2013\u2014|:]|\s-)\s*transcript(?:\s*&\s*notes)?(?:\s*$|\s*[\u2013\u2014|:]|\s+-)",
     re.IGNORECASE,
 )
 _NOTES_BY_MARK = re.compile(r"\bnotes by\b", re.IGNORECASE)
@@ -271,7 +273,13 @@ def _top_heading(name: str, section_path: tuple[str, ...]) -> str:
 
 def _below_title(name: str, section_path: tuple[str, ...]) -> tuple[str, ...]:
     """The headings below a first heading that repeats the document's name."""
-    return section_path[1:] if section_path and section_path[0] == name else section_path
+    if section_path and _same(section_path[0], name):
+        return section_path[1:]
+    return section_path
+
+
+def _same(heading: str, name: str) -> bool:
+    return " ".join(heading.split()).casefold() == " ".join(name.split()).casefold()
 
 
 def _decides(line: str, notes: bool) -> bool:
