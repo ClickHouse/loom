@@ -512,6 +512,7 @@
  "knowledge_ingest_max_attempts": 5,
  "knowledge_ingest_max_chunks": 20000,
  "knowledge_ingest_max_pass_seconds": 900,
+ "knowledge_noise_filter": true,
  "knowledge_repo_docs_list_ttl_s": 60.0,
  "knowledge_repo_docs_timeout_s": 1.5,
  "knowledge_search_fanout_kinds": "memory,collection,personal",

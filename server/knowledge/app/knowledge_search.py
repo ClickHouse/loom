@@ -9,7 +9,7 @@ import asyncio
 import dataclasses
 import functools
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from server.auth.fanout import namespaces_to_search
 from server.core.vectors.private_first import search_private_first
@@ -33,8 +33,8 @@ if TYPE_CHECKING:
     from server.embedding import Embedder
     from server.knowledge.app.search import ChunkHit
 
-# A first-pass hit this close (cosine similarity) ends a private-first search
-# before its public pass.
+# A hit this close (cosine similarity) answers the query: as a first-pass hit it ends a
+# private-first search before its public pass, and it ranks ahead of noise sections.
 PRIVATE_HIT_THRESHOLD = 0.30
 
 # A rejected deployment default is logged once per value, not once per search.
@@ -80,7 +80,7 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
         reranked_by = endpoint if reranked else ""
     if input.collapse_sections:
         all_hits = _collapse_by_section(all_hits)
-    top = all_hits[: input.top_k]
+    top = noise_last(all_hits)[: input.top_k]
     if input.narrow_spans and top:
         await _narrow_spans(embedder, query_vec, top)
     return KnowledgeSearchOutput(
@@ -89,6 +89,33 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
         namespaces_skipped=skipped,
         reranked_by=reranked_by,
     )
+
+
+def noise_last(hits: list[_SearchHit]) -> list[_SearchHit]:
+    """`hits` with the noise sections moved below the last hit close to the query
+    (`_close`): every hit ranked above that one, close or not, comes before them, and
+    every other hit keeps its order. A query about the noise itself still finds it when
+    no close hit ranks below it. As given when `knowledge_noise_filter` is off."""
+    if not settings.knowledge_noise_filter:
+        return hits
+    close = _close()
+    last = max((i for i, h in enumerate(hits) if not h.noise and h.similarity >= close), default=-1)
+    head = hits[: last + 1]
+    return [h for h in head if not h.noise] + [h for h in head if h.noise] + hits[last + 1 :]
+
+
+def not_noise() -> Callable[[Any], bool] | None:
+    """The predicate that drops noise sections from what an agent is handed unasked
+    (context.pack, memory.stack); None, keeping every hit, with the filter off."""
+    return (lambda h: not h.noise) if settings.knowledge_noise_filter else None
+
+
+def _close() -> float:
+    """The similarity of a hit that answers the query: `PRIVATE_HIT_THRESHOLD`, or the
+    embedder's calibrated noise floor where unrelated text scores higher."""
+    from server.memory.app.embedder_calibration import effective_noise_floor
+
+    return max(PRIVATE_HIT_THRESHOLD, effective_noise_floor(PRIVATE_HIT_THRESHOLD))
 
 
 def _rerank_endpoint(input: KnowledgeSearchInput) -> str:
@@ -265,6 +292,8 @@ async def _search_private_first(
             else None
         ),
         threshold=PRIVATE_HIT_THRESHOLD,
+        # A noise section near the query does not stand in for the public documents.
+        may_end=not_noise(),
         span=functools.partial(traced, "ch.query.chunks", top_k=input.top_k),
     )
 
@@ -324,6 +353,7 @@ def _as_search_hits(results_per_ns: list[tuple[str, list[ChunkHit]]]) -> list[_S
                     block_type=h.block_type,
                     locator=h.locator,
                     keys_matched=list(h.keys_matched),
+                    noise=h.noise,
                 )
             )
     return all_hits

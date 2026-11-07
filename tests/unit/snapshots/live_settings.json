@@ -74,6 +74,7 @@
  "knowledge_chunk_size",
  "knowledge_chunk_stride",
  "knowledge_ingest_max_chunks",
+ "knowledge_noise_filter",
  "knowledge_repo_docs_list_ttl_s",
  "knowledge_repo_docs_timeout_s",
  "knowledge_search_fanout_kinds",

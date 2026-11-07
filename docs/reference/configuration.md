@@ -820,6 +820,7 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | --- | --- | --- | --- | --- |
 | `LOOM_KNOWLEDGE_SEARCH_MAX_NAMESPACES` | `int` | `10000` | live | Namespaces an all_mine knowledge.search reads besides the addressed one, at most; the rest come back in `namespaces_skipped`. Each search leg is one statement over all of them (measured 110 ms at 10,000 collections). |
 | `LOOM_KNOWLEDGE_SEARCH_FANOUT_KINDS` | `str` | `'memory,collection,personal'` | live | Namespace kinds an all_mine knowledge.search spans (comma list over loom.namespaces.kind): the memory fan-out's, and the caller's collections. |
+| `LOOM_KNOWLEDGE_NOISE_FILTER` | `bool` | `True` | live | True: noise sections rank below the knowledge hits close to the query and stay out of context.pack and memory.stack. False: they are served like any section. |
 | `LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT` | `str` | `''` | live | Reranker knowledge.search uses when the request names none (same values as the per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON; rerank="none" turns it off for a call). Empty = no default rerank. |
 | `LOOM_KNOWLEDGE_SEARCH_RERANK_TOP` | `int` | `30` | live | How many fused hits a rerank reads (the legs fetch at least this many). |
 | `LOOM_KNOWLEDGE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `800` | live | Characters of each hit a reranker reads: its context (title, description, breadcrumb; at most half), then the chunk text. builtin:cohere reads at most 1024. |

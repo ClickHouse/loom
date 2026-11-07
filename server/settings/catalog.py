@@ -1990,6 +1990,9 @@ class KnowledgeSettings(BaseModel):
     # Namespace kinds an all_mine knowledge.search spans (comma list over
     # loom.namespaces.kind): the memory fan-out's, and the caller's collections.
     knowledge_search_fanout_kinds: Annotated[str, LIVE] = "memory,collection,personal"
+    # True: noise sections rank below the knowledge hits close to the query and stay
+    # out of context.pack and memory.stack. False: they are served like any section.
+    knowledge_noise_filter: Annotated[bool, LIVE] = True
     # Reranker knowledge.search uses when the request names none (same values as the
     # per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON;
     # rerank="none" turns it off for a call). Empty = no default rerank.

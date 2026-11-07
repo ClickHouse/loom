@@ -265,9 +265,11 @@ async def _stack_procedures(input: MemoryStackInput, fill: _StackFill) -> None:
 
 async def _stack_knowledge(input: MemoryStackInput, fill: _StackFill, seed: str) -> None:
     """Section 5 (optional): the top-K knowledge hits keyed on `seed` that serve this
-    agent (agent_rules.served_hits drops another bot's promoted rules)."""
+    agent (agent_rules.served_hits drops another bot's promoted rules), noise sections
+    left out with `knowledge_noise_filter` on."""
     try:
         from server.embedding import get_embedder as _gemb
+        from server.knowledge.app.knowledge_search import not_noise
         from server.knowledge.app.search import HybridSearchQuery as _KSQ
         from server.knowledge.app.search import hybrid_search
 
@@ -287,8 +289,16 @@ async def _stack_knowledge(input: MemoryStackInput, fill: _StackFill, seed: str)
                 )
             )
 
-        # Another bot's promoted rule is not a rule about this agent.
-        khits = await served_hits(await search(top_k), search, lambda h: h.tags, agent, top_k)
+        # Another bot's promoted rule is not a rule about this agent, and a noise section
+        # (meeting notes, a status report) stays out of a bundle handed over unasked.
+        khits = await served_hits(
+            await search(top_k),
+            search,
+            lambda h: h.tags,
+            agent,
+            top_k,
+            keep=not_noise(),
+        )
         for h in khits:
             val = str(getattr(h, "content", "") or "")
             if not val:

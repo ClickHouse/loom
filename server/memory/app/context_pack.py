@@ -726,7 +726,7 @@ async def _pack_knowledge(st: _PackState) -> None:
     if not input.include_knowledge or not input.query:
         return
     from server.knowledge.api.models_knowledge import KnowledgeSearchInput
-    from server.knowledge.app.knowledge_search import handle_knowledge_search
+    from server.knowledge.app.knowledge_search import handle_knowledge_search, not_noise
 
     agent = request_rule_agent(input.agent)
 
@@ -744,9 +744,16 @@ async def _pack_knowledge(st: _PackState) -> None:
         )
         return list(out.results)
 
-    # Another bot's promoted rule is not a rule about this agent.
+    # Another bot's promoted rule is not a rule about this agent, and a pack is handed to
+    # the agent unasked: a noise section stays out of it (knowledge.search still finds
+    # it), and a wider read fills the places either took.
     results = await served_hits(
-        await search(input.top_k), search, lambda h: h.tags, agent, input.top_k
+        await search(input.top_k),
+        search,
+        lambda h: h.tags,
+        agent,
+        input.top_k,
+        keep=not_noise(),
     )
     if results:
         evidence = [
