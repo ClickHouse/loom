@@ -255,8 +255,6 @@ _BLOCK_TAGS: dict[str, BlockType] = {
     "th": "paragraph",
     "dd": "paragraph",
     "dt": "paragraph",
-    # A table's caption is a paragraph of its own.
-    "caption": "paragraph",
 }
 # Elements whose end closes any block left open inside them.
 _CONTAINERS = {
@@ -278,6 +276,7 @@ _CONTAINERS = {
     "form",
     "details",
     "summary",
+    "caption",  # outside a table it opens no block, as a browser ignores the tag there
 }
 
 
@@ -327,6 +326,8 @@ _ENDS_CAPTION = {"caption", "tr", *_CELLS, *_ROW_GROUPS}  # what ends a caption 
 _SPANS = {"colspan": 1_000, "rowspan": 65_534}  # HTML's own bounds
 _MAX_PLACING = 1_000_000  # the steps placing a table's cells may take; past it every cell is kept
 _DIGITS = re.compile(r"[\t\n\f\r ]*\+?0*([0-9]+)")  # HTML's integer: ASCII spacing, a sign
+# More digits than either bound has: a longer number is past both, so it is not read.
+_SPAN_DIGITS = len(str(max(_SPANS.values()))) + 1
 
 
 def _span(attrs: list[tuple[str, str | None]], name: str) -> int:
@@ -337,7 +338,7 @@ def _span(attrs: list[tuple[str, str | None]], name: str) -> int:
     m = _DIGITS.match(next((v for k, v in attrs if k == name), None) or "")
     if m is None:
         return 1
-    n = int(m.group(1)) if len(m.group(1)) <= 6 else _SPANS[name]  # bounded before read
+    n = int(m.group(1)) if len(m.group(1)) <= _SPAN_DIGITS else _SPANS[name]
     return _SPANS[name] if n == 0 and name == "rowspan" else min(max(n, 1), _SPANS[name])
 
 
@@ -581,7 +582,8 @@ class _HTMLBlocks(HTMLParser):
         if o.tag in _HEADINGS:
             self.acc.heading(_HEADINGS[o.tag], text, loc)
         else:
-            self.acc.add(_BLOCK_TAGS[o.tag], text, loc)
+            # A table's caption, which only the table opens, is a paragraph of its own.
+            self.acc.add(_BLOCK_TAGS.get(o.tag, "paragraph"), text, loc)
 
     def open_hidden(self) -> list[str]:
         return sorted(self._hidden)

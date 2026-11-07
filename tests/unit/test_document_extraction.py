@@ -714,6 +714,20 @@ def test_a_stray_caption_end_in_an_html_cell_is_ignored() -> None:
     assert [b.text for b in extract(page.encode(), "t.html").blocks] == ["ab | c"]
 
 
+@pytest.mark.parametrize(
+    ("page", "blocks"),
+    [
+        ("<p>a <caption>b</caption> c</p>", [("paragraph", "a b c")]),
+        ("<ul><li>a <caption>b</caption> c</li></ul>", [("list", "a b c")]),
+    ],
+)
+def test_a_caption_outside_an_html_table_is_ignored(
+    page: str, blocks: list[tuple[str, str]]
+) -> None:
+    """As a browser ignores the tag there: it neither opens a block nor ends one."""
+    assert [(b.type, b.text) for b in extract(page.encode(), "t.html").blocks] == blocks
+
+
 def test_a_data_table_in_a_layout_table_is_one_block_and_coverage_holds() -> None:
     page = (
         "<table><tr><td><h2>Prices</h2>"
