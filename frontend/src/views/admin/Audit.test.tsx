@@ -55,6 +55,22 @@ describe("Audit rows", () => {
     expect(screen.queryByRole("button", { name: /Details/ })).toBeNull();
   });
 
+  it("reads a hashed text value as no value", async () => {
+    const hashed = '{"sha256":"ab12","chars":31}';
+    vi.mocked(api.listAuditLog).mockResolvedValueOnce({
+      rows: [
+        row("alice", `{"memory_key":"k1","reason":${hashed}}`, "memory.delete"),
+        row("bob", `{"memory_key":"k2","reason":"stale"}`, "memory.delete"),
+        row("carol", `{"memory_key":"k3","outcome":${hashed}}`, "memory.outcome"),
+      ],
+    });
+    render(<Audit />);
+    expect(await screen.findByText('Deleted memory "k1"')).toBeTruthy();
+    expect(screen.getByText('Deleted "k2" — stale')).toBeTruthy();
+    expect(screen.getByText('Recorded outcome for "k3":')).toBeTruthy();
+    expect(screen.queryByText(/object Object/)).toBeNull();
+  });
+
   it("says when Loom retired memories on its own, and when one was restored", async () => {
     vi.mocked(api.listAuditLog).mockResolvedValueOnce({
       rows: [

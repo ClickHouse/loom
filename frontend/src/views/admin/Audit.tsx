@@ -55,7 +55,11 @@ function subjectRecord(raw: unknown): Record<string, unknown> {
  * Unknown event types fall through to a generic, readable fallback.
  */
 function summarize(event_type: string, subject: Record<string, unknown>): string {
-  const s = (k: string) => (subject[k] != null ? String(subject[k]) : "");
+  // A hashed text value is `{sha256, chars}`: it reads as no value, never "[object Object]".
+  const s = (k: string) => {
+    const v = subject[k];
+    return typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? String(v) : "";
+  };
 
   switch (event_type) {
     case "namespace.register": {
