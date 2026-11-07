@@ -2033,7 +2033,7 @@
           "default": 100,
           "minimum": 1,
           "type": "integer",
-          "description": "The problem is an error when the failing tier is also this many commits behind the fetched tip."
+          "description": "A `code_tier_failing` health problem is an error when the failing tier is also this many commits behind the fetched tip."
         },
         "code_tier_failing_warn_hours": {
           "default": 3.0,

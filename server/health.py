@@ -48,8 +48,9 @@ def _health_provider_fields(
     observed outcome of real calls (the `provider_health` breaker), because a
     total embedding outage leaves both fakes false. `problems` is the same
     list `loom doctor` prints and the dashboard banner renders, each entry with a
-    fix; `status` is `degraded` when ClickHouse is down or any entry is an
-    error — a configured fake is a warn unless LOOM_REQUIRE_REAL_PROVIDERS.
+    fix; `status` is `degraded` when ClickHouse is down or any entry outside
+    `NOT_DEPLOYMENT_FAULTS` is an error — a configured fake is a warn unless
+    LOOM_REQUIRE_REAL_PROVIDERS.
     """
     from server.auth import claims as signin_claims
     from server.auth import keyring, revocation
