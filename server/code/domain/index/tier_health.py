@@ -14,7 +14,6 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from typing import Any
 
 from server.code.domain.index.compiler_tiers import TIERS as COMPILER_TIER_SPECS
 from server.code.domain.index.state import IndexState
@@ -350,20 +349,3 @@ def _parse_iso(text: str) -> datetime | None:
     except ValueError:
         return None
     return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
-
-
-def snapshot_lag(snapshot: dict[str, Any], tier: str) -> int:
-    """The tier's lag in a published status snapshot (`code.index_status`'s JSON): the
-    fast tier's for ingest, the compiler tier's own for a producer (the C++ tier's for the
-    full run); -1 for the fetch tier (its lag is counted against the mirror it failed to
-    fetch) or when unknown."""
-    try:
-        if tier == "ingest":
-            return int(snapshot.get("fast_tier_lag", -1))
-        producer = "clang" if tier == "clang_full" else tier
-        for t in snapshot.get("compiler_tiers") or []:
-            if isinstance(t, dict) and t.get("producer") == producer:
-                return int(t.get("lag", -1))
-    except (TypeError, ValueError):
-        return -1
-    return -1

@@ -452,13 +452,14 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
     ClickHouse; None when it cannot be read (`clickhouse_reachable` says why)."""
     import asyncio
 
-    from server.code.app.index import tier_health
+    from server.code.app.index import repo_registry, tier_health
     from server.core.ch import get_client
 
     async def read() -> tuple[Any, ...] | None:
         client = get_client()
         try:
             await client.connect()
+            await repo_registry.refresh_db_repos(force=True)  # the self-service entries too
             await tier_health.refresh_failing()
             return tier_health.problem_rows()
         finally:

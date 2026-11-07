@@ -827,11 +827,11 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
         return []
 
     def named(r: Mapping[str, Any]) -> str:
-        lag = int(r.get("lag_commits", -1))
+        lag, passes = int(r.get("lag_commits", -1)), int(r["failed_passes"])
         behind = f", {lag} commit{'' if lag == 1 else 's'} behind" if lag >= 0 else ""
         return (
             f"{r['org']}/{r['namespace']} {r['tier']} ({r['kind']}, "
-            f"{r['failed_passes']} failed passes since {r['since']}{behind})"
+            f"{passes} failed pass{'' if passes == 1 else 'es'} since {r['since']}{behind})"
         )
 
     shown = [named(r) for r in rows[:_TIER_FAILURES_NAMED]]

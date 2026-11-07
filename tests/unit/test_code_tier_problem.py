@@ -36,6 +36,14 @@ def _level(health: tier_health.TierHealth, lag: int, now: datetime) -> str:
     )
 
 
+@pytest.fixture(autouse=True)
+def _fresh_snapshot() -> Any:
+    """The snapshot is process-wide: each test starts and leaves it unread."""
+    recorder.reset_for_tests()
+    yield
+    recorder.reset_for_tests()
+
+
 def test_one_or_two_failures_are_transient_and_raise_nothing() -> None:
     assert _level(_failing(2), 413, T0 + timedelta(hours=1)) == ""
     assert _level(tier_health.recovered("clang", T0), 413, T0) == ""
@@ -52,18 +60,45 @@ def test_a_tier_failing_for_hours_warns_however_few_passes_ran() -> None:
     assert _level(_failing(1), 0, T0 + timedelta(hours=4)) == "warn"
 
 
+TIP, HEAD, SCIP = "c" * 40, "b" * 40, "a" * 40
+
+
+def _state(*, tip: str = TIP) -> dict[str, dict[str, Any]]:
+    """An entry's state with a status snapshot published against `TIP`."""
+    snap = {
+        "clone_head": TIP,
+        "git_head": HEAD,
+        "fast_tier_lag": 7,
+        "compiler_tiers": [{"watermark_key": "scip_commit", "commit": SCIP, "lag": 413}],
+    }
+    return {
+        "clone_head": {"value": tip, "detail": "main"},
+        "git_head": {"value": HEAD},
+        "scip_commit": {"value": SCIP},
+        "status_snapshot": {"value": json.dumps(snap)},
+    }
+
+
 @pytest.mark.parametrize(
     ("tier", "lag"),
     [("ingest", 7), ("clang", 413), ("clang_full", 413), ("python", -1), ("fetch", -1)],
 )
-def test_the_lag_comes_from_the_published_status(tier: str, lag: int) -> None:
-    snap = {"fast_tier_lag": 7, "compiler_tiers": [{"producer": "clang", "lag": 413}]}
-    assert tier_health.snapshot_lag(snap, tier) == lag
+def test_the_lag_is_the_one_the_published_status_counts(tier: str, lag: int) -> None:
+    assert recorder._published_lag(_state(), "main", tier) == lag
+
+
+def test_a_snapshot_from_another_tip_gives_no_lag() -> None:
+    assert recorder._published_lag(_state(tip="d" * 40), "main", "clang") == -1
+
+
+class _Cfg:
+    def __init__(self, ns: str) -> None:
+        self.org, self.namespace, self.git_branch = "o", ns, "main"
 
 
 class _Store:
-    def __init__(self, rows: list[dict[str, Any]], snaps: dict[tuple[str, str], str]) -> None:
-        self.rows, self.snaps = rows, snaps
+    def __init__(self, rows: list[dict[str, Any]], states: dict[tuple[str, str], Any]) -> None:
+        self.rows, self.states = rows, states
         self.fail = False
 
     async def state_rows_with_prefix(self, prefix: str) -> list[dict[str, Any]]:
@@ -71,11 +106,8 @@ class _Store:
             raise RuntimeError("clickhouse down")
         return [r for r in self.rows if str(r["state_key"]).startswith(prefix)]
 
-    async def state_value_for_pairs(
-        self, pairs: list[tuple[str, str]], key: str
-    ) -> dict[tuple[str, str], str]:
-        assert key == "status_snapshot"
-        return {p: v for p, v in self.snaps.items() if p in pairs}
+    async def all_state_many(self, pairs: list[tuple[str, str]]) -> dict[tuple[str, str], Any]:
+        return {p: self.states.get(p, {}) for p in pairs}
 
 
 def _row(ns: str, tier: str, health: tier_health.TierHealth) -> dict[str, Any]:
@@ -95,11 +127,15 @@ async def test_the_snapshot_holds_the_failing_tiers_with_their_lag_and_keeps_it_
         [
             _row("code-a", "clang", _failing(4)),
             _row("code-b", "fetch", tier_health.recovered("fetch", T0)),
+            _row("code-gone", "clang", _failing(4)),  # no longer configured: nothing runs it
         ],
-        {("o", "code-a"): json.dumps({"compiler_tiers": [{"producer": "clang", "lag": 413}]})},
+        {("o", "code-a"): _state()},
     )
     monkeypatch.setattr("server.code.store.index.CodeRepo", lambda ch=None: store)
-    recorder.reset_for_tests()
+    monkeypatch.setattr(
+        "server.code.domain.index.repos.configured_repos",
+        lambda: [_Cfg("code-a"), _Cfg("code-b")],
+    )
     assert recorder.problem_rows() is None  # not read yet: unknown, not healthy
     await recorder.refresh_failing()
     snap = recorder.failing_snapshot()
@@ -111,7 +147,6 @@ async def test_the_snapshot_holds_the_failing_tiers_with_their_lag_and_keeps_it_
     assert recorder.failing_snapshot() == snap
     rows = recorder.problem_rows(T0 + timedelta(hours=2))
     assert rows is not None and rows[0]["severity"] == "error" and rows[0]["kind"] == "credential"
-    recorder.reset_for_tests()
 
 
 def _problem(rows: tuple[dict[str, Any], ...] | None) -> list[Any]:
@@ -164,3 +199,75 @@ def test_many_failing_tiers_are_one_problem_with_each_fix_once() -> None:
 @pytest.mark.parametrize("rows", [None, ()])
 def test_no_failing_tier_is_no_problem(rows: tuple[dict[str, Any], ...] | None) -> None:
     assert _problem(rows) == []
+
+
+class _Client:
+    def __init__(self, fail: bool = False) -> None:
+        self.fail, self.connected = fail, False
+
+    async def connect(self) -> None:
+        if self.fail:
+            raise OSError("clickhouse down")
+        self.connected = True
+
+    async def disconnect(self) -> None:
+        self.connected = False
+
+
+@pytest.mark.parametrize("down", [False, True])
+def test_the_doctor_reads_the_failing_tiers_once_and_none_when_clickhouse_is_down(
+    down: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.cli import doctor
+    from server.code.app.index import repo_registry
+
+    client = _Client(fail=down)
+    calls: list[str] = []
+
+    async def registry(**_: Any) -> list[Any]:
+        calls.append("registry")
+        return []
+
+    async def refresh(ch: Any = None) -> None:
+        calls.append("tiers")
+        recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413),)
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: client)
+    monkeypatch.setattr(repo_registry, "refresh_db_repos", registry)
+    monkeypatch.setattr(recorder, "refresh_failing", refresh)
+    rows = doctor._doctor_tier_failures()
+    if down:
+        assert rows is None and calls == []
+    else:
+        assert rows is not None and [r["namespace"] for r in rows] == ["code-a"]
+        assert calls == ["registry", "tiers"] and not client.connected
+
+
+@pytest.mark.asyncio
+async def test_the_registry_refresher_re_reads_the_failing_tiers_at_start_and_each_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from server.code.app.index import repo_registry
+
+    reads: list[int] = []
+
+    async def registry(**_: Any) -> list[Any]:
+        return []
+
+    async def refresh(ch: Any = None) -> None:
+        reads.append(1)
+
+    monkeypatch.setattr(repo_registry, "refresh_db_repos", registry)
+    monkeypatch.setattr(recorder, "refresh_failing", refresh)
+    monkeypatch.setattr(repo_registry.settings, "code_repos_refresh_seconds", 0)
+    task = await repo_registry.start_refresher()
+    assert reads == [1]  # before the first request is served
+    for _ in range(100):
+        if len(reads) >= 2:
+            break
+        await asyncio.sleep(0.05)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert len(reads) >= 2

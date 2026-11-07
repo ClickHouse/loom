@@ -105,14 +105,15 @@ export function branchHealth(b: CodeRepoSummary): Health {
   const stage = b.stage || "";
   const building = stageLabel(b);
   if (stage === "error")
-    return { text: "Index failed", state: "danger", rank: 6, detail: building?.title || "The last index failed." };
+    return { text: "Index failed", state: "danger", rank: 7, detail: building?.title || "The last index failed." };
   const failing = failingTiers(b.tier_health);
   if (failing.length > 0) {
     const first = failing[0];
     return {
       text: failing.length === 1 ? `${tierName(first.tier)} failing` : `${failing.length} tiers failing`,
-      state: "danger",
-      rank: 7,
+      // warning, as the health problem is: a failing tier serves what it last indexed
+      state: "warning",
+      rank: 6,
       detail: failing
         .map((t) => `${tierName(t.tier)}: ${failureSummary(t)} since ${listTime(t.failing_since)}. Fix: ${t.fix}`)
         .join(" "),

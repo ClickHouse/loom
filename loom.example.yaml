@@ -1077,7 +1077,8 @@ settings:
   # problem (warn); fewer is a transient failure the next pass retries. [live]
   # code_tier_failing_warn_passes: 3
 
-  # ...or failing for this many hours, however few passes ran in that time. [live]
+  # A code-index tier failing for this many hours is a `code_tier_failing` health
+  # problem (warn), however few passes ran in that time. [live]
   # code_tier_failing_warn_hours: 3.0
 
   # The problem is an error when the failing tier is also this many commits behind the

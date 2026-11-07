@@ -2039,7 +2039,7 @@
           "default": 3.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "...or failing for this many hours, however few passes ran in that time."
+          "description": "A code-index tier failing for this many hours is a `code_tier_failing` health problem (warn), however few passes ran in that time."
         },
         "code_tier_failing_warn_passes": {
           "default": 3,

@@ -105,22 +105,6 @@ class CodeRepoBase:
             {"p": prefix},
         )
 
-    async def state_value_for_pairs(
-        self, pairs: list[tuple[str, str]], key: str
-    ) -> dict[tuple[str, str], str]:
-        """(org, namespace) -> the `key` row's value, for the pairs that have one."""
-        if not pairs:
-            return {}
-        rows = await self._ch.query_all(
-            """
-            SELECT org, namespace, state_value FROM loom.code_index_state FINAL
-            WHERE (org, namespace) IN {pairs:Array(Tuple(String, String))}
-              AND state_key = {k:String}
-            """,
-            {"pairs": [(str(o), str(n)) for o, n in pairs], "k": key},
-        )
-        return {(str(r["org"]), str(r["namespace"])): str(r["state_value"] or "") for r in rows}
-
     async def all_state(self, org: str, ns: str) -> IndexState:
         rows = await self._ch.query_all(
             """

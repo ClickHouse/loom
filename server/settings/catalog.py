@@ -949,7 +949,8 @@ class CodeSettings(BaseModel):
     # A code-index tier failing this many passes in a row is a `code_tier_failing`
     # health problem (warn); fewer is a transient failure the next pass retries.
     code_tier_failing_warn_passes: Annotated[int, LIVE] = Field(default=3, ge=1)
-    # ...or failing for this many hours, however few passes ran in that time.
+    # A code-index tier failing for this many hours is a `code_tier_failing` health
+    # problem (warn), however few passes ran in that time.
     code_tier_failing_warn_hours: Annotated[float, LIVE] = Field(default=3.0, gt=0)
     # The problem is an error when the failing tier is also this many commits behind
     # the fetched tip.

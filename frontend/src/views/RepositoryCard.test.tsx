@@ -1016,7 +1016,7 @@ describe("RepositoryCard: a failing tier", () => {
   it("is the branch's worst health, and the opened card names the tier, since, lag, kind and fix", async () => {
     const ok = { ...failing, tier: "fetch", state: "ok" as const, kind: "", fix: "", failed_passes: 0 };
     const b = branch({ scip_lag: 413, tier_health: [ok, failing] });
-    expect(branchHealth(b)).toMatchObject({ text: "C++ compiler tier failing", state: "danger" });
+    expect(branchHealth(b)).toMatchObject({ text: "C++ compiler tier failing", state: "warning" });
     expect(branchHealth(b).detail).toContain("12 failed passes, 413 commits behind (no credential)");
     const { container } = mount([b], []);
     const list = screen.getByTestId("repo-tier-failures");

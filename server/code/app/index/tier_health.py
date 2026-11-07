@@ -9,7 +9,6 @@ left does not read as failing for ever. Recording never fails the pass it descri
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -19,6 +18,7 @@ from server.code.domain.index import tier_health
 from server.core.datetimes import utc_now
 
 if TYPE_CHECKING:
+    from server.code.domain.index.state import IndexState
     from server.code.store.index import CodeRepo
 
 logger = logging.getLogger("loom.code_index.tier_health")
@@ -94,34 +94,55 @@ def failing_snapshot() -> tuple[FailingTier, ...] | None:
 
 
 async def refresh_failing(ch: Any | None = None) -> None:
-    """Re-read every entry's tier-health records and, for the failing ones, the lag
-    their entry's published status counts. Two small reads; called on the
-    code_repos refresh timer. Never raises: a failed read keeps the last snapshot."""
+    """Re-read the tier-health records of every configured entry and, for the failing
+    ones, how far behind the entry's published status counts each (the count `as_of`
+    reads: -1 once the snapshot no longer matches the clone tip and the watermark). Two
+    small reads; called on the code_repos refresh timer. A record of an entry no longer
+    configured (removed from the config, or retired) is not a problem: nothing runs it.
+    Never raises: a failed read keeps the last snapshot."""
     global _FAILING
-    from server.code.app.index_status import STATUS_SNAPSHOT_KEY
+    from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
 
     try:
         store = CodeRepo(ch)
+        configured = {(c.org, c.namespace): c for c in configured_repos()}
         failing: list[tuple[str, str, tier_health.TierHealth]] = []
         for row in await store.state_rows_with_prefix(tier_health.STATE_PREFIX):
+            org, ns = str(row["org"]), str(row["namespace"])
+            if (org, ns) not in configured:
+                continue
             tier = str(row["state_key"])[len(tier_health.STATE_PREFIX) :]
             health = tier_health.parse(tier, str(row.get("state_value") or ""))
             if health is not None and health.failing:
-                failing.append((str(row["org"]), str(row["namespace"]), health))
-        pairs = sorted({(o, n) for o, n, _ in failing})
-        snapshots = await store.state_value_for_pairs(pairs, STATUS_SNAPSHOT_KEY)
-        out = []
-        for org, ns, health in failing:
-            try:
-                snap = json.loads(snapshots.get((org, ns)) or "{}")
-            except ValueError:
-                snap = {}
-            lag = tier_health.snapshot_lag(snap if isinstance(snap, dict) else {}, health.tier)
-            out.append(FailingTier(org, ns, health, lag))
+                failing.append((org, ns, health))
+        states = await store.all_state_many(sorted({(o, n) for o, n, _ in failing}))
+        out = [
+            FailingTier(
+                org,
+                ns,
+                health,
+                _published_lag(
+                    states.get((org, ns)) or {}, configured[(org, ns)].git_branch, health.tier
+                ),
+            )
+            for org, ns, health in failing
+        ]
         _FAILING = tuple(sorted(out, key=lambda f: (f.org, f.namespace, f.health.tier)))
     except Exception as e:  # noqa: BLE001 — the health signal keeps its last reading
         logger.warning("tier health: failing tiers not re-read: %s", e)
+
+
+def _published_lag(state: IndexState, branch: str, tier: str) -> int:
+    """How far the watermark `tier` advances trails the fetched tip, as the entry's
+    published status counts it; -1 for the fetch tier or when unknown."""
+    from server.code.app.index_status import published_clone_head, published_lags
+
+    key = tier_health.WATERMARK_FOR_TIER.get(tier, "")
+    mark = str((state.get(key) or {}).get("value") or "") if key else ""
+    if not mark:
+        return -1
+    return published_lags(state, {key: mark}, published_clone_head(state, branch))[key]
 
 
 def reset_for_tests() -> None:
