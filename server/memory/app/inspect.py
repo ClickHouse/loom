@@ -270,7 +270,9 @@ def _record_exposure(input: MemoryInspectInput, keys: list[str]) -> None:
 async def handle_memory_inspect(input: MemoryInspectInput) -> MemoryInspectOutput:
     run = _Inspect(input)
     published = pg_validation.published_reads(
-        input.org, [input.namespace], lambda reason: run.skipped.append(f"projection: {reason}")
+        input.org,
+        [input.namespace],
+        lambda reason: run.skipped.append(f"{pg_validation.PROJECTION}: {reason}"),
     )
     async with published:
         return await _inspect(input, run)

@@ -539,7 +539,9 @@ def _guide_proposal(
 async def handle_namespace_tune(input: NamespaceTuneInput) -> NamespaceTuneOutput:
     run = _Tune(input)
     published = pg_validation.published_reads(
-        input.org, [input.namespace], lambda reason: run.skipped.append(f"projection: {reason}")
+        input.org,
+        [input.namespace],
+        lambda reason: run.skipped.append(f"{pg_validation.PROJECTION}: {reason}"),
     )
     async with published:
         return await _tune(input, run)

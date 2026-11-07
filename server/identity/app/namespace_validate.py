@@ -43,7 +43,6 @@ from server.identity.api.models_namespace_catalog import (
     _NamespaceValidateFinding,
 )
 from server.identity.app.report_rules import (
-    PROJECTION,
     RuleContract,
     RuleLog,
     attach_evidence,
@@ -450,7 +449,7 @@ async def _code_links_stale(params: dict[str, Any]) -> list[dict[str, Any]]:
 async def handle_namespace_validate(input: NamespaceValidateInput) -> NamespaceValidateOutput:
     rules = RuleLog()
     published = pg_validation.published_reads(
-        input.org, [input.namespace], lambda reason: rules.skip(PROJECTION, reason)
+        input.org, [input.namespace], lambda reason: rules.skip(pg_validation.PROJECTION, reason)
     )
     async with published:
         return await _validate(input, rules)

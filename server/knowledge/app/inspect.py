@@ -730,7 +730,9 @@ async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeIns
     # read once ClickHouse holds what the namespace committed, in one wait the audit
     # does not repeat.
     published = pg_validation.published_reads(
-        input.org, [input.namespace], lambda reason: run.skipped.append(f"projection: {reason}")
+        input.org,
+        [input.namespace],
+        lambda reason: run.skipped.append(f"{pg_validation.PROJECTION}: {reason}"),
     )
     async with published:
         decisions = await run.decisions(listed)

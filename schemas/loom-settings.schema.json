@@ -5339,7 +5339,7 @@
           "default": 2000,
           "minimum": 0,
           "type": "integer",
-          "description": "Milliseconds an admission waits for earlier commits in its scope to reach search before answering 503 PROJECTION_BEHIND."
+          "description": "Milliseconds an admission waits for earlier commits in its scope to reach search before answering 503 PROJECTION_BEHIND; a diagnostic report waits as long, then reads on and names `projection` in `skipped`."
         },
         "pg_request_lease_seconds": {
           "default": 5,

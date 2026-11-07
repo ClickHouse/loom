@@ -5094,7 +5094,8 @@ class StorageSettings(BaseModel):
     # publishing them; the delivery worker publishes the rest.
     pg_admission_help_rows: int = Field(default=20, ge=1)
     # Milliseconds an admission waits for earlier commits in its scope to reach
-    # search before answering 503 PROJECTION_BEHIND.
+    # search before answering 503 PROJECTION_BEHIND; a diagnostic report waits as long,
+    # then reads on and names `projection` in `skipped`.
     pg_projection_wait_ms: int = Field(default=2000, ge=0)
     # Seconds the writing request holds its revisions' delivery; past it, the delivery
     # worker or a waiting admission in the namespace publishes them instead.

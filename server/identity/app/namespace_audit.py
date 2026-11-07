@@ -46,7 +46,6 @@ from server.identity.api.models_namespace_catalog import (
 )
 from server.identity.app.namespace_summary import state_change_ops
 from server.identity.app.report_rules import (
-    PROJECTION,
     RuleContract,
     RuleLog,
     attach_evidence,
@@ -1045,7 +1044,9 @@ async def handle_namespace_audit(input: NamespaceAuditInput) -> NamespaceAuditOu
     computed_at = naive_utc_now_seconds()
     audit = new_audit(input)
     published = pg_validation.published_reads(
-        input.org, [input.namespace], lambda reason: audit.rules.skip(PROJECTION, reason)
+        input.org,
+        [input.namespace],
+        lambda reason: audit.rules.skip(pg_validation.PROJECTION, reason),
     )
     async with published:
         await run_checks(audit, FINDING_CODES)

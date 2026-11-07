@@ -4856,7 +4856,8 @@ settings:
   # pg_admission_help_rows: 20
 
   # Milliseconds an admission waits for earlier commits in its scope to reach search
-  # before answering 503 PROJECTION_BEHIND. [restart]
+  # before answering 503 PROJECTION_BEHIND; a diagnostic report waits as long, then
+  # reads on and names `projection` in `skipped`. [restart]
   # pg_projection_wait_ms: 2000
 
   # Seconds the writing request holds its revisions' delivery; past it, the delivery
