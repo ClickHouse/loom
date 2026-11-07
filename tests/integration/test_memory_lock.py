@@ -92,7 +92,7 @@ def test_lock_is_refused_at_the_write(writer: httpx.Client, admin: httpx.Client,
         assert d["memory_key"] == key and d["unlock_via"]
     # the refused reject wrote nothing: the row reads back live
     got = _post(writer, "memory.get", _ident(ns, memory_key=key)).json()
-    assert got["found"] and got["conflict_verdict"] == "clear", got
+    assert got["found"] and got["status"] == "active", got
 
     # an identical restatement is reinforcement, not a write of the value
     r = _post(

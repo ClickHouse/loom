@@ -47,7 +47,7 @@ class _QuarantineCH(_StubCH):
 
     def __init__(self, query_one_returns, ids):
         super().__init__(query_one_returns)
-        self.ids = list(ids)
+        self.ids = ids
 
     async def query_all(self, sql, params=None):
         if "FROM loom.memory FINAL" in sql:
