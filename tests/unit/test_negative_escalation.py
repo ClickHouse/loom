@@ -135,7 +135,7 @@ def _wire_quarantine(monkeypatch, heads):
     """`heads`: the live rows of the identity by memory id, as the reject reads them."""
     from server.memory.store import lifecycle
 
-    ch = _QuarantineCH(_crossing_threshold(), ids=heads)
+    ch = _QuarantineCH(_crossing_threshold(), ids=list(heads))
 
     async def get_by_id(memory_id, **kw):
         return heads[memory_id]
