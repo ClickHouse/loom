@@ -11,7 +11,7 @@ import logging
 import re
 from typing import Any
 
-from server.core.ch import as_analyst, own_write_reads
+from server.core.ch import as_analyst, own_write_reads, uncaptured
 from server.core.ch_names import database, quote
 from server.core.repo_base import _CHClient, _default_client
 from server.insights.domain import analysis as boundary
@@ -86,6 +86,49 @@ async def granted(*, ch: _CHClient | None = None) -> frozenset[boundary.Grant]:
     )
 
 
+async def granted_roles(*, ch: _CHClient | None = None) -> frozenset[str]:
+    """The roles granted to the analyst, which the allowlist never includes."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT granted_role_name FROM system.role_grants WHERE user_name = {user:String}",
+        {"user": boundary.ANALYST_USER},
+    )
+    return frozenset(str(r["granted_role_name"]) for r in rows)
+
+
+async def stored_caps_digest(*, ch: _CHClient | None = None) -> str:
+    """The digest stamped on the caps profile ('' when there is none)."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        """
+        SELECT value FROM system.settings_profile_elements
+        WHERE profile_name = {profile:String} AND setting_name = {name:String}
+        """,
+        {"profile": boundary.CAPS_PROFILE, "name": boundary.CAPS_DIGEST_SETTING},
+    )
+    return str(row["value"]).strip("'") if row else ""
+
+
+async def foreign_policies(*, ch: _CHClient | None = None) -> list[str]:
+    """Permissive row policies on the allowlisted tables that Loom did not
+    write. ClickHouse ORs permissive policies, so Loom's `USING 1` policy for
+    every other user would widen what each of them lets its users read."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT short_name, table FROM system.row_policies
+        WHERE database = currentDatabase() AND table IN {tables:Array(String)}
+          AND NOT is_restrictive AND short_name NOT IN {ours:Array(String)}
+        ORDER BY table, short_name
+        """,
+        {
+            "tables": list(boundary.allowlisted_tables()),
+            "ours": [boundary.POLICY_NAME, boundary.OTHERS_POLICY_NAME],
+        },
+    )
+    return [f"{r['short_name']} ON {r['table']}" for r in rows]
+
+
 async def analyst_user_absent(*, ch: _CHClient | None = None) -> bool:
     """True only when Loom's user can see that no analyst user exists; False
     when it exists or Loom's user cannot list users."""
@@ -150,11 +193,12 @@ async def own_grants(
 
 async def write_entities(statements: list[str], *, ch: _CHClient | None = None) -> None:
     """Send the entity statements in order; the first refusal stops them.
-    They hold the analyst's password hash and the scope key, so they stay
-    out of system.query_log."""
+    They hold the analyst's password and the scope key, so they stay out of
+    system.query_log and the statement capture file."""
     ch = ch or _default_client()
-    for sql in statements:
-        await ch.execute(sql, settings={"log_queries": 0})
+    with uncaptured():
+        for sql in statements:
+            await ch.execute(sql, settings={"log_queries": 0})
 
 
 def target_database() -> str:

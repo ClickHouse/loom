@@ -75,7 +75,7 @@ def test_policies_come_before_grants_and_revokes_after() -> None:
     assert all(s.startswith("GRANT SELECT(") for s in SQL if s.startswith("GRANT"))
 
 
-def test_every_grant_outside_the_allowlist_is_revoked_after_the_grants() -> None:
+def test_every_grant_and_role_outside_the_allowlist_is_revoked_before_the_grants() -> None:
     def grant(access: str, database: str, table: str, column: str, home: bool) -> boundary.Grant:
         return boundary.Grant(access, database, table, column, home)
 
@@ -83,24 +83,55 @@ def test_every_grant_outside_the_allowlist_is_revoked_after_the_grants() -> None
         {
             grant("SELECT", "loom", "memory", "org", True),
             grant("SELECT", "loom", "memory", "value", True),
+            # A whole allowlisted table: its revoke also takes the column grants.
+            grant("SELECT", "loom", "memory", "", True),
             grant("SELECT", "loom", "signing_keys", "", True),
             grant("SELECT", "other", "memory", "org", False),
             grant("SHOW TABLES", "loom", "", "", True),
             grant("SELECT", "", "", "", False),
         }
     )
-    sql = boundary.entity_sql("`loom`", "pw", KEY, CAPS, held)
+    sql = boundary.entity_sql("`loom`", "pw", KEY, CAPS, held, frozenset({"bi_reader"}))
     revokes = [s for s in sql if s.startswith("REVOKE")]
     assert sorted(revokes) == sorted(
         [
             "REVOKE SELECT(`value`) ON `loom`.`memory` FROM `loom_analyst`",
+            "REVOKE SELECT ON `loom`.`memory` FROM `loom_analyst`",
             "REVOKE SELECT ON `loom`.`signing_keys` FROM `loom_analyst`",
             "REVOKE SELECT(`org`) ON `other`.`memory` FROM `loom_analyst`",
             "REVOKE SHOW TABLES ON `loom`.* FROM `loom_analyst`",
             "REVOKE SELECT ON *.* FROM `loom_analyst`",
+            "REVOKE `bi_reader` FROM `loom_analyst`",
         ]
     )
-    assert sql.index(revokes[0]) > max(i for i, s in enumerate(sql) if s.startswith("GRANT"))
+    grants = [i for i, s in enumerate(sql) if s.startswith("GRANT")]
+    assert max(sql.index(r) for r in revokes) < min(grants)
+    policies = [i for i, s in enumerate(sql) if s.startswith("CREATE ROW POLICY")]
+    assert max(sql.index(r) for r in revokes) > max(policies[:-1])
+
+
+def test_every_other_users_policy_is_written_before_the_analysts() -> None:
+    for t in boundary.TABLES:
+        others = next(
+            i
+            for i, s in enumerate(SQL)
+            if f"`{boundary.OTHERS_POLICY_NAME}` ON `loom`.{t.name} " in s
+        )
+        scoped = next(
+            i for i, s in enumerate(SQL) if f"`{boundary.POLICY_NAME}` ON `loom`.{t.name} " in s
+        )
+        assert others < scoped, t.name
+
+
+def test_the_caps_profile_carries_its_own_digest() -> None:
+    caps_sql = boundary.caps_sql(CAPS)
+    assert all(boundary.caps_digest(CAPS) in s for s in caps_sql)
+    other = boundary.Caps(**{**CAPS.__dict__, "max_threads": 3})
+    assert boundary.caps_digest(other) != boundary.caps_digest(CAPS)
+
+
+def test_the_payload_counts_bytes_as_clickhouse_length_does() -> None:
+    assert boundary.scope_payload("é", "a", 1) == "2:é1:a1"
 
 
 def test_a_retired_table_keeps_a_policy_that_reads_nothing(monkeypatch) -> None:

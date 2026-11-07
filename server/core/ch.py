@@ -173,6 +173,22 @@ def as_analyst(user: str, password: str, extra: dict[str, Any]) -> Iterator[None
         _analyst_var.reset(token)
 
 
+# Set only by `uncaptured`: statements that carry a secret stay out of
+# LOOM_CH_CAPTURE_STATEMENTS.
+_uncaptured_var: ContextVar[bool] = ContextVar("ch_uncaptured", default=False)
+
+
+@contextmanager
+def uncaptured() -> Iterator[None]:
+    """Statements in this block are never written to the capture file: they
+    carry a password or a key in their text."""
+    token = _uncaptured_var.set(True)
+    try:
+        yield
+    finally:
+        _uncaptured_var.reset(token)
+
+
 def _reader_auth() -> dict[str, Any]:
     """Inside a `caller_shaped()` block with LOOM_CH_READER_USER set, the HTTP
     auth header that sends the read as that read-only user instead of `ch_user`.
@@ -454,7 +470,7 @@ def statement_settings(
     out = query_settings(extra)
     cls = cls or statement_class(sql)
     _apply_class_timeout(out, cls)
-    if settings.ch_capture_statements:
+    if settings.ch_capture_statements and not _uncaptured_var.get():
         capture_statement(sql, settings.ch_capture_statements)
     if settings.ch_log_comment_statement_digest:
         tag = str(out.get("log_comment") or "")

@@ -40,9 +40,15 @@ class _Seed:
 
 
 def _call(base: str, token: str, op: str, body: dict) -> httpx.Response:
-    return httpx.post(
-        f"{base}/v1/{op}", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=60
-    )
+    """One call, waiting out a rate limit: insights.query has a small bucket."""
+    for _ in range(10):
+        r = httpx.post(
+            f"{base}/v1/{op}", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=60
+        )
+        if r.status_code != 429 or "analysis statements as it may at once" in r.text:
+            return r
+        time.sleep(float(r.headers.get("Retry-After") or 1))
+    return r
 
 
 @pytest.fixture(scope="module")
@@ -410,6 +416,8 @@ def test_the_statement_text_stays_out_of_the_query_log(
 # and wait for the probe (every minute, on each web process) to answer. Each
 # puts the entities back and waits for every process to answer again.
 _PROBE_WAIT_S = 150
+# A policy statement holds the key: it stays out of system.query_log.
+_UNLOGGED = {"log_queries": 0}
 
 
 def _probed_until(base: str, s: _Seed, done, description: str) -> None:
@@ -509,7 +517,7 @@ def test_a_dropped_policy_reads_nothing_and_is_written_again(
             "the probe to write the policy again",
         )
     except BaseException:
-        ch_client.command(statement)
+        ch_client.command(statement, settings=_UNLOGGED)
         raise
     _answers_again(control_plane_url, seed)
 
@@ -527,7 +535,8 @@ def test_a_canary_under_another_key_is_written_again(
     ch_client.command(
         keyed.sub(lambda m: "unhex('" + "0" * len(m.group(1)) + "')", statement).replace(
             "CREATE ROW POLICY", "CREATE ROW POLICY OR REPLACE", 1
-        )
+        ),
+        settings=_UNLOGGED,
     )
     try:
         _probed_until(
@@ -537,7 +546,10 @@ def test_a_canary_under_another_key_is_written_again(
             "the probe to write the canary's policy again",
         )
     except BaseException:
-        ch_client.command(statement.replace("CREATE ROW POLICY", "CREATE ROW POLICY OR REPLACE", 1))
+        ch_client.command(
+            statement.replace("CREATE ROW POLICY", "CREATE ROW POLICY OR REPLACE", 1),
+            settings=_UNLOGGED,
+        )
         raise
     _answers_again(control_plane_url, seed)
 
@@ -546,7 +558,8 @@ def test_a_widening_policy_makes_analysis_unavailable(
     control_plane_url: str, seed: _Seed, ch_client
 ) -> None:
     """A policy Loom did not write that lets the analyst read every row: the
-    probe's reserved-scope read sees it, and no write tries to repair it."""
+    probe's reserved-scope read sees it, and the replica names it instead of
+    writing anything."""
     ch_client.command(
         "CREATE ROW POLICY OR REPLACE `widen_test` ON loom.memory "
         "AS permissive FOR SELECT USING 1 TO `loom_analyst`"
@@ -559,7 +572,7 @@ def test_a_widening_policy_makes_analysis_unavailable(
             description="the probe to report the widening policy",
         )
         assert r.json()["detail"]["code"] == "ANALYSIS_UNAVAILABLE", r.text
-        assert "admits rows in the reserved scope" in r.text, r.text
+        assert "widen_test ON memory" in r.text, r.text
         assert "widen_test" in str(ch_client.command("SHOW ROW POLICIES ON loom.memory"))
     finally:
         ch_client.command("DROP ROW POLICY IF EXISTS `widen_test` ON loom.memory")

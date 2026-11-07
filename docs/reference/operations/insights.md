@@ -19,10 +19,10 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `tables` | `list[CatalogTable]` |  |
-| `max_result_rows` | `int` | The caps a statement runs under, so a query can be sized before it runs. |
-| `max_execution_s` | `float` |  |
-| `max_rows_to_read` | `int` |  |
+| `tables` | `list[CatalogTable]` | The tables insights.query reads, with their columns and how to read them. |
+| `max_result_rows` | `int` | The most rows one statement returns; past it the answer is truncated. |
+| `max_execution_s` | `float` | The longest one statement runs before ClickHouse stops it. |
+| `max_rows_to_read` | `int` | The most rows one statement may read; add a time or key filter past it. |
 
 ## `insights.query`
 
@@ -37,9 +37,9 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `columns` | `list[AnalysisColumn]` |  |
+| `columns` | `list[AnalysisColumn]` | The statement's result columns, each with its ClickHouse type. |
 | `rows` | `list[list[Any]]` | One list per row, in `columns` order; dates, UUIDs and decimals as strings. |
-| `row_count` | `int` |  |
+| `row_count` | `int` | How many rows `rows` holds, at most `limit`. |
 | `truncated` | `bool` | More rows matched than `limit`; narrow the statement or aggregate. |
 | `sql_digest` | `str` | The digest the request ledger records for `sql` (`sha256:<hex>/<length>`), which a citation of the statement is checked against. |
 

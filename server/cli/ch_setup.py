@@ -468,6 +468,11 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
         print(f"✗ {problem}", file=sys.stderr)
         return 2
     if args.print_analyst_sql:
+        print(
+            "-- Holds the analyst password and scope key: save it to a file and run it in one "
+            "session,\n-- clickhouse-client --log_queries=0 --multiquery --queries-file <file>, "
+            "so neither reaches system.query_log."
+        )
         for stmt in _analyst_sql():
             print(f"{stmt};")
         return 0
@@ -505,7 +510,9 @@ def register_ch_setup_cli(sub: Any) -> None:
         help=(
             "Print the SQL that writes insights.query's analyst user, for an admin where "
             "LOOM_CH_USER lacks access management. It holds the user's password and the "
-            "scope key stored sealed in loom.analysis_secrets: run it, do not store it."
+            "scope key stored sealed in loom.analysis_secrets: run it with "
+            "`clickhouse-client --log_queries=0 --multiquery --queries-file <file>`, do not "
+            "store it."
         ),
     )
     p.set_defaults(func=_cmd_ch_setup)

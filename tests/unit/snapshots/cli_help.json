@@ -162,9 +162,9 @@
   "options: -h, --help show this help message and exit --root ROOT The loom checkout. Default: the current directory, else the installed checkout. --file FILE Compose file relative to --root; repeat to stack overrides (default compose.yaml + dev/docker-compose.dev.yml). --env-file ENV_FILE Existing env file used by the stack (default .env). --delete-data Also delete this stack's named volumes. Irreversible; requires confirmation. --yes, -y Confirm --delete-data without the interactive project-name prompt."
  ],
  "loom ch-setup": [
-  "usage: loom ch-setup [-h] [--print-sql]",
+  "usage: loom ch-setup [-h] [--print-sql] [--print-analyst-sql]",
   "`loom ch-setup`: prepare a ClickHouse that Loom did not start itself, a self-managed server or a ClickHouse Cloud service, for Loom's first boot. It creates the `loom` database and the read-only reader user (`LOOM_CH_READER_USER`, default `loom_reader`): SELECT on `loom.*` and a settings profile that pins Loom's caller-shaped caps as ceilings, with floors no statement can go under. Run it again at any time: what is in place is left alone, and a reader whose profile or grants differ from that is rebuilt to exactly it, so changes an admin made to the reader do not survive a rerun. A user without the privilege for a step gets the SQL to hand an admin instead, with the password left as a placeholder. The bundled ClickHouse defines the reader in its config, so there it only reports. An existing reader is replaced only when it has the shape ch-setup gives it (a password user on the settings profile of its own name) and logs in with LOOM_CH_PASSWORD; anything else of that name is left alone.",
-  "options: -h, --help show this help message and exit --print-sql Print the SQL for an admin (password as a placeholder); change nothing."
+  "options: -h, --help show this help message and exit --print-sql Print the SQL for an admin (password as a placeholder); change nothing. --print-analyst-sql Print the SQL that writes insights.query's analyst user, for an admin where LOOM_CH_USER lacks access management. It holds the user's password and the scope key stored sealed in loom.analysis_secrets: run it with `clickhouse- client --log_queries=0 --multiquery --queries-file <file>`, do not store it."
  ],
  "loom participant": [
   "usage: loom participant [-h] {retire} ...",

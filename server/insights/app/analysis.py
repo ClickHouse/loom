@@ -2,9 +2,10 @@
 
 A statement runs as the ClickHouse user `loom_analyst`, whose grants, settings
 profile and signed row policies hold it to the allowlist and to the request's
-org and namespace (`server.insights.domain.analysis`). This module derives the
-user's password and the scope key from the signing secret, writes the user at
-boot when this replica leads the deployment, probes it, and runs statements.
+org and namespace (`server.insights.domain.analysis`). This module loads the
+user's password and the scope key from `loom.analysis_secrets` (drawing them
+once), writes the user under the analysis lease, probes it in the background
+of every process, and runs statements.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import secrets
 import time
 from datetime import date, datetime
@@ -48,6 +50,8 @@ _SCOPE_TTL_S = 60
 # name, a type error, a cap.
 _ACCESS_DENIED = 497
 _AUTHENTICATION_FAILED = 516
+_TOO_MANY_SIMULTANEOUS_QUERIES = 202
+_MEMORY_LIMIT_EXCEEDED = 241
 _STATEMENT_CODES = frozenset(
     {
         _ACCESS_DENIED,
@@ -91,8 +95,6 @@ _LEASE_TTL_S = 60
 _SECRETS_PURPOSE = "analysis.secrets"
 _loaded: tuple[bytes, str] | None = None
 _REPROBE_S = 60.0
-_probed_at = 0.0
-_reprobing = asyncio.Lock()
 
 # Whether this replica's probe ran a signed statement as the analyst user
 # and saw a system table refused: None = not probed yet.
@@ -170,9 +172,11 @@ def caps() -> boundary.Caps:
     )
 
 
-def entity_statements(granted: frozenset[boundary.Grant] = frozenset()) -> list[str]:
+def entity_statements(
+    granted: frozenset[boundary.Grant] = frozenset(), roles: frozenset[str] = frozenset()
+) -> list[str]:
     """The SQL that writes the analyst user for this deployment, password and key included."""
-    return boundary.entity_sql(store.target_database(), _password(), _key(), caps(), granted)
+    return boundary.entity_sql(store.target_database(), _password(), _key(), caps(), granted, roles)
 
 
 def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> dict[str, Any]:
@@ -192,52 +196,91 @@ def _time_cap() -> dict[str, Any]:
 
 async def provision() -> None:
     """Load the secrets, write the analyst user when the stored entities
-    differ from this build's and are not a newer build's, then probe it. Every
-    replica runs this beside its start, one at a time under the lease."""
+    differ from this build's and are not a newer build's, then probe it. Each
+    process runs it once in the background of its start (`start_probe_loop`),
+    one at a time under the lease."""
     try:
         async with lease():
             await load_secrets(may_draw=await store.analyst_user_absent())
-            if await store.can_manage_access():
-                statements = entity_statements(await store.granted())
+            foreign = await _foreign_problem() if await store.can_manage_access() else None
+            if foreign == "":
+                statements = await _current_statements()
                 stored = await store.stored_entities()
                 if boundary.needs_rewrite(stored, boundary.entity_digest(statements)):
                     await store.write_entities(statements)
                     log.info("analyst user: written (version %s)", boundary.ENTITY_VERSION)
-                else:
-                    # The caps are deployment settings: written at boot, apart from the version.
+                elif await store.stored_caps_digest() != boundary.caps_digest(caps()):
+                    # The caps are deployment settings, written apart from the version.
                     await store.write_entities(boundary.caps_sql(caps()))
+        if foreign:
+            _set_problem(foreign)
+            return
         await reprobe()
     except Exception as e:  # noqa: BLE001 — a failed analyst setup is a reported problem, never fatal to boot
         _set_problem(f"writing or probing {boundary.ANALYST_USER} failed: {error_line(e)}")
 
 
-async def _write_under_lease() -> None:
+async def _current_statements() -> list[str]:
+    return entity_statements(await store.granted(), await store.granted_roles())
+
+
+async def _foreign_problem() -> str:
+    """Why nothing may be written while a permissive policy Loom did not write
+    sits on an allowlisted table, or '' when none does."""
+    foreign = await store.foreign_policies()
+    if not foreign:
+        return ""
+    return (
+        f"row policies Loom did not write are on the analysis tables ({', '.join(foreign[:5])}); "
+        "Loom's policy for every other user would widen them, so an admin must drop them or "
+        "make them restrictive"
+    )
+
+
+async def _write_under_lease() -> str:
     """Write the entities again to repair what the probe found, unless a newer
-    build wrote them meanwhile."""
+    build wrote them meanwhile; a replica whose first boot drew no secrets
+    draws them here. Returns why it wrote nothing, when a policy Loom did not
+    write is there."""
     async with lease():
+        if _loaded is None:
+            await load_secrets(may_draw=await store.analyst_user_absent())
+        if foreign := await _foreign_problem():
+            return foreign
         stored = await store.stored_entities()
         if stored is None or stored.version <= boundary.ENTITY_VERSION:
-            await store.write_entities(entity_statements(await store.granted()))
+            await store.write_entities(await _current_statements())
+    return ""
 
 
 async def rewrite() -> None:
-    """Write the analyst user whatever is stored (`loom ch-setup`)."""
+    """Write the analyst user whatever is stored (`loom ch-setup`). It draws
+    the secrets only while no analyst user exists, so a lost row never puts
+    a new key beside replicas that still hold the old one."""
     async with lease():
+        if await store.sealed_secrets() is None and not await store.analyst_user_absent():
+            raise RuntimeError(
+                "loom.analysis_secrets has no row while the analyst user exists, so the key "
+                f"the replicas hold is lost: drop the user (`DROP USER {boundary.ANALYST_USER}`) "
+                "and run `loom ch-setup` again to draw a new key"
+            )
         await load_secrets(may_draw=True)
-        await store.write_entities(entity_statements(await store.granted()))
+        if foreign := await _foreign_problem():
+            raise RuntimeError(foreign)
+        await store.write_entities(await _current_statements())
 
 
-def lease() -> Any:
+def lease(ch: Any = None) -> Any:
     # Each statement a holder sends times out well inside the lease, so a
     # holder that lost it has nothing left to land.
-    return leases.cluster_lease(_WRITE_LEASE, ttl_s=_LEASE_TTL_S, wait_s=120)
+    return leases.cluster_lease(_WRITE_LEASE, ttl_s=_LEASE_TTL_S, wait_s=120, ch=ch)
 
 
 async def reprobe() -> None:
-    """Probe the analyst user again, every minute in the background. It also
-    re-reads the secrets row: a replica moves to a new key only once the
-    canary reads under it. A failure a write repairs is written again under
-    the lease, by a replica that writes the entities itself."""
+    """Probe the analyst user again. It also re-reads the secrets row: a
+    replica moves to a new key only once the canary reads under it. A failure
+    a write repairs is written again under the lease, by a replica that
+    writes the entities itself."""
     global _loaded
     try:
         stored = _opened(await store.sealed_secrets())
@@ -245,11 +288,26 @@ async def reprobe() -> None:
             _loaded = stored
         problem, repairable = await _probe()
         if problem and repairable and await store.can_manage_access():
-            await _write_under_lease()
-            problem, _ = await _probe()
+            problem = await _write_under_lease() or (await _probe())[0]
     except Exception as e:  # noqa: BLE001 — a failed probe is a reported problem
         problem = f"probing {boundary.ANALYST_USER} failed: {error_line(e)}"
     _set_problem(problem)
+
+
+def start_probe_loop() -> asyncio.Task[None]:
+    """Provision once, then probe every minute, in this process's background,
+    so no request waits on the lease or on a repair."""
+
+    async def _run() -> None:
+        from server.core.ch import set_query_tag
+
+        set_query_tag("analysis.probe")  # every process runs it, not a worker
+        await provision()
+        while True:
+            await asyncio.sleep(_REPROBE_S)
+            await reprobe()
+
+    return asyncio.get_running_loop().create_task(_run(), name="loom-analysis-probe")
 
 
 async def _canary_reads(secrets_: tuple[bytes, str]) -> bool:
@@ -268,12 +326,19 @@ async def _canary_reads(secrets_: tuple[bytes, str]) -> bool:
 
 
 def _set_problem(problem: str) -> None:
-    global _ready, _problem, _probed_at
-    _probed_at = time.monotonic()
-    _problem = problem
+    global _ready, _problem
+    _problem = _scrubbed(problem)
     _ready = not _problem
     if _problem:
         log.warning("insights.query is unavailable: %s", _problem)
+
+
+_KEY_LITERAL = re.compile(r"unhex\('[0-9A-Fa-f]+'\)")
+
+
+def _scrubbed(text: str) -> str:
+    """The text with any key pad a ClickHouse message quoted cut out."""
+    return _KEY_LITERAL.sub("unhex(…)", text)
 
 
 # Statements the analyst must be refused: ClickHouse lets every user read
@@ -299,9 +364,14 @@ async def _probe() -> tuple[str, bool]:
     for t in boundary.TABLES:
         # No row of a real table sits in the reserved scope: a row here means
         # a policy Loom did not write widens what the analyst reads.
-        _, _, rows = await store.run_statement(
-            f"SELECT count() FROM {db}.{t.name}", password=_password(), extra=reserved
-        )
+        try:
+            _, _, rows = await store.run_statement(
+                f"SELECT count() FROM {db}.{t.name}", password=_password(), extra=reserved
+            )
+        except Exception as e:
+            if error_code(e) == _ACCESS_DENIED:
+                return f"{boundary.ANALYST_USER} lacks its grants on {t.name}", True
+            raise
         if rows and rows[0][0] != 0:
             # Seen as the analyst, a missing policy (under the server default a
             # user with none reads every row) and a widening one look alike, so
@@ -371,7 +441,9 @@ def _refusal(e: BaseException) -> ValidationError | None:
     code = error_code(e)
     if code not in _STATEMENT_CODES:
         return None
-    if "SQL_loom_" in str(e):
+    if code == _MEMORY_LIMIT_EXCEEDED and ("(total)" in str(e) or "(for user)" in str(e)):
+        return None  # the server's memory, not the statement's cap
+    if "SQL_loom_" in str(e) or _KEY_LITERAL.search(str(e)):
         return ValidationError(
             f"ClickHouse refused the statement (code {code}) while checking the analysis "
             "scope; a statement must not set the SQL_loom_* settings"
@@ -387,9 +459,8 @@ def _refusal(e: BaseException) -> ValidationError | None:
 async def handle_insights_query(input: InsightsQueryInput) -> InsightsQueryOutput:
     if (input.org, input.namespace) == (boundary.CANARY_ORG, boundary.CANARY_NAMESPACE):
         raise ValidationError("the empty org and namespace are reserved for the analysis probe")
-    if time.monotonic() - _probed_at > _REPROBE_S and not _reprobing.locked():
-        async with _reprobing:
-            await reprobe()
+    if "," in input.namespace:
+        raise ValidationError("a namespace name cannot hold a comma")
     if _ready is not True:
         raise AnalysisUnavailableError(
             "the analyst ClickHouse user is not ready on this replica"
@@ -416,9 +487,18 @@ async def _run(input: InsightsQueryInput) -> InsightsQueryOutput:
     try:
         names, types, rows = await store.run_statement(sql, password=_password(), extra=extra)
     except Exception as e:
-        if error_code(e) == _AUTHENTICATION_FAILED:
+        code = error_code(e)
+        if code == _AUTHENTICATION_FAILED:
             raise AnalysisUnavailableError(
                 "the analyst user refuses this replica's password; `loom doctor` names the fix"
+            ) from None
+        if code == _TOO_MANY_SIMULTANEOUS_QUERIES:
+            raise RateLimitedError(
+                "the analyst user already runs as many statements as it may at once; retry"
+            ) from None
+        if code == _MEMORY_LIMIT_EXCEEDED and _refusal(e) is None:
+            raise AnalysisUnavailableError(
+                "ClickHouse is short of memory for analysis statements; retry later"
             ) from None
         refusal = _refusal(e)
         if refusal is None:
@@ -463,4 +543,5 @@ __all__ = [
     "handle_insights_catalog",
     "handle_insights_query",
     "provision",
+    "start_probe_loop",
 ]

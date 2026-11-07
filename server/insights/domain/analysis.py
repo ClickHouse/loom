@@ -52,6 +52,8 @@ EXP_SETTING = "SQL_loom_exp"
 SIG_SETTING = "SQL_loom_sig"
 VERSION_SETTING = "SQL_loom_analyst_version"
 DIGEST_SETTING = "SQL_loom_analyst_digest"
+# The caps profile's own stamp: the digest of the caps it holds.
+CAPS_DIGEST_SETTING = "SQL_loom_analyst_caps_digest"
 
 _BLOCK = 64  # SHA-256 block size, for HMAC's inner and outer pads
 
@@ -225,8 +227,9 @@ def allowlisted_tables() -> tuple[str, ...]:
 
 
 def scope_payload(org: str, namespaces: str, exp: int) -> str:
-    """Each part length-prefixed, so no two scopes share a payload."""
-    return f"{len(org)}:{org}{len(namespaces)}:{namespaces}{exp}"
+    """Each part prefixed with its length in bytes, as ClickHouse's length()
+    counts a String, so no two scopes share a payload."""
+    return f"{len(org.encode())}:{org}{len(namespaces.encode())}:{namespaces}{exp}"
 
 
 def sign_scope(key: bytes, org: str, namespaces: str, exp: int) -> str:
@@ -336,11 +339,17 @@ def caps_sql(caps: Caps) -> list[str]:
     one and is the profile the analyst user carries. A boot writes them, so a
     cap setting never touches the version."""
     caps_profile = f"`{CAPS_PROFILE}`"
-    settings_ = ", ".join([f"INHERIT '{ANALYST_USER}'", *caps_settings(caps)])
+    stamp = f"{CAPS_DIGEST_SETTING} = {_q(caps_digest(caps))} CONST"
+    settings_ = ", ".join([f"INHERIT '{ANALYST_USER}'", *caps_settings(caps), stamp])
     return [
         f"CREATE SETTINGS PROFILE IF NOT EXISTS {caps_profile} SETTINGS {settings_}",
         f"ALTER SETTINGS PROFILE {caps_profile} SETTINGS {settings_}",
     ]
+
+
+def caps_digest(caps: Caps) -> str:
+    """What the caps profile holds, so a boot writes it only when a cap changed."""
+    return hashlib.sha256("\n".join(caps_settings(caps)).encode()).hexdigest()[:32]
 
 
 def _q(value: str) -> str:
@@ -376,14 +385,18 @@ def entity_sql(
     key: bytes,
     caps: Caps,
     granted: frozenset[Grant] = frozenset(),
+    roles: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Every statement that writes the analyst user, in an order that never
     leaves a granted table without its policy (ClickHouse lets a user with no
     policy on a table read every row of it): each policy is replaced in place,
-    then the grants are given, then every grant the user holds outside the
-    allowlist (`granted` is what it holds now) is revoked. A retired table
-    keeps a policy that reads nothing. The stamp comes last, so a write cut
-    short is written again by the next boot. `db` is already quoted."""
+    every other user's before the analyst's so no user is ever left without
+    one, then every grant and role the user holds outside the allowlist
+    (`granted` and `roles` are what it holds now) is revoked, and then the
+    allowlist is granted, since a table's revoke also takes the column grants
+    under it. A retired table keeps a policy that reads nothing. The stamp
+    comes last, so a write cut short is written again by the next boot. `db`
+    is already quoted."""
     user = f"`{ANALYST_USER}`"
     identified = f"IDENTIFIED WITH sha256_password BY {_q(password)}"
     condition = policy_filter(key)
@@ -403,16 +416,17 @@ def entity_sql(
         f"ALTER USER {user} {identified} SETTINGS PROFILE '{CAPS_PROFILE}'",
     ]
     for t in TABLES:
-        out.append(policy(POLICY_NAME, t.name, f"({t.live}) AND {condition}", user))
         out.append(policy(OTHERS_POLICY_NAME, t.name, "1", f"ALL EXCEPT {user}"))
+        out.append(policy(POLICY_NAME, t.name, f"({t.live}) AND {condition}", user))
     for name in RETIRED_TABLES:
         out.append(policy(POLICY_NAME, name, "0", user))
+    out += [_revoke(g, user) for g in sorted(granted) if not _allowed(g)]
+    out += [f"REVOKE `{role}` FROM {user}" for role in sorted(roles)]
     out += [
         f"GRANT SELECT({', '.join(c.name for c in t.columns)}) ON {db}.{t.name} TO {user}"
         for t in TABLES
     ]
     out.append(f"GRANT SELECT(id) ON {db}.{CANARY_TABLE} TO {user}")
-    out += [_revoke(g, user) for g in sorted(granted) if not _allowed(g)]
     out.append(f"INSERT INTO {db}.{CANARY_TABLE} (id) VALUES (0)")
     # Last of the policies: a canary that reads under the key means all of them do.
     out.append(policy(POLICY_NAME, CANARY_TABLE, condition, user))
@@ -466,9 +480,9 @@ def structure_digest() -> str:
 
 
 def _digest(db: str, profile: list[str]) -> str:
-    """What the entities hold, caps included, so a boot that would write the
-    same leaves them and a changed cap setting is written. The key never
-    changes, so it is not part of it."""
+    """What the entities hold, caps aside (the caps profile has its own), so a
+    boot that would write the same leaves them. The key never changes, so it
+    is not part of it."""
     parts = [db, structure_digest(), *profile]
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:32]
 

@@ -37,9 +37,11 @@ class AnalysisColumn(BaseModel):
 
 
 class InsightsQueryOutput(BaseModel):
+    # The statement's result columns, each with its ClickHouse type.
     columns: list[AnalysisColumn] = Field(default_factory=list)
     # One list per row, in `columns` order; dates, UUIDs and decimals as strings.
     rows: list[list[Any]] = Field(default_factory=list)
+    # How many rows `rows` holds, at most `limit`.
     row_count: int = 0
     # More rows matched than `limit`; narrow the statement or aggregate.
     truncated: bool = False
@@ -68,8 +70,11 @@ class CatalogTable(BaseModel):
 
 
 class InsightsCatalogOutput(BaseModel):
+    # The tables insights.query reads, with their columns and how to read them.
     tables: list[CatalogTable]
-    # The caps a statement runs under, so a query can be sized before it runs.
+    # The most rows one statement returns; past it the answer is truncated.
     max_result_rows: int
+    # The longest one statement runs before ClickHouse stops it.
     max_execution_s: float
+    # The most rows one statement may read; add a time or key filter past it.
     max_rows_to_read: int

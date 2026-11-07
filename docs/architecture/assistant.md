@@ -277,7 +277,11 @@ picks each key's latest version and the policy then drops it when that version i
 tombstone: a deleted or erased key is absent, and its earlier versions do not come back.
 A second policy, `AS PERMISSIVE USING 1 TO ALL EXCEPT loom_analyst`, keeps every other
 user, Loom's own included, reading the tables as before, whatever the server's
-`users_without_row_policies_can_read_rows` says.
+`users_without_row_policies_can_read_rows` says. ClickHouse ORs the permissive policies
+on a table, so this one would widen any permissive policy someone else put on an
+allowlisted table: before every write Loom lists them in `system.row_policies` and,
+finding one, writes nothing and names it, for an admin to drop or make restrictive. A
+restrictive policy is left alone, since it narrows every user it names.
 
 The key and the analyst's password are random and kept together, as one sealed value, in
 one row of `loom.analysis_secrets`, sealed with `server/core/secrets_at_rest.py` in the
@@ -319,7 +323,8 @@ stored key. Elsewhere an admin uses one of two commands:
   rules below (it holds the lease and writes unless the stored version is newer than its
   own), so it is also the repair on a server that cannot write them. It draws the row
   only when there is none and no analyst user exists; over a lost row with the user
-  still there, it refuses and names `--rotate-analysis-key`.
+  still there, it refuses: until the rotation of [part 2](#build-order), the recovery is
+  to drop the analyst user and run it again.
 - `loom ch-setup --print-analyst-sql` prints SQL for an admin to run by hand, and needs
   no access management to print (where `--print-sql` prints the admin SQL
   `loom ch-setup` would run, with the reader's password as a placeholder). It proves its
@@ -423,9 +428,11 @@ keeps:
   else does, so they never touch the version. They are read at boot, not live, and
   `loom doctor` reports a caps profile that differs from the server's settings.
 - **No granted table without its policy.** By default ClickHouse lets a user with no
-  policy on a table read every row of it, so each policy is replaced in place before any
-  grant is given, every grant outside the allowlist and the canary is revoked after, and
-  a policy is never dropped: a table that leaves the allowlist keeps one that reads
+  policy on a table read every row of it, so each policy is replaced in place, every
+  other user's before the analyst's, before any grant is given; then every grant and
+  role outside the allowlist and the canary is revoked, and then the allowlist is
+  granted, since a table's revoke also takes the column grants under it; and a policy is
+  never dropped: a table that leaves the allowlist keeps one that reads
   nothing.
 - **The key never changes by itself.** The secrets row is drawn once, and every read of
   it, the one under the lease included, runs with the read-your-writes setting Loom uses
@@ -447,22 +454,20 @@ keeps:
   the length of the run; a replica that still holds the old password gets an
   authentication failure, which answers `ANALYSIS_UNAVAILABLE` too.
 
-A replica probes the analyst user at boot and again before the first statement a minute
-or more after its last probe, as the analyst itself, so the probe needs no access
-management:
+A replica probes the analyst user at boot and then a minute after each probe, in the
+background, as the analyst itself, so the probe needs no access management:
 
 - a signed read of `loom.analysis_canary`, whose one row sits in a reserved scope (the
   empty org and namespace, which `insights.query` refuses as a request's scope) under a
   policy with the same key, must return that row: the policies accept the key;
 - a signed read of each allowlisted table in that reserved scope must count no rows: no
   extra policy widens what the analyst reads (under the server default a table with no
-  analyst policy counts rows too, so a write is tried first, and what it leaves is a
-  policy for an admin);
+  analyst policy counts rows too, which a write repairs; a write is never made over a
+  permissive policy Loom did not write, which is named instead);
 - a `system` table must be refused;
 - when the stored version is this build's: an unsigned read of each allowlisted table
   and of the canary must fail for want of the scope settings (the table has a policy
-  that reads them), and
-  the analyst's own `SHOW GRANTS` must name nothing but the allowlist and the canary. A
+  that reads them), and the analyst's own `SHOW GRANTS` must name nothing but the allowlist and the canary. A
   build older than the stored version skips these, since the entities are another
   build's.
 
