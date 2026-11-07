@@ -109,6 +109,13 @@ class _Inspect:
         self.scope = request_scope()
         self.skipped: list[str] = []
         self.category_names: dict[str, str] = {}
+        # Under Postgres, whether ClickHouse held what the namespace committed when the
+        # views were read (`published_reads`); a view read short of it is not complete.
+        self.published = True
+
+    def unpublished(self, reason: str) -> None:
+        self.published = False
+        self.skipped.append(f"{pg_validation.PROJECTION}: {reason}")
 
     async def guarded[T](self, section: str, read: Callable[[], Awaitable[T]], default: T) -> T:
         """One section's read; a failure lands in `skipped` and the default stands."""
@@ -184,7 +191,7 @@ class _Inspect:
                 )
                 for r in newest
             ]
-        out.complete = counted and len(out.newest) >= out.live_rows
+        out.complete = self.published and counted and len(out.newest) >= out.live_rows
         return out
 
     async def activity(self) -> InspectActivity:
@@ -270,12 +277,7 @@ def _record_exposure(input: MemoryInspectInput, keys: list[str]) -> None:
 
 async def handle_memory_inspect(input: MemoryInspectInput) -> MemoryInspectOutput:
     run = _Inspect(input)
-    published = pg_validation.published_reads(
-        input.org,
-        [input.namespace],
-        lambda reason: run.skipped.append(f"{pg_validation.PROJECTION}: {reason}"),
-    )
-    async with published:
+    async with pg_validation.published_reads(input.org, [input.namespace], run.unpublished):
         return await _inspect(input, run)
 
 

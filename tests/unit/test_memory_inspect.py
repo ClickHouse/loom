@@ -545,3 +545,5 @@ async def test_an_unpublished_projection_reads_on_and_says_so(
     out = await mi.handle_memory_inspect(_inp(sample_limit=1))
     assert [s.split(": ")[:2] for s in out.skipped] == [["projection", "POSTGRES_UNAVAILABLE"]]
     assert out.own.newest
+    # Read short of what the namespace committed, neither view is the whole of it.
+    assert not out.own.complete and not out.others.complete
