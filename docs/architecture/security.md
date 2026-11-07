@@ -323,18 +323,22 @@ email verification or password reset. In `gateway`, Loom never sees a password.
 sign-up writes, or, for an account made before the prefix, a plain hash on an agent sign-up's
 shape (an `agent-` name that is its own owner, with no email) without the claim's tag. Only
 sign-up writes that shape, no settings write changes the owner, the email or the password,
-and every other account with a password names an email. No password sign-in
+and every other account with a password names an email. Linking an account to an SSO email
+(`loom sso link`, the one operator step that writes an email on a password account) refuses
+an unclaimed one (`is_unclaimed`, the same rule on a row already read). No password sign-in
 (`/v1/auth/login`, the OAuth authorize form, the device grant) accepts an unclaimed account.
 
 The claim page (`server/identity/app/agent_claim.py`) checks the code under the password
 sign-in limits and hashes the new password only once the code is proven. Holding the account
 from read to write, it cuts off every token the namespace's subject was issued before
 (`account_admin.end_tokens`, which also ends each OAuth and device session at its next
-refresh), then replaces the code with the claimer's own password and adds the tag
-`machine:agent-signup:claimed`. `namespace.register` carries a `machine:` tag forward from
-the row and drops one from a form, on this build and the one before it, and a trust's name
-never holds `:`. The page answers once every replica's clock is past the cutoff, so the
-claimer's next sign-in is not ended by it. A second claim finds no code and is refused, so
+refresh), replaces the code with the claimer's own password, adds the tag
+`machine:agent-signup:claimed`, and cuts off once more after the write, for a sign-in with a
+plain-hash code on an older replica while the write was landing. `namespace.register`
+carries a `machine:` tag forward from the row and drops one from a form, on this build and
+the one before it; a trust's name never holds `:`, and unlike a trust's tag the claim's tag
+does not bind the namespace's owner. The page answers once every replica's clock is past the
+later cutoff, so the claimer's next sign-in is not ended by it. A second claim finds no code and is refused, so
 whoever kept a copy of the code cannot sign in as the namespace afterwards, nor keep a
 session it started with the code. An account claimed by signing in with its code before the
 claim page existed is unclaimed by this rule: its owner claims it again with the same code,
@@ -342,6 +346,9 @@ and the first claim wins.
 
 During a rolling upgrade a replica of the build before still signs in with a plain-hash code;
 a claim on the new build ends what that sign-in issued, and the code verifies nowhere after it.
+Restoring `loom.namespaces` from a backup taken before a claim brings the unclaimed account
+back: the claimer's password is gone and the code claims the namespace again, for whoever
+holds it. Claim it again at once after such a restore.
 
 **Impersonation.** A subject in `LOOM_TRUSTED_CALLERS` may send `X-Loom-On-Behalf-Of`
 over HTTP to act as another principal. The header's subject becomes the effective

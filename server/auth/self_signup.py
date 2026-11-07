@@ -33,7 +33,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from server.auth.attempts import Attempts, client_address
-from server.auth.claim_codes import AGENT_TAG, hash_claim_code_off_loop
+from server.auth.claim_codes import hash_claim_code_off_loop
 from server.auth.jwt import mint_token
 from server.auth.login import platform_roles
 from server.auth.passwords import (
@@ -331,6 +331,7 @@ def _claimable_namespace(name: str) -> str:
 # ============================================================
 
 AGENT_NAMESPACE_PREFIX = "agent-"
+AGENT_TAG = "agent"  # on the agent's namespace, for people to read; no check reads it
 # An agent's own token row (`loom.service_accounts`) is named this plus the
 # agent's name; a person's token cannot take such a name.
 AGENT_NAME_PREFIX = "agent · "

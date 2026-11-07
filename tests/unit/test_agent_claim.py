@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -117,9 +118,11 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
         return any(issued_at < cutoffs.get(s, 0) for s in subjects)
 
     waited: list[Any] = []
+    audited_before_wait: list[int] = []
 
     async def wait_out(cutoff: Any) -> None:
         waited.append(cutoff)
+        audited_before_wait.append(len(events))
 
     async def active(subject: str, org: str, roles: list[str]) -> list[str]:
         return roles
@@ -131,6 +134,7 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
     return {
         "cutoffs": cutoffs,
         "waited": waited,
+        "audited_before_wait": audited_before_wait,
         "ch": ch,
         "code": out.claim_code,
         "legacy_code": legacy_code,
@@ -218,13 +222,12 @@ def test_a_person_with_an_email_is_no_unclaimed_agent(world) -> None:
 
 def test_a_settings_write_keeps_an_old_agent_unclaimed(world) -> None:
     # A form sends tags=[] by default: the `agent` tag goes, the shape stays.
-    from datetime import datetime
-
     from server.identity.api.models import NamespaceRegisterInput
     from server.identity.app.namespace import registry_row
 
     form = NamespaceRegisterInput(org="dev", namespace=_LEGACY, owner_email=_LEGACY)
-    row = registry_row(form, _row(world, _LEGACY), datetime(2030, 1, 1))
+    stored = _row(world, _LEGACY)
+    row = registry_row(form, stored, stored["updated_at"] + timedelta(seconds=1))
     assert row["tags"] == [] and row["password_hash"] == _row(world, _LEGACY)["password_hash"]
     asyncio.run(world["ch"].insert("loom.namespaces", [row]))
     assert _sign_in(world["legacy_code"], _LEGACY) is None
@@ -306,6 +309,33 @@ def test_a_claim_ends_the_tokens_and_sessions_the_code_started(world) -> None:
     assert world["waited"] == [revocation_cutoff(world, _LEGACY)]
 
 
+def test_the_cutoff_waited_out_follows_the_password_write(world, monkeypatch) -> None:
+    # A replica of the build before signs in with a plain-hash code until the
+    # write lands: the cutoff the page waits out is taken after it.
+    from datetime import UTC, datetime
+
+    monkeypatch.setattr(revocation, "CLOCK_SKEW_S", 0)
+    ch, written = world["ch"], []
+    insert = ch.insert
+
+    async def slow_insert(table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
+        if table == "loom.namespaces":
+            await asyncio.sleep(1.5)
+        await insert(table, rows, settings)
+        if table == "loom.namespaces":
+            written.append(datetime.now(UTC))
+
+    monkeypatch.setattr(ch, "insert", slow_insert)
+    assert (
+        _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY).status_code == 200
+    )
+    [write] = written
+    [cutoff] = world["waited"]
+    assert cutoff >= write
+    # The claim is audited when it lands, not after the wait.
+    assert world["audited_before_wait"] == [1]
+
+
 def revocation_cutoff(world: dict[str, Any], subject: str) -> Any:
     from datetime import UTC, datetime
 
@@ -351,28 +381,69 @@ def test_a_claim_that_lands_first_is_not_overwritten(world, monkeypatch) -> None
     assert _row(world, _NS)["password_hash"] == "$argon2id$other"
 
 
-def test_the_claimed_mark_is_a_tag_every_build_keeps_and_no_trust_names() -> None:
-    # `machine:` tags are carried forward from the row and dropped from forms by
-    # `namespace.register` on this build and the one before it.
-    trust = claim_codes.CLAIMED_TAG.removeprefix(agents.TAG_PREFIX)
-    assert trust != claim_codes.CLAIMED_TAG and ":" in trust
-
-
 def test_the_claimed_mark_survives_a_settings_write_and_no_form_sets_it(world) -> None:
-    from datetime import datetime
-
     from server.identity.api.models import NamespaceRegisterInput
     from server.identity.app.namespace import registry_row
 
+    # The mark rides the `machine:` prefix, which `namespace.register` carries
+    # forward from the row and drops from a form on this build and the one before
+    # it; a trust's name never holds ':', so the mark names no trust.
+    trust = claim_codes.CLAIMED_TAG.removeprefix(agents.TAG_PREFIX)
+    assert trust != claim_codes.CLAIMED_TAG and ":" in trust
+
     assert _claim(_app(), world["code"], "correct horse").status_code == 200
-    now = datetime(2026, 1, 2)
+    stored = _row(world, _NS)
+    now = stored["updated_at"] + timedelta(seconds=1)
     form = NamespaceRegisterInput(org="dev", namespace=_NS, owner_email=_NS, tags=["mine"])
-    tags = registry_row(form, _row(world, _NS), now)["tags"]
+    tags = registry_row(form, stored, now)["tags"]
     assert tags == ["mine", claim_codes.CLAIMED_TAG]
     forged = NamespaceRegisterInput(
         org="dev", namespace="x", owner_email="x", tags=[claim_codes.CLAIMED_TAG]
     )
     assert registry_row(forged, None, now)["tags"] == []
+
+
+def test_a_released_claimed_namespace_takes_the_owner_a_register_names(world) -> None:
+    # The claim's mark is no trust's: it does not bind the owner as a trust's mark
+    # does, so a release (owner cleared) followed by a register names the new one.
+    from server.identity.api.models import NamespaceRegisterInput
+    from server.identity.app.namespace import registry_row
+
+    assert _claim(_app(), world["code"], "correct horse").status_code == 200
+    released = {**_row(world, _NS), "owner_email": "", "password_hash": "", "active": False}
+    assert claim_codes.CLAIMED_TAG in released["tags"]
+    form = NamespaceRegisterInput(org="dev", namespace=_NS, owner_email="ops")
+    now = released["updated_at"] + timedelta(seconds=1)
+    assert registry_row(form, released, now)["owner_email"] == "ops"
+
+
+def test_the_row_check_and_the_statement_agree(world) -> None:
+    rows = asyncio.run(
+        world["ch"].query_all(
+            "SELECT *, {u} AS unclaimed FROM loom.namespaces FINAL".replace(
+                "{u}", claim_codes.UNCLAIMED_SQL
+            )
+        )
+    )
+    assert {r["namespace"]: bool(r["unclaimed"]) for r in rows} == {
+        _NS: True,
+        _LEGACY: True,
+        "agent-lee": False,
+    }
+    assert all(claim_codes.is_unclaimed(r) == bool(r["unclaimed"]) for r in rows)
+    assert _claim(_app(), world["code"], "correct horse").status_code == 200
+    assert not claim_codes.is_unclaimed(_row(world, _NS))
+
+
+def test_an_sso_link_refuses_an_unclaimed_agent(world, monkeypatch) -> None:
+    # An email on the row would take it out of the unclaimed shape and leave its
+    # code as its password.
+    from server.identity.app import account_admin
+
+    monkeypatch.setattr(account_admin.settings, "oauth_login_provider", "oidc")
+    for namespace in (_NS, _LEGACY):
+        with pytest.raises(ValueError, match="nobody has claimed"):
+            asyncio.run(account_admin.link_plan("lee@corp.example", "dev", namespace))
 
 
 def test_no_claim_while_sso_is_on(world, monkeypatch) -> None:

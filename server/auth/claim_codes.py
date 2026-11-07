@@ -3,7 +3,10 @@
 Agent self-signup stores the code's hash as `CLAIM_PREFIX` + an argon2id hash,
 which `verify_password` reads as malformed. An agent account made before the
 prefix holds a plain argon2id hash of its code; it is told apart by its shape
-(`UNCLAIMED_SQL`), which only sign-up writes and no settings write changes.
+(`UNCLAIMED_SQL`). Only sign-up writes that shape. No settings write changes
+the owner, the email or the password, and the one operator step that writes an
+email on a password account (`account_admin.link_account`) refuses an
+unclaimed one (`is_unclaimed`).
 Until the claim, no sign-in takes the code; the claim page
 (`server.identity.app.agent_claim`) takes it once and writes the claimer's own
 password with `CLAIMED_TAG`.
@@ -11,10 +14,12 @@ password with `CLAIMED_TAG`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from server.auth.passwords import hash_password_off_loop, verify_password_off_loop
 
 CLAIM_PREFIX = "claim:"
-AGENT_TAG = "agent"  # sign-up's tag on the namespace, for people to read
 # The claim's mark rides the workload-trust tag prefix (`agents.TAG_PREFIX`):
 # every build's `namespace.register` carries such a tag forward from the row
 # and drops it from a form. A trust's name never holds ':', so this names none.
@@ -29,6 +34,22 @@ UNCLAIMED_SQL = (
     " OR (startsWith(namespace, 'agent-') AND owner_email = namespace"
     f" AND contact_email = '' AND NOT has(tags, '{CLAIMED_TAG}'))))"
 )
+
+
+def is_unclaimed(row: Mapping[str, Any]) -> bool:
+    """`UNCLAIMED_SQL` for a row already read."""
+    password_hash = str(row.get("password_hash") or "")
+    if not password_hash:
+        return False
+    if password_hash.startswith(CLAIM_PREFIX):
+        return True
+    namespace = str(row.get("namespace") or "")
+    return (
+        namespace.startswith("agent-")
+        and row.get("owner_email") == namespace
+        and not row.get("contact_email")
+        and CLAIMED_TAG not in (row.get("tags") or [])
+    )
 
 
 async def hash_claim_code_off_loop(code: str) -> str:

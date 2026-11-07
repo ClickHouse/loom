@@ -107,12 +107,12 @@ async def agent_claim(request: Request) -> Response:
     if claimed is None:
         return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
     org, cutoff = claimed
-    # The person signs in next: past the cutoff on every replica's clock, so the
-    # token they get is not one it ends.
-    await revocation.wait_out(cutoff)
     await audit.emit(
         "auth.agent_claimed", org=org, namespace=namespace, actor=namespace, subject={}
     )
+    # The person signs in next: past the cutoff on every replica's clock, so the
+    # token they get is not one it ends.
+    await revocation.wait_out(cutoff)
     return oauth.html_page(
         _TITLE,
         f"<h2>Claimed</h2><p>Sign in as <b>{html.escape(namespace)}</b> with your password.</p>",
@@ -148,7 +148,8 @@ async def _replace_code(
         # Before the write, so a write that fails leaves the code to retry with,
         # never a spent code and live tokens. A subject cutoff also ends every
         # OAuth and device session the code started (`oauth.issue_tokens`).
-        cutoff = await account_admin.end_tokens(row["owner_email"], by=namespace, reason=_REASON)
+        subject = str(row["owner_email"])
+        await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         # Insert-as-replace carrying every other column forward.
         await get_client().insert(
@@ -162,6 +163,9 @@ async def _replace_code(
                 }
             ],
         )
+        # Again after it: a replica of the build before signs in with a plain-hash
+        # code until the write lands, and the first cutoff predates that.
+        cutoff = await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
     return org, cutoff
 
 
