@@ -229,8 +229,9 @@ class _CppWindow:
             for n in ("a.cpp", "b.cpp")
         ]
         (self.repo / "build" / "compile_commands.json").write_text(json.dumps(compdb))
-        # a cache whose compilers the host has: the reconfigure tests keep it
+        # a cache made here, whose compilers the host has: the reconfigure tests keep it
         (self.repo / "build" / "CMakeCache.txt").write_text(
+            f"CMAKE_CACHEFILE_DIR:INTERNAL={self.repo / 'build'}\n"
             "CMAKE_GENERATOR:INTERNAL=Ninja\n"
             "CMAKE_C_COMPILER:FILEPATH=/bin/sh\nCMAKE_CXX_COMPILER:FILEPATH=/bin/sh\n"
         )
@@ -393,8 +394,8 @@ def test_a_full_index_whose_reconfigure_fails_fails(tmp_path: Path) -> None:
 def test_a_cache_that_cannot_be_reconfigured_is_configured_from_scratch(
     tmp_path: Path, cache: str | None
 ) -> None:
-    """No cache, or one naming a compiler the host no longer has: the pinned first
-    configure, not a reconfigure that would fail on every run."""
+    """No cache, or one made in another directory or naming a compiler the host no longer
+    has: the pinned first configure, not a reconfigure that would fail on every run."""
     w = _CppWindow(tmp_path)
     if cache is None:
         (w.repo / "build" / "CMakeCache.txt").unlink()
@@ -415,7 +416,7 @@ def test_a_first_configure_without_clang_on_path_fails_classified_cmake(tmp_path
     tools.mkdir()
     for d in ("/usr/bin", "/bin"):
         for exe in Path(d).iterdir():
-            if not exe.name.startswith("clang") and not (tools / exe.name).exists():
+            if not exe.name.startswith("clang") and not os.path.lexists(tools / exe.name):
                 (tools / exe.name).symlink_to(exe)
     env = {k: v for k, v in w.env.items() if k not in ("CC", "CXX")}
     env["PATH"] = f"{w.env['PATH'].split(os.pathsep)[0]}{os.pathsep}{tools}"

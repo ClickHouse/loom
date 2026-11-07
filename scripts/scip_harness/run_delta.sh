@@ -41,16 +41,11 @@ cmake_configure() {
 # cache_unusable: the cache was made in another directory (CMake refuses it), or
 # names a C or C++ compiler the host no longer has.
 cache_unusable() {
-  local dir
+  local dir tool
   dir=$(sed -n 's/^CMAKE_CACHEFILE_DIR:INTERNAL=//p' build/CMakeCache.txt)
   if [[ -n "$dir" && "$(realpath -m "$dir")" != "$(realpath -m build)" ]]; then
     return 0
   fi
-  cached_compiler_missing
-}
-
-cached_compiler_missing() {
-  local tool
   while IFS= read -r tool; do
     [[ -z "$tool" ]] || command -v "$tool" >/dev/null || return 0
   done < <(sed -n 's/^CMAKE_C\(XX\)\?_COMPILER:[A-Z]*=//p' build/CMakeCache.txt)
