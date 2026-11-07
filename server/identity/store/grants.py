@@ -218,6 +218,21 @@ _PEOPLE_PAGE = (
 )
 
 
+async def active_on(
+    org: str, namespace: str, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """(subject, role) of every active grant on (org, namespace), with no limit."""
+    ch = ch or _default_client()
+    return await ch.query_all(
+        """
+        SELECT subject, role FROM loom.namespace_grants FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND {live}
+        """.replace("{live}", LIVE_GRANT),
+        params={"org": org, "ns": namespace},
+    )
+
+
 async def people_page(
     org: str,
     namespace: str,

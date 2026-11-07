@@ -43,6 +43,26 @@ _creators: dict[tuple[str, str], tuple[float, SACreator]] = {}
 _CREATOR_CACHE_MAX = 4096
 
 
+async def agent_signup_tokens(org: str, namespace: str, *, ch: Any | None = None) -> set[str]:
+    """The `sa_subject`s agent sign-up stored for `namespace`: made by the
+    namespace itself, under the agent name prefix no person's token can take."""
+    from server.auth.self_signup import AGENT_CLIENT, AGENT_NAME_PREFIX
+
+    if ch is None:
+        from server.core.ch import get_client
+
+        ch = get_client()
+    rows = await ch.query_all(
+        """
+        SELECT sa_subject FROM loom.service_accounts FINAL
+        WHERE org = {org:String} AND created_by = {ns:String} AND client = {client:String}
+          AND startsWith(name, {prefix:String})
+        """,
+        params={"org": org, "ns": namespace, "client": AGENT_CLIENT, "prefix": AGENT_NAME_PREFIX},
+    )
+    return {str(r["sa_subject"]) for r in rows}
+
+
 async def sa_creator(org: str, sa_subject: str, *, ch: Any | None = None) -> SACreator | None:
     """The creator of the unrevoked service account `sa_subject` in `org`;
     None for a subject that is not one, a row with no creator, or a failed

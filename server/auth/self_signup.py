@@ -27,14 +27,20 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from server.auth.attempts import Attempts, client_address
+from server.auth.claim_codes import hash_claim_code_off_loop
 from server.auth.jwt import mint_token
 from server.auth.login import platform_roles
-from server.auth.passwords import hash_password_off_loop
+from server.auth.passwords import (
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
+    hash_password_off_loop,
+)
 from server.core import grant_cache, leases
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now_seconds
@@ -57,7 +63,7 @@ async def provision_account(
     """Create a loom.namespaces row + the owner's admin self-grant.
 
     Shared by self-signup (password), OIDC JIT provisioning (no password),
-    agent self-signup (the claim code as the password), the auth-off default
+    agent self-signup (the claim code's hash, which only the claim takes), the auth-off default
     namespace and the personal-namespace auto-claim, so the account shape
     can't drift. password_hash="" = no password sign-in. `ch` defaults to
     the server's client.
@@ -117,7 +123,9 @@ class SelfSignupInput(BaseModel):
     org: str | None = None  # defaults to settings.self_signup_org
     email: Annotated[str, Field(min_length=3, max_length=320)]
     # argon2id-hashed before storage; repr=False keeps it out of logs and tracebacks
-    password: Annotated[str, Field(min_length=8, max_length=256, repr=False)]
+    password: Annotated[
+        str, Field(min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH, repr=False)
+    ]
     ttl_days: Annotated[int, Field(ge=1, le=3650)] = 365
 
 
@@ -319,13 +327,18 @@ def _claimable_namespace(name: str) -> str:
 
 # ============================================================
 # Agent self-signup: a bot mints its own scoped token; a
-# human claims the namespace later with a one-time code.
+# human claims the namespace later with a code that works once.
 # ============================================================
 
 AGENT_NAMESPACE_PREFIX = "agent-"
+# The description when an agent's sign-up names no purpose.
+AGENT_DESCRIPTION = "Created via agent self-signup."
+# The default of rows signed up before the claim page; a claim replaces it.
+AGENT_DESCRIPTION_UNCLAIMED = "Created via agent self-signup; unclaimed."
 # An agent's own token row (`loom.service_accounts`) is named this plus the
 # agent's name; a person's token cannot take such a name.
 AGENT_NAME_PREFIX = "agent · "
+AGENT_CLIENT = "agent-signup"  # the `client` of that row
 AGENT_SIGNUPS_PER_HOUR = 5
 # Humans behind one office NAT share an address; agents rarely do.
 HUMAN_SIGNUPS_PER_HOUR = 20
@@ -405,6 +418,11 @@ class AgentSignupOutput(BaseModel):
     expires_at: datetime | None = None
 
 
+def claim_url(base_url: str, namespace: str) -> str:
+    """The page where a person claims `namespace` with its code."""
+    return f"{base_url}/oauth/agent-claim?{urlencode({'namespace': namespace})}"
+
+
 def _base_url(request: Request) -> str:
     # One resolver for every address the server hands out.
     from server.auth.public_url import public_base_url
@@ -417,12 +435,13 @@ async def agent_signup(input: AgentSignupInput, request: Request) -> AgentSignup
     """A bot signs itself up: one call, no human, no operator.
 
     Provisions `agent-<slug>` with the human self-signup's account shape —
-    the namespace's owner identity is the namespace name, its password is a
-    one-time claim code — grants a service-account subject `writer` on it,
-    and returns that subject's token plus the claim code. A person claims the
-    namespace later by signing in to the dashboard with the namespace name and the
-    code (the ordinary login route), which makes them its admin; the agent's
-    token keeps working. First-claim-wins on the name, like the human route.
+    the namespace's owner identity is the namespace name, and it stores a claim
+    code that no sign-in takes — grants a service-account subject `writer` on
+    it, and returns that subject's token plus the claim code. A person claims
+    the namespace once at `claim_url` with the code and a password of their
+    own, which replaces the code (`server.identity.app.agent_claim`); they
+    then sign in as the namespace, its admin, and the agent's token keeps
+    working. First-claim-wins on the name, like the human route.
     """
     if settings.effective_identity_provider() == "single-user":
         # Creates nothing, so the per-address limit does not apply.
@@ -520,8 +539,8 @@ async def _provision_agent(
         namespace=namespace,
         subject=namespace,
         contact_email="",
-        password_hash=await hash_password_off_loop(claim_code),
-        description=input.purpose.strip() or "Created via agent self-signup; unclaimed.",
+        password_hash=await hash_claim_code_off_loop(claim_code),
+        description=input.purpose.strip() or AGENT_DESCRIPTION,
         tags=["agent"],
     )
     await ch.insert(
@@ -558,7 +577,7 @@ async def _provision_agent(
                 "revoked_by": "",
                 "version": time.time_ns(),
                 "kind": "agent",
-                "client": "agent-signup",
+                "client": AGENT_CLIENT,
                 "inherit_creator_grants": False,
                 "ns_roles": json.dumps({namespace: "writer"}),
             }
@@ -570,7 +589,7 @@ async def _provision_agent(
         org=org,
         subject=sa_subject,
         claim_code=claim_code,
-        claim_url=f"{_base_url(request)}/",
+        claim_url=claim_url(_base_url(request), namespace),
         expires_at=expires_at,
     )
 

@@ -450,7 +450,7 @@ of the above, so they do not stop with someone's offboarding.
   ended session writes an `auth.*` row to the audit log:
   `auth.sso_signin`, `auth.signin_denied`, `auth.device_approved`,
   `auth.device_denied`, `auth.connect_approved`, `auth.connect_denied`,
-  `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`, `auth.machine_created`, `auth.machine_token`, `auth.machine_disabled`, `auth.agent_provisioned`, `auth.platform_admin_minted`,
+  `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`, `auth.agent_claimed`, `auth.machine_created`, `auth.machine_token`, `auth.machine_disabled`, `auth.agent_provisioned`, `auth.platform_admin_minted`,
   `auth.session_revoked`, `auth.scim_deactivated`, `auth.scim_reactivated`,
   `auth.scim_deleted`, `auth.scim_collateral`.
 

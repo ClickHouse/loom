@@ -17,6 +17,7 @@ import asyncio
 import functools
 import logging
 import secrets
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
@@ -25,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from server.auth import attempts
 from server.auth.attempts import Attempts, address_key, client_address
+from server.auth.claim_codes import UNCLAIMED_SQL
 from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password, verify_password_off_loop
 from server.core.ch import get_client
@@ -92,6 +94,11 @@ def _unknown_account_hash() -> str:
     return hash_password(secrets.token_urlsafe(24))
 
 
+async def verify_as_unknown(password: str) -> None:
+    """One full hash against no account, so a miss costs what a wrong password does."""
+    await verify_password_off_loop(await asyncio.to_thread(_unknown_account_hash), password)
+
+
 async def resolve_user_credentials(
     identifier: str, password: str, *, address: str = ""
 ) -> Identity | None:
@@ -104,6 +111,15 @@ async def resolve_user_credentials(
     password hash so response timing doesn't leak account existence.
     """
     ident = identifier.strip().lower()
+    return await throttled(ident, address, lambda: _check_credentials(ident, password))
+
+
+async def throttled[T](
+    ident: str, address: str, check: Callable[[], Awaitable[T | None]]
+) -> T | None:
+    """Run `check` of a secret for `ident` under the sign-in limits: it counts
+    as a failure unless it answers something. Raises LoginThrottled past the
+    limit for `ident` or `address`, LoginBusy when no check slot frees."""
     by_address = [(_by_address, address_key(address))] if address else []
     gates = [(_by_identifier, ident), *by_address]
     try:
@@ -112,7 +128,7 @@ async def resolve_user_credentials(
             if admitted is None:
                 raise LoginThrottled
             try:
-                resolved = await _check_credentials(ident, password)
+                resolved = await check()
             except BaseException:
                 # A check that crashed (a ClickHouse timeout) judged nothing.
                 await _release_quietly(admitted)
@@ -133,18 +149,21 @@ async def _release_quietly(admitted: attempts.Admission) -> None:
 
 async def _check_credentials(ident: str, password: str) -> Identity | None:
     if not ident:
-        # Unclaimed agents' rows name no email: a blank identifier would test
-        # the password against every one of them. Timed as an unknown account.
-        await verify_password_off_loop(await asyncio.to_thread(_unknown_account_hash), password)
+        # Agent accounts name no email: a blank identifier would test the
+        # password against every one of them. Timed as an unknown account.
+        await verify_as_unknown(password)
         return None
     ch = get_client()
+    # An unclaimed agent's claim code is no password: it only claims
+    # (`server.identity.app.agent_claim`), and its row is timed as unknown here.
     # Email first (one email may own several namespaces → mint with all of them).
     rows = await ch.query_all(
         """
         SELECT namespace, owner_email, org, password_hash, contact_email
         FROM loom.namespaces FINAL
         WHERE contact_email = {ident:String} AND active = 1 AND password_hash != ''
-        """,
+          AND NOT {unclaimed}
+        """.replace("{unclaimed}", UNCLAIMED_SQL),
         params={"ident": ident},
     )
     if not rows:  # fallback: identifier is a namespace name
@@ -153,11 +172,12 @@ async def _check_credentials(ident: str, password: str) -> Identity | None:
             SELECT namespace, owner_email, org, password_hash, contact_email
             FROM loom.namespaces FINAL
             WHERE namespace = {ident:String} AND active = 1 AND password_hash != ''
-            """,
+              AND NOT {unclaimed}
+            """.replace("{unclaimed}", UNCLAIMED_SQL),
             params={"ident": ident},
         )
     if not rows:
-        await verify_password_off_loop(await asyncio.to_thread(_unknown_account_hash), password)
+        await verify_as_unknown(password)
         return None
     # The password proves one credential, not every row that shares the
     # email or name: sign in as the row it verifies, and mint only the

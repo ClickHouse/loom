@@ -149,6 +149,7 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
     now, the grants under it to carry to the subject revoked (its revoked ones,
     or all of them when it is another account's verified email, `elsewhere`).
     Raises ValueError when it cannot take `email`."""
+    from server.auth.claim_codes import is_unclaimed
     from server.core.ch import get_client, own_write_reads
     from server.identity.store import namespaces
 
@@ -166,6 +167,15 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
         row = await namespaces.fetch_row(org, namespace)
         if row is None or not row["active"] or not row["password_hash"]:
             raise ValueError(f"{org}/{namespace} is not an active password account")
+        if is_unclaimed(row):
+            # An email would end the claim code's hold on the account and leave
+            # the code as its password.
+            raise ValueError(
+                f"{org}/{namespace} is an agent's namespace nobody has claimed, and the "
+                "claim page is closed under SSO: turn SSO off to claim it at "
+                f"/oauth/agent-claim, or release it with `loom claim-release --org {org} "
+                f"--namespace {namespace}`"
+            )
         was = str(row["contact_email"])
         if was == email:
             if (org, namespace) in await sso_links.linked(email):

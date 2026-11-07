@@ -290,8 +290,8 @@ when auth is turned on.
 - **A bot that signs itself up** (trust-network only):
   `loom init --agent nightly-triage --server-url http://localhost:7777` creates the
   namespace `agent-nightly-triage`, saves a writer token to `~/.loom/token` and the URL
-  to `~/.loom/config.json`, and prints a one-time claim code. A person signs in to the dashboard
-  with that code to take ownership.
+  to `~/.loom/config.json`, and prints a claim code. A person enters it once at
+  `/oauth/agent-claim` with a password of their own to take ownership.
 
 Save the token where the SDK, the CLI and the plugins look for it:
 

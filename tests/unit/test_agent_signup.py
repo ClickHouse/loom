@@ -1,7 +1,7 @@
 """An agent signs itself up.
 
 The route provisions `agent-<slug>` with the human self-signup's account
-shape (owner = the namespace name, password = a one-time claim code), grants
+shape (owner = the namespace name, a claim code no sign-in takes), grants
 a service-account subject `writer`, mints that subject's token, and is gated
 and rate-limited; the CLI saves the token and config where the hooks look
 and prints the claim code once. Hermetic: the ClickHouse client is faked.
@@ -19,7 +19,7 @@ import pytest
 from fastapi import HTTPException
 
 import server.auth.self_signup as ss
-from server.auth import passwords
+from server.auth import claim_codes, passwords
 from server.auth.jwt import verify_token
 
 
@@ -143,7 +143,7 @@ async def test_signup_provisions_the_account_shape_and_returns_a_writer_sa_token
     assert out.namespace == "agent-nightly-triage" and out.org == "dev"
     assert re.fullmatch(r"sa:agent-nightly-triage-[0-9a-f]{6}", out.subject)
     assert len(out.claim_code) >= 20
-    assert out.claim_url == "http://loom.test:7777/"
+    assert out.claim_url == "http://loom.test:7777/oauth/agent-claim?namespace=agent-nightly-triage"
 
     claims = verify_token(out.token)
     assert claims.subject == out.subject and claims.org == "dev"
@@ -159,12 +159,13 @@ async def test_signup_provisions_the_account_shape_and_returns_a_writer_sa_token
         "loom.service_accounts",
     ]
     ns_row = _open.inserts[0][1][0]
-    # the human self-signup shape: the namespace is its own owner identity and
-    # the claim code is its password — the ordinary login route is the claim
+    # the human self-signup shape: the namespace is its own owner identity; the
+    # claim code is stored so that only the claim page takes it, never a sign-in
     assert ns_row["owner_email"] == "agent-nightly-triage"
     assert ns_row["contact_email"] == ""
-    assert passwords.verify_password(ns_row["password_hash"], out.claim_code)
-    assert not passwords.verify_password(ns_row["password_hash"], "not-the-code")
+    assert not passwords.verify_password(ns_row["password_hash"], out.claim_code)
+    assert await claim_codes.verify_claim_code_off_loop(ns_row["password_hash"], out.claim_code)
+    assert not await claim_codes.verify_claim_code_off_loop(ns_row["password_hash"], "not-the-code")
     assert ns_row["tags"] == ["agent"] and ns_row["description"] == "Files the nightly failures."
     owner_grant, sa_grant = _open.inserts[1][1][0], _open.inserts[2][1][0]
     assert (owner_grant["subject"], owner_grant["role"]) == ("agent-nightly-triage", "admin")

@@ -68,24 +68,36 @@ async def _shutdown_drains(lease: Any, supervisor: Any, emitter: Any) -> None:
     """The lifespan's shutdown drains, in order; it bounds them all together."""
     from server.workers import leader as _leader
 
-    await _leader.shutdown(lease, supervisor)
-    # The service-side writes still in flight land while what they use is
-    # open: a write's after-write tasks use the shared HTTP pool and emit
-    # through the event emitter.
-    # MCP session runs still being begun land first, so the session-run
-    # sweep can close them (boot sits below the transport).
-    from server.transport import mcp_runs
+    # An agent claim's last cutoff, which ends what an older replica's sign-in
+    # with the code issued while the claim was landing: started first, so it
+    # runs beside the drains below.
+    claims, started = asyncio.create_task(_agent_claim.drain()), time.monotonic()
+    try:
+        await _leader.shutdown(lease, supervisor)
+        # The service-side writes still in flight land while what they use is
+        # open: a write's after-write tasks use the shared HTTP pool and emit
+        # through the event emitter.
+        # MCP session runs still being begun land first, so the session-run
+        # sweep can close them (boot sits below the transport).
+        from server.transport import mcp_runs
 
-    with contextlib.suppress(TimeoutError):
-        # not a setting: one shutdown step
-        await asyncio.wait_for(mcp_runs.drain_ledger_writes(), 5.0)
-    await boot.drain_writes()
-    # The judge emits a cost event and posts scores: it stops before the
-    # emitter and the score queue drain, and both before the HTTP clients close.
-    from server.observability import langfuse_scores, retrieval_judge
+        with contextlib.suppress(TimeoutError):
+            # not a setting: one shutdown step
+            await asyncio.wait_for(mcp_runs.drain_ledger_writes(), 5.0)
+        await boot.drain_writes()
+        # The judge emits a cost event and posts scores: it stops before the
+        # emitter and the score queue drain, and both before the HTTP clients close.
+        from server.observability import langfuse_scores, retrieval_judge
 
-    await retrieval_judge.stop()
-    await langfuse_scores.drain(timeout_s=5.0)
+        await retrieval_judge.stop()
+        await langfuse_scores.drain(timeout_s=5.0)
+        # Counted from the drains' start, so the emitter and the clients below
+        # still close in the budget.
+        left = _agent_claim.SHUTDOWN_WAIT_S - (time.monotonic() - started)
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(claims, max(0.0, left))
+    finally:
+        claims.cancel()  # a no-op once it is done
     await emitter.stop()
     _otel.shutdown()
     from server.clients import _http as _http_clients
@@ -461,6 +473,7 @@ from server.auth import login as _login  # noqa: E402
 from server.auth import oauth as _oauth  # noqa: E402
 from server.auth import scim_routes as _scim_routes  # noqa: E402
 from server.auth import self_signup as _self_signup  # noqa: E402
+from server.identity.app import agent_claim as _agent_claim  # noqa: E402
 from server.identity.app import claim_release as _claim_release  # noqa: E402
 from server.identity.app import password_link as _password_link  # noqa: E402
 from server.identity.app import scim_groups as _scim_groups  # noqa: E402
@@ -471,6 +484,7 @@ _claim_release.attach(app)
 # Sign-in (device grant, SSO) wherever auth is on; MCP connect only with LOOM_OAUTH_ENABLED.
 _oauth.attach(app)
 _password_link.attach(app)
+_agent_claim.attach(app)
 # SCIM Groups, pushed per org with an org admin's token; ahead of the Users
 # routes, whose catch-all would answer its paths.
 _scim_groups.attach(app)

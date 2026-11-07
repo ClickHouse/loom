@@ -318,6 +318,85 @@ in [deployment](../operations/deployment.md). Never expose `single-user` beyond 
 local machine: auth is off. In `trust-network`, passwords are argon2id and there is no
 email verification or password reset. In `gateway`, Loom never sees a password.
 
+**Agent claims.** An agent account is unclaimed while its password is its claim code
+(`UNCLAIMED_SQL` in `server/auth/claim_codes.py`): a hash under a `claim:` prefix, which agent
+sign-up writes, or, for an account made before the prefix, a plain hash on an agent sign-up's
+shape (an `agent-` name that is its own owner, with no email) without the claim's tag. Only
+sign-up writes that shape, no settings write changes the owner, the email or the password, and
+every other account with a password names an email but a claimed agent's, which carries the
+claim's tag. Linking an account to an SSO email (`loom
+sso link`, the one operator step that writes an email on a password account) refuses an
+unclaimed one (`is_unclaimed`, the same rule on a row already read); the claim page is closed
+under SSO, so such an account is claimed with SSO off, or released with `loom claim-release`.
+No password sign-in (`/v1/auth/login`, the OAuth authorize form, the device grant) accepts an
+unclaimed account.
+
+The claim page (`server/identity/app/agent_claim.py`) checks the code under the password
+sign-in limits and hashes the new password only once the code is proven. Holding the account
+from read to write, it cuts off every token the namespace's subject was issued before
+(`account_admin.end_tokens`, which also ends each OAuth and device session at its next
+refresh), replaces the code with the claimer's own password, adds the tag
+`machine:agent-signup:claimed`. Once it releases the account it reads the row back with
+sequential consistency (for at most 5 s), waits `CLOCK_SKEW_S` (5 s), and cuts off once more,
+for a sign-in with a plain-hash code on an older replica while the write was landing, then
+audits `auth.agent_claimed`. No lease bound can stop these steps, and they run in a task of
+their own, so a client that disconnects does not stop them either; a shutdown waits for them
+alongside its other drains, for up to 20 s. An insert that reports any failure is read back
+(for at most 5 s): when the row holds the new password the claim goes on as written; otherwise
+it may still land, so the cutoff after it still runs and is waited out, the claim is audited
+with `confirmed: false`, and the page lists the other grant holders and asks the person to try
+their password before submitting again. The account's lease is released either way, so an
+insert that lands after that read can still replace a claim that another submit with the same
+code made meanwhile; both proved the code. A second submit of the same form that proved the
+code too finds the account claimed once it holds it and waits to a bound past the first claim's
+last cutoff, counted from that moment: 5 s for the first claim's release to return (assumed,
+not enforced) and 5 s more for a check that its write landed, the read-back's 5 s, the skew
+wait, the cutoff's own margin (`CLOCK_SKEW_S` + 1) and `CLOCK_SKEW_S` for the first claim's
+replica clock running ahead, 31 s, then the usual wait for every replica's clock to pass it.
+Only then does it tell the person to sign in. A submit that finds the account busy past the
+lease's wait answers 503 with `Retry-After`, saying an earlier submit may still be claiming it.
+A failed read-back is logged and the wait and the cutoff still run; a failed second cutoff is
+logged, the claim stands, and the page waits past any cutoff the failed call could have stored.
+`namespace.register` carries a `machine:` tag forward from the row and drops one from a form,
+on this build and the one before it, and a trust's name never holds `:`. On this build the
+claim's tag does not bind the namespace's owner as a trust's tag does; the build before binds
+it, which keeps a claimed namespace's owner as the claim left it. The page answers once every
+replica's clock is past the later cutoff, so the claimer's next sign-in is not ended by it. A
+second claim finds no code and is refused, so whoever kept a copy of the code cannot sign in as
+the namespace afterwards, nor keep a session it started with the code. The claim ends no grant
+and no setting: what a session with the code gave another subject, or set on the namespace,
+stays. So the `auth.agent_claimed` audit row records every subject with an active grant on the
+namespace other than its own and the agent's token while that holds the `writer` role sign-up
+gave it (`other_grants`), and the page lists them again once every replica has refreshed its
+revocations past the claim's cutoffs (`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` later) and asks
+the claimer to review the grants and every namespace setting. A replica whose revocation
+refreshes keep failing serves its last snapshot for up to
+`LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`, so there a code session can act, and a grant it makes
+be missing from the list, for that long. The new password may not be the code. An agent account
+whose password is a plain hash of its code and that has no claim tag is unclaimed, even when a
+person has signed in with that code: whoever holds the code and claims first wins, so its owner
+claims it at once. An agent account with a plain-hash code and an email (one linked to an SSO
+email) is not unclaimed, and the claim page refuses it, while its password is still the code;
+under SSO no password sign-in is served, and an operator who turns SSO off first releases such
+an account with `loom claim-release`.
+
+During a rolling upgrade a replica of the build before still signs in with a plain-hash code,
+and its sign-in reads `loom.namespaces` without sequential consistency. After the wait, the
+later cutoff ends every token any replica issues up to `CLOCK_SKEW_S` + 1 seconds (6 s) after
+the write read back, for a replica whose clock leads by up to `CLOCK_SKEW_S`. On a single
+server the write is visible to every read at once. On ClickHouse Cloud a read without
+sequential consistency on a replica that trails the write by more than that margin can still
+find the code and issue a token the claim does not end; that window closes when no replica of
+the build before remains. A self-hosted replicated cluster sends every Loom process to one
+replica, as the read-your-writes section of [ClickHouse](clickhouse.md#read-your-writes) asks.
+A replica of the build before refuses a prefixed code at once, without the full hash it spends
+on an unknown name, so its answer time tells an unclaimed agent account from no account, during
+the upgrade and, after a rollback, while such an account stays unclaimed.
+
+Restoring `loom.namespaces` from a backup taken before a claim brings the unclaimed account
+back: the claimer's password is gone and the code claims the namespace again, for whoever holds
+it. Claim it again at once after such a restore.
+
 **Impersonation.** A subject in `LOOM_TRUSTED_CALLERS` may send `X-Loom-On-Behalf-Of`
 over HTTP to act as another principal. The header's subject becomes the effective
 subject, and `impersonated_by` records the caller on its `agent_events` rows.

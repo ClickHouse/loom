@@ -5,9 +5,8 @@ server that has `LOOM_SELF_SIGNUP=open`, write the returned token where the
 hooks, the SDK and every `loom` subcommand look for one (`~/.loom/token`,
 0600) and the server URL + namespace + org where the coding-agent plugins
 look (`~/.loom/config.json`, 0600), then print the two facts the operator of
-the bot needs: how the bot connects, and the one-time claim code a person
-uses to take ownership of the namespace in the dashboard (the ordinary login: namespace
-name + code).
+the bot needs: how the bot connects, and the claim code a person enters once
+at the claim page, with a password of their own, to take ownership of the namespace.
 
 Every HTTP call goes through `_post_json` so the unit tests swap it
 (`tests/unit/test_agent_signup.py`).
@@ -96,8 +95,8 @@ def connect_lines(out: dict[str, Any], *, base_url: str, token_path: str, config
         f'    # Codex:        codex mcp add loom --url "{mcp_url}" '
         "--bearer-token-env-var LOOM_API_KEY",
         "",
-        "  Hand the namespace to a person (one-time code; keep it out of logs):",
-        f"    sign in at {claim_url} with name {ns!r} and code {out['claim_code']}",
+        "  Hand the namespace to a person (the code works once; keep it out of logs):",
+        f"    open {claim_url} and enter name {ns!r} and code {out['claim_code']} where it asks",
         "    — they become its admin; this agent's token keeps working.",
     ]
     if out.get("expires_at"):
@@ -162,8 +161,8 @@ def _cmd_init(args: argparse.Namespace) -> int:
 _INIT_HELP = (
     "Create an identity on a Loom server. `--agent NAME` signs an agent up by "
     "itself (server needs LOOM_SELF_SIGNUP=open): mints a writer token on a fresh "
-    "agent-<slug> namespace, saves it to ~/.loom/token, and prints the one-time "
-    "code a person uses in the dashboard to claim the namespace."
+    "agent-<slug> namespace, saves it to ~/.loom/token, and prints the claim code "
+    "a person enters once, with a password of their own, to claim the namespace."
 )
 
 

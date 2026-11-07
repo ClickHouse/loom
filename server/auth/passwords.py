@@ -17,6 +17,9 @@ import asyncio
 
 from argon2 import PasswordHasher
 
+# The length a chosen password must have, wherever a person sets one.
+PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH = 8, 256
+
 # Single shared hasher — its config is fine for our threat model
 # (interactive login, not bulk-issued tokens). Tune memory/time
 # upward if running on hardware where verifications are >100ms.

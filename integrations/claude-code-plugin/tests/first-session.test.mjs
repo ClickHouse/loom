@@ -165,6 +165,9 @@ test("two concurrent callers create ONE service account; the second reuses the f
   assert.ok([a.by, b.by].includes("peer"), "one result names the peer");
   assert.equal(b.claimPath || a.claimPath, path.join(dir, `claim-${SIGNED.namespace}.txt`));
   assert.equal(fs.existsSync(path.join(dir, ".signup.lock")), false, "lock released");
+  // The peer's notice sends the person to the claim file, which names the claim page.
+  const peer = a.by === "peer" ? a : b;
+  assert.match(renderFirstSessionNotice(peer, "https://loom.example"), /follow the steps saved in/);
 });
 
 test("a stale lock (crashed signer) is taken over; a fresh one is waited on, then reported", async () => {

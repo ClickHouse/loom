@@ -114,8 +114,9 @@ Details: [Claude Code](../features/integrations/claude-code.md#the-code-shunt).
 
 On a server started with `LOOM_SELF_SIGNUP=open`, the first Claude Code session that finds
 no token signs the machine up. It writes the token to `~/.loom/config.json` (mode 0600)
-and a one-time claim code to `~/.loom/claim-<namespace>.txt`, and the primer says how to
-claim the namespace in the dashboard. `LOOM_AUTO_SIGNUP=off` turns this off. A server without
+and a claim code to `~/.loom/claim-<namespace>.txt`, and the primer says how to claim the
+namespace: the code works once, at the server's `/oauth/agent-claim` page, with a password of
+your own. `LOOM_AUTO_SIGNUP=off` turns this off. A server without
 self-signup leaves the session without a token, and the primer says how to get one.
 
 ## Next

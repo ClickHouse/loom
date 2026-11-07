@@ -3,10 +3,10 @@
 // At the first SessionStart without a credential, the plugin calls the
 // server's agent self-signup: the server provisions a memory
 // namespace for this machine + client, grants it writer, and returns a
-// token plus a one-time claim code. The token goes to ~/.loom/config.json
+// token plus a claim code that works once. The token goes to ~/.loom/config.json
 // (0600), the claim code to ~/.loom/claim-<namespace>.txt (0600) — never
-// into the model's context. A person makes the namespace theirs by signing
-// in to the dashboard with the namespace name and the code (the ordinary login).
+// into the model's context. A person makes the namespace theirs at the claim
+// page (`claimUrl`) with the namespace name, the code and a password of their own.
 //
 // LOOM_AUTO_SIGNUP=off disables. A server with self-signup off (404) or a
 // rate limit (429) leaves the machine without a credential: hooks no-op, and
@@ -64,7 +64,8 @@ function _peerResult(cfg, { base, dir, configPath }) {
     token: String(cfg.token),
     namespace,
     org: cfg.org || "",
-    claimUrl: `${String(cfg.url || base).replace(/\/+$/, "")}/`,
+    // The claim page's address is in the claim file the winning sign-up wrote.
+    claimUrl: "",
     claimPath: cfg.claimed === true ? "" : join(dir, `claim-${namespace}.txt`),
     claimed: cfg.claimed === true,
     configPath,
@@ -198,7 +199,7 @@ async function _signUp({ base, client, host, user, fetchImpl, now, configPath, d
     writePrivateFile(
       claimPath,
       `Loom namespace ${namespace} on ${base} was created for this machine by the ${client} plugin.\n` +
-        `To make it yours, sign in at ${claimUrl} with the namespace name (${namespace}) and this one-time code:\n` +
+        `To make it yours, open ${claimUrl} and enter the namespace name (${namespace}) and this code where it asks:\n` +
         `${claimCode}\n`,
     );
   }
@@ -215,8 +216,11 @@ export function renderFirstSessionNotice(result, serverUrl) {
       }
       return (
         `Loom: no credential was found, so this machine signed itself up as memory namespace ` +
-        `\`${result.namespace}\` on ${base}. Tell the user once: to make it theirs, sign in at ${result.claimUrl} ` +
-        `with namespace \`${result.namespace}\` and the one-time code saved in ${result.claimPath}; ` +
+        `\`${result.namespace}\` on ${base}. Tell the user once: to make it theirs, ` +
+        (result.claimUrl
+          ? `open ${result.claimUrl} and enter namespace \`${result.namespace}\` and the code saved in ` +
+            `${result.claimPath} where it asks; `
+          : `follow the steps saved in ${result.claimPath}; `) +
         `until then memory is per-machine.`
       );
     case "unavailable":

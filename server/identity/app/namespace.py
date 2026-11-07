@@ -14,6 +14,7 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from server.auth.claim_codes import CLAIMED_TAG
 from server.auth.grant_claims import account_change
 from server.auth.sharing import PERSONAL_ALIAS, is_collection, is_personal
 from server.core import grant_cache
@@ -130,9 +131,11 @@ def registry_row(
     from server.auth.agents import TAG_PREFIX as MACHINE_TAG
     from server.identity.app.namespace_autoregister import classify_kind
 
-    # A workload trust's mark is the trust's to give: dropped from the form,
-    # carried forward from the row.
+    # A workload trust's mark is the trust's to give, and an agent claim's mark the
+    # claim's: dropped from the form, carried forward from the row. Only a trust's
+    # mark binds the owner.
     stored = [str(t) for t in (existing or {}).get("tags") or [] if str(t).startswith(MACHINE_TAG)]
+    trust_made = [t for t in stored if t != CLAIMED_TAG]
     tags = [t for t in input.tags if not str(t).startswith(MACHINE_TAG)] + stored
     kind = input.kind
     if input.traffic_class:
@@ -146,7 +149,7 @@ def registry_row(
         "org": input.org,
         "namespace": input.namespace,
         # An agent's namespace is bound to the agent (its exchange checks it).
-        "owner_email": existing["owner_email"] if existing and stored else input.owner_email,
+        "owner_email": existing["owner_email"] if existing and trust_made else input.owner_email,
         "description": _set_or_stored(input.description, existing, "description", ""),
         # A fresh row with no explicit kind is classified by name, the same call the
         # first-write hook makes, so registering a bench-prefixed name first and writing
