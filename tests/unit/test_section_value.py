@@ -123,6 +123,7 @@ def test_the_labelled_set_scores_as_measured() -> None:
         # a running notes page that dates each meeting with its year
         ("Storage weekly sync", ("Aug 13, 2026", "Cache"), "Talked about the TTL."),
         ("Storage weekly sync", ("4 March 2026", "Cache"), "Talked about the TTL."),
+        ("Storage sync 2026-03-04", ("Coverage",), "We are lower than the target on coverage."),
     ],
 )
 def test_bookkeeping_and_discussion_without_a_decision_are_noise(
@@ -416,6 +417,8 @@ def test_a_recorded_meetings_transcript_and_template_are_noise(
         (_RECORDED, ("Details",), "Please rate the three vendors by cost before Friday."),
         (_RECORDED, (), "Please rate the new notes tab."),
         (_RECORDED, ("Planner sync",), "Mar 4, 2026\nThe team reviewed the fallback list."),
+        (_RECORDED, ("Cache budget",), "Ana shared [the budget sheet](https://x.example)."),
+        (_RECORDED, ("Planner sync",), "Invited [Ana](mailto:a@example.com)\n```\nSELECT 1\n```"),
         (
             _RECORDED,
             ("Summary",),
@@ -834,4 +837,6 @@ def test_a_long_line_is_judged_in_linear_time() -> None:
     is_noise("Jan 4, " * 20_000 + "notes by", ("X",), "x")
     is_noise(_RECORDED, ("transcript " * 20_000,), "x")
     is_noise(_RECORDED, ("Notes",), "Invited " + "a " * 20_000)
+    is_noise(_RECORDED, ("Notes",), "[" * 40_000 + "x")
+    is_noise(_RECORDED, ("Notes",), "[a](b)" + "[](" * 20_000)
     assert time.perf_counter() - started < 5.0

@@ -25,8 +25,8 @@ A document is notes by its title, in one of three shapes:
 Without a date the same words name a topic as often ("Standup reminder bot", "Order
 sync 24/7"), and a title holding a design-document, release or incident word
 ("Calendar sync design 2026-01-15", "Release notes 2026-03-04") is never notes, unless
-it is a recording's transcript (below). A document with no title is named by its first heading.
-Lines inside a fenced code block are code, never questions.
+it is a recording's transcript (below). A document with no title is named by its first
+heading. Lines inside a fenced code block are code, never questions.
 
 Notes a meeting tool writes from a recording carry the meeting's date and clock time and
 a transcript or notes-by mark in their title ("Planner sync - 2026/03/04 10:00 CET -
@@ -49,10 +49,12 @@ _CHOICE_VERB = (
     r"(?:(?:going to |be )?(?:go(?:ing)?(?: ahead)? with|proceed(?:ing)? with|use|using|"
     r"keep|keeping|drop|dropping|"
     r"switch(?:ing)? to|move|moving|migrate|migrating|adopt|adopting|support|supporting|"
-    r"ship|shipping|pick|choose|stick with|stay with|replace|replacing|"
-    r"enable|enabling|disable|disabling|lower|remove|removing|deprecate|deprecating|disallow|"
-    r"roll out|rolling out))"
+    r"ship|shipping|pick|choose|stick with|stay with|replace|replacing))"
 )
+# A plan to change something: "we'll enable", "I'm going to remove", "we're deprecating".
+# The plain verb only after a future ("we are lower than the target" states a status).
+_PLAN_VERB = r"(?:enable|disable|lower|remove|deprecate|disallow|roll out)\b"
+_PLAN_ING = r"(?:enabling|disabling|lowering|removing|deprecating|disallowing|rolling out)\b"
 _CHOSE = (
     r"(?:picked|chose|selected|switched to|moved to|migrated to|adopted|went with|dropped|"
     r"replaced|rejected|accepted)"
@@ -65,10 +67,9 @@ _DECISION = re.compile(
     r"conclusion:|outcome:|opted (?:for|to)|concluded|not supporting|"
     r"defaults? to|"
     rf"we(?:'re| are|'ll| will| won't| will not)(?: not)? {_CHOICE_VERB}|"
-    # In the first person only a plan to change something: "I'll remove the old flag",
-    # not "I'll move on to the next slide".
-    r"i(?:'ll| will|'m going to| am going to) (?:enable|disable|lower|remove|deprecate|"
-    r"disallow|roll out)|"
+    # In the first person only a plan ("I'll remove the old flag", not "I'll move on").
+    rf"(?:we|i)(?:'ll| will|'m going to| am going to|'re going to| are going to) {_PLAN_VERB}|"
+    rf"let's {_PLAN_VERB}|we(?:'re| are) {_PLAN_ING}|"
     r"the plan is to|"
     rf"(?:we|the team)(?:'ve| have| had)? {_CHOSE}|"
     r"(?:was|were|is|are) (?:picked|selected)|"
@@ -151,11 +152,15 @@ _TRANSCRIPT_HEADING = re.compile(
 # as links ("Invited [Ana](...)", "Mar 4, 2026 [Ana](...)"), the transcript's preamble,
 # the footer that asks for a rating or a review of the notes. "Invited the vendor to
 # demo" is a topic's text.
-# A line of links with at most a short label before them: the invite header's attendees,
+# A line of links, alone or under the invite header's own labels: the attendees,
 # attachments and meeting records ("Attachments [Planner sync](...)").
 # A line with no word in it (an empty heading marker "##") carries nothing.
 _WORD = re.compile(r"\w")
-_LINKS = re.compile(r"^\W*(?:\w+\s+){0,2}(?:\[[^\]]*\]\([^)]*\)\W*)+$")
+_LINKS = re.compile(
+    r"^[^\w\[]*(?:(?:invited|attachments|meeting\s+records)\s+)?"
+    r"(?:\[[^\]]*\]\([^)]*\)[^\w\[]*)+$",
+    re.IGNORECASE,
+)
 _TEMPLATE_TEXT = re.compile(
     rf"^\W*(?:invited\s+\[|{_MONTH}\s+\d{{1,2}},\s+\d{{4}}(?:\s+\[|\W*$)|"
     r"this editable transcript\b|please\W+rate\b[^.]{0,60}\bsurvey\b|"
@@ -227,7 +232,8 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
         own = _below_title(name, headings)
         # Template text fills its section: a summary after the meeting's date is content.
         return any(_TRANSCRIPT_HEADING.search(h) for h in own) or bool(
-            prose
+            not code
+            and prose
             and all(
                 _TEMPLATE_TEXT.match(line) or _LINKS.match(line) or not _WORD.search(line)
                 for line in prose

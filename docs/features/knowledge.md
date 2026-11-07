@@ -604,8 +604,8 @@ its title and a date, with or without its year (`Aug 13, 2026`), as the top head
 each meeting. A document with no title is named by its first heading. A title that
 names a design document, a plan, a release, a migration or an incident is never notes,
 as in `Calendar sync design 2026-01-15` or `Release notes 2026-03-04`, unless it is a
-recording's transcript (below). In notes, a section that records no decision is noise, its bookkeeping
-(attendees, an agenda, action items) included; a stated plan (`the plan is to ...`,
+recording's transcript (below). In notes, a section that records no decision is noise,
+its bookkeeping (attendees, an agenda, action items) included; a stated plan (`the plan is to ...`,
 `we'll enable ...`) is a decision. Notes a meeting tool writes from a recording, titled
 with the meeting's date and clock time and a transcript or notes-by mark, as in
 `Planner sync - 2026/03/04 10:00 CET - Notes by ...`, keep their summary and topic
