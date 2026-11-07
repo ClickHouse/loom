@@ -344,8 +344,8 @@ The flow for a fact an agent should not make live on its own:
    its grades (`run.grade`) are its trial.
 2. The dashboard's **Review queue** (`/admin/review_queue`) shows a **Proposals** tab while
    one waits; for an admin of the namespace the drawer lists the queue then too. Each
-   proposal shows its key, value, the agent that wrote it, the graded runs that relied on
-   it and what the policy thresholds would decide.
+   proposal shows its key, value, the agent that wrote it, how many graded runs passed
+   and failed on it and what the policy thresholds would decide.
 3. A writer accepts it (it becomes `active`, or `conflicted` when it was contradicted on
    trial) or rejects it (`rejected`), optionally with a reason. A viewer sees the list
    without the buttons. The same decision is `memory.proposal_decide` for a script or

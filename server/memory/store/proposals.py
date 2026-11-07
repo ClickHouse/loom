@@ -24,32 +24,31 @@ async def scan_proposals(
     that row's (memory_id, version), newest first. memory.proposal_decide takes a key's
     newest row of any status, so an older proposal under a decided key is left out: no
     decision could take it."""
-    where = ["org = {org:String}", "namespace = {ns:String}", "tombstoned_at IS NULL"]
     params: dict[str, Any] = {"org": org, "ns": namespace, "cap": cap}
-    proposed = ["status = 'proposed'"]
+    in_namespace = "org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL"
+    # A wanted row: a proposal this caller may read, matching the listing's filters.
+    wanted = ["status = 'proposed'", *scope_where(scope, params)]
     if prefix:
-        proposed.append("startsWith(memory_key, {p:String})")
+        wanted.append("startsWith(memory_key, {p:String})")
         params["p"] = prefix
     if tags:
-        proposed.append("hasAny(tags, {tags:Array(String)})")
+        wanted.append("hasAny(tags, {tags:Array(String)})")
         params["tags"] = list(tags)
-    readable = scope_where(scope, params)
-    namespace_rows = " AND ".join(where)
+    is_wanted = " AND ".join(wanted)
     return await ch.query_all(
         f"""
         SELECT memory_key, mid, version FROM (
             SELECT memory_key, toString(memory_id) AS mid, version, status, tags,
                    user_id, session_id
             FROM loom.memory FINAL
-            WHERE {namespace_rows}
+            WHERE {in_namespace}
               AND memory_key IN (
-                  SELECT memory_key FROM loom.memory FINAL
-                  WHERE {" AND ".join([*where, *readable, *proposed])}
+                  SELECT memory_key FROM loom.memory FINAL WHERE {in_namespace} AND {is_wanted}
               )
             ORDER BY memory_key, version DESC, created_at DESC
             LIMIT 1 BY memory_key
         )
-        WHERE {" AND ".join([*proposed, *readable])}
+        WHERE {is_wanted}
         ORDER BY version DESC
         LIMIT {{cap:UInt32}}
         """,

@@ -362,8 +362,7 @@ export function Sidebar() {
       }
       if (canCall("memory.proposals", roleHere, whoami)) {
         tasks.push(
-          // Whether an agent's proposal waits for a decision (the Proposals tab): one
-          // head's grades (see scan_proposals for what the scan reads).
+          // Whether a proposal waits (the Proposals tab); `limit=1` grades one row.
           listProposals({ org: identity.org, namespace: identity.namespace }, 1)
             .then((r) => {
               if (!cancelled) {

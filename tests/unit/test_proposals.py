@@ -267,7 +267,7 @@ def test_a_proposal_supersedes_nothing_on_any_refines_path(monkeypatch: pytest.M
 
 
 _ROW = (
-    "('o', 'n', '{agent}', '{user}', '-', '00000000-0000-0000-0000-00000000000{agent}', 'k', "
+    "('o', 'n', '{agent}', '{user}', '-', '00000000-0000-0000-0000-00000000000{mid}', 'k', "
     "'semantic', '{value}', '{status}', {version}, '2026-01-0{version} 00:00:00')"
 )
 _INSERT = (
@@ -307,8 +307,8 @@ async def test_the_listing_offers_only_the_row_a_decision_takes(
 
     a_user = "u1" if scope_user else "-"
     rows = [
-        _ROW.format(agent="a", user=a_user, value="a value", status="proposed", version=1),
-        _ROW.format(agent="b", user=b_user, value="b value", status=b_status, version=2),
+        _ROW.format(agent="a", mid=1, user=a_user, value="a value", status="proposed", version=1),
+        _ROW.format(agent="b", mid=2, user=b_user, value="b value", status=b_status, version=2),
     ]
     ch = LocalCH(ddl("memory"), _INSERT + ", ".join(rows))
     scope = (
@@ -331,6 +331,8 @@ async def test_the_listing_offers_only_the_row_a_decision_takes(
     out = await proposals_ops.handle_memory_proposals(MemoryProposalsInput(org="o", namespace="n"))
     assert [(r.agent, r.value_preview) for r in out.proposals] == listed
     assert out.total == len(listed)
+    for r in out.proposals:  # what the dashboard opens and filters by
+        assert (r.user_id, r.session_id, r.version) == (b_user, "-", 2)
     # The row the decision reads is the one listed.
     ident = Identity(org="o", namespace="n", agent="*", user_id="-", session_id="-")
     head = await get_many_by_keys(ident, ["k"], scope=WHOLE_NAMESPACE, ch=ch, strong=True)
@@ -382,3 +384,61 @@ async def test_proposals_grade_only_the_rows_they_can_return(
     assert out.total == 2
     # The default policy decides neither row, so `ready` returns none.
     assert len(out.proposals) == returned
+
+
+def _listing(monkeypatch: pytest.MonkeyPatch, insert: str) -> Any:
+    """`memory.proposals` over the rows `insert` writes, policy and counters stubbed."""
+    from server.memory.app import proposals_ops
+    from server.memory.domain.proposal_policy import ProposalPolicy
+
+    ch = LocalCH(ddl("memory"), insert)
+
+    async def _policy(*_a: Any, **_k: Any) -> Any:
+        return ProposalPolicy()
+
+    async def _none(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {}
+
+    monkeypatch.setattr(proposals_ops, "get_client", lambda: ch)
+    monkeypatch.setattr(p, "policy_for", _policy)
+    monkeypatch.setattr(p, "graded_counts", _none)
+    monkeypatch.setattr(proposals_ops, "_usage_counts", _none)
+    return proposals_ops.handle_memory_proposals
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_the_listing_filters_by_prefix_and_tags_and_cuts_by_character(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_proposals import MemoryProposalsInput
+
+    insert = _INSERT.replace("created_at)", "created_at, tags)") + (
+        "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-000000000001', 'lesson/tea', "
+        f"'semantic', '{'é' * 401}', 'proposed', 1, '2026-01-01 00:00:00', []), "
+        "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-000000000002', 'trial/door', "
+        "'semantic', 'opens inward', 'proposed', 2, '2026-01-02 00:00:00', ['ops'])"
+    )
+    list_ = _listing(monkeypatch, insert)
+    by_prefix = await list_(MemoryProposalsInput(org="o", namespace="n", prefix="lesson/"))
+    assert [r.memory_key for r in by_prefix.proposals] == ["lesson/tea"]
+    assert by_prefix.proposals[0].value_preview == "é" * 400
+    by_tag = await list_(MemoryProposalsInput(org="o", namespace="n", tags=["ops"]))
+    assert [r.memory_key for r in by_tag.proposals] == ["trial/door"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_tombstoned_newest_row_leaves_the_proposal_below_it_listed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_proposals import MemoryProposalsInput
+
+    insert = _INSERT.replace("created_at)", "created_at, tombstoned_at)") + (
+        "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-000000000001', 'k', 'semantic', "
+        "'a value', 'proposed', 1, '2026-01-01 00:00:00', NULL), "
+        "('o', 'n', 'b', '-', '-', '00000000-0000-0000-0000-000000000002', 'k', 'semantic', "
+        "'b value', 'active', 2, '2026-01-02 00:00:00', '2026-01-03 00:00:00')"
+    )
+    out = await _listing(monkeypatch, insert)(MemoryProposalsInput(org="o", namespace="n"))
+    assert [r.value_preview for r in out.proposals] == ["a value"]

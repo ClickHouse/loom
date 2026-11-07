@@ -861,8 +861,8 @@ function trialLabel(r: MemoryProposal): string {
   return r.ready ? `${graded} · the policy would ${r.ready} it` : graded;
 }
 
-// The characters of a proposal's value `memory.proposals` sends (its store,
-// server/memory/store/proposals.py, cuts the preview there).
+// The characters of a proposal's value `memory.proposals` sends; mirrors the cut that
+// `MemoryProposal.value_preview` documents.
 const PREVIEW_CHARS = 400;
 
 const proposalId = (p: MemoryProposal) => `${p.memory_id}@${p.version ?? 0}`;
