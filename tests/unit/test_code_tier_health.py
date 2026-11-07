@@ -727,3 +727,14 @@ async def test_apply_delta_records_the_apply_not_the_callers_input(
         assert record.failed_passes == 2
     else:
         assert not record.failing
+
+
+def test_a_credential_in_a_url_query_reaches_neither_the_error_nor_the_fix() -> None:
+    text = (
+        "fatal: unable to access 'https://dl.example.com/pkg.tgz?token=abcd1234&v=2': "
+        "The requested URL returned error: 403"
+    )
+    record = tier_health.failed(None, "clang", text, T0)
+    assert record.kind == "credential"
+    assert "abcd1234" not in record.error and "token=***&v=2" in record.error
+    assert "dl.example.com/pkg.tgz)" in record.fix and "abcd1234" not in record.fix

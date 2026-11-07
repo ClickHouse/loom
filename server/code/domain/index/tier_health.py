@@ -131,6 +131,14 @@ _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     # an Authorization header or a bearer value
     (re.compile(r"(authorization:\s*)\S+(?:\s+\S+)?", re.IGNORECASE), r"\1***"),
     (re.compile(r"(bearer\s+)[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE), r"\1***"),
+    # a credential in a URL's query: ?token=..., &sig=...
+    (
+        re.compile(
+            r"([?&](?:access_token|token|sig|signature|key|x-amz-signature)=)[^&\s'\"]+",
+            re.IGNORECASE,
+        ),
+        r"\1***",
+    ),
 )
 
 
@@ -145,8 +153,7 @@ def redact(text: str) -> str:
 # --- classification ----------------------------------------------------------------
 
 # First match wins: a missing credential also makes the submodule pin look missing
-# ("did not contain <sha>"), so the credential test comes before the pin test, and a
-# full disk comes before the network.
+# ("did not contain <sha>"), so the credential test comes before the pin test.
 _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # A full disk also cuts a transfer short ("the remote end hung up"): it goes first.
     ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
@@ -219,7 +226,7 @@ def _where(text: str) -> str:
     an absolute one."""
     parts: list[str] = []
     urls = [
-        (m.group(1), (m.group(2) or "").rstrip("/:.,;)").removesuffix(".git"))
+        (m.group(1), (m.group(2) or "").split("?", 1)[0].rstrip("/:.,;)").removesuffix(".git"))
         for m in _HOST_RE.finditer(text)
     ]
     if urls:
