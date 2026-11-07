@@ -195,31 +195,6 @@ def test_a_page_of_more_rules_than_the_bound_is_read_without_ruled_tables() -> N
     assert layout.drawing(reader.pages[0], reader, lambda x, y: (x, y)).rules == []
 
 
-def test_a_fonts_unicode_map_gives_its_codes_widths() -> None:
-    cmap = (
-        b"begincmap 2 beginbfchar <0003> <0020> <0004> <0041> endbfchar"
-        b" 1 beginbfrange <0010> <0012> <0061> endbfrange"
-        b" 1 beginbfrange <0020> <0021> [<0062> <00660069>] endbfrange endcmap"
-    )
-
-    class Stream:
-        def get_object(self) -> Stream:
-            return self
-
-        def get_data(self) -> bytes:
-            return cmap
-
-    assert layout._to_unicode({"/ToUnicode": Stream()}) == {
-        3: " ",
-        4: "A",
-        0x10: "a",
-        0x11: "b",
-        0x12: "c",
-        0x20: "b",
-        0x21: "fi",
-    }
-
-
 class _CmapStream:
     def __init__(self, data: bytes) -> None:
         self.data = data
@@ -229,6 +204,24 @@ class _CmapStream:
 
     def get_data(self) -> bytes:
         return self.data
+
+
+def test_a_fonts_unicode_map_gives_its_codes_widths() -> None:
+    cmap = (
+        b"begincmap 2 beginbfchar <0003> <0020> <0004> <0041> endbfchar"
+        b" 1 beginbfrange <0010> <0012> <0061> endbfrange"
+        b" 1 beginbfrange <0020> <0021> [<0062> <00660069>] endbfrange endcmap"
+    )
+
+    assert layout._to_unicode({"/ToUnicode": _CmapStream(cmap)}) == {
+        3: " ",
+        4: "A",
+        0x10: "a",
+        0x11: "b",
+        0x12: "c",
+        0x20: "b",
+        0x21: "fi",
+    }
 
 
 @pytest.mark.parametrize("block", [b"beginbfchar", b"beginbfrange"])

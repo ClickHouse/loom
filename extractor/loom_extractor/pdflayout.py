@@ -114,9 +114,7 @@ def _utf16(hexs: bytes) -> str:
 
 
 def _blocks(data: bytes, begin: bytes, end: bytes) -> Iterator[bytes]:
-    """The text between each `begin` and the first `end` after it, left to right. Each
-    search starts where the last block ended, so an opening with no close costs one scan
-    of the rest, not one per opening as a lazy regex would."""
+    """The text between each `begin` and the first `end` after it, in one pass left to right."""
     at = data.find(begin)
     while at >= 0:
         close = data.find(end, at + len(begin))
