@@ -342,7 +342,8 @@ networkPolicy:
   # ingress controller's namespace). [] = any source.
   ingressFrom: []
   # Addresses outside the cluster's pods that the Loom pods never reach (a policy
-  # engine enforces it, and an extraEgress rule can reopen them): the instance
+  # engine enforces it; an extraEgress rule, or the full policy's DNS and Pod
+  # Identity rules, can reopen them): the instance
   # metadata service, so repository code a pod builds cannot take the node's cloud
   # role. 169.254.169.254 serves most clouds, the IPv6 entries AWS and GCE; add your
   # provider's address if it differs, the address of a metadata proxy that passes

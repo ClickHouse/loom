@@ -17,7 +17,7 @@ it on a laptop.
 | Optional `<release>-publish`          | A pre-upgrade Job for a change that cannot roll ([below](#changing-what-cannot-roll)).                                                                        |
 | Optional `<release>-analytics-export` | A daily CronJob and its own ServiceAccount (`analyticsExport.enabled`, [below](#analytics-export)).                                                           |
 | Optional `<release>-extractor`        | The document extractor's Deployment, Service and NetworkPolicy (`extractor.enabled`, [below](#document-extractor)).                                           |
-| NetworkPolicy `<release>`             | By default, egress to all but the metadata service (`networkPolicy.guardMetadata`); with `networkPolicy.enabled`, the full policy.                            |
+| NetworkPolicy `<release>`             | By default, egress to all but the metadata service ([below](#instance-metadata-service)); with `networkPolicy.enabled`, the full policy.                      |
 | Optional dev ClickHouse               | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                                                                     |
 
 ## Before you install
@@ -352,6 +352,8 @@ or later, where `ProcMountType` and `UserNamespacesSupport` are on), and the nam
 Pod Security level must allow it (`baseline` and `restricted` do not). Run
 `dev/sandbox_probe.sh` in a pod to check the result before setting `sandbox.required: true`.
 
+## Instance metadata service
+
 By default, and with `networkPolicy.enabled`, a NetworkPolicy keeps the Loom pods off
 `networkPolicy.egressExcept` (the instance metadata service), so repository code a pod
 runs cannot take the node's cloud role. Off, `networkPolicy.guardMetadata` renders an egress-only
@@ -360,8 +362,12 @@ NetworkPolicy whose one rule allows every pod and every address but those (none 
 
 - A pod that took cloud credentials from the metadata service has none: the node's
   instance role, and GKE Workload Identity on Dataplane V2. IRSA, and EKS Pod Identity
-  on an engine that matches node addresses by range, are not affected. Set
-  `guardMetadata: false` to keep that access.
+  on an engine that matches node addresses by range, are not affected; a client with no
+  region set looks it up there, so set `AWS_REGION` (the identity webhooks inject it).
+  Set `guardMetadata: false` to keep that access.
+- A customised `egressExcept` now applies with the policy off as well: a range listed
+  there (a VPC range, say) cuts the pods off every address in it but other pods, and
+  an entry that is not a CIDR fails the upgrade.
 - A metadata proxy that redirects 169.254.169.254 to another address is reached at
   that address, which the engine may check instead. One that serves only the pod's own
   identity (GKE's metadata server without Dataplane V2) needs nothing; add the address of

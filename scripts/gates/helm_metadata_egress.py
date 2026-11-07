@@ -143,7 +143,7 @@ def main() -> None:
         }
     ], policy["egress"]
     assert not web_policies(render(*sets("networkPolicy.guardMetadata=false")))
-    # the switch is the off-mode guard's only: the full policy still renders
+    # guardMetadata: false turns off only the off-mode policy; the full one still renders
     (full,) = web_policies(
         render(*sets("networkPolicy.enabled=true", "networkPolicy.guardMetadata=false"))
     )
