@@ -339,8 +339,9 @@ refresh), replaces the code with the claimer's own password, adds the tag
 reads the row back with sequential consistency (for at most 5 s), waits `CLOCK_SKEW_S` (5 s),
 and cuts off once more, for a sign-in with a plain-hash code on an older replica while the
 write was landing; no lease bound can stop these steps, and they run in a task of their own, so
-a client that disconnects does not stop them either, and a shutdown waits for them. A second submit of the same form that
-proved the code too finds the account claimed once it holds it and waits to a bound past the
+a client that disconnects does not stop them either; a shutdown waits for them for as long as
+one claim can run (`agent_claim.DRAIN_S`), within the shutdown's drain budget. A second submit
+of the same form that proved the code too finds the account claimed once it holds it and waits to a bound past the
 first claim's last cutoff, counted from that moment: the read-back's 5 s, the skew wait, the
 cutoff's own margin (`CLOCK_SKEW_S` + 1) and `CLOCK_SKEW_S` for the first claim's replica clock
 running ahead, 21 s, then the usual wait for every replica's clock to pass it. Only then does
@@ -355,9 +356,12 @@ it, which keeps a claimed namespace's owner as the claim left it. The page answe
 replica's clock is past the later cutoff, so the claimer's next sign-in is not ended by it. A
 second claim finds no code and is refused, so whoever kept a copy of the code cannot sign in as
 the namespace afterwards, nor keep a session it started with the code. The claim ends no
-grant: one that a session with the code gave another subject stays, so the claim page lists
-the subjects other than the namespace's own and the agent's token that hold a grant on it, the
-`auth.agent_claimed` audit row records them (`other_grants`), and the claimer reviews them.
+grant and no setting: what a session with the code gave another subject, or set as the
+namespace's visibility or join policy, stays. So the claim page lists every subject with an
+active grant on it other than the namespace's own and the agent's token while that holds the
+`writer` role sign-up gave it, the `auth.agent_claimed` audit row records them
+(`other_grants`), and the page asks the claimer to review the grants, the visibility and the
+join policy.
 The new password may not be the code. An agent account whose password is a plain hash of its
 code and that has no claim tag is unclaimed, even when a person has signed in with that code:
 whoever holds the code and claims first wins, so its owner claims it at once. An agent account

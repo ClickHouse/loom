@@ -22,7 +22,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
-from server.auth import oauth, revocation
+from server.auth import grant_claims, oauth, revocation
 from server.auth.attempts import client_address
 from server.auth.claim_codes import CLAIMED_TAG, UNCLAIMED_SQL, verify_claim_code_off_loop
 from server.auth.grant_claims import account_change
@@ -56,7 +56,7 @@ def _form(namespace: str, error: str = "", status_code: int = 200) -> Response:
         f"""<h2>{_TITLE}</h2>
 <p>Enter the code the agent printed and choose your password. The code works
 once; afterwards you sign in with the namespace name and this password.
-Claiming takes up to 30 seconds: submit once and wait for the answer.</p>{message}
+Claiming can take up to a minute: submit once and wait for the answer.</p>{message}
 <form method="post" action="/oauth/agent-claim">
 <input name="namespace" placeholder="agent-…" value="{html.escape(namespace)}" required>
 <input name="code" placeholder="claim code" autocomplete="off" required>
@@ -157,25 +157,26 @@ async def _grants_notice(org: str, namespace: str) -> str:
         others = await _other_grants(org, namespace)
     except Exception as e:  # noqa: BLE001 — the claim is done; the page still answers
         log.warning("agent claim of %s/%s: listing its grants failed: %r", org, namespace, e)
-        return "<p>Review who holds grants on it in the dashboard.</p>"
+        others = []
+    review = "<p>Review its grants, visibility and join policy in the dashboard.</p>"
     if not others:
-        return ""
+        return review
     names = ", ".join(f"<b>{html.escape(s)}</b>" for s in others)
-    return f"<p>These subjects also hold grants on it; review them in the dashboard: {names}.</p>"
+    return f"<p>These subjects also hold grants on it: {names}.</p>{review}"
 
 
 async def _other_grants(org: str, namespace: str) -> list[str]:
     """The subjects with an active grant on the namespace, besides its own
-    subject and the agent's token (`sa:<namespace>-<6 hex>`, from sign-up)."""
+    subject and the agent's token (`sa:<namespace>-<6 hex>`) while it holds the
+    writer role sign-up gave it."""
     agent = re.compile(re.escape(f"sa:{namespace}-") + "[0-9a-f]{6}")
-    rows = await grants.list_active(org, namespace)
+    rows = await grants.active_on(org, namespace)
     return sorted(
         {
             str(r["subject"])
             for r in rows
-            if r["status"] == "active"
-            and str(r["subject"]) != namespace
-            and not agent.fullmatch(str(r["subject"]))
+            if str(r["subject"]) != namespace
+            and not (agent.fullmatch(str(r["subject"])) and r["role"] == "writer")
         }
     )
 
@@ -211,7 +212,12 @@ def _done(task: asyncio.Task[Any]) -> None:
         log.warning("agent claim: the claim's task failed: %r", task.exception())
 
 
-async def drain(timeout_s: float) -> None:
+# The longest one claim runs: the lease's wait and bound, the read-back and the
+# skew wait before its last cutoff.
+DRAIN_S = grant_claims.WAIT_S + grant_claims.CHANGE_S + _READ_BACK_S + revocation.CLOCK_SKEW_S
+
+
+async def drain(timeout_s: float = DRAIN_S) -> None:
     """Wait for the claims still running, so a shutdown does not drop a cutoff."""
     if _running:
         await asyncio.wait(set(_running), timeout=timeout_s)
@@ -240,9 +246,8 @@ async def _replace_code(
     # Held from the read to the write, as a release or a password link holds the
     # account; the cutoffs after the write need no lease and run after it.
     try:
-        async with account_change(org, namespace):
-            with own_write_reads():
-                row = await namespaces.fetch_row(org, namespace)
+        async with account_change(org, namespace):  # its reads are sequentially consistent
+            row = await namespaces.fetch_row(org, namespace)
             if row is None or not row["active"]:
                 return "refused", None
             if row["password_hash"] != code_hash:

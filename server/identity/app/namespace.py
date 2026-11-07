@@ -14,6 +14,7 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from server.auth.claim_codes import CLAIMED_TAG
 from server.auth.grant_claims import account_change
 from server.auth.sharing import PERSONAL_ALIAS, is_collection, is_personal
 from server.core import grant_cache
@@ -129,12 +130,9 @@ def registry_row(
     # Lazy: the auto-register module imports the operation registry, which imports this one.
     from server.auth.agents import TAG_PREFIX as MACHINE_TAG
 
-    # A workload trust's mark is the trust's to give, and an agent claim's mark
-    # (`claim_codes.CLAIMED_TAG`, under the same prefix) the claim's: dropped from
-    # the form, carried forward from the row. On this build only a trust's mark binds
-    # the owner; the build before binds it to the claim's too, which keeps a claimed
-    # namespace's owner as the claim left it and a released one's empty.
-    from server.auth.claim_codes import CLAIMED_TAG
+    # A workload trust's mark is the trust's to give, and an agent claim's mark the
+    # claim's: dropped from the form, carried forward from the row. Only a trust's
+    # mark binds the owner.
     from server.identity.app.namespace_autoregister import classify_kind
 
     stored = [str(t) for t in (existing or {}).get("tags") or [] if str(t).startswith(MACHINE_TAG)]

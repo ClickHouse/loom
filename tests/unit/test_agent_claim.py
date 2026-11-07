@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import time
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -211,7 +212,7 @@ def test_the_code_claims_once_and_the_claimer_signs_in_with_their_password(world
     c = _app()
     page = c.get("/oauth/agent-claim", params={"namespace": _NS})
     assert page.status_code == 200 and 'name="code"' in page.text and _NS in page.text
-    assert "up to 30 seconds" in page.text
+    assert "up to a minute" in page.text
 
     r = _claim(c, world["code"], "correct horse")
     assert r.status_code == 200 and _NS in r.text
@@ -532,24 +533,45 @@ def test_the_code_is_refused_as_the_new_password(world) -> None:
     assert _claim(_app(), world["code"], "correct horse").status_code == 200
 
 
-def test_the_claim_names_the_grants_others_hold(world) -> None:
+def _grant(namespace: str, subject: str, role: str, minutes_ago: int = 0) -> dict[str, Any]:
     from datetime import UTC, datetime
 
-    grant = {
+    granted_at = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    return {
         "org": "dev",
-        "namespace": _LEGACY,
-        "subject": "kept@acme.com",
-        "role": "admin",
-        "granted_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
-        "granted_by": _LEGACY,
+        "namespace": namespace,
+        "subject": subject,
+        "role": role,
+        "granted_at": granted_at - timedelta(minutes=minutes_ago),
+        "granted_by": namespace,
         "revoked_at": None,
-        "version": 1,
+        "version": time.time_ns(),
     }
-    asyncio.run(world["ch"].insert("loom.namespace_grants", [grant]))
+
+
+def test_the_claim_names_every_grant_others_hold(world) -> None:
+    # The oldest of more than a page of grants is named too.
+    rows = [_grant(_LEGACY, "kept@acme.com", "admin", minutes_ago=600)]
+    rows += [_grant(_LEGACY, f"filler-{i}@acme.com", "reader") for i in range(120)]
+    asyncio.run(world["ch"].insert("loom.namespace_grants", rows))
     r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
     assert r.status_code == 200 and "kept@acme.com" in r.text
     [(_, kw)] = world["events"]
-    assert kw["subject"] == {"other_grants": ["kept@acme.com"]}
+    assert len(kw["subject"]["other_grants"]) == 121
+    assert "kept@acme.com" in kw["subject"]["other_grants"]
+
+
+def test_the_agent_token_is_named_once_it_holds_more_than_writer(world) -> None:
+    [agent] = [
+        r["subject"]
+        for r in asyncio.run(grants.active_on("dev", _NS))
+        if str(r["subject"]).startswith("sa:")
+    ]
+    asyncio.run(world["ch"].insert("loom.namespace_grants", [_grant(_NS, agent, "admin")]))
+    r = _claim(_app(), world["code"], "correct horse")
+    assert r.status_code == 200 and agent in r.text
+    [(_, kw)] = world["events"]
+    assert kw["subject"] == {"other_grants": [agent]}
 
 
 def test_a_write_that_lands_but_reports_a_failure_still_claims(world, monkeypatch) -> None:

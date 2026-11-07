@@ -82,7 +82,7 @@ async def _shutdown_drains(lease: Any, supervisor: Any, emitter: Any) -> None:
     await boot.drain_writes()
     # An agent claim's last cutoff, which ends what an older replica's sign-in
     # with the code issued while the claim was landing.
-    await _agent_claim.drain(timeout_s=15.0)  # not a setting: one shutdown step
+    await _agent_claim.drain()
     # The judge emits a cost event and posts scores: it stops before the
     # emitter and the score queue drain, and both before the HTTP clients close.
     from server.observability import langfuse_scores, retrieval_judge
