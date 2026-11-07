@@ -373,12 +373,13 @@ async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_th
             ("toString(memory_id) AS id FROM loom.memory", [{"namespace": "ns", "id": topic}])
         )
         keys, one = {"keys": ["t"]}, {"n": 1}
-        ch.query_one_returns.extend([one, one, one, keys, one, keys, one, one, {"n": 2}])
+        ch.query_one_returns.extend([one, one, one, one, keys, one, keys, one, one, {"n": 2}])
         # each row counts once: the summary's at its tombstone, the user's at their
-        # delete here (memory.tombstone counts none in a purge)
+        # delete here (memory.tombstone counts none in a purge, the late stamp neither)
         assert await graph_steps.retire_memory_by_user("o", "alice", ch=ch) == 7
         calls = [(" ".join(sql.split()), params) for sql, params in ch.execute_calls]
-        embeddings, stamp, (links, link_params), cache, precedents, *rest = calls
+        embeddings, stamp, (links, link_params), late, cache, precedents, *rest = calls
+        assert late[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
         (memory, memory_params), (own, own_params) = rest
         assert embeddings[0].startswith("DELETE FROM loom.memory_embeddings")
         assert stamp[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")

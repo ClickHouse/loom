@@ -449,14 +449,19 @@ async def retire_memory_by_user(org: str, user_id: str, *, ch: _CHClient | None 
     summaries go first, while the user's rows still name them."""
     ch = ch or _default_client()
     total, slices = await _retire_summaries(org, user_id, ch=ch)
+    # the rows written since memory.tombstone are stamped before the answers go, so no
+    # new answer quotes them in between
+    with purge_scope(False):
+        stamped = await tombstone_scoped(
+            "loom.memory", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+        )
     total += await delete_llm_response_cache_by_user(org, user_id, ch=ch)
     total += await delete_ask_precedents_by_user(org, user_id, ch=ch)
-    if purge_mode():
-        for params in slices:
-            # counted at their tombstone in this saga; one tombstoned before it is not
-            await delete_scoped(
-                "loom.memory", org=org, scope_where=_CONSOLIDATED, params=params, ch=ch
-            )
+    if not purge_mode():
+        return total + stamped
+    for params in slices:
+        # counted at their tombstone in this saga; one tombstoned before it is not
+        await delete_scoped("loom.memory", org=org, scope_where=_CONSOLIDATED, params=params, ch=ch)
     total += await tombstone_scoped(
         "loom.memory", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
     )
