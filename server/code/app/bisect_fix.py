@@ -68,13 +68,6 @@ async def _cause_stage(
 FIX_BLAME_CONCURRENCY = 4
 
 
-def checkable_frames(frames: list[str]) -> list[str]:
-    """The first 60 frames tracker.duplicate_check accepts."""
-    from server.tracker.api.models import checkable_frames
-
-    return checkable_frames(frames)[:60]
-
-
 def _start_dupcheck_fix(input: Any, org: str, ns: str, frames: list[str]) -> Any:
     """A report with no `fix_pr` and no issue gets the duplicate check on its own text,
     started beside the resolve reads. None when the caller named a fix or an issue, the text
@@ -91,7 +84,7 @@ def _start_dupcheck_fix(input: Any, org: str, ns: str, frames: list[str]) -> Any
         return None
 
     async def run() -> dict[str, Any]:
-        from server.tracker.api.models import TrackerDuplicateCheckInput
+        from server.tracker.api.models import TrackerDuplicateCheckInput, checkable_frames
         from server.tracker.app import dupcheck as tdc
         from server.tracker.app import dupcheck_links as dl
 
@@ -107,7 +100,7 @@ def _start_dupcheck_fix(input: Any, org: str, ns: str, frames: list[str]) -> Any
                     namespace=ns,
                     title=title,
                     body=body,
-                    frames=checkable_frames(frames),
+                    frames=checkable_frames(frames)[:60],
                     paths=list(input.paths)[:40],
                     related_prs=False,
                     rerank=False,  # the legs alone: the rerank's second is the budget

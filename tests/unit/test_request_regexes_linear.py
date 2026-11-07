@@ -18,7 +18,6 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from server.code.app import bisect_fix
 from server.code.app.index import sql_names
 from server.code.domain import facets
 from server.code.domain.index import citations, query_trim
@@ -45,6 +44,7 @@ from server.tracker.api.models import (
     MAX_FRAME_CHARS,
     TrackerDuplicateCheckInput,
     TrackerSimilarInput,
+    checkable_frames,
 )
 from server.tracker.domain import defect_answer, similar
 
@@ -87,6 +87,11 @@ def _amounts(s: str) -> object:
 
 def _cue(s: str) -> object:
     return transcripts.parse_vtt("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n" + s + "\n")
+
+
+def _voice_cue(s: str) -> object:
+    # a word after the blanks, so the line's strip keeps them
+    return _cue(s + "x")
 
 
 def _forget(s: str) -> object:
@@ -200,6 +205,7 @@ CASES: list[tuple[str, Callable[[str], object], str, str]] = [
         "Assertion ",
     ),
     ("transcripts._TAG", _cue, "", "<"),
+    ("transcripts._VOICE", _voice_cue, "<v.", "\t"),
     ("mentor_rules._TRACE_LINE_RES blanks", mentor_rules.looks_like_stack_trace, "x" * 80, "\n"),
     ("mentor_rules._TRACE_LINE_RES frame", mentor_rules.looks_like_stack_trace, "1. ", "a"),
     (
@@ -295,10 +301,15 @@ def test_the_search_tracker_leg_drops_a_frame_the_check_would_refuse() -> None:
     TrackerDuplicateCheckInput(namespace="t", frames=shape["frames"])
 
 
-def test_the_bisect_fix_check_drops_a_frame_the_check_would_refuse() -> None:
+def test_a_frame_the_check_would_refuse_is_dropped_before_it() -> None:
     frames = ["DB::" + "a" * MAX_FRAME_CHARS, "DB::Foo::bar"]
-    assert bisect_fix.checkable_frames(frames) == ["DB::Foo::bar"]
-    TrackerDuplicateCheckInput(namespace="t", frames=bisect_fix.checkable_frames(frames))
+    assert checkable_frames(frames) == ["DB::Foo::bar"]
+    TrackerDuplicateCheckInput(namespace="t", frames=checkable_frames(frames))
+
+
+def _without(pattern: str, guard: str) -> str:
+    assert pattern.count(guard) == 1, "the rewrite no longer carries its guard"
+    return pattern.replace(guard, "")
 
 
 # The rewrites that changed most, against the patterns they replaced: the same
@@ -316,7 +327,7 @@ _ORIGINAL = {
     "_TERM": re.compile(r"[A-Za-z_][A-Za-z0-9_$-]*(?:\.[A-Za-z0-9_$-]+)+|[A-Za-z_][A-Za-z0-9_$]*"),
     "_SEGMENT_SPLIT_RE": re.compile(r"(\s+[—–]\s+|\s+-\s+(?=\S)|(?<=[?!])\s+|:\s+(?=\S))"),
     # the number words are long, so the original is the rewrite without its guard
-    "_NUM_RE": re.compile(ask_threshold._NUM_RE.pattern.replace(r"?(?<!\s)\s*", r"?\s*", 1)),
+    "_NUM_RE": re.compile(_without(ask_threshold._NUM_RE.pattern, r"(?<!\s)")),
     "_PART_SPLIT_RE": re.compile(
         r"\s*(?:\?|\.)\s*(?:Additionally|Also|In addition|And)[,:]?\s+|;\s+", re.I
     ),

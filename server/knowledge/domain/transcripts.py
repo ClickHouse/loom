@@ -24,8 +24,9 @@ _TIME = r"(?:\d+:)?\d{1,2}:\d{2}[.,]\d{1,3}"
 _CUE_TIME = re.compile(rf"^({_TIME})\s+-->\s+({_TIME})")
 # A cue line that names its speaker: `Name: text`.
 _SPEAKER = re.compile(r"^([^:<>]{1,80}):\s+(.*)$")
-# A WebVTT voice span names its speaker: `<v Name>text`.
-_VOICE = re.compile(r"^<v(?:\.[^ >]*)?\s+([^>]{1,80})>(.*)$")
+# A WebVTT voice span names its speaker: `<v Name>text`. Its classes hold no
+# blank, so a run of tabs is not split between them in every way.
+_VOICE = re.compile(r"^<v(?:\.[^\s>]*)?\s+([^>]{1,80})>(.*)$")
 _TAG = re.compile(r"<[^>]*>")
 # A line that would read as Markdown structure (a heading, a quote, a table, a fence,
 # a Setext underline, an HTML block) and cut a section where the speaker did not.
