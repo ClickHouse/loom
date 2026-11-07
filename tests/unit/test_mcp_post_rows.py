@@ -5,7 +5,6 @@ the call."""
 from __future__ import annotations
 
 import asyncio
-import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -41,13 +40,23 @@ def _call(**kw: Any) -> None:
     asyncio.run(post_rows.post_handler_rows(_op(), transport="mcp", **args))
 
 
+class _Rows(list[str]):
+    """The rows written, and the most writes that were in flight at once."""
+
+    in_flight = 0
+    peak = 0
+
+
 @pytest.fixture()
-def _slow_rows(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    done: list[str] = []
+def _slow_rows(monkeypatch: pytest.MonkeyPatch) -> _Rows:
+    done = _Rows()
 
     def _row(name: str, fail: bool = False) -> Any:
         async def _write(**_: Any) -> None:
+            done.in_flight += 1
+            done.peak = max(done.peak, done.in_flight)
             await asyncio.sleep(0.2)
+            done.in_flight -= 1
             if fail:
                 raise RuntimeError(f"{name} down")
             done.append(name)
@@ -61,11 +70,10 @@ def _slow_rows(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return done
 
 
-def test_the_three_rows_go_out_in_one_round(_slow_rows: list[str]) -> None:
-    t = time.perf_counter()
+def test_the_three_rows_go_out_in_one_round(_slow_rows: _Rows) -> None:
     _call()
     assert sorted(_slow_rows) == ["audit", "budget", "idem"]
-    assert time.perf_counter() - t < 0.45, "three 0.2 s writes took one round, not three"
+    assert _slow_rows.peak == 3, "the three writes were in flight at once, not one by one"
 
 
 def test_under_budget_and_without_a_key_only_the_audit_row(_slow_rows: list[str]) -> None:

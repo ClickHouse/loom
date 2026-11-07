@@ -54,14 +54,16 @@ def code_plane(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
 
     async def fake_symbol(inp: Any) -> Any:
         st.symbol_calls.append(inp.name)
-        st.span.append(("symbol", time.perf_counter()))
+        st.span.append(("symbol", "start"))
         await asyncio.sleep(st.delay)
+        st.span.append(("symbol", "end"))
         return SimpleNamespace(definitions=[_unit("src/foo.py", 10, inp.name)])
 
     async def fake_search(inp: Any) -> Any:
         st.search_calls += 1
-        st.span.append(("search", time.perf_counter()))
+        st.span.append(("search", "start"))
         await asyncio.sleep(st.delay)
+        st.span.append(("search", "end"))
         return SimpleNamespace(
             abstain=False,
             as_of={"branch": "main"},
@@ -95,14 +97,10 @@ async def test_search_fallback_appends_every_rendered_unit(code_plane, monkeypat
 
 async def test_exact_symbol_leads_and_the_search_fills_concurrently(code_plane) -> None:
     code_plane.delay = 0.2
-    t0 = time.perf_counter()
     hits = await g._inject_code_context("what does FooBar do", _input(), _settings())
-    wall = time.perf_counter() - t0
     # One symbol lookup and the search: both started before either finished.
     assert code_plane.symbol_calls == ["FooBar"] and code_plane.search_calls == 1
-    assert wall < 0.36, wall  # one delay, not two
-    kinds = [k for k, _t in code_plane.span]
-    assert set(kinds) == {"symbol", "search"}
+    assert sorted(code_plane.span[:2]) == [("search", "start"), ("symbol", "start")]
     # The definition leads, the search fills the two remaining slots.
     assert hits[0].memory_key == "code:code-x:src/foo.py:10"
     assert [h.memory_key for h in hits[1:]] == ["code:code-x:src/a.py:1", "code:code-x:src/b.py:2"]
@@ -140,12 +138,9 @@ async def test_apply_runs_two_concurrent_rounds_in_the_fixed_order(monkeypatch) 
     monkeypatch.setattr(g, "_inject_pr_facts", _step("pr", [pr_hit], pool_arg=1))
     monkeypatch.setattr(g, "_annotate_stale_code_memories", _step("stale", note, pool_arg=0))
 
-    t0 = time.perf_counter()
     out = await g.apply_code_grounding("q", _input(), pool, _settings())
-    wall = time.perf_counter() - t0
 
-    # Two rounds of ~200 ms, not four.
-    assert wall < 0.64, wall
+    # Two rounds: in each, both steps start before either ends.
     starts = {n: t for n, ev, t in timeline if ev == "start"}
     ends = {n: t for n, ev, t in timeline if ev == "end"}
     assert starts["ctx"] < ends["gate"] and starts["gate"] < ends["ctx"]

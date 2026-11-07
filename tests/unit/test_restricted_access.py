@@ -5,7 +5,6 @@ and nothing at all for a standard namespace."""
 from __future__ import annotations
 
 import asyncio
-import time
 
 import pytest
 
@@ -91,12 +90,11 @@ async def test_note_restricted_access_writes_one_row(monkeypatch) -> None:
         is_service_account=True,
         token_id="jti-1",
     )
-    t0 = time.perf_counter()
     assert await ra.note_restricted_access(
         auth, op="code.search", org=ORG, namespace=NS, transport="http"
     )
-    # The request does not wait for the insert...
-    assert time.perf_counter() - t0 < 0.04 and rows == []
+    # The request does not wait for the insert: no row yet...
+    assert rows == []
     # ...and the row still lands, with the same content
     assert await ra.drain() == 1
     ((event, kw),) = rows
