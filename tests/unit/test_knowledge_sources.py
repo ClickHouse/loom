@@ -235,7 +235,9 @@ def test_a_failed_probe_stores_nothing(
     assert fake.rows == {}
 
 
-def test_a_folder_takes_word_documents_only_when_its_config_names_them(fake: _Store) -> None:
+def test_a_folder_config_naming_docx_is_stored_in_the_table_s_order_and_probed(
+    fake: _Store,
+) -> None:
     config = {"folder_ids": [FOLDER], "include": ["docx", "pdf"]}
     out = asyncio.run(app.handle_knowledge_source_add(_add(config=config)))
     assert out.config["include"] == ["pdf", "docx"]

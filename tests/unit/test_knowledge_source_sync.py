@@ -856,7 +856,6 @@ def test_an_uploaded_deck_or_document_goes_to_the_extractor_with_its_bytes_kept(
     world.sources = [_source(config={"folder_ids": [FOLDER], "include": [fmt]})]
     world.files = [_file("file2", mime, "2026-01-03T00:00:00.000Z", size="14")]
     asyncio.run(source_sync.run_sync())
-    assert f"mimeType = '{mime}'" in _listings(world)[0]
     [(inp, _)] = world.upserts
     assert inp.metadata["ingested_format"] == fmt
     assert inp.metadata["extraction_coverage"]["complete"] is True

@@ -229,6 +229,10 @@ export const INCLUDE_OPTIONS = [
   { value: "docx", label: ".docx documents" },
 ] as const;
 
+/** The kinds a folder takes unless its form says otherwise: the server's default
+ *  `include` (GDRIVE_DEFAULT_INCLUDE), which leaves .docx out. */
+export const DEFAULT_INCLUDE = ["docs", "slides", "pdf", "pptx"] as const;
+
 /** A meeting store's providers, with the credential each takes. */
 export const RECORDING_PROVIDERS = [
   { value: "meet", label: "meet", hint: "An authorized_user JSON file with the meetings.space.readonly scope only" },
@@ -272,8 +276,7 @@ export function emptySourceForm(): SourceForm {
     name: "",
     kind: "gdrive",
     folders: "",
-    // .docx is opt-in, as in the server's default include.
-    include: INCLUDE_OPTIONS.map((o) => o.value).filter((v) => v !== "docx"),
+    include: [...DEFAULT_INCLUDE],
     projects: "",
     pages: "",
     databases: "",
