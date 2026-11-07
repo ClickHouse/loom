@@ -92,7 +92,7 @@ describe("RepairsPanel", () => {
     render(<RepairsPanel />);
     await userEvent.click(screen.getByRole("button", { name: "Apply expiries now" }));
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith("Expired 2; the search index did not follow: mirror:2 keys: Timeout", "error"),
+      expect(toast).toHaveBeenCalledWith("Expired 2; the search index did not follow (Timeout)", "error"),
     );
   });
 

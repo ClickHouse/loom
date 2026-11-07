@@ -130,7 +130,7 @@ export function ProjectionFailuresPanel() {
                     type="empty"
                     htmlType="button"
                     disabled={busy}
-                    aria-label={`Dismiss the ${f.projection} failure of ${f.memory_keys[0] || f.source_operation || "a write"} (${f.failure_id.slice(0, 8)})`}
+                    aria-label={dismissLabel(f)}
                     onClick={() => void dismiss(f.failure_id)}
                   >
                     Dismiss
@@ -143,4 +143,10 @@ export function ProjectionFailuresPanel() {
       )}
     </>
   );
+}
+
+/** Named by what the row shows; the short id tells apart two failures of one memory. */
+function dismissLabel(f: ProjectionFailure): string {
+  const subject = f.memory_keys[0] || f.source_operation || "a write";
+  return `Dismiss the ${f.projection} failure of ${subject} (${f.failure_id.slice(0, 8)})`;
 }

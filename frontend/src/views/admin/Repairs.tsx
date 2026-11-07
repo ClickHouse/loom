@@ -67,7 +67,7 @@ export function RepairsPanel() {
       if (r.failures.some((f) => !f.startsWith("mirror")))
         return toast(`The expiry did not land: ${r.failures.join("; ")}`, "error");
       if (r.failures.length)
-        return toast(`Expired ${done}; the search index did not follow: ${r.failures.join("; ")}`, "error");
+        return toast(`Expired ${done}; the search index did not follow (${mirrorErrors(r.failures)})`, "error");
       // A full pass may have left more; one that expired nothing only met locked rows.
       const rest = r.scanned === SWEEP_LIMIT && done > 0 ? "; run it again for the rest" : "";
       toast(`Expired ${done}; ${r.locked_skipped} locked kept${rest}`, "ok");
@@ -234,4 +234,9 @@ function restoreWarning(payload: unknown, here: { org: string; namespace: string
     return `${taken} It is a snapshot of ${name}: its memories are written here, and its members get the grants they had there.`;
   }
   return `${taken} Its memories replace their current versions here, deleted ones come back, and its grants are active again, including any revoked since.`;
+}
+
+/** A mirror failure reads `mirror:<n> keys: <error>`; the operator needs the error. */
+function mirrorErrors(failures: string[]): string {
+  return failures.map((f) => f.replace(/^mirror:\d+ keys: /, "")).join(", ");
 }
