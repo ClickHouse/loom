@@ -197,6 +197,11 @@ async function runFileContextHook(rendered) {
 }
 
 const HEAD = "Loom: 4 memories anchored to src/a.cpp — read before editing:";
+// What the plugin says after the block for REMOVAL, a rule-or-decision footer that names decision.record.
+const REMOVAL_GUIDANCE =
+  'A team rule or decision above that is wrong or outdated: memory.delete(namespace="code-x", memory_key=<its id>) ' +
+  "removes it if you wrote it or are a maintainer; otherwise write a corrected rule for the file and tell its " +
+  "author, or ask a maintainer to record the corrected decision with decision.record.";
 const TEAM_ROW = "- Team rule (by alice, 2 days ago): keep the lock order [id: rules/a/lock]";
 const REMOVAL =
   '- A team rule or decision wrong or outdated? memory.delete(namespace="code-x", memory_key=<id>) removes it if you ' +
@@ -208,10 +213,13 @@ test("the hook passes the file's path and the team namespace through to the guid
     [HEAD, TEAM_ROW, '- … 1 more; memory.for_file(path="src/a.cpp") lists them.', REMOVAL].join("\n"),
   );
   assert.deepEqual(asked.body.extra_namespaces, ["code-x"]);
-  assert.match(after, /^\nA team rule or decision above .*memory\.delete\(namespace="code-x", memory_key=<its id>\)/);
-  assert.match(
+  assert.equal(
     after,
-    /\nRows left out of the block: memory\.for_file\(path="src\/a\.cpp"\) returns every row in its hits\.$/,
+    "\n" +
+      [
+        REMOVAL_GUIDANCE,
+        'Rows left out of the block: memory.for_file(path="src/a.cpp", extra_namespaces=["code-x"]) returns every row in its hits.',
+      ].join("\n"),
   );
 });
 
@@ -230,10 +238,14 @@ test("the hook restates a left-out team decision line and a more line of ceiling
   );
   const lines = after.split("\n").slice(1);
   assert.equal(lines.length, 3, after);
-  assert.match(lines[1], /^Rows left out of the block: memory\.for_file\(path="src\/a\.cpp"\)/);
+  assert.equal(lines[0], REMOVAL_GUIDANCE);
+  assert.match(
+    lines[1],
+    /^Rows left out of the block: memory\.for_file\(path="src\/a\.cpp", extra_namespaces=\["code-x"\]\)/,
+  );
   assert.equal(
     lines[2],
     "Decisions or constraints left out of the block: memory.get on each key it names, with the namespace it names " +
-      "for a team key; loom_search for the rest.",
+      "for a team key; loom_search for the rest, and for a key memory.get does not find (a row filed under another user).",
   );
 });

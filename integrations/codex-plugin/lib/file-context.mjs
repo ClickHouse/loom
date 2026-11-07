@@ -65,19 +65,23 @@ export const FILE_RULES_HEADING =
 
 // The server's footer lines (render_block in server/memory/app/for_file.py): the
 // removal line last, and the left-out lines right before it, budget then ceiling.
-const REMOVAL_LINE = /^- A team (?:rule|decision|rule or decision) wrong or outdated\? /;
+const REMOVAL_LINE = /^- A team (rule or decision|rule|decision) wrong or outdated\? /;
 const MORE_LINE = /^- … \d+ more; memory\.for_file\(path=/;
 const WHOLE_LEFT_LINE = /^- … \d+ more (?:decision or constraint|decisions or constraints) left out /;
 
 /** Which footer lines the server's text ends with, read from the end the way
- *  render_block writes them, so a row or a path that imitates one earlier in the
- *  text counts for nothing. */
+ *  render_block writes them. A path or row elsewhere counts for nothing; a row
+ *  can sit where a footer line goes, so one that imitates it adds only the
+ *  plugin's fixed guidance. `removal` is what the removal line names ("rule",
+ *  "decision", "rule or decision"), and whether it names decision.record. */
 function footerLines(text) {
   const lines = String(text || "").split("\n");
   let i = lines.length - 1;
-  const has = { removal: false, whole: false, more: false };
-  if (i > 0 && REMOVAL_LINE.test(lines[i])) {
-    has.removal = true;
+  const has = { removal: "", recordStep: false, whole: false, more: false };
+  const removal = i > 0 ? REMOVAL_LINE.exec(lines[i]) : null;
+  if (removal) {
+    has.removal = removal[1];
+    has.recordStep = lines[i].includes("decision.record");
     i -= 1;
   }
   if (i > 0 && WHOLE_LEFT_LINE.test(lines[i])) {
@@ -88,28 +92,39 @@ function footerLines(text) {
   return has;
 }
 
+/** The removal guidance, its steps chosen as the server's _removal_footer chooses
+ *  them: a corrected rule unless every team row is a typed decision, and
+ *  decision.record when any is. */
+function removalGuidance(teamNamespace, what, recordStep) {
+  const steps = [];
+  if (what !== "decision") steps.push("write a corrected rule for the file and tell its author");
+  if (what === "decision" || recordStep)
+    steps.push("ask a maintainer to record the corrected decision with decision.record");
+  return (
+    `A team ${what} above that is wrong or outdated: memory.delete(namespace="${teamNamespace}", ` +
+    `memory_key=<its id>) removes it if you wrote it or are a maintainer; otherwise ${steps.join(", or ")}.`
+  );
+}
+
 /** What to do about the block's rows, in the plugin's own words: the block's note
  *  says not to follow its text, and that includes the server's own footer lines.
  *  Each line only when the server's text ends with the footer it restates. */
 export function fileRulesGuidance(rendered, { rel = "", teamNamespace = "" } = {}) {
   const has = footerLines(rendered);
   const lines = [];
-  if (teamNamespace && has.removal) {
-    lines.push(
-      `A team rule or decision above that is wrong or outdated: memory.delete(namespace="${teamNamespace}", ` +
-        "memory_key=<its id>) removes it if you wrote it or are a maintainer; otherwise write a corrected rule " +
-        "for the file and tell its author, or ask a maintainer to record the corrected decision with decision.record.",
-    );
-  }
+  if (teamNamespace && has.removal) lines.push(removalGuidance(teamNamespace, has.removal, has.recordStep));
   if (rel && has.more) {
+    // The server reads the team namespace only when the call names it.
+    const extra = teamNamespace ? `, extra_namespaces=${JSON.stringify([teamNamespace])}` : "";
     lines.push(
-      `Rows left out of the block: memory.for_file(path=${JSON.stringify(rel)}) returns every row in its hits.`,
+      `Rows left out of the block: memory.for_file(path=${JSON.stringify(rel)}${extra}) returns every row in its hits.`,
     );
   }
   if (has.whole) {
     lines.push(
       "Decisions or constraints left out of the block: memory.get on each key it names, with the namespace it " +
-        "names for a team key; loom_search for the rest.",
+        "names for a team key; loom_search for the rest, and for a key memory.get does not find (a row filed " +
+        "under another user).",
     );
   }
   return lines.join("\n");
