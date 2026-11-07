@@ -904,16 +904,16 @@ def test_the_checks_need_only_the_standard_library(tmp_path: Path) -> None:
 
 
 def test_a_missing_gh_is_one_line(
-    prepared: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+    prepared: list[tuple[str, ...]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def no_gh(version: str, previous: str) -> str:
-        raise FileNotFoundError(2, "No such file or directory", "gh")
-
-    monkeypatch.setattr(prepare, "release_notes", no_gh)
+    monkeypatch.setattr(
+        prepare, "release_notes", lambda version, previous: prepare.pull_requests({1: 0})
+    )
+    monkeypatch.setenv("PATH", str(tmp_path))  # no gh on it
     monkeypatch.setattr(sys, "argv", ["prepare.py", "notes", "1.2.0"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
-    assert str(exited.value) == "gh is not installed"
+    assert str(exited.value) == "gh: not found"
 
 
 def test_the_previous_release_is_printed_for_a_candidate_too(

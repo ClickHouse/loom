@@ -6,12 +6,12 @@ and the version checks the release workflow runs.
 server's registry); the other commands, which the release workflow runs on the
 runner's own python3, need only the standard library:
 
-    .venv/bin/python scripts/release/prepare.py bump 1.2.0       # notes, then the bump
-    .venv/bin/python scripts/release/prepare.py notes 1.2.0      # the notes alone
-    .venv/bin/python scripts/release/prepare.py check 1.2.0      # one version everywhere
-    .venv/bin/python scripts/release/prepare.py check-chart 1.2.0       # the chart moved
-    .venv/bin/python scripts/release/prepare.py check-tag 1.2.0-rc.1    # candidate order
-    .venv/bin/python scripts/release/prepare.py previous 1.2.0-rc.1     # the notes' base tag
+    .venv/bin/python scripts/release/prepare.py bump 1.2.0   # notes, then the bump
+    .venv/bin/python scripts/release/prepare.py notes 1.2.0  # the notes alone
+    python3 scripts/release/prepare.py check 1.2.0           # one version everywhere
+    python3 scripts/release/prepare.py check-chart 1.2.0     # the chart moved
+    python3 scripts/release/prepare.py check-tag 1.2.0-rc.1  # candidate order
+    python3 scripts/release/prepare.py previous 1.2.0-rc.1   # the notes' base tag
 
 What each file carries, the chart rule, the release candidates and the notes:
 docs/development/release-process.md.
@@ -527,7 +527,7 @@ def _bump(args: argparse.Namespace) -> None:
 
 def _one_line(e: Exception) -> str:
     if isinstance(e, FileNotFoundError):
-        return f"{e.filename} is not installed"
+        return f"{e.filename}: not found"
     if isinstance(e, subprocess.CalledProcessError):
         detail = f": {e.stderr.strip()}" if e.stderr else ""
         return f"{' '.join(map(str, e.cmd))} failed{detail}"
@@ -554,7 +554,8 @@ def main() -> None:
         command.add_argument("tag_version", help="the tag's version, X.Y.Z or X.Y.Z-rc.N")
         command.set_defaults(run=run)
     args = parser.parse_args()
-    # A refusal, a failed git or gh call, or a missing gh is one line; in a check, an ::error::.
+    # A refusal, a failed git or gh call, or a missing gh, git or file is one line;
+    # in a check, an ::error:: annotation.
     try:
         args.run(args)
     except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as e:
