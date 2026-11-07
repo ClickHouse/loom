@@ -230,10 +230,7 @@ async def _bound_trackers() -> Any:
     once for the whole listing."""
     from server.tracker.app import binding
 
-    try:
-        await binding.refresh_overrides()
-    except Exception as e:  # noqa: BLE001 — the last snapshot answers
-        logger.debug("code.repos: binding refresh failed: %s", e)
+    await binding.refresh_overrides()  # never raises: a failed one keeps the last snapshot
     return functools.partial(
         binding.tracker_namespaces_for, operator=binding.operator_repositories()
     )

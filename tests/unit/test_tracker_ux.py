@@ -144,7 +144,7 @@ async def test_a_maintainer_row_says_its_binding(monkeypatch) -> None:
     from server.tracker.app import binding
 
     async def refresh(**k):
-        return {}
+        return None
 
     monkeypatch.setattr(binding, "refresh_overrides", refresh)
     binding.reset_overrides_for_tests(

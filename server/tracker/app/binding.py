@@ -248,15 +248,19 @@ async def _gated(org: str, code_namespace: str, ns: str, *, hides_answer: bool) 
 
 
 async def authorized_tracker_namespaces(
-    org: str, code_namespace: str, *, hides_answer: bool = True
+    org: str,
+    code_namespace: str,
+    *,
+    hides_answer: bool = True,
+    operator: Collection[tuple[str, str]] | None = None,
 ) -> list[str]:
     """Every linked tracker the current principal may read,
     primary first; a refused one is left out in silence (never named).
-    `hides_answer`: see `authz.row_in_scope`."""
+    `hides_answer`: see `authz.row_in_scope`; `operator`: see `tracker_namespaces_for`."""
     await refresh_overrides()
     return [
         ns
-        for ns in tracker_namespaces_for(org, code_namespace)
+        for ns in tracker_namespaces_for(org, code_namespace, operator=operator)
         if await _gated(org, code_namespace, ns, hides_answer=hides_answer)
     ]
 
@@ -316,13 +320,14 @@ async def resolve_binding(org: str, namespace: str) -> dict[str, Any]:
             "authorized": True,
             "templates": template_names(own.restricted),
         }
-    primary = tracker_namespace_for(org, namespace)
+    operator = operator_repositories()  # once for both lookups below
+    primary = tracker_namespace_for(org, namespace, operator=operator)
     target = tracker_namespace(org, primary)
     if target is None:  # unbound, or bound to a name the tracker plane does not serve
         return none
     # Every linked tracker this principal may read, primary
     # first; a refused primary is `none` whatever else is linked (never named)
-    linked = await authorized_tracker_namespaces(org, namespace)
+    linked = await authorized_tracker_namespaces(org, namespace, operator=operator)
     if not linked or linked[0] != primary:
         return none
     return {

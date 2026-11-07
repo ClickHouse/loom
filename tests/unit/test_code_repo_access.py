@@ -233,7 +233,7 @@ async def test_set_source_writes_the_binding_state_and_the_override_is_read_firs
     async def refresh_over(*, force=False, ch=None):
         # the "state" after a write: what set_state recorded last
         binding.reset_overrides_for_tests({(o, ns): v for o, ns, _k, v in states})
-        return {}
+        return None
 
     monkeypatch.setattr(reg, "refresh_db_repos", refresh)
     monkeypatch.setattr(
