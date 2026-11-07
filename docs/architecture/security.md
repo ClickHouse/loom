@@ -340,11 +340,11 @@ sequential consistency (for at most 5 s), waits `CLOCK_SKEW_S` (5 s), and cuts o
 for a sign-in with a plain-hash code on an older replica while the write was landing, then
 audits `auth.agent_claimed`. No lease bound can stop these steps, and they run in a task of
 their own, so a client that disconnects does not stop them either; a shutdown waits for them
-alongside its other drains, for as long as one claim can run (`agent_claim.DRAIN_S`) or what is
-left of the shutdown's drain budget. An insert that reports any failure is read back (for at
-most 5 s): when the row holds the new password the claim goes on as written; otherwise the
-cutoff after the write still runs, the page asks the person to try their password before
-submitting again, and the server logs a warning instead of an audit row. The account's lease is
+alongside its other drains, within the shutdown's drain budget. An insert that reports any
+failure is read back (for at most 5 s): when the row holds the new password the claim goes on
+as written; otherwise it may still land, so the cutoff after it still runs and is waited out,
+the claim is audited with `confirmed: false`, and the page lists the other grant holders and
+asks the person to try their password before submitting again. The account's lease is
 released either way, so an insert that lands after that read can still replace a claim that
 another submit with the same code made meanwhile; both proved the code. A second submit of the
 same form that proved the code too finds the account claimed once it holds it and waits to a

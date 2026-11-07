@@ -223,7 +223,7 @@ def test_the_code_claims_once_and_the_claimer_signs_in_with_their_password(world
     [(event, kw)] = world["events"]
     assert (event, kw["namespace"], kw["actor"]) == ("auth.agent_claimed", _NS, _NS)
     # The agent's own grant is not another holder's.
-    assert kw["subject"] == {"other_grants": []} and "hold grants" not in r.text
+    assert kw["subject"] == {"other_grants": [], "confirmed": True} and "hold grants" not in r.text
 
     # The code is spent: neither a second claim nor a sign-in takes it.
     assert _claim(c, world["code"], "attacker pass").status_code == 400
@@ -581,7 +581,7 @@ def test_the_agent_token_is_named_once_it_holds_more_than_writer(world) -> None:
     r = _claim(_app(), world["code"], "correct horse")
     assert r.status_code == 200 and agent in r.text
     [(_, kw)] = world["events"]
-    assert kw["subject"] == {"other_grants": [agent]}
+    assert kw["subject"] == {"other_grants": [agent], "confirmed": True}
 
 
 def _timed_out() -> Exception:
@@ -647,12 +647,13 @@ def test_grants_that_cannot_be_listed_are_named_as_such(world, monkeypatch) -> N
     assert r.status_code == 200 and "could not be listed" in r.text
     [(_, kw)] = world["events"]
     # Listed once, for the audit row and the page alike.
-    assert kw["subject"] == {"other_grants": None} and calls == [_LEGACY]
+    assert kw["subject"] == {"other_grants": None, "confirmed": True} and calls == [_LEGACY]
 
 
 def test_a_write_that_does_not_confirm_still_cuts_off_after_it(world, monkeypatch) -> None:
-    # The insert fails before it lands and the read-back cannot find it: the
-    # code stays, the cutoff after the write still runs, and the page says wait.
+    # The insert fails and the read-back cannot find it: it may land later, so
+    # the cutoff after it runs and is waited out, the claim is audited as
+    # unconfirmed, and the page says wait, with the grant review.
     from server.identity.app import account_admin
 
     real_end, cutoffs = account_admin.end_tokens, []
@@ -672,8 +673,20 @@ def test_a_write_that_does_not_confirm_still_cuts_off_after_it(world, monkeypatc
     monkeypatch.setattr(ch, "insert", insert)
     r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
     assert r.status_code == 503 and "An earlier submit may still be claiming" in r.text
-    assert len(cutoffs) == 2 and world["events"] == []
+    assert "Review its grants" in r.text
+    assert len(cutoffs) == 2 and world["waited"] == cutoffs[1:]
+    [(event, kw)] = world["events"]
+    assert event == "auth.agent_claimed" and kw["subject"]["confirmed"] is False
     assert passwords.verify_password(_row(world, _LEGACY)["password_hash"], world["legacy_code"])
+
+
+def test_a_form_body_that_cannot_be_read_answers_the_page(world) -> None:
+    r = _app().post(
+        "/oauth/agent-claim",
+        content=b"namespace=\xff\xfe",
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+    assert r.status_code == 400 and "Claim an agent" in r.text
 
 
 def test_a_personal_token_named_like_the_agent_is_named(world) -> None:
@@ -686,7 +699,7 @@ def test_a_personal_token_named_like_the_agent_is_named(world) -> None:
     r = _claim(_app(), world["code"], "correct horse")
     assert r.status_code == 200 and lookalike in r.text
     [(_, kw)] = world["events"]
-    assert kw["subject"] == {"other_grants": [lookalike]}
+    assert kw["subject"] == {"other_grants": [lookalike], "confirmed": True}
 
 
 @pytest.mark.parametrize("failure", [_unavailable, _timed_out, lambda: RuntimeError("driver")])
@@ -805,7 +818,7 @@ def test_a_shutdown_drain_waits_for_a_claims_last_cutoff(world, monkeypatch) -> 
         )
         await entered.wait()
         handler.cancel()
-        await agent_claim.drain(timeout_s=30.0)
+        await agent_claim.drain()
         assert not agent_claim._running
 
     asyncio.run(run())

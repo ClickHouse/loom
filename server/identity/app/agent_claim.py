@@ -21,13 +21,17 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
-from server.auth import grant_claims, oauth, revocation, service_accounts
+from server.auth import oauth, revocation, service_accounts
 from server.auth.attempts import client_address
 from server.auth.claim_codes import CLAIMED_TAG, UNCLAIMED_SQL, verify_claim_code_off_loop
 from server.auth.grant_claims import account_change
 from server.auth.login import LoginBusy, LoginThrottled, throttled, verify_as_unknown
 from server.auth.passwords import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, hash_password_off_loop
-from server.auth.self_signup import AGENT_DESCRIPTION, AGENT_NAME_PREFIX
+from server.auth.self_signup import (
+    AGENT_DESCRIPTION,
+    AGENT_DESCRIPTION_UNCLAIMED,
+    AGENT_NAME_PREFIX,
+)
 from server.core.ch import get_client, own_write_reads
 from server.core.errors import (
     BackendTimeoutError,
@@ -44,13 +48,18 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 _TITLE = "Claim an agent's namespace"
+_EARLIER_SUBMIT = (
+    "An earlier submit may still be claiming this namespace: wait a minute and sign in "
+    "with the password you chose; if that fails, submit again."
+)
 # What ClickHouse or the account's lease answer when a step cannot run now.
 _BUSY = (GrantBusyError, BackendUnavailableError, BackendTimeoutError, OverloadedError)
 _REASON = "agent namespace claimed"
 
 
-def _form(namespace: str, error: str = "", status_code: int = 200) -> Response:
-    message = f'<p class="error">{html.escape(error)}</p>' if error else ""
+def _form(namespace: str, error: str = "", status_code: int = 200, notice: str = "") -> Response:
+    # `notice` is HTML the caller built; `error` is text.
+    message = (f'<p class="error">{html.escape(error)}</p>' if error else "") + notice
     return oauth.html_page(
         _TITLE,
         f"""<h2>{_TITLE}</h2>
@@ -90,7 +99,10 @@ async def agent_claim_page(namespace: str = "") -> Response:
 async def agent_claim(request: Request) -> Response:
     if settings.oauth_login_provider == "oidc":
         return _closed()
-    f = await oauth.form_body(request)
+    try:
+        f = await oauth.form_body(request)
+    except oauth.OAuthError:
+        return _form("", "The form could not be read: submit it again.", 400)
     namespace = f.get("namespace", "").strip().lower()
     code, password = f.get("code", "").strip(), f.get("password", "")
     if not namespace or not code:
@@ -126,16 +138,16 @@ async def agent_claim(request: Request) -> Response:
     try:
         outcome, cutoff, others = await claim_shielded(org, namespace, code_hash, password_hash)
     except Exception:  # noqa: BLE001 — answered by the page; `_done` logs it
-        return _retry_later(
-            namespace,
-            "An earlier submit may still be claiming this namespace: wait a minute and sign "
-            "in with the password you chose; if that fails, submit again.",
-        )
+        return _retry_later(namespace, _EARLIER_SUBMIT)
     if cutoff is None:
         return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
     # The person signs in next: past the cutoff on every replica's clock, so the
     # token they get is not one it ends.
     await revocation.wait_out(cutoff)
+    if outcome == "unconfirmed":
+        page = _form(namespace, _EARLIER_SUBMIT, 503, notice=_grants_notice(others))
+        page.headers["Retry-After"] = "60"
+        return page
     if outcome == "taken":
         return _form(
             namespace,
@@ -228,22 +240,11 @@ def _done(task: asyncio.Task[Any]) -> None:
         log.warning("agent claim: the claim's task failed: %r", task.exception())
 
 
-# The longest one claim runs to its last cutoff: the lease's wait and bound, a
-# landed check, the read-back, the skew wait, and the cutoff's wait for the
-# subject's lease plus a margin for its insert. The audit after it is not waited for.
-DRAIN_S = (
-    grant_claims.WAIT_S
-    + grant_claims.CHANGE_S
-    + 3 * _READ_BACK_S
-    + revocation.CLOCK_SKEW_S
-    + revocation.SUBJECT_WAIT_S
-)
-
-
-async def drain(timeout_s: float = DRAIN_S) -> None:
-    """Wait for the claims still running, so a shutdown does not drop a cutoff."""
+async def drain() -> None:
+    """Wait for the claims still running, so a shutdown does not drop a cutoff;
+    the shutdown's drain budget bounds the wait."""
     if _running:
-        await asyncio.wait(set(_running), timeout=timeout_s)
+        await asyncio.wait(set(_running))
 
 
 async def claim_shielded(
@@ -263,9 +264,11 @@ async def _replace_code(
     """("claimed", the cutoff the claimer waits out, the other grant holders or
     None when they could not be listed) when this call replaced the code with
     `password_hash`; ("taken", a cutoff past the first claim's last, None) when a
-    claim landed first, as an earlier submit of the same form does; ("refused",
-    None, None), the only outcome without a cutoff, when the row changed
-    otherwise (a release)."""
+    claim landed first, as an earlier submit of the same form does;
+    ("unconfirmed", the cutoff after the write, the holders) when the write
+    failed and did not read back, so it may still land; ("refused", None,
+    None), the only outcome without a cutoff, when the row changed otherwise
+    (a release)."""
     subject, sent, written = "", False, False
     # Held from the read to the write, as a release or a password link holds the
     # account; the cutoffs after the write need no lease and run after it.
@@ -292,13 +295,12 @@ async def _replace_code(
         # A write can land and still report a failure (a timeout after it was
         # applied, the lease's bound after it).
         if not written and not await _landed(org, namespace, password_hash):
-            # It may still land: the cutoff after it runs anyway, and the person
-            # is told to try their password before submitting again.
+            # It may still land: the cutoff after it runs anyway, the claim is
+            # audited as unconfirmed, and the person is told to try their
+            # password before submitting again.
             log.warning("agent claim of %s/%s: the write did not confirm: %r", org, namespace, e)
-            await _after_write(org, namespace, subject, password_hash)
-            raise BackendUnavailableError(
-                "the claim's write did not confirm", operation="agent_claim"
-            ) from e
+            cutoff = await _after_write(org, namespace, subject, password_hash)
+            return "unconfirmed", cutoff, await _audit(org, namespace, confirmed=False)
         log.warning(
             "agent claim of %s/%s: the backend failed after the write: %r", org, namespace, e
         )
@@ -321,9 +323,8 @@ async def _landed(org: str, namespace: str, password_hash: str) -> bool:
 async def _write(row: dict[str, Any], password_hash: str) -> None:
     """Replace the code with the claimer's password and mark the account claimed."""
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-    # A row signed up under an earlier default calls the namespace unclaimed.
     description = str(row["description"])
-    if description == "Created via agent self-signup; unclaimed.":
+    if description == AGENT_DESCRIPTION_UNCLAIMED:
         description = AGENT_DESCRIPTION
     await get_client().insert(
         "loom.namespaces",
@@ -331,9 +332,10 @@ async def _write(row: dict[str, Any], password_hash: str) -> None:
     )
 
 
-async def _audit(org: str, namespace: str) -> list[str] | None:
+async def _audit(org: str, namespace: str, *, confirmed: bool = True) -> list[str] | None:
     """Audit the claim with the grants others hold, which it leaves for the
-    claimer to review; those holders, or None when they could not be listed."""
+    claimer to review, and whether its write read back (`confirmed`); those
+    holders, or None when they could not be listed."""
     others: list[str] | None = None
     try:
         others = await _other_grants(org, namespace)
@@ -345,7 +347,7 @@ async def _audit(org: str, namespace: str) -> list[str] | None:
             org=org,
             namespace=namespace,
             actor=namespace,
-            subject={"other_grants": others},
+            subject={"other_grants": others, "confirmed": confirmed},
         )
     except Exception as e:  # noqa: BLE001 — the claim is written; the page must still answer
         log.warning("agent claim of %s/%s: the audit row failed: %r", org, namespace, e)

@@ -350,10 +350,6 @@ async def _write(
     return row
 
 
-# How long a subject revocation waits for the one ahead of it.
-SUBJECT_WAIT_S = 10.0
-
-
 @asynccontextmanager
 async def subject_change(subject: str) -> AsyncIterator[None]:
     """Serialize subject revocations across every writer and replica."""
@@ -361,7 +357,7 @@ async def subject_change(subject: str) -> AsyncIterator[None]:
     from server.core.errors import GrantBusyError
 
     name = f"subject-revocation:{uuid.uuid5(_LEASE_NAMESPACE, subject)}"
-    async with leases.holding(name, ttl_s=60.0, wait_s=SUBJECT_WAIT_S) as held:
+    async with leases.holding(name, ttl_s=60.0, wait_s=10.0) as held:
         if not held:
             raise GrantBusyError("another revocation of this subject is running; retry shortly")
         yield
