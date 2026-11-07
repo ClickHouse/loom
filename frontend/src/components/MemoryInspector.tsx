@@ -204,9 +204,10 @@ export function MemoryInspector({
   // The memory the drawer has open, compared by value (parents rebuild identity): a write
   // that answers late checks it before touching the drawer.
   const shown = useRef<string | null>(null);
-  // Bumped by each Edit and each Rename (they are exclusive), so a save or a move that
-  // answers late closes only the form it came from.
-  const editSession = useRef(0);
+  // Bumped by each Edit and each Rename, so a save or a move that answers late closes only
+  // the form it came from. `renameSession` is the count when Rename opened: `onRenamed`
+  // runs in the closure of that render.
+  const formSession = useRef(0);
   const [renameSession, setRenameSession] = useState(0);
   const toggleSection = (id: SectionId) =>
     setSections((cur) => {
@@ -676,7 +677,7 @@ export function MemoryInspector({
 
   const onStartEdit = () => {
     if (!detail) return;
-    editSession.current += 1;
+    formSession.current += 1;
     setDraft(formatValue(detail.value));
     setEditing(true);
   };
@@ -735,7 +736,7 @@ export function MemoryInspector({
 
   const onSaveEdit = async () => {
     if (!detail) return;
-    const session = editSession.current;
+    const session = formSession.current;
     try {
       // Parse JSON if it looks like an object/array; else keep the string.
       let nextValue: unknown = draft;
@@ -754,7 +755,7 @@ export function MemoryInspector({
       });
       toast("Saved", "ok");
       // A save that answers after another Edit leaves that editor open.
-      if (editSession.current === session) setEditing(false);
+      if (formSession.current === session) setEditing(false);
     } catch (e) {
       toast(`Save failed: ${humanizeError(e)}`, "error");
       return;
@@ -769,9 +770,10 @@ export function MemoryInspector({
     const left = r.redirected ? "the old key redirects to it" : "the old key was deleted";
     // A move that answers after the drawer moved, or after another Edit or Rename, leaves
     // the drawer as it is and says where the key went.
-    if (!showing() || editSession.current !== renameSession) {
-      onChanged();
+    if (!showing() || formSession.current !== renameSession) {
       toast(`Renamed ${memoryKey} to ${r.to_key} — ${left}`, "ok");
+      // Still on this key: read it again, so a deleted key shows as gone.
+      await reread();
       return;
     }
     setRenaming(false);
@@ -1440,8 +1442,8 @@ export function MemoryInspector({
                     <Dropdown.Item
                       onSelect={() => {
                         menuHandsOff.current = true;
-                        editSession.current += 1;
-                        setRenameSession(editSession.current);
+                        formSession.current += 1;
+                        setRenameSession(formSession.current);
                         setRenaming(true);
                       }}
                     >
