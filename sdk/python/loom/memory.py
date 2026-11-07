@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 import json
+import weakref
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -91,20 +92,6 @@ class _CoalesceWindow:
 _T = TypeVar("_T")
 
 
-def _after(
-    before: list[asyncio.Task[Any] | None], request: Callable[[], Awaitable[_T]]
-) -> asyncio.Task[_T]:
-    """A task that runs `request()` once every task in `before` is done."""
-
-    async def run() -> _T:
-        waits = [t for t in before if t is not None]
-        if waits:
-            await asyncio.wait(waits)
-        return await request()
-
-    return asyncio.get_running_loop().create_task(run())
-
-
 class _SetCoalescer:
     """Gathers burst `memory.set` calls of one identity into `memory.bulk_set`.
 
@@ -120,10 +107,15 @@ class _SetCoalescer:
     def __init__(self, transport: Any) -> None:
         self._transport = transport
         self._windows: dict[tuple[str, ...], _CoalesceWindow] = {}
-        self._inflight: set[asyncio.Task[None]] = set()
+        # Every flush and first set not yet done: flush() waits for them all.
+        self._inflight: set[asyncio.Task[Any]] = set()
         # The last flush of each identity. The next window's first sets and its flush start
         # after it, so a set sent again cannot land after a newer set of its key.
         self._flushes: dict[tuple[str, ...], asyncio.Task[None]] = {}
+        # The flush each flush followed: one cancelled before its turn passes the wait on.
+        self._ahead: weakref.WeakKeyDictionary[asyncio.Task[Any], asyncio.Task[None]] = (
+            weakref.WeakKeyDictionary()
+        )
 
     def _key(self, identity: dict[str, str]) -> tuple[str, ...]:
         return tuple(str(identity.get(k, SENTINEL)) for k in _IDENTITY_KEYS)
@@ -143,11 +135,14 @@ class _SetCoalescer:
             self._windows[key] = window
         window.count += 1
         if window.count < COALESCE_MIN_BURST:
-            first = _after(
+            first = self._after(
                 [self._flushes.get(key)], lambda: self._transport.post("/v1/memory.set", payload)
             )
             window.first_sets.append(first)
-            direct: dict[str, Any] = await first
+            self._inflight.add(first)
+            first.add_done_callback(self._inflight.discard)
+            # A caller that stops waiting leaves the set going: the window's flush follows it.
+            direct: dict[str, Any] = await asyncio.shield(first)
             return direct
         fut: asyncio.Future[dict[str, Any]] = loop.create_future()
         window.pending.append((entry, fut))
@@ -167,14 +162,34 @@ class _SetCoalescer:
         if not window.pending:
             return
         batch, window.pending = window.pending, []
-        task = _after(
-            [self._flushes.get(key), *window.first_sets],
-            lambda: self._flush(window.identity, batch),
-        )
+        ahead = self._flushes.get(key)
+        task = self._after([ahead, *window.first_sets], lambda: self._flush(window.identity, batch))
+        if ahead is not None:
+            self._ahead[task] = ahead
         self._flushes[key] = task
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
         task.add_done_callback(lambda done: self._flush_done(key, done, batch))
+
+    def _after(
+        self, before: list[asyncio.Task[Any] | None], request: Callable[[], Awaitable[_T]]
+    ) -> asyncio.Task[_T]:
+        """A task that runs `request()` once every task in `before` is done; for a flush
+        cancelled before its turn, once the flush it followed is done."""
+
+        async def run() -> _T:
+            waits = [t for t in before if t is not None]
+            while waits:
+                await asyncio.wait(waits)
+                waits = [
+                    ahead
+                    for t in waits
+                    if t.cancelled() and (ahead := self._ahead.get(t)) is not None
+                    if not ahead.done()
+                ]
+            return await request()
+
+        return asyncio.get_running_loop().create_task(run())
 
     def _flush_done(
         self,
@@ -183,7 +198,11 @@ class _SetCoalescer:
         batch: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]],
     ) -> None:
         if self._flushes.get(key) is task:
-            del self._flushes[key]
+            ahead = self._ahead.get(task)
+            if task.cancelled() and ahead is not None and not ahead.done():
+                self._flushes[key] = ahead  # the next window still follows the one ahead
+            else:
+                del self._flushes[key]
         if task.cancelled():
             # Cancelled running or still waiting its turn: a caller waiting is told.
             for _, fut in batch:
@@ -289,7 +308,8 @@ class _SetCoalescer:
         for key, window in list(self._windows.items()):
             self._close(key, window)
         if self._inflight:
-            await asyncio.gather(*list(self._inflight), return_exceptions=True)
+            # wait, not gather: a flush_sets() call cancelled leaves the writes going
+            await asyncio.wait(list(self._inflight))
 
 
 def _value_bytes(entry: dict[str, Any]) -> int:

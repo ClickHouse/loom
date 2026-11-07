@@ -40,6 +40,7 @@ class _FakeTransport:
         self.fail_bulk_calls: set[int] = set()
         # (key, value) in the order the writes landed.
         self.landed: list[tuple[str, str]] = []
+        self.closed = False
         # What a memory.set alone of a value raises.
         self.alone_errors: dict[str, BaseException] = {}
 
@@ -65,6 +66,8 @@ class _FakeTransport:
     ) -> dict[str, Any]:
         self.calls.append((op_path, payload))
         await asyncio.sleep(0)
+        if self.closed:
+            raise RuntimeError("transport closed")
         if op_path == "/v1/memory.set":
             gate = self.set_gates.get(str(payload["value"]))
             if gate is not None:
@@ -113,7 +116,7 @@ class _FakeTransport:
         return {}
 
     async def close(self) -> None:
-        pass
+        self.closed = True
 
     def paths(self) -> list[str]:
         return [p for p, _ in self.calls]
@@ -670,3 +673,79 @@ async def test_a_windows_first_sets_go_out_side_by_side(agent: Agent) -> None:
     assert t.landed == [("b", "free")]
     t.set_gates["held"].set()
     await asyncio.gather(held, other)
+
+
+async def test_close_waits_for_a_first_set_queued_behind_a_flush(agent: Agent) -> None:
+    # Agent.close() flushes before the transport closes: a window's first set waiting for
+    # the flush ahead of it is part of that wait.
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    earlier = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcd"]
+    await _settle()
+    _close_windows(agent)
+    queued = asyncio.create_task(agent.memory.set("e", "e"))
+    await _settle()
+    closing = asyncio.create_task(agent.close())
+    await _settle()
+    t.bulk_gate.set()
+    await closing
+    assert (await queued)["version"] == 7
+    await asyncio.gather(*earlier)
+
+
+async def test_a_cancelled_queued_flush_keeps_the_next_window_behind_the_one_ahead(
+    agent: Agent,
+) -> None:
+    # The first flush holds an unchecked set of k it sends again; the second, queued, is
+    # cancelled. The next window's set of k still waits for the first flush.
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    t.value_verdicts = {"old": "blacklist_unchecked"}
+    first = [asyncio.create_task(agent.memory.set(k, v)) for k, v in [("a", "a"), ("b", "b")]]
+    first += [asyncio.create_task(agent.memory.set(k, v)) for k, v in [("k", "old"), ("x", "x")]]
+    await _settle()
+    _close_windows(agent)
+    second = [asyncio.create_task(agent.memory.set(k, k)) for k in "efgh"]
+    await _settle()
+    _close_windows(agent)
+    co: Any = agent.memory._coalescer
+    (queued,) = co._flushes.values()
+    queued.cancel()
+    await _settle()
+    newer = asyncio.create_task(agent.memory.set("k", "new"))
+    await _settle()
+    t.bulk_gate.set()
+    await asyncio.gather(*first, *second, newer, return_exceptions=True)
+    assert _landed(t, "k") == ["old", "new"]
+
+
+async def test_a_first_set_its_caller_cancels_still_lands_before_the_windows_flush(
+    agent: Agent,
+) -> None:
+    t: Any = agent.transport
+    t.set_gates = {"v1": asyncio.Event()}
+    x = asyncio.create_task(agent.memory.set("x", "x"))
+    v1 = asyncio.create_task(agent.memory.set("k", "v1"))
+    v2 = asyncio.create_task(agent.memory.set("k", "v2"))
+    await _settle()
+    v1.cancel()
+    _close_windows(agent)
+    await _settle()
+    assert _landed(t, "k") == []  # the flush waits for the first set it follows
+    t.set_gates["v1"].set()
+    await asyncio.gather(x, v2)
+    await _settle()
+    assert _landed(t, "k") == ["v1", "v2"]
+
+
+async def test_cancelling_a_flush_sets_call_leaves_the_writes_going(agent: Agent) -> None:
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    sets = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
+    await _settle()
+    waiting = asyncio.create_task(agent.memory.flush_sets())
+    await _settle()
+    waiting.cancel()
+    await _settle()
+    t.bulk_gate.set()
+    assert all(r["version"] for r in await asyncio.gather(*sets))
