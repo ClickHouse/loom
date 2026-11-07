@@ -142,7 +142,7 @@ async def agent_claim(request: Request) -> Response:
     # Hashed only once the code is proven, so a guess costs one hash.
     password_hash = await hash_password_off_loop(password)
     try:
-        outcome, cutoff, others = await claim_shielded(org, namespace, code_hash, password_hash)
+        outcome, cutoff = await claim_shielded(org, namespace, code_hash, password_hash)
     except GrantBusyError:
         return _retry_later(namespace, _EARLIER_SUBMIT)
     except Exception:  # noqa: BLE001 — answered by the page; `_done` logs it
@@ -152,9 +152,12 @@ async def agent_claim(request: Request) -> Response:
         return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
     # The person signs in next: past the cutoff on every replica's clock, so the
     # token they get is not one it ends.
+    listing = asyncio.create_task(_listed_once_replicas_cut_off(org, namespace))
     await revocation.wait_out(cutoff)
-    if outcome in ("claimed", "unconfirmed"):
-        others = await _listed_once_replicas_cut_off(org, namespace)
+    if outcome == "taken":
+        listing.cancel()
+    else:
+        others = await listing
     if outcome == "unconfirmed":
         return _form(
             namespace, _EARLIER_SUBMIT, 503, notice=_grants_notice(others), retry_after_s=60
@@ -266,7 +269,7 @@ async def drain() -> None:
 
 async def claim_shielded(
     org: str, namespace: str, code_hash: str, password_hash: str
-) -> tuple[str, datetime | None, list[str] | None]:
+) -> tuple[str, datetime | None]:
     """`_replace_code` in a task of its own: a client that disconnects cancels
     the request, never the write's cutoffs."""
     task = _running.spawn(
@@ -278,15 +281,13 @@ async def claim_shielded(
 
 async def _replace_code(
     org: str, namespace: str, code_hash: str, password_hash: str
-) -> tuple[str, datetime | None, list[str] | None]:
-    """("claimed", the cutoff the claimer waits out, the other grant holders or
-    None when they could not be listed) when this call replaced the code with
-    `password_hash`; ("taken", a cutoff past the first claim's last, None) when a
-    claim landed first, as an earlier submit of the same form does;
-    ("unconfirmed", the cutoff after the write, the holders) when the write
-    failed and did not read back, so it may still land; ("refused", None,
-    None), the only outcome without a cutoff, when the row changed otherwise
-    (a release)."""
+) -> tuple[str, datetime | None]:
+    """("claimed", the cutoff the claimer waits out) when this call replaced the
+    code with `password_hash`; ("taken", a cutoff past the first claim's last)
+    when a claim landed first, as an earlier submit of the same form does;
+    ("unconfirmed", the cutoff after the write) when the write failed and did
+    not read back, so it may still land; ("refused", None), the only outcome
+    without a cutoff, when the row changed otherwise (a release)."""
     subject, sent, written = "", False, False
     # Held from the read to the write, as a release or a password link holds the
     # account; the cutoffs after the write need no lease and run after it.
@@ -294,11 +295,11 @@ async def _replace_code(
         async with account_change(org, namespace):  # its reads are sequentially consistent
             row = await namespaces.fetch_row(org, namespace)
             if row is None or not row["active"]:
-                return "refused", None, None
+                return "refused", None
             if row["password_hash"] != code_hash:
                 if CLAIMED_TAG not in (row.get("tags") or []):
-                    return "refused", None, None
-                return "taken", _past_a_claim_landed_now(), None
+                    return "refused", None
+                return "taken", _past_a_claim_landed_now()
             subject = str(row["owner_email"])
             # Before the write, so a write that fails leaves the code to retry with,
             # never a spent code and live tokens. A subject cutoff also ends every
@@ -318,13 +319,15 @@ async def _replace_code(
             # password before submitting again.
             log.warning("agent claim of %s/%s: the write did not confirm: %r", org, namespace, e)
             cutoff = await _after_write(org, namespace, subject, password_hash)
-            return "unconfirmed", cutoff, await _audit(org, namespace, confirmed=False)
+            await _audit(org, namespace, confirmed=False)
+            return "unconfirmed", cutoff
         log.warning(
             "agent claim of %s/%s: the backend failed after the write: %r", org, namespace, e
         )
     cutoff = await _after_write(org, namespace, subject, password_hash)
     # After the last cutoff, so the audit's time does not delay it.
-    return "claimed", cutoff, await _audit(org, namespace)
+    await _audit(org, namespace)
+    return "claimed", cutoff
 
 
 async def _listed_once_replicas_cut_off(org: str, namespace: str) -> list[str] | None:
@@ -362,10 +365,10 @@ async def _write(row: dict[str, Any], password_hash: str) -> None:
     )
 
 
-async def _audit(org: str, namespace: str, *, confirmed: bool = True) -> list[str] | None:
-    """Audit the claim with the grants others hold, which it leaves for the
-    claimer to review, and whether its write read back (`confirmed`); those
-    holders, or None when they could not be listed."""
+async def _audit(org: str, namespace: str, *, confirmed: bool = True) -> None:
+    """Audit the claim with the grants others hold (None when they could not
+    be listed), which it leaves for the claimer to review, and whether its
+    write read back (`confirmed`)."""
     others: list[str] | None = None
     try:
         others = await _other_grants(org, namespace)
@@ -378,7 +381,6 @@ async def _audit(org: str, namespace: str, *, confirmed: bool = True) -> list[st
         actor=namespace,
         subject={"other_grants": others, "confirmed": confirmed},
     )
-    return others
 
 
 async def _after_write(org: str, namespace: str, subject: str, password_hash: str) -> datetime:

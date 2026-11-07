@@ -490,7 +490,7 @@ def test_a_second_submit_answers_after_the_first_claims_last_cutoff(world) -> No
         )
         return list(await asyncio.gather(first, second))
 
-    (first, c1, _), (second, c2, _) = asyncio.run(both())
+    (first, c1), (second, c2) = asyncio.run(both())
     assert (first, second) == ("claimed", "taken")
     assert c2 > c1 and int(c2.timestamp()) > world["cutoffs"][_LEGACY]
     # A sign-in once the answer came is issued at or after the bound it waited
