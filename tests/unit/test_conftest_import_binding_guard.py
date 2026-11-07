@@ -79,6 +79,11 @@ def test_a_scripts_module_is_checked(probe) -> None:
     assert _double_bound_at_import(before)
 
 
+def test_a_namespace_holding_a_mock_attribute_is_not_found(probe) -> None:
+    before = _fake_first_import(probe, settings=types.SimpleNamespace(mock=MagicMock()))
+    assert not _double_bound_at_import(before)
+
+
 def test_the_real_class_is_not_found(probe) -> None:
     before = _fake_first_import(probe, CodeRepo=CodeRepo)
     assert not _double_bound_at_import(before)

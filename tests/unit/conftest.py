@@ -20,6 +20,7 @@ import socket
 import sys
 import threading
 import time
+import types
 import unittest.mock
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
@@ -558,7 +559,9 @@ def _is_test_double(obj: object) -> bool:
     """A mock (an autospec'd function included), an instance of a class defined under
     tests/, or a function or class defined under tests/ (a lambda included). An
     instance's `__module__` is its class's."""
-    if isinstance(getattr(obj, "__dict__", {}).get("mock"), unittest.mock.NonCallableMock):
+    if isinstance(obj, types.FunctionType) and isinstance(
+        obj.__dict__.get("mock"), unittest.mock.NonCallableMock
+    ):
         return True  # create_autospec(fn) returns a plain function carrying its mock
     module = getattr(obj, "__module__", None)
     return isinstance(module, str) and module.startswith(("tests.", "test_", "unittest.mock"))
