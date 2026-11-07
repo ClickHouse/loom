@@ -430,7 +430,7 @@ def detect_sensitivity(text: str) -> Sensitivity:
 
 # A line no pattern matches across: `;` ends the assignment shape's token class, and the
 # phone shape allows only one space, dot or dash between its groups.
-_SCALAR_SEP = "\n;\n"
+SCALAR_SEP = "\n;\n"
 
 # Key words naming a PIN-like secret, and the label a value under them is stated with
 # (`{"pin_code": "4471"}` reads as `pin is 4471`), so the free-text grammar decides the
@@ -538,18 +538,23 @@ def _pair_secret(key: str, quoted: str | None, bare: str | None) -> str:
 def detector_text(value: Any) -> str:
     """Decoded text of a stored value for the detector: a JSON string is parsed, and each key
     and scalar is its own line, so a token after a newline keeps its word boundary. The lines
-    are joined by `_SCALAR_SEP`, which no pattern crosses, so two scalars never read as one
+    are joined by `SCALAR_SEP`, which no pattern crosses, so two scalars never read as one
     (`Password:` then the next key, or `256`, `512`, `1024` as a phone number). A key that
     names a PIN-like secret, an SSN or a credential adds its value's stated form
     (`_keyed_secret`), so `{"pin": "4471"}` reads as `pin is 4471` does; other keys label
     nothing. Iterative, so a deeply nested value cannot stop a worker pass."""
+    return SCALAR_SEP.join(detector_lines(value))
+
+
+def detector_lines(value: Any) -> Iterator[str]:
+    """The lines `detector_text` joins, one at a time, so a caller can pause between them."""
     if isinstance(value, str):
         text = value
         try:
             value = json.loads(text)
         except (ValueError, RecursionError):
-            return text
-    lines: list[str] = []
+            yield text
+            return
     stack: list[Any] = [value]
     while stack:
         v = stack.pop()
@@ -559,12 +564,11 @@ def detector_text(value: Any) -> str:
                 stack.append(str(k))
                 stated = _keyed_secret(str(k), x)
                 if stated:
-                    lines.append(stated)
+                    yield stated
         elif isinstance(v, list | tuple):
             stack.extend(reversed(v))
         elif v is not None:
-            lines.append(str(v))
-    return _SCALAR_SEP.join(lines)
+            yield str(v)
 
 
 def value_reads_high(value: Any) -> bool:
@@ -771,14 +775,56 @@ def listed_text(text: Any) -> str:
 def resolve_sensitivity(requested: str | None, text: str) -> Sensitivity:
     """The caller's explicit level wins; an unset level is detected from the
     value when `memory_sensitivity_autodetect` is on, else stays ''."""
+    level = caller_level(requested)
+    return detect_sensitivity(text or "") if level is None else level
+
+
+def caller_level(requested: str | None) -> Sensitivity | None:
+    """The level a write gets without reading its value: the caller's explicit level, or
+    '' when `memory_sensitivity_autodetect` is off; None when it is to be detected."""
     level = (requested or "").strip().lower()
     if level and is_level(level):
         return level
     from server.settings import settings
 
-    if not bool(settings.memory_sensitivity_autodetect):
-        return ""
-    return detect_sensitivity(text or "")
+    return None if bool(settings.memory_sensitivity_autodetect) else ""
+
+
+# The longest text a shape is read over, so a window of a long value holds each shape
+# whole: an email is at most 64 + 1 + 253 + 1 + 24 = 343 characters, and a key, a JWT, a
+# private key block or a stated PIN is found from a prefix shorter than that (a stated PIN
+# with more whitespace between its words than this is not).
+SHAPE_SPAN = 1024
+# Where a window ends and the next begins: after whitespace that no digit or dash touches,
+# so no digit run (a card, a phone number, an SSN) is split, and each edge reads as the
+# whitespace it stands for. Without one in `_CUT_SEARCH` characters, the cut is where it
+# falls, and a shape at that edge can read where the whole value would not.
+_WINDOW_CUT = re.compile(r"(?<![\d-])\s(?![\d-])")
+_CUT_SEARCH = 256
+
+
+def _cut(text: str, at: int) -> int:
+    """The last window cut at or before `at`, within `_CUT_SEARCH` characters."""
+    last = at
+    for m in _WINDOW_CUT.finditer(text, max(0, at - _CUT_SEARCH), min(len(text), at + 1)):
+        if m.end() <= at:
+            last = m.end()
+    return last
+
+
+def detection_windows(text: str, size: int) -> Iterator[str]:
+    """`text` in windows of at most `size` characters, each overlapping the next by at
+    least `SHAPE_SPAN`, so every shape up to that long lies whole in one window. The
+    largest level of the windows is the level of `text`, except a shape at a cut where no
+    whitespace was near, which may read where the whole would not."""
+    if size < 4 * SHAPE_SPAN:
+        raise ValueError(f"a window holds at least {4 * SHAPE_SPAN} characters")
+    start = 0
+    while len(text) - start > size:
+        end = _cut(text, start + size)
+        yield text[start:end]
+        start = _cut(text, end - SHAPE_SPAN)
+    yield text[start:]
 
 
 def max_sensitivity(levels: Iterable[str | None]) -> Sensitivity:

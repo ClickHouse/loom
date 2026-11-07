@@ -29,7 +29,7 @@ from server.memory.app.projections import (
     resolved_entity_list,
 )
 from server.memory.app.provenance import writer_actor
-from server.memory.app.sensitivity_level import resolve_level
+from server.memory.app.sensitivity_level import decoded_text, resolve_level
 from server.memory.app.set_commit import count_attribute_tags, set_next
 from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
@@ -39,7 +39,6 @@ from server.memory.domain.expire_reasons import carried_reason
 from server.memory.domain.memory_types import is_embedded
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
 from server.memory.domain.sensitive_retention import sensitive_retention
-from server.memory.domain.sensitivity import detector_text
 from server.memory.store.rows import next_version
 
 if TYPE_CHECKING:
@@ -689,7 +688,7 @@ async def _bulk_build_rows(
             continue
         version = next_version()
         serialized_value = json.dumps(entry.value)
-        decoded_value = detector_text(serialized_value)
+        decoded_value = await decoded_text(serialized_value)
         # Sensitivity tier: caller's level, the repeated value's, or detected from the
         # value; rides the row, its `sensitivity:` tag and the embed gate. Built over the
         # key's latest row in the batch; the replay settles it again (`_relabel`).

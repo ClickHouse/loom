@@ -293,15 +293,16 @@ rather than `\Z`) and compiles to at most 300 RE2 instructions (a long non-ASCII
 can exceed that: use a substring pattern for it), and a scope's regexes together compile
 to at most 3,000. It runs on RE2, in time linear in the value, on writes and in the sweep
 alike. On a write it runs on four threads per process of its own, off the event loop; one
-org holds at most two of them at once, so another org's write finds a free one, and a
+org holds at most two of them at once, so one busy org leaves half the threads to the others, and a
 write that waits more than 5 seconds for one is refused with 503 `OVERLOADED`, never
 stored unchecked. Once the bytes one request writes (a bulk write's entries together)
 times the instructions of the regexes that apply pass 250 million, a further value is
 refused as `BLACKLISTED` with an empty `pattern_id` and a reason saying it is too long to
 check, unless a substring pattern matches it: send it in a smaller request, or, when the
-value alone is past the budget (the reason says so), shorten it. The Python SDK sends a
-coalesced set refused this way again as a `memory.set` of its own, unless a later set of
-the same key in its batch was written.
+value alone is past the budget (the reason says so), shorten it. The Python SDK sends the
+coalesced sets refused this way again, in order, in a smaller `memory.bulk_set` (one still
+unchecked at the front of a request goes as a `memory.set` alone), and answers a set a
+later set of the same key already wrote over as a no-op.
 
 | Operation          | Role   | Does                                                                              |
 | ------------------ | ------ | --------------------------------------------------------------------------------- |

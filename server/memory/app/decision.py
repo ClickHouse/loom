@@ -41,7 +41,7 @@ from server.memory.api.models_records import (
 )
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app import decisions as svc
-from server.memory.app.sensitivity_level import resolve_level
+from server.memory.app.sensitivity_level import decoded_text, resolve_level
 from server.memory.app.set_commit import count_attribute_tags, count_write
 from server.memory.domain.decision_schema import (
     DECISION_TAG,
@@ -59,7 +59,6 @@ from server.memory.domain.sensitivity import (
     SENSITIVITY_TAG_PREFIX,
     Sensitivity,
     attribute_tags,
-    detector_text,
 )
 from server.memory.store import (
     Identity,
@@ -287,7 +286,7 @@ async def _checked_statement(
         count_write(namespace, "error")
         raise
     fields = svc.label_fields(payload)
-    sensitivity = await resolve_level("", detector_text([*fields, statement]))
+    sensitivity = await resolve_level("", await decoded_text([*fields, statement]))
     added: list[str] = []
     for field in fields:
         added += attribute_tags(field, [*tags, *added])

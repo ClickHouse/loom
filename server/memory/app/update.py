@@ -428,13 +428,13 @@ async def _update_sensitivity(
     """(the revised row's sensitivity, its tags with the `sensitivity:` tag): the
     level memory.set would give the new value (autodetected when the setting is on),
     never below the row's own label."""
-    from server.memory.app.sensitivity_level import resolve_level
-    from server.memory.domain.sensitivity import detector_text, max_sensitivity, sensitivity_tags
+    from server.memory.app.sensitivity_level import decoded_text, resolve_level
+    from server.memory.domain.sensitivity import max_sensitivity, sensitivity_tags
 
     level = max_sensitivity(
         [
             getattr(existing, "sensitivity", ""),
-            await resolve_level("", detector_text(serialized_value)),
+            await resolve_level("", await decoded_text(serialized_value)),
         ]
     )
     return level, [*tags, *sensitivity_tags(level, tags)]

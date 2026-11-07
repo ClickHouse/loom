@@ -391,12 +391,11 @@ async def _set_prepare_value(w: _SetWrite) -> None:
 
     # Sensitivity tier: the caller's level, else detected from the value. 'high' rows take
     # the non-embedded path below.
-    from server.memory.app.sensitivity_level import resolve_level
-    from server.memory.domain.sensitivity import detector_text
+    from server.memory.app.sensitivity_level import decoded_text, resolve_level
 
     # Detected on the decoded value: in the stored JSON a token after a newline loses its
     # word boundary.
-    decoded_value = detector_text(serialized_value)
+    decoded_value = await decoded_text(serialized_value)
     effective_sensitivity = await resolve_level(getattr(input, "sensitivity", ""), decoded_value)
     # A sensitive row carries its retention window: the caller's or the type's expiry stays
     # when shorter; on_expire defaults to the sensitive post-action when the caller set none.

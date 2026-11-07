@@ -16,7 +16,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException
@@ -113,6 +113,8 @@ class BlacklistPattern:
     scope: str  # 'namespace' | 'org' | 'global'
     reason: str
     compiled: Any = None  # the RE2 pattern, set for regex patterns
+    # What a token narrowed to one user is told; set for a refusal with no stored pattern.
+    narrowed_reason: str = ""
 
 
 # The first match wins, so the cache holds the most specific scope first; the
@@ -326,47 +328,30 @@ def _first_match(
     )
 
 
-@dataclass(frozen=True)
-class OverBudget(BlacklistPattern):
-    """The refusal of a value too long for the regexes its scopes hold to check: no
-    stored pattern (pattern_id ""), `scope` the widest that holds one."""
-
-    size: int = 0  # the value's bytes
-    program: int = 0  # the RE2 instructions of the regexes that apply
-    alone: bool = False  # the value by itself is past the budget: no smaller request checks it
-
-    def message(self, *, narrowed: bool) -> str:
-        """The refusal's text; under a narrowed token without the instruction count,
-        which sums other principals' patterns."""
-        advice = (
-            "shorten the value, or remove regex patterns"
-            if self.alone
-            else "send less in one request, or remove regex patterns"
-        )
-        counts = "" if narrowed else f" ({self.size} bytes here, {self.program} RE2 instructions)"
-        return (
-            "this request's values are too long to check against the blacklist regexes "
-            f"that apply{counts}; {advice}"
-        )
-
-
 def _over_budget(
     org: str, namespace: str, scope: str, size: int, program: int, *, alone: bool
-) -> OverBudget:
-    """The refusal of a `size`-byte value under regexes of `program` instructions."""
-    refusal = OverBudget(
+) -> BlacklistPattern:
+    """The refusal of a `size`-byte value too long for the regexes its scopes hold
+    (`program` RE2 instructions) to check: no stored pattern, so `pattern_id` is empty, and
+    `scope` is the widest that holds one. `alone` says the value by itself is past the
+    budget, so no smaller request checks it."""
+    advice = (
+        "shorten the value, or remove regex patterns"
+        if alone
+        else "send less in one request, or remove regex patterns"
+    )
+    head = "this request's values are too long to check against the blacklist regexes that apply"
+    return BlacklistPattern(
         pattern_id="",
         org=org,
         namespace=namespace,
         pattern="",
         pattern_type="regex",
         scope=scope,
-        reason="",
-        size=size,
-        program=program,
-        alone=alone,
+        reason=f"{head} ({size} bytes here, {program} RE2 instructions); {advice}",
+        # the instruction count sums other principals' patterns
+        narrowed_reason=f"{head}; {advice}",
     )
-    return replace(refusal, reason=refusal.message(narrowed=False))
 
 
 # Refusals per pattern since its last hit-count write, and when that was.
@@ -433,10 +418,10 @@ async def enforce_on_insert(
     await note_hit(hit.pattern_id)
     from server.identity.app.request_scope import request_narrowed
 
-    if isinstance(hit, OverBudget):  # no stored pattern matched: the value is too long to check
+    if not hit.pattern_id:  # no stored pattern matched: the value is too long to check
         detail = {
             "code": "BLACKLISTED",
-            "message": hit.message(narrowed=request_narrowed()),
+            "message": hit.narrowed_reason if request_narrowed() else hit.reason,
             "scope": hit.scope,
             "pattern_id": "",
         }

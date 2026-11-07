@@ -1060,23 +1060,100 @@ def test_an_email_and_a_jwt_still_read_as_before() -> None:
     assert detect_sensitivity(f"Authorization: Bearer {jwt}") == "high"
 
 
-async def test_a_long_value_is_labelled_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Detection reads up to about a second per megabyte: past ON_LOOP_CHARS of one
-    # request's values it runs on a worker thread, the event loop's thread kept free.
-    import threading
+async def test_a_long_value_is_labelled_without_holding_the_event_loop() -> None:
+    # Detection holds the GIL, so a long value is read a window at a time with a turn for
+    # the loop between windows: a 10 ms ticker's longest wait stays a small share of what
+    # reading the value whole holds the loop for.
+    import asyncio
 
+    from server.memory.app.sensitivity_level import decoded_text, resolve_level
+    from server.settings import settings
+
+    value = json.dumps({"notes": ["the quick brown fox 123 jumps over a lazy dog. " * 40] * 4_000})
+    assert len(value) > 7_000_000
+    started = time.perf_counter()
+    whole = detect_sensitivity(detector_text(value))
+    whole_s = time.perf_counter() - started
+    gaps: list[float] = []
+    done = asyncio.Event()
+
+    async def tick() -> None:
+        last = time.perf_counter()
+        while not done.is_set():
+            await asyncio.sleep(0.01)
+            now = time.perf_counter()
+            gaps.append(now - last)
+            last = now
+
+    ticker = asyncio.create_task(tick())
+    await asyncio.sleep(0.02)
+    old = settings.memory_sensitivity_autodetect
+    settings.memory_sensitivity_autodetect = True
+    try:
+        level = await resolve_level("", await decoded_text(value))
+    finally:
+        settings.memory_sensitivity_autodetect = old
+        done.set()
+        await ticker
+    assert level == whole
+    assert max(gaps) < whole_s / 10, (max(gaps), whole_s)
+
+
+_SHAPES = (
+    "sk-" + "a1B2" * 6,
+    "AKIA" + "ABCDEFGHIJ123456",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N",
+    "john.doe@example.com",
+    "call 415-555-0123",
+    "4111 1111 1111 1111",
+    "SSN 123-45-6789",
+    "GB82 WEST 1234 5698 7654 32",
+    "PIN is 4471",
+    "-----BEGIN RSA PRIVATE KEY-----\nMIIEow",
+    "password=hunter2xyz9",
+)
+
+
+def _filler(rng: Any, n: int) -> str:
+    words = ["alpha", "beta", "x-ray", "42", "2024-01-15", "a.b", "Q3", "foo_bar", "--", "+1"]
+    out: list[str] = []
+    while sum(map(len, out)) < n:
+        out.append(rng.choice(words) + rng.choice([" ", " ", "\n", ", ", "-", ""]))
+    return "".join(out)
+
+
+def test_a_value_read_in_windows_reads_as_the_whole_value() -> None:
+    # Each shape is placed across a window's edge, at an offset that moves through it.
+    import random
+
+    from server.memory.domain.sensitivity import detection_windows, max_sensitivity
+
+    rng = random.Random(11)
+    size = 4 * 1024
+    straddled = 0
+    for i in range(240):
+        text = _filler(rng, rng.randint(6_000, 9_000))
+        first_edge = len(next(detection_windows(text, size)))
+        for shape in rng.sample(_SHAPES, rng.randint(0, 2)):
+            at = max(0, first_edge - rng.randint(0, len(shape)))
+            text = text[:at] + " " + shape + " " + text[at:]
+            straddled += at < first_edge < at + len(shape) + 2
+        windowed = max_sensitivity(detect_sensitivity(w) for w in detection_windows(text, size))
+        assert windowed == detect_sensitivity(text), (i, text)
+    assert straddled > 100  # most shapes did cross an edge
+
+
+async def test_a_long_value_is_decoded_with_turns_between_its_lines(monkeypatch) -> None:
     from server.memory.app import sensitivity_level
 
-    threads: list[bool] = []
+    turns = []
+    real_sleep = sensitivity_level.asyncio.sleep
 
-    def _resolve(requested: str | None, text: str) -> str:
-        threads.append(threading.current_thread() is threading.main_thread())
-        return ""
+    async def counted(delay: float) -> None:
+        turns.append(delay)
+        await real_sleep(delay)
 
-    monkeypatch.setattr(sensitivity_level, "resolve_sensitivity", _resolve)
-    limit = sensitivity_level.ON_LOOP_CHARS
-    await sensitivity_level.resolve_level("", "x" * limit)
-    await sensitivity_level.resolve_level("", "x" * (limit + 1))
-    # a bulk write's entries count together
-    await sensitivity_level.resolve_level("", "x", read_before=limit)
-    assert threads == [True, False, False]
+    monkeypatch.setattr(sensitivity_level.asyncio, "sleep", counted)
+    value = json.dumps({"rows": [{"pin": str(1000 + i), "note": "x" * 20} for i in range(5_000)]})
+    assert await sensitivity_level.decoded_text(value) == detector_text(value)
+    assert len(turns) >= 5
