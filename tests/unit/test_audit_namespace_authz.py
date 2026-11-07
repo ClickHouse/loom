@@ -155,17 +155,21 @@ async def test_wildcard_token_is_not_blocked(monkeypatch) -> None:
     assert out.rows == []
 
 
-def _note_access(monkeypatch) -> list[str]:
-    """The namespaces the handler writes a restricted-access audit row for."""
-    from server.identity.app import restricted_access
+def _note_access(monkeypatch) -> list[tuple[str, str, str]]:
+    """(namespace, op, transport) of each restricted-access audit row emitted."""
+    from server.identity.app import namespace_classification as nc
+    from server.settings import settings
 
-    noted: list[str] = []
+    noted: list[tuple[str, str, str]] = []
 
-    async def _note(auth, *, op, org, namespace, transport, **_):
-        noted.append(namespace)
-        return True
+    async def _emit(event_type, **kw):
+        assert event_type == "namespace.restricted_access"
+        noted.append((kw["namespace"], kw["subject"]["op"], kw["subject"]["transport"]))
+        return "hash"
 
-    monkeypatch.setattr(restricted_access, "note_restricted_access", _note)
+    monkeypatch.setattr("server.observability.audit.emit", _emit)
+    monkeypatch.setattr(settings, "restricted_audit_inline", True)
+    monkeypatch.setattr(nc, "is_restricted_cached", lambda org, ns: ns == "secret-ns")
     return noted
 
 
@@ -233,7 +237,7 @@ async def test_restricted_namespace_reads_for_a_named_token_with_a_grant(monkeyp
     monkeypatch.setattr(h, "get_client", lambda: ch)
     await h.handle_audit_list(AuditListInput(org="dev", namespace="secret-ns"))
     assert ch.queried is True
-    assert noted == ["secret-ns"]  # the access row a read of it writes
+    assert noted == [("secret-ns", "audit.list", "op")]  # the access row a read of it writes
 
 
 @pytest.mark.asyncio
