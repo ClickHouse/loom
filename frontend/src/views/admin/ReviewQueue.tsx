@@ -865,14 +865,17 @@ function trialLabel(r: MemoryProposal): string {
 // server/memory/store/proposals.py, cuts the preview there).
 const PREVIEW_CHARS = 400;
 
+const proposalId = (p: MemoryProposal) => `${p.memory_id}@${p.version ?? 0}`;
+
 function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null; onSeedUsed: () => void }) {
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
   const inspect = useStore((s) => s.inspect);
   const role = useNamespaceRole(identity.namespace);
   const mayDecide = canCall("memory.proposal_decide", role, whoami);
-  // Proposals this panel decided, by memory id: a re-read from a replica that has not
-  // seen the decision yet must not bring them back. Each is kept until a read drops it.
+  // Proposals this panel decided, by memory id and version: a re-read from a replica that
+  // has not seen the decision yet must not bring them back, while a new proposal of the
+  // key (the same id at a newer version) shows. Each is kept until a read drops it.
   const decided = useRef(new Set<string>());
   // No reset on a namespace switch: the switch unmounts this panel (the page's probe is
   // tagged with its namespace).
@@ -911,9 +914,9 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
         .then((r) => {
           if (!live()) return;
           const read = r.proposals || [];
-          const stale = read.filter((p) => decided.current.has(p.memory_id));
-          decided.current = new Set(stale.map((p) => p.memory_id));
-          setRows(read.filter((p) => !decided.current.has(p.memory_id)));
+          const stale = read.filter((p) => decided.current.has(proposalId(p)));
+          decided.current = new Set(stale.map(proposalId));
+          setRows(read.filter((p) => !decided.current.has(proposalId(p))));
           setTotal(Math.max(0, (r.total ?? 0) - stale.length));
         })
         .catch((e) => {
@@ -962,7 +965,7 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
       const i = rowsNow.current?.findIndex((r) => r.memory_key === key) ?? -1;
       const at = Math.max(0, i);
       const decidedRow = rowsNow.current?.[i];
-      if (decidedRow) decided.current.add(decidedRow.memory_id);
+      if (decidedRow) decided.current.add(proposalId(decidedRow));
       // Off the list at once, so its buttons cannot send the decision again.
       setRows((rs) => rs?.filter((r) => r.memory_key !== key) ?? rs);
       setReason(({ [key]: _gone, ...rest }) => rest);
@@ -1041,7 +1044,7 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
                   weight="mono"
                   className="min-w-0 break-all text-left"
                   aria-label={`Open ${r.memory_key} in full`}
-                  onClick={() => inspect(r.memory_key, { agent: r.agent })}
+                  onClick={() => inspect(r.memory_key, { agent: r.agent, userId: r.user_id, sessionId: r.session_id })}
                 >
                   {r.memory_key}
                 </Link>

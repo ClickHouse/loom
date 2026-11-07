@@ -14091,7 +14091,10 @@ class MemoryProposalsOutput(TypedDict, total=False):
 class MemoryProposal(TypedDict, total=False):
     memory_key: Required[str]
     memory_id: Required[str]
+    version: NotRequired[int]
     agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
     memory_type: NotRequired[str]
     value_preview: NotRequired[str]
     sensitivity: NotRequired[str]

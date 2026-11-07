@@ -6117,7 +6117,10 @@ export interface MemoryProposalsInput {
 export interface MemoryProposal {
   memory_key: string;
   memory_id: string;
+  version?: number;
   agent?: string;
+  user_id?: string;
+  session_id?: string;
   memory_type?: string;
   value_preview?: string;
   sensitivity?: string;

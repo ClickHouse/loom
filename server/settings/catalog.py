@@ -2807,9 +2807,8 @@ class MemorySettings(BaseModel):
     memory_profile_cas_max_retries: Annotated[int, LIVE] = Field(default=3, ge=1)
     # Seconds a namespace's proposal policy is cached; a change applies within it.
     memory_proposals_policy_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
-    # A listing reads at most this many proposals before `only` / `limit` — the graded
-    # counts are one statement over them; a namespace holding more on trial than this is a
-    # queue nobody is deciding, not a page.
+    # A listing reads at most this many proposed keys before `only` / `limit`; a namespace
+    # holding more on trial than this is a queue nobody is deciding, not a page.
     memory_proposals_scan_cap: Annotated[int, LIVE] = Field(default=2000, ge=1)
     # Seconds the entity vocabulary of a namespace's summaries is cached for the summary
     # read leg.

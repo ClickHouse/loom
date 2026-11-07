@@ -6,7 +6,10 @@ import type { Identity, RequestOpts } from "../api";
 export interface MemoryProposal {
   memory_key: string;
   memory_id: string;
+  version?: number;
   agent?: string;
+  user_id?: string;
+  session_id?: string;
   memory_type?: string;
   /** The first 400 characters of the value; "" for a high-sensitivity row. */
   value_preview?: string;

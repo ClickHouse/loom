@@ -281,13 +281,15 @@ _INSERT = (
 @pytest.mark.parametrize(
     ("b_status", "b_user", "scope_user", "listed"),
     [
-        # a proposed `k` first, b later: b's row is the key's head.
+        # a proposed `k`, then b: b's row is the head.
         ("proposed", "-", "", [("b", "b value")]),
         # b's row was accepted: a's older proposal is past deciding.
         ("active", "-", "", []),
         # A caller bounded to user u1 sees a's proposal, but the head is u2's row.
         ("active", "u2", "u1", []),
         ("proposed", "u2", "u1", []),
+        # The head is the bounded caller's own proposal.
+        ("proposed", "u1", "u1", [("b", "b value")]),
     ],
 )
 async def test_the_listing_offers_only_the_row_a_decision_takes(

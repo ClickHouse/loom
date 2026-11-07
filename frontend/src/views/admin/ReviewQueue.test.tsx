@@ -32,8 +32,8 @@ vi.mock("../../api", async (importOriginal) => {
     getMemoryById: vi.fn(),
   };
 });
-// The page's yes/no probe is shared with the sidebar and lives in api/audit.
 vi.mock("../../api/proposalDecisions", () => ({ decideProposal: vi.fn() }));
+// The page's yes/no probe is shared with the sidebar and lives in api/audit.
 vi.mock("../../api/audit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/audit")>()),
   hasAutoResolved: vi.fn(),
@@ -806,6 +806,20 @@ describe("ReviewQueue", () => {
     expect(screen.getByText("second")).toBeTruthy();
   });
 
+  it("shows a new proposal of a decided key, the same id at a newer version", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    const first = { memory_key: "a", memory_id: "m1", version: 1, value_preview: "first" };
+    vi.mocked(listProposals)
+      .mockResolvedValueOnce({ proposals: [first], total: 1 })
+      .mockResolvedValue({ proposals: [{ ...first, version: 2, value_preview: "again" }], total: 1 });
+    vi.mocked(decideProposal).mockResolvedValue({ decided: 1, results: [{ memory_key: "a", decided: true }] });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Reject a" }, WAIT));
+    expect(await screen.findByText("again", {}, WAIT)).toBeTruthy();
+  });
+
   it("says a contradicted proposal it accepted now waits as a conflict", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listProposals).mockResolvedValue({
@@ -892,7 +906,9 @@ describe("ReviewQueue", () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     const long = "x".repeat(400);
     vi.mocked(listProposals).mockResolvedValue({
-      proposals: [{ memory_key: "k", memory_id: "m1", value_preview: long, agent: "claude" }],
+      proposals: [
+        { memory_key: "k", memory_id: "m1", value_preview: long, agent: "claude", user_id: "u1", session_id: "s1" },
+      ],
       total: 1,
     });
     const inspect = vi.fn();
@@ -902,7 +918,7 @@ describe("ReviewQueue", () => {
     await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
     expect(await screen.findByText(`${long}…`, {}, WAIT)).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Open k in full" }));
-    expect(inspect).toHaveBeenCalledWith("k", { agent: "claude" });
+    expect(inspect).toHaveBeenCalledWith("k", { agent: "claude", userId: "u1", sessionId: "s1" });
   });
 
   it("hands focus to the error when the read after a decision fails", async () => {

@@ -36,7 +36,12 @@ class MemoryProposalsInput(BaseModel):
 class MemoryProposal(BaseModel):
     memory_key: str
     memory_id: str
+    # The listed row's version: a new proposal of the key by the same writer keeps the id.
+    version: int = 0
     agent: str = ""
+    # The writer's user and session ('-' when unset), which a memory.get of the key names.
+    user_id: str = "-"
+    session_id: str = "-"
     memory_type: str = ""
     # The first 400 characters of the value; "" for a high row, read by key (memory.get).
     value_preview: str = ""

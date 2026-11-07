@@ -54,7 +54,10 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
             MemoryProposal(
                 memory_key=key,
                 memory_id=mid,
+                version=int(r["version"]),
                 agent=str(r.get("agent") or ""),
+                user_id=str(r.get("user_id") or "-"),
+                session_id=str(r.get("session_id") or "-"),
                 memory_type=str(r.get("memory_type") or ""),
                 value_preview=str(r.get("preview") or ""),
                 sensitivity=str(r.get("sensitivity") or ""),

@@ -33,8 +33,6 @@ async def scan_proposals(
     if tags:
         proposed.append("hasAny(tags, {tags:Array(String)})")
         params["tags"] = list(tags)
-    # The head is picked across the namespace, as the decision picks it; the read scope
-    # then decides which heads this caller may see.
     readable = scope_where(scope, params)
     namespace_rows = " AND ".join(where)
     return await ch.query_all(
@@ -68,7 +66,7 @@ async def proposal_details(
         return {}
     rows = await ch.query_all(
         """
-        SELECT toString(memory_id) AS mid, agent, memory_type,
+        SELECT toString(memory_id) AS mid, agent, user_id, session_id, memory_type,
                -- a high value is readable by key only
                if(sensitivity = 'high', '', substringUTF8(value_preview, 1, 400)) AS preview,
                sensitivity, tags, toString(created_at) AS created, conflict_with
