@@ -142,8 +142,11 @@ test("redaction is linear: the same bytes cost the same in 80 KB outputs as in 1
   };
   for (const [name, make] of Object.entries(shapes)) {
     const [smallText, largeText] = [make(10_000), make(80_000)];
-    // What a hook pays: one run on output this size, the first.
-    const first = cpuMs(largeText, 1);
+    // What a hook pays: one run on output this size, the first. Its main
+    // thread's time is at most both clocks: process CPU time also counts V8's
+    // compiler and GC threads, which a cold run keeps busy.
+    const wallStart = performance.now();
+    const first = Math.min(cpuMs(largeText, 1), performance.now() - wallStart);
     assert.ok(first < 200, `${name}: one 80 KB redaction took ${first.toFixed(1)} ms`);
     let n = 1;
     while (cpuMs(smallText, 8 * n) < 100) n *= 2;

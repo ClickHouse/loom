@@ -402,13 +402,15 @@ test("the accounting adds under 50 ms to a hook run (1,000 decisions + a flush f
     { ...base, modified: "untracked" },
     { ...base, lineCount: 50 },
   ];
-  // One run, as a hook pays it, in CPU time: on a shared runner, beside the
-  // suite's other files, wall-clock time measures the runner as much as the
-  // accounting.
+  // One run, as a hook pays it. The main thread's time is at most both
+  // clocks: wall-clock time also counts the runner preempting the suite, and
+  // process CPU time also counts V8's compiler and GC threads, which a cold
+  // run keeps busy (a run can show more CPU than wall time).
+  const wallStart = performance.now();
   const started = process.cpuUsage();
   const agg = foldThousand(variants);
   const { user, system } = process.cpuUsage(started);
-  const ms = (user + system) / 1000;
+  const ms = Math.min(performance.now() - wallStart, (user + system) / 1000);
   assert.equal(agg.lines, 1000);
   assert.ok(ms < 50, `accounting took ${ms.toFixed(1)} ms for 1,000 decisions`);
   console.log(`# shunt accounting: 1,000 decisions classified, logged and folded in ${ms.toFixed(2)} ms`);
