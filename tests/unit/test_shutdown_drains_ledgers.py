@@ -84,3 +84,48 @@ async def test_an_exposure_row_is_an_after_write_task_the_shutdown_drain_lands(
     assert row is not None and after_write.pending() == 1
     assert await after_write.drain(timeout_s=2.0) == 1
     assert inserted == [exposure_ledger.TABLE]
+
+
+@pytest.mark.asyncio
+async def test_a_claim_past_its_wait_leaves_the_emitter_and_the_clients_to_close(
+    monkeypatch,
+) -> None:
+    # An agent claim's drain is bounded: one still running past it is left to
+    # run on, and the emitter and the HTTP clients still close.
+    from server.clients import _http
+    from server.identity.app import agent_claim
+    from server.observability import langfuse_scores, retrieval_judge
+    from server.transport import mcp_runs
+    from server.workers import leader
+
+    closed: list[str] = []
+
+    async def nothing(*_: object, **__: object) -> None:
+        return None
+
+    async def aclose() -> None:
+        closed.append("http")
+
+    class _Emitter:
+        async def stop(self) -> None:
+            closed.append("emitter")
+
+    for target, name in [
+        (leader, "shutdown"),
+        (mcp_runs, "drain_ledger_writes"),
+        (boot, "drain_writes"),
+        (retrieval_judge, "stop"),
+        (langfuse_scores, "drain"),
+    ]:
+        monkeypatch.setattr(target, name, nothing)
+    monkeypatch.setattr(_http, "aclose", aclose)
+    monkeypatch.setattr(m._otel, "shutdown", lambda: None)
+    monkeypatch.setattr(agent_claim, "SHUTDOWN_WAIT_S", 0.05)
+    claim = asyncio.get_running_loop().create_task(asyncio.sleep(10))
+    agent_claim._running.add(claim)
+    try:
+        await m._shutdown_drains(None, None, _Emitter())
+        assert closed == ["emitter", "http"] and not claim.done()
+    finally:
+        agent_claim._running.discard(claim)
+        claim.cancel()

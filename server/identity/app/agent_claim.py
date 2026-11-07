@@ -172,7 +172,10 @@ def _log_unexpected(namespace: str, e: Exception) -> None:
 def _grants_notice(others: list[str] | None) -> str:
     # The claim ends no grant: one made before it, by whoever held the code,
     # is the claimer's to review.
-    review = "<p>Review its grants, visibility and join policy in the dashboard.</p>"
+    review = (
+        "<p>Review its grants and settings in the dashboard: visibility, join policy, "
+        "approvals, retention, and the classify and rerank endpoints and prompts.</p>"
+    )
     if others is None:
         return "<p>The other holders of grants on it could not be listed.</p>" + review
     if not others:
@@ -238,6 +241,11 @@ def _done(task: asyncio.Task[Any]) -> None:
     _running.discard(task)
     if not task.cancelled() and not isinstance(task.exception(), (type(None), *_BUSY)):
         log.warning("agent claim: the claim's task failed: %r", task.exception())
+
+
+# The most a shutdown waits for the claims still running: not a setting, one
+# shutdown step inside its drain budget.
+SHUTDOWN_WAIT_S = 20.0
 
 
 async def drain() -> None:

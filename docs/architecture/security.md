@@ -363,12 +363,12 @@ it, which keeps a claimed namespace's owner as the claim left it. The page answe
 replica's clock is past the later cutoff, so the claimer's next sign-in is not ended by it. A
 second claim finds no code and is refused, so whoever kept a copy of the code cannot sign in as
 the namespace afterwards, nor keep a session it started with the code. The claim ends no
-grant and no setting: what a session with the code gave another subject, or set as the
-namespace's visibility or join policy, stays. So the claim page lists every subject with an
-active grant on it other than the namespace's own and the agent's token while that holds the
-`writer` role sign-up gave it, the `auth.agent_claimed` audit row records them
-(`other_grants`), and the page asks the claimer to review the grants, the visibility and the
-join policy.
+grant and no setting: what a session with the code gave another subject, or set on the
+namespace (visibility, join policy, approvals, retention, the classify and rerank endpoints and
+prompts), stays. So the claim page lists every subject with an active grant on it other than the
+namespace's own and the agent's token while that holds the `writer` role sign-up gave it, the
+`auth.agent_claimed` audit row records them (`other_grants`), and the page asks the claimer to
+review the grants and those settings.
 The new password may not be the code. An agent account whose password is a plain hash of its
 code and that has no claim tag is unclaimed, even when a person has signed in with that code:
 whoever holds the code and claims first wins, so its owner claims it at once. An agent account
@@ -385,6 +385,9 @@ sequential consistency on a replica that trails the write by more than that marg
 find the code and issue a token the claim does not end; that window closes when no replica of
 the build before remains. A self-hosted replicated cluster sends every Loom process to one
 replica, as the read-your-writes section of [ClickHouse](clickhouse.md#read-your-writes) asks.
+A replica of the build before refuses a prefixed code at once, without the full hash it spends
+on an unknown name, so its answer time tells an unclaimed agent account from no account, during
+the upgrade and, after a rollback, while such an account stays unclaimed.
 
 Restoring `loom.namespaces` from a backup taken before a claim brings the unclaimed account
 back: the claimer's password is gone and the code claims the namespace again, for whoever holds

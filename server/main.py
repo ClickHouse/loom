@@ -93,7 +93,7 @@ async def _shutdown_drains(lease: Any, supervisor: Any, emitter: Any) -> None:
         await langfuse_scores.drain(timeout_s=5.0)
         # Bounded so the emitter and the clients below still close in the budget.
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(claims, 20.0)  # not a setting: one shutdown step
+            await asyncio.wait_for(claims, _agent_claim.SHUTDOWN_WAIT_S)
     finally:
         claims.cancel()  # a no-op once it is done
     await emitter.stop()
