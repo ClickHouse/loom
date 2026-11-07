@@ -44,15 +44,17 @@ def _copy(tmp_path: Path) -> Path:
 
 
 def _git(root: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+    """git in `root`, signing nothing whatever the host's config says."""
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+         "-c", "tag.gpgSign=false", *args],
+        cwd=root, check=True, capture_output=True,
+    )  # fmt: skip
 
 
 def _commit(root: Path, message: str) -> None:
     _git(root, "add", ".")
-    _git(
-        root, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
-        "commit", "-qm", message, "--allow-empty",
-    )  # fmt: skip
+    _git(root, "commit", "-qm", message, "--allow-empty")
 
 
 def _body(category: str, entry: str = "...", steps: str = "none") -> str:
@@ -497,11 +499,14 @@ def _gh_listing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, numbers: list[i
 def test_the_notes_read_the_merged_pull_requests_in_one_call_in_merge_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # 23:30 UTC the day before: a merger east of UTC, as GitHub records it.
+    monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-11-07T00:30:00+01:00")
     root = _released(tmp_path / "repo")
     gh = _gh_listing(tmp_path, monkeypatch, [14, 13, 12])
     text = prepare.release_notes("1.1.0", "v1.0.0", root)
     assert "- Entry 12. (#12)\n- Entry 13. (#13)\n- Entry 14. (#14)\n" in text
-    assert "--search merged:>=" in (gh / "args").read_text()  # since the tag, not all of them
+    # A UTC day before the oldest merge since the tag: 2026-11-06T23:30Z.
+    assert "--search merged:>=2026-11-05 " in (gh / "args").read_text()
 
 
 def test_a_merged_pull_request_gh_does_not_list_stops_the_notes(

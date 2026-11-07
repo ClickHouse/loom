@@ -110,12 +110,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
           echo "Releasing v$VERSION (prerelease: $PRERELEASE, dry run: $DRY_RUN)"
-      # The server reports its version from server/__init__.py (= pyproject.toml);
-      # a tag that disagrees would ship an image that names another release.
-      # prepare.py check holds every other version file, server.json (which the
-      # mcp-registry job publishes as committed) included, to that one.
-      # A release candidate (vX.Y.Z-rc.N) is tagged on the commit whose files name
-      # X.Y.Z, where the final tag goes after the soak.
+      # The server reports its version from server/__init__.py; a candidate's files name its final.
       - name: The server's version names the release
         env:
           VERSION: ${{ steps.parse.outputs.version }}
@@ -123,10 +118,7 @@ jobs:
           FINAL=${VERSION%%-*}
           grep -qxF "__version__ = \"$FINAL\"" server/__init__.py \
             || { echo "::error file=server/__init__.py::__version__ is not $FINAL"; exit 1; }
-      # Every file the release pull request bumps names it too, the chart's own
-      # version is above the previous release's, and a tag keeps the candidate
-      # order (a candidate before its final, the final on its last candidate's
-      # commit).
+      # Every version file, the chart's own version and the candidate order (release-process.md).
       - name: Version files, the chart and the candidate order
         env:
           VERSION: ${{ steps.parse.outputs.version }}

@@ -18,13 +18,13 @@ Loom follows SemVer. The server, the Python SDK, the TypeScript SDK, the web app
 
 The server reads its version from `server/__init__.py` only; the OpenAPI document, MCP `serverInfo`, `loom report` and `GET /v1/health` (checked by `tests/unit/test_health_problems.py`) report it. These checks keep the numbers consistent:
 
-| Check                                    | Asserts                                                                                                                                                                                                            |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `tests/unit/test_release_version.py`     | every surface reports the server's version, and `server.json` keeps the registry listing's shape                                                                                                                   |
-| `npm run check:version` (TypeScript SDK) | its four version sources agree                                                                                                                                                                                     |
-| `tests/unit/test_codex_plugin.py`        | both plugin manifests carry one version and one `minServerVersion`, no newer than the server's version                                                                                                             |
-| `tests/unit/test_release_prepare.py`     | every file `prepare.py` bumps names the server's version                                                                                                                                                           |
-| `prepare.py check-chart X.Y.Z`           | the release's `version` job: the chart's version is above the previous release's; skipped, with a notice, when `vX.Y.Z` is tagged on another commit; fails when no final release tag is below it (no tags fetched) |
+| Check                                          | Asserts                                                                                                                               |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/unit/test_release_version.py`           | every surface reports the server's version, and `server.json` keeps the registry listing's shape                                      |
+| `npm run check:version` (TypeScript SDK)       | its four version sources agree                                                                                                        |
+| `tests/unit/test_codex_plugin.py`              | both plugin manifests carry one version and one `minServerVersion`, no newer than the server's version                                |
+| `tests/unit/test_release_prepare.py`           | every file `prepare.py` bumps names the server's version                                                                              |
+| `prepare.py check`, `check-chart`, `check-tag` | the release's `version` job ([step 1](#what-the-release-workflow-does)): one version everywhere, the chart moved, the candidate order |
 
 Two plugin pull requests that bump to the same number merge without a conflict, and the second ships nothing to clients the first already updated. Check the plugin version on `main` before bumping.
 

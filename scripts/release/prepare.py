@@ -34,6 +34,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -85,7 +86,6 @@ FOLLOWERS = [
 ]
 PINS = [SERVER, *FOLLOWERS]
 CHART = Pin("deploy/helm/loom/Chart.yaml", r"^version: (?P<v>\S+)$")
-CHART_DIR = "deploy/helm/loom"
 
 
 def _match(pin: Pin, text: str) -> re.Match[str]:
@@ -279,7 +279,7 @@ def bump(version: str, chart: str, root: Path = ROOT) -> None:
     is edited in memory first, so a pin not found writes nothing."""
     texts: dict[str, str] = {}
     for pin, value in [(CHART, chart), *((pin, version) for pin in PINS)]:
-        text = texts.get(pin.path) or _text(pin.path, root)
+        text = texts[pin.path] if pin.path in texts else _text(pin.path, root)
         start, end = _match(pin, text).span("v")
         texts[pin.path] = text[:start] + value + text[end:]
     for path, text in texts.items():
@@ -421,13 +421,22 @@ def notes(version: str, previous: str, pulls: list[dict[str, Any]], wire: str) -
     return "\n".join(out)
 
 
+def _merged_since(previous_tag: str, root: Path) -> str:
+    """A UTC day before the oldest commit since the tag, for gh's `merged:`: every
+    pull request merged since then passes, whatever the merger's timezone."""
+    log = _git(root, "log", "--reverse", "--format=%ct", f"{previous_tag}..HEAD")
+    log.check_returncode()
+    oldest = (
+        int(log.stdout.split()[0]) if log.stdout.strip() else int(datetime.now(UTC).timestamp())
+    )
+    return (datetime.fromtimestamp(oldest, UTC) - timedelta(days=1)).date().isoformat()
+
+
 def release_notes(version: str, previous: str, root: Path = ROOT) -> str:
     numbers = merged_pull_requests(previous, root)
-    tagged = _git(root, "log", "-1", "--format=%cs", previous)  # the tag's commit date
-    tagged.check_returncode()
     listed = subprocess.run(
         ["gh", "pr", "list", "-R", REPOSITORY, "--state", "merged",
-         "--search", f"merged:>={tagged.stdout.strip()}", "--limit", "1000",
+         "--search", f"merged:>={_merged_since(previous, root)}", "--limit", "1000",
          "--json", "number,title,body"],
         check=True,
         stdout=subprocess.PIPE,  # its error reaches the terminal
