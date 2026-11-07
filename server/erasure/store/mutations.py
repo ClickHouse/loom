@@ -305,10 +305,9 @@ async def wait_for_mutation(
         )
 
 
-# Set by the saga (and the census that verifies it) for an erasure requested with
-# purge=true; read by count_then_mutate. A step may switch it off to stamp rows that
-# later steps still read. A ContextVar so the step functions between the saga and the
-# mutation carry nothing new.
+# Set around a saga, and the census that verifies it, for an erasure requested with
+# purge=true; read through purge_mode(). A step may switch it off to stamp rows later
+# steps still read.
 _PURGE: contextvars.ContextVar[bool] = contextvars.ContextVar("loom_erasure_purge", default=False)
 
 
