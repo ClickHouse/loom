@@ -21,6 +21,7 @@ from server.auth.jwt import mint_token
 from server.identity.app import account_admin
 from server.identity.app import claim_release as cr
 from server.identity.app import namespace_classification as nc
+from server.memory.domain.trust import actor_for
 from server.settings import settings
 
 _REAL_IS_RESTRICTED = nc.is_restricted
@@ -183,6 +184,8 @@ def test_a_release_of_a_restricted_namespace_writes_the_access_audit_row(
     assert event == "namespace.restricted_access"
     assert (kw["org"], kw["namespace"]) == ("acme", "repo-x")
     assert kw["subject"]["op"] == "admin.claim_release"
+    assert (kw["subject"]["transport"], kw["subject"]["roles"]) == ("http", ["org_admin"])
+    assert kw["actor"] == actor_for("op", is_service_account=True)  # `_tok` mints a service account
 
 
 def test_auth_off_releases_as_local(env: Any, monkeypatch: pytest.MonkeyPatch) -> None:

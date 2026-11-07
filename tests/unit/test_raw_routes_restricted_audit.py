@@ -35,6 +35,7 @@ from server.operations.base import Role
 ORG, NS, PLAIN = "acme", "vault", "plain"
 # the real grant write, before a fixture stubs it
 _REAL_GRANT_TO_TOKEN = token_grants.grant_restricted_to_token
+BEARER = {"Authorization": "Bearer alice"}
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -120,6 +121,29 @@ class _Rendered:
     rendered = ""
 
 
+async def _one_frame(**_k: Any) -> Any:
+    yield "retry: 1000\n\n"
+
+
+async def _no_events(org: str, **_k: Any) -> list[Any]:
+    return []
+
+
+async def _direct_grant(org: str, namespace: str, subject: str) -> Role:
+    return Role.WRITER
+
+
+def _alice(namespace: str = NS) -> AuthInfo:
+    """A viewer token naming `namespace`, for the primer, which takes it directly."""
+    return AuthInfo(
+        subject="alice",
+        org=ORG,
+        namespaces=(namespace,),
+        roles=(Role.VIEWER,),
+        is_service_account=False,
+    )
+
+
 def _client(module: Any) -> AsyncClient:
     app = FastAPI()
     if hasattr(module, "attach"):
@@ -127,13 +151,6 @@ def _client(module: Any) -> AsyncClient:
     else:
         app.include_router(module.router)
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://t")
-
-
-async def _one_frame(**_k: Any) -> Any:
-    yield "retry: 1000\n\n"
-
-
-BEARER = {"Authorization": "Bearer alice"}
 
 
 @pytest.mark.asyncio
@@ -214,9 +231,6 @@ async def test_an_admitted_inbox_watch_writes_the_audit_row_for_the_owner_namesp
     ) -> bool:
         return True
 
-    async def _no_events(org: str, **_k: Any) -> list[Any]:
-        return []
-
     monkeypatch.setattr(repo, "fetch_inbox_row", _inbox)
     monkeypatch.setattr(repo, "events_since", _no_events)
     monkeypatch.setattr(watch_routes, "event_stream", _one_frame)  # no real-time wait
@@ -241,9 +255,6 @@ async def test_the_real_check_fills_the_snapshot_the_audit_row_reads(
     from server.knowledge.app import download_routes
     from server.knowledge.store import documents as documents_repo
 
-    async def _direct_grant(org: str, namespace: str, subject: str) -> Role:
-        return Role.WRITER
-
     cold_directory()
     monkeypatch.setattr(authz, "grant_role_for", _direct_grant)
     monkeypatch.setattr(documents_repo, "get_one", _no_doc)
@@ -266,12 +277,6 @@ async def test_the_real_inbox_check_fills_the_snapshot_the_audit_row_reads(
     import server.auth.authz as authz
     from server.tasks.app import watch_routes
     from server.tasks.store import repo
-
-    async def _direct_grant(org: str, namespace: str, subject: str) -> Role:
-        return Role.WRITER
-
-    async def _no_events(org: str, **_k: Any) -> list[Any]:
-        return []
 
     cold_directory()
     monkeypatch.setattr(authz, "grant_role_for", _direct_grant)
@@ -491,9 +496,7 @@ async def test_the_mcp_primer_profile_read_writes_the_audit_row(
         return _Rendered()
 
     monkeypatch.setattr(profile, "handle_profile_render", _render)
-    alice = AuthInfo(
-        subject="alice", org=ORG, namespaces=(NS,), roles=(Role.VIEWER,), is_service_account=False
-    )
+    alice = _alice()
     await mcp_primer._loom_primer_text(alice, defaults={"org": ORG, "namespace": NS})
     ((event, kw),) = audit_rows
     assert kw["bound"] is alice
@@ -551,9 +554,7 @@ async def test_the_mcp_primer_leaves_the_profile_out_when_the_classification_fai
 
     monkeypatch.setattr(profile, "handle_profile_render", _render)
     monkeypatch.setattr(nc, "is_restricted", _unreadable)
-    alice = AuthInfo(
-        subject="alice", org=ORG, namespaces=(NS,), roles=(Role.VIEWER,), is_service_account=False
-    )
+    alice = _alice()
     text = await mcp_primer._loom_primer_text(alice, defaults={"org": ORG, "namespace": NS})
     assert rendered == [] and audit_rows == []
     assert "always-loaded context" not in text
@@ -570,14 +571,7 @@ async def test_the_mcp_primer_profile_read_of_a_standard_namespace_writes_no_row
         return _Rendered()
 
     monkeypatch.setattr(profile, "handle_profile_render", _render)
-    alice = AuthInfo(
-        subject="alice",
-        org=ORG,
-        namespaces=(PLAIN,),
-        roles=(Role.VIEWER,),
-        is_service_account=False,
-    )
-    await mcp_primer._loom_primer_text(alice, defaults={"org": ORG, "namespace": PLAIN})
+    await mcp_primer._loom_primer_text(_alice(PLAIN), defaults={"org": ORG, "namespace": PLAIN})
     assert audit_rows == []
 
 
