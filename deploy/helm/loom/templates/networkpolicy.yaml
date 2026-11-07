@@ -82,9 +82,8 @@ spec:
     {{- end }}
 {{- /* A missing key counts as on: `helm upgrade --reuse-values` keeps the old values. */}}
 {{- else if and (ne $guard false) .Values.networkPolicy.egressExcept }}
-{{- /* Off, the Loom pods reach no address in `egressExcept` (the metadata service)
-but other pods'; a pod peer is listed because engines differ on matching pod IPs
-by range. */}}
+{{- /* Off: every pod and every address but `egressExcept`; pods are named apart
+because engines differ on whether an ipBlock matches pod IPs. */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

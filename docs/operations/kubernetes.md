@@ -378,7 +378,8 @@ hold. The policy's effects:
   `egressExcept` for them: deny those addresses in its own policy.
 - NetworkPolicies add up: where your own policies limit the pods' egress, this one
   lets them reach everything else. Set `guardMetadata: false` and deny the metadata
-  addresses in your own policy.
+  addresses in your own policy. Set it too when your own policy is named after the
+  release: Helm refuses to take over an object it does not own, so the upgrade fails.
 - An engine that keeps address ranges off node IPs (Cilium's default) blocks host-network
   endpoints and the nodes' own addresses: NodeLocal DNSCache (so DNS), the EKS Pod
   Identity agent, and the API server (which `retireLostPods` calls) where the engine
