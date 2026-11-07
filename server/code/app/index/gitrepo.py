@@ -94,8 +94,13 @@ def auth_env(token: str = "", remote: str = "https://github.com/") -> dict[str, 
     refused for submodules and redirects too. GIT_TERMINAL_PROMPT=0 makes a
     missing credential a failure, not a hang.
 
-    `token` rides an `http.<remote>.extraheader`, so it appears in no argv, no
-    remote URL, no stored config and no `code_index_state.repo_remote`."""
+    `token` rides an `http.<url>.extraheader` keyed to the remote's owner
+    (`https://host/owner/`; the whole host for a remote with no owner path), so
+    it appears in no argv, no remote URL, no stored config and no
+    `code_index_state.repo_remote`, and git sends it to that owner's
+    repositories only: a submodule URL elsewhere on the host gets none.
+    Git matches the prefix byte for byte, so an owner spelled in another case
+    gets none either."""
     env = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "TMPDIR") if k in os.environ}
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_CONFIG_NOSYSTEM"] = "1"
@@ -110,14 +115,17 @@ def auth_env(token: str = "", remote: str = "https://github.com/") -> dict[str, 
         add_git_config(env, "protocol.file.allow", "always")
     if not token or not remote.startswith(("https://", "http://")):
         return env
-    host = remote.split("/")[2]
+    parts = remote.split("/")
+    host = parts[2]
+    owner = parts[3] if len(parts) > 4 else ""
     username = {
         "github.com": "x-access-token",
         "gitlab.com": "oauth2",
         "bitbucket.org": "x-token-auth",
     }.get(host.split(":", 1)[0].lower(), "oauth2")
     basic = base64.b64encode(f"{username}:{token}".encode()).decode()
-    add_git_config(env, f"http.https://{host}/.extraheader", f"AUTHORIZATION: basic {basic}")
+    scope = f"https://{host}/{owner}/" if owner else f"https://{host}/"
+    add_git_config(env, f"http.{scope}.extraheader", f"AUTHORIZATION: basic {basic}")
     return env
 
 
@@ -217,9 +225,9 @@ async def _git(
 ) -> str:
     """A git command on the bare clone. With `remote` it talks to that remote, so it
     runs as a repository job (sandbox.run_job): the network only through the egress
-    proxy, the clone the one writable path, `token` for the remote's host. A local
-    command reads and writes `index_file` as its index when given. `timeout_s`
-    defaults to `code_git_timeout_s`."""
+    proxy, the clone the one writable path, `token` for the remote's owner
+    (`auth_env`). A local command reads and writes `index_file` as its index when
+    given. `timeout_s` defaults to `code_git_timeout_s`."""
     if timeout_s is None:
         timeout_s = settings.code_git_timeout_s
     extra = upload_pack_args(remote)

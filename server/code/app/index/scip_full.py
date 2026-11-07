@@ -66,7 +66,7 @@ class FullIndexFailed(RuntimeError):
         self.tail = tail
 
 
-async def move_checkout(checkout: Path, bare: Path, target: str) -> None:
+async def move_checkout(checkout: Path, bare: Path, target: str, cfg: RepoConfig) -> None:
     """Fetch `target` from the bare clone, force-check it out, then the submodules
     exactly at their pins. Never recurse submodules on the fetch: one pin rewritten
     away upstream fatals the whole fetch. Each step gets a real budget and one retry
@@ -95,6 +95,8 @@ async def move_checkout(checkout: Path, bare: Path, target: str) -> None:
         "--recursive",
         "--quiet",
         network=True,
+        token=cfg.github_token,
+        remote=cfg.git_remote,
         timeout_s=settings.code_git_fetch_timeout_s,
         retries=1,
     )
@@ -170,7 +172,7 @@ async def _index_and_apply(
     jobs: int,
     keep_delta: str,
 ) -> tuple[ScipApplyStats, str]:
-    await move_checkout(checkout, bare, target)
+    await move_checkout(checkout, bare, target, cfg)
     with tempfile.TemporaryDirectory(prefix="scip_full_", dir=work_dir()) as tmp:
         delta_path = Path(tmp) / "delta.json"
         rc, out = await run_full_harness(

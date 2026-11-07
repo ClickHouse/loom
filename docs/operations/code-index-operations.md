@@ -258,6 +258,15 @@ memory the workers process has. The full index of such a tree takes about an hou
   `loom code scip-full` runs the same index by hand (`--keep-delta` saves the delta so an
   interrupted apply can be re-run with `--apply-delta`), and `loom code scip-delta` one
   delta pass, which prints a `RESULT:` line.
+- **C/C++ submodules.** The tier fetches submodule pins with the entry's access
+  token, so a private submodule whose `.gitmodules` URL is an absolute https URL under
+  the remote's owner needs no other credential. The owner is matched as written, case
+  included, so an owner spelled in another case is fetched without the token. A
+  relative URL resolves to a local path in the checkout, which has no remote; the tier
+  refuses the `file` transport, so that submodule update fails. Whoever can commit to
+  the repository's `.gitmodules` can point a submodule at any repository of that owner
+  the token reads, so give an entry a token scoped to the repositories its submodules
+  need.
 - **SQL ↔ C++ crossref.** `code_crossref` rebuilds `code_test_map`'s content-reference
   rows (test queries to the files that register the functions and settings they use)
   for each C/C++ entry whose `git_head` moved since its last run. It reads the parser
@@ -365,9 +374,11 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
 
 Every git a repository job runs reads no system or global git config and allows only
 the `https` and `ssh` transports (`protocol.allow=never`); `ext::` and `file://` are
-refused, so are URL rewrites. The entry's access token reaches only its clone and
-fetches, never a build or `go mod download`. Inside the sandbox an `ssh` remote has no
-host SSH key: use an HTTPS remote with an access token.
+refused, so are URL rewrites. The entry's access token reaches only its clone, its
+fetches and the C/C++ tier's `git submodule update`, never a build or `go mod
+download`, and git sends it only to URLs under the remote's owner
+(`https://host/owner/`; the whole host for a remote with no owner path). Inside the
+sandbox an `ssh` remote has no host SSH key: use an HTTPS remote with an access token.
 
 **Which stacks run the sandbox.** The blue/green colours `redeploy.sh` deploys
 (`dev/docker-compose.colour.yml`) set the container options below. The other Compose

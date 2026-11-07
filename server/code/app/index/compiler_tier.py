@@ -322,13 +322,22 @@ async def git(
     retries: int = 0,
     local_remote: Path | None = None,
     network: bool = False,
+    token: str = "",
+    remote: str = "",
 ) -> None:
     """Run one git command in a checkout, as a repository job: the checkout writable,
     `local_remote` (the bare clone a fetch reads) read-only, the network only with
-    `network`. On timeout, name the command (a bare TimeoutError says nothing) and
-    retry `retries` times — a stall is usually transient contention on the shared
-    bare clone."""
+    `network`. `token` authenticates to the owner of `remote` (the repository's own
+    https remote), so a private submodule of that owner can be fetched. On timeout,
+    name the command (a bare TimeoutError says nothing) and retry `retries` times — a
+    stall is usually transient contention on the shared bare clone."""
     from server.code.app.index.gitrepo import auth_env
+
+    # The file transport follows the bare clone alone, never the entry's remote.
+    if token and remote.startswith(("https://", "http://")):
+        env = auth_env(token, remote)
+    else:
+        env = auth_env(remote=str(local_remote or ""))
 
     attempt = 0
     while True:
@@ -336,7 +345,7 @@ async def git(
             done = await run_job(
                 # never a repack inside a fetch: the tier's own gc does it (`gc_checkout`)
                 ["git", "-C", str(cwd), "-c", "gc.auto=0", "-c", "maintenance.auto=false", *args],
-                env=auth_env(remote=str(local_remote or "")),
+                env=env,
                 timeout_s=timeout_s,
                 writable=[cwd],
                 readonly=[local_remote] if local_remote else [],

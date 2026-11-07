@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from server.code.app.index import sandbox
+from tests.unit.code_fixtures import git_config, repo_config
 
 EPERM = sandbox.SECCOMP_RET_ERRNO_EPERM
 KILL = sandbox.SECCOMP_RET_KILL_PROCESS
@@ -179,9 +180,7 @@ def test_network_jobs_reach_the_relay_only(monkeypatch) -> None:
     env: dict[str, str] = {}
     sandbox._network_env(env)
     assert env["HTTPS_PROXY"] == env["https_proxy"] == sandbox.RELAY_URL
-    from tests.unit.test_gitrepo_token_env import _config
-
-    assert _config(env)["http.proxy"] == sandbox.RELAY_URL
+    assert git_config(env)["http.proxy"] == sandbox.RELAY_URL
     assert "ProxyCommand=" in env["GIT_SSH_COMMAND"]
     assert "connect %h %p" in env["GIT_SSH_COMMAND"]
 
@@ -344,7 +343,6 @@ async def test_a_required_sandbox_skips_every_entry_before_any_fetch(
     from server.code.app.index import compiler_tier, gitrepo, ingest_pass, pass_fetch
     from server.code.app.index.pass_budget import CodeIngestResult
     from server.settings import settings
-    from tests.unit.code_fixtures import repo_config
 
     mirror = tmp_path / "shared.git"
     mirror.mkdir()
@@ -378,7 +376,6 @@ async def test_a_refused_clone_records_an_error_stage(tmp_path: Path, monkeypatc
 
     from server.code.app.index import bootstrap
     from server.settings import settings
-    from tests.unit.code_fixtures import repo_config
 
     monkeypatch.setattr(sandbox, "_available", False)
     monkeypatch.setattr(settings, "code_sandbox_required", True)
@@ -623,7 +620,6 @@ async def test_scip_full_runs_its_harness_as_a_gated_repository_job(
     from server.code.app.index import compiler_tier, scip_full
     from server.code.store import index as store_index
     from server.settings import settings
-    from tests.unit.code_fixtures import repo_config
 
     for d in ("checkout", "bare.git"):
         (tmp_path / d).mkdir()
@@ -658,7 +654,6 @@ async def test_scip_full_runs_in_the_clang_tree_when_clang_is_an_extra_tier(
     from server.code.app.index import compiler_tier, scip_full
     from server.code.store import index as store_index
     from server.settings import settings
-    from tests.unit.code_fixtures import repo_config
 
     for d in ("checkout", "checkout.clang", "bare.git"):
         (tmp_path / d).mkdir()
@@ -685,7 +680,8 @@ async def test_scip_full_runs_in_the_clang_tree_when_clang_is_an_extra_tier(
 @pytest.mark.asyncio
 async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, monkeypatch) -> None:
     """The fetch reads the bare clone, which the sandbox mounts only when named,
-    and the submodule pins come from the network."""
+    and the submodule pins come from the network with the repository's token, so
+    a private submodule of the repository's owner is fetched."""
     from server.code.app.index import compiler_tier, scip_full
 
     calls: list[tuple[tuple[str, ...], dict]] = []
@@ -695,10 +691,66 @@ async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, mo
 
     monkeypatch.setattr(compiler_tier, "git", _git)
     bare = tmp_path / "bare.git"
-    await scip_full.move_checkout(tmp_path / "checkout", bare, "a" * 40)
+    cfg = repo_config(github_token="ghs_test", git_remote="https://github.com/o/private")
+    await scip_full.move_checkout(tmp_path / "checkout", bare, "a" * 40, cfg)
     fetch, _checkout, submodules = calls
     assert fetch[0][0] == "fetch" and fetch[1]["local_remote"] == bare
+    assert "token" not in fetch[1]
     assert submodules[0][0] == "submodule" and submodules[1]["network"] is True
+    assert submodules[1]["token"] == "ghs_test"
+    assert submodules[1]["remote"] == "https://github.com/o/private"
+
+
+@pytest.mark.asyncio
+async def test_a_networked_compiler_tier_git_authenticates_to_the_repository_owner(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`git(..., token=, remote=)` hands the job the token as an extraheader for the
+    remote's owner, never in argv; without a token the job carries no credential."""
+    from server.code.app.index import compiler_tier
+
+    envs: list[dict[str, str]] = []
+    argvs: list[list[str]] = []
+
+    async def _run_job(argv: list[str], **kw: object) -> sandbox.JobResult:
+        argvs.append(argv)
+        envs.append(kw["env"])  # type: ignore[arg-type]
+        return sandbox.JobResult(0, b"", b"")
+
+    monkeypatch.setattr(compiler_tier, "run_job", _run_job)
+    args = ("submodule", "update", "--init")
+    await compiler_tier.git(
+        tmp_path, *args, network=True, token="ghs_test", remote="https://github.com/o/r"
+    )
+    await compiler_tier.git(tmp_path, *args, network=True)
+    with_token, without = envs
+    header = git_config(with_token)["http.https://github.com/o/.extraheader"]
+    assert header.startswith("AUTHORIZATION: basic ")
+    assert not any("ghs_test" in a for a in argvs[0])
+    assert not any(k.endswith(".extraheader") for k in git_config(without))
+
+
+@pytest.mark.asyncio
+async def test_a_local_remote_entry_keeps_the_file_transport_off_its_submodules(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An entry whose remote is a local mirror path must not open `file://`
+    `.gitmodules` URLs to its networked submodule update."""
+    from server.code.app.index import compiler_tier
+
+    envs: list[dict[str, str]] = []
+
+    async def _run_job(argv: list[str], **kw: object) -> sandbox.JobResult:
+        envs.append(kw["env"])  # type: ignore[arg-type]
+        return sandbox.JobResult(0, b"", b"")
+
+    monkeypatch.setattr(compiler_tier, "run_job", _run_job)
+    await compiler_tier.git(tmp_path, "submodule", "update", network=True, remote="/srv/m.git")
+    await compiler_tier.git(
+        tmp_path, "submodule", "update", network=True, token="t", remote="/srv/m.git"
+    )
+    for env in envs:
+        assert "protocol.file.allow" not in git_config(env)
 
 
 @pytest.mark.asyncio
@@ -729,7 +781,6 @@ async def test_scip_full_hands_the_sandbox_an_absolute_checkout(
     from server.code.app.index import compiler_tier, scip_full
     from server.code.store import index as store_index
     from server.settings import settings
-    from tests.unit.code_fixtures import repo_config
 
     for d in ("checkout", "bare.git", "elsewhere"):
         (tmp_path / d).mkdir()
