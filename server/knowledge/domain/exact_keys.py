@@ -19,8 +19,13 @@ from __future__ import annotations
 import re
 
 # A dotted path whose segments may hold dashes (a qualified table, a TOML key path),
-# or a single identifier.
-_TERM = re.compile(r"[A-Za-z_][A-Za-z0-9_$-]*(?:\.[A-Za-z0-9_$-]+)+|[A-Za-z_][A-Za-z0-9_$]*")
+# or a single identifier; the term is group 1 or group 2. A dotted path is tried
+# once per run, from its first letter: a later letter in the run reads the same
+# run to the same end, so trying each one costs the square of the run.
+_TERM = re.compile(
+    r"(?<![A-Za-z0-9_$-])[0-9$-]*+([A-Za-z_][A-Za-z0-9_$-]*+(?:\.[A-Za-z0-9_$-]+)+)"
+    r"|([A-Za-z_][A-Za-z0-9_$]*)"
+)
 # What a plain word or an acronym has none of.
 _IDENTIFIER_MARK = re.compile(r"[_.$0-9]|[a-z][A-Z]")
 # Terms shorter than this name too many keys to narrow anything.
@@ -31,7 +36,7 @@ MAX_QUERY_KEYS = 32  # not a setting: bounds the statement's parameter
 
 def query_keys(query: str) -> list[str]:
     """The query's candidate keys, in the order written, each once."""
-    terms = [t.rstrip("-") for t in _TERM.findall(query or "")]
+    terms = [(dotted or word).rstrip("-") for dotted, word in _TERM.findall(query or "")]
     terms = [t for t in terms if len(t) >= MIN_KEY_CHARS]
     whole = len(terms) == 1 and (query or "").strip() == terms[0]
     out: dict[str, None] = {}

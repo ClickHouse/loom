@@ -22,7 +22,7 @@ from server.operations.base import MCP_HIDDEN
 
 # One frame or trace line: a deep template frame runs to a few thousand
 # characters, and each line is parsed with regexes on the request path.
-MAX_FRAME_CHARS = 4000
+MAX_FRAME_CHARS = 4000  # not a setting: the wire contract's bound
 _FrameLine = Annotated[str, Field(max_length=MAX_FRAME_CHARS)]
 
 

@@ -43,7 +43,7 @@ _FRESH = timedelta(hours=6)
 _REPUBLISH_S = 12 * 3600.0
 # Vite's `[name]-[hash].[ext]`: the hash makes the name a version.
 _HASHED = re.compile(r"-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$")
-_MAX_NAME_CHARS = 255
+_MAX_NAME_CHARS = 255  # not a setting: a file system's longest file name
 # Fetched bodies, by path (content-addressed, so never stale).
 _CACHE: OrderedDict[str, tuple[str, bytes]] = OrderedDict()
 _CACHE_MAX_BYTES = 32 * 1024 * 1024

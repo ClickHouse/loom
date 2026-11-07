@@ -7,6 +7,8 @@ call time, so the case measures what the server runs."""
 
 from __future__ import annotations
 
+import random
+import re
 import time
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -15,10 +17,13 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from server.code.app import bisect_fix
 from server.code.app.index import sql_names
 from server.code.domain import facets
 from server.code.domain.index import citations, query_trim
 from server.identity.app import scim_groups
+from server.insights.app import mentor_rules
+from server.knowledge.domain import exact_keys, transcripts
 from server.memory.app import observe_replay, value_updates
 from server.memory.app.ask import identifiers, prompts
 from server.memory.app.loom_search import tracker_leg
@@ -77,6 +82,10 @@ def _then(read: Callable[[str], object], tail: str) -> Callable[[str], object]:
 def _amounts(s: str) -> object:
     row = SimpleNamespace(content_excerpt=s, memory_key="k", valid_at="")
     return prompts.amount_candidates([row], money=None)
+
+
+def _cue(s: str) -> object:
+    return transcripts.parse_vtt("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n" + s + "\n")
 
 
 def _forget(s: str) -> object:
@@ -168,6 +177,18 @@ CASES: list[tuple[str, Callable[[str], object], str, str]] = [
         "",
         " ",
     ),
+    ("citations._NAME_RE", _then(_finditer(citations, "_NAME_RE"), "::"), "a", "::~a"),
+    # "no wait" parsed two ways per repeat was exponential in the repeats.
+    (
+        "forget_requests._FORGET_MSG_RE",
+        _then(_match(forget_requests, "_FORGET_MSG_RE"), "hello"),
+        "",
+        "no wait ",
+    ),
+    ("exact_keys._TERM", exact_keys.query_keys, "", "a-"),
+    ("transcripts._TAG", _cue, "", "<"),
+    ("mentor_rules._TRACE_LINE_RES blanks", mentor_rules.looks_like_stack_trace, "x" * 80, "\n"),
+    ("mentor_rules._TRACE_LINE_RES frame", mentor_rules.looks_like_stack_trace, "1. ", "a"),
     # Per-text work done once, not once per match.
     ("facets.extract_code_facets hex runs", facets.extract_code_facets, "", "deadbee "),
     ("prompts.amount_candidates", _amounts, "", "Ab 1 km "),
@@ -237,3 +258,79 @@ def test_the_search_tracker_leg_drops_a_frame_the_check_would_refuse() -> None:
     )
     assert shape is not None and shape["frames"] == ["DB::Foo::bar"]
     TrackerDuplicateCheckInput(namespace="t", frames=shape["frames"])
+
+
+def test_the_bisect_fix_check_drops_a_frame_the_check_would_refuse() -> None:
+    frames = ["DB::" + "a" * MAX_FRAME_CHARS, "DB::Foo::bar"]
+    assert bisect_fix.checkable_frames(frames) == ["DB::Foo::bar"]
+    TrackerDuplicateCheckInput(namespace="t", frames=bisect_fix.checkable_frames(frames))
+
+
+# The rewrites that changed most, against the patterns they replaced: the same
+# reads on short random text drawn from the characters each one turns on.
+_ORIGINAL = {
+    "TRACE_SYMBOL_RE": re.compile(r"(?:[A-Za-z_~][\w~]*::)+[A-Za-z_~][\w~]*"),
+    "_TRACE_LINE_RE": re.compile(
+        r"^\s*(?:(?:#\d+|\d+\.)\s+.*[A-Za-z_]\w*::[A-Za-z_~]"
+        r"|.*[A-Za-z_]\w*::[A-Za-z_~]\w*.*\s@\s0x[0-9A-Fa-f]{6,})"
+    ),
+    "_MIXED_RE": re.compile(
+        r"\b(?=[A-Za-z0-9_-]{6,}\b)(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]+\b"
+    ),
+    "_PATHLIKE_RE": re.compile(r"`[^`]*`|\S*[/\\]\S*|\S+[._-]\S*[._-]\S*|\S+\.\w{1,5}\b"),
+}
+
+
+def _texts(pieces: list[str], seed: int) -> list[str]:
+    rnd = random.Random(seed)
+    return ["".join(rnd.choice(pieces) for _ in range(rnd.randint(1, 16))) for _ in range(2000)]
+
+
+def _names(p: re.Pattern[str], s: str, group: int) -> list[tuple[tuple[int, int], str]]:
+    return [(m.span(group), m.group(group)) for m in p.finditer(s)]
+
+
+@pytest.mark.parametrize(
+    ("name", "new", "read_old", "read_new", "pieces"),
+    [
+        (
+            "TRACE_SYMBOL_RE",
+            similar.TRACE_SYMBOL_RE,
+            lambda p, s: _names(p, s, 0),
+            lambda p, s: _names(p, s, 1),
+            ["a", "Z", "_", "~", "::", ":", "9", " ", "(", "é", "DB", "Foo"],
+        ),
+        (
+            "_TRACE_LINE_RE",
+            similar._TRACE_LINE_RE,
+            lambda p, s: bool(p.match(s)),
+            lambda p, s: bool(p.match(s)),
+            ["#1 ", "2. ", " ", "\t", "a", "~", "::", "DB::Foo", "9", " @ 0x", "1c4652", "é", "@"],
+        ),
+        (
+            "_MIXED_RE",
+            query_planner._MIXED_RE,
+            lambda p, s: _names(p, s, 0),
+            lambda p, s: _names(p, s, 1),
+            ["a", "1", "-", "_", " ", "é", ".", "Zb9", "ab12", "--"],
+        ),
+        (
+            "_PATHLIKE_RE",
+            activity_facts._PATHLIKE_RE,
+            lambda p, s: p.sub(" ", s),
+            lambda p, s: p.sub(" ", s),
+            ["a", "/", ".", "_", "-", " ", "`", "\\", "é", "!", "x.py", "`cmd`"],
+        ),
+    ],
+    ids=["TRACE_SYMBOL_RE", "_TRACE_LINE_RE", "_MIXED_RE", "_PATHLIKE_RE"],
+)
+def test_a_rewrite_reads_what_the_original_read(
+    name: str,
+    new: re.Pattern[str],
+    read_old: Callable[[re.Pattern[str], str], object],
+    read_new: Callable[[re.Pattern[str], str], object],
+    pieces: list[str],
+) -> None:
+    old = _ORIGINAL[name]
+    for s in _texts(pieces, seed=len(name)):
+        assert read_new(new, s) == read_old(old, s), repr(s)

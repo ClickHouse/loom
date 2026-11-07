@@ -63,8 +63,9 @@ _NUMBER_RE = re.compile(
     r"Related to|Follow-?up to|Backport of|Part of)\s+#?|#)(?P<number>\d{1,8})\b"
 )
 # Ns::Name, Class::method, DB::Foo::~Foo, a::b::operator[] — two or more parts.
+# Not from a destructor part's name (`::~Foo`): a start there rescans the chain.
 _NAME_RE = re.compile(
-    r"(?<![\w:>.])(?P<name>[A-Za-z_]\w*(?:::(?:operator\s*(?:\[\]|\(\)|[^\s\w(]{1,3})|~?[A-Za-z_]\w*))+)"
+    r"(?<![\w:>.])(?<!::~)(?P<name>[A-Za-z_]\w*(?:::(?:operator\s*(?:\[\]|\(\)|[^\s\w(]{1,3})|~?[A-Za-z_]\w*))+)"
     r"(?![\w:])"
 )
 _FENCE_RE = re.compile(r"```.*?```|~~~.*?~~~", re.S)

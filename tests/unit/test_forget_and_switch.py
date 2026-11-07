@@ -275,6 +275,19 @@ def test_forget_sentences_mark_the_message_and_what_it_says_instead() -> None:
     assert [r["value"] for r in forget.forget_requests_from_messages(msgs)] == ["my salary"]
 
 
+def test_a_message_with_two_forget_requests_keeps_its_other_sentences_once() -> None:
+    # each request's replacement, then the sentences that are not requests, once
+    msgs = [
+        {
+            "role": "user",
+            "content": "forget that I like jazz. I play the drums now. "
+            "forget my old address, it's 12 Elm Street now.",
+        }
+    ]
+    assert forget.forget_sentences(msgs) == {0: "it's 12 Elm Street now. I play the drums now."}
+    assert forget.forget_sentences(msgs, same_sentence=True) == {0: "it's 12 Elm Street now."}
+
+
 @pytest.mark.asyncio
 async def test_a_request_that_names_the_replacement_keeps_the_users_words(monkeypatch) -> None:
     """Observed: one request-shaped entry holding the replacement and no

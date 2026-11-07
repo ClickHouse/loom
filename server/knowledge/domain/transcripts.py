@@ -81,7 +81,10 @@ def parse_vtt(text: str) -> list[Entry]:
         voice = _VOICE.match(body)
         if voice is not None:
             speaker, body = " ".join(voice.group(1).split()), voice.group(2)
-        body = " ".join(html.unescape(_TAG.sub("", body)).split())
+        # no tag closes after the last `>`: reading only up to it keeps a run of
+        # unclosed `<` from being rescanned from each one
+        cut = body.rfind(">") + 1
+        body = " ".join(html.unescape(_TAG.sub("", body[:cut]) + body[cut:]).split())
         if body:
             cues.append((_seconds(timing.group(1)), _seconds(timing.group(2)), speaker, body))
     unnamed = [c for c in cues if not c[2]]

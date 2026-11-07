@@ -678,13 +678,14 @@ _IDENT_TOKEN_RE = re.compile(
     r"|(?:\b\w+\(\))"  # a call
     r"|(?:\b[\w./-]+\.(?:py|cpp|h|hpp|ts|tsx|js|go|rs|java|sql|sh)\b)"  # a source path
 )
+# A line's own leading blanks only: `^\s*` would rescan every blank line below.
 _TRACE_LINE_RES = (
-    re.compile(r"^\s*File \"[^\"]+\", line \d+", re.M),  # Python
-    re.compile(r"^\s*at [\w.$<>]+ ?\(.*:\d+(?::\d+)?\)", re.M),  # JS/Java
-    re.compile(r"^\s*#\d+\s+0x[0-9a-fA-F]+ in ", re.M),  # gdb / ClickHouse
-    re.compile(r"^\s*\d+\.\s+(?:0x[0-9a-fA-F]+\s+)?[\w:<>]+.*@ 0x", re.M),  # ClickHouse
-    re.compile(r"^\s*goroutine \d+ \[", re.M),  # Go
-    re.compile(r"^\s*[\w./-]+\.go:\d+", re.M),  # Go frames
+    re.compile(r"^[^\S\n]*File \"[^\"]+\", line \d+", re.M),  # Python
+    re.compile(r"^[^\S\n]*at [\w.$<>]+ ?\(.*:\d+(?::\d+)?\)", re.M),  # JS/Java
+    re.compile(r"^[^\S\n]*#\d+\s+0x[0-9a-fA-F]+ in ", re.M),  # gdb / ClickHouse
+    re.compile(r"^[^\S\n]*\d+\.\s+(?:0x[0-9a-fA-F]+\s+)?[\w:<>]++.*@ 0x", re.M),  # ClickHouse
+    re.compile(r"^[^\S\n]*goroutine \d+ \[", re.M),  # Go
+    re.compile(r"^[^\S\n]*[\w./-]+\.go:\d+", re.M),  # Go frames
 )
 _TRACE_HEAD_RE = re.compile(
     r"Traceback \(most recent call last\)|Stack trace|Exception:|Error:|panic:|DB::Exception|"

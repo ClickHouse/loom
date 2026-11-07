@@ -61,9 +61,10 @@ def _content_tokens(text: str) -> set[str]:
 # A request to forget is read from the user's own message. The
 # verb families that ask the assistant to drop something it knows — and none
 # of the ones that ask it to change its behaviour ("stop using emojis") or
-# to do something later ("don't forget to remind me").
+# to do something later ("don't forget to remind me"). "no wait" is read as
+# "no" then "wait": as its own word too, a run of them parses in 2^n ways.
 _FORGET_MSG_PREFIX = (
-    r"^(?:(?:please|kindly|also|and|hey|ok|okay|so|oh|actually|by the way|no wait|wait|no)[,\s]+)*"
+    r"^(?:(?:please|kindly|also|and|hey|ok|okay|so|oh|actually|by the way|wait|no)[,\s]+)*"
     r"(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|"
     r"i(?:'d|\s+would)\s+(?:like|prefer|want)\s+you\s+to\s+|i\s+(?:want|need)\s+you\s+to\s+)?"
     r"(?:please\s+)?"
@@ -107,7 +108,7 @@ _FORGET_MSG_RE = re.compile(
 # "forget it", "forget about that, let's move on": no object to resolve.
 _FORGET_MSG_PRONOUNS = frozenset("it this that them those these everything anything all".split())
 # A longer sentence is not read as a request to forget.
-MAX_FORGET_SENTENCE_CHARS = 400
+MAX_FORGET_SENTENCE_CHARS = 400  # not a setting: the bound the match's cost is held to
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
@@ -329,7 +330,7 @@ def forget_sentences(
         for raw in sents:
             sent = raw.strip("\"'“”‘’")
             # the length forget_requests_from_messages reads: the match is
-            # quadratic in a sentence's trailing whitespace
+            # quadratic in a blank run inside the sentence
             mt = _FORGET_MSG_RE.match(sent) if len(sent) <= MAX_FORGET_SENTENCE_CHARS else None
             if mt:
                 rests.append(split_replacement(mt.group("what"))[1])

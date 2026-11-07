@@ -68,6 +68,14 @@ async def _cause_stage(
 FIX_BLAME_CONCURRENCY = 4
 
 
+def checkable_frames(frames: list[str]) -> list[str]:
+    """The frames tracker.duplicate_check accepts: a longer line would fail
+    the whole check, so it is dropped, as loom_search's tracker leg does."""
+    from server.tracker.api.models import MAX_FRAME_CHARS
+
+    return [f for f in frames if len(f) <= MAX_FRAME_CHARS][:60]
+
+
 def _start_dupcheck_fix(input: Any, org: str, ns: str, frames: list[str]) -> Any:
     """A report with no `fix_pr` and no issue gets the duplicate check on its own text,
     started beside the resolve reads. None when the caller named a fix or an issue, the text
@@ -100,7 +108,7 @@ def _start_dupcheck_fix(input: Any, org: str, ns: str, frames: list[str]) -> Any
                     namespace=ns,
                     title=title,
                     body=body,
-                    frames=frames[:60],
+                    frames=checkable_frames(frames),
                     paths=list(input.paths)[:40],
                     related_prs=False,
                     rerank=False,  # the legs alone: the rerank's second is the budget
