@@ -293,6 +293,10 @@ class _Open:
     colspan: int = 1  # the columns a table cell spans
     rowspan: int = 1  # the rows it spans
 
+    def text(self) -> str:
+        """Its text, each run of spacing one space."""
+        return " ".join("".join(self.parts).split())
+
     def take(self, data: str, line: int) -> None:
         """Append `data`, which starts on `line`."""
         self.parts.append(data)
@@ -320,14 +324,15 @@ _ROW_GROUPS = {"thead", "tbody", "tfoot"}
 _CELLS = {"td", "th"}
 _SPANS = {"colspan": 1_000, "rowspan": 65_534}  # HTML's own bounds
 _MAX_PLACING = 1_000_000  # not a setting: the steps a table's cells are placed in
-_DIGITS = re.compile(r"\s*0*([0-9]+)")
+_DIGITS = re.compile(r"[\t\n\f\r ]*\+?0*([0-9]+)")  # HTML's integer: ASCII spacing, a sign
 
 
 def _span(attrs: list[tuple[str, str | None]], name: str) -> int:
-    """A cell's `colspan` or `rowspan` as HTML reads it: its leading digits (`2px`
-    is 2), 1 when it has none, at most HTML's bound; a rowspan of 0 reaches to the
-    end of its row group."""
-    m = _DIGITS.match(dict(attrs).get(name) or "")
+    """A cell's `colspan` or `rowspan` as HTML reads it: after ASCII spacing and a
+    sign, its leading digits (`2px` is 2), 1 when it has none, at most HTML's bound;
+    a rowspan of 0 reaches to the end of its row group."""
+    # the first of a repeated attribute, as HTML keeps it
+    m = _DIGITS.match(next((v for k, v in attrs if k == name), None) or "")
     if m is None:
         return 1
     n = int(m.group(1)) if len(m.group(1)) <= 6 else _SPANS[name]  # bounded before read
@@ -479,7 +484,7 @@ class _HTMLBlocks(HTMLParser):
 
     def _flush_loose(self) -> None:
         if self._loose is not None:
-            text = " ".join("".join(self._loose.parts).split())
+            text = self._loose.text()
             if text:
                 self.acc.add("paragraph", text, self._loose.span())
             self._loose = None
@@ -499,7 +504,7 @@ class _HTMLBlocks(HTMLParser):
             return
         self._emit_runs(t, cells=False)
         cells = [c for row in t.rows for c in row if c.first_line]
-        texts = [[" ".join("".join(c.parts).split()) for c in row] for row in t.rows]
+        texts = [[c.text() for c in row] for row in t.rows]
         if not any(any(r) for r in texts):
             return
         # A column no cell of its own fills (a spacer; a cell spanning columns fills none
@@ -554,7 +559,7 @@ class _HTMLBlocks(HTMLParser):
             if raw.strip("\n"):
                 self.acc.add("code", raw.strip("\n"), loc)
             return
-        text = " ".join(raw.split())
+        text = o.text()
         if not text:
             return
         if o.tag in _HEADINGS:

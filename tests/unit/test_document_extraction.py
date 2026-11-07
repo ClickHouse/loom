@@ -552,13 +552,17 @@ def test_a_cell_a_rowspan_carries_down_holds_its_column_in_the_rows_below() -> N
 @pytest.mark.parametrize(
     ("span", "text"),
     [
-        ('colspan="2px"', "a | b"),  # its leading digits, as HTML reads it
-        ('colspan="' + "9" * 5000 + '"', "a | b"),  # past what int() reads: the bound
-        ('rowspan="' + "9" * 5000 + '"', "a | b"),
+        # a spanning `a` covers the second row's empty middle cell, which goes as a spacer
+        ('colspan="2px"', "a | b\nc | d"),  # its leading digits, as HTML reads it
+        ('colspan="+2"', "a | b\nc | d"),  # a sign
+        ('colspan="\u00a02"', "a | b\nc |  | d"),  # spacing that is not ASCII: no number, 1
+        ('colspan="1" colspan="2"', "a | b\nc |  | d"),  # the first of a repeated attribute
+        ('colspan="' + "9" * 5000 + '"', "a | b\nc | d"),  # past what int() reads: the bound
+        ('rowspan="' + "9" * 5000 + '"', "a | b\n | c | d"),
     ],
 )
 def test_a_span_is_read_as_html_reads_it(span: str, text: str) -> None:
-    page = f"<table><tr><td {span}>a</td><td>b</td></tr></table>".encode()
+    page = f"<table><tr><td {span}>a</td><td>b</td></tr><tr><td>c<td><td>d</table>".encode()
     assert [b.text for b in extract(page, "s.html").blocks] == [text]
 
 
