@@ -54,6 +54,7 @@ function ExtractionRules({ scope }: { scope: PolicyScope }) {
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
   const [busy, setBusy] = useState(false);
+  const where = scope === "org" ? identity.org : identity.namespace;
 
   useAbortableEffect(
     (signal, live) => {
@@ -78,7 +79,6 @@ function ExtractionRules({ scope }: { scope: PolicyScope }) {
       setPolicy(p);
       setDraft(p.policy);
       // Name the panel's scope: a save can answer after a switch.
-      const where = scope === "org" ? identity.org : identity.namespace;
       toast(`Rules ${clear ? "removed" : "saved"} for ${where}`, "ok");
     } catch (e) {
       toast(`Save failed: ${humanizeError(e)}`, "error");
@@ -133,7 +133,7 @@ function ExtractionRules({ scope }: { scope: PolicyScope }) {
                 disabled={busy}
                 onClick={async () => {
                   const ok = await confirmAction({
-                    title: `Remove the ${scope}'s extraction rules?`,
+                    title: `Remove the extraction rules for ${where}?`,
                     confirmLabel: "Remove",
                     danger: true,
                   });
@@ -223,13 +223,15 @@ function ModelCallsPanel() {
       )}
       {state && (
         <div className="mt-3 space-y-3">
-          <TextField
-            id="model-calls-reason"
-            label="Reason (sent with the switch)"
-            value={reason}
-            onChange={setReason}
-            maxLength={MAX_REASON_CHARS}
-          />
+          {!lockedOff && (
+            <TextField
+              id="model-calls-reason"
+              label="Reason (sent with the switch)"
+              value={reason}
+              onChange={setReason}
+              maxLength={MAX_REASON_CHARS}
+            />
+          )}
           <div className="flex flex-wrap items-center gap-3">
             <Switch
               label="Model calls"

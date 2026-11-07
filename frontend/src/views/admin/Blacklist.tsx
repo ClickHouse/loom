@@ -39,6 +39,7 @@ const SCOPE_LABELS: Record<BlacklistScope, string> = { namespace: "Namespace", o
  * the org's extraction rules and model-call switch for an org admin claim.
  */
 export function Blacklist() {
+  const org = useStore((s) => s.identity?.org ?? "");
   const namespace = useStore((s) => s.identity?.namespace ?? "");
   const orgAdmin = useStore((s) => hasOrgAdminClaim(s.whoami));
   return (
@@ -46,7 +47,8 @@ export function Blacklist() {
       <PageHeader title="Guardrails">
         <ScopeBadge kind="namespace" value={namespace} />
       </PageHeader>
-      <PrivacyFilters />
+      {/* Keyed by namespace: a sweep still running belongs to the namespace it started in. */}
+      <PrivacyFilters key={`${org}/${namespace}`} />
       {orgAdmin && <OrgGuardrails />}
     </PageContainer>
   );

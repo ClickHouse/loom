@@ -274,7 +274,7 @@ function MemoryTab() {
         <p className="text-xs text-text-muted mt-0.5 mb-3 max-w-2xl">
           A write whose value matches a pattern is refused — extracted ones too.
         </p>
-        <PrivacyFilters compact starters={PRIVACY_STARTERS} />
+        <PrivacyFilters key={`${identity.org}/${identity.namespace}`} compact starters={PRIVACY_STARTERS} />
       </section>
 
       <section aria-labelledby="settings-seed" className="flex flex-wrap items-start justify-between gap-3">

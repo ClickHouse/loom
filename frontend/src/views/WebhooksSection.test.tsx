@@ -60,7 +60,7 @@ describe("WebhooksSection", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Retry" }));
     expect(await screen.findByText(HOOK.url)).toBeInTheDocument();
     vi.mocked(api.listWebhookDeliveries).mockRejectedValueOnce(new Error("boom"));
-    await userEvent.click(screen.getByRole("button", { name: "Deliveries" }));
+    await userEvent.click(screen.getByRole("button", { name: `Deliveries for ${HOOK.url}` }));
     const dialog = await screen.findByRole("dialog", { name: "Deliveries" });
     await userEvent.click(await within(dialog).findByRole("button", { name: "Retry" }));
     expect(await within(dialog).findByText("deploy_window")).toBeInTheDocument();
@@ -142,7 +142,7 @@ describe("WebhooksSection", () => {
       ],
     });
     render(<WebhooksSection />);
-    await userEvent.click(await screen.findByRole("button", { name: "Deliveries" }));
+    await userEvent.click(await screen.findByRole("button", { name: `Deliveries for ${HOOK.url}` }));
     const dialog = await screen.findByRole("dialog", { name: "Deliveries" });
     expect(await within(dialog).findByText("no answer: ConnectError")).toBeInTheDocument();
     // The worker's reason and the receiver's status, both.
@@ -163,7 +163,7 @@ describe("WebhooksSection", () => {
 
   it("shows a webhook's deliveries", async () => {
     render(<WebhooksSection />);
-    await userEvent.click(await screen.findByRole("button", { name: "Deliveries" }));
+    await userEvent.click(await screen.findByRole("button", { name: `Deliveries for ${HOOK.url}` }));
     const dialog = await screen.findByRole("dialog", { name: "Deliveries" });
     expect(await within(dialog).findByText("deploy_window")).toBeInTheDocument();
     expect(within(dialog).getByText("dead")).toBeInTheDocument();

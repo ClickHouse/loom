@@ -106,6 +106,7 @@ describe("OrgGuardrails", () => {
     await userEvent.click(await screen.findByRole("switch", { name: "Model calls" }));
     expect(confirmAction).toHaveBeenCalledWith(expect.objectContaining({ danger: true }));
     await waitFor(() => expect(api.setOrgModelCalls).toHaveBeenCalledWith("acme", false, ""));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Model calls off for acme", "ok"));
     expect(await screen.findByText("Off")).toBeInTheDocument();
   });
 
@@ -122,6 +123,13 @@ describe("OrgGuardrails", () => {
     render(<OrgGuardrails />);
     await userEvent.click(await screen.findByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("switch", { name: "Model calls" })).toBeInTheDocument();
+  });
+
+  it("lets an org admin switch calls off under the lock while they are on", async () => {
+    vi.mocked(api.getOrgModelCalls).mockResolvedValue({ ...CALLS, enabled: true, locked: true, locked_by: "root" });
+    render(<OrgGuardrails />);
+    expect(await screen.findByRole("switch", { name: "Model calls" })).toBeEnabled();
+    expect(screen.getByLabelText("Reason (sent with the switch)")).toBeInTheDocument();
   });
 
   it("holds the switch under a platform admin's lock", async () => {

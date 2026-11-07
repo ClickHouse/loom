@@ -131,5 +131,6 @@ describe("PrivacyFilters sweep", () => {
       expect.objectContaining({ title: expect.stringContaining("across acme") }),
     );
     await waitFor(() => expect(guardrails.sweepBlacklistPattern).toHaveBeenCalledWith(expect.anything(), "p2"));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Deleted 3 of 3 matching memories in acme", "ok"));
   });
 });
