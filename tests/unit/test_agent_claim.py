@@ -211,7 +211,7 @@ def test_the_code_claims_once_and_the_claimer_signs_in_with_their_password(world
     c = _app()
     page = c.get("/oauth/agent-claim", params={"namespace": _NS})
     assert page.status_code == 200 and 'name="code"' in page.text and _NS in page.text
-    assert "up to a minute" in page.text
+    assert "a minute or more" in page.text
 
     r = _claim(c, world["code"], "correct horse")
     assert r.status_code == 200 and _NS in r.text
@@ -675,8 +675,9 @@ def test_grants_that_cannot_be_listed_are_named_as_such(world, monkeypatch) -> N
     r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
     assert r.status_code == 200 and "could not be listed" in r.text
     [(_, kw)] = world["events"]
-    # Listed once, for the audit row and the page alike.
-    assert kw["subject"] == {"other_grants": None, "confirmed": True} and calls == [_LEGACY]
+    # Listed for the audit row, and again for the page once replicas refresh.
+    assert kw["subject"] == {"other_grants": None, "confirmed": True}
+    assert calls == [_LEGACY, _LEGACY]
 
 
 def test_a_write_that_does_not_confirm_still_cuts_off_after_it(world, monkeypatch) -> None:
@@ -852,6 +853,7 @@ def test_a_shutdown_drain_waits_for_a_claims_last_cutoff(world, monkeypatch) -> 
 
     asyncio.run(run())
     assert len(cutoffs) == 2
+    assert [e for e, _ in world["events"]] == ["auth.agent_claimed"]
     assert passwords.verify_password(_row(world, _LEGACY)["password_hash"], "p")
 
 

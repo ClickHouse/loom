@@ -365,20 +365,20 @@ replica's clock is past the later cutoff, so the claimer's next sign-in is not e
 second claim finds no code and is refused, so whoever kept a copy of the code cannot sign in as
 the namespace afterwards, nor keep a session it started with the code. The claim ends no grant
 and no setting: what a session with the code gave another subject, or set on the namespace,
-stays. So, once every replica has refreshed its revocations past the first cutoff
-(`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` after it), the claim lists every subject with an
-active grant on the namespace other than its own and the agent's token while that holds the
-`writer` role sign-up gave it; the `auth.agent_claimed` audit row records them
-(`other_grants`), and the page shows them and asks the claimer to review the grants and every
-namespace setting. A replica whose revocation refreshes keep failing serves its last snapshot
-for up to `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`, so there a code session can act, and a grant
-it makes be missing from the list, for that long. The new password may not be the code. An
-agent account whose password is a plain hash of its code and that has no claim tag is
-unclaimed, even when a person has signed in with that code: whoever holds the code and claims
-first wins, so its owner claims it at once. An agent account with a plain-hash code and an
-email (one linked to an SSO email) is not unclaimed, and the claim page refuses it, while its
-password is still the code; under SSO no password sign-in is served, and an operator who turns
-SSO off first releases such an account with `loom claim-release`.
+stays. So the `auth.agent_claimed` audit row records every subject with an active grant on the
+namespace other than its own and the agent's token while that holds the `writer` role sign-up
+gave it (`other_grants`), and the page lists them again once every replica has refreshed its
+revocations past the claim's cutoffs (`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` later) and asks
+the claimer to review the grants and every namespace setting. A replica whose revocation
+refreshes keep failing serves its last snapshot for up to
+`LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`, so there a code session can act, and a grant it makes
+be missing from the list, for that long. The new password may not be the code. An agent account
+whose password is a plain hash of its code and that has no claim tag is unclaimed, even when a
+person has signed in with that code: whoever holds the code and claims first wins, so its owner
+claims it at once. An agent account with a plain-hash code and an email (one linked to an SSO
+email) is not unclaimed, and the claim page refuses it, while its password is still the code;
+under SSO no password sign-in is served, and an operator who turns SSO off first releases such
+an account with `loom claim-release`.
 
 During a rolling upgrade a replica of the build before still signs in with a plain-hash code,
 and its sign-in reads `loom.namespaces` without sequential consistency. After the wait, the
