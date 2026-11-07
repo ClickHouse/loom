@@ -54,14 +54,14 @@
     },
     {
       "id": "tier_failing",
-      "title": "Failing tiers: failed passes in a row, by namespace, tier and error kind",
+      "title": "Failing tiers: failed passes in a row, by namespace and tier",
       "chart": "line",
       "source": "metrics",
-      "sql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 5 MINUTE) AS t, concat(Attributes['loom.namespace'], ' ', Attributes['tier'], ' (', Attributes['kind'], ')') AS series, max(Value) AS failed_passes FROM default.otel_metrics_gauge WHERE MetricName = 'loom.code.tier_failing' AND TimeUnix > now() - INTERVAL 24 HOUR GROUP BY t, series ORDER BY t",
+      "sql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 5 MINUTE) AS t, concat(Attributes['loom.namespace'], ' ', Attributes['tier']) AS series, max(Value) AS failed_passes FROM default.otel_metrics_gauge WHERE MetricName = 'loom.code.tier_failing' AND TimeUnix > now() - INTERVAL 24 HOUR GROUP BY t, series ORDER BY t",
       "alert": {
         "name": "code tier failing",
         "condition": "max(Value) > 0 for 15m",
-        "why": "A tier that fails on every pass falls behind, and the lag gauges only say how far behind it is, not why. The series is the run of failed passes, labelled with the error kind and severity, and reports exactly the tiers /v1/health's code_tier_failing problem reports, so its thresholds are the LOOM_CODE_TIER_FAILING_* settings; that problem and code.repos tier_health carry the fix. A tier stops reporting on its next successful pass."
+        "why": "A tier that fails on every pass falls behind, and the lag gauges only say how far behind it is, not why. The series is the run of failed passes per namespace and tier (not per error kind or severity, which can change during a run and would restart the alert's wait); the points carry both, and the gauge reports exactly the tiers /v1/health's code_tier_failing problem reports, so its thresholds are the LOOM_CODE_TIER_FAILING_* settings; that problem and code.repos tier_health carry the fix. A tier stops reporting on its next successful pass."
       }
     },
     {
