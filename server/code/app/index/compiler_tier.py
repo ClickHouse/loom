@@ -232,10 +232,8 @@ STALE_COMPDB_MARKER = "build/.loom-reconfigure-failed"
 async def note_stale_compdb(
     worker: str, cfg: RepoConfig, checkout: Path, skipped: list[str]
 ) -> None:
-    """A harness run that indexed with a stale compile database succeeds, but a
-    translation unit added since the last configure is missing from it: record a
-    skip, first, so the pass's outcome in workers.status names the entry within the
-    skips it keeps."""
+    """The harness indexed with a stale compile database (its CMake reconfigure failed):
+    a skip, first, so workers.status keeps it among the skips it shows."""
     if await asyncio.to_thread((checkout / STALE_COMPDB_MARKER).exists):
         reason = f"{cfg.namespace}: cmake reconfigure failed; compile database stale"
         logger.warning("%s: %s", worker, reason)

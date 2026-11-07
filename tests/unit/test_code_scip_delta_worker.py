@@ -157,6 +157,24 @@ async def test_a_delta_on_a_stale_compile_database_is_a_skip_on_the_pass(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_the_stale_compile_database_skip_comes_before_the_passs_other_skips(tmp_path):
+    from server.code.app.index.compiler_tier import (
+        STALE_COMPDB_MARKER,
+        note_stale_compdb,
+        tier_outcome,
+    )
+    from server.code.workers.scip_delta import CodeScipDeltaResult
+
+    (tmp_path / STALE_COMPDB_MARKER).parent.mkdir()
+    (tmp_path / STALE_COMPDB_MARKER).touch()
+    result = CodeScipDeltaResult(skipped=[f"code-{n}: watermarks not seeded" for n in range(5)])
+    await note_stale_compdb("code_scip_delta", _Cfg(), tmp_path, result.skipped)
+    stale = "code-clickhouse: cmake reconfigure failed; compile database stale"
+    outcome = tier_outcome(result)
+    assert outcome["skipped"][0] == stale and outcome["reason"] == stale
+
+
+@pytest.mark.asyncio
 async def test_missing_checkout_skips(monkeypatch):
     from server.settings import settings
 
