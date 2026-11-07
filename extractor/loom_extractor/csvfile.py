@@ -19,12 +19,11 @@ import math
 import re
 from collections.abc import Iterator
 from datetime import date, datetime
-from typing import Any
 
 from loom_extractor.artifact import MAX_COLUMNS, Artifact, Blocks, Coverage, Failure, on_python
 from loom_extractor.tabular import EMPTY, Budget, Cell, Rows, counted, fail, table
 
-PARSER_VERSION = "1"
+PARSER_VERSION = "2"
 # A field longer than this is not a value a table holds.
 MAX_FIELD_CHARS = 1 << 20  # not a setting: a bound on hostile input
 MAX_RECORD_CHARS = 8 << 20  # not a setting: a bound on hostile input
@@ -108,9 +107,11 @@ class _Sniffer(csv.Sniffer):
     delimiter-frequency guess it falls back to still reads the whole sample, in linear
     time."""
 
-    def _guess_quote_and_delimiter(self, data: str, delimiters: str | None) -> Any:
+    def _guess_quote_and_delimiter(
+        self, data: str, delimiters: str | None
+    ) -> tuple[str, bool, str, bool]:
         # The stdlib method `sniff` calls first; typeshed does not declare it.
-        return super()._guess_quote_and_delimiter(  # type: ignore[misc]
+        return super()._guess_quote_and_delimiter(  # type: ignore[misc,no-any-return]
             _whole_lines(data, _QUOTE_SNIFF_CHARS), delimiters
         )
 
