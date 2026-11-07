@@ -13,7 +13,7 @@ import pytest
 
 from server.code.domain.idents import embedded_idents
 from server.llm import fake
-from server.memory.domain.decision_extract import _BARE_CAMEL
+from server.memory.domain.decision_extract import _BARE_CAMEL, sort_mentions
 from server.tracker.domain.catalogue import extract_anchors
 
 # Each input takes a backtracking pattern 2 to 10 s, so a regression fails here, not hangs.
@@ -21,7 +21,7 @@ CASES = [
     pytest.param(embedded_idents, "Ab" + "A" * 27 + "_", id="code-search-pascal"),
     pytest.param(embedded_idents, "ab" + "A" * 27 + "_", id="code-search-camel"),
     pytest.param(extract_anchors, "Ab" + "0" * 25 + "_", id="tracker-anchors"),
-    pytest.param(_BARE_CAMEL.match, "Ab" + "A" * 27 + "_", id="decision-bare-camel"),
+    pytest.param(lambda s: sort_mentions([s], s), "Ab" + "A" * 27 + "_", id="decision-mentions"),
     pytest.param(fake._CAMEL_RE.findall, "Ab" + "A" * 27 + "_", id="fake-mentions"),
 ]
 
