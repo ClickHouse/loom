@@ -61,16 +61,23 @@ async def handle_facts_list(input: FactsListInput) -> FactsListOutput:
     # `entity` is a convenience that ORs across subject + object.
     # When set, it overrides subject/object so the caller can't
     # accidentally write a contradictory filter set.
+    # A name with no canonical form is no node: nothing can match it.
     if input.entity is not None:
-        where.append("(subject = {ent:String} OR object = {ent:String})")
-        params["ent"] = input.entity.lower()
+        if not (ent := _stored_spellings(input.entity)):
+            return FactsListOutput(rows=[])
+        where.append("(subject IN {ent:Array(String)} OR object IN {ent:Array(String)})")
+        params["ent"] = ent
     else:
         if input.subject is not None:
-            where.append("subject = {subj:String}")
-            params["subj"] = input.subject.lower()
+            if not (subj := _stored_spellings(input.subject)):
+                return FactsListOutput(rows=[])
+            where.append("subject IN {subj:Array(String)}")
+            params["subj"] = subj
         if input.object is not None:
-            where.append("object = {obj:String}")
-            params["obj"] = input.object.lower()
+            if not (obj := _stored_spellings(input.object)):
+                return FactsListOutput(rows=[])
+            where.append("object IN {obj:Array(String)}")
+            params["obj"] = obj
     if input.relation is not None:
         where.append("relation = {rel:String}")
         # Stored relations went through canonicalize_verb + canonical_relation
@@ -257,13 +264,15 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
     "acme EMPLOYS alice" (alice is object).
     """
 
+    spellings = _stored_spellings(input.entity)
+    if not spellings:
+        return FactsRelatedOutput(entity="", related=[])  # no canonical form, no node
     ch = get_client()
-    entity = input.entity.lower()
     validity_predicate = ""
     params: dict[str, Any] = {
         "org": input.org,
         "ns": input.namespace,
-        "ent": entity,
+        "ent": spellings,
         "lim": input.top_k * 2,  # widen so we can collapse role=both
     }
     if input.as_of is not None:
@@ -284,7 +293,7 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
             FROM loom.entity_triples
             WHERE org = {{org:String}}
               AND namespace = {{ns:String}}
-              AND subject = {{ent:String}}
+              AND subject IN {{ent:Array(String)}}
               {validity_predicate}
             GROUP BY object
             UNION ALL
@@ -292,11 +301,11 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
             FROM loom.entity_triples
             WHERE org = {{org:String}}
               AND namespace = {{ns:String}}
-              AND object = {{ent:String}}
+              AND object IN {{ent:Array(String)}}
               {validity_predicate}
             GROUP BY subject
         )
-        WHERE neighbor != {{ent:String}}
+        WHERE neighbor NOT IN {{ent:Array(String)}}
         GROUP BY neighbor, role
         ORDER BY co_occur DESC
         LIMIT {{lim:UInt32}}
@@ -322,7 +331,7 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
         key=lambda x: -x.co_occur,
     )[: input.top_k]
 
-    return FactsRelatedOutput(entity=entity, related=related)
+    return FactsRelatedOutput(entity=spellings[0], related=related)
 
 
 async def _after_own_projections(org: str, ns: str) -> tuple[datetime | None, datetime]:
@@ -586,6 +595,16 @@ def _hub_lookup(ch: Any, org: str, namespace: str, hub_degree: int, hub_share: f
     return _hubs
 
 
+def _stored_spellings(raw: str) -> list[str]:
+    """The spellings a stored node can have for `raw`, canonical first: the form every
+    writer stores, then `raw` lowered, which a "commit:" or "error:" concept facet row can
+    still hold. Empty for a name with no canonical form."""
+    from server.memory.domain.graph_quality import canonical_entity_text
+
+    node = canonical_entity_text(raw)
+    return list(dict.fromkeys((node, raw.strip().lower()))) if node else []
+
+
 def _seed_variants(seed: str, raw: str) -> list[str]:
     """A graph may hold the entity under its raw or plural/singular spelling; "pr" in the
     taxonomy is "prs" in the edges. Canonical form first, then the cheap
@@ -734,7 +753,7 @@ async def handle_facts_path(input: FactsPathInput) -> FactsPathOutput:
     Validity mirrors facts.traverse exactly: `as_of` = interval containment;
     default = edges whose valid_to is open or in the future. Both entities are
     canonicalised the way the write path stores them (canonical_entity_text),
-    so "Alice's" finds "alice".
+    so "Alice's" finds "alice" and "error:Timeouts" finds "error:timeouts".
     """
     from server.memory.domain import graph_path as gp
     from server.memory.domain.graph_quality import canonical_entity_text

@@ -130,11 +130,7 @@ def edge_nodes(entry: Any, entity_map: dict[str, str]) -> list[str]:
         *(getattr(entry, "concepts", None) or []),
         *(getattr(entry, "topics", None) or []),
     ]:
-        node = (
-            str(raw).lower()
-            if str(raw).lower().startswith(("commit:", "error:"))
-            else canonical_entity_text(str(raw))
-        )
+        node = canonical_entity_text(str(raw))
         if (
             len(node) >= 2
             and node not in ents

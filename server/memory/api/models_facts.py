@@ -25,14 +25,17 @@ _DEFAULT_LIMIT = 50
 class FactsListInput(BaseModel):
     org: str
     namespace: str
-    # subject/object/relation AND together; unfiltered returns top triples by co_occur.
+    # Only triples with this subject, canonicalised like a write (or as given, lowered);
+    # subject/object/relation AND together, and unfiltered returns top triples by co_occur.
     subject: str | None = None
-    # Only triples with this object (lowercased); ignored when `entity` is set.
+    # Only triples with this object, canonicalised like a write (or as given, lowered);
+    # ignored when `entity` is set.
     object: str | None = None
     # Only triples with this relation, normalised the way writes store it (`works_at` ->
     # `work_at`).
     relation: str | None = None
-    # subject OR object match. Wins over subject/object when both are passed.
+    # Triples with this subject or object, canonicalised like a write (or as given,
+    # lowered). Wins over subject/object when both are passed.
     entity: str | None = None
     # At most this many triples; the server caps it at 500.
     limit: int = Field(default=_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT)
@@ -94,7 +97,8 @@ class FactsListOutput(BaseModel):
 class FactsRelatedInput(BaseModel):
     org: str
     namespace: str
-    # The entity whose neighbours to list (lowercased; matched as subject or object).
+    # The entity whose neighbours to list, matched as subject or object: as the write path
+    # stores it (canonicalised) or as given, lowered.
     entity: str
     # At most this many neighbours; the server caps it at 200.
     top_k: int = Field(default=20, ge=1, le=200)
@@ -110,7 +114,8 @@ class _RelatedEntity(BaseModel):
 
 
 class FactsRelatedOutput(BaseModel):
-    entity: str  # echoed
+    # `entity` canonicalised like a write, or "" when it has no canonical form.
+    entity: str
     # Neighbours of `entity` over any relation, by summed `co_occur` descending.
     related: list[_RelatedEntity]
 

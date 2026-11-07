@@ -172,6 +172,7 @@ def test_canonical_text_is_a_fixed_point_for_any_mix_of_its_edge_pieces() -> Non
     import random
 
     pieces = ["the ", "a ", "an ", ".", " ", "'s", "s", "es", "ies", "net", "re", "x", "(", '"']
+    pieces += ["error:", "commit:", "`", ")", "[", "]", "<", ">", "{", "}", "\t"]
     rng = random.Random(0)
     for _ in range(20000):
         raw = "".join(rng.choice(pieces) for _ in range(rng.randint(1, 8)))

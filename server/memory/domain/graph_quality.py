@@ -20,6 +20,9 @@ _PUNCT_RE = re.compile(r"[^\w\s:/.-]+")
 _NOT_WORD_RE = re.compile(r"\W+")
 _VERB_GAP_RE = re.compile(r"[\s_]+")
 _ARTICLE_RE = re.compile(r"(?:the|a|an)\s+")
+# "commit:<sha>" / "error:<name>" is an identifier: never singularised. A blank (or markup,
+# which becomes one) after the colon reads as prose ("Error: the build failed").
+_CODE_FACET_NAME = re.compile(r"(?:commit|error):\S")
 _SINGLE_VALUED_RELATIONS = {
     "works_at",
     "employed_by",
@@ -435,7 +438,8 @@ def _normalise(lowered: str) -> str:
     text = unicodedata.normalize("NFKC", lowered).lower()
     text = fold_case(text.replace("'s", "").replace("’s", ""))
     text = _PUNCT_RE.sub(_marks_kept, text)
-    text = _settle(_lead(_SPACE_RE.sub(" ", text)))
+    text = _lead(_SPACE_RE.sub(" ", text))
+    text = text.rstrip(" .") if _CODE_FACET_NAME.match(text) else _settle(text)
     return SELF_SUBJECT if text in _FIRST_PERSON_FORMS else text
 
 
@@ -472,7 +476,8 @@ def canonical_entity(raw: str) -> CanonicalEntity:
 def canonical_entity_text(raw: str) -> str:
     """The one entity normalizer for writes and reads: strips articles,
     possessives and punctuation and folds first-person forms to "user", so a
-    query seed and the stored node land on identical text. Idempotent."""
+    query seed and the stored node land on identical text; a name that starts with
+    "commit:" or "error:" and a non-blank is never singularised. Idempotent."""
     return canonical_entity(raw).text
 
 
@@ -787,21 +792,15 @@ def facet_triples(
     """The facet triples Loom mints for one entry, about its actor (the agent).
     Files and concepts become code nodes, so facts.traverse answers "what touches
     this file"; topics hang off `about`, so a topic never passes for a library. An item too
-    long to be a name (`MAX_ENTITY_CHARS`) mints no node."""
+    long to be a name (`MAX_ENTITY_CHARS`), or with no canonical form (only punctuation),
+    mints no node."""
     subject = canonical_entity_text(agent or "user") or "user"
-    for path in names_only(files):
-        yield (
-            subject,
-            code_facet_relation("file", fact_verbs),
-            canonical_entity_text(path) or path.lower(),
-        )
-    for concept in names_only(concepts):
-        lowered = concept.lower()
-        node = (
-            lowered
-            if lowered.startswith(("commit:", "error:"))
-            else (canonical_entity_text(concept) or lowered)
-        )
-        yield subject, code_facet_relation(classify_code_concept(concept), fact_verbs), node
-    for topic in names_only(topics):
-        yield subject, "about", canonical_entity_text(topic) or topic.lower()
+    for path in files:
+        if node := canonical_entity_text(path):
+            yield subject, code_facet_relation("file", fact_verbs), node
+    for concept in concepts:
+        if node := canonical_entity_text(concept):
+            yield subject, code_facet_relation(classify_code_concept(concept), fact_verbs), node
+    for topic in topics:
+        if node := canonical_entity_text(topic):
+            yield subject, "about", node

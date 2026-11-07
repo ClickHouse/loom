@@ -99,6 +99,22 @@ async def test_facts_traverse_defaults_edges_to_current_validity(
 
 
 @pytest.mark.asyncio
+async def test_facts_traverse_seeds_an_error_name_whole(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The write side stores "error:Timeouts" as the node "error:timeouts"; the walk
+    starts there, not at a singular "error:timeout"."""
+    from server.memory.api.models_facts import FactsTraverseInput
+    from server.memory.app import facts as facts_handlers
+
+    ch = StubCH()
+    monkeypatch.setattr(facts_handlers, "get_client", lambda: ch)
+    out = await facts_handlers.handle_facts_traverse(
+        FactsTraverseInput(org="clickhouse", namespace="ns", seed_entity="error:Timeouts")
+    )
+    assert ch.query_all_calls[0][1]["frontier"] == ["error:timeouts"]
+    assert out.seed == "error:timeouts"
+
+
+@pytest.mark.asyncio
 async def test_facts_traverse_aggregates_edge_pairs_before_min_co_filter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1014,3 +1030,53 @@ async def test_traverse_rank_by_reads_the_setting_and_the_request_wins(
         )
         == "cosine"
     )
+
+
+@pytest.mark.asyncio
+async def test_facts_list_and_related_match_the_canonical_and_the_lowered_spelling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A facet row holds the canonical node, or (stored earlier) the name lowered.
+    from server.memory.api.models_facts import FactsListInput, FactsRelatedInput
+    from server.memory.app import facts as facts_handlers
+    from server.memory.domain.graph_quality import facet_triples
+
+    ch = StubCH()
+    monkeypatch.setattr(facts_handlers, "get_client", lambda: ch)
+    name = "error:HTTPError(404)"
+    [(_, _, node)] = facet_triples("bot", [], [], [name], [])
+    both = [node, name.lower()]
+
+    await facts_handlers.handle_facts_list(FactsListInput(org="o", namespace="n", object=name))
+    await facts_handlers.handle_facts_list(FactsListInput(org="o", namespace="n", entity=name))
+    out = await facts_handlers.handle_facts_related(
+        FactsRelatedInput(org="o", namespace="n", entity=name)
+    )
+    assert [p.get("obj") or p.get("ent") for _, p in ch.query_all_calls] == [both, both, both]
+    assert out.entity == node
+    await facts_handlers.handle_facts_list(
+        FactsListInput(org="o", namespace="n", subject="Alice's")
+    )
+    assert ch.query_all_calls[-1][1]["subj"] == ["alice", "alice's"]
+
+
+@pytest.mark.asyncio
+async def test_a_name_with_no_canonical_form_matches_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_facts import FactsListInput, FactsRelatedInput
+    from server.memory.app import facts as facts_handlers
+
+    ch = StubCH()
+    monkeypatch.setattr(facts_handlers, "get_client", lambda: ch)
+    for blank in (" ", "``"):
+        out = await facts_handlers.handle_facts_related(
+            FactsRelatedInput(org="o", namespace="n", entity=blank)
+        )
+        assert out.entity == "" and out.related == []
+        for field in ("entity", "subject", "object"):
+            listed = await facts_handlers.handle_facts_list(
+                FactsListInput(org="o", namespace="n", **{field: blank})
+            )
+            assert listed.rows == [], field
+    assert ch.query_all_calls == []  # nothing to match, so nothing is asked

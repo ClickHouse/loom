@@ -13,7 +13,10 @@ facet parser is pure, the write paths take a stub CH client.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app.extract import ExtractedFact, extract_code_facets
@@ -336,3 +339,157 @@ def test_a_facet_too_long_to_be_a_name_mints_no_node() -> None:
         triples = list(facet_triples("bot", [], [huge], [huge, "src/app.py"], [huge, "billing"]))
         assert triples and all(len(t[2]) <= MAX_ENTITY_CHARS for t in triples)
         assert [t[2] for t in triples] == ["src/app.py", "billing"]
+
+
+def _edge_nodes(**facets: list[str]) -> list[str]:
+    from server.memory.app.projections import edge_nodes
+
+    empty = {"entities": [], "files": [], "concepts": [], "topics": []}
+    return edge_nodes(SimpleNamespace(**{**empty, **facets}), {})
+
+
+def test_edge_nodes_are_the_entities_and_the_facet_nodes() -> None:
+    nodes = _edge_nodes(
+        entities=["alice"],
+        files=["src/app.py"],
+        concepts=["KeyError", "commit:ABC1234"],
+        topics=["the billing"],
+    )
+    assert nodes == ["alice", "billing", "commit:abc1234", "keyerror", "src/app.py"]
+
+
+def test_a_commit_name_is_stored_case_folded_whole_at_the_cap() -> None:
+    from server.memory.domain.graph_quality import MAX_ENTITY_CHARS, facet_triples
+
+    # 256 as written; .lower() would make it 505 ("İ" is "i" and a dot above).
+    raw = "commit:" + "İ" * (MAX_ENTITY_CHARS - len("commit:"))
+    node = "commit:" + "i" * (MAX_ENTITY_CHARS - len("commit:"))
+    assert [t[2] for t in facet_triples("bot", [], [], [raw], [])] == [node]
+    assert _edge_nodes(concepts=[raw]) == [node]
+    # A ligature folds too.
+    assert [t[2] for t in facet_triples("bot", [], [], ["error:ﬁle"], [])] == ["error:file"]
+
+
+def test_a_commit_name_that_folds_past_the_cap_mints_no_node() -> None:
+    from server.memory.domain.graph_quality import MAX_ENTITY_CHARS, facet_triples
+
+    # 256 as written, 2 * 249 + 7 once folded ("ﬁ" is "fi").
+    folds_long = "commit:" + "ﬁ" * (MAX_ENTITY_CHARS - len("commit:"))
+    too_long = "error:" + "x" * MAX_ENTITY_CHARS
+    for raw in (folds_long, too_long):
+        assert list(facet_triples("bot", [], [raw], [raw], [raw])) == []
+        assert _edge_nodes(files=[raw], concepts=[raw], topics=[raw]) == []
+
+
+@pytest.mark.asyncio
+async def test_an_error_topic_is_one_node_to_the_triples_the_edges_and_the_graph_seed() -> None:
+    from server.memory.app.retrieval import fetch_graph_neighbors
+    from server.memory.domain.graph_quality import facet_triples
+
+    seen: list[dict[str, Any]] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+            seen.append(params or {})
+            return []
+
+    for facet in ("files", "concepts", "topics"):
+        lists: dict[str, list[str]] = {"files": [], "concepts": [], "topics": []}
+        lists[facet] = ["error:Timeouts"]
+        triples = facet_triples("bot", [], lists["files"], lists["concepts"], lists["topics"])
+        assert [t[2] for t in triples] == ["error:timeouts"]
+        assert _edge_nodes(**{facet: ["error:Timeouts"]}) == ["error:timeouts"]
+    await fetch_graph_neighbors(
+        _CH(), org="o", namespace="n", seed_entities=["error:Timeouts"], hub_skip_degree=0
+    )
+    assert seen and seen[0]["seeds"] == ["error:timeouts"]
+
+
+@pytest.mark.asyncio
+async def test_an_error_name_in_entities_relations_and_a_facet_is_one_node() -> None:
+    from server.memory.app.projections import write_entity_edges, write_entity_triples
+
+    inp = _bulk_input(
+        entities=["deploy", "error:Timeouts"],
+        relations=[("deploy", "causes", "error:Timeouts")],
+        topics=["error:Timeouts"],
+    )
+    edges = (await _written(write_entity_edges, inp))["loom.entity_edges"]
+    assert {(e["entity_a"], e["entity_b"]) for e in edges} == {("deploy", "error:timeouts")}
+    triples = (await _written(write_entity_triples, inp))["loom.entity_triples"]
+    assert {t["object"] for t in triples} == {"error:timeouts"}
+
+
+@pytest.mark.asyncio
+async def test_memory_search_scope_seeds_an_error_name_at_its_edge_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.search import scope
+
+    monkeypatch.setattr(scope, "get_client", lambda: _StubCH())
+    done: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+    done.set_result(None)
+    run = scope._SearchRun(
+        rerank_override="", rerank_cfg_task=None, calibration_task=done, fanout_task=None
+    )
+    body = MemorySearchInput(
+        org="o", namespace="n", agent="a", query="q", entity_filter=["error:Timeouts"]
+    )
+    await scope._resolve_entity_scope(body, run, [], {})
+    assert run.effective_entity_filter == _edge_nodes(topics=["error:Timeouts"])
+
+
+@pytest.mark.asyncio
+async def test_a_query_triple_names_an_error_facet_as_it_is_stored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.llm import client as llm_client
+    from server.llm.client import LLMResult
+    from server.memory.app import search_llm
+    from server.memory.domain.graph_quality import facet_triples
+
+    class _LLM:
+        async def complete(self, system: str, user: str, **kw: Any) -> LLMResult:
+            text = '[{"s": "deploy", "v": "causes", "o": "error:Timeouts"}]'
+            return LLMResult(text=text, tokens_in=1, tokens_out=1, provider="fake", model="m")
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _LLM())
+    monkeypatch.setattr(search_llm, "_QUERY_ENTITY_CACHE", {})
+    (triple,) = await search_llm.extract_query_triples_llm("what causes error:Timeouts")
+    (stored,) = facet_triples("bot", [], [], ["error:Timeouts"], [])
+    assert triple[2] == stored[2] == "error:timeouts"
+
+
+def test_a_prose_name_that_starts_with_error_is_normalised_as_prose() -> None:
+    from server.memory.domain.graph_quality import canonical_entity_text
+
+    assert canonical_entity_text("Error: the Thing's") == "error: the thing"
+    assert canonical_entity_text("error:`Timeouts`") == "error: timeout"  # markup is a blank
+    assert canonical_entity_text("error:Timeouts") == "error:timeouts"
+
+
+def test_a_wrapped_or_spaced_code_facet_name_is_the_bare_names_node() -> None:
+    from server.memory.domain.graph_quality import canonical_entity, canonical_entity_text
+
+    for bare in ("error:Timeouts", "error:HTTPError(404)", "error:can't connect", "commit:ABC123"):
+        node = canonical_entity_text(bare)
+        for written in (
+            f"`{bare}`",
+            f"**{bare}**",
+            f"(({bare}))",
+            f'"{bare}',
+            f"the [{bare}].",
+            f"{bare},",
+            f" {bare} ",
+        ):
+            assert canonical_entity_text(written) == node, written
+    assert canonical_entity("error:a \t b").entity_id == "error:a_b"
+
+
+def test_a_facet_of_only_punctuation_mints_no_node() -> None:
+    from server.memory.domain.graph_quality import facet_triples
+
+    assert list(facet_triples("a", [], ["``"], ["``", "."], ["``"])) == []
