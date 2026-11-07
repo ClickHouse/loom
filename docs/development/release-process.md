@@ -192,8 +192,7 @@ jobs:
 The images are already published by the tag run: a dispatch on a tag whose images carry the
 version builds and tags none (`scripts/release/published_images.sh`), smoke-tests the published
 ones, and goes on to the registries. Release images build without the cache, so a rebuild would
-move the version's tags onto other bytes. When only one of the two carries the version (a failed
-`docker-tag`), re-run the failed jobs of the tag's run, which tags the same build. Never move a tag
+move the version's tags onto other bytes. When only one of the two carries the version (a failed `docker-tag`), use "Re-run failed jobs" on the tag's run, which tags the same build. "Re-run all jobs" would start with a `preflight` that refuses the half-tagged version, and from then on "Re-run failed jobs" re-runs only that `preflight`. To recover from there, tag the missing image by hand from that run's digests: `docker buildx imagetools create -t ghcr.io/clickhouse/<image>:X.Y.Z -t ghcr.io/clickhouse/<image>:X.Y <image>@<amd64 digest> <image>@<arm64 digest>`, with the two digests from the run's `scanned-<artifact>-<arch>` artifacts, then dispatch the tag. Never move a tag
 whose images are published: `published_images.sh` fails when a published image was built from another
 commit than the run's, and a fix needs a new version.
 

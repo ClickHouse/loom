@@ -145,8 +145,13 @@ def test_the_workflow_runs_the_preflight_before_any_build() -> None:
     (step,) = [s for s in jobs["preflight"]["steps"] if "preflight.sh" in s.get("run", "")]
     assert step["env"]["MODE"] == "${{ inputs.dry_run && 'report' || 'strict' }}"
     assert step["env"]["REPOSITORY_PRIVATE"] == "${{ github.event.repository.private }}"
+    # One list of images for both checks, the docker matrix's.
     matrix = jobs["docker"]["strategy"]["matrix"]["include"]
-    assert step["env"]["IMAGES"].split() == [i["image"] for i in matrix if "image" in i]
+    assert jobs["preflight"]["env"]["IMAGES"].split() == [
+        i["image"] for i in matrix if "image" in i
+    ]
+    (published,) = [s for s in jobs["preflight"]["steps"] if s.get("id") == "images"]
+    assert '"$VERSION" $IMAGES)' in published["run"]
 
 
 @pytest.mark.parametrize(
@@ -214,7 +219,14 @@ def test_a_dry_run_publishes_nothing() -> None:
 def test_a_dry_run_smokes_its_own_images_and_a_release_the_published_ones() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     smoke = jobs["docker-smoke"]
-    assert smoke["needs"] == ["version", "preflight", "clickhouse", "docker", "docker-tag"]
+    assert smoke["needs"] == [
+        "version",
+        "preflight",
+        "clickhouse",
+        "verify",
+        "docker",
+        "docker-tag",
+    ]
     # Which jobs run on each path: tests/unit/test_release_job_paths.py.
     loads = [s for s in smoke["steps"] if s.get("if") == "${{ inputs.dry_run }}"]
     assert loads[0]["with"]["pattern"] == "scanned-*-${{ matrix.arch }}"
@@ -353,7 +365,7 @@ def test_one_image_out_without_the_other_fails_with_the_recovery(tmp_path: Path)
     result = _published(tmp_path, PUBLISHED="clickhouse/loom:1.2.0")
     assert result.returncode == 1 and result.stdout == ""
     assert "only ghcr.io/clickhouse/loom carries 1.2.0" in result.stderr
-    assert "re-run the failed jobs of the tag's run" in result.stderr
+    assert "Re-run failed jobs (not all jobs)" in result.stderr
 
 
 def test_published_images_fails_on_an_outage_instead_of_rebuilding(tmp_path: Path) -> None:
@@ -394,3 +406,42 @@ def test_a_missing_push_token_is_named_apart_from_a_missing_grant(tmp_path: Path
     )
     assert result.stdout.count("gave this workflow no push token") == 2
     assert "Write role" not in result.stdout
+
+
+# preflight.sh against a registry that answers 503: an outage is never reported
+# as a setting for the owner to change.
+OUTAGE_CURL = r"""#!/usr/bin/env bash
+case "$*" in
+  *" -u "*) echo '{"token":"t"}' ;;
+  *"-X POST"*) printf 'HTTP/2 503\r\n\r\n' ;;
+  *"-X DELETE"*) ;;
+  *) echo 503 ;;
+esac
+"""
+
+
+def test_a_registry_outage_is_not_reported_as_a_missing_grant(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "curl").write_text(OUTAGE_CURL)
+    (bin_dir / "curl").chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "GITHUB_REPOSITORY": "ClickHouse/loom",
+        "GITHUB_ACTOR": "release-bot",
+        "GH_TOKEN": "token",
+        "REPOSITORY_PRIVATE": "false",
+        "IMAGES": IMAGES,
+        "GHCR": "https://registry.test",
+    }
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/release/preflight.sh"), "strict"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert result.stdout.count("(an outage), so its Write access is unknown") == 2
+    assert result.stdout.count("(an outage), so its visibility is unknown") == 2
+    assert "Write role" not in result.stdout and "Danger Zone" not in result.stdout

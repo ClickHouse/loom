@@ -55,8 +55,14 @@ def _evaluate(expression: str, context: dict[str, object]) -> bool:
     return bool(eval(text, {"N": context["N"], "C": context["C"]}))
 
 
-def run(*, event: str, dry_run: bool | None, published: bool, fail: set[str] = frozenset(),
-        prerelease: bool = False) -> set[str]:  # fmt: skip
+def run(
+    *,
+    event: str,
+    dry_run: bool | None,
+    published: bool,
+    fail: frozenset[str] = frozenset(),
+    prerelease: bool = False,
+) -> set[str]:
     """The jobs that run, every one that runs succeeding unless named in `fail`."""
     result: dict[str, str] = {}
     outputs = {
@@ -113,10 +119,16 @@ def test_a_dry_run_builds_and_smokes_and_publishes_nothing() -> None:
     assert ran == BUILD | {"docker", "docker-smoke"}
 
 
-@pytest.mark.parametrize("failed", ["docker", "docker-tag", "docker-smoke", "verify"])
+@pytest.mark.parametrize("failed", ["docker", "docker-tag", "docker-smoke", "verify", "preflight"])
 def test_a_failure_before_the_release_publishes_nothing(failed: str) -> None:
-    ran = run(event="workflow_dispatch", dry_run=False, published=False, fail={failed})
+    ran = run(event="workflow_dispatch", dry_run=False, published=False, fail=frozenset({failed}))
     assert not ran & ({"github-release"} | REGISTRIES)
+
+
+@pytest.mark.parametrize("failed", ["verify", "clickhouse", "preflight"])
+def test_a_failure_on_the_published_tag_smokes_and_publishes_nothing(failed: str) -> None:
+    ran = run(event="workflow_dispatch", dry_run=False, published=True, fail=frozenset({failed}))
+    assert not ran & ({"docker-smoke", "github-release"} | REGISTRIES)
 
 
 def test_a_tag_push_whose_images_are_published_builds_and_tags_none() -> None:
@@ -126,15 +138,19 @@ def test_a_tag_push_whose_images_are_published_builds_and_tags_none() -> None:
 
 
 def test_a_failed_smoke_on_the_published_tag_publishes_nothing() -> None:
-    ran = run(event="workflow_dispatch", dry_run=False, published=True, fail={"docker-smoke"})
+    ran = run(
+        event="workflow_dispatch", dry_run=False, published=True, fail=frozenset({"docker-smoke"})
+    )
     assert not ran & ({"github-release"} | REGISTRIES)
 
 
 def test_a_dry_run_whose_build_fails_smokes_nothing() -> None:
-    ran = run(event="workflow_dispatch", dry_run=True, published=False, fail={"docker"})
+    ran = run(event="workflow_dispatch", dry_run=True, published=False, fail=frozenset({"docker"}))
     assert "docker-smoke" not in ran
 
 
 def test_a_failed_release_step_publishes_no_registry() -> None:
-    ran = run(event="workflow_dispatch", dry_run=False, published=True, fail={"github-release"})
+    ran = run(
+        event="workflow_dispatch", dry_run=False, published=True, fail=frozenset({"github-release"})
+    )
     assert not ran & REGISTRIES

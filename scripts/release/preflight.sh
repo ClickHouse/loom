@@ -49,8 +49,10 @@ for image in $IMAGES; do
     case $location in /*) location=$GHCR$location ;; esac
     [ -z "$location" ] || curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" "$location" || true
     echo "$image: this workflow can push"
+  elif [ "$status" = 403 ]; then
+    say "$image: this workflow cannot push (HTTP 403). In $settings, under Manage Actions access, add $GITHUB_REPOSITORY with the Write role"
   else
-    say "$image: this workflow cannot push (HTTP $status). In $settings, under Manage Actions access, add $GITHUB_REPOSITORY with the Write role"
+    say "$image: ghcr.io answered the push check with HTTP $status (an outage), so its Write access is unknown"
   fi
   # Pull: an install pulls without signing in, so the package must be public.
   # ghcr.io refuses an anonymous token with 401 for a private package and 403
@@ -61,7 +63,8 @@ for image in $IMAGES; do
     403)
       echo "::warning::$image does not exist yet: this run's push creates it private, and docker-smoke fails to pull it. Set it public in $settings, then re-run the failed jobs"
       ;;
-    *) say "$image refuses anonymous pulls (HTTP $status), and an install pulls without signing in. In $settings, under Danger Zone, set the visibility to Public" ;;
+    401) say "$image refuses anonymous pulls (HTTP 401), and an install pulls without signing in. In $settings, under Danger Zone, set the visibility to Public" ;;
+    *) say "$image: ghcr.io answered the anonymous pull check with HTTP ${status:-no status} (an outage), so its visibility is unknown" ;;
   esac
 done
 

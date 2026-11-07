@@ -72,6 +72,6 @@ for image in "$@"; do
   out+=("$image")
 done
 if [ "${#out[@]}" -gt 0 ] && [ "${#missing[@]}" -gt 0 ]; then
-  fail "only ${out[*]} carries $version, not ${missing[*]}: re-run the failed jobs of the tag's run, which tag the same build (a new build would move the published tags)"
+  fail "only ${out[*]} carries $version, not ${missing[*]}: use Re-run failed jobs (not all jobs) on the tag's run, which tags the same build; a new build would move the published tags (docs/development/release-process.md#what-the-release-workflow-does)"
 fi
 [ "${#missing[@]}" -eq 0 ] && echo true || echo false

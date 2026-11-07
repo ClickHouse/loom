@@ -130,6 +130,9 @@ jobs:
     timeout-minutes: 5
     outputs:
       images_published: ${{ steps.images.outputs.published }}
+    env:
+      # Every image the docker matrix builds (a unit test keeps the two equal).
+      IMAGES: ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor
     permissions:
       contents: read
       packages: write # the push probe asks for the access the docker job uses
@@ -141,7 +144,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
-          IMAGES: ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor
           MODE: ${{ inputs.dry_run && 'report' || 'strict' }}
         run: bash scripts/release/preflight.sh "$MODE"
       # The registry dispatch on a tag whose images the tag run published keeps
@@ -153,8 +155,8 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
           REVISION: ${{ github.sha }}
         run: |
-          published=$(bash scripts/release/published_images.sh "$VERSION" \
-            ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor)
+          # shellcheck disable=SC2086 # one argument per image
+          published=$(bash scripts/release/published_images.sh "$VERSION" $IMAGES)
           echo "published=$published" >> "$GITHUB_OUTPUT"
 
   # The bundle names the ClickHouse release that is latest now, so an installed
@@ -616,11 +618,11 @@ jobs:
     # A dry run smokes the images its docker jobs exported, a release the ones
     # docker-tag published, and a dispatch on a published tag the published ones.
     if: >-
-      ${{ !cancelled() && needs.clickhouse.result == 'success' && (
+      ${{ !cancelled() && needs.clickhouse.result == 'success' && needs.verify.result == 'success' && (
       (needs.docker.result == 'success' && needs.docker-tag.result == 'success') ||
       (inputs.dry_run && needs.docker.result == 'success' && needs.docker-tag.result == 'skipped') ||
       needs.preflight.outputs.images_published == 'true') }}
-    needs: [version, preflight, clickhouse, docker, docker-tag]
+    needs: [version, preflight, clickhouse, verify, docker, docker-tag]
     strategy:
       fail-fast: false
       matrix:
