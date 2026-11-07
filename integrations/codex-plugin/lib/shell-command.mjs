@@ -467,6 +467,10 @@ export function parseBashBulkSegments(command) {
     const stages = splitOutsideQuotes(s, ["|"]);
     const bulk = parseBashBulk(stages[0]);
     if (!bulk || (stages.length > 1 && bulk.kind !== "grep")) continue;
+    // A Git Bash /c/... operand names the same file as its cd target would.
+    if (bulk.file) bulk.file = gitBashPath(bulk.file);
+    if (bulk.dir) bulk.dir = gitBashPath(bulk.dir);
+    if (bulk.files) bulk.files = bulk.files.map((f) => gitBashPath(f));
     out.push({ ...bulk, cmd: tokens(stages[0].trim())[0], cwd });
   }
   return out;

@@ -135,8 +135,8 @@ def test_manifests_agree_and_marketplace_points_at_the_plugin() -> None:
 def test_claude_hooks_json_still_passes_no_client_argument() -> None:
     """Claude Code stays the default client: its wiring passes no client
     argument, so the scripts fall back to `claude-code`."""
-    # Each command is read by sh (its second line) and by PowerShell (its
-    # fourth): neither names a client.
+    # sh runs each command's second line; PowerShell runs the node call on
+    # its fourth: neither names a client.
     for _, cmd in _commands(_hooks(CLAUDE / "hooks" / "hooks.json")):
         lines = cmd.split("\n")
         assert re.fullmatch(

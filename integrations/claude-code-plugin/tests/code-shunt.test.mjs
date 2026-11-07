@@ -152,6 +152,12 @@ test("Bash segments: a chained read is judged, not passed in silence", () => {
   assert.equal(gitBashPath("/c", "win32"), "C:/");
   assert.equal(gitBashPath("/c/Users/me/app", "linux"), "/c/Users/me/app");
   assert.equal(gitBashPath("/srv/app", "win32"), "/srv/app");
+  if (process.platform === "win32") {
+    assert.equal(parseBashBulkSegments("cat /c/Users/me/app/a.py")[0].file, "C:/Users/me/app/a.py");
+    assert.equal(parseBashBulkSegments("grep -rn foo /c/Users/me/app")[0].dir, "C:/Users/me/app");
+  } else {
+    assert.equal(parseBashBulkSegments("cat /c/Users/me/app/a.py")[0].file, "/c/Users/me/app/a.py");
+  }
   assert.deepEqual(parseBashBulkSegments("make test || cat log.txt")[0].file, "log.txt");
 });
 
