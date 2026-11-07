@@ -51,6 +51,9 @@ vi.mock("../api", async (importOriginal) => {
   return {
     ...actual,
     getMemory: vi.fn(async () => LIVE),
+    setMemory: vi.fn(),
+    deleteMemory: vi.fn(),
+    pinMemory: vi.fn(),
     moveMemory: vi.fn(
       async (_id: unknown, fromKey: string, toKey: string, opts: { dryRun?: boolean; keepRedirect?: boolean } = {}) =>
         opts.dryRun
@@ -77,7 +80,7 @@ vi.mock("../api", async (importOriginal) => {
     listMine: vi.fn(async () => []),
   };
 });
-import { getMemory, moveMemory } from "../api";
+import { deleteMemory, getMemory, moveMemory, pinMemory, setMemory } from "../api";
 import { toast } from "./Toast";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
@@ -252,6 +255,11 @@ describe("MemoryInspector rename with redirect", () => {
     // open behind it, so one Escape closes the drawer.
     expect(await screen.findByText(/not found/i)).toBeInTheDocument();
     expect(toast).toHaveBeenCalledWith("Renamed coffee_pref to prefs/coffee — the old key was deleted", "ok");
+    // The shortcuts have no row to act on, so none of them writes the deleted key back.
+    await userEvent.keyboard("edp{Meta>}{Enter}{/Meta}");
+    expect(setMemory).not.toHaveBeenCalled();
+    expect(deleteMemory).not.toHaveBeenCalled();
+    expect(pinMemory).not.toHaveBeenCalled();
     await userEvent.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalled();
   });

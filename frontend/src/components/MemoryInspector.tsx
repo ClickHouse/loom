@@ -300,9 +300,9 @@ export function MemoryInspector({
   // e/d/p drive edit/delete/pin, ⌘/Ctrl+Enter saves an edit. Bound to the
   // dialog content, so they fire only while the drawer holds focus. Radix
   // portals bubble React events through the tree, so keystrokes from a dialog
-  // over the drawer are skipped explicitly.
+  // over the drawer are skipped explicitly. A key that is not found has nothing to act on.
   const onContentKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (dialogOver) return;
+    if (dialogOver || !detail?.found) return;
     const t = e.target;
     const typing =
       t instanceof HTMLElement && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable);
