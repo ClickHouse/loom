@@ -12,7 +12,7 @@ import { Stat, Unavailable } from "../../components/ui";
 import { ListTime } from "../../components/ui/ListTime";
 import { useClamped } from "../../components/ui/TextClamp";
 import { fmtInt, sentenceCase } from "../../lib/format";
-import { SUBJECT_OF, shownName } from "./subjects";
+import { INSPECTED_AS, shownName } from "./subjects";
 
 const PLANE_LABEL: Record<InventoryPlane, string> = {
   memories: "Memories",
@@ -95,7 +95,7 @@ export function InventoryPopulations({
     <ul className="space-y-3" data-testid="assistant-populations">
       {populations.map((p) => {
         const label = POPULATION_LABEL[p.population] ?? { title: p.population, what: "" };
-        const subject = SUBJECT_OF[p.population];
+        const subject = INSPECTED_AS[p.population];
         return (
           <li key={p.population} data-population={p.population}>
             <div className="flex flex-wrap items-baseline gap-x-2 text-sm">

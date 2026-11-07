@@ -6,6 +6,7 @@ import { CodeBlock } from "./CodeBlock";
 import { ListTime } from "../../components/ui/ListTime";
 import { SectionHeading } from "../../components/ui";
 import { useStore } from "../../lib/state";
+import { SUBJECT_COPY } from "./subjects";
 
 // What the subject's own view holds, as the server defines it: rows filed under a user
 // (by any writer), rows an agent wrote, rows written in a session (by any user).
@@ -16,7 +17,6 @@ const OWN_HEADING = {
 } as const;
 // server/memory/app/inspect.py TOP_TAGS: a view lists at most this many tags.
 const TOP_TAGS = 20;
-const SUBJECT_NAME = { user: "User", agent: "Agent", session: "Session" } as const;
 
 /** What one user, agent or session remembers: the subject's own rows as the server defines
  *  them, apart from every other live row, and what creates them. */
@@ -27,7 +27,7 @@ export function Inspection({ result }: { result: MemoryInspection }) {
   return (
     <div className="space-y-5" data-testid="assistant-inspection">
       <p className="text-sm text-text">
-        {SUBJECT_NAME[result.subject]} <span className="font-mono break-all">{result.id}</span>
+        {SUBJECT_COPY[result.subject].label} <span className="font-mono break-all">{result.id}</span>
       </p>
       <InspectViewBlock
         id="inspect-own"

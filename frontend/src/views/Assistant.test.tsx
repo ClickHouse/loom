@@ -955,16 +955,21 @@ describe("Assistant: overview", () => {
     expect(screen.getByLabelText("User id")).toHaveValue("ada");
   });
 
-  it("clears the id field on a namespace switch and on a change of subject", async () => {
+  it("clears the id on a namespace switch and a change of subject, and the entity on a switch", async () => {
     render(<Assistant />);
     await screen.findByTestId("assistant-populations");
     await userEvent.click(screen.getByRole("button", { name: "ada 12 memories" }));
     expect(screen.getByLabelText("User id")).toHaveValue("ada");
+    // The subject already selected changes nothing.
+    await userEvent.click(screen.getByRole("button", { name: "User" }));
+    expect(screen.getByLabelText("User id")).toHaveValue("ada");
     await userEvent.click(screen.getByRole("button", { name: "Session" }));
     expect(screen.getByLabelText("Session id")).toHaveValue("");
     await userEvent.click(screen.getByRole("button", { name: "ada 12 memories" }));
+    await userEvent.type(screen.getByLabelText("Start from (optional)"), "invoices");
     switchNamespace();
     expect(screen.getByLabelText("User id")).toHaveValue("");
+    expect(screen.getByLabelText("Start from (optional)")).toHaveValue("");
   });
 
   it("moves the focus to the answer for a pick made while an earlier one is still read", async () => {

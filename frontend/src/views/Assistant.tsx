@@ -28,7 +28,7 @@ import { DocumentInspection } from "./assistant/DocumentInspection";
 import { Inspection } from "./assistant/Inspection";
 import { InventoryPopulations, InventoryScopeNote, InventorySections } from "./assistant/Inventory";
 import { ReviewChanges } from "./assistant/ReviewChanges";
-import { SUBJECT_OF, SUBJECTS, shownName } from "./assistant/subjects";
+import { INSPECTED_AS, SUBJECT_COPY, shownName } from "./assistant/subjects";
 import { tokenReadScope } from "./assistant/tokenScope";
 import { useScopedRead } from "./assistant/useScopedRead";
 
@@ -39,9 +39,9 @@ import { useScopedRead } from "./assistant/useScopedRead";
  * read is deterministic (no model) and read-only; a draft is never applied here.
  */
 
-const SUBJECT_OPTIONS = (Object.keys(SUBJECTS) as InspectSubject[]).map((value) => ({
+const SUBJECT_OPTIONS = (Object.keys(SUBJECT_COPY) as InspectSubject[]).map((value) => ({
   value,
-  label: SUBJECTS[value].label,
+  label: SUBJECT_COPY[value].label,
 }));
 
 export function Assistant() {
@@ -61,7 +61,8 @@ export function Assistant() {
   const [entity, setEntity] = useState("");
 
   // Each read is gated on its own op. All four are VIEWER, so a canCall refusal means the role
-  // is unknown; the server refuses memory.inspect and namespace.tune to a pinned token.
+  // is unknown; the server refuses memory.inspect and namespace.tune to a pinned token. With
+  // no claim to read (an end-user token, or behind a proxy), the inventory's answer says so.
   const narrowed =
     tokenScope?.readScope != null || (inventory.data !== null && inventory.data.scope.read_scope !== "namespace");
   // A scoped read under `own_session`, or under `own_user` with no `read_user_id`, needs the
@@ -81,9 +82,9 @@ export function Assistant() {
   const memoryGate = gate("memory.inspect");
   const documentsGate = gate("knowledge.inspect");
   const tuneGate = gate("namespace.tune");
-  const copy = SUBJECTS[subject];
-  const suggestions = inventory.data?.populations.find((p) => SUBJECT_OF[p.population] === subject)?.top ?? [];
-  const emptyReason = (suggestions.length > 0 ? copy.pick : undefined) ?? copy.empty;
+  const copy = SUBJECT_COPY[subject];
+  const suggestions = inventory.data?.populations.find((p) => INSPECTED_AS[p.population] === subject)?.top ?? [];
+  const emptyReason = suggestions.length > 0 ? copy.pick : copy.empty;
   const inspectBlocked = memoryGate ?? (subjectId.trim() ? null : emptyReason);
 
   const org = identity?.org ?? "";
@@ -98,11 +99,12 @@ export function Assistant() {
   useEffect(() => {
     if (org && overviewGate === null) readOverview();
   }, [org, overviewGate, readOverview]);
-  // An id picked or typed in one namespace is not meant for the next one.
+  // An id or entity picked or typed in one namespace is not meant for the next one.
   const [idFor, setIdFor] = useState(`${org}/${namespace}`);
   if (idFor !== `${org}/${namespace}`) {
     setIdFor(`${org}/${namespace}`);
     setSubjectId("");
+    setEntity("");
   }
 
   if (!identity) return null;
@@ -192,6 +194,7 @@ export function Assistant() {
             selected={subject}
             onClick={(v) => {
               // A user id is not an agent name or a session id.
+              if (v === subject) return;
               setSubject(v as InspectSubject);
               setSubjectId("");
             }}
