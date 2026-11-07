@@ -350,6 +350,18 @@ schema. These rules keep that safe. The operator procedure is in
     back every folder of `.docx` files, while the cost falls on the sources a maintainer
     opts in, ends with the rollout, and loses nothing. The mixed-version gate does not
     check this rule.
+32. **A native document's pictures out of its export** (the `gdrive` sync's `docs`
+    conversion): N drops each pasted picture's base64 reference definition from a native
+    document's Markdown export; N-1 stores the export as it comes. A document N-1 writes
+    is found by N on its next full listing, whose stored-revision read checks each
+    stored text for such a definition, and converted again at the same revision. N
+    writes that copy with a `text_sha256` in its metadata, so the mining step of either
+    build, which keys a document carrying one by its revision and that hash, mines the
+    new text once; N-1 rewrites the document only when its file changes. No gate holds
+    the rollout: the cost is the base64 a document N-1 writes holds until N's next full
+    listing, and the check, which reads each document's stored text on every full
+    listing, stays while a build that stores raw exports may serve. The mixed-version
+    gate does not check this rule.
 
 ## What checks them
 

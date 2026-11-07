@@ -21,6 +21,7 @@ import pytest
 from server.clients import gdrive
 from server.core import leases
 from server.core.errors import ValidationError
+from server.core.hashing import sha256_text
 from server.core.secrets_at_rest import seal
 from server.knowledge.app import extractors, source_sync, writes
 from server.knowledge.app import sources as source_ops
@@ -145,13 +146,18 @@ class _World:
         self.sources = [s for s in self.sources if s.name != src.name] + [src]
 
     async def source_revisions(
-        self, org: str, ns: str, name: str, *, searchable_only: bool = True
+        self, org: str, ns: str, name: str, *, searchable_only: bool = True, pictures: bool = False
     ) -> list[dict[str, str]]:
         return [
             {
                 "source_uri": uri,
                 "file_id": d["metadata"]["ingested_from"],
                 "source_revision": d["metadata"]["source_revision"],
+                "text_sha256": d["metadata"].get("text_sha256", ""),
+                "inline_pictures": "1" if pictures and "]: <data:" in d.get("content", "") else "",
+                "text_hash": sha256_text(d.get("content", ""))
+                if pictures and "]: <data:" in d.get("content", "")
+                else "",
             }
             for uri, d in self.docs.items()
             if d["actor"] == SYNC_WORKER_ACTOR
@@ -255,7 +261,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
                 namespace=ns,
                 source_uri=uri,
                 doc_id="d",
-                content="",
+                content=d.get("content", ""),
                 version=1,
                 ingested_at="2026-01-01T00:00:00",
                 actor=d["actor"],
@@ -271,6 +277,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
             "actor": pipeline_actor_var.get(),
             "tags": list(inp.tags),
             "metadata": dict(inp.metadata),
+            "content": inp.content,
         }
 
     async def _delete(inp: Any) -> Any:
@@ -437,6 +444,177 @@ def test_a_later_turn_lists_only_changes_and_skips_unchanged_files(world: _World
     asyncio.run(source_sync.run_sync(full=True))
     assert world.upserts == []
     assert [r.url.path for r in world.requests] == ["/drive/v3/files", f"/drive/v3/files/{FOLDER}"]
+
+
+OLD_EXPORT = "# Design\n\n![][image1]\n\n[image1]: <data:image/png;base64,AAAA>\n"
+
+
+def _stored(world: _World, file_id: str, mime: str, content: str) -> str:
+    """A copy of `file_id` the sync stored at REV1."""
+    uri = source_sync.source_uri_of(_file(file_id, mime, REV1))
+    world.docs[uri] = {
+        "actor": SYNC_WORKER_ACTOR,
+        "tags": ["source-kind:design_doc", "source:decks"],
+        "metadata": {"ingested_from": file_id, "source_revision": REV1},
+        "content": content,
+    }
+    return uri
+
+
+def test_a_document_stored_with_its_pictures_bytes_is_converted_and_mined_again(
+    world: _World,
+) -> None:
+    world.files = [_file("doc1", DOCS, REV1)]
+    uri = _stored(world, "doc1", DOCS, OLD_EXPORT)
+    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
+    asyncio.run(source_sync.run_sync())
+    assert [inp.source_uri for inp, _ in world.upserts] == [uri]
+    assert "data:" not in world.docs[uri]["content"]
+    assert [u for u, _, _ in world.mined] == [uri]
+    world.upserts.clear()
+    asyncio.run(source_sync.run_sync(full=True))
+    assert world.upserts == []
+
+
+def test_a_definition_shown_in_code_is_fetched_but_neither_written_nor_mined_again(
+    world: _World,
+) -> None:
+    sample = "# Export\n\n```md\n[image1]: <data:image/png;base64,AAAA>\n```\n"
+    world.files = [_file("doc1", DOCS, REV1)]
+    world.file_answers["doc1"] = httpx.Response(200, text=sample)
+    uri = _stored(world, "doc1", DOCS, sample)
+    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
+    for _ in range(2):
+        asyncio.run(source_sync.run_sync(full=True))
+    assert world.upserts == [] and world.mined == []
+    assert _detail(world)["mined"] == {uri: REV1}
+
+
+def test_a_flagged_copy_whose_address_moved_is_written_at_the_new_one(world: _World) -> None:
+    old = _stored(world, "doc1", DOCS, OLD_EXPORT)
+    moved = _file("doc1", DOCS, REV1, webViewLink="https://docs.example.com/document/d/doc1/v2")
+    world.files = [moved]
+    asyncio.run(source_sync.run_sync(full=True))
+    new = source_sync.source_uri_of(moved)
+    assert new != old and old not in world.docs
+    assert "data:" not in world.docs[new]["content"]
+
+
+def test_a_document_stored_without_pictures_bytes_is_not_fetched_again(world: _World) -> None:
+    world.files = [_file("doc1", DOCS, REV1)]
+    _stored(world, "doc1", DOCS, "# Design\n\nText only.\n")
+    asyncio.run(source_sync.run_sync(full=True))
+    assert world.upserts == []
+
+
+def test_a_turn_cut_after_a_reconverting_write_still_mines_the_new_text(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc1", DOCS, REV1)]
+    uri = _stored(world, "doc1", DOCS, OLD_EXPORT)
+    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
+    real = source_sync._write_state
+
+    async def _cut(*a: Any, **kw: Any) -> None:
+        raise RuntimeError("cut before the turn's state")
+
+    monkeypatch.setattr(source_sync, "_write_state", _cut)
+    asyncio.run(source_sync.run_sync())
+    monkeypatch.setattr(source_sync, "_write_state", real)
+    asyncio.run(source_sync.run_sync())
+    assert uri in [u for u, _, _ in world.mined]
+
+
+def test_a_failed_reconverting_write_leaves_the_document_to_be_mined_again(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc1", DOCS, REV1)]
+    uri = _stored(world, "doc1", DOCS, OLD_EXPORT)
+    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
+    real = writes.handle_knowledge_upsert
+
+    async def _down(inp: Any) -> Any:
+        raise RuntimeError("store down")
+
+    monkeypatch.setattr(writes, "handle_knowledge_upsert", _down)
+    asyncio.run(source_sync.run_sync())
+    detail = _detail(world)
+    assert detail["file_waits"]["doc1"][2] == "write_failed:RuntimeError"
+    assert "data:" in world.docs[uri]["content"]
+    monkeypatch.setattr(writes, "handle_knowledge_upsert", real)
+    asyncio.run(source_sync.run_sync(full=True))
+    assert "data:" not in world.docs[uri]["content"]
+    # The failed write left the old copy and its mined key: only the new text is mined.
+    assert [u for u, _, _ in world.mined] == [uri]
+
+
+def test_a_document_given_up_on_is_not_fetched_again_for_its_pictures(world: _World) -> None:
+    world.files = [_file("doc1", DOCS, REV1)]
+    _stored(world, "doc1", DOCS, OLD_EXPORT)
+    waits = {"doc1": [REV1, 3, "http_500"]}
+    # A periodic full listing whose one more try was already granted.
+    listed = "2026-01-02T00:00:00+00:00"
+    detail = {"file_waits": waits, "full_listed_at": listed, "retry_granted_for": listed}
+    world.states["decks"] = {"state_value": REV1, "detail": json.dumps(detail)}
+    asyncio.run(source_sync.run_sync())
+    assert world.upserts == []
+    detail = _detail(world)
+    assert (detail["file_waits"], detail["unconverted"]) == (waits, 0)
+
+
+@pytest.mark.parametrize(("file_id", "mime"), [("deck1", SLIDES), ("pdf1", PDF)])
+def test_a_deck_or_uploaded_file_is_not_fetched_again_for_pictures_bytes(
+    world: _World, file_id: str, mime: str
+) -> None:
+    world.files = [_file(file_id, mime, REV1, size="14")]
+    _stored(world, file_id, mime, OLD_EXPORT)
+    asyncio.run(source_sync.run_sync(full=True))
+    assert world.upserts == []
+
+
+def test_a_document_export_keeps_its_text_and_marks_its_inlined_pictures() -> None:
+    data = "data:image/png;base64," + "iVBORw0KGgo" * 40
+    exported = (
+        "# Design\n\nThe planner runs first.\n\n![][image1]\n\n![][image2]\n\n"
+        "* ![][image3] the operator version shown\n* ![][image2]\n> ![Flow][image1]\n\n"
+        "![Flow][image4]*Figure 2: flow*\n\n```md\n![][image1]\n\n\n  indented\n```\n\n"
+        "See [the spec][spec].\n\n"
+        f"[image1]: <{data}>\n\n[image2]: <{data}>\n\n[image3]: <{data}>\n\n"
+        f"[image4]: <{data}>\n\n[spec]: https://example.com/spec\n"
+    )
+    assert convert.exported_markdown(exported) == (
+        "# Design\n\nThe planner runs first.\n\n"
+        "> [image-only: 2 pictures, rationale not extracted]\n\n"
+        "* the operator version shown\n"
+        "* [image-only: 1 picture, rationale not extracted]\n"
+        "> [image-only: 1 picture, rationale not extracted] Flow\n\n"
+        "Flow *Figure 2: flow*\n\n```md\n![][image1]\n\n\n  indented\n```\n\n"
+        "See [the spec][spec].\n\n[spec]: https://example.com/spec\n"
+    )
+    nested = "1. Step\n\n   ![][image1]\n\n2. Next\n\n[image1]: <data:image/png;base64,AAAA>\n"
+    assert convert.exported_markdown(nested) == (
+        "1. Step\n\n   > [image-only: 1 picture, rationale not extracted]\n\n2. Next\n"
+    )
+    heading = "# ![][image1]\n\nText.\n\n[image1]: <data:image/png;base64,AAAA>\n"
+    assert convert.exported_markdown(heading) == (
+        "# [image-only: 1 picture, rationale not extracted]\n\nText.\n"
+    )
+    joined = "one![][image1]two\n\n[image1]: <data:image/png;base64,AAAA>\n"
+    assert convert.exported_markdown(joined) == "one two\n"
+    inline = "![](data:image/png;base64,AAAA)\n\nA ![Graph](data:image/png;base64,AAAA) here.\n"
+    assert convert.exported_markdown(inline) == (
+        "> [image-only: 1 picture, rationale not extracted]\n\nA Graph here.\n"
+    )
+    tilde = "~~~\n![][image1]\n~~~\n``` x ` ```\n\n[image1]: <data:image/png;base64,AAAA>\n"
+    assert convert.exported_markdown(tilde) == "~~~\n![][image1]\n~~~\n``` x ` ```\n"
+    ended = "The flow is ![][image1]. Then ![Flow][image1], done.\n\n[image1]: <data:a>\n"
+    assert convert.exported_markdown(ended) == "The flow is. Then Flow, done.\n"
+    spaced = "see![][image1] next\n\n[image1]: <data:image/png;base64,AAAA>\n"
+    assert convert.exported_markdown(spaced) == "see next\n"
+    captioned = "see![Flow][image1] next\n\n[image1]: <data:image/png;base64,AAAA>\n"
+    assert convert.exported_markdown(captioned) == "see Flow next\n"
+    plain = "# Plain\n\nNo pictures.\n\n\n```\n  kept\n```"
+    assert convert.exported_markdown(plain) == plain
 
 
 def test_a_full_listing_retires_what_the_folder_no_longer_has(world: _World) -> None:
