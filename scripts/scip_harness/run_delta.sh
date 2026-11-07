@@ -54,7 +54,7 @@ fi
 # configure that fails fails the run, as the first configure does: the window
 # is retried, with the TUs it adds, once the build configures again.
 reconfigure() {
-  if [[ -z "${CONFIGURED:-}" ]]; then
+  if [[ -z "$CONFIGURED" ]]; then
     echo ">> cmake reconfigure (compile_commands.json): $1"
     if ! cmake -B build -S . >"$WORK/cmake.log" 2>&1; then
       tail -n 20 "$WORK/cmake.log"

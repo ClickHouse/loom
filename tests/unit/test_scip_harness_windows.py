@@ -355,9 +355,8 @@ def test_a_failed_reconfigure_fails_the_run_with_cmakes_last_lines(tmp_path: Pat
     """A build edit the host cannot configure fails the run, as a failed first configure
     does: no delta, CMake's last lines in the output, classified `cmake`."""
     w = _CppWindow(tmp_path)
-    w.env["CMAKE_FAIL"] = "1"
     (w.repo / "src" / "c.cpp").write_text("int c() { return 3; }\n")
-    proc = w.run_unchecked(_commit(w.repo, "add c"))
+    proc = w.run_unchecked(_commit(w.repo, "add c"), CMAKE_FAIL="1")
     assert proc.returncode == 1 and not w.delta.exists() and w.compdbs == []
     assert "CMake Error: a package is missing" in proc.stdout
     assert classify(f"harness exit 1: {proc.stdout[-2000:]}") == "cmake"
@@ -368,11 +367,9 @@ def test_a_window_whose_configure_failed_indexes_what_it_adds_once_it_configures
 ) -> None:
     """The failed run moved no watermark, so the retried window still adds c.cpp."""
     w = _CppWindow(tmp_path)
-    w.env["CMAKE_FAIL"] = "1"
     (w.repo / "src" / "c.cpp").write_text("int c() { return 3; }\n")
     head = _commit(w.repo, "add c")
-    assert w.run_unchecked(head).returncode == 1
-    del w.env["CMAKE_FAIL"]
+    assert w.run_unchecked(head, CMAKE_FAIL="1").returncode == 1
     delta = w.run(head, ["src/c.cpp"])
     assert w.compdbs == [["c.cpp"]]
     assert delta is not None and [f["path"] for f in delta["files"]] == ["src/c.cpp"]
