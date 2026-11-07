@@ -274,8 +274,9 @@ def fix_for(kind: str, text: str) -> str:
         return f"The host could not be reached{at}: check DNS, routes and the remote's status."
     if kind == "timeout":
         return (
-            "The step exceeded its time limit; the error names the step, and that step's "
-            "timeout setting raises it."
+            "The step exceeded its time limit; the error names the step. That step's "
+            "timeout setting raises it, or, for a run under entry-lock, the caller's own "
+            "time limit."
         )
     if kind == "disk":
         return "The disk is full: free space under the code-index work directory."

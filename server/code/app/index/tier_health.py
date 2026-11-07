@@ -2,9 +2,9 @@
 
 A failure appends to the run of failures; a success after a failure clears it. A
 success over a record that is already ok writes nothing, so a healthy entry costs one
-state read per tier per pass. A tier the entry no longer runs drops its record
-(`forget`), so a failure it left does not read as failing for ever. Recording never
-fails the pass it describes.
+state read per tier per pass (two for a current Go entry, which reads its record
+first). A tier the entry no longer runs drops its record (`forget`), so a failure it
+left does not read as failing for ever. Recording never fails the pass it describes.
 """
 
 from __future__ import annotations
