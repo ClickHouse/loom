@@ -14413,7 +14413,7 @@ class MemoryRedactInput(TypedDict, total=False):
 
     org: Required[str]
     memory_id: Required[str]
-    version: Required[int]
+    version: Required[Union[int, str]]
     reason: NotRequired[str]
     redacted_by: NotRequired[str]
 
@@ -14423,7 +14423,7 @@ class MemoryRedactBody(TypedDict, total=False):
 
     org: NotRequired[str]
     memory_id: Required[str]
-    version: Required[int]
+    version: Required[Union[int, str]]
     reason: NotRequired[str]
     redacted_by: NotRequired[str]
 

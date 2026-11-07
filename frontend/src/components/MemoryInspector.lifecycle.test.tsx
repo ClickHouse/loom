@@ -72,6 +72,7 @@ vi.mock("../api", async (importOriginal) => {
 });
 import * as api from "../api";
 import { confirmAction } from "./ConfirmDialog";
+import { toast } from "./Toast";
 
 const grant = (role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace: "team",
@@ -120,9 +121,67 @@ describe("MemoryInspector lifecycle actions", () => {
     const items = within(await menu())
       .getAllByRole("menuitem")
       .map((i) => i.textContent);
-    expect(items).not.toContain("Lock…");
-    expect(items).not.toContain("Mark as wrong…");
-    expect(items).not.toContain("Share with every agent");
+    for (const label of [
+      "Lock…",
+      "Mark as wrong…",
+      "Share with every agent",
+      "Stop sharing",
+      "This helped",
+      "This misled",
+    ])
+      expect(items).not.toContain(label);
+    cleanup();
+
+    await open("viewer", { ...LIVE, lock_mode: "read_only" });
+    const locked = within(await menu())
+      .getAllByRole("menuitem")
+      .map((i) => i.textContent);
+    expect(locked).not.toContain("Unlock");
+  });
+
+  it("writes an expiry and an edit to the row it shows, not under the drawer's identity", async () => {
+    vi.mocked(api.setMemory).mockResolvedValue({ version: 4, pinned: false });
+    await open("writer");
+    await userEvent.click(screen.getByRole("button", { name: "Change" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "1 hour" }));
+    await waitFor(() =>
+      expect(api.setMemory).toHaveBeenCalledWith(
+        row,
+        "coffee_pref",
+        LIVE.value,
+        expect.objectContaining({ ttlSeconds: 3600 }),
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Save new version" }));
+    await waitFor(() => expect(api.setMemory).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.setMemory).mock.calls[1][0]).toEqual(row);
+  });
+
+  it("says a lock is gone when the unlock finds none", async () => {
+    vi.mocked(api.unlockMemory).mockResolvedValueOnce({ unlocked: false, reason: "not_locked" });
+    await open("admin", { ...LIVE, lock_mode: "read_only" });
+    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Unlock" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("This memory carried no lock", "info"));
+  });
+
+  it("says why a share was refused", async () => {
+    vi.mocked(api.shareMemory).mockRejectedValueOnce(new Error("a shared memory already holds this key"));
+    await open("admin");
+    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Share failed: /), "error"));
+  });
+
+  it("names the lock holder and when it lapses in the lock's tip", async () => {
+    await open("writer", {
+      ...LIVE,
+      lock_mode: "no_delete",
+      lock_reason: "legal hold",
+      locked_by: "counsel@example.com",
+      lock_until: "2030-01-01T00:00:00Z",
+    });
+    await userEvent.hover(within(screen.getByRole("contentinfo")).getByText("No delete"));
+    expect(await screen.findAllByText(/legal hold · by counsel@example.com · until /)).not.toHaveLength(0);
   });
 
   it("locks with a mode and a reason", async () => {
@@ -293,9 +352,7 @@ describe("MemoryInspector lifecycle actions", () => {
     await open("writer");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "This misled" }));
     // By id: the op resolves a key in the `-` session only, and this row has its own.
-    await waitFor(() =>
-      expect(api.recordMemoryOutcome).toHaveBeenCalledWith(identity, { memoryId: "m-live" }, "negative"),
-    );
+    await waitFor(() => expect(api.recordMemoryOutcome).toHaveBeenCalledWith(identity, "m-live", "negative"));
   });
 
   it("reads the memory again when a bad outcome rejects it", async () => {

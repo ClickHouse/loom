@@ -6353,7 +6353,7 @@ export interface MemoryRecordWriteOutput {
 export interface MemoryRedactInput {
   org: string;
   memory_id: string;
-  version: number;
+  version: number | string;
   reason?: string;
   redacted_by?: string;
 }

@@ -483,6 +483,16 @@ class MemoryDeleteInput(_Identity):
     memory_key: str
 
 
+def _version_number(v: int | str) -> int:
+    if isinstance(v, str):
+        if not (v.isascii() and v.isdigit()):
+            raise ValueError("`version` is a version number")
+        v = int(v)
+    if not 0 <= v < 2**64:
+        raise ValueError("`version` is a version number")
+    return v
+
+
 class MemoryDeleteVersionInput(_Identity):
     # The key to delete, under this exact identity: another agent's row of it is never read.
     # `agent` must be concrete, not "*".
@@ -495,13 +505,7 @@ class MemoryDeleteVersionInput(_Identity):
     @field_validator("version")
     @classmethod
     def _decimal(cls, v: int | str) -> int:
-        if isinstance(v, str):
-            if not (v.isascii() and v.isdigit()):
-                raise ValueError("`version` is a version number")
-            v = int(v)
-        if not 0 <= v < 2**64:
-            raise ValueError("`version` is a version number")
-        return v
+        return _version_number(v)
 
 
 class MemoryUnpinInput(_Identity):
@@ -1168,9 +1172,16 @@ class MemoryRedactInput(BaseModel):
     org: str
     # The id every version of the memory shares; `version` picks the historical row.
     memory_id: str
-    version: int  # target row's version (from memory.set / memory.history)
+    # The target row's version, from memory.set or memory.history. A decimal string is
+    # accepted: a nanosecond version is above 2^53, which a JavaScript number rounds.
+    version: int | str
     reason: str = ""  # short justification; the audit row keeps its SHA-256 and length
     redacted_by: str = ""  # actor for the audit row (caller-supplied)
+
+    @field_validator("version")
+    @classmethod
+    def _decimal(cls, v: int | str) -> int:
+        return _version_number(v)
 
 
 class MemoryRedactOutput(BaseModel):

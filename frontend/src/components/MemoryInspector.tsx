@@ -62,7 +62,7 @@ import { CHIP_OUTLINE_CLASS } from "./ui/Chip";
 import { confirmAction } from "./ConfirmDialog";
 import { CopyToNamespaceDialog } from "../flows/CopyToNamespaceDialog";
 import { ThreadReplayDialog, type ReplayThread } from "./ThreadReplayDialog";
-import { relativeTime, formatValue, humanizeError, parseChTime, SENTINEL_AGENTS } from "../lib/format";
+import { absoluteTime, relativeTime, formatValue, humanizeError, parseChTime, SENTINEL_AGENTS } from "../lib/format";
 import { detectEncodedValue } from "../lib/encoded";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
@@ -409,8 +409,10 @@ export function MemoryInspector({
       want("evidence", () =>
         memoryEvidence(rowIdentity(identity, detail), k)
           .then((r) => {
-            if (fresh()) setEvidence(r.items ?? []);
-            if (fresh()) setEvidenceCut(r.truncated);
+            if (fresh()) {
+              setEvidence(r.items ?? []);
+              setEvidenceCut(r.truncated);
+            }
           })
           .catch(() => {
             if (fresh()) setEvidence([]);
@@ -452,6 +454,7 @@ export function MemoryInspector({
   const canUnlock = canCall("memory.unlock", role, whoami);
   const canReject = canCall("memory.reject", role, whoami);
   const canShare = canCall("memory.promote", role, whoami);
+  const canUnshare = canCall("memory.demote", role, whoami);
   const canRedact = canCall("memory.redact", role, whoami);
   const canJudge = canCall("memory.outcome", role, whoami);
   const verified = detail?.verification === "human" || detail?.verification === "process";
@@ -517,16 +520,12 @@ export function MemoryInspector({
 
   // A person's verdict on the fact: it helped, or relying on it went badly.
   const onOutcome = async (outcome: "positive" | "negative") => {
-    if (!detail) return;
+    if (!detail?.memory_id) return;
     try {
       // By id: the op resolves a key in the `-` session only, and an extracted row has its own.
-      const r = await recordMemoryOutcome(
-        identity,
-        detail.memory_id ? { memoryId: detail.memory_id } : { memoryKey },
-        outcome,
-      );
+      const r = await recordMemoryOutcome(identity, detail.memory_id, outcome);
       if (!r.recorded) {
-        toast("This memory is no longer live", "error");
+        toast("Couldn't record that", "error");
         return;
       }
       if (r.quarantined) {
@@ -660,7 +659,7 @@ export function MemoryInspector({
     const prev = detail.tags || [];
     setDetail({ ...detail, tags: nextTags });
     try {
-      await setMemory(identity, memoryKey, detail.value, {
+      await setMemory(rowIdentity(identity, detail), memoryKey, detail.value, {
         memoryType: detail.memory_type || "semantic",
         tags: nextTags,
         charLimit: detail.char_limit ?? undefined,
@@ -689,7 +688,7 @@ export function MemoryInspector({
   const onChangeExpiry = async (ttlSeconds: number | null) => {
     if (!detail) return;
     try {
-      await setMemory(identity, memoryKey, detail.value, {
+      await setMemory(rowIdentity(identity, detail), memoryKey, detail.value, {
         memoryType: detail.memory_type || "semantic",
         tags: detail.tags,
         // ttlSeconds=null is "Never expire" — clearExpiry overrides any
@@ -720,7 +719,7 @@ export function MemoryInspector({
           /* keep raw string */
         }
       }
-      await setMemory(identity, memoryKey, nextValue, {
+      await setMemory(rowIdentity(identity, detail), memoryKey, nextValue, {
         memoryType: detail.memory_type || "semantic",
         tags: detail.tags,
         charLimit: detail.char_limit ?? undefined,
@@ -1392,10 +1391,12 @@ export function MemoryInspector({
                       <Dropdown.Item onSelect={() => void onShare(true)}>
                         <MenuLabel icon="users">Share with every agent</MenuLabel>
                       </Dropdown.Item>
-                      <Dropdown.Item onSelect={() => void onShare(false)}>
-                        <MenuLabel icon="user">Stop sharing</MenuLabel>
-                      </Dropdown.Item>
                     </>
+                  )}
+                  {canUnshare && (
+                    <Dropdown.Item onSelect={() => void onShare(false)}>
+                      <MenuLabel icon="user">Stop sharing</MenuLabel>
+                    </Dropdown.Item>
                   )}
                   {canMove && !editing && (
                     <Dropdown.Item
@@ -1443,7 +1444,7 @@ export function MemoryInspector({
                 </span>
               )}
               {detail.lock_mode && (
-                <Tip content={detail.lock_reason || "Locked"}>
+                <Tip content={lockTip(detail)}>
                   <span className="min-w-0 inline-flex items-center gap-1 text-xs text-text-muted">
                     <Icon name="lock" size="sm" aria-hidden="true" />
                     <span className="truncate">{detail.lock_mode === "read_only" ? "Read only" : "No delete"}</span>
@@ -1465,9 +1466,16 @@ export function MemoryInspector({
               onClose={() => setRedacting(null)}
             />
           )}
-          {reasonDialog && detail && (
-            <ReasonDialogFor
-              kind={reasonDialog}
+          {reasonDialog === "lock" && detail && (
+            <LockMemoryDialog
+              row={rowIdentity(identity, detail)}
+              memoryKey={memoryKey}
+              onDone={() => void reread()}
+              onClose={() => setReasonDialog(null)}
+            />
+          )}
+          {reasonDialog === "reject" && detail && (
+            <RejectMemoryDialog
               row={rowIdentity(identity, detail)}
               memoryKey={memoryKey}
               onDone={() => void reread()}
@@ -1853,8 +1861,12 @@ function CodeLinks({ links }: { links: CodeLink[] }) {
   );
 }
 
-function ReasonDialogFor({ kind, ...props }: { kind: "lock" | "reject" } & Parameters<typeof LockMemoryDialog>[0]) {
-  return kind === "lock" ? <LockMemoryDialog {...props} /> : <RejectMemoryDialog {...props} />;
+/** What the lock badge's tip says: why, by whom, and until when. */
+function lockTip(detail: MemoryDetail): string {
+  const parts = [detail.lock_reason || "Locked"];
+  if (detail.locked_by) parts.push(`by ${detail.locked_by}`);
+  if (detail.lock_until) parts.push(`until ${absoluteTime(detail.lock_until)}`);
+  return parts.join(" · ");
 }
 
 const EVIDENCE_SCOPE: Record<MemoryEvidenceItem["scope"], string> = {
