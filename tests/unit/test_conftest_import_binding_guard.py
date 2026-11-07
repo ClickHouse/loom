@@ -66,7 +66,8 @@ def test_a_module_imported_before_the_test_is_not_checked(probe) -> None:
 
 # The fixture itself, in a fresh process: scip_delta binds CodeRepo when first imported,
 # and scip_full holds scip_delta's apply_delta, which reads CodeRepo from scip_delta's
-# globals, so both are dropped.
+# globals, so scip_full must go too; both were first imported in the leaking test, and
+# the fixture drops every such module.
 _INNER_CONFTEST = """
 import server.code.app.index  # noqa: F401 (the package is loaded before the tests)
 from tests.unit.conftest import _test_double_bound_at_import_dropped  # noqa: F401
