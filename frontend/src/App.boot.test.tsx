@@ -786,6 +786,21 @@ describe("login link", () => {
     expect(stored).toEqual([mallory]);
   });
 
+  it("a cancel stands though another tab stores a token while the screen is up", async () => {
+    localStorage.setItem("loom_token_v1", alice);
+    stored = [];
+    window.history.replaceState(null, "", `/settings#token=${mallory}`);
+    render(<App />);
+    await screen.findByRole("button", { name: "Sign in as mallory" });
+    const bob = jwt({ sub: "bob", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
+    localStorage.setItem("loom_token_v1", bob); // another tab signs in as bob
+    stored = [];
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await settle();
+    expect(screen.queryByRole("button", { name: "Sign in as mallory" })).toBeNull();
+    expect(stored).toEqual([]);
+  });
+
   it("a sign-in mark older than ten minutes counts as none", async () => {
     window.history.replaceState(null, "", `/me${markSignIn(Date.now() - 11 * 60 * 1000)}#token=${mallory}`);
     render(<App />);

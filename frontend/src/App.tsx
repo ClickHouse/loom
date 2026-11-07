@@ -360,12 +360,12 @@ export default function App() {
               let ok: boolean;
               let held: string | null;
               // Another tab that stores a token while the screen is up changes whose account
-              // is replaced: the question is put again, naming it.
+              // a confirmation replaces: the question is put again, naming it. A cancel stands.
               do {
                 held = storedToken();
                 const ask = { subject: answer.subject ?? null, org: answer.org ?? null, held };
                 ok = await new Promise<boolean>((resolve) => setLinkAsk({ ...ask, answer: resolve }));
-              } while (storedToken() !== held);
+              } while (ok && storedToken() !== held);
               setLinkAsk(null);
               if (!ok) link = { ...link, token: null };
             } else linkAnswer = answer;
