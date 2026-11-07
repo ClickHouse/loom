@@ -74,7 +74,7 @@ def _page(ids: list[str], total_pages: int) -> _Resp:
 @pytest.mark.asyncio
 async def test_lookup_asks_for_core_fields_and_follows_pages(backend) -> None:
     c = _Client([_page(["a", "b"], 2), _page(["c"], 2)])
-    ids = await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="")
+    ids = await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="", first=0)
     assert ids == ["a", "b", "c"]
     assert all(call["fields"] == "core" for call in c.calls)
     assert [call["page"] for call in c.calls] == [1, 2]
@@ -84,7 +84,7 @@ async def test_lookup_asks_for_core_fields_and_follows_pages(backend) -> None:
 @pytest.mark.asyncio
 async def test_a_timed_out_page_is_retried_then_read(backend) -> None:
     c = _Client([httpx.ReadTimeout("", request=None), _page(["a"], 1)])
-    ids = await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="")
+    ids = await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="", first=0)
     assert ids == ["a"] and len(c.calls) == 2
 
 
@@ -92,7 +92,7 @@ async def test_a_timed_out_page_is_retried_then_read(backend) -> None:
 async def test_a_5xx_page_is_retried_and_the_last_status_is_reported(backend) -> None:
     c = _Client([_Resp(502), _Resp(503), _Resp(500)])
     with pytest.raises(eb.ErasureBackendError) as ei:
-        await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="")
+        await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="", first=0)
     assert "HTTP 500" in str(ei.value) and len(c.calls) == 3
 
 
@@ -120,7 +120,7 @@ async def test_three_timeouts_fail_closed_with_the_exception_named(backend, monk
 async def test_a_4xx_page_is_not_retried(backend) -> None:
     c = _Client([_Resp(401)])
     with pytest.raises(eb.ErasureBackendError) as ei:
-        await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="")
+        await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="", first=0)
     assert "HTTP 401" in str(ei.value) and len(c.calls) == 1
 
 

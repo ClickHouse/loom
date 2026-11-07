@@ -144,9 +144,26 @@ async def test_a_failed_langfuse_read_answers_502_not_a_verdict(
         await admin_routes.admin_prompts_evaluate(_input())
     assert ei.value.status_code == 502
     assert ei.value.detail["code"] == "BACKEND_UNAVAILABLE"
-    # The cause is named even when the exception's own text is empty (a timeout's is).
     cause = ei.value.detail["message"].removeprefix("Langfuse read failed: ").split(":")[0]
     assert cause in {"HTTPStatusError", "ErasureBackendError"}
+
+
+@pytest.mark.asyncio
+async def test_a_langfuse_that_keeps_timing_out_answers_502_naming_the_timeout(
+    langfuse: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timeout's own text is empty, so the 502 names its type."""
+    fake = langfuse({})
+
+    async def _timeout(url: str, headers: Any = None, params: Any = None) -> Any:
+        raise httpx.ReadTimeout("")
+
+    monkeypatch.setattr(fake, "get", _timeout)
+    monkeypatch.setattr(LangfuseBackend, "_PAGE_BACKOFF_S", 0.0)
+    with pytest.raises(HTTPException) as ei:
+        await admin_routes.admin_prompts_evaluate(_input())
+    assert ei.value.status_code == 502
+    assert ei.value.detail["message"] == "Langfuse read failed: ReadTimeout: "
 
 
 @pytest.mark.asyncio

@@ -218,15 +218,16 @@ class LangfuseBackend:
         *,
         tags: list[str],
         user_id: str,
-        first: int = 0,
+        first: int,
     ) -> list[str]:
         """The trace ids of the observations matching the filter, on Langfuse 4.
 
         Langfuse 4 keeps tags and the user id on each observation, so the filter
         runs over `GET /api/public/v2/observations` and the distinct `traceId`s
-        are the traces to delete. Pagination follows `meta.cursor` until it is
-        absent; a page may be empty while a cursor is still present. The same
-        fail-closed rules as the Langfuse 3 lookup apply (no truncation).
+        are the matching traces. Pagination follows `meta.cursor` until it is
+        absent (or `first` are found); a page may be empty while a cursor is
+        still present. A whole-set read follows the same fail-closed rules as
+        the Langfuse 3 lookup (no truncation).
         """
         conditions: list[dict[str, Any]] = [
             {"type": "arrayOptions", "column": "tags", "operator": "all of", "value": tags}
@@ -281,11 +282,13 @@ class LangfuseBackend:
         *,
         tags: list[str],
         user_id: str,
-        first: int = 0,
+        first: int,
     ) -> list[str]:
-        """Collect every trace id matching a filter, following pagination.
+        """Collect the trace ids matching a filter, following pagination, until
+        `first` are found when it is set.
 
-        Fails closed on both partial outcomes. This is a GDPR path, and the
+        A whole-set read (`first` 0, which erasure always asks for) fails closed
+        on both partial outcomes. Erasure is a GDPR path, and its
         callers turn a returned count into a `completed` saga step that the
         recovery worker will never retry — so under-collecting here is silent,
         permanent non-erasure:
