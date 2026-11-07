@@ -7,8 +7,9 @@ boolean setting that loads false. Both tables are generated from the code: each 
 
 ## Operations
 
-- **Stable** ops are reached by more than a raw HTTP POST (the reach census fails a
-  stable op otherwise) and are meant to have production callers.
+- **Stable** ops are listed under the MCP `all` toolset; one hidden from MCP must be
+  reached by an SDK method, an example, a plugin hook or the dashboard (the reach census
+  fails it otherwise). They are meant to have production callers.
 - **Experimental** ops may have no reach path besides a raw HTTP POST, and no production
   callers yet.
 

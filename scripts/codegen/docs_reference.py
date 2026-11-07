@@ -139,10 +139,9 @@ def render_operations() -> str:
         "`LOOM_MCP_CODE_TOOLS=true`); an op marked `no` is still callable by name or "
         "through `loom_op`, unless it is hidden from MCP; **Audit** marks ops that leave "
         "an `audit_log` row.\n",
-        "Groups: " + " · ".join(f"[`{g}`](#{g.replace('_', '_')})" for g in groups) + "\n",
+        "Groups: " + " · ".join(f"[`{g}`](#{g})" for g in groups) + "\n",
     ]
-    for group in groups:
-        ops = groups[group]
+    for group, ops in groups.items():
         out.append(f"### {group}\n")
         page = f"operations/{group}.md"
         out.append(f"Fields for every `{group}` op: [{page}]({page}).\n")
@@ -172,8 +171,7 @@ def render_status_ops() -> str:
     groups = _op_groups()
     rows: list[str] = []
     experimental_total = 0
-    for group in groups:
-        ops = groups[group]
+    for group, ops in groups.items():
         experimental = [op for op in ops if op.maturity == "experimental"]
         experimental_total += len(experimental)
         links = ", ".join(

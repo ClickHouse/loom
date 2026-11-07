@@ -22,7 +22,7 @@ carries:
 | `idempotent`                            | Safe to retry. Idempotent ops accept an idempotency key; see [HTTP API](./http-api.md#idempotency).                                                                  |
 | `audit`                                 | A successful call writes a row to `loom.audit_log`.                                                                                                                  |
 | `writes`                                | Set on the few viewer-callable, idempotent ops that still change stored state (a feedback row, a watch), so they are not read-only.                                  |
-| `maturity`                              | `stable` or `experimental`. It decides the [MCP `all` listing](#mcp-all-listing), and `op_reach_census.py --check` fails a stable op nothing reaches but a raw POST. |
+| `maturity`                              | `stable` or `experimental`. It decides the [MCP `all` listing](#mcp-all-listing), and `op_reach_census.py --check` fails a stable op hidden from MCP that nothing else reaches. |
 | `budget_p99_ms`, `shape_budgets_p99_ms` | The target p99 latency, overall and per request shape. A successful call over budget emits a `budget.violated` event.                                                |
 | `skip_namespace_authz`                  | The op acts _on_ a namespace (join, leave, register) rather than in one; the handler checks membership. The role check still runs.                                   |
 | `deployment_scoped`                     | The op reads facts about the deployment (build, registry), not tenant data; a namespace-scoped token passes with its best role.                                      |
@@ -75,7 +75,7 @@ serving do not depend on `maturity`.
 The label is set by hand in the op's declaration. The reach census
 (`scripts/codegen/op_reach_census.py`, gated by `tests/unit/test_op_reach_census.py`) reports
 each op's reach and, with `--call-counts`, its calls; it never rewrites the declaration, and
-its `--check` (in `make lint`) fails a stable op nothing reaches but a raw POST.
+its `--check` (in `make lint`) fails a stable op hidden from MCP that nothing else reaches.
 
 ## Toolsets
 
