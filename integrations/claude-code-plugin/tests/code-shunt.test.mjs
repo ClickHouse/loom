@@ -991,6 +991,9 @@ test("a pattern search spelled with awk, sed or git grep is the grep shape", () 
     files: ["src/a.cpp"],
   });
   assert.equal(parseBashBulk("awk '/a\\/b/' src/a.cpp").pattern, "a/b");
+  // a lone backslash before the closing slash escapes it: the program never ends
+  assert.equal(parseBashBulk("sed -n '/a\\/p' src/a.cpp"), null);
+  assert.equal(parseBashBulk("awk '/a\\/' src/a.cpp"), null);
   assert.deepEqual(parseBashBulk("git grep -n renameTempPartAndAdd src/a.cpp src/a.h"), {
     kind: "grep",
     pattern: "renameTempPartAndAdd",
