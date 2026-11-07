@@ -1008,6 +1008,71 @@ async def test_a_sync_takes_the_repository_claim_before_the_branch_s(
     ]
 
 
+@pytest.mark.parametrize(
+    ("namespace", "reached"),
+    [("code-z-dev", ["code-z-26-5"]), ("code-z", ["code-z-26-5", "code-z-dev"])],
+)
+async def test_grants_revoke_fans_out_one_way(
+    monkeypatch: pytest.MonkeyPatch, namespace: str, reached: list[str]
+) -> None:
+    from server.core import ch as ch_mod
+
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+    mirror = {"granted_by": "repo-maintainers:code-z"}
+    ch = _FakeCH(
+        [
+            *(_admin(ns, "x") for ns in ("code-z", "code-z-dev", "code-z-26-5")),
+            _admin("code-z", "ops"),
+            _admin("code-z-dev", "ops") | mirror,
+            _admin("code-z-26-5", "ops") | mirror,
+        ]
+    )
+    monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
+
+    async def _any(*_a: Any, **_k: Any) -> GrantState:
+        return GrantState.from_row(
+            {"subject": "ops", "role": "admin", "status": "active", "granted_by": "it"}
+        )
+
+    async def _two(*_a: Any, **_k: Any) -> int:
+        return 2
+
+    written: list[str] = []
+
+    async def _insert(row: dict[str, Any], **_k: Any) -> None:
+        written.append(row["namespace"])
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _any)
+    monkeypatch.setattr(grants_repo, "count_active_admins", _two)
+    monkeypatch.setattr(grants_repo, "insert_row", _insert)
+    await grants_mod.handle_grants_revoke(
+        GrantsRevokeInput(org="clickhouse", namespace=namespace, subject="ops")
+    )
+    assert sorted(r["namespace"] for r in ch.inserted) == reached
+    assert written == [namespace]
+
+
+async def test_a_page_branch_known_from_its_directory_row_is_read_then_fanned_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    known = [*MIXED[:2]]  # code-z-26-5 is not in this process's snapshot yet
+
+    async def _read(_ch: Any = None) -> bool:
+        if MIXED[2] not in known:
+            known.append(MIXED[2])
+        return True
+
+    monkeypatch.setattr(repo_registry, "read_registry", _read)
+    monkeypatch.setattr(repos, "configured_repos", lambda: known)
+    _code_rows(monkeypatch, {"code-z-26-5"})
+    repo = await maintainers.read_repo("clickhouse", "code-z-26-5", ch=object())
+    assert repo == "Org/z"
+    rows = [_admin(ns, s) for ns in ("code-z", "code-z-dev", "code-z-26-5") for s in ("ops", "x")]
+    ch = _FakeCH(rows)
+    await maintainers.revoke_repo_maintainer("clickhouse", "code-z-26-5", "ops", repo=repo, ch=ch)
+    assert [r["namespace"] for r in ch.inserted] == ["code-z-dev"]
+
+
 async def test_a_revoke_answers_busy_and_writes_nothing_while_the_registry_cannot_be_read(
     _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:

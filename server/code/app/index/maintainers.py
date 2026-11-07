@@ -18,8 +18,9 @@ configures gives no grant on the operator's namespaces.
   the subject's newest such grant is respected, and so is a request made there
   since: admin is not re-added. An older row of any kind is replaced. Called
   after an admin grant is created or approved on a code namespace, when a branch
-  is added, and once per process per namespace by the registrar (so
-  environment-registered branches inherit).
+  is added, and by the registrar on each pass until the self-service registry
+  is read, then once per process per namespace (so environment-registered
+  branches inherit).
 * ``revoke_repo_maintainer`` — a revoked admin leaves the branches the revoke
   reaches, except a branch where they are the only active admin (the handler's
   own guard). From an operator entry it takes off a branch added from the page
