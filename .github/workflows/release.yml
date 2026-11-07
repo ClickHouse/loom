@@ -81,7 +81,7 @@ jobs:
       # A dispatch from a branch would otherwise take the branch name as the
       # version and publish it. A dry run publishes nothing, so it runs on any
       # ref, at the version the server names.
-      - name: Parse version from tag
+      - name: Parse the version from the tag or the server
         id: parse
         env:
           REF: ${{ github.ref }}
@@ -442,16 +442,12 @@ jobs:
           - artifact: server
             image: ghcr.io/clickhouse/loom
             file: Dockerfile
-            cache: buildkit
-            smoke_cache: docker-smoke
             pin: image.digest
             # The repository's title and description, metadata-action's defaults.
             labels: ""
           - artifact: extractor
             image: ghcr.io/clickhouse/loom-extractor
             file: extractor/Dockerfile
-            cache: extractor
-            smoke_cache: docker-smoke-extractor
             pin: extractor.image.digest
             labels: |
               org.opencontainers.image.title=loom-extractor
@@ -506,12 +502,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: ${{ !inputs.dry_run && 'mode=max' || 'false' }}
           sbom: ${{ !inputs.dry_run }}
-          # A tag run reads only its own ref's caches and the default branch's, so
-          # each release also starts from what docker-smoke built on main.
-          cache-from: |
-            type=gha,scope=${{ matrix.cache }}-${{ matrix.arch }}
-            type=gha,scope=${{ matrix.smoke_cache }}-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.cache }}-${{ matrix.arch }}
+          # Built from the package archives as they are now: a cached apt layer
+          # would ship, or fail the scan on, a package fixed since it was cached.
+          no-cache: true
       # Fails the release on a critical CVE that has a fixed package.
       - name: Scan the image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

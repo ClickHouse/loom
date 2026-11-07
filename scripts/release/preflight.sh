@@ -32,7 +32,7 @@ fi
 
 for image in $IMAGES; do
   path=${image#ghcr.io/}
-  settings="https://github.com/orgs/${path%%/*}/packages/container/package/${path#*/}"
+  settings="https://github.com/orgs/${path%%/*}/packages/container/${path#*/}/settings"
   # Push: a blob upload session the registry opens only for a writer, then cancelled.
   token=$(curl -sS -u "$GITHUB_ACTOR:$GH_TOKEN" \
     "$GHCR/token?service=ghcr.io&scope=repository:$path:pull,push" | jq -r '.token // empty' || true)

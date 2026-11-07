@@ -95,7 +95,7 @@ def test_each_missing_prerequisite_names_its_fix_and_fails_a_release(tmp_path: P
     assert "ClickHouse/loom is private" in errors[0]
     assert "ghcr.io/clickhouse/loom: this workflow cannot push (HTTP 403)" in errors[1]
     assert "Manage Actions access, add ClickHouse/loom with the Write role" in errors[1]
-    assert "packages/container/package/loom," in errors[1]
+    assert "https://github.com/orgs/clickhouse/packages/container/loom/settings," in errors[1]
     assert "ghcr.io/clickhouse/loom refuses anonymous pulls (HTTP 401)" in errors[2]
     assert "set the visibility to Public" in errors[2]
     assert "loom-extractor refuses anonymous pulls" in errors[3]
@@ -201,7 +201,15 @@ def test_a_dry_run_publishes_nothing() -> None:
     (login,) = [s for s in jobs["docker"]["steps"] if s.get("name") == "Log in to ghcr.io"]
     assert login["if"] == "${{ !inputs.dry_run }}"
     (build,) = [s for s in jobs["docker"]["steps"] if s.get("id") == "build"]
-    assert build["with"]["outputs"].startswith("${{ inputs.dry_run && format('type=docker,")
+    outputs = build["with"]["outputs"]
+    assert outputs.startswith("${{ inputs.dry_run && format('type=docker,")
+    # A release pushes by digest, with its attestations, built from today's packages.
+    assert "|| format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true'" in (
+        outputs
+    )
+    assert build["with"]["provenance"] == "${{ !inputs.dry_run && 'mode=max' || 'false' }}"
+    assert build["with"]["sbom"] == "${{ !inputs.dry_run }}"
+    assert build["with"]["no-cache"] is True and "cache-from" not in build["with"]
 
 
 def test_a_dry_run_smokes_its_own_images_and_a_release_the_published_ones() -> None:

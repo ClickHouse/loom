@@ -7,7 +7,8 @@ GitHub's `releases/latest` serves the installer and `:latest` the image, so only
 the highest final version takes them: a patch to an older line, or a
 prerelease, leaves Latest where it is. It reads the repository's tags with
 `gh`: a tag exists from its push on, before its release run publishes anything,
-so two releases running at once agree. Prerelease tags never count. A failed
+so two releases running at once agree. Prerelease tags never count; a final
+tag that will not ship holds Latest below it until it is deleted. A failed
 listing fails the script, never reads as "no tags".
 """
 

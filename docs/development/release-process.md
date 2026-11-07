@@ -68,7 +68,9 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
 
 A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not move the `latest` image tag.
 Only the highest final version becomes the repository's Latest release and moves `:latest`, so a
-patch to an older line leaves both where they are: `releases/latest` serves the installer.
+patch to an older line leaves both where they are: `releases/latest` serves the installer. The
+versions are read from the repository's tags, so delete a final tag that will not ship, or Latest
+stays below it.
 
 ## Rehearsing a release
 
@@ -141,7 +143,8 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    smoke-tests the wheel in a clean venv with `scripts/gates/sdk_wheel_smoke.py`;
 6. `docker` builds `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`
    (the document extractor service), each for linux/amd64 and linux/arm64 on that
-   architecture's own runner, with provenance and an SBOM, pushes each by digest and scans it;
+   architecture's own runner and without the build cache (so from the package archives as they are
+   that day), with provenance and an SBOM, pushes each by digest and scans it;
    `docker-tag` joins each image's two digests under its tags, and tags neither image until all
    four have passed (a failure there can leave one tagged, and re-running it tags both);
 7. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
