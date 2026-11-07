@@ -4613,10 +4613,10 @@ settings:
   # minute per (op, org, namespace). [restart]
   # budget_violation_audit_burst: 5
 
-  # The address the server hands to clients — the Setup page's config block, `claude mcp
-  # add`, a bot's claim_url, OAuth metadata. Empty = the request's own Host and scheme,
-  # which only a loopback bind may rely on: a non-loopback bind_host refuses to start
-  # without it. [restart]
+  # The address the server hands to clients — the client setups a new token comes with,
+  # `claude mcp add`, a bot's claim_url, OAuth metadata. Empty = the request's own Host
+  # and scheme, which only a loopback bind may rely on: a non-loopback bind_host refuses
+  # to start without it. [restart]
   # public_base_url: ""
 
   # The address Loom is reachable on: `loom serve` and `make server` bind it; in a

@@ -286,8 +286,8 @@ def reads_check(
     post_json: PostJson,
     auth_ok: bool,
 ) -> Check:
-    """What the token reads, in the words the Setup page uses: every namespace the token's
-    creator belongs to, the repositories among them grouped by repository, and the
+    """What the token reads, in the words the dashboard's token form uses: every namespace
+    the token's creator belongs to, the repositories among them grouped by repository, and the
     restricted repositories it still cannot read — a client token runs under its own `sa:`
     subject with no direct grant, so the restricted-namespace gate refuses it there.
     `code.repos` is asked only when the membership list holds a repository row."""

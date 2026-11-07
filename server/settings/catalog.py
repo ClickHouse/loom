@@ -4889,8 +4889,8 @@ class RuntimeSettings(BaseModel):
     # folded into the next: a short burst stays visible, a storm costs at most
     # this many inserts a minute per (op, org, namespace).
     budget_violation_audit_burst: int = 5
-    # The address the server hands to clients — the Setup page's config
-    # block, `claude mcp add`, a bot's claim_url, OAuth metadata. Empty = the
+    # The address the server hands to clients — the client setups a new
+    # token comes with, `claude mcp add`, a bot's claim_url, OAuth metadata. Empty = the
     # request's own Host and scheme, which only a loopback bind may rely on:
     # a non-loopback bind_host refuses to start without it.
     public_base_url: str = ""

@@ -228,7 +228,7 @@ describe("the token form", () => {
     await waitFor(() => expect(savesTo()).toHaveTextContent(/^ns-a/), WAIT);
     await create();
     expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(
-      "Reads everything you belong to, including namespaces you join later, plus code-secret. Saves to ns-a.",
+      "Reads everything you belong to, including namespaces you join later, plus org/secret · main. Saves to ns-a.",
     );
     expect(screen.getByLabelText(/^Connect/)).toHaveTextContent("Claude Code");
     expect(screen.getByTestId("claude-code-recommended")).toBeInTheDocument();
@@ -255,6 +255,21 @@ describe("the token form", () => {
     expect(screen.getByText(/namespace="ns-c"/)).toBeInTheDocument();
     await pickOption(/^Connect/, /^Cursor$/);
     expect(localStorage.getItem("loom_last_mcp_client_v1")).toBe("cursor");
+  });
+
+  it("a script for a list token that saves nowhere reads its first memory namespace", async () => {
+    vi.mocked(createToken).mockResolvedValueOnce(
+      created({
+        namespaces: ["code-secret", "ns-c"],
+        ns_roles: { "code-secret": "viewer", "ns-c": "viewer" },
+        reads_everything: false,
+        saves_to: "",
+      }),
+    );
+    render(<Setup />);
+    await waitFor(() => expect(savesTo()).toHaveTextContent(/^ns-a/), WAIT);
+    await create();
+    expect(await screen.findByText(/namespace="ns-c"/, undefined, WAIT)).toBeInTheDocument();
   });
 
   it("a token that reads everything of someone who writes nowhere is read-only", async () => {

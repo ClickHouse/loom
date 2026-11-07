@@ -128,6 +128,18 @@ describe("describeTokenScope", () => {
   it("a flat token for one namespace reads only it", () => {
     expect(describeTokenScope({ namespaces: ["me"], roles: ["writer"] })).toBe("reads only me");
   });
+  it("names a repository by repository and branch, not by its namespace", () => {
+    const label = (n: string) => (n === "code-secret" ? "org/secret · main" : n);
+    expect(describeTokenScope({ namespaces: ["me", "*", "code-secret"], roles: ["writer"] }, { label })).toBe(
+      "reads everything you belong to, plus org/secret · main · saves to me",
+    );
+    expect(
+      describeTokenScope(
+        { namespaces: ["code-secret"], roles: ["viewer"], ns_roles: { "code-secret": "viewer" } },
+        { label },
+      ),
+    ).toBe("reads only org/secret · main (viewer) · read-only");
+  });
   it("a token with no claim reads nothing", () => {
     expect(describeTokenScope({ namespaces: [], roles: ["writer"] })).toBe("reads nothing");
   });

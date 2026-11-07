@@ -4,25 +4,10 @@ person signed in as `alice@acme.com`."""
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from server.identity.app import me_callers
-
-GRANTS = [{"subject": "Alice@Acme.com", "namespace": "secret", "role": "admin"}]
-
-
-class _CH:
-    """Answers a grant read the way ClickHouse would for the statement it is sent."""
-
-    async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any] | None:
-        folds = "lower(subject) IN" in sql
-        for g in GRANTS:
-            subject = g["subject"].lower() if folds else g["subject"]
-            if g["namespace"] == params["ns"] and subject in params["subs"]:
-                return {"role": g["role"], "x": 1}
-        return None
+from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl
 
 
 @pytest.fixture
@@ -30,10 +15,17 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _aliases(org: str, subject: str) -> list[str]:
         return [subject]
 
+    ch = LocalCH(
+        ddl("namespace_grants"),
+        "INSERT INTO loom.namespace_grants (org, namespace, subject, role, granted_at, "
+        "granted_by, version, status) VALUES "
+        "('o', 'secret', 'Alice@Acme.com', 'admin', now(), 'op', 1, 'active')",
+    )
     monkeypatch.setattr(me_callers, "subject_aliases_of", _aliases)
-    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
 
 
+@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("wired")
 async def test_a_grant_stored_in_another_case_is_the_callers() -> None:

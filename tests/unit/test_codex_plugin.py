@@ -213,7 +213,9 @@ def test_the_token_mint_client_table_names_codex() -> None:
 
 def test_the_mint_builds_the_entries_the_dashboard_prints() -> None:
     """The server's `clients` and the dashboard's snippets come from two builders; the
-    client sets each keys on, and the Claude Code line, are the same."""
+    client sets each keys on, and the Claude Code line, are the same. It fails when a
+    client joins or leaves a set, or the line changes, on one side only; a reformat of
+    clients.ts that keeps each set a `new Set([...])` of quoted ids passes."""
     import re
 
     from server.identity.app import token_clients
@@ -221,7 +223,7 @@ def test_the_mint_builds_the_entries_the_dashboard_prints() -> None:
     ts = (ROOT / "frontend" / "src" / "lib" / "clients.ts").read_text()
 
     def ts_set(name: str) -> set[str]:
-        m = re.search(rf"const {name}: ReadonlySet<ClientId> = new Set\(\[([^\]]*)\]\)", ts)
+        m = re.search(rf"const {name}\b[^=]*=\s*new Set\(\s*\[([^\]]*)\]", ts)
         assert m, name
         return set(re.findall(r'"([a-z-]+)"', m.group(1)))
 

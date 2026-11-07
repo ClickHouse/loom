@@ -89,7 +89,14 @@ export function describeTokenScope(
     writesAnywhere = true,
     yours = true,
     writable,
-  }: { writesAnywhere?: boolean; yours?: boolean; writable?: (ns: string) => boolean } = {},
+    label = (n) => n,
+  }: {
+    writesAnywhere?: boolean;
+    yours?: boolean;
+    writable?: (ns: string) => boolean;
+    /** A namespace in words, e.g. a repository's as "repo · branch". */
+    label?: (ns: string) => string;
+  } = {},
 ): string {
   const ns = t.namespaces || [];
   if (ns.length === 0) return "reads nothing";
@@ -98,7 +105,7 @@ export function describeTokenScope(
     const also = ns.filter((n) => n !== "*" && n !== home);
     // Another person's token (an admin of one of its namespaces sees it) reads as theirs.
     const who = yours ? "you belong" : "its owner belongs";
-    const reads = `reads everything ${who} to${also.length ? `, plus ${also.join(", ")}` : ""}`;
+    const reads = `reads everything ${who} to${also.length ? `, plus ${also.map(label).join(", ")}` : ""}`;
     // It writes through its owner's grants and its own one role: either one short of
     // writer, and it only reads.
     const tokenWrites = (t.roles || []).some((r) => WRITES.has(r));
@@ -112,8 +119,8 @@ export function describeTokenScope(
   const distinct = new Set(ns.map((n) => roles?.[n] ?? ""));
   const listed =
     roles && distinct.size > 1
-      ? ns.map((n) => `${n} (${roles[n]})`).join(", ")
-      : `${ns.join(", ")}${roles ? ` (${roles[ns[0]]})` : ""}`;
+      ? ns.map((n) => `${label(n)} (${roles[n]})`).join(", ")
+      : `${ns.map(label).join(", ")}${roles ? ` (${roles[ns[0]]})` : ""}`;
   // Where a list saves can follow its owner's pick, so the row names no namespace.
   const writes = roles ? ns.some((n) => WRITES.has(roles[n] ?? "")) : (t.roles || []).some((r) => WRITES.has(r));
   return `reads only ${listed}${writes ? "" : " · read-only"}`;

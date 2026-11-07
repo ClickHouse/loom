@@ -13,8 +13,9 @@ _STDIO_VIA_NPX = {"claude-desktop", "zed", "cline"}
 _CODING_CLIENTS = {"claude-code", "codex", "cursor"}
 
 
-# Where each client keeps its MCP config, per platform.
-_CONFIG_PATHS = {
+# Where each client keeps its MCP config, per platform. `loom install` writes the same
+# files (server/cli/install.py).
+CONFIG_PATHS = {
     "claude-desktop": {
         "darwin": "~/Library/Application Support/Claude/claude_desktop_config.json",
         "linux": "~/.config/Claude/claude_desktop_config.json",
@@ -36,9 +37,9 @@ _CONFIG_PATHS = {
         "win32": "%USERPROFILE%\\.cursor\\mcp.json",
     },
     "vscode": {
-        "darwin": "~/.vscode/mcp.json",
-        "linux": "~/.vscode/mcp.json",
-        "win32": "%USERPROFILE%\\.vscode\\mcp.json",
+        "darwin": "~/Library/Application Support/Code/User/mcp.json",
+        "linux": "~/.config/Code/User/mcp.json",
+        "win32": "%APPDATA%\\Code\\User\\mcp.json",
     },
     "cline": {
         "darwin": "~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",  # noqa: E501
@@ -60,7 +61,14 @@ _CONFIG_PATHS = {
 
 # The MCP clients a new token comes with a setup for, one per row of the table above
 # (frontend/src/lib/clients.ts mirrors the list).
-MCP_CLIENTS = tuple(_CONFIG_PATHS)
+MCP_CLIENTS = tuple(CONFIG_PATHS)
+
+# The config file's key for its MCP servers; every other client uses "mcpServers".
+_CONFIG_KEYS = {"vscode": "servers", "zed": "context_servers", "codex": "mcp_servers"}
+
+
+def config_key(client: str) -> str:
+    return _CONFIG_KEYS.get(client, "mcpServers")
 
 
 def _coding_url(mcp_url: str) -> str:
@@ -72,16 +80,7 @@ def client_config(client: str, mcp_url: str, minted: str) -> dict[str, object]:
     (URL + bearer, the `mcp-remote` bridge for stdio clients,
     `bearer_token_env_var` for Codex), the file's own text when it is not JSON,
     the one-line registration command, and the file's path per platform."""
-    # Per-client shape. VS Code uses "servers", Zed uses "context_servers",
-    # everyone else uses "mcpServers".
-    if client == "vscode":
-        config_key = "servers"
-    elif client == "zed":
-        config_key = "context_servers"
-    elif client == "codex":
-        config_key = "mcp_servers"
-    else:
-        config_key = "mcpServers"
+    key = config_key(client)
     auth_header = f"Authorization: Bearer {minted}"
     if client in _STDIO_VIA_NPX:
         entry: dict[str, object] = {
@@ -106,7 +105,7 @@ def client_config(client: str, mcp_url: str, minted: str) -> dict[str, object]:
         }
         if client in {"claude-code", "vscode"}:
             entry["type"] = "http"
-    config_block = {config_key: {"loom": entry}}
+    config_block = {key: {"loom": entry}}
     config_toml = (
         f'[mcp_servers.loom]\nurl = "{entry["url"]}"\nbearer_token_env_var = "LOOM_API_KEY"\n'
         if client == "codex"
@@ -123,11 +122,11 @@ def client_config(client: str, mcp_url: str, minted: str) -> dict[str, object]:
         command = ""
 
     return {
-        "config_key": config_key,
+        "config_key": key,
         "config": config_block,
         "config_toml": config_toml,
         "command": command,
-        "config_path": _CONFIG_PATHS[client],
+        "config_path": CONFIG_PATHS[client],
     }
 
 

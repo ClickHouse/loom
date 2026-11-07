@@ -19,6 +19,7 @@ import jwt as pyjwt
 import pytest
 
 from tests.integration._eventually import eventually
+from tests.integration._resources import unique_org
 from tests.integration.test_mcp import _post as _mcp_post
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -245,3 +246,76 @@ async def test_the_mint_requires_auth(control_plane_url: str) -> None:
         )
     r = await _post(control_plane_url, None, {})
     assert r.status_code == 401
+
+
+def _restricted_namespace(ch_client: Any, org: str, namespace: str) -> None:
+    now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    row = [org, namespace, "ops@mint.invalid", True, "memory", "restricted", now, now]
+    cols = ["org", "namespace", "owner_email", "active", "kind", "classification"]
+    ch_client.insert("loom.namespaces", [row], column_names=[*cols, "created_at", "updated_at"])
+
+
+def _grant(ch_client: Any, org: str, namespace: str, subject: str, role: str) -> None:
+    now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    row = [org, namespace, subject, role, now, "it", time.time_ns()]
+    cols = ["org", "namespace", "subject", "role", "granted_at", "granted_by", "version"]
+    ch_client.insert("loom.namespace_grants", [row], column_names=cols)
+
+
+@pytest.mark.asyncio
+async def test_a_restricted_namespace_beside_star_reads_at_the_persons_grant(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    """Named beside `*`, a restricted namespace is read only through a direct grant to the
+    token, capped at the person's own grant there: a viewer's token reads it and cannot
+    write it, while it still writes its home. Without a grant of their own the mint
+    refuses."""
+    from server.auth.jwt import mint_token
+
+    if not await _auth_on(control_plane_url):
+        pytest.skip("server runs with auth off: every namespace is readable")
+    org = unique_org("mintr")
+    person, other = f"mint-{uuid.uuid4().hex[:8]}", f"mint-{uuid.uuid4().hex[:8]}"
+    home, secret = f"home-{uuid.uuid4().hex[:6]}", f"priv-{uuid.uuid4().hex[:6]}"
+    _restricted_namespace(ch_client, org, secret)
+    _grant(ch_client, org, home, person, "writer")
+    _grant(ch_client, org, secret, person, "viewer")
+    _grant(ch_client, org, home, other, "writer")
+
+    def token_of(subject: str) -> str:
+        return mint_token(
+            subject=subject, org=org, namespaces=[home], roles=["WRITER"], is_service_account=False
+        )
+
+    body = {"namespaces": [home, "*", secret]}
+    refused = await _post(control_plane_url, token_of(other), body)
+    assert refused.status_code == 403, refused.text
+    assert secret in refused.json()["detail"]["message"]
+
+    r = await _post(control_plane_url, token_of(person), body)
+    assert r.status_code == 200, r.text
+    minted = r.json()
+    assert minted["restricted_namespaces"] == [secret]
+    assert minted["saves_to"] == home
+    rows = ch_client.query(
+        "SELECT role FROM loom.namespace_grants FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND subject = {sub:String}",
+        parameters={"org": org, "ns": secret, "sub": minted["sa_subject"]},
+    ).result_rows
+    assert rows == [("viewer",)]
+
+    token = minted["token"]
+    read = {"namespace": secret, "agent": "it", "memory_key": "absent"}
+
+    async def _reads() -> dict | None:
+        # The new grant reaches the gate within the grant cache TTL.
+        result = (
+            await _mcp_post(control_plane_url, _tool_call("loom_memory_get", read), token)
+        ).json()
+        return None if result["result"]["isError"] else result
+
+    await eventually(_reads, description="the token reads the restricted namespace")
+    write = {**read, "memory_type": "semantic", "value": {"x": 1}}
+    r = await _mcp_post(control_plane_url, _tool_call("loom_memory_set", write), token)
+    assert r.json()["result"]["isError"] is True
+    await _assert_unaddressed_write_lands_in(control_plane_url, token, home)

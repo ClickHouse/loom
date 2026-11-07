@@ -224,6 +224,43 @@ export function TokensSection({
   );
 }
 
+type RepoInfo = Record<string, { repo: string; branch: string; classification?: string }>;
+
+/** Repository and branch per code namespace, from code.repos. `code.repos` only when the
+ *  caller has standing on a code namespace or an admin claim; else the map stays empty. */
+function useRepoInfo(mine: MyNamespaceEntry[] | null): RepoInfo {
+  const identity = useIdentity();
+  const whoami = useStore((s) => s.whoami);
+  const reposReadable = canCallCodeRepos(mine, whoami);
+  const [repoInfo, setRepoInfo] = useState<RepoInfo>({});
+  useAbortableEffect(
+    async (_signal, live) => {
+      if (!identity.org || !reposReadable) return;
+      try {
+        const rows = await sharedCodeRepos(identity.org);
+        if (!live()) return;
+        setRepoInfo(
+          Object.fromEntries(
+            rows.map((r) => [r.namespace, { repo: r.repo, branch: r.branch, classification: r.classification }]),
+          ),
+        );
+      } catch {
+        if (live()) setRepoInfo({});
+      }
+    },
+    [identity.org, reposReadable],
+  );
+  return repoInfo;
+}
+
+/** A namespace in words: a repository's as "repo · branch", any other as itself. */
+function nsLabeler(repoInfo: RepoInfo): (ns: string) => string {
+  return (ns) => {
+    const r = repoInfo[ns];
+    return r ? `${r.repo} · ${r.branch}` : ns;
+  };
+}
+
 function TokenForm({
   formRef,
   onCancel,
@@ -278,30 +315,7 @@ function TokenForm({
 
   const eligibleNs = (mine ?? []).filter((n) => n.kind !== "code");
   const eligibleRepos = (mine ?? []).filter((n) => n.kind === "code");
-  // Repository and branch per code namespace, from code.repos; a namespace the list does
-  // not know keeps its identifier as the label. `code.repos` only when the caller has
-  // standing on a code namespace or an admin claim.
-  const reposReadable = canCallCodeRepos(mine ?? storedMine, whoami);
-  const [repoInfo, setRepoInfo] = useState<Record<string, { repo: string; branch: string; classification?: string }>>(
-    {},
-  );
-  useAbortableEffect(
-    async (_signal, live) => {
-      if (!identity.org || !reposReadable) return;
-      try {
-        const rows = await sharedCodeRepos(identity.org);
-        if (!live()) return;
-        setRepoInfo(
-          Object.fromEntries(
-            rows.map((r) => [r.namespace, { repo: r.repo, branch: r.branch, classification: r.classification }]),
-          ),
-        );
-      } catch {
-        if (live()) setRepoInfo({});
-      }
-    },
-    [identity.org, reposReadable],
-  );
+  const repoInfo = useRepoInfo(mine ?? storedMine);
   const repoGroups = useMemo(() => {
     const by = new Map<string, { repo: string; restricted: boolean; rows: { namespace: string; branch: string }[] }>();
     for (const n of eligibleRepos) {
@@ -670,11 +684,11 @@ function TokenForm({
 }
 
 /** One line on what a just-made token reads and where it saves, as the server minted it. */
-function createdScope(c: TokenCreated, writesAnywhere: boolean): string {
-  const named = c.namespaces.filter((n) => n !== "*");
+function createdScope(c: TokenCreated, writesAnywhere: boolean, label: (ns: string) => string): string {
+  const named = c.namespaces.filter((n) => n !== "*").map(label);
   const reads = c.reads_everything
     ? `Reads everything you belong to, including namespaces you join later${
-        c.restricted_namespaces.length ? `, plus ${c.restricted_namespaces.join(", ")}` : ""
+        c.restricted_namespaces.length ? `, plus ${c.restricted_namespaces.map(label).join(", ")}` : ""
       }.`
     : `Reads only ${named.join(", ")}.`;
   const roles = Object.values(c.ns_roles);
@@ -692,7 +706,9 @@ function createdScope(c: TokenCreated, writesAnywhere: boolean): string {
 
 function CreatedDialog({ created, onClose }: { created: TokenCreated | null; onClose: () => void }) {
   const identity = useIdentity();
+  const mine = useStore((s) => s.myNamespaces);
   const writesAnywhere = useWritable().length > 0;
+  const label = nsLabeler(useRepoInfo(mine));
   // The last target picked; none yet: a script for a token that reads only some
   // namespaces, Claude Code for one that reads everything.
   const [stored, setStored] = useState<ConnectTarget | null>(() => {
@@ -730,7 +746,7 @@ function CreatedDialog({ created, onClose }: { created: TokenCreated | null; onC
             text="Copy it now: this is the only time it is shown. The same token works in every tool."
           />
           <div className="text-xs text-text-muted" data-testid="minted-token-scope">
-            {createdScope(created, writesAnywhere)}
+            {createdScope(created, writesAnywhere, label)}
           </div>
           <div className="relative">
             <div className="text-xs text-text-muted mb-1.5">Token</div>
@@ -757,7 +773,11 @@ function CreatedDialog({ created, onClose }: { created: TokenCreated | null; onC
             <ScriptConnect
               token={created.token}
               org={created.org}
-              namespace={created.saves_to || created.namespaces.find((n) => n !== "*") || identity.namespace}
+              namespace={
+                created.saves_to ||
+                created.namespaces.find((n) => isMemoryNamespace(n, mine)) ||
+                (created.reads_everything ? identity.namespace : "")
+              }
               baseUrl={created.mcp_url.replace(/\/mcp$/, "")}
             />
           ) : (
@@ -885,6 +905,7 @@ function useWritable(): string[] {
 function TokenList({ tokens, onRevoke }: { tokens: TokenEntry[] | null; onRevoke: (name: string) => void }) {
   const writable = useWritable();
   const me = useStore((s) => s.whoami?.subject ?? "");
+  const label = nsLabeler(useRepoInfo(useStore((s) => s.myNamespaces)));
   return (
     <div className="rounded-2xl border border-border bg-surface p-2">
       <TokensStatusSummary tokens={tokens} />
@@ -918,6 +939,7 @@ function TokenList({ tokens, onRevoke }: { tokens: TokenEntry[] | null; onRevoke
                       writesAnywhere: writable.length > 0,
                       yours: s.yours ?? (!me || s.created_by === me),
                       writable: (ns) => writable.includes(ns),
+                      label,
                     })}{" "}
                     · created <ListTime time={s.created_at} quiet />
                     {" · "}
