@@ -573,7 +573,14 @@ describe("login link", () => {
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
-    useStore.setState({ authed: false, whoami: null, myNamespaces: null, identity: null, view: "setup" });
+    useStore.setState({
+      authed: false,
+      gateReason: null,
+      whoami: null,
+      myNamespaces: null,
+      identity: null,
+      view: "setup",
+    });
     Element.prototype.scrollTo = vi.fn();
     vi.stubGlobal(
       "fetch",
@@ -687,32 +694,51 @@ describe("login link", () => {
     expect(screen.getByText(/You are signed in as/).textContent).toBe("You are signed in as <b>alice</b> (acme).");
   });
 
-  it("gives back the held token when the server refuses a same-account link's", async () => {
-    localStorage.setItem("loom_token_v1", alice);
-    stored = [];
-    const forged = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], iat: 3 });
-    vi.mocked(reloadPage).mockClear();
-    vi.mocked(fetch).mockImplementation(async () => json({ authenticated: false }));
-    window.history.replaceState(null, "", `/me#token=${forged}`);
-    render(<App />);
-    await until(() => vi.mocked(reloadPage).mock.calls.length > 0);
-    expect(stored).toEqual([forged, alice]);
-    expect(localStorage.getItem("loom_token_v1")).toBe(alice);
-    expect(screen.queryByText(/Sign in from a link/)).toBeNull();
-  });
+  /** whoami answers for the bearer each call carries: `alice` is accepted; `link` is refused
+   *  (`authenticated: false`) or unanswered (a network error). */
+  function serveWhoami(link: string, answer: "accept" | "refuse" | "throw", seen: number[]) {
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (!String(input).includes("/v1/whoami")) return json(GENERIC);
+      const bearer = new Headers(init?.headers).get("Authorization");
+      if (bearer === `Bearer ${link}`) {
+        seen.push(stored.length); // what was stored when the link's token was asked about
+        if (answer === "throw") throw new TypeError("Failed to fetch");
+        if (answer === "refuse") return json({ authenticated: false });
+      }
+      return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
+    });
+  }
 
-  it("stores without asking a link token for the same subject and org as the one held", async () => {
+  for (const answer of ["refuse", "throw"] as const) {
+    it(`a same-account link whoami does not accept (${answer}) leaves the held token stored`, async () => {
+      localStorage.setItem("loom_token_v1", alice);
+      stored = [];
+      const forged = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], iat: 3 });
+      const seen: number[] = [];
+      serveWhoami(forged, answer, seen);
+      window.history.replaceState(null, "", `/me#token=${forged}`);
+      render(<App />);
+      await until(() => useStore.getState().whoami !== null);
+      expect(seen).toEqual([0]);
+      // Nothing written, so no other tab hears of the link's token either.
+      expect(stored).toEqual([]);
+      expect(localStorage.getItem("loom_token_v1")).toBe(alice);
+      expect(useStore.getState().gateReason).toBeNull();
+      expect(screen.queryByText(/Sign in from a link/)).toBeNull();
+    });
+  }
+
+  it("stores a same-account link's token without asking, once whoami accepts it", async () => {
     localStorage.setItem("loom_token_v1", alice);
     stored = [];
     const again = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], iat: 2 });
-    vi.mocked(fetch).mockImplementation(async (input) =>
-      String(input).includes("/v1/whoami")
-        ? json({ authenticated: true, subject: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] })
-        : json(GENERIC),
-    );
+    const seen: number[] = [];
+    serveWhoami(again, "accept", seen);
     window.history.replaceState(null, "", `/me#token=${again}`);
     render(<App />);
     await until(() => useStore.getState().whoami !== null);
+    // Asked about with its own header before anything was stored, then stored.
+    expect(seen[0]).toBe(0);
     expect(stored).toEqual([again]);
     expect(localStorage.getItem("loom_token_v1")).toBe(again);
     expect(screen.queryByText(/Sign in from a link/)).toBeNull();

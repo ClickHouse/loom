@@ -2,7 +2,7 @@
 // navigation.
 
 /** Leave for the identity provider's sign-in marked `nonce` (`markSignInStarted`); it comes
- *  back to `/me#token=…&n=<nonce>`. */
+ *  back to `/me?n=<nonce>#token=…`. */
 export function goToSso(nonce: string): void {
   window.location.assign(`/oauth/sso?n=${encodeURIComponent(nonce)}`);
 }

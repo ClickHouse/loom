@@ -436,7 +436,10 @@ browser that started the sign-in, never stored on the server. The callback finis
 sign-in only with that cookie, once: its state is marked used in Keeper. The callback URL
 alone (from a log, browser history or a screenshot) finishes nothing. The cookie is scoped
 to `/oauth/callback`, not `__Host-`, so it is not sent on every request; a site on a
-sibling subdomain can therefore plant its own sign-in for the victim to finish.
+sibling subdomain can therefore plant its own sign-in for the victim to finish. The
+dashboard's tab nonce (below) makes such a sign-in ask before it takes effect; for the MCP
+connect and device sign-ins, which it does not cover, serving Loom on a host of its own
+rules it out.
 
 **The dashboard's hand-off is bound to its tab.** The sign-in gate starts SSO as
 `/oauth/sso?n=<nonce>`, with a random nonce it keeps in that tab's session storage. The

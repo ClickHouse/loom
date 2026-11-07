@@ -87,7 +87,7 @@ export function markSignInStarted(now: number = Date.now()): string {
   return nonce;
 }
 
-/** Whether `nonce`, from a link's fragment, is the mark of a sign-in this tab started in the
+/** Whether `nonce`, from the landing's query, is the mark of a sign-in this tab started in the
  *  last ten minutes; the mark is used up either way. */
 export function takeSignInStarted(nonce: string | null, now: number = Date.now()): boolean {
   try {
@@ -102,7 +102,7 @@ export function takeSignInStarted(nonce: string | null, now: number = Date.now()
 }
 
 /** Whether a link token names the same subject of the same org as the token held: a session
- *  refreshed, stored without asking (and given back should the server refuse it). Anyone
+ *  refreshed, stored without asking once the server accepts it. Anyone
  *  holding a token can send a link; storing any other unasked would sign this browser in as
  *  them. */
 export function sameAccount(link: string, held: string | null): boolean {
