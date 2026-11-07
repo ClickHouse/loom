@@ -161,8 +161,8 @@ FIXED_FIELDS = (
     "formats",
     "block_types",
 )
-# The ranking knobs an arm may set. An allow-list, so a field added to knowledge.search
-# later is refused until it is named here or in FIXED_FIELDS.
+# The ranking knobs an arm may set. An allow-list: a field added to knowledge.search later
+# is refused until it is named here, and the unit test fails until it is in one list.
 SEARCH_FIELDS = frozenset(
     ("search_mode", "lexical_weight", "narrow_spans", "collapse_sections", "rerank")
 )
