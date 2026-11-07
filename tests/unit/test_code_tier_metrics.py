@@ -96,11 +96,13 @@ def test_the_wired_rows_are_the_tiers_the_problem_reports(
 class _Meter:
     def __init__(self) -> None:
         self.units: dict[str, str] = {}
+        self.callbacks: dict[str, Any] = {}
 
     def create_observable_gauge(
         self, *, name: str, callbacks: Any, description: str = "", unit: str = ""
     ) -> None:
         self.units[name] = unit
+        self.callbacks[name] = callbacks[0]
 
 
 def test_the_gauges_register_with_the_names_the_alerts_read() -> None:
@@ -113,6 +115,18 @@ def test_the_gauges_register_with_the_names_the_alerts_read() -> None:
     }
     rule = (ROOT / "deploy/helm/loom/templates/prometheusrule.yaml").read_text()
     assert "loom_code_tier_failing)" in rule and 'loom_code_tier_failing{severity="error"}' in rule
+
+
+def test_each_gauge_reads_its_own_series(_snapshot: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "code_tier_failing_warn_passes", 3)
+    monkeypatch.setattr(settings, "code_tier_failing_error_lag_commits", 100)
+    recorder._FAILING = (recorder.FailingTier("o", "code-far", _failing(3, 2), 413),)
+    meter = _Meter()
+    metrics_gauges._register_code_tier_gauges(meter)
+    (passes,) = meter.callbacks["loom.code.tier_failing"](None)
+    (lag,) = meter.callbacks["loom.code.tier_lag_commits"](None)
+    assert passes.value == 3 and passes.attributes["severity"] == "error"
+    assert lag.value == 413 and "severity" not in lag.attributes
 
 
 def test_the_dashboard_alert_fires_on_any_reported_tier() -> None:

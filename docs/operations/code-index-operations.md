@@ -716,7 +716,7 @@ The record is read where each reader already looks:
   `/v1/health`, the dashboard banner and `loom doctor`
   ([monitoring](./monitoring.md#v1health));
 - for push alerting, the `loom.code.tier_failing` and `loom.code.tier_lag_commits`
-  gauges carry every failing tier ([telemetry](../features/observability/telemetry.md)),
+  gauges carry each tier the `code_tier_failing` problem reports ([telemetry](../features/observability/telemetry.md)),
   with an alert in `deploy/dashboards/code_plane.json` and, for Prometheus, the chart's
   rule ([alert rules](./kubernetes.md#alert-rules)).
 

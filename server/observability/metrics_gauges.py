@@ -808,14 +808,15 @@ def code_tier_series(
 def _register_code_tier_gauges(meter: Any) -> None:
     """The failing code-index tiers this process last read; in-process, no store read."""
 
-    def _points(which: int) -> Callable[[Any], Any]:
+    def _points(series: str) -> Callable[[Any], Any]:
         def _cb(_options: Any) -> Any:
             from opentelemetry.metrics import Observation
 
             try:
                 from server.observability.state_inputs import state_inputs
 
-                points = code_tier_series(state_inputs().failing_code_tiers())[which]
+                failing, lag = code_tier_series(state_inputs().failing_code_tiers())
+                points = failing if series == "failing" else lag
             except Exception:  # noqa: BLE001 — a gauge reading must not fail export
                 return []
             return [Observation(v, attributes=a) for v, a in points]
@@ -824,7 +825,7 @@ def _register_code_tier_gauges(meter: Any) -> None:
 
     meter.create_observable_gauge(
         name="loom.code.tier_failing",
-        callbacks=[_points(0)],
+        callbacks=[_points("failing")],
         description=(
             "Failed passes in a row of a code-index tier the `code_tier_failing` health "
             "problem reports, per namespace, `tier` (fetch, ingest, clang, typescript, go, "
@@ -836,7 +837,7 @@ def _register_code_tier_gauges(meter: Any) -> None:
     )
     meter.create_observable_gauge(
         name="loom.code.tier_lag_commits",
-        callbacks=[_points(1)],
+        callbacks=[_points("lag")],
         description=(
             "Commits a code-index tier the `code_tier_failing` problem reports trails the "
             "fetched branch tip by, as the entry's last published status counted it (a lower "
