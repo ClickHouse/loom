@@ -289,6 +289,8 @@ test("Stop gates: 401 and a hanging server both let the stop through", async () 
           assert.equal(r.code, 0, `${hook} ${status}`);
           assert.equal(r.out, "", `${hook} ${status}`);
           if (arrived.has(op)) break;
+          // Only git's 1.5 s timeout excuses a silent run; any other is a failure.
+          assert.ok(r.ms >= 1500, `${hook} ${status}: ended in ${r.ms} ms without sending ${op}`);
         }
         // From the gate's request to the hook's exit: the 500 ms request
         // bound and the 500 ms exit grace, not node's start-up or git, which
@@ -343,6 +345,8 @@ test("blast radius and file context: 401 and a hanging server add nothing to the
           assert.equal(r.code, 0, `${hook} ${status}`);
           assert.equal(r.out, "", `${hook} ${status}`);
           if (arrived.has(op)) break;
+          // Only git's 1.5 s timeout excuses a silent run; any other is a failure.
+          assert.ok(r.ms >= 1500, `${hook} ${status}: ended in ${r.ms} ms without sending ${op}`);
         }
         // From the hook's request to its exit, as for the Stop gates.
         assert.ok(arrived.has(op), `${hook} ${status}: never sent ${op} in three runs`);
