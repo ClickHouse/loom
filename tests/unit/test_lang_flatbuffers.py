@@ -119,10 +119,11 @@ def test_a_union_member_with_a_long_blank_run_is_read_in_linear_time() -> None:
 
 def test_a_block_header_with_a_long_blank_run_is_read_in_linear_time() -> None:
     """A header that never opens its block (`table A`, blanks, `x`) is refused after one
-    pass over the blanks; a header with a base type and attributes still opens one."""
+    pass over the blanks; headers with a base type and with attributes still open one,
+    their groups read."""
     blanks = " " * 2_000
-    schema = f"table A{blanks}x\nenum E : byte (bit_flags) {{ X = 1 }}\n".encode()
+    schema = f"table A{blanks}x\nenum E : byte (bit_flags) {{ X = 1 }}\ntable T (x) {{}}\n".encode()
     start = time.process_time()
     pf = parse_fbs("src/b.fbs", schema)
     assert time.process_time() - start < 0.5
-    assert [s.name for s in pf.symbols] == ["E"]
+    assert {s.name: s.signature for s in pf.symbols} == {"E": "enum : byte", "T": "table (x)"}
