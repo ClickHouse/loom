@@ -11,7 +11,7 @@ notes = "Empty package marker; `tests.inventory` and `tests.unit.*` import throu
 match = "tests/conftest.py"
 owner = "integration fixtures"
 status = "retain"
-notes = "Integration and analyzer fixtures; the unit conftest shadows both autouse ones."
+notes = "Integration and analyzer fixtures; the unit conftest shadows the .env loader and the token seeding."
 
 [[files]]
 match = "tests/README.md"
