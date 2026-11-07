@@ -202,7 +202,7 @@
           "maximum": 300.0,
           "minimum": 0.1,
           "type": "number",
-          "description": "Each cap is pinned as a MAX in the loom_analyst user's settings profile, which Loom rewrites at boot, so no statement can raise it. Seconds one insights.query statement may run."
+          "description": "Seconds one insights.query statement may run."
         },
         "ch_analysis_max_memory_bytes": {
           "default": 2000000000,

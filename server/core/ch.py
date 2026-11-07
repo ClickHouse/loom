@@ -475,14 +475,17 @@ def statement_settings(
     if settings.ch_log_comment_statement_digest:
         tag = str(out.get("log_comment") or "")
         out["log_comment"] = f"{tag} {statement_digest(sql)}".strip()
+    analyst = _analyst_var.get()
+    if analyst is not None:
+        # The analyst's profile pins its own caps: a traffic class's or the
+        # caller's settings could only collide with them.
+        out.update(analyst[2])
+        return _with_request_query_id(out)
     tclass = traffic_class_var.get()[0]
     if tclass and is_read_statement(sql):
         for name, value in traffic_class_settings(tclass).items():
             out.setdefault(name, value)
     _apply_caller_ceilings(out, cls)
-    analyst = _analyst_var.get()
-    if analyst is not None:
-        out.update(analyst[2])
     return _with_request_query_id(out)
 
 

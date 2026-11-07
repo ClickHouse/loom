@@ -10,6 +10,8 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `insights.catalog`
 
+List the tables `insights.query` can read: each column with its type and meaning, how to read the table correctly (one live row per key, or one row per event), and the caps a statement runs under.
+
 `POST /v1/insights.catalog` · MCP `loom_insights_catalog` · role `viewer` · read · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
@@ -25,6 +27,8 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 | `max_rows_to_read` | `int` | The most rows one statement may read; add a time or key filter past it. |
 
 ## `insights.query`
+
+Run one read-only SQL SELECT (or WITH) over the tables `insights.catalog` lists, for questions no other read answers: counts, rankings and trends over memories, conflicts, usage, documents and the…
 
 `POST /v1/insights.query` · MCP `loom_insights_query` · role `viewer` · read · not listed under the MCP `all` toolset
 

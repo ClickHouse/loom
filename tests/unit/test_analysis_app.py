@@ -124,6 +124,7 @@ def test_a_foreign_permissive_policy_stops_the_repair(
     monkeypatch.setattr(app.store, "sealed_secrets", none)
     monkeypatch.setattr(app.store, "can_manage_access", yes)
     monkeypatch.setattr(app.store, "foreign_policies", foreign)
+    monkeypatch.setattr(app.store, "other_deployments", none)
     monkeypatch.setattr(app.store, "write_entities", write)
     asyncio.run(app.reprobe())
     assert not written
@@ -153,3 +154,177 @@ def test_ch_setup_refuses_a_new_key_beside_a_live_analyst_user(
     monkeypatch.setattr(app.store, "analyst_user_absent", no)
     with pytest.raises(RuntimeError, match=f"DROP USER {boundary.ANALYST_USER}"):
         asyncio.run(app.rewrite())
+
+
+class _NoLease:
+    def __init__(self, *_: Any) -> None:
+        pass
+
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *_: Any) -> None:
+        return None
+
+
+def _returns(value: Any):
+    async def fn(*_: Any, **__: Any) -> Any:
+        return value
+
+    return fn
+
+
+def test_ch_setup_refuses_over_a_newer_builds_entities(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    written: list[Any] = []
+    monkeypatch.setattr(app, "lease", _NoLease)
+    monkeypatch.setattr(app.store, "sealed_secrets", _returns("sealed"))
+    monkeypatch.setattr(app, "_opened", lambda _: SECRETS)
+    newer = boundary.Stored(boundary.ENTITY_VERSION + 1, "theirs")
+    monkeypatch.setattr(app.store, "stored_entities", _returns(newer))
+    monkeypatch.setattr(app.store, "write_entities", lambda s, **_: written.append(s))
+    with pytest.raises(RuntimeError, match="newer build"):
+        asyncio.run(app.rewrite())
+    assert not written
+
+
+def _provisioning(monkeypatch: pytest.MonkeyPatch, *, stored: Any, caps: str, foreign: list[str]):
+    written: list[list[str]] = []
+
+    async def write(statements: list[str], **_: Any) -> None:
+        written.append(statements)
+
+    monkeypatch.setattr(app, "lease", _NoLease)
+    monkeypatch.setattr(app, "load_secrets", _returns(None))
+    monkeypatch.setattr(app, "reprobe", _returns(None))
+    monkeypatch.setattr(app.store, "analyst_user_absent", _returns(False))
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
+    monkeypatch.setattr(app.store, "other_deployments", _returns([]))
+    monkeypatch.setattr(app.store, "foreign_policies", _returns(foreign))
+    monkeypatch.setattr(app.store, "granted", _returns(frozenset()))
+    monkeypatch.setattr(app.store, "granted_roles", _returns(frozenset()))
+    monkeypatch.setattr(app.store, "stored_entities", _returns(stored))
+    monkeypatch.setattr(app.store, "stored_caps_digest", _returns(caps))
+    monkeypatch.setattr(app.store, "write_entities", write)
+    return written
+
+
+def _current(monkeypatch: pytest.MonkeyPatch) -> boundary.Stored:
+    statements = app.entity_statements()
+    return boundary.Stored(boundary.ENTITY_VERSION, boundary.entity_digest(statements))
+
+
+def test_a_boot_writes_only_the_caps_when_only_a_cap_changed(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    written = _provisioning(monkeypatch, stored=_current(monkeypatch), caps="old", foreign=[])
+    asyncio.run(app.provision())
+    assert written == [boundary.caps_sql(app.caps())]
+
+
+def test_a_boot_writes_nothing_when_the_entities_and_caps_are_current(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    digest = boundary.caps_digest(app.caps())
+    written = _provisioning(monkeypatch, stored=_current(monkeypatch), caps=digest, foreign=[])
+    asyncio.run(app.provision())
+    assert written == []
+
+
+def test_an_older_build_leaves_a_newer_builds_caps(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    newer = boundary.Stored(boundary.ENTITY_VERSION + 1, "theirs")
+    written = _provisioning(monkeypatch, stored=newer, caps="theirs", foreign=[])
+    asyncio.run(app.provision())
+    assert written == []
+
+
+def test_a_boot_writes_nothing_over_a_foreign_permissive_policy(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    written = _provisioning(monkeypatch, stored=None, caps="", foreign=["bi_scope ON memory"])
+    asyncio.run(app.provision())
+    assert written == []
+    assert "bi_scope ON memory" in app.analysis_state()[1]
+
+
+def test_a_foreign_policy_outlasts_a_clean_probe(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    # Such a policy widens another user, never the analyst, so the probe passes.
+    monkeypatch.setattr(app, "_probe", _returns(("", False)))
+    monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
+    monkeypatch.setattr(app.store, "other_deployments", _returns([]))
+    monkeypatch.setattr(app.store, "foreign_policies", _returns(["bi_scope ON memory"]))
+    asyncio.run(app.reprobe())
+    assert app.analysis_state() == (False, app.analysis_state()[1])
+    assert "bi_scope ON memory" in app.analysis_state()[1]
+
+
+def test_another_loom_database_on_the_server_stops_the_write(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    written = _provisioning(monkeypatch, stored=None, caps="", foreign=[])
+    monkeypatch.setattr(app.store, "other_deployments", _returns(["loom_staging"]))
+    asyncio.run(app.provision())
+    assert written == []
+    assert "loom_staging" in app.analysis_state()[1]
+
+
+def test_an_org_past_its_concurrency_cap_is_rate_limited(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    monkeypatch.setattr(app, "_running", {"acme": 99})
+    with pytest.raises(RateLimitedError):
+        asyncio.run(app.handle_insights_query(_query()))
+
+
+def test_analyst_statements_carry_no_traffic_class_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core import ch
+    from server.core.traffic_context import traffic_class_var
+
+    monkeypatch.setattr(ch, "traffic_class_settings", lambda _: {"max_threads": 64})
+    token = traffic_class_var.set(("interactive", ""))
+    try:
+        with ch.as_analyst(boundary.ANALYST_USER, "pw", {"max_threads": 4}):
+            assert ch.statement_settings("SELECT 1")["max_threads"] == 4
+        assert ch.statement_settings("SELECT 1").get("max_threads") == 64
+    finally:
+        traffic_class_var.reset(token)
+
+
+def test_the_printed_sql_revokes_what_show_grants_lists_before_granting(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    lines = [
+        "GRANT SELECT(org, namespace) ON loom.memory TO loom_analyst",
+        "GRANT SELECT ON loom.signing_keys TO loom_analyst WITH GRANT OPTION",
+        "GRANT bi_reader TO loom_analyst",
+    ]
+    monkeypatch.setattr(app.store, "own_grant_lines", _returns(lines))
+    revokes = asyncio.run(app.own_grant_revokes())
+    assert revokes == [
+        "REVOKE SELECT(org, namespace) ON loom.memory FROM loom_analyst",
+        "REVOKE SELECT ON loom.signing_keys FROM loom_analyst",
+        "REVOKE bi_reader FROM loom_analyst",
+    ]
+    printed = app.printed_statements(revokes)
+    first_grant = next(i for i, s in enumerate(printed) if s.startswith("GRANT "))
+    assert printed[first_grant - len(revokes) : first_grant] == revokes
+
+
+def test_a_column_grant_in_another_database_is_outside_the_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Ch:
+        async def query_columns(self, sql: str) -> Any:
+            return ["g"], ["String"], [("GRANT SELECT(org) ON other.memory TO loom_analyst",)]
+
+    monkeypatch.setattr(app.store, "database", lambda: "loom")
+    held = asyncio.run(app.store.own_grants(password="pw", extra={}, ch=_Ch()))
+    assert ("memory", "org") not in held

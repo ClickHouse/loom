@@ -427,7 +427,7 @@ def _analyst_sql() -> list[str]:
     async def _go(_ch: Any) -> list[str]:
         async with analysis.lease():
             await analysis.load_secrets(may_draw=True)
-        return analysis.entity_statements()
+        return analysis.printed_statements(await analysis.own_grant_revokes())
 
     return run_connected(_go)
 
@@ -468,10 +468,15 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
         print(f"✗ {problem}", file=sys.stderr)
         return 2
     if args.print_analyst_sql:
+        from server.insights.app import analysis
+
         print(
             "-- Holds the analyst password and scope key: save it to a file and run it in one "
             "session,\n-- clickhouse-client --log_queries=0 --multiquery --queries-file <file>, "
-            "so neither reaches system.query_log."
+            "so neither reaches system.query_log.\n-- First list the permissive row policies "
+            "Loom did not write on the analysis tables;\n-- drop or make restrictive any it "
+            "returns, since the policy below for every other user would widen them:\n-- "
+            + analysis.FOREIGN_POLICIES_SQL
         )
         for stmt in _analyst_sql():
             print(f"{stmt};")

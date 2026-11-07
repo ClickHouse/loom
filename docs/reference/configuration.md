@@ -155,9 +155,11 @@ Ceilings for the reads a caller shapes (code.grep, code.search with a pattern or
 
 ### Analysis statements (insights.query)
 
+Caps for insights.query statements, each pinned as a MAX in the loom_analyst user's caps profile so no statement can raise it. A boot whose ClickHouse user has access management writes that profile when a cap here changed.
+
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_CH_ANALYSIS_MAX_EXECUTION_S` | `float` | `10.0` |  | Each cap is pinned as a MAX in the loom_analyst user's settings profile, which Loom rewrites at boot, so no statement can raise it. Seconds one insights.query statement may run. |
+| `LOOM_CH_ANALYSIS_MAX_EXECUTION_S` | `float` | `10.0` |  | Seconds one insights.query statement may run. |
 | `LOOM_CH_ANALYSIS_MAX_ROWS_TO_READ` | `int` | `200000000` |  | Rows one statement may scan; past it the statement fails (422), never a partial answer. |
 | `LOOM_CH_ANALYSIS_MAX_MEMORY_BYTES` | `int` | `2000000000` |  | Bytes of memory one statement may use. |
 | `LOOM_CH_ANALYSIS_MAX_RESULT_ROWS` | `int` | `500` |  | Rows one statement returns at most; a longer result comes back cut, marked truncated. |

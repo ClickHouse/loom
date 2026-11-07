@@ -17,7 +17,8 @@ class InsightsQueryInput(BaseModel):
         max_length=20_000,
         description=(
             "One SELECT or WITH statement over the tables insights.catalog lists; it reads "
-            "only this namespace's rows. No trailing FORMAT or SETTINGS widen anything."
+            "only this namespace's rows. A trailing FORMAT is a syntax error, and SETTINGS "
+            "cannot raise a cap or change the scope."
         ),
     )
     limit: int = Field(
@@ -64,7 +65,7 @@ class CatalogColumn(BaseModel):
 class CatalogTable(BaseModel):
     name: str
     comment: str
-    # How to read it correctly: FINAL, one row per version, a sum to take.
+    # How to read it correctly: one live row per key or one row per event, a sum to take.
     notes: str
     columns: list[CatalogColumn]
 

@@ -23,6 +23,7 @@ from typing import Any
 from uuid import UUID
 
 from server.core import leases
+from server.core.ch import statement_timeout
 from server.core.ch_errors import error_code, error_line
 from server.core.errors import AnalysisUnavailableError, RateLimitedError, ValidationError
 from server.core.secrets_at_rest import seal, unseal
@@ -96,8 +97,7 @@ _SECRETS_PURPOSE = "analysis.secrets"
 _loaded: tuple[bytes, str] | None = None
 _REPROBE_S = 60.0
 
-# Whether this replica's probe ran a signed statement as the analyst user
-# and saw a system table refused: None = not probed yet.
+# Whether this process's last probe passed: None = not probed yet.
 _ready: bool | None = None
 _problem = ""
 
@@ -179,6 +179,40 @@ def entity_statements(
     return boundary.entity_sql(store.target_database(), _password(), _key(), caps(), granted, roles)
 
 
+# What `loom ch-setup --print-analyst-sql` tells an admin to check first.
+FOREIGN_POLICIES_SQL = (
+    "SELECT short_name, table FROM system.row_policies WHERE database = currentDatabase() "
+    "AND table IN ("
+    + ", ".join(f"'{t}'" for t in boundary.allowlisted_tables())
+    + f") AND NOT is_restrictive AND short_name NOT IN ('{boundary.POLICY_NAME}', "
+    f"'{boundary.OTHERS_POLICY_NAME}');"
+)
+
+
+async def own_grant_revokes() -> list[str]:
+    """A REVOKE for each grant the analyst's own SHOW GRANTS lists, for the
+    printed SQL, whose writer cannot read system.grants. The allowlist is
+    granted after them. None before the user exists."""
+    try:
+        lines = await store.own_grant_lines(password=_password(), extra=_time_cap())
+    except Exception:  # noqa: BLE001 — no user yet, or it refuses this password: nothing to revoke
+        return []
+    out = []
+    for line in lines:
+        bare = line.replace(" WITH GRANT OPTION", "").replace(" WITH ADMIN OPTION", "")
+        if bare.startswith("GRANT ") and " TO " in bare:
+            what, _, to = bare[len("GRANT ") :].rpartition(" TO ")
+            out.append(f"REVOKE {what} FROM {to}")
+    return out
+
+
+def printed_statements(revokes: list[str]) -> list[str]:
+    """The entity statements with `revokes` before the first grant."""
+    statements = entity_statements()
+    first = next(i for i, s in enumerate(statements) if s.startswith("GRANT "))
+    return [*statements[:first], *revokes, *statements[first:]]
+
+
 def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> dict[str, Any]:
     """The settings one statement carries: the scope signed with `key` (the
     stored one by default), and the time cap as the statement's own
@@ -209,7 +243,11 @@ async def provision() -> None:
                 if boundary.needs_rewrite(stored, boundary.entity_digest(statements)):
                     await store.write_entities(statements)
                     log.info("analyst user: written (version %s)", boundary.ENTITY_VERSION)
-                elif await store.stored_caps_digest() != boundary.caps_digest(caps()):
+                elif (
+                    stored is not None
+                    and stored.version <= boundary.ENTITY_VERSION
+                    and (await store.stored_caps_digest() != boundary.caps_digest(caps()))
+                ):
                     # The caps are deployment settings, written apart from the version.
                     await store.write_entities(boundary.caps_sql(caps()))
         if foreign:
@@ -227,6 +265,11 @@ async def _current_statements() -> list[str]:
 async def _foreign_problem() -> str:
     """Why nothing may be written while a permissive policy Loom did not write
     sits on an allowlisted table, or '' when none does."""
+    if others := await store.other_deployments():
+        return (
+            f"the analyst user {boundary.ANALYST_USER} is also written by the Loom database "
+            f"{others[0]} on this ClickHouse; analysis needs one Loom per ClickHouse service"
+        )
     foreign = await store.foreign_policies()
     if not foreign:
         return ""
@@ -265,6 +308,12 @@ async def rewrite() -> None:
                 "and run `loom ch-setup` again to draw a new key"
             )
         await load_secrets(may_draw=True)
+        stored = await store.stored_entities()
+        if stored is not None and stored.version > boundary.ENTITY_VERSION:
+            raise RuntimeError(
+                f"the analyst user was written by a newer build (version {stored.version}, this "
+                f"one writes {boundary.ENTITY_VERSION}); run `loom ch-setup` from that build"
+            )
         if foreign := await _foreign_problem():
             raise RuntimeError(foreign)
         await store.write_entities(await _current_statements())
@@ -287,8 +336,13 @@ async def reprobe() -> None:
         if stored is not None and stored != _loaded and await _canary_reads(stored):
             _loaded = stored
         problem, repairable = await _probe()
-        if problem and repairable and await store.can_manage_access():
+        manages = await store.can_manage_access()
+        if problem and repairable and manages:
             problem = await _write_under_lease() or (await _probe())[0]
+        elif not problem and manages:
+            # A policy added since the last write widens other users, not the
+            # analyst, so only this check sees it.
+            problem = await _foreign_problem()
     except Exception as e:  # noqa: BLE001 — a failed probe is a reported problem
         problem = f"probing {boundary.ANALYST_USER} failed: {error_line(e)}"
     _set_problem(problem)
@@ -358,10 +412,17 @@ async def _probe() -> tuple[str, bool]:
     not and whether a write of the entities repairs it. It runs as the
     analyst itself, so it needs no access management."""
     db = store.target_database()
-    if _loaded is None or not await _canary_reads(_loaded):
+    if _loaded is None:
+        return (
+            "this replica holds no analyst secrets: loom.analysis_secrets has no row it can open",
+            True,
+        )
+    if not await _canary_reads(_loaded):
         return "the analyst's policies do not accept this replica's key", True
     reserved = _scope_extra(boundary.CANARY_ORG, [boundary.CANARY_NAMESPACE])
     for t in boundary.TABLES:
+        # Every allowlisted table's sort key leads with (org, namespace), so
+        # this count reads a granule or so, however large the table.
         # No row of a real table sits in the reserved scope: a row here means
         # a policy Loom did not write widens what the analyst reads.
         try:
@@ -457,6 +518,8 @@ def _refusal(e: BaseException) -> ValidationError | None:
 
 
 async def handle_insights_query(input: InsightsQueryInput) -> InsightsQueryOutput:
+    """Run one read-only statement as the analyst user, held to the request's
+    org and namespace by ClickHouse's row policies."""
     if (input.org, input.namespace) == (boundary.CANARY_ORG, boundary.CANARY_NAMESPACE):
         raise ValidationError("the empty org and namespace are reserved for the analysis probe")
     if "," in input.namespace:
@@ -485,7 +548,10 @@ async def _run(input: InsightsQueryInput) -> InsightsQueryOutput:
     sql = boundary.wrap_statement(input.sql, limit)
     extra = _scope_extra(input.org, [input.namespace])
     try:
-        names, types, rows = await store.run_statement(sql, password=_password(), extra=extra)
+        # The client waits a little past the time cap, so ClickHouse's own
+        # timeout answers first and the statement does not outlive its call.
+        with statement_timeout(float(settings.ch_analysis_max_execution_s) + 5):
+            names, types, rows = await store.run_statement(sql, password=_password(), extra=extra)
     except Exception as e:
         code = error_code(e)
         if code == _AUTHENTICATION_FAILED:
@@ -496,11 +562,11 @@ async def _run(input: InsightsQueryInput) -> InsightsQueryOutput:
             raise RateLimitedError(
                 "the analyst user already runs as many statements as it may at once; retry"
             ) from None
-        if code == _MEMORY_LIMIT_EXCEEDED and _refusal(e) is None:
+        refusal = _refusal(e)
+        if code == _MEMORY_LIMIT_EXCEEDED and refusal is None:
             raise AnalysisUnavailableError(
                 "ClickHouse is short of memory for analysis statements; retry later"
             ) from None
-        refusal = _refusal(e)
         if refusal is None:
             raise
         raise refusal from None
@@ -518,6 +584,7 @@ async def _run(input: InsightsQueryInput) -> InsightsQueryOutput:
 
 
 async def handle_insights_catalog(input: InsightsCatalogInput) -> InsightsCatalogOutput:
+    """The allowlisted tables and the caps a statement runs under."""
     del input  # the allowlist is the same for every namespace
     return InsightsCatalogOutput(
         tables=[

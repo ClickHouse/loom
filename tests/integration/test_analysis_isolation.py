@@ -53,6 +53,8 @@ def _call(base: str, token: str, op: str, body: dict) -> httpx.Response:
 
 @pytest.fixture(scope="module")
 def seed(control_plane_url: str) -> _Seed:
+    # Minted directly, with the server's secret as mint_test_token does: the
+    # seed is module-scoped, which a function-scoped fixture cannot serve.
     from server.auth.jwt import mint_token
 
     if (

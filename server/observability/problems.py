@@ -84,12 +84,12 @@ class HealthState:
     repo_sandbox_refusal: str = ""
     # Whether a read as LOOM_CH_READER_USER worked: None = not probed or unset.
     ch_reader_ok: bool | None = None
+    # ClickHouse's answer when that read failed.
+    ch_reader_error: str = ""
     # insights.query's analyst user: None = not probed, False = unusable
     # (`analysis_error` says why).
     analysis_ok: bool | None = None
     analysis_error: str = ""
-    # ClickHouse's answer when that read failed.
-    ch_reader_error: str = ""
     # Whether a sign-in lately found loom.oauth_signin_state at its key limit.
     oauth_signin_state_full: bool = False
     # Provider participants this process's last sweep could not retire

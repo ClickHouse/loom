@@ -221,7 +221,7 @@ change.
 ## The analysis op
 
 `insights.query` runs one read-only SQL statement over an allowlisted set of Loom
-tables and return its rows, capped. The agent uses it for questions no other read
+tables and returns its rows, capped. The agent uses it for questions no other read
 answers, such as which agents wrote the most contradicted facts last week or what a
 namespace holds by kind and age. Any token with `viewer` on the namespaces it names can
 call it directly, on any transport, and it joins the
@@ -281,7 +281,10 @@ user, Loom's own included, reading the tables as before, whatever the server's
 on a table, so this one would widen any permissive policy someone else put on an
 allowlisted table: before every write Loom lists them in `system.row_policies` and,
 finding one, writes nothing and names it, for an admin to drop or make restrictive. A
-restrictive policy is left alone, since it narrows every user it names.
+restrictive policy is left alone, since it narrows every user it names. The analyst
+user, its profiles and its policies' names are server-wide, so analysis needs one Loom
+per ClickHouse service: a deployment that finds the analyst's scope policy in another
+database writes nothing and names it.
 
 The key and the analyst's password are random and kept together, as one sealed value, in
 one row of `loom.analysis_secrets`, sealed with `server/core/secrets_at_rest.py` in the
@@ -327,9 +330,14 @@ stored key. Elsewhere an admin uses one of two commands:
   to drop the analyst user and run it again.
 - `loom ch-setup --print-analyst-sql` prints SQL for an admin to run by hand, and needs
   no access management to print (where `--print-sql` prints the admin SQL
-  `loom ch-setup` would run, with the reader's password as a placeholder). It proves its
-  `LOOM_JWT_SECRET` as the rotation below does, draws a fresh key and password, and
-  prints a complete rotation, in the order of a write, with the command that runs it in
+  `loom ch-setup` would run, with the reader's password as a placeholder). It draws the
+  secrets on a first install and otherwise prints the stored key's entity set, with a
+  `REVOKE` before the grants for each grant the analyst's own `SHOW GRANTS` lists,
+  headed by the command that runs it in one session and by the query that lists the
+  permissive policies Loom did not write, which the admin checks first. With
+  [part 2](#build-order) it proves its `LOOM_JWT_SECRET` as the rotation below does,
+  draws a fresh key and password, and prints a complete rotation, in the order of a
+  write, with the command that runs it in
   one session
   (`clickhouse-client --log_queries=0 --distributed_ddl_output_mode=throw --multiquery --queries-file <file>`):
   the delete, the new password, the `KILL QUERY`, the rest of the entity set under the
@@ -425,8 +433,9 @@ keeps:
 - **The caps apart.** The caps are deployment settings, kept in a second profile of
   their own: a write holding the lease (a boot, `loom ch-setup`) writes them when the
   stored ones differ from its settings, the printed SQL always writes them, and nothing
-  else does, so they never touch the version. They are read at boot, not live, and
-  `loom doctor` reports a caps profile that differs from the server's settings.
+  else does, so they never touch the version. They are read at boot, not live; with
+  [part 2](#build-order), `loom doctor` reports a caps profile that differs from the
+  server's settings.
 - **No granted table without its policy.** By default ClickHouse lets a user with no
   policy on a table read every row of it, so each policy is replaced in place, every
   other user's before the analyst's, before any grant is given; then every grant and
@@ -437,7 +446,8 @@ keeps:
 - **The key never changes by itself.** The secrets row is drawn once, and every read of
   it, the one under the lease included, runs with the read-your-writes setting Loom uses
   across replicas (`own_write_reads` in `server/core/ch.py`). A replica reads the key
-  from the row before each statement; a rotation's `KILL QUERY` (the order of a write)
+  from the row at each probe (with [part 2](#build-order), before each statement); a
+  rotation's `KILL QUERY` (the order of a write)
   ends the statements already running. A row that does not open, or is gone while the
   analyst user exists, answers `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem.
   `loom ch-setup --rotate-analysis-key` is the recovery. It runs from a CLI at least as
@@ -467,16 +477,18 @@ background, as the analyst itself, so the probe needs no access management:
 - a `system` table must be refused;
 - when the stored version is this build's: an unsigned read of each allowlisted table
   and of the canary must fail for want of the scope settings (the table has a policy
-  that reads them), and the analyst's own `SHOW GRANTS` must name nothing but the allowlist and the canary. A
+  that reads them), and the analyst's own `SHOW GRANTS` must name nothing but the
+  allowlist and the canary. A
   build older than the stored version skips these, since the entities are another
   build's.
 
 A failed check answers `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem. When the
 stored version is its own, a replica that writes the entities itself writes them again
 under the lease after a check failed with a definite answer that a write repairs: a
-table without its policy, a canary under another key (checked again once three settle
-times have passed since the row's stored time, as `loom doctor` does, since a server
-still applying a rotation looks the same), a grant outside the allowlist. Elsewhere
+table without its policy, a canary under another key (with [part 2](#build-order),
+checked again once three settle times have passed since the row's stored time, as
+`loom doctor` does, since a server still applying a rotation looks the same), a grant
+outside the allowlist. Elsewhere
 `loom doctor` names `loom ch-setup` as the fix. A policy Loom did not write, which a
 write cannot remove, is left to an admin: `loom doctor` names it where Loom's user can
 list policies, and the table that admits rows in the reserved scope where it cannot. The

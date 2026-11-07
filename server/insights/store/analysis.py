@@ -129,6 +129,21 @@ async def foreign_policies(*, ch: _CHClient | None = None) -> list[str]:
     return [f"{r['short_name']} ON {r['table']}" for r in rows]
 
 
+async def other_deployments(*, ch: _CHClient | None = None) -> list[str]:
+    """Other databases on this ClickHouse whose tables carry the analyst's
+    scope policy: another Loom deployment writing the same server-wide user."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT DISTINCT database FROM system.row_policies
+        WHERE short_name = {name:String} AND database != currentDatabase()
+        ORDER BY database
+        """,
+        {"name": boundary.POLICY_NAME},
+    )
+    return [str(r["database"]) for r in rows]
+
+
 async def analyst_user_absent(*, ch: _CHClient | None = None) -> bool:
     """True only when Loom's user can see that no analyst user exists; False
     when it exists or Loom's user cannot list users."""
@@ -169,7 +184,9 @@ async def own_version(*, password: str, extra: dict[str, Any], ch: _CHClient | N
         return 0
 
 
-_GRANT = re.compile(r"^GRANT SELECT\((?P<columns>[^)]*)\) ON [^.]+\.(?P<table>\S+) TO ")
+_GRANT = re.compile(
+    r"^GRANT SELECT\((?P<columns>[^)]*)\) ON (?P<database>[^.\s]+)\.(?P<table>\S+) TO "
+)
 
 
 async def own_grants(
@@ -184,11 +201,21 @@ async def own_grants(
     out: set[tuple[str, str]] = set()
     for (line,) in rows:
         m = _GRANT.match(str(line))
-        if m is None:
+        if m is None or m["database"].strip("`") != database():
             out.add(("*", str(line)))
             continue
         out |= {(m["table"], c.strip()) for c in m["columns"].split(",")}
     return frozenset(out)
+
+
+async def own_grant_lines(
+    *, password: str, extra: dict[str, Any], ch: _CHClient | None = None
+) -> list[str]:
+    """The analyst's own SHOW GRANTS, line by line, read as the analyst."""
+    ch = ch or _default_client()
+    with as_analyst(boundary.ANALYST_USER, password, extra):
+        _, _, rows = await ch.query_columns("SHOW GRANTS")
+    return [str(line) for (line,) in rows]
 
 
 async def write_entities(statements: list[str], *, ch: _CHClient | None = None) -> None:
