@@ -3,8 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
 import { confirmAction } from "../../components/ConfirmDialog";
+import { toast } from "../../components/Toast";
 import { useStore } from "../../lib/state";
-import { DuplicatesPanel } from "./Duplicates";
+import { DuplicatesPanel, keptAndCopies } from "./Duplicates";
 
 vi.mock("../../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
 vi.mock("../../components/Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
@@ -35,17 +36,24 @@ vi.mock("../../api", async (importOriginal) => {
         },
       ],
     })),
-    listWritingAgents: vi.fn(async () => ["claude-code", "-"]),
+    listMemoryAgents: vi.fn(async () => ["claude-code", "-"]),
     resolveMemoryDuplicate: vi.fn(async () => ({})),
     retireDocumentDuplicate: vi.fn(async () => ({})),
     collapseMemoryDuplicates: vi.fn(async (_id: unknown, dry: boolean) => ({
       pairs: 3,
-      restamped: dry ? 0 : 3,
+      mirror_stale: 2,
+      restamped: dry ? 0 : 2,
       truncated: false,
       sample: [],
     })),
     repairOrphanDuplicates: vi.fn(async () => ({ candidates: 0, reactivated: 0 })),
-    consolidateMemories: vi.fn(async () => ({ consolidated: [], examined: 10, clusters_found: 2 })),
+    consolidateMemories: vi.fn(async () => ({
+      consolidated: [{ canonical_key: "k", canonical_value: "v", merged_keys: ["a", "b"], cluster_size: 2 }],
+      examined: 10,
+      clusters_found: 2,
+      clusters_failed: 1,
+      clusters_refused_lossy: 1,
+    })),
   };
 });
 
@@ -74,10 +82,12 @@ describe("DuplicatesPanel", () => {
   it("deletes a memory of the pair only after a confirmation that names it", async () => {
     vi.mocked(confirmAction).mockResolvedValueOnce(false);
     render(<DuplicatesPanel />);
-    await userEvent.click(await screen.findByRole("button", { name: "Keep this one: user_city" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for user_city" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Keep this one, delete home_city" }));
     expect(confirmAction).toHaveBeenCalledWith(expect.objectContaining({ title: "Delete home_city?" }));
     expect(api.resolveMemoryDuplicate).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "Drop this one: user_city" }));
+    await userEvent.click(screen.getByRole("button", { name: "Actions for user_city" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Keep home_city, delete this one" }));
     expect(confirmAction).toHaveBeenLastCalledWith(expect.objectContaining({ title: "Delete user_city?" }));
     await waitFor(() =>
       expect(api.resolveMemoryDuplicate).toHaveBeenCalledWith(scope, expect.anything(), "d1", "keep_canonical"),
@@ -91,14 +101,94 @@ describe("DuplicatesPanel", () => {
     await waitFor(() => expect(api.retireDocumentDuplicate).toHaveBeenCalledWith(scope, "a.md", "b.md"));
   });
 
-  it("collapses every pair only after a dry run and a confirmation", async () => {
+  it("marks the stale search rows of duplicates only after a dry run and a confirmation", async () => {
     render(<DuplicatesPanel />);
-    await userEvent.click(await screen.findByRole("button", { name: "Collapse all pairs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Hide duplicates from search" }));
     await waitFor(() => expect(api.collapseMemoryDuplicates).toHaveBeenCalledTimes(2));
     expect(vi.mocked(api.collapseMemoryDuplicates).mock.calls.map((c) => c[1])).toEqual([true, false]);
     expect(confirmAction).toHaveBeenCalledWith(
-      expect.objectContaining({ title: expect.stringContaining("3 duplicate pairs") }),
+      expect.objectContaining({ title: expect.stringContaining("Mark 2 search rows") }),
     );
+    expect(toast).toHaveBeenCalledWith("Marked 2 search rows.", "ok");
+  });
+
+  it("asks nothing when pairs wait but search already skips them, and says when more remain", async () => {
+    vi.mocked(api.collapseMemoryDuplicates).mockResolvedValueOnce({
+      pairs: 3,
+      mirror_stale: 0,
+      restamped: 0,
+      truncated: false,
+      sample: [],
+    });
+    render(<DuplicatesPanel />);
+    await userEvent.click(await screen.findByRole("button", { name: "Hide duplicates from search" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Search already skips every duplicate.", "info"));
+    expect(confirmAction).not.toHaveBeenCalled();
+
+    vi.mocked(api.collapseMemoryDuplicates)
+      .mockResolvedValueOnce({ pairs: 500, mirror_stale: 1, restamped: 0, truncated: true, sample: [] })
+      .mockResolvedValueOnce({ pairs: 500, mirror_stale: 1, restamped: 1, truncated: true, sample: [] });
+    await userEvent.click(screen.getByRole("button", { name: "Hide duplicates from search" }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith("Marked 1 search row. More duplicates remain: run it again.", "ok"),
+    );
+  });
+
+  it("offers no decision on a cluster whose canonical is gone, and warns of the siblings a keep orphans", async () => {
+    vi.mocked(api.listMemoryDuplicates).mockResolvedValueOnce({
+      clusters: [
+        {
+          canonical_id: "gone",
+          canonical_key: "",
+          canonical_agent: "",
+          dup_count: 1,
+          duplicates: [{ memory_id: "o1", memory_key: "old_city", agent: "a", created_at: null }],
+        },
+        {
+          canonical_id: "c2",
+          canonical_key: "home",
+          canonical_agent: "a",
+          dup_count: 2,
+          duplicates: [
+            { memory_id: "x1", memory_key: "home_1", agent: "a", created_at: null },
+            { memory_id: "x2", memory_key: "home_2", agent: "a", created_at: null },
+          ],
+        },
+      ],
+    });
+    vi.mocked(confirmAction).mockResolvedValueOnce(false);
+    render(<DuplicatesPanel />);
+    expect(await screen.findByText(/1 duplicate of a deleted memory/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Keep both: old_city" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Actions for home_1" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Keep this one, delete home" }));
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("The other 1 duplicate of it lose their canonical") }),
+    );
+  });
+
+  it("keeps the oldest document and lists each other address once", () => {
+    const d = (doc_id: string, source_uri: string, ingested_at: string) => ({
+      doc_id,
+      source_uri,
+      title: "",
+      ingested_at,
+    });
+    const { keep, copies } = keptAndCopies([
+      d("3", "c.md", "2026-03"),
+      d("1", "a.md", "2026-01"),
+      d("2", "a.md", "2026-02"),
+      d("4", "c.md", "2026-04"),
+    ]);
+    expect(keep.doc_id).toBe("1");
+    expect(copies.map((c) => c.doc_id)).toEqual(["3"]);
+  });
+
+  it("shows the memory pairs when the document read fails", async () => {
+    vi.mocked(api.listDocumentDuplicates).mockRejectedValueOnce(new Error("boom"));
+    render(<DuplicatesPanel />);
+    expect(await screen.findByRole("button", { name: "Keep both: user_city" })).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load duplicate documents")).toBeInTheDocument();
   });
 
   it("asks nothing when the dry run finds nothing to repair", async () => {
@@ -122,7 +212,12 @@ describe("DuplicatesPanel", () => {
     expect(document.querySelector('[cui-select-item][data-value="-"]')).toBeNull();
     await userEvent.click(item);
     await userEvent.click(merge);
-    await waitFor(() => expect(api.consolidateMemories).toHaveBeenCalledWith(scope, "claude-code", false));
-    expect(api.consolidateMemories).toHaveBeenCalledWith(scope, "claude-code", true);
+    // One call, after the confirmation: a dry run would pay for the same model calls.
+    await waitFor(() => expect(api.consolidateMemories).toHaveBeenCalledWith(scope, "claude-code"));
+    expect(api.consolidateMemories).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith(
+      "Merged 1 of 2 clusters; 1 left as they were, 1 because the merge lost a detail",
+      "ok",
+    );
   });
 });

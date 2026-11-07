@@ -6,6 +6,9 @@ type Scope = Pick<Identity, "org" | "namespace">;
 
 // ===== Duplicate memories (the dedup worker's pairs) =====
 
+/** How many clusters each duplicate list asks for: the largest first. */
+export const DUPLICATE_LIST_LIMIT = 50;
+
 /** Mirrors `server/memory/api/models_graph.py::_DedupCluster`. */
 export interface MemoryDuplicateCluster {
   canonical_id: string;
@@ -19,7 +22,11 @@ export async function listMemoryDuplicates(
   id: Scope,
   opts: RequestOpts = {},
 ): Promise<{ clusters: MemoryDuplicateCluster[] }> {
-  return post("/v1/memory.dedup_list", { org: id.org, namespace: id.namespace, limit: 50 }, opts.signal);
+  return post(
+    "/v1/memory.dedup_list",
+    { org: id.org, namespace: id.namespace, limit: DUPLICATE_LIST_LIMIT },
+    opts.signal,
+  );
 }
 
 export type MemoryDuplicateDecision = "keep_canonical" | "keep_duplicate" | "keep_both";
@@ -45,13 +52,15 @@ export async function resolveMemoryDuplicate(
 /** Mirrors `server/memory/api/models_graph.py::MemoryDedupCollapseOutput`. */
 export interface DuplicateCollapse {
   pairs: number;
+  /** Search rows of duplicates still marked as live; a run marks them `duplicate`. */
+  mirror_stale: number;
   restamped: number;
   truncated: boolean;
   sample: { duplicate_key: string; canonical_key: string }[];
 }
 
-/** POST /v1/memory.dedup_collapse: every duplicate pair onto its canonical, no model call
- *  and nothing tombstoned. `dryRun` counts what a run would do. */
+/** POST /v1/memory.dedup_collapse: marks the search rows of duplicates `duplicate`, so search
+ *  skips them; no model call, and no value, key or memory changes. `dryRun` counts them. */
 export async function collapseMemoryDuplicates(id: Scope, dryRun: boolean): Promise<DuplicateCollapse> {
   return post("/v1/memory.dedup_collapse", { org: id.org, namespace: id.namespace, dry_run: dryRun });
 }
@@ -73,20 +82,25 @@ export interface ConsolidatedCluster {
 }
 
 /** POST /v1/memory.consolidate: one model call per cluster of near-duplicate memories of
- *  one agent, merged into one each. `dryRun` finds the clusters and merges none. */
+ *  one agent (those of no user), merged into one each. */
 export async function consolidateMemories(
   id: Scope,
   agent: string,
-  dryRun: boolean,
-): Promise<{ consolidated: ConsolidatedCluster[]; examined: number; clusters_found: number }> {
-  return post("/v1/memory.consolidate", { org: id.org, namespace: id.namespace, agent, dry_run: dryRun });
+): Promise<{
+  consolidated: ConsolidatedCluster[];
+  examined: number;
+  clusters_found: number;
+  clusters_failed: number;
+  clusters_refused_lossy: number;
+}> {
+  return post("/v1/memory.consolidate", { org: id.org, namespace: id.namespace, agent });
 }
 
 /** POST /v1/memory.agents_list: the agents that wrote into the namespace. */
-export async function listWritingAgents(id: Scope, opts: RequestOpts = {}): Promise<string[]> {
+export async function listMemoryAgents(id: Scope, opts: RequestOpts = {}): Promise<string[]> {
   const r = await post<{ agents: string[] }>(
     "/v1/memory.agents_list",
-    { org: id.org, namespace: id.namespace, agent: "*" },
+    { org: id.org, namespace: id.namespace },
     opts.signal,
   );
   return r.agents ?? [];
@@ -104,7 +118,11 @@ export async function listDocumentDuplicates(
   id: Scope,
   opts: RequestOpts = {},
 ): Promise<{ doc_clusters: DocumentDuplicateCluster[] }> {
-  return post("/v1/knowledge.dedup_list", { org: id.org, namespace: id.namespace, limit: 50 }, opts.signal);
+  return post(
+    "/v1/knowledge.dedup_list",
+    { org: id.org, namespace: id.namespace, limit: DUPLICATE_LIST_LIMIT },
+    opts.signal,
+  );
 }
 
 /** POST /v1/knowledge.dedup_resolve: `duplicateUri` is superseded by `canonicalUri`. */
@@ -124,8 +142,11 @@ export async function retireDocumentDuplicate(id: Scope, canonicalUri: string, d
 /** Mirrors `server/memory/api/models_proposals.py::MemoryProposal`. */
 export interface MemoryProposal {
   memory_key: string;
+  memory_id: string;
   agent: string;
+  /** "" for a high row: its value is read by key. */
   value_preview: string;
+  sensitivity: "" | "low" | "medium" | "high";
   created_at: string;
   graded_passes: number;
   graded_fails: number;
@@ -135,18 +156,25 @@ export interface MemoryProposal {
   ready: "" | "accept" | "reject";
 }
 
+/** How many proposals the Review queue asks for, newest first. */
+export const PROPOSAL_LIST_LIMIT = 100;
+
 export async function listProposals(
   id: Scope,
   opts: RequestOpts = {},
 ): Promise<{ proposals: MemoryProposal[]; total: number }> {
-  return post("/v1/memory.proposals", { org: id.org, namespace: id.namespace, limit: 100 }, opts.signal);
+  return post(
+    "/v1/memory.proposals",
+    { org: id.org, namespace: id.namespace, limit: PROPOSAL_LIST_LIMIT },
+    opts.signal,
+  );
 }
 
 export async function decideProposals(
   id: Scope,
   keys: string[],
   decision: "accept" | "reject",
-): Promise<{ decided: number }> {
+): Promise<{ decided: number; results: { memory_key: string; decided: boolean; reason: string }[] }> {
   return post("/v1/memory.proposal_decide", { org: id.org, namespace: id.namespace, memory_keys: keys, decision });
 }
 
@@ -159,21 +187,11 @@ export interface RevisionSuggestion {
   rationale: string;
 }
 
-/** POST /v1/conflicts.propose_revision: what to do about a conflict, changing nothing.
- *  `memories` maps each suggestion's local ids to keys. */
+/** POST /v1/conflicts.propose_revision: what to do about a conflict with all its peers,
+ *  changing nothing. */
 export async function proposeRevision(
   id: Scope,
   memoryId: string,
-  peerId?: string,
-): Promise<{
-  found: boolean;
-  memories: { local_id: number; memory_id: string; memory_key: string }[];
-  suggestions: RevisionSuggestion[];
-}> {
-  return post("/v1/conflicts.propose_revision", {
-    org: id.org,
-    namespace: id.namespace,
-    memory_id: memoryId,
-    ...(peerId ? { peer_id: peerId } : {}),
-  });
+): Promise<{ found: boolean; suggestions: RevisionSuggestion[] }> {
+  return post("/v1/conflicts.propose_revision", { org: id.org, namespace: id.namespace, memory_id: memoryId });
 }

@@ -104,7 +104,11 @@ export function ReviewQueue() {
   // The duplicate lists are ADMIN; the tab is there for an admin whether or not a pair waits,
   // since its repairs run over the whole namespace.
   const hasDuplicates = canCall("memory.dedup_list", role, whoami) && canCall("knowledge.dedup_list", role, whoami);
-  const [probedProposals, setProbedProposals] = useState<{ rows: MemoryProposal[]; scope: string } | null>(null);
+  const [probedProposals, setProbedProposals] = useState<{
+    rows: MemoryProposal[];
+    total: number;
+    scope: string;
+  } | null>(null);
   const hasProposals = probedProposals?.scope === scopeKey && probedProposals.rows.length > 0;
   const tabbed = hasLearnings || hasExceptions || hasAuto || hasProposals || hasDuplicates;
   // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
@@ -147,7 +151,7 @@ export function ReviewQueue() {
       if (!proposalsReadable) return;
       listProposals({ org: identity.org, namespace: identity.namespace }, { signal })
         .then((r) => {
-          if (live()) setProbedProposals({ rows: r.proposals ?? [], scope: scopeKey });
+          if (live()) setProbedProposals({ rows: r.proposals ?? [], total: r.total ?? 0, scope: scopeKey });
         })
         .catch(() => {});
     },
@@ -251,7 +255,7 @@ export function ReviewQueue() {
         )}
         {hasProposals && (
           <Tabs.Content value="proposals">
-            <ProposalsPanel initial={probedProposals.rows} />
+            <ProposalsPanel initial={probedProposals} />
           </Tabs.Content>
         )}
         {hasDuplicates && (
@@ -553,7 +557,7 @@ function ConflictsPanel() {
             Keep A
           </Button>
         </div>
-        <RevisionHint key={current.memory_id} memoryId={current.memory_id} peerId={peerId} />
+        <RevisionHint key={current.memory_id} memoryId={current.memory_id} />
       </Panel>
 
       <SectionHeading
@@ -583,28 +587,26 @@ function ConflictsPanel() {
   );
 }
 
-/** A suggestion in the words of the buttons above it: A is the conflict on screen
- *  (local id 1), any other target is named by its key. */
-function suggestionLabel(s: RevisionSuggestion, keys: Map<number, string>): string {
-  if (s.decision === "allow") return "Allow both";
-  const target = s.target_local_id === 1 ? "A" : (keys.get(s.target_local_id) ?? "the peer");
-  return `${s.decision === "revise" ? "Keep" : "Drop"} ${target}`;
-}
+/** A suggestion in the words of the buttons above it; every suggestion is about A, the
+ *  conflict on screen. */
+const SUGGESTION_LABEL: Record<RevisionSuggestion["decision"], string> = {
+  revise: "Keep A",
+  contract: "Drop A",
+  allow: "Allow both",
+};
 
 /** conflicts.propose_revision for the conflict on screen, read when asked: which of the
- *  three decisions fits and why. It changes nothing. */
-function RevisionHint({ memoryId, peerId }: { memoryId: string; peerId?: string }) {
+ *  three decisions fits and why. It weighs every peer, as the buttons act on every peer, and
+ *  changes nothing. */
+function RevisionHint({ memoryId }: { memoryId: string }) {
   const identity = useIdentity();
-  const [hint, setHint] = useState<{ suggestions: RevisionSuggestion[]; keys: Map<number, string> } | null>(null);
+  const [hint, setHint] = useState<RevisionSuggestion[] | null>(null);
   const [busy, setBusy] = useState(false);
   const ask = async () => {
     setBusy(true);
     try {
-      const r = await proposeRevision({ org: identity.org, namespace: identity.namespace }, memoryId, peerId);
-      setHint({
-        suggestions: r.suggestions ?? [],
-        keys: new Map((r.memories ?? []).map((m) => [m.local_id, m.memory_key])),
-      });
+      const r = await proposeRevision({ org: identity.org, namespace: identity.namespace }, memoryId);
+      setHint(r.suggestions ?? []);
     } catch (e) {
       toast(`Couldn't read a suggestion: ${humanizeError(e)}`, "error");
     } finally {
@@ -621,11 +623,11 @@ function RevisionHint({ memoryId, peerId }: { memoryId: string; peerId?: string 
     );
   return (
     <div className="mt-3 text-sm" role="status">
-      {hint.suggestions.length === 0
+      {hint.length === 0
         ? "No suggestion for this conflict."
-        : hint.suggestions.map((s) => (
-            <p key={`${s.decision}-${s.target_local_id}`}>
-              <strong>{suggestionLabel(s, hint.keys)}</strong>: {s.rationale}
+        : hint.map((s) => (
+            <p key={s.decision}>
+              <strong>{SUGGESTION_LABEL[s.decision]}</strong>: {s.rationale}
             </p>
           ))}
     </div>

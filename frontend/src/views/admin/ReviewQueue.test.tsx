@@ -33,7 +33,7 @@ vi.mock("../../api", async (importOriginal) => {
     proposeRevision: vi.fn(),
     listMemoryDuplicates: vi.fn(async () => ({ clusters: [] })),
     listDocumentDuplicates: vi.fn(async () => ({ doc_clusters: [] })),
-    listWritingAgents: vi.fn(async () => []),
+    listMemoryAgents: vi.fn(async () => []),
   };
 });
 // The page's yes/no probe is shared with the sidebar and lives in api/audit.
@@ -182,22 +182,19 @@ describe("ReviewQueue", () => {
     useStore.setState({ whoami: null, myNamespaces: null });
   });
 
-  it("suggests a decision in the words of the buttons, naming a peer by its key", async () => {
+  it("suggests a decision over every peer, in the words of the buttons", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
     vi.mocked(proposeRevision).mockResolvedValue({
       found: true,
-      memories: [
-        { local_id: 1, memory_id: "id-city", memory_key: "city" },
-        { local_id: 2, memory_id: "peer-000000000000", memory_key: "home_city" },
-      ],
-      suggestions: [{ decision: "contract", target_local_id: 2, peer_local_ids: [1], rationale: "A is pinned" }],
+      suggestions: [{ decision: "contract", target_local_id: 1, peer_local_ids: [2], rationale: "a peer is pinned" }],
     });
     seed("ns-a");
     render(<ReviewQueue />);
     await screen.findByText("value of city", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: "Suggest a decision" }));
-    expect(await screen.findByText("Drop home_city")).toBeInTheDocument();
-    expect(screen.getByText(/A is pinned/)).toBeInTheDocument();
+    expect(await within(await screen.findByRole("status")).findByText("Drop A")).toBeInTheDocument();
+    expect(screen.getByText(/a peer is pinned/)).toBeInTheDocument();
+    expect(vi.mocked(proposeRevision).mock.calls[0]).toHaveLength(2);
     expect(resolveConflict).not.toHaveBeenCalled();
   });
 

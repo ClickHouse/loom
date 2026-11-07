@@ -233,7 +233,6 @@ DASHBOARD_PENDING: frozenset[str] = frozenset(
         "memory.reject",
         "memory.touch",
         "memory.unlock",
-        # review
         # settings
         "extraction_policy.clear",
         "extraction_policy.get",
