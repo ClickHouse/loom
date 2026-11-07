@@ -52,9 +52,7 @@ EVERYTHING = (
 
 
 def render(*args: str) -> list[dict[str, Any]]:
-    cmd = ["helm", "template", "loom", str(CHART)]
-    for s in REQUIRED:
-        cmd += ["--set", s]
+    cmd = ["helm", "template", "loom", str(CHART), *sets(*REQUIRED)]
     out = subprocess.run([*cmd, *args], check=True, capture_output=True, text=True).stdout
     return [d for d in yaml.safe_load_all(out) if d]
 
