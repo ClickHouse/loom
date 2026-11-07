@@ -239,6 +239,27 @@ def test_one_unreadable_namespace_refuses_the_whole_request(
     assert single.calls == []  # nothing ran
 
 
+def test_a_one_entry_list_naming_an_unreadable_namespace_is_refused_on_both_ops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate checks `namespace`, not the list: a one-entry list is authorized as each
+    entry of a longer one, through the handler, before anything runs."""
+    checked: list[str] = []
+
+    async def _scope(org: str, ns: str, role: Any = None, *, hides_answer=True) -> bool:
+        checked.append(ns)
+        return ns != "code-secret"
+
+    monkeypatch.setattr(authz, "row_in_scope", _scope)
+    monkeypatch.setattr(hy, "require_code_intel", lambda: None)
+    monkeypatch.setattr(grep_mod, "require_code_intel", lambda: None)
+    with pytest.raises(AuthInsufficientError, match="code.symbol.*code-secret"):
+        _run(hy.handle_code_symbol(_sym(presence=True, namespaces=["code-secret"])))
+    with pytest.raises(AuthInsufficientError, match="code.grep.*code-secret"):
+        _run(grep_mod.handle_code_grep(_grep(mode="presence", namespaces=["code-secret"])))
+    assert checked == ["code-secret", "code-secret"]
+
+
 def test_the_deployment_cap_can_lower_the_wire_cap(
     monkeypatch: pytest.MonkeyPatch, _authorized: None
 ) -> None:

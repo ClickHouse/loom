@@ -1,5 +1,5 @@
 """Every input field that names a namespace, org or inbox besides `org` /
-`namespace` is authorized by its handler.
+`namespace` is declared with the function that authorizes it.
 
 The transport gate checks the request's `org` and `namespace` only. A field
 naming another one (`namespaces`, `to_namespace`, `inbox`, ...) reaches the

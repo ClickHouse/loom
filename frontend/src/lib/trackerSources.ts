@@ -321,7 +321,8 @@ export interface BindableRecord {
   covers: boolean;
   /** The repositories the tracker lists (for the "answers nothing" sentence). */
   repos: string[];
-  /** The caller administers the tracker: a new link needs that, or an org-wide admin token. */
+  /** The caller holds an admin grant on the tracker. A hint only: the server decides a new
+   *  link, and a token that administers the tracker another way (org-wide) links without one. */
   admin: boolean;
 }
 
