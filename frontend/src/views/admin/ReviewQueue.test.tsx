@@ -788,6 +788,33 @@ describe("ReviewQueue", () => {
     expect(toast).toHaveBeenCalledWith("Not decided: not a proposal (status active)", "error");
   });
 
+  it("shows one row for a key two agents proposed, and one decision takes both off", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listProposals)
+      .mockResolvedValueOnce({
+        proposals: [
+          { memory_key: "k", memory_id: "m2", agent: "b", value_preview: "b's version" },
+          { memory_key: "k", memory_id: "m1", agent: "a", value_preview: "a's version" },
+        ],
+        total: 2,
+      })
+      .mockResolvedValue({ proposals: [], total: 0 });
+    vi.mocked(decideProposal).mockResolvedValue({
+      decided: 1,
+      results: [{ memory_key: "k", decided: true, status: "active" }],
+    });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await screen.findByText("b's version", {}, WAIT);
+    expect(screen.queryByText("a's version")).toBeNull();
+    expect(screen.getByText(/1 more proposal of this key from other agents/)).toBeTruthy();
+    expect(screen.getByText("2 proposals")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Accept k" }));
+    await waitFor(() => expect(screen.queryByText("b's version")).toBeNull(), WAIT);
+    expect(decideProposal).toHaveBeenCalledTimes(1);
+  });
+
   it("says a contradicted proposal it accepted now waits as a conflict", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listProposals).mockResolvedValue({

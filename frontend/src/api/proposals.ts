@@ -1,4 +1,4 @@
-// Fact proposals (memory.proposals, memory.proposal_decide): facts an agent wrote with
+// Fact proposals (memory.proposals): facts an agent wrote with
 // `memory.set(proposed=true)`, served only on request until someone accepts them.
 import { post } from "../api";
 import type { Identity, RequestOpts } from "../api";

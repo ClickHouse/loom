@@ -864,6 +864,23 @@ function trialLabel(r: MemoryProposal): string {
 // The characters of a proposal's value `memory.proposals` sends.
 const PREVIEW_CHARS = 400;
 
+// A key's proposals as one row: agents of a namespace may each propose the same key, and
+// `memory.proposal_decide` decides them together. The newest one shows; `others` counts
+// the rest.
+type ProposalRow = MemoryProposal & { others: number };
+
+function oneRowPerKey(read: MemoryProposal[]): ProposalRow[] {
+  const rows = new Map<string, ProposalRow>();
+  for (const p of read) {
+    const row = rows.get(p.memory_key);
+    if (row) row.others += 1;
+    else rows.set(p.memory_key, { ...p, others: 0 });
+  }
+  return [...rows.values()];
+}
+
+const proposalsIn = (rows: ProposalRow[]) => rows.reduce((n, r) => n + 1 + r.others, 0);
+
 function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null; onSeedUsed: () => void }) {
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
@@ -873,7 +890,7 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
   // Keys this panel decided: a re-read from a replica that has not seen the decision yet
   // must not bring them back. Each is kept until a read no longer returns it.
   const decided = useRef(new Set<string>());
-  const [rows, setRows] = useState<MemoryProposal[] | null>(initial?.proposals ?? null);
+  const [rows, setRows] = useState<ProposalRow[] | null>(initial ? oneRowPerKey(initial.proposals) : null);
   const [total, setTotal] = useState(initial?.total ?? 0);
   const [reason, setReason] = useState<Record<string, string>>({});
   // The keys a decision is out for: their buttons wait, so a second click sends nothing.
@@ -910,9 +927,10 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
         .then((r) => {
           if (!live()) return;
           const read = r.proposals || [];
-          decided.current = new Set(read.filter((p) => decided.current.has(p.memory_key)).map((p) => p.memory_key));
-          setRows(read.filter((p) => !decided.current.has(p.memory_key)));
-          setTotal(Math.max(0, (r.total ?? 0) - decided.current.size));
+          const stale = read.filter((p) => decided.current.has(p.memory_key));
+          decided.current = new Set(stale.map((p) => p.memory_key));
+          setRows(oneRowPerKey(read.filter((p) => !decided.current.has(p.memory_key))));
+          setTotal(Math.max(0, (r.total ?? 0) - stale.length));
         })
         .catch((e) => {
           if (!live()) return;
@@ -958,11 +976,12 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
       // Where the decided row is now, not where it was when clicked: another decision may
       // have taken a row above it off the list meanwhile, or a re-read the row itself.
       const at = Math.max(0, rowsNow.current?.findIndex((r) => r.memory_key === key) ?? 0);
+      const gone = rowsNow.current?.find((r) => r.memory_key === key);
       decided.current.add(key);
       // Off the list at once, so its buttons cannot send the decision again.
       setRows((rs) => rs?.filter((r) => r.memory_key !== key) ?? rs);
       setReason(({ [key]: _gone, ...rest }) => rest);
-      setTotal((t) => Math.max(0, t - 1));
+      setTotal((t) => Math.max(0, t - 1 - (gone?.others ?? 0)));
       // Only when focus is still in the decided row or was lost: never pull it away from
       // a field the person moved to while the decision was out.
       const active = document.activeElement;
@@ -986,9 +1005,9 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
         search={false}
         count={
           !error && rows !== null
-            ? total > rows.length
-              ? `the newest ${rows.length} of ${total} proposals read`
-              : `${rows.length} ${rows.length === 1 ? "proposal" : "proposals"}`
+            ? total > proposalsIn(rows)
+              ? `the newest ${proposalsIn(rows)} of ${total} proposals read`
+              : `${proposalsIn(rows)} ${proposalsIn(rows) === 1 ? "proposal" : "proposals"}`
             : undefined
         }
       />
@@ -1022,7 +1041,7 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
           )}
           {rows.map((r) => (
             <Panel
-              key={r.memory_id || r.memory_key}
+              key={r.memory_key}
               ref={(el) => {
                 if (el) rowBoxes.current.set(r.memory_key, el);
                 else rowBoxes.current.delete(r.memory_key);
@@ -1045,12 +1064,18 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
                   {r.created_at && <ListTime time={r.created_at} quiet />}
                 </span>
               </div>
+              {r.others > 0 && (
+                <div className="text-xs text-text-muted mb-2">
+                  {plural(r.others, "more proposal")} of this key from other agents; a decision covers them all.
+                </div>
+              )}
               {r.sensitivity === "high" ? (
                 <div className="text-sm text-text-muted mb-2">{SENSITIVE_READ_BY_KEY}</div>
               ) : (
                 <div className="text-sm text-text mb-2 whitespace-pre-wrap break-words">
                   {r.value_preview ?? ""}
-                  {/* The server sends the first 400 characters: the key opens the whole value. */}
+                  {/* The server sends the first 400 characters, so a value of exactly 400 is
+                      marked too: the key opens the whole value. */}
                   {(r.value_preview?.length ?? 0) >= PREVIEW_CHARS && "…"}
                 </div>
               )}

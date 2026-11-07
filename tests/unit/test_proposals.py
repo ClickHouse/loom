@@ -88,9 +88,15 @@ def repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     seen: dict[str, Any] = {"mirror": [], "audit": [], "flagged": [], "announced": []}
 
     async def _many(
-        ident: Any, keys: list[str], *, ch: Any = None, strong: bool = False, scope: Any = None
+        ident: Any,
+        keys: list[str],
+        *,
+        ch: Any = None,
+        strong: bool = False,
+        scope: Any = None,
+        every_identity: bool = False,
     ) -> list[Any]:
-        assert strong and ident.agent == "*"
+        assert strong and every_identity and ident.agent == "*"
         return [rows[k] for k in keys if k in rows]
 
     async def _mirror(batch: list[dict[str, Any]], *, ch: Any = None) -> int:
@@ -137,6 +143,25 @@ def test_decide_changes_only_proposals_and_mirrors_every_decided_row(repo: dict[
     # an `active` flip is mirrored too (write_versions_by_ids would skip it)
     assert [r["memory_key"] for r in repo["mirror"]] == ["p1"]
     assert repo["audit"] == [("memory.proposal_accept", "human:t", "p1")]
+
+
+def test_a_decision_covers_every_agents_proposal_of_the_key(
+    repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory import store as memory_repo
+
+    heads = [_Row("k", "proposed"), _Row("k", "proposed", conflict_with=["id-fact"])]
+
+    async def _many(ident: Any, keys: list[str], **kw: Any) -> list[Any]:
+        assert kw["every_identity"]
+        return heads
+
+    monkeypatch.setattr(memory_repo, "get_many_by_keys", _many)
+    ch = _CH()
+    out = asyncio.run(p.decide("o", "n", ["k"], "accept", actor="human:t", ch=ch))
+    assert [(r.memory_key, r.decided, r.status) for r in out] == [("k", True, "conflicted")]
+    assert [r["status"] for r in ch.inserts[0]] == ["active", "conflicted"]
+    assert len(repo["audit"]) == 2
 
 
 def test_an_accepted_proposal_that_met_a_contradiction_lands_conflicted(

@@ -146,7 +146,8 @@ async def decide(
     reason: str = "",
     ch: Any = None,
 ) -> list[DecideResult]:
-    """Accept (→ `active`) or reject (→ `rejected`) the proposals under `keys`.
+    """Accept (→ `active`) or reject (→ `rejected`) the proposals under `keys`, every
+    agent's proposal of a key included.
 
     Only rows still `proposed` change; anything else is reported as it is.
     Each decided row is a new version carrying every column
@@ -165,35 +166,44 @@ async def decide(
         org=org, namespace=namespace, agent="*", user_id="-", session_id="-"
     )
     rows = await memory_repo.get_many_by_keys(
-        ident, wanted, ch=ch, strong=True, scope=WHOLE_NAMESPACE
+        ident, wanted, ch=ch, strong=True, scope=WHOLE_NAMESPACE, every_identity=True
     )
-    by_key = {r.memory_key: r for r in rows}
+    # Agents of one namespace may each propose the same key: a decision covers them all.
+    by_key: dict[str, list[Any]] = {}
+    for r in rows:
+        by_key.setdefault(r.memory_key, []).append(r)
     to_write: list[dict[str, Any]] = []
     decided: list[Any] = []
     out: list[DecideResult] = []
     for key in wanted:
-        row = by_key.get(key)
-        if row is None:
+        held = by_key.get(key, [])
+        if not held:
             out.append(DecideResult(key, False, "", "not found"))
             continue
-        status = str(getattr(row, "status", "") or "")
-        if status != PROPOSED:
+        proposed = [r for r in held if str(getattr(r, "status", "") or "") == PROPOSED]
+        if not proposed:
+            status = str(getattr(held[0], "status", "") or "")
             out.append(DecideResult(key, False, status, f"not a proposal (status {status})"))
             continue
-        # An accepted proposal that met a contradiction on trial lands as a
-        # conflicted fact in the same version (no re-read that a lagging
-        # replica could answer with the proposal); its peers are flagged below.
-        contradicted = bool(getattr(row, "conflict_with", None))
-        accepted_status = "conflicted" if contradicted else "active"
-        overrides: dict[str, Any] = {
-            "version": memory_repo.next_version(),
-            "status": accepted_status if decision == "accept" else "rejected",
-        }
-        if decision == "reject":
-            overrides["rejection_reason"] = (reason or "proposal rejected")[:512]
-        to_write.append(memory_repo.build_memory_version_row(row, **overrides))
-        decided.append(row)
-        out.append(DecideResult(key, True, str(overrides["status"])))
+        statuses = []
+        for row in proposed:
+            # An accepted proposal that met a contradiction on trial lands as a
+            # conflicted fact in the same version (no re-read that a lagging
+            # replica could answer with the proposal); its peers are flagged below.
+            contradicted = bool(getattr(row, "conflict_with", None))
+            accepted_status = "conflicted" if contradicted else "active"
+            overrides: dict[str, Any] = {
+                "version": memory_repo.next_version(),
+                "status": accepted_status if decision == "accept" else "rejected",
+            }
+            if decision == "reject":
+                overrides["rejection_reason"] = (reason or "proposal rejected")[:512]
+            to_write.append(memory_repo.build_memory_version_row(row, **overrides))
+            decided.append(row)
+            statuses.append(overrides["status"])
+        # One conflicted acceptance is the key's answer: the caller looks at the conflict.
+        status = "conflicted" if "conflicted" in statuses else statuses[0]
+        out.append(DecideResult(key, True, status))
     if not to_write:
         return out
     await insert_memory_versions(to_write, ch=ch)

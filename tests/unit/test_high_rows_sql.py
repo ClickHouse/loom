@@ -715,6 +715,29 @@ async def test_a_high_row_past_its_window_is_never_read_nor_hides_a_live_row() -
 
 
 @pytest.mark.asyncio
+async def test_every_identity_reads_each_agents_head_of_a_key() -> None:
+    # Agents a and b each proposed `k`, and a revised its own: one head per agent, a's newest.
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import Identity, get_many_by_keys
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, version) VALUES "
+        f"('o', 'n', 'a', '-', '-', '{_A}', 'k', 'semantic', 'a1', 'proposed', 1), "
+        f"('o', 'n', 'a', '-', '-', '{_A}', 'k', 'semantic', 'a2', 'proposed', 3), "
+        f"('o', 'n', 'b', '-', '-', '{_B}', 'k', 'semantic', 'b1', 'proposed', 2)",
+    )
+    ident = Identity(org="o", namespace="n", agent="*", user_id="-", session_id="-")
+    rows = await get_many_by_keys(
+        ident, ["k"], scope=WHOLE_NAMESPACE, ch=ch, strong=True, every_identity=True
+    )
+    assert sorted((r.agent, r.value) for r in rows) == [("a", "a2"), ("b", "b1")]
+    newest = await get_many_by_keys(ident, ["k"], scope=WHOLE_NAMESPACE, ch=ch, strong=True)
+    assert [(r.agent, r.value) for r in newest] == [("a", "a2")]
+
+
+@pytest.mark.asyncio
 async def test_an_as_of_read_never_serves_a_high_row_past_its_window() -> None:
     # memory.get with as_of replays past expiry, but a high row's expiry is its retention.
     from datetime import UTC, datetime
@@ -779,5 +802,5 @@ async def test_proposals_grade_only_the_rows_they_can_return(
     )
     assert asked == used == [graded]
     assert out.total == 2
-    if not only:  # one row within `limit`, both counted (the fake keeps no order)
+    if not only:  # one row within `limit`, both counted (the two tie on created_at)
         assert len(out.proposals) == 1

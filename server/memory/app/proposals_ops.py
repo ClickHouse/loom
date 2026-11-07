@@ -43,7 +43,7 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
         where.append("hasAny(tags, {tags:Array(String)})")
         params["tags"] = list(input.tags)
     where.extend(scope_where(request_scope(), params))
-    # The scan reads keys only: a badge's `limit=1` call counts them all but shows one.
+    # The scan reads ids only; values are read for the rows returned.
     rows = await ch.query_all(
         f"""
         SELECT memory_key, toString(memory_id) AS mid
@@ -51,15 +51,15 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
         WHERE {" AND ".join(where)}
         ORDER BY created_at DESC
         LIMIT {{cap:UInt32}}
+        {_sequential()}
         """,
         params=params,
     )
     policy = await _p.policy_for(input.org, input.namespace, ch=ch)
-    # Without `only`, nothing past `limit` is returned, so only those rows are graded;
-    # `ready` reads every row's grades to choose which to return.
-    graded = rows if input.only == "ready" else rows[: input.limit]
-    details = await _details(ch, where, params, [str(r["mid"]) for r in graded])
-    graded = [{**r, **details[str(r["mid"])]} for r in graded if str(r["mid"]) in details]
+    # `ready` grades every row to choose which to return.
+    wanted = rows if input.only == "ready" else rows[: input.limit]
+    details = await _details(ch, where, params, [str(r["mid"]) for r in wanted])
+    graded = [{**r, **details[str(r["mid"])]} for r in wanted if str(r["mid"]) in details]
     keys = [str(r["memory_key"]) for r in graded]
     counts = await _p.graded_counts(ch, input.org, input.namespace, keys)
     usage = await _usage_counts(ch, input.org, input.namespace, [str(r["mid"]) for r in graded])
@@ -111,10 +111,18 @@ async def _details(
                tags, toString(created_at) AS created, conflict_with
         FROM loom.memory FINAL
         WHERE {" AND ".join(where)} AND memory_id IN {{ids:Array(UUID)}}
+        {_sequential()}
         """,
         params={**params, "ids": memory_ids},
     )
     return {str(r["mid"]): r for r in rows}
+
+
+def _sequential() -> str:
+    """A re-read right after a decision must not see the decided row on a lagging replica."""
+    import server.memory.store as memory_repo
+
+    return memory_repo._SEQUENTIAL if memory_repo.read_your_writes_enabled() else ""
 
 
 async def _usage_counts(
