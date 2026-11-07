@@ -1,4 +1,5 @@
 #!/bin/sh
+# LF line endings only (.gitattributes): sh reads a CR as part of a command.
 # Loom's coding-agent hooks run through bin/loom-node, which finds Node 18+
 # on PATH, under a version manager or in the usual install directories.
 #   ensure-node.sh --check   report only: exit 0 when ready, 1 when missing

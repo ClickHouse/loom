@@ -87,13 +87,14 @@ const GH_SEARCH_FLAGS_WITH_ARG = new Set([
 
 /** Shell words with backslash escapes honoured inside double quotes — a gh
  *  search phrase is often `--search "\\"exact phrase\\" word"`; `tokens()`
- *  (the grep shapes) has no escapes to honour. */
+ *  (the grep shapes) has no escapes to honour. As in sh, a backslash there
+ *  escapes only $ ` " \\ and keeps itself before anything else ("C:\\x"). */
 function shTokens(command) {
   const out = [];
   const re = /"((?:\\.|[^"\\])*)"|'([^']*)'|(\S+)/g;
   let m;
   while ((m = re.exec(command)) !== null) {
-    out.push(m[1] != null ? m[1].replace(/\\(.)/g, "$1") : (m[2] ?? m[3]));
+    out.push(m[1] != null ? m[1].replace(/\\([$`"\\])/g, "$1") : (m[2] ?? m[3]));
   }
   return out;
 }
@@ -450,8 +451,9 @@ export function parseBashBulkSegments(command) {
     const words = tokens(s);
     if (words[0] === "cd") {
       const dir = words.length === 2 ? words[1] : "";
-      if (!dir || /[$~]/.test(dir) || dir === "-") break;
-      cwd = dir.startsWith("/") ? dir : cwd ? `${cwd}/${dir}` : dir;
+      // `~` expands only at the start of a word: C:/Users/RUNNER~1 is literal.
+      if (!dir || dir.includes("$") || dir.startsWith("~") || dir === "-") break;
+      cwd = /^(\/|[A-Za-z]:[\\/])/.test(dir) ? dir : cwd ? `${cwd}/${dir}` : dir;
       continue;
     }
     const stages = splitOutsideQuotes(s, ["|"]);

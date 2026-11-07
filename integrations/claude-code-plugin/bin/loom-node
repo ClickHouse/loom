@@ -1,4 +1,5 @@
 #!/bin/sh
+# LF line endings only (.gitattributes): sh reads a CR as part of a command.
 # Runs a plugin script under Node.js 18+ wherever Node is installed. Hooks and
 # the MCP header helper start with the agent's own environment, and an agent
 # started from the Dock, a desktop launcher or a shell whose version manager

@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { ensureCredential, planSignup, renderFirstSessionNotice, signupName } from "../lib/first-session.mjs";
 import { writeConfigMerged } from "../lib/loom-client.mjs";
+import { assertMode } from "./host-env.mjs";
 
 function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "loom-first-"));
@@ -60,12 +61,12 @@ test("created: token to config.json (0600, merged), claim code to claim file (06
   assert.equal(cfg.keep, 1, "existing keys survive");
   assert.equal(cfg.claimed, false);
   assert.equal(cfg.signed_up_by, "claude-code");
-  assert.equal(fs.statSync(configPath).mode & 0o777, 0o600);
+  assertMode(configPath, 0o600);
   assert.equal(r.claimPath, path.join(dir, `claim-${SIGNED.namespace}.txt`));
   const claim = fs.readFileSync(r.claimPath, "utf8");
   assert.match(claim, /SECRET-CODE/);
   assert.match(claim, /https:\/\/loom\.example\//);
-  assert.equal(fs.statSync(r.claimPath).mode & 0o777, 0o600);
+  assertMode(r.claimPath, 0o600);
   const notice = renderFirstSessionNotice(r, "https://loom.example");
   assert.match(notice, /agent-alice-box-claude-code/);
   assert.match(notice, /claim-agent-alice-box-claude-code\.txt/);
@@ -131,7 +132,7 @@ test("writeConfigMerged creates the directory 0700 and the file 0600", () => {
   const dir = path.join(tmp(), "nested");
   const configPath = path.join(dir, "config.json");
   writeConfigMerged(configPath, { a: 1 });
-  assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+  assertMode(dir, 0o700);
   assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf8")), { a: 1 });
 });
 

@@ -1,4 +1,4 @@
-// Pure helpers for the loom-file-context PreToolUse hook (unit-tested; no I/O).
+// Helpers for the loom-file-context PreToolUse hook (unit-tested).
 //
 // The hook fires before Edit/Write/MultiEdit/NotebookEdit and asks Loom what it
 // knows about the target file (`memory.for_file`), then injects the rendered
@@ -7,7 +7,7 @@
 // cost one lookup, not ten.
 
 import path from "node:path";
-import { patchFiles } from "./loom-client.mjs";
+import { patchFiles, pathUnder } from "./loom-client.mjs";
 import { recalledDataBlock } from "./prompt-recall.mjs";
 
 export const FILE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"]);
@@ -33,10 +33,8 @@ export function targetPath(toolName, toolInput) {
 export function relativeForLookup(root, filePath, cwd) {
   if (!filePath) return "";
   const abs = path.isAbsolute(filePath) ? filePath : path.resolve(cwd || process.cwd(), filePath);
-  if (root) {
-    const rel = path.relative(root, abs);
-    if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) return rel.split(path.sep).join("/");
-  }
+  const rel = pathUnder(root, abs);
+  if (rel) return rel;
   return path.basename(abs);
 }
 

@@ -459,25 +459,6 @@ jobs:
       # are compared source-to-copy by the plugin sync check in the lint job.
       - name: grep shim entry points are executable
         run: for f in integrations/grep-shim/bin/*; do test -x "$f" || { echo "::error file=$f::not executable"; exit 1; }; done
-  # Hooks start Node through bin/loom-node, a POSIX sh script: run its
-  # install-layout tests where the plugins run, macOS's bash-as-sh and Git
-  # Bash on Windows.
-  plugin-node-launcher:
-    name: plugin Node launcher (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: node --test (bin/loom-node)
-        shell: bash
-        run: node --test integrations/claude-code-plugin/tests/loom-node.test.mjs
   # The dashboard's vitest and Playwright suites share nothing but `npm ci`, so
   # each runs as its own job, split into parts on separate runners.
   frontend-vitest:

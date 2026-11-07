@@ -1,4 +1,4 @@
-// Pure helpers for the loom-test-gate Stop hook (unit-tested; no I/O).
+// Helpers for the loom-test-gate Stop hook (unit-tested).
 //
 // When the agent is about to stop with uncommitted changes in a loom-indexed
 // repo, ask `code.test_gate` what the change obliges: the tests that reach
@@ -16,7 +16,7 @@
 // mid-change, a teammate's edits) does not gate a turn that touched nothing.
 
 import path from "node:path";
-import { commandText, extractFiles, normalizeToolName } from "./loom-client.mjs";
+import { commandText, extractFiles, normalizeToolName, pathUnder } from "./loom-client.mjs";
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "str_replace_editor", "apply_patch"]);
 
@@ -157,6 +157,12 @@ export function commentOnlyDiff(diff) {
   return changedLines > 0;
 }
 
+/** The interpreter of the virtualenv at `dir`: bin/python, or on Windows
+ *  Scripts\python.exe. */
+export function venvPython(dir, platform = process.platform) {
+  return platform === "win32" ? path.win32.join(dir, "Scripts", "python.exe") : path.posix.join(dir, "bin", "python");
+}
+
 /** Stop-hook payload: block once with the reason; empty text = no output. */
 export function gatePayload(text) {
   return text ? { decision: "block", reason: text } : null;
@@ -168,9 +174,7 @@ function relativeToRoot(root, p, cwd) {
   const s = String(p || "").trim();
   if (!s || !root) return "";
   const abs = path.isAbsolute(s) ? s : path.resolve(cwd || root, s);
-  const rel = path.relative(root, abs);
-  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return "";
-  return rel.split(path.sep).join("/");
+  return pathUnder(root, abs) || "";
 }
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -178,9 +182,8 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** True when `command` names `rel` (or its absolute form) as a whole path:
  *  `sed -i s/a/b/ src/a.py`, `pytest tests/test_a.py::test_x`, a heredoc
  *  into it. `data.py` does not name `a.py`; `a.pyc` does not name `a.py`. */
-function commandNames(command, rel, absPath) {
-  const alts = [escapeRe(rel)];
-  if (absPath) alts.push(escapeRe(absPath));
+function commandNames(command, rel, absPaths) {
+  const alts = [rel, ...absPaths].map(escapeRe);
   return new RegExp(`(^|[^A-Za-z0-9_./-])(?:${alts.join("|")})(?![A-Za-z0-9_-])`).test(command);
 }
 
@@ -229,9 +232,42 @@ export function sessionScope(changed, objs, { root, cwd } = {}) {
       }
     }
   }
+  const roots = root ? [root] : [];
+  const logical = root ? logicalRoot(root, cwd) : "";
+  if (logical && logical !== root) roots.push(logical);
   return dirty.filter((rel) => {
     if (edited.has(rel)) return true;
-    const absPath = root ? path.join(root, rel) : "";
-    return commands.some((c) => commandNames(c, rel, absPath));
+    const absPaths = roots.flatMap((r) => absoluteForms(path.join(r, rel)));
+    return commands.some((c) => commandNames(c, rel, absPaths));
   });
+}
+
+/** The checkout root as `cwd` spells it, when that differs from git's: a
+ *  session started in /Users/me/link/src, where link points at the
+ *  checkout, names its files /Users/me/link/... in its commands. "" when
+ *  `cwd` is outside `root`. */
+function logicalRoot(root, cwd) {
+  const rel = cwd ? pathUnder(root, cwd) : null;
+  if (rel == null) return "";
+  const abs = path.resolve(cwd);
+  const tail = rel ? path.join(...rel.split("/")) : "";
+  if (!tail) return abs;
+  return abs.endsWith(path.sep + tail) ? abs.slice(0, -tail.length - 1) : "";
+}
+
+/** The spellings a shell command may use for absolute path `abs`: as given,
+ *  and on Windows with forward slashes (C:/x), with either drive-letter case,
+ *  and as Git Bash writes it (/c/x). */
+function absoluteForms(abs) {
+  const forms = new Set([abs, abs.split(path.sep).join("/")]);
+  const drive = /^([A-Za-z]):[\\/]/.exec(abs);
+  if (drive) {
+    const rest = abs.slice(3);
+    for (const d of [drive[1].toUpperCase(), drive[1].toLowerCase()]) {
+      forms.add(`${d}:\\${rest.split("/").join("\\")}`);
+      forms.add(`${d}:/${rest.split(path.sep).join("/")}`);
+    }
+    forms.add(`/${drive[1].toLowerCase()}/${rest.split(path.sep).join("/")}`);
+  }
+  return [...forms];
 }

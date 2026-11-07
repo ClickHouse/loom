@@ -134,11 +134,17 @@ def test_manifests_agree_and_marketplace_points_at_the_plugin() -> None:
 def test_claude_hooks_json_still_passes_no_client_argument() -> None:
     """Claude Code stays the default client: its wiring passes no client
     argument, so the scripts fall back to `claude-code`."""
+    # Each command is read by sh (its second line) and by PowerShell (its
+    # fourth): neither names a client.
     for _, cmd in _commands(_hooks(CLAUDE / "hooks" / "hooks.json")):
+        lines = cmd.split("\n")
         assert re.fullmatch(
-            r'sh "\$\{CLAUDE_PLUGIN_ROOT\}/bin/loom-node" "\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[a-z-]+\.mjs" \w+',
-            cmd,
+            r'exec sh "\$\{CLAUDE_PLUGIN_ROOT\}/bin/loom-node" "\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[a-z-]+\.mjs" \w+',
+            lines[1],
         ), cmd
+        assert re.search(r'node "\$env:CLAUDE_PLUGIN_ROOT/hooks/[a-z-]+\.mjs" \w+ \}', lines[3]), (
+            cmd
+        )
 
 
 # ---- loom install --client codex -------------------------------------------
@@ -215,11 +221,14 @@ def test_codex_plugin_bundles_its_mcp_entry() -> None:
     assert entry["type"] == "http"
     defaults = json.loads((CODEX / "plugin-defaults.json").read_text())
     assert entry["url"] == f"{defaults['server_url']}/mcp?toolset=core,coding,tracker,tasks"
-    # Codex runs the helper through `sh -c` in the session's cwd with a cleared
-    # environment (HOME kept, no PLUGIN_ROOT/CODEX_HOME), so the command finds
-    # the newest installed copy of this plugin's own launcher under $HOME and
-    # runs the helper beside it.
+    # Codex runs the helper through `sh -c` on Unix and `cmd.exe /C` on
+    # Windows, in the session's cwd with a cleared environment (no
+    # PLUGIN_ROOT/CODEX_HOME). `node -e`, which both run, loads the newest
+    # installed helper under the home directory; under sh, the newest
+    # launcher under $HOME is the fallback when no node is on PATH.
     helper = entry["http_headers_helper"]
+    assert helper.startswith('node -e "')
+    assert "'.codex','plugins','cache','loom','loom'" in helper
     assert '"$HOME"/.codex/plugins/cache/loom/loom/*/bin/loom-node' in helper
     assert '"${l%/*}/loom-mcp-headers.mjs"' in helper
     assert "sort -V | tail -1" in helper

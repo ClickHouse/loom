@@ -91,20 +91,72 @@ test("diagnostics never carry Anthropic, OpenAI or GitLab keys, basic auth or UR
   );
 });
 
-test("redaction is linear: an 80 KB adversarial output takes well under 200 ms per shape", async () => {
+test("redactJwts replaces exactly what the JWT pattern matches", async () => {
+  const { redactJwts } = await import("../lib/loom-client.mjs");
+  const pattern = /\beyJ[\w-]{0,512}\.[\w-]{1,8192}\.[\w-]{0,1024}/g;
+  const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln-_x";
+  for (const text of [
+    `Bearer ${jwt}`,
+    `token=${jwt}&next`,
+    `a-${jwt}`,
+    `a_${jwt}`,
+    `${jwt}.${jwt}`,
+    `eyJ${"a".repeat(512)}.b.c eyJ${"a".repeat(513)}.b.c`,
+    `eyJ-eyJ-eyJ.x.y`,
+    "eyJa. eyJ.x eyJ..",
+    `eyJa.${"b".repeat(8192)}.c eyJa.${"b".repeat(8193)}.c`,
+  ]) {
+    assert.equal(redactJwts(text), text.replace(pattern, "[redacted]"), text.slice(0, 40));
+  }
+  // Random text over the characters the pattern turns on.
+  let seed = 7;
+  const rand = (n) => (seed = (seed * 1103515245 + 12345) % 2147483648) % n;
+  const alphabet = ["eyJ", "eyJ", "a", "-", "_", ".", ".", " ", "="];
+  for (let k = 0; k < 3000; k++) {
+    let text = "";
+    for (let len = rand(40); len > 0; len--) text += alphabet[rand(alphabet.length)];
+    assert.equal(redactJwts(text), text.replace(pattern, "[redacted]"), JSON.stringify(text));
+  }
+});
+
+test("redaction is linear: the same bytes cost the same in 80 KB outputs as in 10 KB ones, per shape", async () => {
   const { redactSecrets } = await import("../lib/loom-client.mjs");
-  const n = 80_000;
+  // 8n runs at 10 KB against n at 80 KB: linear work costs the same both
+  // ways, quadratic 8x as much at 80 KB; 3x leaves room for noise. In CPU
+  // time, not wall-clock: beside the suite's other files a long run is
+  // preempted where a short one is not. n grows until the 10 KB side costs
+  // 100 ms, so a coarse CPU clock (Windows counts in ~16 ms) cannot round
+  // either side to nothing.
   const shapes = {
-    url: "a://" + "x:".repeat(n / 2),
-    dotted: "a.".repeat(n / 2),
-    urlDots: "https://" + "a.b:".repeat(n / 4),
-    jwt: "eyJ-".repeat(n / 4),
+    url: (n) => "a://" + "x:".repeat(n / 2),
+    dotted: (n) => "a.".repeat(n / 2),
+    urlDots: (n) => "https://" + "a.b:".repeat(n / 4),
+    jwt: (n) => "eyJ-".repeat(n / 4),
+    // Headers that end in a dot, each before a payload that never does.
+    jwtPayload: (n) => ("eyJ-".repeat(128) + "." + "a".repeat(8192) + " ").repeat(Math.ceil(n / 8706)).slice(0, n),
   };
-  for (const [name, text] of Object.entries(shapes)) {
-    const started = performance.now();
-    redactSecrets(text, "");
-    const ms = performance.now() - started;
-    assert.ok(ms < 200, `${name} took ${Math.round(ms)} ms`);
+  const cpuMs = (text, runs) => {
+    const started = process.cpuUsage();
+    for (let i = 0; i < runs; i++) redactSecrets(text, "");
+    const { user, system } = process.cpuUsage(started);
+    return (user + system) / 1000;
+  };
+  for (const [name, make] of Object.entries(shapes)) {
+    const [smallText, largeText] = [make(10_000), make(80_000)];
+    // What a hook pays: one run on output this size, the first.
+    const first = cpuMs(largeText, 1);
+    assert.ok(first < 200, `${name}: one 80 KB redaction took ${first.toFixed(1)} ms`);
+    let n = 1;
+    while (cpuMs(smallText, 8 * n) < 100) n *= 2;
+    // The best of three each, interleaved, for what noise is left.
+    let small = Infinity;
+    let large = Infinity;
+    for (let round = 0; round < 3; round++) {
+      small = Math.min(small, cpuMs(smallText, 8 * n));
+      large = Math.min(large, cpuMs(largeText, n));
+    }
+    const shown = `${name}: ${n} x 80 KB took ${large.toFixed(1)} ms, ${8 * n} x 10 KB ${small.toFixed(1)} ms`;
+    assert.ok(large < 3 * small, shown);
   }
 });
 

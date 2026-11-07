@@ -13,6 +13,7 @@ import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { cachePathFor } from "../lib/repo-scope.mjs";
+import { hostEnv } from "./host-env.mjs";
 
 const HOOKS = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "hooks");
 const BIG = Array.from({ length: 400 }, (_, i) => `int f${i}() { return ${i}; }`).join("\n") + "\n";
@@ -50,7 +51,7 @@ function run(hook, stdin, { tmp, url = REFUSED, token = "t", env = {} }) {
   return new Promise((resolve) => {
     const started = Date.now();
     const child = spawn(process.execPath, [path.join(HOOKS, hook), "X"], {
-      env: {
+      env: hostEnv({
         PATH: process.env.PATH,
         HOME: tmp,
         TMPDIR: tmp,
@@ -58,14 +59,14 @@ function run(hook, stdin, { tmp, url = REFUSED, token = "t", env = {} }) {
         LOOM_API_KEY: token,
         LOOM_SHUNT_REPORT: "off",
         ...env,
-      },
+      }),
       stdio: ["pipe", "pipe", "pipe"],
     });
     let out = "";
     let err = "";
     child.stdout.on("data", (c) => (out += c));
     child.stderr.on("data", (c) => (err += c));
-    child.on("close", (code) => resolve({ code, out, err, ms: Date.now() - started }));
+    child.on("close", (code) => resolve({ code, out, err, ms: Date.now() - started, closedAt: Date.now() }));
     child.stdin.end(typeof stdin === "string" ? stdin : JSON.stringify(stdin));
   });
 }
@@ -73,8 +74,11 @@ function run(hook, stdin, { tmp, url = REFUSED, token = "t", env = {} }) {
 /** A server that answers every request with `status`, or never when null. */
 async function withServer(status, fn) {
   const seen = [];
+  // When each op last arrived: what a hook spends after its request is sent.
+  const arrived = new Map();
   const server = http.createServer((req, res) => {
     seen.push(req.url);
+    arrived.set(req.url, Date.now());
     if (status == null) return; // hang
     res.statusCode = status;
     res.setHeader("content-type", "application/json");
@@ -82,7 +86,7 @@ async function withServer(status, fn) {
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   try {
-    return await fn(`http://127.0.0.1:${server.address().port}`, seen);
+    return await fn(`http://127.0.0.1:${server.address().port}`, seen, arrived);
   } finally {
     server.closeAllConnections();
     server.close();
@@ -268,7 +272,7 @@ function dirtySession() {
 
 test("Stop gates: 401 and a hanging server both let the stop through", async () => {
   for (const status of [401, null]) {
-    await withServer(status, async (url, seen) => {
+    await withServer(status, async (url, seen, arrived) => {
       for (const hook of ["loom-test-gate.mjs", "loom-validate-gate.mjs"]) {
         const { dir, tmp, transcript } = dirtySession();
         const r = await run(
@@ -278,7 +282,15 @@ test("Stop gates: 401 and a hanging server both let the stop through", async () 
         );
         assert.equal(r.code, 0, `${hook} ${status}`);
         assert.equal(r.out, "", `${hook} ${status}`);
-        assert.ok(r.ms < 3000, `${hook} took ${r.ms} ms`);
+        // From the gate's request to the hook's exit: the 500 ms request
+        // bound and the 500 ms exit grace, not node's start-up or git, which
+        // a loaded runner stretches.
+        const op = hook === "loom-test-gate.mjs" ? "/v1/code.test_gate" : "/v1/namespace.validate";
+        const after = r.closedAt - arrived.get(op);
+        assert.ok(after < 1500, `${hook} ${status}: ${after} ms after its request (${r.ms} ms in all)`);
+        // And the whole run, start-up and git included: twice the slowest
+        // seen on a loaded runner (3.4 s, macOS Intel).
+        assert.ok(r.ms < 7000, `${hook} ${status} took ${r.ms} ms`);
       }
       assert.ok(seen.includes("/v1/code.test_gate") && seen.includes("/v1/namespace.validate"), seen.join(","));
     });
@@ -305,7 +317,7 @@ test("Stop gates: a Stop the gate itself caused never blocks again", async () =>
 
 test("blast radius and file context: 401 and a hanging server add nothing to the edit", async () => {
   for (const status of [401, null]) {
-    await withServer(status, async (url) => {
+    await withServer(status, async (url, seen, arrived) => {
       const { dir, tmp } = dirtySession();
       const edit = {
         tool_name: "Edit",
@@ -317,7 +329,11 @@ test("blast radius and file context: 401 and a hanging server add nothing to the
         const r = await run(hook, edit, { tmp, url, env: { LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" } });
         assert.equal(r.code, 0, `${hook} ${status}`);
         assert.equal(r.out, "", `${hook} ${status}`);
-        assert.ok(r.ms < 3000, `${hook} took ${r.ms} ms`);
+        // From the hook's request to its exit, as for the Stop gates.
+        const op = hook === "loom-blast-radius.mjs" ? "/v1/code.impact" : "/v1/memory.for_file";
+        const after = r.closedAt - arrived.get(op);
+        assert.ok(after < 1500, `${hook} ${status}: ${after} ms after its request (${r.ms} ms in all)`);
+        assert.ok(r.ms < 7000, `${hook} ${status} took ${r.ms} ms`);
       }
     });
   }

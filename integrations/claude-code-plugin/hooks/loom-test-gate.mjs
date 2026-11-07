@@ -21,6 +21,8 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   git,
+  gitToplevel,
+  pathUnder,
   postBounded,
   readStdinJson,
   DIFF_ARGS,
@@ -34,6 +36,7 @@ import { resolveIndexedRepo } from "../lib/repo-scope.mjs";
 import { readSessionState, writeSessionState } from "../lib/tmp-state.mjs";
 import { readAllLines } from "../lib/transcript.mjs";
 import {
+  venvPython,
   commentOnlyDiff,
   decideBlock,
   gatePayload,
@@ -51,20 +54,20 @@ const DEPTH = Math.min(3, Math.max(1, Number(process.env.LOOM_TEST_GATE_DEPTH ||
  *  agent to look. */
 function checkoutPython(root) {
   const cands = [
-    path.join(root, ".venv", "bin", "python"),
-    path.join(root, "venv", "bin", "python"),
-    process.env.VIRTUAL_ENV ? path.join(process.env.VIRTUAL_ENV, "bin", "python") : "",
+    venvPython(path.join(root, ".venv")),
+    venvPython(path.join(root, "venv")),
+    process.env.VIRTUAL_ENV ? venvPython(process.env.VIRTUAL_ENV) : "",
   ].filter(Boolean);
   for (const c of cands) {
     try {
-      if (fs.statSync(c).isFile()) return path.relative(root, c).startsWith("..") ? c : path.relative(root, c);
+      if (fs.statSync(c).isFile()) return pathUnder(root, c) ?? c;
     } catch {
       /* next */
     }
   }
   for (const py of ["python3", "python"]) {
     try {
-      execFileSync(py, ["-c", "import pytest"], { cwd: root, timeout: 1500, stdio: "ignore" });
+      execFileSync(py, ["-c", "import pytest"], { cwd: root, timeout: 1500, stdio: "ignore", windowsHide: true });
       return py;
     } catch {
       /* next */
@@ -91,7 +94,7 @@ async function main() {
   }
 
   const cwd = payload.cwd || process.cwd();
-  const root = git(["rev-parse", "--show-toplevel"], cwd);
+  const root = gitToplevel(cwd);
   if (!root) {
     scheduleExit(0);
     return;
@@ -152,9 +155,7 @@ async function main() {
       python: needsPython ? checkoutPython(root) : undefined,
       testExists: (testPath) => {
         const target = path.resolve(root, testPath);
-        const relative = path.relative(root, target);
-        if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
-          return false;
+        if (!pathUnder(root, target)) return false;
         try {
           return fs.statSync(target).isFile();
         } catch {

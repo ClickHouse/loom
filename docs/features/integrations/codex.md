@@ -15,6 +15,11 @@ codex plugin marketplace add ClickHouse/loom        # or a path to a local clone
 codex plugin add loom@loom
 ```
 
+The plugin runs on macOS, Linux (glibc or musl; WSL 2 included) and Windows, on x86_64 and
+arm64. On macOS and Linux its hooks find Node through `bin/loom-node`; the header helper
+runs the `node` on `PATH` and falls back to the launcher. On Windows both run through
+`cmd.exe` and use the `node` on the `PATH` Codex starts with.
+
 The plugin brings its own MCP entry (`.mcp.json`): the server URL with
 `?toolset=core,coding,tracker,tasks`, authenticated by the plugin's header helper,
 `bin/loom-mcp-headers.mjs`. Do not add `codex mcp add loom` on top: an entry with the
@@ -64,17 +69,18 @@ override replaces the plugin's entry whole, helper included), and put the same U
 ```toml
 [mcp_servers.loom]
 url = "https://loom.example.com/mcp?toolset=core,coding,tracker,tasks"
-http_headers_helper = 'l="$(ls -d "$HOME"/.codex/plugins/cache/loom/loom/*/bin/loom-node 2>/dev/null | sort -V | tail -1)"; sh "$l" "${l%/*}/loom-mcp-headers.mjs"'
+http_headers_helper = '''node -e "const f=require('fs'),p=require('path');if(process.versions.node.split('.')[0]<18)process.exit(1);const d=p.join(require('os').homedir(),'.codex','plugins','cache','loom','loom');const k=v=>v.split(/[.-]/).map(x=>x.padStart(9,'0')).join('.');const v=f.readdirSync(d).filter(x=>f.existsSync(p.join(d,x,'bin','loom-node'))).sort((a,b)=>k(a)<k(b)?-1:1).pop();import(require('url').pathToFileURL(p.join(d,v,'bin','loom-mcp-headers.mjs')).href)" || { l="$(ls -d "$HOME"/.codex/plugins/cache/loom/loom/*/bin/loom-node 2>/dev/null | sort -V | tail -1)"; sh "$l" "${l%/*}/loom-mcp-headers.mjs"; }'''
 ```
 
-Codex runs the helper through `sh -c` with a reduced environment (`HOME`, `PATH`, the
-locale and a few others) and does not expand `${PLUGIN_ROOT}`, so the command finds the
-newest installed `loom@loom` launcher (`bin/loom-node`) under `$HOME/.codex` and runs the
-header helper beside it. The launcher finds Node 18+ on that `PATH`, in a version manager's
-default directory under `HOME` or in the usual install directories; `LOOM_NODE` and
-variables such as `NVM_DIR` do not reach it. With a custom `CODEX_HOME`, spell the path
-out. On Windows Codex runs the helper through `cmd.exe`, which cannot run this command:
-use `bearer_token_env_var` there. A Codex build that rejects `Authorization` from a
+Codex runs the helper through `sh -c` on macOS and Linux and through `cmd.exe` on
+Windows, with a reduced environment (`HOME` or `USERPROFILE`, `PATH`, the locale and a few
+others), and does not expand `${PLUGIN_ROOT}`. So the command starts with `node -e`, which
+both shells run: it loads the header helper of the newest installed `loom@loom` under the
+home directory's `.codex`. Under `sh`, when no `node` is on that `PATH`, it falls back to the
+newest installed launcher (`bin/loom-node`), which also looks in a version manager's default
+directory under `HOME` and in the usual install directories; `LOOM_NODE` and variables such
+as `NVM_DIR` do not reach it. On Windows the `node` on `PATH` is the one that runs. With a
+custom `CODEX_HOME`, spell the path out. A Codex build that rejects `Authorization` from a
 header helper ("returned a reserved header") also needs
 `bearer_token_env_var = "LOOM_API_KEY"`, with `LOOM_API_KEY` exported.
 

@@ -194,13 +194,20 @@ comment), and the workflow grants its jobs read-only repository access
 | `format`               | Biome, Prettier, Taplo and shfmt checks at pinned versions, and Biome's accessibility lint on `frontend/src`                                                                                                                                                                                                                  |
 | `helm`                 | `helm lint --strict` and kubeconform on every overlay, kubeconform on `deploy/okf-sync/cronjob.yaml`, the values the chart must refuse, and `scripts/gates/helm_extractor_isolation.py`                                                                                                                                       |
 | `agent-plugins`        | `node --test` for the plugin hooks and the grep shim, the Cursor hook sample (`integrations/cursor/test.sh`), a parse check of every hook, library and `bin/` helper script of both plugins and the shim, and a check that the grep shim's entry points are executable                                                        |
-| `plugin-node-launcher` | the `bin/loom-node` launcher tests on macOS and Windows (Git Bash)                                                                                                                                                                                                                                                            |
 | `frontend-vitest`      | vitest (unit, component, axe), in parts on separate runners                                                                                                                                                                                                                                                                   |
 | `frontend-e2e`         | Playwright, in parts on separate runners                                                                                                                                                                                                                                                                                      |
 | `integration`          | parts, each with its own ClickHouse, migrations, reference extractor and booted server (fake providers, workers off): the numbered parts split `pytest tests/integration` (`LOOM_TEST_SHARD`), the isolation gates part the provider staging tests, the auth-on gates and `pytest tests/analyzer`                             |
 | `mixed-version`        | `scripts/gates/mixed_version.py`: builds N-1 and N side by side on one ClickHouse, N-1 being `origin/main` on a pull request and the previous commit (`HEAD~1`) on `main`                                                                                                                                                     |
 | `sdk-typescript`       | `sdk_ts_gen.py --check`, `npm run check` (lint, types, version, README examples, tests), `npm run check:dist`                                                                                                                                                                                                                 |
 | `sdk-python-package`   | builds the SDK wheel with uv, installs it into a clean venv and runs `scripts/gates/sdk_wheel_smoke.py`, on Python 3.11, 3.12 and 3.14, plus 3.11 and 3.14 with every declared dependency at its lower bound                                                                                                                  |
+
+`.github/workflows/plugin-platforms.yml` runs when a change touches `integrations/`, a
+plugin marketplace, `.gitattributes` or the workflow itself: the plugin and grep-shim
+suites on Linux (x86_64, arm64, Alpine), macOS (Apple silicon, Intel), Windows (x86_64,
+arm64) and WSL 2 (Ubuntu, Node 18), then real Claude Code and Codex sessions with the
+plugin installed from the checkout (`tests/e2e/agent-session.mjs` under the Claude Code
+plugin: a local fake answers both the model API and Loom), also with `node` off the
+agent's `PATH` on the Ubuntu and macOS runners and without Git Bash on Windows.
 
 A pull request stacked on another branch gets no checks until it is retargeted to `main`,
 and a pull request with a merge conflict gets none either: "no checks reported" after a

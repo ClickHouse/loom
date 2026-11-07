@@ -61,11 +61,13 @@ export function readPrivateFile(file) {
   }
 }
 
-/** Set `file`'s mtime to now, with readPrivateFile's checks; true when done. */
+/** Set `file`'s mtime to now, with readPrivateFile's checks; true when done.
+ *  Opened for writing: Windows sets a file's times only through a handle
+ *  that may write. */
 export function touchPrivateFile(file) {
   try {
     const c = fs.constants;
-    const fd = fs.openSync(file, c.O_RDONLY | (c.O_NOFOLLOW ?? 0) | (c.O_NONBLOCK ?? 0));
+    const fd = fs.openSync(file, c.O_RDWR | (c.O_NOFOLLOW ?? 0) | (c.O_NONBLOCK ?? 0));
     try {
       const st = fs.fstatSync(fd);
       if (!st.isFile() || (typeof process.getuid === "function" && st.uid !== process.getuid())) return false;

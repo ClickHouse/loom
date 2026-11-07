@@ -1,5 +1,6 @@
 import "./temp-home.mjs";
 import { test } from "node:test";
+import path from "node:path";
 import assert from "node:assert/strict";
 import {
   boundMs,
@@ -33,7 +34,8 @@ test("env wins, then a fresh cache, then the default", () => {
 test("the cache is one file per server", () => {
   const a = rttCachePath("/tmp", "https://loom.example");
   const b = rttCachePath("/tmp", "https://other.example");
-  assert.match(a, /^\/tmp\/loom-rtt-[0-9a-f]{12}\.json$/);
+  assert.equal(path.dirname(a), path.normalize("/tmp"));
+  assert.match(path.basename(a), /^loom-rtt-[0-9a-f]{12}\.json$/);
   assert.notEqual(a, b);
   assert.equal(a, rttCachePath("/tmp", "https://loom.example"));
 });

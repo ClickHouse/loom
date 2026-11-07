@@ -19,6 +19,7 @@ import {
   writePrivateFile,
 } from "../lib/tmp-state.mjs";
 import { appendTurn, journalPath, readJournal } from "../lib/turn-journal.mjs";
+import { hostEnv } from "./host-env.mjs";
 
 const posix = process.platform !== "win32";
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "loom-private-test-"));
@@ -130,14 +131,14 @@ test("SessionEnd keeps the turn journal and removes the stashes", { skip: !posix
   const recalled = path.join(dir, `loom-recalled-${sid}.json`);
   fs.writeFileSync(stash, "[]");
   fs.writeFileSync(recalled, "[]");
-  const env = {
+  const env = hostEnv({
     PATH: process.env.PATH,
     HOME: dir,
     TMPDIR: dir,
     LOOM_BASE_URL: "http://127.0.0.1:9",
     LOOM_API_KEY: "x.y.z",
     LOOM_SESSION_MEMORY: "off",
-  };
+  });
   for (const name of ["loom-capture.mjs", "loom-session-memory.mjs"]) {
     const hook = fileURLToPath(new URL(`../hooks/${name}`, import.meta.url));
     spawnSync(process.execPath, [hook, "SessionEnd"], {

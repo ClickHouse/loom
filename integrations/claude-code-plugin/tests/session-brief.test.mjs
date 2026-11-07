@@ -26,6 +26,7 @@ import {
   transcriptEvents,
   worthSaving,
 } from "../lib/session-brief.mjs";
+import { hostEnv } from "./host-env.mjs";
 
 process.env.LOOM_HOOK_NO_MAIN = "1";
 const { formatList, isListNumber, localTranscript, parseArgs, renderTranscript, sinceLines } = await import(
@@ -415,7 +416,7 @@ for (const [label, status] of [
     const transcript = path.join(tmp, "t.jsonl");
     fs.writeFileSync(transcript, claude.map((o) => JSON.stringify(o)).join("\n") + "\n");
     await withServer(status, async (url, posts) => {
-      const env = {
+      const env = hostEnv({
         ...process.env,
         TMPDIR: tmp,
         LOOM_BASE_URL: url,
@@ -423,7 +424,7 @@ for (const [label, status] of [
         LOOM_NAMESPACE: "coding",
         LOOM_PROJECT_NAME: "x",
         HOME: tmp,
-      };
+      });
       const sessionId = `s-${status}`;
       await runHook(env, { session_id: sessionId, transcript_path: transcript, cwd: tmp });
       assert.ok(await until(() => posts.some((p) => p.url === "/v1/session.brief_save")), "the flusher posted");
@@ -464,7 +465,7 @@ test("with recording off the hook sends nothing and moves past the window", asyn
   const transcript = path.join(tmp, "t.jsonl");
   fs.writeFileSync(transcript, claude.map((o) => JSON.stringify(o)).join("\n") + "\n");
   await withServer(200, async (url, posts) => {
-    const env = {
+    const env = hostEnv({
       ...process.env,
       TMPDIR: tmp,
       LOOM_BASE_URL: url,
@@ -472,7 +473,7 @@ test("with recording off the hook sends nothing and moves past the window", asyn
       LOOM_NAMESPACE: "coding",
       LOOM_PROJECT_NAME: "x",
       HOME: tmp,
-    };
+    });
     writeRecording(url, "o", "coding", false, { tmp });
     await runHook(env, { session_id: "s-rec", transcript_path: transcript, cwd: tmp });
     await new Promise((r) => setTimeout(r, 400));

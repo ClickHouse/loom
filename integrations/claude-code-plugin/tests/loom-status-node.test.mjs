@@ -5,9 +5,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import nodeTest from "node:test";
+import { hostEnv } from "./host-env.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const WINDOWS = process.platform === "win32";
+
+// The helper installs Node with a POSIX system's package manager, and these
+// fixtures build its PATH from symlinked /bin tools; on Windows it names no
+// installer, which the last test checks under Git Bash.
+function test(name, opts, fn) {
+  if (typeof opts === "function") [opts, fn] = [{}, opts];
+  nodeTest(name, { ...opts, skip: opts.skip || (WINDOWS && "a POSIX installer") }, fn);
+}
 const whichSync = (c) => spawnSync("/bin/sh", ["-c", `command -v ${c}`], { encoding: "utf8" }).stdout.trim();
 // The GUI run's PATH is fixed; a Node in it is found whatever the test hides.
 const GUI_NODE = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"].some((d) => fs.existsSync(path.join(d, "node")));
@@ -66,8 +76,10 @@ test("loom-status Node helper selects apt and verifies the installed binary", ()
       "apt-get",
       'if [ "$*" = "install -y nodejs" ]; then printf "#!/bin/sh\\necho v22.0.0\\n" > "$TEST_BIN/node"; chmod +x "$TEST_BIN/node"; fi',
     );
+    // Where each lives differs: /usr/bin on most distributions, /bin on Alpine.
     for (const command of ["mktemp", "rm", "chmod"]) {
-      fs.symlinkSync(`/usr/bin/${command}`, path.join(f.bin, command));
+      const real = spawnSync("sh", ["-c", `command -v ${command}`], { encoding: "utf8" }).stdout.trim();
+      fs.symlinkSync(real, path.join(f.bin, command));
     }
     const r = f.run();
     assert.equal(r.status, 0, `${r.stderr}\n${r.stdout}`);
@@ -213,5 +225,26 @@ test("loom-status Node check under Codex warns when the header helper's environm
     assert.doesNotMatch(f.run("--check").stdout, /header helper/);
   } finally {
     fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+nodeTest("on Windows the helper checks through the launcher and names no installer", { skip: !WINDOWS }, () => {
+  const sh = path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "bin", "sh.exe");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-node-bootstrap-"));
+  try {
+    // No APPDATA or LOCALAPPDATA: the launcher's Windows install directories
+    // are not searched, so only PATH can supply a Node.
+    const env = (PATH) => hostEnv({ PATH, HOME: dir, TMPDIR: dir, PROGRAMFILES: dir, LOOM_NODE_SYSTEM_DIRS: "" });
+    const ready = spawnSync(sh, [helper, "--check"], { encoding: "utf8", env: env(process.env.PATH) });
+    assert.equal(ready.status, 0, ready.stderr);
+    assert.match(ready.stdout, /^Loom hook runtime ready: /);
+    const noNode = process.env.PATH.split(path.delimiter)
+      .filter((d) => !fs.existsSync(path.join(d, "node.exe")))
+      .join(path.delimiter);
+    const r = spawnSync(sh, [helper], { encoding: "utf8", env: env(noNode) });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /No installer for this OS; install Node\.js 18\+, or set LOOM_NODE=/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

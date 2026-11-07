@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { assertMode } from "./host-env.mjs";
 
 process.env.LOOM_HOOK_NO_MAIN = "1";
 const { agentToken, agentTokenPath, proofHash, resolveToken } = await import("../lib/loom-client.mjs");
@@ -140,7 +141,7 @@ test("the exchange sends the workload token and saves the answer 0600", async ()
     exp: 4600,
     ttl: 3600,
   });
-  assert.equal(fs.statSync(agentTokenPath(env)).mode & 0o777, 0o600);
+  assertMode(agentTokenPath(env), 0o600);
 });
 
 test("the saved token names the proof sent, though the file rotated meanwhile", async () => {

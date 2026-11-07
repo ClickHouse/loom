@@ -92,6 +92,19 @@ test("buildSessionState renders goal, tree, edits and last text, paths relative 
   assert.equal(body.split("\n")[1], BOOKMARK_FRAME, "the frame is the line under the title");
 });
 
+test("buildSessionState shortens a Windows payload path under the cwd", { skip: process.platform !== "win32" }, () => {
+  const body = buildSessionState({
+    goal: "g",
+    files: ["C:\\repo\\src\\a.py"],
+    git: null,
+    lastText: "",
+    cwd: "C:/repo",
+    writtenAt: "t",
+    reason: "Stop",
+  });
+  assert.match(body, /\nedited this session: src\/a\.py$/m);
+});
+
 test("buildSessionState is bounded and omits empty sections", () => {
   const body = buildSessionState({
     goal: "x".repeat(5000),

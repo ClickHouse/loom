@@ -11,6 +11,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { hostEnv } from "./host-env.mjs";
 
 const entry = (rel) => fileURLToPath(new URL(`../${rel}`, import.meta.url));
 const PERSONAL = "personal.tok";
@@ -38,7 +39,7 @@ function run(rel, url, stdin = "") {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [entry(rel)], {
       cwd: home,
-      env: {
+      env: hostEnv({
         PATH: process.env.PATH,
         HOME: home,
         TMPDIR: home,
@@ -47,7 +48,7 @@ function run(rel, url, stdin = "") {
         LOOM_WORKLOAD_TOKEN: "workload-proof",
         LOOM_MCP_HOOK_WAIT_MS: "0",
         LOOM_MCP_CODE_SCOPE: "off",
-      },
+      }),
     });
     let stdout = "";
     child.stdout.on("data", (c) => (stdout += c));
@@ -96,7 +97,7 @@ test("an agent's scope is never the org and namespace a person saved", async () 
     const out = await new Promise((resolve) => {
       const child = spawn(process.execPath, ["--input-type=module", "-e", script], {
         cwd: home,
-        env: {
+        env: hostEnv({
           PATH: process.env.PATH,
           HOME: home,
           TMPDIR: home,
@@ -104,7 +105,7 @@ test("an agent's scope is never the org and namespace a person saved", async () 
           LOOM_BASE_URL: "http://127.0.0.1:9", // nothing listens: the exchange fails
           LOOM_CLIENT_ID: "ci",
           LOOM_WORKLOAD_TOKEN: "workload-proof",
-        },
+        }),
       });
       let stdout = "";
       child.stdout.on("data", (c) => (stdout += c));

@@ -76,15 +76,6 @@ export function repoSlug(remoteUrl) {
   return m ? `${m[1]}/${m[2]}`.toLowerCase() : "";
 }
 
-/** Repo-relative POSIX path, or null when `abs` is outside `root`. */
-export function relPath(root, abs) {
-  if (!root || !abs) return null;
-  const r = root.replace(/\/+$/, "") + "/";
-  const a = abs.replace(/\\/g, "/");
-  if (a === root) return "";
-  return a.startsWith(r) ? a.slice(r.length) : null;
-}
-
 /** Is `rel` inside (or an ancestor of) one of the indexed path prefixes? */
 export function underPrefixes(rel, prefixes) {
   if (!prefixes || prefixes.length === 0) return true;
@@ -334,6 +325,7 @@ export function runLocalGrep(cwd, pattern, files, { exec = execFileSync, timeout
         timeout: timeoutMs,
         maxBuffer: 256 * 1024,
         stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
       }) || "",
     );
   } catch {
