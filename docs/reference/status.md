@@ -1,7 +1,7 @@
 # Status of Loom's surfaces
 
-Each op's maturity label (stable or experimental), and which boolean settings load false.
-Both tables are generated from the code: each op's `maturity` in the operation registry,
+This page lists each op's maturity label (stable or experimental) and every boolean
+setting that loads false. Both tables are generated from the code: each op's `maturity` in the operation registry,
 and the boolean settings of `server/settings/catalog.py` as they load.
 
 ## Operations

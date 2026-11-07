@@ -79,6 +79,11 @@ def test_status_switches_list_what_loads_false_not_what_is_declared_false(monkey
     provider; the env of the process that renders the page changes nothing."""
     monkeypatch.setenv("LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED", "false")
     monkeypatch.setenv("LOOM_CODE_ORG_READABLE", "true")
-    rendered = gen.render_status_switches()
+    # Built under this env, not taken from a cache another test filled.
+    gen._loaded_defaults.cache_clear()
+    try:
+        rendered = gen.render_status_switches()
+    finally:
+        gen._loaded_defaults.cache_clear()
     assert "`LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED`" not in rendered
     assert "| `LOOM_CODE_ORG_READABLE` |" in rendered

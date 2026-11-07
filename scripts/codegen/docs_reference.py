@@ -163,21 +163,21 @@ def render_status_ops() -> str:
     groups: dict[str, list[Operation]] = defaultdict(list)
     for op in registry.ALL_OPERATIONS:
         groups[op.name.split(".")[0]].append(op)
-    rows, stable_total = [], 0
+    experimental_total = sum(op.maturity == "experimental" for op in registry.ALL_OPERATIONS)
+    rows: list[str] = []
     for group in sorted(groups):
         ops = sorted(groups[group], key=lambda o: o.name)
-        stable = sum(1 for op in ops if op.maturity == "stable")
-        stable_total += stable
-        named = ", ".join(
+        stable = sum(op.maturity == "stable" for op in ops)
+        experimental = ", ".join(
             f"[`{op.name}`](operations/{group}.md#{_op_anchor(op.name)})"
             for op in ops
             if op.maturity == "experimental"
         )
-        rows.append(f"| `{group}` | {stable} | {named} |")
+        rows.append(f"| `{group}` | {stable} | {experimental} |")
     total = len(registry.ALL_OPERATIONS)
     return "\n".join(
         [
-            f"{total} operations, {total - stable_total} of them experimental.\n",
+            f"{total} operations, {experimental_total} of them experimental.\n",
             "| Group | Stable | Experimental |",
             "| --- | --- | --- |",
             *rows,
@@ -187,9 +187,8 @@ def render_status_ops() -> str:
 
 @functools.cache
 def _loaded_defaults() -> Settings:
-    """The settings as a deployment with a real LLM provider loads them with nothing else
-    set: the catalog's defaults after the validators that resolve a field at load (the
-    conflict resolver turns on), whatever this process's env holds."""
+    """Settings built from defaults alone with a real LLM provider, so load-time validators
+    (the conflict resolver) resolve as they run."""
     from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
     from server.settings import Settings
