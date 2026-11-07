@@ -249,30 +249,25 @@ def _pem_root(secret: str) -> SigningKey | None:
     return SigningKey(ROOT_KID, "RS256", secret, public, datetime.min)
 
 
-# Below these, a root key can be recovered offline: an HMAC secret from one token it
-# signed (RFC 7518 section 3.2 asks for at least the hash size), an RSA key from the
-# public half the JWKS serves.
+# The minimum root key sizes of RFC 7518 sections 3.2 and 3.3: an HMAC secret as long as
+# the hash, an RSA modulus of 2048 bits. Only the length is checked, not the randomness.
 MIN_HMAC_ROOT_BYTES = 32
 MIN_RSA_ROOT_BITS = 2048
 
 
 def root_is_weak() -> bool:
-    """Whether LOOM_JWT_SECRET is an HMAC secret under 32 bytes or an RSA key under
-    2048 bits."""
+    """Whether LOOM_JWT_SECRET is below the minimum key size: an HMAC secret under 32
+    bytes or an RSA key under 2048 bits."""
     secret = str(settings.jwt_secret)
     if root_is_hmac_key():
         return len(secret.encode()) < MIN_HMAC_ROOT_BYTES
     key = _pem_root(secret)
-    return key is not None and _rsa_bits(key.secret) < MIN_RSA_ROOT_BITS
-
-
-def _rsa_bits(pem: str) -> int:
+    if key is None:
+        return False
     from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
 
-    private = serialization.load_pem_private_key(pem.encode(), password=None)
-    assert isinstance(private, rsa.RSAPrivateKey)  # _pem_root admitted only RSA
-    return private.key_size
+    public = serialization.load_pem_public_key(key.public_pem.encode())
+    return getattr(public, "key_size", 0) < MIN_RSA_ROOT_BITS
 
 
 def _keys(view: _View) -> dict[str, SigningKey]:

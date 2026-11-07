@@ -898,11 +898,10 @@ The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in fro
   control.
 - A non-loopback `LOOM_BIND_HOST` refuses to start without `LOOM_PUBLIC_BASE_URL`, and,
   unless `LOOM_ALLOW_INSECURE=1`, with auth off, `LOOM_MCP_AUTH_MODE=open` (every MCP tool
-  would run with no principal), the dev JWT secret, or a `LOOM_JWT_SECRET` that can be
-  recovered offline: an HMAC secret shorter than 32 bytes or an RSA key under 2048 bits.
-  With auth off, any
-  request whose `Host` is not a loopback host or the public URL's host gets `421` (DNS
-  rebinding). A request from a page on another origin (an `Origin` that is not the
+  would run with no principal), the dev JWT secret, or a `LOOM_JWT_SECRET` below the
+  minimum key size: an HMAC secret shorter than 32 bytes or an RSA key under 2048 bits
+  (only the length is checked). With auth off, any request whose `Host` is not a loopback
+  host or the public URL's host gets `421` (DNS rebinding). A request from a page on another origin (an `Origin` that is not the
   server's own, or `Sec-Fetch-Site: cross-site` / `same-site`) gets `403` unless
   `LOOM_CORS_ORIGINS` lists that origin: every request with auth off except following a
   link to a page, and every non-GET request with auth on, since in proxy mode the proxy

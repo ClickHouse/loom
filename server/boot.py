@@ -91,8 +91,8 @@ def require_safe_bind(
     LOOM_PUBLIC_BASE_URL (generated URLs would otherwise echo a request's Host),
     or, unless LOOM_ALLOW_INSECURE=1, with auth off, MCP open (`mcp_open`: every
     tool runs with no principal), the dev signing secret, or a weak root key
-    (`weak_secret`: an HMAC secret under 32 bytes or an RSA key under 2048 bits,
-    either recoverable offline).
+    (`weak_secret`: below the minimum key size of RFC 7518, an HMAC secret under 32
+    bytes or an RSA key under 2048 bits).
     A loopback bind is not checked."""
     from server.auth.public_url import is_loopback_host
 
@@ -126,8 +126,8 @@ def require_safe_bind(
         )
     if weak_secret:
         raise InsecureBindRefused(
-            f"refusing to start: {where} and LOOM_JWT_SECRET is an HMAC secret shorter than "
-            "32 bytes or an RSA key under 2048 bits, which can be recovered offline. Set 32 "
+            f"refusing to start: {where} and LOOM_JWT_SECRET is below the minimum key size "
+            "(an HMAC secret shorter than 32 bytes or an RSA key under 2048 bits). Set 32 "
             "or more random bytes or a 2048-bit key, bind 127.0.0.1, or set "
             "LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
         )

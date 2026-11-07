@@ -60,6 +60,13 @@ export LOOM_WEB_WORKERS
 # LOOM_TRUSTED_PROXIES names the peers whose X-Forwarded-For/Proto uvicorn
 # applies. LOOM_LISTEN_HOST is the address to bind: loopback by default, every
 # interface in the image.
+# The startup checks judge reachability by LOOM_BIND_HOST: left unset while uvicorn
+# listens beyond loopback, it is that address, so the checks cannot be skipped by
+# setting only the listen address. (A container published on loopback sets both.)
+case "${LOOM_LISTEN_HOST:-127.0.0.1}" in
+  127.0.0.1 | localhost | ::1) ;;
+  *) [ -n "${LOOM_BIND_HOST:-}" ] || export LOOM_BIND_HOST="$LOOM_LISTEN_HOST" ;;
+esac
 # exec: uvicorn must be PID 1 to receive docker's SIGTERM (a POSIX shell does
 # not forward it to its child).
 exec uvicorn server.main:app --host "${LOOM_LISTEN_HOST:-127.0.0.1}" --port "${PORT:-7777}" \

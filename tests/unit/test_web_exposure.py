@@ -61,7 +61,7 @@ def test_mcp_open_on_a_reachable_bind_is_refused() -> None:
 
 
 def test_a_weak_root_key_on_a_reachable_bind_is_refused() -> None:
-    with pytest.raises(InsecureBindRefused, match="shorter than 32 bytes or an RSA key"):
+    with pytest.raises(InsecureBindRefused, match="below the minimum key size"):
         _bind(weak_secret=True)
     _bind(weak_secret=True, allow_insecure=True)
 
@@ -85,18 +85,40 @@ def _rsa_pem(bits: int) -> str:
         ("a" * 32, False),
         ("é" * 16, False),  # 16 characters, 32 bytes
         ("é" * 15 + "a", True),  # 31 bytes
-        (_rsa_pem(1024), True),  # its modulus is public in the JWKS
-        (_rsa_pem(2048), False),
+        (1024, True),  # an RSA key of this many bits; its modulus is public in the JWKS
+        (2048, False),
     ],
     ids=["hmac-31", "hmac-32", "multibyte-32", "multibyte-31", "rsa-1024", "rsa-2048"],
 )
 def test_a_weak_root_key_is_an_hmac_secret_under_32_bytes_or_rsa_under_2048_bits(
-    monkeypatch: pytest.MonkeyPatch, secret: str, weak: bool
+    monkeypatch: pytest.MonkeyPatch, secret: str | int, weak: bool
 ) -> None:
     from server.auth import keyring
 
-    monkeypatch.setattr(settings, "jwt_secret", secret)
+    monkeypatch.setattr(
+        settings, "jwt_secret", _rsa_pem(secret) if isinstance(secret, int) else secret
+    )
     assert keyring.root_is_weak() is weak
+
+
+def test_a_pem_root_that_is_not_rsa_is_not_weak(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An EC key cannot sign as kid `default` at all, so the size check passes it."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from server.auth import keyring
+
+    pem = (
+        ec.generate_private_key(ec.SECP256R1())
+        .private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        .decode()
+    )
+    monkeypatch.setattr(settings, "jwt_secret", pem)
+    assert keyring.root_is_weak() is False
 
 
 @pytest.mark.parametrize(
@@ -123,6 +145,12 @@ def test_startup_on_a_reachable_bind_refuses_mcp_open_and_a_weak_root_key(
     monkeypatch.setattr(settings, "jwt_secret", "s" * 48)
     for name, value in over.items():
         monkeypatch.setattr(settings, name, value)
+
+    def past_the_check(*_a: object, **_k: object) -> None:
+        raise AssertionError("startup went past the bind check")
+
+    monkeypatch.setattr("server.core.object_store.require_client", past_the_check)
+    monkeypatch.setattr(main.boot, "require_clickhouse_ready", past_the_check)
 
     async def start() -> None:
         async with main.lifespan(main.app):

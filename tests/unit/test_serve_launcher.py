@@ -28,7 +28,7 @@ case "$*" in
 esac
 """
 _UVICORN = """#!/bin/sh
-echo "$* runtime=${LOOM_RUNTIME_DIR:-}"
+echo "$* bind=${LOOM_BIND_HOST:-} runtime=${LOOM_RUNTIME_DIR:-}"
 """
 
 
@@ -41,6 +41,7 @@ def _launch(
     resolved_workers: str = "",
     resolved_runtime_dir: str = "",
     loop: str = "",
+    extra: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -59,6 +60,7 @@ def _launch(
         env["LOOM_UVICORN_LOOP"] = loop
     if pinned:
         env["LOOM_RUNTIME_DIR"] = pinned
+    env.update(extra or {})
     return subprocess.run(
         ["sh", str(ROOT / "scripts" / "serve.sh")],
         env=env,
@@ -104,6 +106,25 @@ def test_a_count_only_a_file_names_is_kept(tmp_path: Path, workers: str, started
     done = _launch(tmp_path, workers=workers, runtime_dir="/run/loom", resolved_workers="2")
     assert done.returncode == 0, done.stderr
     assert _workers(done.stdout) == started
+
+
+@pytest.mark.parametrize(
+    ("env", "bind"),
+    [
+        ({"LOOM_LISTEN_HOST": "0.0.0.0"}, "0.0.0.0"),  # checked as reachable
+        ({"LOOM_LISTEN_HOST": "0.0.0.0", "LOOM_BIND_HOST": "127.0.0.1"}, "127.0.0.1"),
+        ({"LOOM_LISTEN_HOST": "127.0.0.1"}, ""),  # the settings decide
+        ({}, ""),
+    ],
+)
+def test_listening_beyond_loopback_is_what_the_bind_checks_read(
+    tmp_path: Path, env: dict[str, str], bind: str
+) -> None:
+    """A listen address alone cannot skip the startup checks: the checks read
+    LOOM_BIND_HOST, which defaults to a non-loopback listen address."""
+    done = _launch(tmp_path, workers="1", runtime_dir="none", extra=env)
+    assert done.returncode == 0, done.stderr
+    assert f" bind={bind} " in done.stdout
 
 
 def _without_loom() -> dict[str, str]:
@@ -280,5 +301,5 @@ def test_a_value_with_shell_characters_reaches_uvicorn_as_written(
         tmp_path, f"version: 1\nsettings:\n  web_workers: 1\n  trusted_proxies: '{quoted}'\n"
     )
     assert done.returncode == 0, done.stderr
-    assert f"--forwarded-allow-ips={proxies} runtime=" in done.stdout
+    assert f"--forwarded-allow-ips={proxies} bind=" in done.stdout
     assert not probe.exists()

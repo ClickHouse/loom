@@ -60,8 +60,9 @@ instructions.
 | `discovery_only`     | `tools/call` only; every other method is open                 |
 | `open`               | nothing; an invalid bearer is ignored (trusted networks only) |
 
-A server on a non-loopback `LOOM_BIND_HOST` refuses to start with `open` unless `LOOM_ALLOW_INSECURE=1`. A deployment with auth off (`LOOM_AUTH_REQUIRED=false`) behaves as `open`. A
-missing or invalid bearer on a gated method is HTTP `401` with
+A server on a non-loopback `LOOM_BIND_HOST` refuses to start with `open` unless
+`LOOM_ALLOW_INSECURE=1`. A deployment with auth off (`LOOM_AUTH_REQUIRED=false`)
+behaves as `open`. A missing or invalid bearer on a gated method is HTTP `401` with
 `WWW-Authenticate: Bearer realm="loom"` (plus `error="invalid_token"` when a
 token was sent). A token that cannot be checked yet, because the revocation
 list has not loaded, is HTTP `503` with `Retry-After` instead, so the client

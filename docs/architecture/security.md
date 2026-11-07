@@ -587,9 +587,11 @@ request's own scheme and `Host`, validated as `http(s)://hostname[:port]`.
 
 **Exposure.** A non-loopback `LOOM_BIND_HOST` refuses to start without
 `LOOM_PUBLIC_BASE_URL`, and, unless `LOOM_ALLOW_INSECURE=1`, with auth off,
-`LOOM_MCP_AUTH_MODE=open`, the dev JWT secret, or a root key that can be recovered
-offline (an HMAC secret under 32 bytes, or an RSA key under 2048 bits, whose modulus
-the JWKS serves). `LOOM_CORS_ORIGINS=*` refuses to start (CORS allows
+`LOOM_MCP_AUTH_MODE=open`, the dev JWT secret, or a root key below the minimum size of
+RFC 7518 (an HMAC secret under 32 bytes, or an RSA key under 2048 bits; only the length
+is checked, not the randomness). `scripts/serve.sh` takes a non-loopback
+`LOOM_LISTEN_HOST` as `LOOM_BIND_HOST` when that is unset, so the listen address alone
+cannot skip these checks. `LOOM_CORS_ORIGINS=*` refuses to start (CORS allows
 credentials). With auth off, a request whose `Host` is not a loopback host or the
 public URL's host gets `421`, so a DNS-rebinding page cannot drive a local server. A
 request whose `Origin` is not the server's own (and is not in `LOOM_CORS_ORIGINS`), or
