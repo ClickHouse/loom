@@ -278,9 +278,8 @@ def _accepted(response: Response) -> Response:
     return Response(status_code=202, headers=dict(response.headers))
 
 
-# Entries one JSON-RPC batch may hold. Only `tools/call` is rate-limited per call, so a
-# batch of thousands of `initialize` or `resources/read` entries would hold the request's
-# worker for all of them; clients batch a handful at most (MCP 2025-06-18 drops batching).
+# Entries one JSON-RPC batch may hold: only tool calls past `loom_activate` meet the rate
+# limiter, so the batch length bounds one request's work (MCP 2025-06-18 drops batching).
 MAX_BATCH_ENTRIES = 64  # not a setting: a protocol bound, not a deployment's capacity
 
 
@@ -320,13 +319,6 @@ def attach(app: FastAPI) -> None:
             payload = await request.json()
         except Exception:  # noqa: BLE001 — any body read failure answers PARSE_ERROR
             return _err(_TRANSPORT_ERROR_ID, PARSE_ERROR, "Body is not valid JSON")
-        if isinstance(payload, list) and not 0 < len(payload) <= MAX_BATCH_ENTRIES:
-            # Refused whole, before any entry runs (JSON-RPC: an empty batch is invalid).
-            return _err(
-                _TRANSPORT_ERROR_ID,
-                INVALID_REQUEST,
-                f"A batch holds 1 to {MAX_BATCH_ENTRIES} requests; send larger work in parts",
-            )
 
         # `MCP-Protocol-Version` (2025-06-18+): a version this transport does
         # not serve is a 400 with the recognised modern error naming the ones
@@ -336,6 +328,13 @@ def attach(app: FastAPI) -> None:
         if header_version is not None and not protocol_version_supported(header_version):
             response.status_code = 400
             return unsupported_version_error(_echo_request_id(payload), header_version)
+        if isinstance(payload, list) and not 0 < len(payload) <= MAX_BATCH_ENTRIES:
+            # Refused whole, before the bearer or any entry (JSON-RPC: an empty batch is invalid).
+            return _err(
+                _TRANSPORT_ERROR_ID,
+                INVALID_REQUEST,
+                f"A batch holds 1 to {MAX_BATCH_ENTRIES} requests; send larger work in parts",
+            )
 
         # `Mcp-Session-Id` correlates the `initialize` handshake (carrying
         # `clientInfo.name`) with later `tools/call` POSTs. Server-assigned at
