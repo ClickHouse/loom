@@ -4058,8 +4058,9 @@ def host_list_refusal(setting: str, hosts: str) -> str:
             host = ""
         if not is_bare_host(host):
             return (
-                f"{setting}: {entry.strip()[:64]!r} is not a hostname or IP literal "
-                "(no scheme, port, brackets, path or wildcard)"
+                f"{setting}: {entry.strip()[:64]!r} is not a hostname or IP literal (no "
+                "scheme, port, brackets, path, wildcard, zone, percent-encoding or a name "
+                "IDNA cannot encode)"
             )
     return ""
 
