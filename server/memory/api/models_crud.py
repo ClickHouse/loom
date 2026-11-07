@@ -28,6 +28,7 @@ from server.memory.domain.graph_quality import (
     MAX_TRIPLES_PER_ROW,
     canonical_entity_text,
     canonical_relation,
+    fits_entity,
 )
 from server.memory.domain.search_text import canonicalize_verb
 from server.memory.domain.sensitivity import Sensitivity
@@ -253,12 +254,13 @@ class MemoryGetOutput(ProjectedRow):
 
 
 # A (subject, relation, object) fact a point write names: at most MAX_TRIPLES_PER_ROW a
-# row, each part capped at 256. The lengths the triple writer needs are checked on the
-# canonical form it stores, so "I" (stored as "user") is a subject and "  " is refused
-# rather than dropped. A bulk entry's `relations` stay unchecked: an extractor's surplus
-# is cut, not refused. When the canonical form dropped something, the refusal says what
-# it was stored as and why, since "has" and "is a" look long enough until the copula is
-# dropped; a part that is only too short ("x") just says so.
+# row, each part capped at 256, a subject or object as written and once normalised. The
+# lengths the triple writer needs are checked on the canonical form it stores, so "I"
+# (stored as "user") is a subject and "  " is refused rather than dropped. A bulk entry's
+# `relations` stay unchecked: an extractor's surplus is cut, not refused. When the
+# canonical form dropped something, the refusal says what it was stored as and why, since
+# "has" and "is a" look long enough until the copula is dropped; a part that is only too
+# short ("x") just says so.
 def _canonical_at_least(min_chars: int, canonical: Any, dropped: str, needs: str) -> AfterValidator:
     def check(raw: str) -> str:
         stored = canonical(raw)
@@ -271,6 +273,12 @@ def _canonical_at_least(min_chars: int, canonical: Any, dropped: str, needs: str
     return AfterValidator(check)
 
 
+def _refuse_long_normalised(raw: str) -> str:
+    if not fits_entity(raw):
+        raise ValueError(f"{raw!r} is longer than {MAX_ENTITY_CHARS} characters once normalised")
+    return raw
+
+
 def _relation_verb(raw: str) -> str:
     return canonical_relation(canonicalize_verb(raw)).verb
 
@@ -279,6 +287,7 @@ _ENTITY_DROPS = "articles, possessives and punctuation"
 _FactSubject = Annotated[
     str,
     Field(max_length=MAX_ENTITY_CHARS),
+    AfterValidator(_refuse_long_normalised),
     _canonical_at_least(
         2,
         canonical_entity_text,
@@ -299,6 +308,7 @@ _FactRelation = Annotated[
 _FactObject = Annotated[
     str,
     Field(max_length=MAX_ENTITY_CHARS),
+    AfterValidator(_refuse_long_normalised),
     _canonical_at_least(
         1, canonical_entity_text, _ENTITY_DROPS, "an object needs at least 1 character"
     ),

@@ -107,6 +107,12 @@ def test_a_refused_subject_names_what_it_was_stored_as():
     assert "a subject needs at least 2 characters" in message
 
 
+def test_a_part_longer_than_the_cap_once_normalised_says_so():
+    long = "\ufb01" * 200  # 400 characters once normalised
+    for fact in ((long, "owns", "cat"), ("bob", "owns", long)):
+        assert "is longer than 256 characters once normalised" in _refusal(fact)
+
+
 def test_a_statuses_id_is_at_most_64_characters():
     from server.memory.api.models_crud import MemoryStatusesInput
 

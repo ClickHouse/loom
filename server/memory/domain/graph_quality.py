@@ -239,8 +239,8 @@ _FIRST_PERSON_FORMS = frozenset(
 SELF_SUBJECT = "user"
 # The most triples one memory row states; the triple writer keeps the first ones.
 MAX_TRIPLES_PER_ROW = 8  # not a setting: a wire bound of `relations`
-# The longest entity name kept, as written. Longer text is not a name, and a read binds
-# names as query parameters, which ClickHouse caps at 128 KiB each.
+# The longest entity name kept, as written and once normalised. Longer text is not a
+# name, and a read binds names as query parameters, which ClickHouse caps at 128 KiB each.
 MAX_ENTITY_CHARS = 256  # not a setting: a wire bound of a triple's subject and object
 
 # Singularize the head noun so distinct-thing COUNTs don't split on
@@ -439,18 +439,32 @@ def _normalise(lowered: str) -> str:
     return SELF_SUBJECT if text in _FIRST_PERSON_FORMS else text
 
 
+def _capped_normal(original: str) -> str | None:
+    """`original` normalised, or None when it or its normal form (NFKC lengthens:
+    "\ufb01" is "fi") is longer than `MAX_ENTITY_CHARS`."""
+    if len(original) > MAX_ENTITY_CHARS:
+        return None
+    text = _normalise(original.lower())
+    return text if len(text) <= MAX_ENTITY_CHARS else None
+
+
+def fits_entity(raw: str) -> bool:
+    """Whether `raw` is short enough to be an entity name, as written and normalised."""
+    return _capped_normal(str(raw or "").strip()) is not None
+
+
 def canonical_entity(raw: str) -> CanonicalEntity:
     """Return stable canonical entity text + ID for storage/search.
 
     Collapses first-person forms (i / me / user / ...) to "user" to match the
     read side (graph seeds and query triples use `canonical_entity_text`); the original
     surface form is preserved in `aliases` for provenance and recall. Text longer than
-    `MAX_ENTITY_CHARS` is no entity: its text is empty."""
+    `MAX_ENTITY_CHARS`, as written or once normalised, is no entity: its text is empty."""
 
     original = str(raw or "").strip()
-    if len(original) > MAX_ENTITY_CHARS:
+    text = _capped_normal(original)
+    if text is None:
         return CanonicalEntity(text="", entity_id="")
-    text = _normalise(original.lower())
     entity_id = text.replace(" ", "_")
     return CanonicalEntity(text=text, entity_id=entity_id, aliases=[original] if original else [])
 
@@ -764,7 +778,7 @@ def restates_current(
 
 def names_only(values: list[str]) -> list[str]:
     """`values` without the text too long to be an entity name."""
-    return [v for v in values if len(v.strip()) <= MAX_ENTITY_CHARS]
+    return [v for v in values if fits_entity(v)]
 
 
 def facet_triples(
