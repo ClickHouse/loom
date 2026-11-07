@@ -46,8 +46,9 @@ function subjectRecord(raw: unknown): Record<string, unknown> {
 /**
  * Format the audit row into one human-readable line.
  *
- * The raw `subject` blob is the operation's full input payload — useful
- * for debugging but unreadable in a feed. This formatter pulls 1-3
+ * The raw `subject` blob is the operation's input as the server's
+ * `audit.input_subject` shapes it (text values hashed) — useful for
+ * debugging but unreadable in a feed. This formatter pulls 1-3
  * load-bearing fields per event type and synthesizes a sentence.
  *
  * Unknown event types fall through to a generic, readable fallback.

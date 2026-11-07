@@ -7,18 +7,23 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from typing import Any
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Any, Literal
 
 import pytest
+from pydantic import BaseModel
 
 import server.observability.budgets as budgets
 import server.transport._common as common
+from server.identity.api.models import NamespaceRestoreInput, NamespaceSnapshotOutput
 from server.identity.api.models_grants import GrantsShareAgentInput
 from server.memory.api.models_apply import MemoryApplyInput
 from server.memory.api.models_bulk import MemoryImportCuratedInput
 from server.memory.api.models_decision import DecisionRecordInput
 from server.memory.api.models_move import MemoryMoveInput
 from server.memory.api.models_records import MemoryRecordWriteInput
+from server.observability.audit import input_subject
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.transport import post_rows
 
@@ -136,3 +141,55 @@ def test_a_free_form_dict_is_hashed_whole(monkeypatch) -> None:
     dumped = json.dumps(subject)
     assert SECRET not in dumped and "P-123" not in dumped
     assert (subject["schema_name"], subject["memory_key"]) == ("patient", "p1")
+
+
+def test_a_restored_snapshot_keeps_its_ids_and_counts_and_hashes_its_rows(monkeypatch) -> None:
+    row = {"memory_key": "k", "value": SECRET}
+    payload = NamespaceSnapshotOutput.model_construct(
+        snapshot_id="snap-1",
+        org="o",
+        source_namespace="src",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        memory_count=1,
+        type_count=0,
+        grant_count=0,
+        audit_tail_count=0,
+        include_embeddings=False,
+        memories=[row],
+        types=[],
+        grants=[],
+        audit_tail=[],
+    )
+    body = NamespaceRestoreInput.model_construct(
+        org="o", target_namespace="dst", payload=payload, rebind_agent=None
+    )
+    subject = _audited_subject(monkeypatch, "namespace.restore", body)
+    assert SECRET not in json.dumps(subject)
+    shaped = subject["payload"]
+    assert (shaped["snapshot_id"], shaped["source_namespace"], shaped["memory_count"]) == (
+        "snap-1",
+        "src",
+        1,
+    )
+    assert shaped["memories"] == _digest(json.dumps([row]))
+
+
+def test_an_enum_and_an_optional_nested_model_are_shaped_by_their_type() -> None:
+    class Colour(StrEnum):
+        RED = "red"
+
+    class Inner(BaseModel):
+        item_key: str
+        note: str
+
+    class Body(BaseModel):
+        colour: Colour
+        inner: Inner | None = None
+        stages: list[Literal["a", "b"]] = []
+
+    body = Body(colour=Colour.RED, inner=Inner(item_key="k", note=SECRET), stages=["a"])
+    assert input_subject(body) == {
+        "colour": "red",
+        "inner": {"item_key": "k", "note": _digest(SECRET)},
+        "stages": ["a"],
+    }
