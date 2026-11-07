@@ -643,7 +643,6 @@ class _HTMLBlocks(HTMLParser):
         """A start tag inside a table; False when it is to be read as outside one,
         because it lays the table out (`_LAYOUT`, `_PARAGRAPHS`) or ends it (`_ENDS_TABLE`)."""
         line = self.getpos()[0]
-        # A caption left open ends at the next caption, row group, row or cell.
         if t.caption is not None and (t.caption_tables or tag not in _ENDS_CAPTION):
             if tag == "table":
                 t.caption_tables += 1

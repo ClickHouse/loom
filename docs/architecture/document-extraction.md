@@ -187,7 +187,7 @@ them apart; a table inside a caption, like a heading or list there, is read as t
 Cells are placed in columns as HTML places them: a span (`colspan`, `rowspan`) is read as HTML reads an integer, and a
 cell a `rowspan` carries down holds its columns in the rows below, as an empty cell there, until its row group ends. A
 column that only empty cells and cells spanning several columns fill is a spacer and is dropped, unless a cell with text
-is carried down into it. Placing counts each row's cells and the columns carried down into it; a table past a million of
+is carried down into it. Placing counts each row's cells and the cells carried down into it; a table past a million of
 those keeps every cell. A table left with one column holds no grid: its rows are one paragraph without `attrs.table`, as
 a page wrapped in a table (an email) is.
 
