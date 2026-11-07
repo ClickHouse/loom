@@ -35,12 +35,15 @@ The transport writes the row after the handler succeeds (`emit_op_audit` in
 insert is logged and loses the row; the operation still succeeds.
 
 For an `audit=True` op the subject is its `audit_subject` when it declares one, else the
-validated input as `audit.input_subject` shapes it: identity fields, ids, keys and URIs
-(names ending `_id`, `_key`, `_uri`, `_namespace`), numbers, booleans and Literal or Enum
-values verbatim, and every other value (a memory value, a decision's reasoning, a reason, a
-snapshot payload) as `{"sha256", "chars"}`. Erasure does not reach `loom.audit_log`, so no
-subject holds memory content. An op whose input carries a credential (a tracker source's
-password, a repository's access token) declares an `audit_subject` that leaves it out.
+validated input as `audit.input_subject` shapes it. Fields that name what the call acted
+on or who acted (the identity fields, principals, and names ending in an id, key, URI,
+name, org, agent, namespace or `_by` suffix), numbers, booleans and Literal or Enum values
+stay as sent; a nested model follows the same rule. Every other value (a memory value, a
+decision's reasoning, a reason, a snapshot payload, a record's fields) is stored as its
+SHA-256 and length, since erasure does not reach `loom.audit_log`. A hash of a short value
+can be recovered by guessing; the rule keeps long text out of the trail, not every word.
+An op whose input carries a credential (a tracker source's password, a repository's
+access token) declares an `audit_subject` that leaves it out.
 Grant `loom.audit_log` like the data it describes.
 
 ## The row

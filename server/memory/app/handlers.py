@@ -760,7 +760,7 @@ async def _audit_deferred(input: MemoryDeleteVersionInput) -> None:
         org=input.org,
         namespace=input.namespace,
         actor=auth.subject if auth is not None else "anonymous",
-        subject={**input.model_dump(mode="json"), "outcome": "deferred"},
+        subject={**audit.input_subject(input), "outcome": "deferred"},
         request_id=request_id_var.get() or "",
     )
 

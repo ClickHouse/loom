@@ -16,6 +16,8 @@ from enum import Enum
 from types import UnionType
 from typing import Any, Literal, Union, get_args, get_origin
 
+from pydantic import BaseModel
+
 from server.core.ch import get_client
 from server.core.ch_writes import batched_insert_settings
 from server.observability.instance import stamp_row
@@ -149,24 +151,67 @@ async def emit_many(
         log.exception("audit.emit_many failed for event_type=%s: %s", event_type, e)
 
 
-# Input fields whose text an audit subject keeps: identity, ids, keys and URIs, which
-# name what a call acted on. Every other text field (a value, a reason, a payload) is
-# kept as its SHA-256 and length, so `loom.audit_log` never holds content erasure must reach.
+# Input fields whose text an audit subject keeps: identity, principals, ids, keys and
+# URIs, which name what a call acted on and who acted. Every other text field (a value, a
+# reason, a payload) is kept as its SHA-256 and length, so `loom.audit_log` holds no text
+# an erasure must reach.
 _NAMING_FIELDS = frozenset(
-    {"org", "namespace", "agent", "user_id", "session_id", "run_id", "thread_id", "subject"}
+    {
+        "org",
+        "namespace",
+        "agent",
+        "user_id",
+        "session_id",
+        "run_id",
+        "thread_id",
+        "subject",
+        "grantee",
+        "owner_email",
+        "requester",
+        "approver",
+        "key",
+        "keys",
+        "name",
+    }
 )
-_NAMING_SUFFIXES = ("_id", "_ids", "_key", "_keys", "_uri", "_uris", "_namespace", "_org", "_agent")
+_NAMING_SUFFIXES = (
+    "_id",
+    "_ids",
+    "_key",
+    "_keys",
+    "_uri",
+    "_uris",
+    "_namespace",
+    "_org",
+    "_agent",
+    "_name",
+    "_by",
+)
 
 
 def _is_vocabulary(annotation: Any) -> bool:
-    """True for a Literal or Enum annotation (optionally inside Optional/Union)."""
-    if get_origin(annotation) is Literal:
+    """True for a Literal or Enum annotation, alone, in a list or inside Optional/Union."""
+    origin = get_origin(annotation)
+    if origin is Literal:
         return True
     if isinstance(annotation, type) and issubclass(annotation, Enum):
         return True
-    if get_origin(annotation) in (Union, UnionType):
+    if origin in (Union, UnionType):
         return all(a is type(None) or _is_vocabulary(a) for a in get_args(annotation))
+    if origin in (list, tuple, set, frozenset):
+        args = [a for a in get_args(annotation) if a is not Ellipsis]
+        return bool(args) and all(_is_vocabulary(a) for a in args)
     return False
+
+
+def _nested_model(annotation: Any) -> type[BaseModel] | None:
+    """The model a field holds, alone or inside Optional."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    if get_origin(annotation) in (Union, UnionType):
+        models = [m for m in map(_nested_model, get_args(annotation)) if m is not None]
+        return models[0] if len(models) == 1 else None
+    return None
 
 
 def _digest(value: Any) -> dict[str, Any]:
@@ -174,23 +219,34 @@ def _digest(value: Any) -> dict[str, Any]:
     return {"sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "chars": len(text)}
 
 
-def input_subject(input_obj: Any) -> dict[str, Any]:
-    """The audit subject of a validated op input that declares no `audit_subject`:
-    numbers, booleans, a Literal or Enum value and the naming fields verbatim, every
-    other value as its SHA-256 and length."""
+def _shape(model: type[BaseModel], dumped: dict[str, Any]) -> dict[str, Any]:
+    fields = model.model_fields
     subject: dict[str, Any] = {}
-    fields = getattr(type(input_obj), "model_fields", {})
-    for name, value in input_obj.model_dump(mode="json").items():
+    for name, value in dumped.items():
         field = fields.get(name)
+        annotation = field.annotation if field is not None else None
+        nested = _nested_model(annotation)
+        if nested is not None and isinstance(value, dict):
+            # A free-form dict (a payload, a record's fields) has no model and is hashed.
+            subject[name] = _shape(nested, value)
+            continue
         keep = (
             value in (None, "", [], {})
             or isinstance(value, bool | int | float)
             or name in _NAMING_FIELDS
             or name.endswith(_NAMING_SUFFIXES)
-            or (field is not None and _is_vocabulary(field.annotation))
+            or (annotation is not None and _is_vocabulary(annotation))
         )
         subject[name] = value if keep else _digest(value)
     return subject
+
+
+def input_subject(input_obj: BaseModel) -> dict[str, Any]:
+    """The audit subject of a validated op input that declares no `audit_subject`:
+    numbers, booleans, Literal or Enum values and the naming fields verbatim, a nested
+    model shaped by the same rule, and every other value (a free-form dict included) as
+    its SHA-256 and length."""
+    return _shape(type(input_obj), input_obj.model_dump(mode="json"))
 
 
 def _audit_row(

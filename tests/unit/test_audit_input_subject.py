@@ -13,10 +13,12 @@ import pytest
 
 import server.observability.budgets as budgets
 import server.transport._common as common
+from server.identity.api.models_grants import GrantsShareAgentInput
+from server.memory.api.models_apply import MemoryApplyInput
 from server.memory.api.models_bulk import MemoryImportCuratedInput
 from server.memory.api.models_decision import DecisionRecordInput
 from server.memory.api.models_move import MemoryMoveInput
-from server.observability.audit import input_subject
+from server.memory.api.models_records import MemoryRecordWriteInput
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.transport import post_rows
 
@@ -100,9 +102,37 @@ def test_import_curated_audit_row_holds_no_document(monkeypatch) -> None:
     assert subject["extra_tags"] == []
 
 
-def test_input_subject_of_an_object_without_fields_hashes_every_text_value() -> None:
-    class _Body:
-        def model_dump(self, mode: str) -> dict[str, Any]:
-            return {"org": "o", "note": SECRET, "n": 3}
+def test_an_admin_op_audit_row_names_its_principals(monkeypatch) -> None:
+    body = GrantsShareAgentInput(org="o", namespace="n", grantee="ci-bot", role="writer")
+    subject = _audited_subject(monkeypatch, "grants.share_agent", body)
+    assert (subject["grantee"], subject["role"]) == ("ci-bot", "writer")
 
-    assert input_subject(_Body()) == {"org": "o", "note": _digest(SECRET), "n": 3}
+
+def test_memory_apply_audit_row_keeps_the_keys_it_named(monkeypatch) -> None:
+    body = MemoryApplyInput(
+        org="o",
+        namespace="n",
+        agent="a",
+        target={"keys": ["k1", "k2"]},
+        action="delete",
+        reason=SECRET,
+        dry_run=False,
+    )
+    subject = _audited_subject(monkeypatch, "memory.apply", body)
+    assert subject["target"]["keys"] == ["k1", "k2"]
+    assert (subject["action"], subject["dry_run"]) == ("delete", False)
+    assert subject["reason"] == _digest(SECRET)
+
+
+def test_a_free_form_dict_is_hashed_whole(monkeypatch) -> None:
+    body = MemoryRecordWriteInput(
+        org="o",
+        namespace="n",
+        schema_name="patient",
+        memory_key="p1",
+        fields={"patient_id": {"value": "P-123"}, "diagnosis": {"value": SECRET}},
+    )
+    subject = _audited_subject(monkeypatch, "memory.record.write", body)
+    dumped = json.dumps(subject)
+    assert SECRET not in dumped and "P-123" not in dumped
+    assert (subject["schema_name"], subject["memory_key"]) == ("patient", "p1")

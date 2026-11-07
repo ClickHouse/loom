@@ -1152,7 +1152,7 @@ class MemoryRedactInput(BaseModel):
     # The id every version of the memory shares; `version` picks the historical row.
     memory_id: str
     version: int  # target row's version (from memory.set / memory.history)
-    reason: str = ""  # short justification recorded in the audit log
+    reason: str = ""  # short justification; the audit row keeps its SHA-256 and length
     redacted_by: str = ""  # actor for the audit row (caller-supplied)
 
 
