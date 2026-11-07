@@ -140,7 +140,7 @@ _SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
 # line is read.
 _LINE_LEAD = re.compile(r"^\s*(?:[-+>|]|\*(?!\*)|\d{1,3}[.)])\s*")
 # Underscore emphasis ("__Agreed:__"), which `\b` cannot see past; snake_case stays.
-_UNDERSCORES = re.compile(r"(?<!\w)_{1,2}|_{1,2}(?!\w)")
+_UNDERSCORES = re.compile(r"(?<!\w)_{1,3}|_{1,3}(?!\w)")
 # A table's separator row, an empty table row and a horizontal rule carry no text.
 _RULE = re.compile(r"^[\s|:\-=*_]*$")
 
@@ -148,16 +148,16 @@ _RULE = re.compile(r"^[\s|:\-=*_]*$")
 def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
     """Whether one section is noise: `text` under the heading path `section_path` in the
     document titled `title`."""
+    headings = tuple(_plain(h) for h in section_path)
     # A document stored with no title is named by its first heading.
-    name = title or (section_path[0] if section_path else "")
+    name = _plain(title) if title else (headings[0] if headings else "")
     dated = bool(_NOTES_TITLE.search(name)) or (
         bool(_MEETING_TITLE.search(name))
-        and bool(_DATE_HEADING.match(_top_heading(name, section_path)))
+        and bool(_DATE_HEADING.match(_top_heading(name, headings)))
     )
     notes = dated and not _DESIGN_TITLE.search(name)
     prose, code = _lines(text)
     # A heading is not in the section's text: a decision it states counts the same.
-    headings = [_plain(h) for h in section_path]
     # A heading that says no decision was reached is not one, in any document.
     if any(_decides(line, notes) for line in prose) or any(_decides(h, True) for h in headings):
         return False
@@ -166,7 +166,7 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
     if not prose and not code:
         # A heading with no body under it (a deck's title slide) has nothing to hide.
         return False
-    if _unanswered(section_path, prose, code):
+    if _unanswered(headings, prose, code):
         return True
     return notes
 

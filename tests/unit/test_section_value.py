@@ -102,6 +102,8 @@ def test_the_labelled_set_scores_as_measured() -> None:
         ("Storage sync 2026-03-04", ("Cache",), "**Decision:** none"),
         ("Storage sync 2026-03-04", ("Cache",), "**Outcome:** no decision yet"),
         ("Storage sync 2026-03-04", ("Cache",), "__Decision:__ deferred to next sync"),
+        ("Vector search design", ("__Open questions__",), "- Who owns it?"),
+        ("Storage weekly sync", ("__2026-03-04__", "Cache"), "Talked about the TTL."),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: not decided yet"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: no decision"),
         ("Storage sync 2026-03-04", ("Decision: not decided",), "- Revisit next week."),
@@ -191,6 +193,7 @@ def test_bookkeeping_and_discussion_without_a_decision_are_noise(
         ("Storage sync 2026-03-04", ("Cache",), "Decision: no consensus on Kafka."),
         ("Storage sync 2026-03-04", ("Cache",), "__Decision:__ drop the cache."),
         ("Storage sync 2026-03-04", ("Cache",), "__Agreed:__ drop the block cache."),
+        ("Storage sync 2026-03-04", ("Cache",), "___Agreed:___ drop the block cache."),
         ("Storage sync 2026-03-04", ("__Decisions__",), "- New services use the shared cluster."),
         # A deferral to a target of more than 40 characters is read as a topic: content when unsure.
         (
@@ -699,5 +702,6 @@ def test_a_long_line_is_judged_in_linear_time() -> None:
     is_noise("Storage sync 2026-03-04", ("X",), "outcome: decision: " * 20_000)
     is_noise("Storage sync 2026-03-04", ("X",), "Decision" + " " * 20_000 + "x")
     is_noise("Storage sync 2026-03-04", ("X",), "Decision" + "*:" * 20_000 + "x")
+    is_noise("Storage sync 2026-03-04", ("X",), "_" * 40_000 + "x")
     is_noise("Storage sync 2026-03-04", ("X",), "Decision: deferred to " + "x " * 20_000)
     assert time.perf_counter() - started < 5.0
