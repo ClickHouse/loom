@@ -28,6 +28,17 @@ REQUIRED = (
     "publicBaseUrl=https://loom.example.com",
     "clickhouse.host=ch",
 )
+# Every pod that runs the Loom image with EVERYTHING on: a template that stops
+# rendering one, or stops rendering its image, would drop it from the check.
+LOOM_PODS = {
+    "Deployment/loom",
+    "Deployment/loom-workers",
+    "Job/loom-publish",
+    "Job/loom-reseal",
+    "Job/loom-rollback-check",
+    "CronJob/loom-analytics-export",
+    "Pod/loom-test-health",
+}
 # Every optional object that runs the Loom image.
 EVERYTHING = (
     "workers.enabled=true",
@@ -100,7 +111,7 @@ def reaches(peer: dict[str, Any], address: str) -> bool:
 def check_metadata_denied(docs: list[dict[str, Any]], what: str) -> None:
     policies = [d["spec"] for d in docs if d["kind"] == "NetworkPolicy"]
     pods = loom_pods(docs)
-    assert len(pods) > 1, f"{what}: found only {pods}"
+    assert set(pods) >= LOOM_PODS, f"{what}: found only {sorted(pods)}"
     for name, pod in pods.items():
         assert not pod["spec"].get("hostNetwork"), f"{what}: {name} is outside every policy"
         labels = pod["metadata"].get("labels", {})

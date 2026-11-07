@@ -427,7 +427,7 @@ jobs:
           refused "$token" "${extractor[@]}" --set env.LOOM_DOCUMENT_EXTRACTOR_TOKEN=x
           refused "$token" "${extractor[@]}" --set "extraEnv[0].name=LOOM_DOCUMENT_EXTRACTOR_TOKEN"
           refused "$token" "${extractor[@]}" --set settingsFile.document_extractor_token=x
-          # guardMetadata is a bool; a string or number is refused, not read as on.
+          # guardMetadata is a bool; a string or number is refused by name, with the policy on or off.
           refused "networkPolicy.guardMetadata must be true or false" --set-string networkPolicy.guardMetadata=false
           refused "networkPolicy.guardMetadata must be true or false" --set networkPolicy.guardMetadata=0
       - name: install PyYAML for the render gates

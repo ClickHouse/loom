@@ -332,9 +332,10 @@ extractor:
   tolerations: []
 
 # Ingress to the Loom port from `ingressFrom` only. Egress to DNS, the
-# release's web pods, the extractor's pods (with extractor.enabled), and TCP 443
-# and the ClickHouse port anywhere except `egressExcept` (providers, the IdP and
-# git remotes have no fixed range). Off, `guardMetadata` gives the Loom pods an
+# release's web pods, the extractor's pods (with extractor.enabled), the dev
+# ClickHouse (with devClickhouse.enabled), the EKS Pod Identity agent, and TCP
+# 443, the ClickHouse port and 6443 (with retireLostPods) anywhere except
+# `egressExcept` (providers, the IdP and git remotes have no fixed range). Off, `guardMetadata` gives the Loom pods an
 # egress-only policy that allows every pod and every address but `egressExcept`.
 networkPolicy:
   enabled: false
@@ -350,9 +351,10 @@ networkPolicy:
   # other non-pod ranges to keep pods off them.
   egressExcept: [169.254.169.254/32, fd00:ec2::254/128, fd20:ce::254/128]
   # With enabled: false, render the egress-only policy above (none with
-  # `egressExcept: []`). Set false when your own policies limit the pods' egress:
-  # NetworkPolicies add up, so this one would let the pods reach everything else.
-  # Deny `egressExcept` there instead.
+  # `egressExcept: []`). Set false when the pods take cloud credentials from the
+  # metadata service (the node's role, GKE Workload Identity on Dataplane V2), or
+  # when your own policies limit the pods' egress: NetworkPolicies add up, so this
+  # one would let the pods reach everything else. Deny `egressExcept` there instead.
   guardMetadata: true
   # More egress rules, e.g. SSH git remotes or an OTLP collector.
   extraEgress: []

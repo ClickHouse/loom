@@ -359,9 +359,7 @@ By default, and with `networkPolicy.enabled`, a NetworkPolicy keeps the Loom pod
 runs cannot take the node's cloud role. With the policy off, `networkPolicy.guardMetadata`
 renders an egress-only NetworkPolicy whose one rule allows every pod and every address
 but those (none with `egressExcept: []`); the cluster needs a policy engine for it to
-hold. A `helm upgrade --reuse-values` from a chart with a shorter `egressExcept` keeps
-that list: set `networkPolicy.egressExcept` again, or upgrade with
-`--reset-then-reuse-values`. Its effects:
+hold. The policy's effects:
 
 - A pod has no cloud credentials from the metadata service: not the node's instance
   role, and not GKE Workload Identity on Dataplane V2. IRSA, and EKS Pod Identity on an
@@ -385,6 +383,9 @@ that list: set `networkPolicy.egressExcept` again, or upgrade with
   Identity agent, and the API server (which `retireLostPods` calls) where the engine
   gives it an identity of its own. Turn on the engine's node matching, or set
   `guardMetadata: false` and allow them in your own policy.
+
+A `helm upgrade --reuse-values` from a chart with a shorter `egressExcept` keeps that
+list: set `networkPolicy.egressExcept` again, or upgrade with `--reset-then-reuse-values`.
 
 ## Separate workers
 
