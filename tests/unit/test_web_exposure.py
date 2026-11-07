@@ -89,8 +89,17 @@ def _rsa_pem(bits: int) -> str:
         ("é" * 15 + "a", True),  # 31 bytes
         (1024, True),  # an RSA key of this many bits; its modulus is public in the JWKS
         (2048, False),
+        ("ssh-rsa-x", True),  # PyJWT refuses it as an HMAC key; it still seals stored keys
     ],
-    ids=["hmac-31", "hmac-32", "multibyte-32", "multibyte-31", "rsa-1024", "rsa-2048"],
+    ids=[
+        "hmac-31",
+        "hmac-32",
+        "multibyte-32",
+        "multibyte-31",
+        "rsa-1024",
+        "rsa-2048",
+        "not-hmac-short",
+    ],
 )
 def test_a_weak_root_key_is_an_hmac_secret_under_32_bytes_or_rsa_under_2048_bits(
     monkeypatch: pytest.MonkeyPatch, secret: str | int, weak: bool
@@ -134,6 +143,32 @@ def test_a_gateway_key_under_2048_bits_is_weak(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(settings, "jwt_secret", "s" * 48)
     monkeypatch.setattr(settings, "jwt_public_keys_json", json.dumps(keys))
     assert keyring.weak_keys() == ["gateway:gw-old", "gateway:gw-ssh"]
+
+
+def test_a_key_that_is_not_rsa_is_not_judged_by_its_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PyJWT 2.10's RSA loader returns an EC or Ed25519 key unchecked; neither is weak RSA."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, ed25519
+    from jwt.algorithms import RSAAlgorithm
+
+    from server.auth import keyring
+
+    def pem(key: Any) -> str:
+        return (
+            key.public_key()
+            .public_bytes(
+                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+            .decode()
+        )
+
+    monkeypatch.setattr(
+        RSAAlgorithm,
+        "prepare_key",
+        lambda self, key: serialization.load_pem_public_key(key.encode()),
+    )
+    assert keyring.weak_rsa(pem(ec.generate_private_key(ec.SECP256R1()))) is False
+    assert keyring.weak_rsa(pem(ed25519.Ed25519PrivateKey.generate())) is False
 
 
 def test_an_end_user_issuers_inline_key_under_2048_bits_is_weak(
