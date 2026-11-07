@@ -584,6 +584,8 @@ def test_a_cell_a_rowspan_carries_down_holds_its_column_in_the_rows_below(
         # a spanning `a` covers the second row's empty middle cell, which goes as a spacer
         ('colspan="2px"', "a | b\nc | d"),  # its leading digits, as HTML reads it
         ('colspan="+2"', "a | b\nc | d"),  # a sign
+        ('rowspan="-0"', "a | b\n | c | d"),  # 0, to the end of its row group
+        ('rowspan="-2"', "a | b\nc |  | d"),  # negative: no number, 1
         ('colspan="\u00a02"', "a | b\nc |  | d"),  # spacing that is not ASCII: no number, 1
         ('colspan="1" colspan="2"', "a | b\nc |  | d"),  # the first of a repeated attribute
         ('colspan="' + "9" * 5000 + '"', "a | b\nc | d"),  # past what int() reads: the bound

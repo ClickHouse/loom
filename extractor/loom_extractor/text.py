@@ -325,15 +325,17 @@ _CELLS = {"td", "th"}
 _ENDS_CAPTION = {"caption", "tr", *_CELLS, *_ROW_GROUPS}  # what ends a caption left open
 _SPANS = {"colspan": 1_000, "rowspan": 65_534}  # HTML's own bounds
 _MAX_PLACING = 1_000_000  # the steps placing a table's cells may take; past it every cell is kept
-_DIGITS = re.compile(r"[\t\n\f\r ]*\+?0*([0-9]+)")  # HTML's integer: ASCII spacing, a sign
+# HTML's non-negative integer: ASCII spacing, then `+`, or `-` before a zero (`-0` is 0).
+_DIGITS = re.compile(r"[\t\n\f\r ]*(?:\+|-(?=0+(?![0-9])))?0*([0-9]+)")
 # More digits than either bound has: a longer number is past both, so it is not read.
 _SPAN_DIGITS = len(str(max(_SPANS.values()))) + 1
 
 
 def _span(attrs: list[tuple[str, str | None]], name: str) -> int:
     """A cell's `colspan` or `rowspan` as HTML reads it: after ASCII spacing and a
-    sign, its leading digits (`2px` is 2), 1 when it has none, at most HTML's bound;
-    a rowspan of 0 reaches to the end of its row group."""
+    `+` (or the `-` of `-0`), its leading digits (`2px` is 2), 1 when it has none or
+    is negative, at most HTML's bound; a rowspan of 0 reaches to the end of its row
+    group."""
     # the first of a repeated attribute, as HTML keeps it
     m = _DIGITS.match(next((v for k, v in attrs if k == name), None) or "")
     if m is None:

@@ -184,12 +184,12 @@ next row, and a row group's start or end (`thead`, `tbody`, `tfoot`) ends the op
 or list inside them, and its text in no cell (between rows) are paragraphs before it, in their order, as a browser shows
 them apart; a table inside a caption, like a heading or list there, is read as the caption's text.
 
-Cells are placed in columns as HTML places them: a span (`colspan`, `rowspan`) is read as HTML reads an integer, and a
-cell a `rowspan` carries down holds its columns in the rows below, as an empty cell there, until its row group ends. A
-column that only empty cells and cells spanning several columns fill is a spacer and is dropped, unless a cell with text
-is carried down into it. Placing counts each row's cells and the cells carried down into it; a table past a million of
-those keeps every cell. A table left with one column holds no grid: its rows are one paragraph without `attrs.table`, as
-a page wrapped in a table (an email) is.
+Cells are placed in columns as HTML places them: a span (`colspan`, `rowspan`) is read as HTML reads a non-negative
+integer, and a cell a `rowspan` carries down holds its columns in the rows below, as an empty cell there, until its row
+group ends. A column that only empty cells and cells spanning several columns fill is a spacer and is dropped, unless a
+cell with text is carried down into it. Placing counts each row's cells and the cells carried down into it; a table past
+a million of those keeps every cell. A table left with one column holds no grid: its rows are one paragraph without
+`attrs.table`, as a page wrapped in a table (an email) is.
 
 A table whose cell holds a heading, a list, a `pre`, a table or a second paragraph lays out a page instead (an email, a
 page set in a table's cells): its cells, captions and text in no cell are read as the blocks they hold, in order, and a
