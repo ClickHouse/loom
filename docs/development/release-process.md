@@ -83,7 +83,9 @@ the tag ships.
    When a merged pull request's changelog entry says it needs the next server release, the same
    pull request raises both plugins' `minServerVersion` to this version and bumps both plugin
    versions: clients get a manifest only through a new plugin version.
-3. After the release pull request merges, tag its merge commit and push the tag:
+3. After the release pull request merges, tag its merge commit and push the tag. To soak a
+   release candidate first, tag `vX.Y.Z-rc.1` there instead, and the final later on the last
+   candidate's commit (below):
 
    ```bash
    git tag vX.Y.Z <merge commit>

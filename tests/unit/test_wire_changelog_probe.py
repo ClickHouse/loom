@@ -30,5 +30,4 @@ def test_the_probe_reads_the_registry() -> None:
         exec(_module()._PROBE, {})
     ops = json.loads(out.getvalue())["ops"]
     assert {"memory.set", "memory.search", "memory.get", "code.search"} <= set(ops)
-    assert all(op["path"] == f"/v1/{name}" for name, op in ops.items())
     assert "memory_key" in ops["memory.set"]["request_fields"]

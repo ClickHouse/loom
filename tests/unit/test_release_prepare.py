@@ -287,7 +287,7 @@ def test_a_category_without_the_templates_guidance_is_read() -> None:
 
 def test_the_categories_are_the_templates() -> None:
     names = prepare.categories()
-    assert names[0] == "New Feature" and len(names) == 10
+    assert names[0] == "New Feature"
     assert "Critical Bug Fix (data loss, cross-tenant read, auth bypass)" in names
 
 

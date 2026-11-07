@@ -222,8 +222,8 @@ def candidates(final: str, root: Path = ROOT) -> list[str]:
 
 def candidates_on_head(final: str, root: Path = ROOT) -> list[str]:
     """The candidate tags of `final` on the checked-out commit, newest first."""
-    head = _sha(root, "HEAD")
-    return [t for t in reversed(candidates(final, root)) if _tag_sha(root, t) == head]
+    on_head = set(_git(root, "tag", "--points-at", "HEAD").stdout.split())
+    return [t for t in reversed(candidates(final, root)) if t in on_head]
 
 
 def refuse_tagged(version: str, root: Path = ROOT) -> None:
@@ -238,7 +238,7 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
     `vX.Y.Z` is out, or a final `vX.Y.Z` on another commit than its last
     candidate."""
     final = final_of(tag_version)
-    if tag_version != final:  # a candidate: _tag_version admits no other prerelease
+    if tag_version != final:  # a candidate, X.Y.Z-rc.N
         released = _tag_sha(root, f"v{final}")
         if released == _sha(root, "HEAD"):
             # No deletion advice: the final's runs may read this tag as the one soaked.
