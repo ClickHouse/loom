@@ -182,7 +182,11 @@ class _World:
                 return httpx.Response(self.fail_listing, json={"error": {"status": "x"}})
             q = request.url.params["q"]
             after = q.split("modifiedTime > '")[1].rstrip("'") if "modifiedTime >" in q else ""
-            files = [f for f in self.files if f["modifiedTime"] > after]
+            files = [
+                f
+                for f in self.files
+                if f["modifiedTime"] > after and f"mimeType = '{f['mimeType']}'" in q
+            ]
             return httpx.Response(
                 200, json={"files": files, "incompleteSearch": self.incomplete_search}
             )
@@ -885,6 +889,25 @@ def test_two_sources_sharing_a_folder_do_not_take_each_other_s_documents(
     assert world.docs[_uri("doc1")]["tags"][-1] == "source:aaa"
     assert len(world.upserts) == 1
     assert _detail(world, "bbb")["skipped"] == 1
+    assert world.audits == []
+
+
+def test_a_second_source_with_only_docx_adds_a_folder_s_word_files_and_nothing_else(
+    world: _World,
+) -> None:
+    world.sources = [
+        _source("aaa"),
+        _source("bbb", config={"folder_ids": [FOLDER], "include": ["docx"]}),
+    ]
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
+        _file("word1", DOCX, "2026-01-02T00:00:00.000Z", size="14"),
+    ]
+    asyncio.run(source_sync.run_sync())
+    asyncio.run(source_sync.run_sync(full=True))
+    tags = {uri: d["tags"][-1] for uri, d in world.docs.items()}
+    assert tags == {_uri("doc1"): "source:aaa", _uri("word1", "file"): "source:bbb"}
+    assert len(world.upserts) == 2
     assert world.audits == []
 
 
