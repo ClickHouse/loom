@@ -3,7 +3,6 @@ repository's config asks."""
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -23,14 +22,8 @@ def test_a_commit_and_a_tag_need_no_key_and_run_no_hook(tmp_path: Path) -> None:
     git_repo.git(tmp_path, "config", "core.hooksPath", str(hooks))
     git_repo.git(tmp_path, "commit", "-q", "--allow-empty", "-m", "x")
     git_repo.git(tmp_path, "tag", "v1.0.0")
-    tagged = subprocess.run(
-        ["git", "cat-file", "-t", "v1.0.0"],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert tagged.stdout.strip() == "commit"  # a plain tag, not a signed tag object
+    # A plain tag, not a signed tag object.
+    assert git_repo.git(tmp_path, "cat-file", "-t", "v1.0.0").strip() == "commit"
 
 
 def test_a_failure_says_what_git_said(tmp_path: Path) -> None:

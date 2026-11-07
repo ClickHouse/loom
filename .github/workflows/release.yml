@@ -82,7 +82,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0 # the tags: the chart's previous version and the candidate order
-      # prepare.py's checks need only the standard library, of the project's Python.
+      # prepare.py's checks need only the standard library; the project's Python runs them.
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}

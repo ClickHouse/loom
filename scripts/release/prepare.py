@@ -189,8 +189,7 @@ def _sha(root: Path, ref: str) -> str:
 
 
 def tag_on_head(tag_version: str, root: Path = ROOT) -> bool:
-    """`v<tag_version>` is the checked-out commit: the tag's own run, not a dry
-    run or a branch run."""
+    """`v<tag_version>` is the checked-out commit (a run on the tag's ref)."""
     own = _sha(root, f"v{tag_version}")
     return bool(own) and own == _sha(root, "HEAD")
 
@@ -239,8 +238,8 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
     )
     if candidates and _sha(root, candidates[-1]) != _sha(root, "HEAD"):
         return (
-            f"v{final} is not on {candidates[-1]}'s commit: tag the final there,"
-            f" or delete {candidates[-1]} if it is a stray"
+            f"v{final} is not on {candidates[-1]}'s commit: delete {candidates[-1]} if it is"
+            f" a stray; if v{final}'s run published nothing, tag the final on its commit"
         )
     return None
 
@@ -251,9 +250,10 @@ def released_chart(tag: str, root: Path = ROOT) -> str:
     try:
         version = _match(CHART, shown.stdout).group("v")
         parse(version)
-    except ValueError as e:
-        reason = e.reason if isinstance(e, PinError) else str(e)
-        raise PinError(CHART.path, f"{reason} (at {tag})") from None
+    except PinError as e:
+        raise PinError(CHART.path, f"{e.reason} (at {tag})") from None
+    except ValueError as e:  # the version is not X.Y.Z
+        raise PinError(CHART.path, f"{e} (at {tag})") from None
     return version
 
 
@@ -491,9 +491,7 @@ def _check_chart(args: argparse.Namespace) -> None:
     tag_version = args.tag_version
     baseline = chart_baseline(tag_version)
     if not baseline:
-        # vX.Y.Z is on another commit, which check-tag has refused outside a dry run (a
-        # final off HEAD, a candidate after its final). Said in the log, so a skip never
-        # reads as a chart checked.
+        # A tag run never gets here: check-tag refuses every vX.Y.Z off HEAD first.
         print(f"::notice::no chart check: v{final_of(tag_version)} is tagged on another commit")
         return
     # Caught here, not in main(), for the annotation's file= and the baseline's name.
