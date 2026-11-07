@@ -145,7 +145,7 @@ export function ProjectionFailuresPanel() {
   );
 }
 
-/** Named by what the row shows; the short id tells apart two failures of one memory. */
+/** Names the failure's first memory, else the write that made it; the short id tells two apart. */
 function dismissLabel(f: ProjectionFailure): string {
   const subject = f.memory_keys[0] || f.source_operation || "a write";
   return `Dismiss the ${f.projection} failure of ${subject} (${f.failure_id.slice(0, 8)})`;
