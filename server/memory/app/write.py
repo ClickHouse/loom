@@ -329,10 +329,11 @@ async def _set_expiry(
         expires_at = None
     elif input.ttl_seconds is not None:
         expires_at = datetime.now(UTC) + timedelta(seconds=input.ttl_seconds)
-    elif existing is not None and "expire" in _lock.REFUSES.get(_lock.effective_mode(existing), ()):
-        # A lock that refuses an expiry change keeps the row's own, lapsed or not: the
-        # type's retention is a default for a row without one, not a change to this one.
-        expires_at = existing.expires_at
+    elif _lock.refuses(existing, "expire"):
+        # A lock that refuses an expiry change keeps the row's live expiry, or none, as
+        # memory.bulk_set does: the type's retention is a default for a row without one.
+        live = existing.expires_at is not None and existing.expires_at > naive_utc_now()
+        expires_at = existing.expires_at if live else None
     elif (
         existing is not None
         and existing.expires_at is not None

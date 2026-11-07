@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
+from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value
 from server.memory.api.models_crud import (
     MemoryDeleteInput,
@@ -250,20 +251,22 @@ async def _expiry_after_set(
     restatement = MemorySetInput(
         **_ID, memory_key="deploy_window", value="Tue and Thu only", classify=False
     )
-    no_prefetch = asyncio.get_running_loop().create_future()
-    no_prefetch.set_result(WriteConfig())
-    return await write_mod._set_expiry(restatement, existing, no_prefetch, "semantic")
+    prefetched = asyncio.get_running_loop().create_future()
+    prefetched.set_result(WriteConfig())
+    return await write_mod._set_expiry(restatement, existing, prefetched, "semantic")
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("expires_at", [None, _NOW - timedelta(days=1), _NOW + timedelta(days=2)])
-async def test_a_read_only_row_keeps_its_expiry_through_a_restatement(
-    monkeypatch: pytest.MonkeyPatch, expires_at: datetime | None
+@pytest.mark.parametrize(
+    ("expires_in", "kept"), [(None, False), (timedelta(days=-1), False), (timedelta(days=2), True)]
+)
+async def test_a_read_only_row_keeps_its_live_expiry_or_none(
+    monkeypatch: pytest.MonkeyPatch, expires_in: timedelta | None, kept: bool
 ) -> None:
-    # The type's retention is a default for a row without an expiry; a read_only row keeps
-    # its own, none or lapsed included.
+    # The checks read the real clock, so the expiry is set from it.
+    expires_at = naive_utc_now() + expires_in if expires_in is not None else None
     row = _row(lock_mode="read_only", lock_reason="hold", expires_at=expires_at)
-    assert await _expiry_after_set(monkeypatch, row) == expires_at
+    assert await _expiry_after_set(monkeypatch, row) == (expires_at if kept else None)
 
 
 @pytest.mark.asyncio
