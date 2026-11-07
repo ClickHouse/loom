@@ -190,7 +190,8 @@ async def test_a_locked_memory_is_not_quarantined(monkeypatch, mode):
 
     monkeypatch.setattr(memory_repo, "get_by_id", get_target)
     ch = _StubCH(_crossing_threshold())
-    _wire_quarantine(monkeypatch, ch, {"mid-s1": target})
+    # Its unlocked copy in another session stays too.
+    _wire_quarantine(monkeypatch, ch, {"mid-s1": target, "mid-s2": _session_row("s2")})
 
     out = await ops.handle_memory_outcome(
         MemoryOutcomeInput(org="o", namespace="n", memory_id="mid-s1", outcome="negative", weight=1)

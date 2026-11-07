@@ -234,8 +234,7 @@ async def reject_by_identity(
 ) -> int:
     """Mark the live rows of `memory_key` in every session of the identity
     `rejected`. A locked row raises 423 LOCKED before any row is written, unless
-    `skip` leaves it (an automatic quarantine passes `refuses_retirement`). Rows
-    are marked by version re-emit on loom.memory and its vector rows. Never a
+    `skip` leaves it. Rows are marked by version re-emit on loom.memory and its vector rows. Never a
     lightweight UPDATE: on loom.memory_embeddings it leaves a patch part, and
     the fact leg's codes-first read stays off while one exists
     (`server.core.vectors.patch_parts`). The rows land at one version drawn

@@ -521,6 +521,8 @@ async def test_an_automatic_quarantine_leaves_a_locked_row_and_rejects_the_rest(
     )
     assert written == 1
     assert [(m["session_id"], m["status"]) for m in ch.inserts[0][1]] == [("s1", "rejected")]
+    # The locked session's vector row is not mirrored as rejected either.
+    assert [(e["session_id"], e["status"]) for e in ch.inserts[1][1]] == [("s1", "rejected")]
 
 
 @pytest.mark.asyncio
