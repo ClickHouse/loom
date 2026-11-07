@@ -39,9 +39,9 @@ cmake_configure() {
 # cached_compiler_missing: the cache names a C or C++ compiler the host no longer has.
 cached_compiler_missing() {
   local tool
-  for tool in $(sed -n 's/^CMAKE_C\(XX\)\?_COMPILER:[A-Z]*=//p' build/CMakeCache.txt); do
-    command -v "$tool" >/dev/null || return 0
-  done
+  while IFS= read -r tool; do
+    [[ -z "$tool" ]] || command -v "$tool" >/dev/null || return 0
+  done < <(sed -n 's/^CMAKE_C\(XX\)\?_COMPILER:[A-Z]*=//p' build/CMakeCache.txt)
   return 1
 }
 

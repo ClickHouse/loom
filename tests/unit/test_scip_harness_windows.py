@@ -394,8 +394,9 @@ def test_a_cache_that_cannot_be_reconfigured_is_configured_from_scratch(
     if cache == "missing":
         (w.repo / "build" / "CMakeCache.txt").unlink()
     else:
+        other = "CMAKE_CXX_COMPILER" if cache == "CMAKE_C_COMPILER" else "CMAKE_C_COMPILER"
         (w.repo / "build" / "CMakeCache.txt").write_text(
-            f"CMAKE_C_COMPILER:FILEPATH=/bin/sh\n{cache}:FILEPATH=/nonexistent/clang-18\n"
+            f"{other}:FILEPATH=/bin/sh\n{cache}:FILEPATH=/nonexistent/clang-18\n"
         )
     assert (
         w.run_unchecked(index_docs=["src/a.cpp", "src/b.cpp"], CC="cc", CXX="c++").returncode == 0
