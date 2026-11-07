@@ -220,22 +220,23 @@ class Run:
                 content=data,
             )
             status = up.status_code
-        except httpx.HTTPError:
+            upload_id = str(up.json().get("upload_id") or "") if status == 201 else ""
+        except (httpx.HTTPError, ValueError, AttributeError):
+            status, upload_id = 0, ""  # no answer, or one that is not an upload's
+        if status == 201 and not upload_id:
             status = 0
         self.tallies["knowledge.upload"].add((time.perf_counter() - t0) * 1000, status)
         if status != 201:
             return "not queued", 0.0
-        status, job = await self.op(
-            "knowledge.ingest", {"upload_id": up.json()["upload_id"], "source_uri": uri}
-        )
-        if status != 200:
+        status, job = await self.op("knowledge.ingest", {"upload_id": upload_id, "source_uri": uri})
+        if status != 200 or not job.get("ingestion_id"):
             return "not queued", 0.0
         polled = time.perf_counter()
         while time.perf_counter() - polled < wait_s:
             await asyncio.sleep(POLL_S)
             _, st = await self.op("knowledge.ingest_status", {"ingestion_id": job["ingestion_id"]})
             if st.get("state") and st["state"] not in OPEN:
-                return str(st["state"]), _job_seconds(st)
+                return str(st["state"]), _job_seconds(st, time.perf_counter() - polled)
         return "still open", time.perf_counter() - polled
 
     async def small_ingest(self, n: int) -> None:
@@ -303,12 +304,16 @@ class Run:
             await asyncio.sleep(every)
 
 
-def _job_seconds(status: dict[str, Any]) -> float:
+def _job_seconds(status: dict[str, Any], waited_s: float) -> float:
     """A finished job's time from its creation to its last update, by the server's
-    clock (`knowledge.ingest_status` `created_at` / `updated_at`)."""
-    created, updated = (
-        datetime.fromisoformat(str(status[k])) for k in ("created_at", "updated_at")
-    )
+    clock (`knowledge.ingest_status` `created_at` / `updated_at`), or `waited_s`, the
+    time this process polled it, when the answer holds no readable pair."""
+    try:
+        created, updated = (
+            datetime.fromisoformat(str(status[k])) for k in ("created_at", "updated_at")
+        )
+    except (KeyError, ValueError):
+        return waited_s
     return (updated - created).total_seconds()
 
 
@@ -380,8 +385,11 @@ async def main(args: argparse.Namespace) -> int:
             b"# Canary\n\nReady.\n", "canary.md", "repo://canary.md", CANARY_S
         )
         if state != "ready":
-            print(f"the canary ingest ended {state!r} (waited up to {CANARY_S:g} s): a worker"
-                  " must take and publish a small document", file=sys.stderr)  # fmt: skip
+            print(
+                f"the canary ingest ended {state!r} (waited up to {CANARY_S:g} s): a worker"
+                " must take and publish a small document",
+                file=sys.stderr,
+            )
             return 2
         start = time.monotonic()
         deadline = start + args.duration

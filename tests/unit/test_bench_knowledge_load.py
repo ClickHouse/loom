@@ -134,9 +134,12 @@ def test_calls_start_at_their_rate_whatever_the_earlier_ones_take() -> None:
 
 def test_a_jobs_time_is_its_servers_creation_to_its_end() -> None:
     status = {"created_at": "2026-01-02T03:04:05Z", "updated_at": "2026-01-02T03:04:17.250Z"}
-    assert load._job_seconds(status) == 12.25
+    assert load._job_seconds(status, 99.0) == 12.25
     naive = {"created_at": "2026-01-02T03:04:05", "updated_at": "2026-01-02T03:05:05"}
-    assert load._job_seconds(naive) == 60.0
+    assert load._job_seconds(naive, 99.0) == 60.0
+    # No timestamps (or unreadable ones): the time this process waited.
+    assert load._job_seconds({"state": "ready"}, 3.5) == 3.5
+    assert load._job_seconds({"created_at": "soon", "updated_at": "later"}, 3.5) == 3.5
 
 
 def _main_against(answer: Any, monkeypatch: pytest.MonkeyPatch, *argv: str) -> int:
@@ -204,3 +207,27 @@ def test_a_token_that_cannot_read_the_tenant_exits_2(monkeypatch: pytest.MonkeyP
     import httpx
 
     assert _main_against(lambda r: httpx.Response(403, json={"error": "no"}), monkeypatch) == 2
+
+
+@pytest.mark.parametrize(
+    "broken", ["upload not json", "upload without an id", "ingest without an id"]
+)
+def test_an_upload_or_ingest_answer_out_of_shape_is_not_queued_not_a_crash(
+    monkeypatch: pytest.MonkeyPatch, broken: str
+) -> None:
+    """The canary's own upload or ingest answered out of shape: exit 2, no traceback."""
+    import httpx
+
+    ready = _server("ready")
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("knowledge.upload") and broken == "upload not json":
+            return httpx.Response(201, text="<html>proxy</html>")
+        if path.endswith("knowledge.upload") and broken == "upload without an id":
+            return httpx.Response(201, json={})
+        if path.endswith("knowledge.ingest") and broken == "ingest without an id":
+            return httpx.Response(200, json={})
+        return ready(request)
+
+    assert _main_against(answer, monkeypatch) == 2
