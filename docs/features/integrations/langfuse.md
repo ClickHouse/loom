@@ -44,7 +44,9 @@ and, under `scores` and `retrieval_judge`, how many scores were posted, failed o
 Loom attaches a second span processor beside the ClickHouse exporter and forwards the
 OpenTelemetry span tree to Langfuse's OTLP endpoint. The trace carries the real nesting
 (the HTTP span, the handler, each generation), the session id and per-generation cost.
-With OTel disabled (`LOOM_OTEL_ENABLED=false`) no traces reach Langfuse.
+A chat call is a `GENERATION` observation and an embedding call that reached the provider
+is an `EMBEDDING`; an embedding served from Loom's own cache is a plain span. With OTel
+disabled (`LOOM_OTEL_ENABLED=false`) no traces reach Langfuse.
 
 | Setting                                                                       | Default                                             | Effect                                                                                                   |
 | ----------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |

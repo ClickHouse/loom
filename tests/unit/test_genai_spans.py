@@ -487,3 +487,13 @@ def test_the_resource_names_the_environment_under_the_current_convention_key(
         otel._start_tracing("ch", "")
     assert seen["deployment.environment.name"] == "staging"
     assert "deployment.environment" not in seen
+
+
+def test_a_cache_write_without_a_read_is_its_own_share_of_the_input() -> None:
+    span = _FakeSpan()
+    genai._Generation(span, "claude-haiku-4-5").record_usage(
+        1000, 20, priced=True, cache_write_5m_tokens=200, cache_write_1h_tokens=100
+    )
+    assert span.attrs["gen_ai.usage.input_tokens"] == 1000
+    assert span.attrs["gen_ai.usage.cache_creation.input_tokens"] == 300
+    assert "gen_ai.usage.cache_read.input_tokens" not in span.attrs

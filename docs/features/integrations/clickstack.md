@@ -13,9 +13,8 @@ tables are in that database instead of `default`, here and in every query below.
 must follow.
 
 Model-call spans carry the OpenTelemetry GenAI attributes
-([telemetry](../observability/telemetry.md#traces-and-logs)), so HyperDX's LLM view shows
-Loom's token use, prompt-cache share, cost and latency per model with no extra
-configuration.
+([telemetry](../observability/telemetry.md#traces-and-logs)) under the keys HyperDX's LLM
+view reads for the provider, the operation, token use, the prompt-cache share and cost.
 
 ## Choose the export path
 
