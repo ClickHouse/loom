@@ -1,6 +1,6 @@
 """The identifier shapes read from a code query, a tracker question or a document match a
 run of capitals or digits ending in a word character in linear time. A repeated group whose
-body can continue the previous repetition, `(?:[A-Z][a-zA-Z0-9]+)+`, backtracks through
+body can continue the previous repetition, `(?:[A-Z][a-zA-Z0-9]*)+`, backtracks through
 every split of such a run instead: seconds at 25 to 40 characters, growing exponentially."""
 
 from __future__ import annotations
@@ -18,11 +18,11 @@ from server.tracker.domain.catalogue import extract_anchors
 
 # Each input takes a backtracking pattern 2 to 10 s, so a regression fails here, not hangs.
 CASES = [
-    pytest.param(embedded_idents, "Ab" + "A" * 27 + "_", id="code.search PascalCase"),
-    pytest.param(embedded_idents, "ab" + "A" * 27 + "_", id="code.search camelCase"),
-    pytest.param(extract_anchors, "Ab" + "0" * 25 + "_", id="tracker.ask anchors"),
-    pytest.param(_BARE_CAMEL.match, "Ab" + "A" * 27 + "_", id="decision extract bare camel"),
-    pytest.param(fake._CAMEL_RE.findall, "Ab" + "A" * 27 + "_", id="fake model mentions"),
+    pytest.param(embedded_idents, "Ab" + "A" * 27 + "_", id="code-search-pascal"),
+    pytest.param(embedded_idents, "ab" + "A" * 27 + "_", id="code-search-camel"),
+    pytest.param(extract_anchors, "Ab" + "0" * 25 + "_", id="tracker-anchors"),
+    pytest.param(_BARE_CAMEL.match, "Ab" + "A" * 27 + "_", id="decision-bare-camel"),
+    pytest.param(fake._CAMEL_RE.findall, "Ab" + "A" * 27 + "_", id="fake-mentions"),
 ]
 
 
