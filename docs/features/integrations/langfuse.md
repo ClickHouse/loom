@@ -118,7 +118,8 @@ is not pushed again.
 `POST /v1/admin/prompts.evaluate` (platform admin) reads Langfuse traces tagged
 `prompt:<name>:<version>` and returns a should-promote verdict from their rubric scores
 against a minimum count and threshold. It never writes to Langfuse, and answers 501
-`INTEGRATION_NOT_CONFIGURED` when Langfuse is not set up.
+`INTEGRATION_NOT_CONFIGURED` when Langfuse is not set up. It reads the trace list, which only
+Langfuse 3 serves: on Langfuse 4 it finds no traces and answers `should_promote: false`.
 
 ## Erasure
 
@@ -135,7 +136,13 @@ The lookup depends on the server's major version, read from `GET /api/public/hea
 Langfuse 3 lists traces (`GET /api/public/traces`), and Langfuse 4, which no longer serves
 that list, lists observations (`GET /api/public/v2/observations`) and collects their trace
 ids. Langfuse 4 deletes asynchronously, so a deleted trace can stay visible for a few
-minutes.
+minutes. The server version is read once per erasure step.
+
+On a deployment upgraded from Langfuse 3, the Langfuse 4 lookup finds what the
+observations list holds. Loom's traces are there: Loom sends the
+`x-langfuse-ingestion-version: 4` header, under which Langfuse 3 already writes them where
+Langfuse 4 reads. Traces that reached a Langfuse 3 release without that write path need
+Langfuse's historic backfill before an erasure can find them.
 
 The step fails closed. A health answer with no version, a 5xx, a timeout, or a 404 from
 the delete endpoint (an older self-hosted build, or a proxy that forwards only GET and

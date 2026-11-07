@@ -192,10 +192,23 @@ async def test_langfuse_4_lookup_refuses_a_truncated_set(backend, monkeypatch) -
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "resp", [_Resp(200, {"status": "OK"}), _Resp(404), _Resp(200, {"version": "dev"})]
+    "resp",
+    [_Resp(200, {"status": "OK"}), _Resp(404), _Resp(200, {"version": "dev"}), _NotJson()],
 )
 async def test_an_unreadable_server_version_fails_closed(backend, resp) -> None:
     c = _Client([resp])
     with pytest.raises(eb.ErasureBackendError, match="server version"):
         await backend._find_trace_ids(c, tags=["org:o"])  # type: ignore[arg-type]
     assert len(c.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_server_version_is_probed_once_per_backend(backend) -> None:
+    c = _Client([_health("4.76.0"), _obs_page(["t1"], None), _obs_page(["t2"], None)])
+    await backend._find_trace_ids(c, tags=["namespace:a", "org:o"])  # type: ignore[arg-type]
+    await backend._find_trace_ids(c, tags=["namespace:b", "org:o"])  # type: ignore[arg-type]
+    assert [call["url"].rsplit("/", 1)[-1] for call in c.calls] == [
+        "health",
+        "observations",
+        "observations",
+    ]

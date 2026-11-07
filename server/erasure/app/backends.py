@@ -137,6 +137,9 @@ class LangfuseBackend:
         else:
             self._headers = {"Authorization": f"Bearer {admin_token}"}
         self._timeout = timeout_s
+        # The server's major version, probed once per backend: a namespace-list
+        # erasure runs one lookup per namespace.
+        self._major: int | None = None
 
     # Langfuse has no bulk-by-filter delete, so erasure is query-then-delete:
     # find the matching trace ids, then delete them in batches. Bounded so a
@@ -147,11 +150,10 @@ class LangfuseBackend:
     # The observations list (Langfuse 4) returns one row per span, so a trace
     # spans several rows; its maximum page size keeps the page count down.
     _V4_PAGE_SIZE: ClassVar[int] = 1000
-    # The trace list is asked for its core fields only: the default payload
-    # carries every trace's input, output and metadata, and on a project with
-    # millions of traces a one-row default list can take tens of seconds or
-    # time out, where `fields=core` answers in seconds. Erasure needs ids and
-    # tags, nothing else.
+    # Both lookups ask for core fields only: the default payload carries each
+    # row's input, output and metadata, and on a project with millions of
+    # traces a one-row default list can take tens of seconds or time out, where
+    # `fields=core` answers in seconds. Erasure needs ids, nothing else.
     _LIST_FIELDS: ClassVar[str] = "core"
     # A page that times out or returns 5xx/429 is retried this many times with
     # exponential backoff before the step fails closed (the recovery worker
@@ -168,20 +170,23 @@ class LangfuseBackend:
         readable version fails closed: guessing would either 404 the lookup or,
         worse, read an empty list as nothing to erase.
         """
-        r = await self._get_page(c, "/api/public/health", {})
+        if self._major is not None:
+            return self._major
+        r = await self._get_retried(c, "/api/public/health", {})
         version = ""
         if r.status_code == 200:
             try:
                 version = str((r.json() or {}).get("version") or "")
             except ValueError:  # a proxy's HTML page: no version, so fail closed below
-                version = ""
+                pass
         major = version.split(".", 1)[0]
         if not major.isdigit():
             raise ErasureBackendError(
                 f"langfuse health → HTTP {r.status_code} with no server version "
                 f"({version!r}); cannot tell which trace lookup to use"
             )
-        return int(major)
+        self._major = int(major)
+        return self._major
 
     async def _find_trace_ids(
         self,
@@ -221,13 +226,13 @@ class LangfuseBackend:
                 {"type": "string", "column": "userId", "operator": "=", "value": user_id}
             )
         query: dict[str, Any] = {
-            "fields": "core",
+            "fields": self._LIST_FIELDS,
             "limit": self._V4_PAGE_SIZE,
             "filter": json.dumps(conditions),
         }
         ids: dict[str, None] = {}
         while True:
-            r = await self._get_page(c, "/api/public/v2/observations", query)
+            r = await self._get_retried(c, "/api/public/v2/observations", query)
             if r.status_code != 200:
                 raise ErasureBackendError(
                     f"langfuse observation lookup {tags} → HTTP {r.status_code}: "
@@ -272,7 +277,7 @@ class LangfuseBackend:
         ids: list[str] = []
         page = 1
         while True:
-            r = await self._get_page(
+            r = await self._get_retried(
                 c,
                 "/api/public/traces",
                 {"fields": self._LIST_FIELDS, "page": page, "limit": self._PAGE_SIZE, **params},
@@ -307,11 +312,12 @@ class LangfuseBackend:
             page += 1
         return ids
 
-    async def _get_page(
+    async def _get_retried(
         self, c: httpx.AsyncClient, path: str, query: dict[str, Any]
     ) -> httpx.Response:
-        """One page of a lookup, retried on a timeout, a 429 or a 5xx.
-        Anything else is returned to the caller's status check unchanged."""
+        """One GET to Langfuse (a lookup page or the health probe), retried on a
+        timeout, a 429 or a 5xx. Anything else is returned to the caller's status
+        check unchanged."""
         last: Exception | None = None
         for attempt in range(self._PAGE_ATTEMPTS):
             try:
