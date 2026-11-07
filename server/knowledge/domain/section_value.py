@@ -136,10 +136,11 @@ _DATE_HEADING = re.compile(rf"^\W*{_DAY}\b\W*$", re.IGNORECASE)
 # A recorded meeting's title: a date with a clock time, and a transcript or notes-by mark.
 _RECORDED_STAMP = re.compile(rf"\b{_DAY}\s+\d{{1,2}}[:.]\d{{2}}\b", re.IGNORECASE)
 # A transcript mark is a whole part of the title ("Planner sync — Transcript & notes — ...",
-# "... - Transcript"); "Incident ... - transcript export failing" names a topic.
+# "... - Transcript", "... - Transcript.docx" as a file name); "Incident ... - transcript
+# export failing" names a topic.
 _TRANSCRIPT_MARK = re.compile(
     # A hyphen separates only with a space beside it: "transcript-export" is one word.
-    r"(?:^|[\u2013\u2014|:]|\s-)\s*transcript(?:\s*&\s*notes)?(?:\s*$|\s*[\u2013\u2014|:]|\s+-)",
+    r"(?:^|[\u2013\u2014|:]|\s-)\s*transcript(?:\s*&\s*notes)?(?:\s*(?:\.\w+)?$|\s*[\u2013\u2014|:]|\s+-)",
     re.IGNORECASE,
 )
 _NOTES_BY_MARK = re.compile(r"\bnotes by\b", re.IGNORECASE)

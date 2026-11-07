@@ -476,6 +476,14 @@ def test_a_recorded_meetings_transcript_and_template_are_noise(
             ("Planner sync \u2013 2026-03-04 10:00 CET \u2013 Transcript", "Summary"),
             "The team reviewed the fallback list.",
         ),
+        # an upload titled by its file name, and the "|" and ":" separators
+        (
+            "Planner sync - 2026-03-04 10:00 CET - Transcript.docx",
+            ("Summary",),
+            "The team reviewed the fallback list.",
+        ),
+        ("Planner sync | 2026-03-04 10:00 CET | Transcript", ("Summary",), "The team met."),
+        ("Planner sync 2026-03-04 10:00 CET: Transcript", ("Summary",), "The team met."),
         # a clock time without a transcript or notes-by mark names no recording
         ("Cutover 2026-03-04 10:00", ("Transcript",), "Ana walked through the steps."),
     ],
@@ -494,6 +502,7 @@ def test_a_recorded_meetings_account_is_content(
         "The plan is to lower the alert to info.",
         "I'll remove the old flag in the next release.",
         "We're deprecating the v1 export API.",
+        "Let's disable the legacy exporter.",
     ],
 )
 def test_a_stated_plan_is_a_decision_in_notes(text: str) -> None:
