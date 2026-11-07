@@ -1225,6 +1225,13 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
       }
       case "/v1/namespace.taxonomy":
         return json(options.taxonomy ?? TAXONOMY);
+      // The Guardrails page's org panels and Settings → Memory's webhooks, empty.
+      case "/v1/extraction_policy.get":
+        return json({ policy: "", updated_by: "", updated_at: null });
+      case "/v1/org.model_calls":
+        return json({ enabled: true, reason: "", updated_by: "", updated_at: null, locked: false, locked_by: "" });
+      case "/v1/webhook.list":
+        return json({ webhooks: [] });
       case "/v1/facts.traverse":
         calls.traverse.push(body);
         if (options.traverseDelayMs) await new Promise((r) => setTimeout(r, options.traverseDelayMs));
