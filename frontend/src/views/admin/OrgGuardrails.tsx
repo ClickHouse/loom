@@ -14,7 +14,8 @@ import {
   type OrgModelCalls,
   type PolicyScope,
 } from "../../api/guardrails";
-import { useIdentity } from "../../lib/state";
+import { useIdentity, useStore } from "../../lib/state";
+import { hasPlatformAdminClaim } from "../../lib/role";
 import { useAbortableEffect } from "../../lib/hooks";
 import { humanizeError } from "../../lib/format";
 import { confirmAction } from "../../components/ConfirmDialog";
@@ -150,6 +151,7 @@ function ExtractionRules({ scope }: { scope: PolicyScope }) {
 
 function ModelCallsPanel() {
   const identity = useIdentity();
+  const platformAdmin = useStore((s) => hasPlatformAdminClaim(s.whoami));
   const [state, setState] = useState<OrgModelCalls | null>(null);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<unknown>(null);
@@ -191,8 +193,9 @@ function ModelCallsPanel() {
     }
   };
 
-  // Under a platform admin's lock the org's admins may still switch calls off, never on.
-  const lockedOff = !!state?.locked && !state.enabled;
+  // Under a platform admin's lock the org's admins may still switch calls off, never on;
+  // a platform admin may.
+  const lockedOff = !!state?.locked && !state.enabled && !platformAdmin;
   return (
     <Panel>
       <SectionHeading
@@ -202,6 +205,11 @@ function ModelCallsPanel() {
       />
       {!!error && (
         <ListState kind="error" things="the model call setting" error={error} onRetry={() => setReload((n) => n + 1)} />
+      )}
+      {!error && state === null && (
+        <LoadingSkeleton label="Loading the model call setting">
+          <SkeletonText lines={2} />
+        </LoadingSkeleton>
       )}
       {state && (
         <div className="mt-3 space-y-3">

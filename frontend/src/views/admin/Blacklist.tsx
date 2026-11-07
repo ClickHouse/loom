@@ -89,8 +89,7 @@ export function PrivacyFilters({
   const canList = canCall("blacklist.list", role, whoami);
   const canAdd = canCall("blacklist.add", role, whoami);
   const canRemove = canCall("blacklist.remove", role, whoami);
-  // A namespace pattern sweeps its namespace (WRITER there); an org or global one sweeps
-  // the whole org, so it needs an org admin, as the sweep handler asks.
+  // Who may sweep which pattern: `handle_blacklist_sweep`.
   const canSweepNamespace = canCall("blacklist.sweep", role, whoami);
   const orgAdmin = hasOrgAdminClaim(whoami);
   const canSweep = (r: BlacklistRow) => (r.scope === "namespace" ? canSweepNamespace : orgAdmin);
@@ -160,15 +159,19 @@ export function PrivacyFilters({
   };
 
   // A pattern stops new writes; a sweep tombstones what it already matches.
+  const [sweeping, setSweeping] = useState<string | null>(null);
   const sweep = async (r: BlacklistRow) => {
-    const where = r.scope === "namespace" ? "in this namespace" : `across ${identity.org}`;
+    const inNamespace = r.scope === "namespace";
     const ok = await confirmAction({
-      title: `Delete the stored memories "${r.pattern}" matches ${where}?`,
-      message: "They can be restored for 14 days from Memories → Recently deleted.",
+      title: `Delete the stored memories "${r.pattern}" matches ${inNamespace ? "in this namespace" : `across ${identity.org}`}?`,
+      message: inNamespace
+        ? "They can be restored for 14 days from Memories → Recently deleted."
+        : "They can be restored for 14 days from Memories → Recently deleted in each namespace they were in.",
       confirmLabel: "Delete matches",
       danger: true,
     });
     if (!ok) return;
+    setSweeping(r.pattern_id);
     try {
       const s = await sweepBlacklistPattern(identity, r.pattern_id);
       if (s.error) throw new Error(s.error);
@@ -176,6 +179,8 @@ export function PrivacyFilters({
       toast(`Deleted ${s.tombstoned} of ${s.matched} matching memories${more}`, "ok");
     } catch (e) {
       toast(`Sweep failed: ${humanizeError(e)}`, "error");
+    } finally {
+      setSweeping(null);
     }
   };
 
@@ -320,13 +325,16 @@ export function PrivacyFilters({
                   </div>
                 </div>
                 {canSweep(r) && (
-                  <IconButton
-                    icon="trash"
-                    size="sm"
-                    label={`Delete stored memories matching ${r.pattern}`}
-                    tooltip="Delete stored matches"
+                  <Button
+                    type="danger"
+                    htmlType="button"
+                    aria-label={`Delete stored memories matching ${r.pattern}`}
+                    loading={sweeping === r.pattern_id}
+                    disabled={sweeping !== null}
                     onClick={() => void sweep(r)}
-                  />
+                  >
+                    Delete matches
+                  </Button>
                 )}
                 {canRemove && (
                   <IconButton

@@ -335,7 +335,8 @@ bumps a one-row version watermark (`loom.blacklist_version`); replicas poll it e
 (`LOOM_BLACKLIST_CACHE_TTL_SECONDS`, 300 s). For up to one interval, another replica can
 still accept a newly refused value.
 
-The dashboard's Guardrails page (`<server>/admin/guardrails`) manages patterns. Refusing is
+The dashboard's Guardrails page (`<server>/admin/guardrails`) manages patterns, and each
+pattern's **Delete matches** runs the sweep. Refusing is
 not erasing: to remove a person's data, use [erasure](./retention-and-erasure.md#erasure).
 
 ## Settings

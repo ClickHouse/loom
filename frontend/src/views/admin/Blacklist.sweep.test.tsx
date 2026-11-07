@@ -8,7 +8,8 @@ import * as guardrails from "../../api/guardrails";
 import type { BlacklistRow, MyNamespaceEntry, WhoAmI } from "../../api";
 import { useStore } from "../../lib/state";
 import { resetNamespaceRoleCache } from "../../lib/namespaceRole";
-import { PrivacyFilters } from "./Blacklist";
+import { toast } from "../../components/Toast";
+import { Blacklist, PrivacyFilters } from "./Blacklist";
 
 vi.mock("../../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
 vi.mock("../../components/Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
@@ -21,6 +22,8 @@ vi.mock("../../api", async (importOriginal) => {
 });
 vi.mock("../../api/guardrails", () => ({
   sweepBlacklistPattern: vi.fn(async () => ({ matched: 3, tombstoned: 3, truncated: false, error: "" })),
+  getOrgModelCalls: vi.fn(() => new Promise(() => {})),
+  getExtractionPolicy: vi.fn(() => new Promise(() => {})),
 }));
 
 const row = (pattern_id: string, scope: BlacklistRow["scope"]): BlacklistRow =>
@@ -53,6 +56,33 @@ afterEach(() => {
 });
 
 describe("PrivacyFilters sweep", () => {
+  it("says when a sweep failed and when more matches remain", async () => {
+    signIn(["writer"]);
+    vi.mocked(guardrails.sweepBlacklistPattern)
+      .mockResolvedValueOnce({ matched: 0, tombstoned: 0, truncated: false, error: "the pattern no longer compiles" })
+      .mockResolvedValueOnce({ matched: 9000, tombstoned: 5000, truncated: true, error: "" });
+    render(<PrivacyFilters />);
+    const sweep = await screen.findByRole("button", { name: "Delete stored memories matching secret-p1" });
+    await userEvent.click(sweep);
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Sweep failed: the pattern no longer compiles", "error"));
+    await userEvent.click(sweep);
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith("Deleted 5000 of 9000 matching memories; more remain, sweep again", "ok"),
+    );
+  });
+
+  it("shows the org's guardrails on the page to an org admin claim only", async () => {
+    signIn(["writer"]);
+    render(<Blacklist />);
+    await screen.findByRole("button", { name: "Delete stored memories matching secret-p1" });
+    expect(screen.queryByRole("heading", { name: "Model calls" })).toBeNull();
+    cleanup();
+
+    signIn(["org_admin"]);
+    render(<Blacklist />);
+    expect(await screen.findByRole("heading", { name: "Model calls" })).toBeInTheDocument();
+  });
+
   it("offers a writer the sweep of a namespace pattern, not of an org one", async () => {
     signIn(["writer"]);
     render(<PrivacyFilters />);

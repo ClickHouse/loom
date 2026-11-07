@@ -256,12 +256,11 @@ const PRIVACY_STARTERS: PrivacyFilterStarter[] = [
   { pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b", label: "US SSNs" },
 ];
 
-/** The Memory tab — two settings, each one row: what is never saved, and seeding from a
- *  document. */
+/** The Memory tab: what is never saved, seeding from a document, and, for a namespace
+ *  admin, the namespace's webhooks. */
 function MemoryTab() {
   const [importing, setImporting] = useState(false);
-  // The webhook ops are ADMIN on the namespace; the section reads on open, so only a role
-  // known to reach them sees it.
+  // Hidden below namespace ADMIN: the section reads webhook.list on mount.
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
   const showWebhooks = canCall("webhook.list", useNamespaceRole(identity.namespace), whoami);

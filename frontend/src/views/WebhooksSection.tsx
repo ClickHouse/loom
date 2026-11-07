@@ -13,7 +13,8 @@ import {
   type Webhook,
   type WebhookDelivery,
   type WebhookEvent,
-} from "../api/guardrails";
+  webhookSecretPrefix,
+} from "../api/webhooks";
 import { useIdentity } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
 import { humanizeError } from "../lib/format";
@@ -22,7 +23,7 @@ import { toast } from "../components/Toast";
 import { IconButton } from "../components/IconButton";
 import { ListState } from "../components/ui/ListState";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { Alert, ListTime, Tip } from "../components/ui";
+import { Alert, ListTime, Loading, Tip } from "../components/ui";
 
 /**
  * The namespace's memory webhooks: a URL told of every memory write, revision, delete,
@@ -31,7 +32,11 @@ import { Alert, ListTime, Tip } from "../components/ui";
  */
 export function WebhooksSection() {
   const identity = useIdentity();
-  const [hooks, setHooks] = useState<Webhook[] | null>(null);
+  // Kept with the namespace it was read for: after a switch the old list is not shown,
+  // and its Remove is not offered under the new namespace.
+  const scopeKey = `${identity.org}/${identity.namespace}`;
+  const [loaded, setLoaded] = useState<{ scope: string; hooks: Webhook[] } | null>(null);
+  const hooks = loaded?.scope === scopeKey ? loaded.hooks : null;
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
   const [adding, setAdding] = useState(false);
@@ -41,7 +46,7 @@ export function WebhooksSection() {
     (signal, live) => {
       setError(null);
       listWebhooks(identity, { signal })
-        .then((r) => live() && setHooks(r.webhooks ?? []))
+        .then((r) => live() && setLoaded({ scope: scopeKey, hooks: r.webhooks ?? [] }))
         .catch((e) => live() && setError(e));
     },
     [identity.org, identity.namespace, reload],
@@ -52,7 +57,8 @@ export function WebhooksSection() {
     if (!(await confirmAction({ title: `Stop sending events to ${h.url}?`, confirmLabel: "Remove", danger: true })))
       return;
     try {
-      await removeWebhook(identity, h.webhook_id);
+      const r = await removeWebhook(identity, h.webhook_id);
+      if (!r.removed) toast("This webhook was already removed", "info");
       refresh();
     } catch (e) {
       toast(`Remove failed: ${humanizeError(e)}`, "error");
@@ -76,6 +82,7 @@ export function WebhooksSection() {
       </div>
       <div className="mt-3">
         {!!error && <ListState kind="error" things="webhooks" error={error} onRetry={refresh} />}
+        {!error && hooks === null && <Loading label="Loading webhooks" />}
         {!error && hooks?.length === 0 && <p className="text-sm text-text-muted">No webhook yet.</p>}
         {!error && !!hooks?.length && (
           <ul className="divide-y divide-border">
@@ -169,10 +176,11 @@ function AddWebhookDialog({ onClose }: { onClose: (added: boolean) => void }) {
             label="Secret variable"
             value={secretRef}
             onChange={setSecretRef}
-            placeholder="LOOM_WEBHOOK_SECRET_…"
+            placeholder={`${webhookSecretPrefix(identity.org)}…`}
           />
           <p className="text-xs text-text-muted">
-            The name of the server's environment variable that holds the signing secret, never the secret itself.
+            The name of the server's environment variable that holds the signing secret, never the secret itself:{" "}
+            <span className="font-mono">{webhookSecretPrefix(identity.org)}</span> and then letters and digits.
           </p>
           <fieldset className="space-y-2">
             <legend className="text-sm text-text mb-1">Events</legend>
@@ -206,18 +214,21 @@ function DeliveriesDialog({ hook, onClose }: { hook: Webhook; onClose: () => voi
   const identity = useIdentity();
   const [rows, setRows] = useState<WebhookDelivery[] | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [retry, setRetry] = useState(0);
   useAbortableEffect(
     (signal, live) => {
+      setError(null);
       listWebhookDeliveries(identity, hook.webhook_id, { signal })
         .then((r) => live() && setRows(r.deliveries ?? []))
         .catch((e) => live() && setError(e));
     },
-    [hook.webhook_id],
+    [hook.webhook_id, retry],
   );
   return (
     <Modal open onOpenChange={(v) => !v && onClose()} title="Deliveries" className="w-full max-w-[760px]">
       <p className="text-sm text-text-muted mb-3 font-mono truncate">{hook.url}</p>
-      {!!error && <Alert role="alert" state="danger" text={humanizeError(error)} />}
+      {!!error && <ListState kind="error" things="deliveries" error={error} onRetry={() => setRetry((n) => n + 1)} />}
+      {!error && rows === null && <Loading label="Loading deliveries" />}
       {!error && rows?.length === 0 && <p className="text-sm text-text-muted">No event in the last three days.</p>}
       {!error && rows !== null && rows.length > 0 && (
         <Table
@@ -241,7 +252,11 @@ function DeliveriesDialog({ hook, onClose }: { hook: Webhook; onClose: () => voi
                     ) : (
                       <Badge text={d.status} state={DELIVERY_STATE[d.status]} size="sm" />
                     )}
-                    {d.attempts > 0 && <span className="text-xs text-text-muted tabular">{d.attempts} tries</span>}
+                    {d.attempts > 0 && (
+                      <span className="text-xs text-text-muted tabular">
+                        {d.attempts} {d.attempts === 1 ? "try" : "tries"}
+                      </span>
+                    )}
                   </span>
                 ),
               },

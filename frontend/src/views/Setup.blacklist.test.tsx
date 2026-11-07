@@ -55,7 +55,12 @@ vi.mock("../api", async (importOriginal) => {
     })),
   };
 });
+vi.mock("../api/webhooks", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/webhooks")>()),
+  listWebhooks: vi.fn(async () => ({ webhooks: [] })),
+}));
 import { countMemories, listBlacklist, listMine, registerNamespace } from "../api";
+import { listWebhooks } from "../api/webhooks";
 import { sharedMine } from "../lib/sharedReads";
 
 const ORG = "dev";
@@ -165,6 +170,9 @@ describe("Setup's 'Never save' panel", () => {
     expect(screen.queryByRole("button", { name: /Remove pattern/ })).not.toBeInTheDocument();
     expect(screen.queryByText(PRIVACY_FILTERS_MANAGED_BY_ADMIN)).not.toBeInTheDocument();
     expect(countMemories).toHaveBeenCalledTimes(1);
+    // Webhooks are ADMIN: a viewer neither sees the section nor reads them.
+    expect(screen.queryByRole("heading", { name: "Webhooks" })).not.toBeInTheDocument();
+    expect(listWebhooks).not.toHaveBeenCalled();
   });
 
   it("an admin claim lists once and gets the add form and the remove button", async () => {
@@ -178,6 +186,7 @@ describe("Setup's 'Never save' panel", () => {
     expect(await screen.findByRole("button", { name: "Remove pattern sk-[A-Za-z0-9]{20,}" }, WAIT)).toBeInTheDocument();
     expect(screen.queryByText(PRIVACY_FILTERS_MANAGED_BY_ADMIN)).not.toBeInTheDocument();
     expect(screen.queryByText(PRIVACY_FILTERS_READ_ONLY)).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Webhooks" }, WAIT)).toBeInTheDocument();
   });
 });
 

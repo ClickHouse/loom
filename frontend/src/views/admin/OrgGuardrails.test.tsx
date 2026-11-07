@@ -81,6 +81,15 @@ describe("OrgGuardrails", () => {
     expect(await screen.findByText("Off")).toBeInTheDocument();
   });
 
+  it("lets a platform admin switch calls back on under the lock", async () => {
+    useStore.setState({ whoami: { authenticated: true, subject: "root", org: "*", roles: ["platform_admin"] } });
+    vi.mocked(api.getOrgModelCalls).mockResolvedValue({ ...CALLS, enabled: false, locked: true, locked_by: "root" });
+    render(<OrgGuardrails />);
+    expect(await screen.findByRole("switch", { name: "Model calls" })).toBeEnabled();
+    expect(screen.queryByText(/only they can switch them on/)).toBeNull();
+    useStore.setState({ whoami: null });
+  });
+
   it("holds the switch under a platform admin's lock", async () => {
     vi.mocked(api.getOrgModelCalls).mockResolvedValue({ ...CALLS, enabled: false, locked: true, locked_by: "root" });
     render(<OrgGuardrails />);
