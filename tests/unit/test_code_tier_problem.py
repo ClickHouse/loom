@@ -248,6 +248,7 @@ def test_the_doctor_reads_the_failing_tiers_once_and_none_when_clickhouse_is_dow
 
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
     monkeypatch.setattr(repo_registry, "refresh_db_repos", registry)
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: True)
     monkeypatch.setattr(recorder, "refresh_failing", refresh)
     rows = doctor._doctor_tier_failures()
     if down:
@@ -346,3 +347,26 @@ def test_the_doctor_grades_a_failing_tier_at_most_warn() -> None:
         "problem:code_tier_failing": doctor.WARN,
         "problem:jwt_secret_empty": doctor.FAIL,
     }
+
+
+@pytest.mark.doctor_tier_read
+def test_the_doctor_says_nothing_when_the_registry_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.cli import doctor
+    from server.code.app.index import repo_registry
+
+    async def registry(**_: Any) -> list[Any]:
+        return []
+
+    async def refresh(ch: Any = None) -> None:
+        raise AssertionError("no tier read without the configured entries")
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "ch_host", "localhost")
+    monkeypatch.setattr(doctor, "_doctor_ch_reachable", lambda *_: (True, "ok"))
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
+    monkeypatch.setattr(repo_registry, "refresh_db_repos", registry)
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
+    monkeypatch.setattr(recorder, "refresh_failing", refresh)
+    assert doctor._doctor_tier_failures() is None

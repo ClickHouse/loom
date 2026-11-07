@@ -468,6 +468,8 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
         try:
             await client.connect()
             await repo_registry.refresh_db_repos(force=True)  # the self-service entries too
+            if not repo_registry.registry_read():
+                return None  # which entries are configured is unknown: say nothing
             await tier_health.refresh_failing()
             return tier_health.problem_rows()
         finally:

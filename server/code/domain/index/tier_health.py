@@ -337,7 +337,7 @@ def severity(
     `error_lag_commits` or more behind (-1 lag is unknown, never an error)."""
     if not health.failing:
         return ""
-    since = parse_iso_dt(health.failing_since)  # naive UTC, as `_iso` writes it
+    since = parse_iso_dt(health.failing_since)  # drops the +00:00 `_iso` writes: naive UTC
     at = now.astimezone(UTC).replace(tzinfo=None)
     hours = (at - since).total_seconds() / 3600 if since else 0.0
     if health.failed_passes < warn_passes and hours < warn_hours:

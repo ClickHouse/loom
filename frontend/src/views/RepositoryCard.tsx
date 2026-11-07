@@ -111,7 +111,8 @@ export function branchHealth(b: CodeRepoSummary): Health {
     const first = failing[0];
     return {
       text: failing.length === 1 ? `${tierName(first.tier)} failing` : `${failing.length} tiers failing`,
-      // warning, as the health problem is: a failing tier serves what it last indexed
+      // warning: the card does not know the thresholds, and a failing tier still serves
+      // what it last indexed
       state: "warning",
       rank: 6,
       detail: failing
