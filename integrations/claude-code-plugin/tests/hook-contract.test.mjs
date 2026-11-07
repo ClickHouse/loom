@@ -200,7 +200,7 @@ function baseEnv(box, serverUrl, extra = {}) {
     // The shunt's repository lookup has its own bound, 8 s by default: 1000,
     // the floor resolveTimeoutMs allows, keeps a hanging server's cost near
     // the other hooks'. code-hooks-failopen.test.mjs holds the hook to its
-    // deadline (lookup bound + 4 s).
+    // deadline (4 s in all with a 1000 ms lookup bound).
     LOOM_SHUNT_RESOLVE_TIMEOUT_MS: "1000",
     // A hook's swallowed error then reaches stderr, which every case checks.
     LOOM_HOOK_DEBUG: "on",

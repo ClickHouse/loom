@@ -36,13 +36,13 @@ import { resolveIndexedRepo } from "../lib/repo-scope.mjs";
 import { readSessionState, writeSessionState } from "../lib/tmp-state.mjs";
 import { readAllLines } from "../lib/transcript.mjs";
 import {
-  venvPython,
   commentOnlyDiff,
   decideBlock,
   gatePayload,
   gateSignature,
   renderGate,
   sessionScope,
+  venvPython,
 } from "../lib/test-gate.mjs";
 
 const ENABLED = envSwitch("LOOM_TEST_GATE", true);
