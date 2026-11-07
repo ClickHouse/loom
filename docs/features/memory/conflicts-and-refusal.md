@@ -161,9 +161,11 @@ architecture](../../architecture/memory-architecture.md#the-conflict-resolver).
 ### The Review queue
 
 The dashboard's Review queue (`<server>/admin/review_queue`, `g r`) lists conflicted pairs and
-applies `conflicts.resolve`. Three more tabs appear when they have content: **Learnings**
-([learnings](./procedures-and-learnings.md#learnings-review-queue)), **Auto-resolved**
-(below) and **Exceptions** (the allowlist). See [the dashboard](../dashboard.md).
+applies `conflicts.resolve`. Four more tabs appear when they have content: **Learnings**
+([learnings](./procedures-and-learnings.md#learnings-review-queue)), **Proposals**
+([an agent proposes, a person approves](./writing.md#an-agent-proposes-a-person-approves)),
+**Auto-resolved** (below) and **Exceptions** (the allowlist). See
+[the dashboard](../dashboard.md).
 
 ### Automatic retirements
 

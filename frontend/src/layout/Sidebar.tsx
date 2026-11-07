@@ -4,7 +4,7 @@ import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "../components/IconButton";
 import { Tip } from "../components/ui/Tooltip";
 import { useStore, viewHref, type View } from "../lib/state";
-import { countConflicts, countNewAgents, type WhoAmI } from "../api";
+import { countConflicts, countNewAgents, listProposals, type WhoAmI } from "../api";
 import { readSession, useAfterPaint, writeSession } from "../lib/afterPaint";
 import { sharedBudgetStatus, sharedHasAutoResolved } from "../lib/sharedReads";
 import { hasOrgAdminClaim, hasPlatformAdminClaim, isNamespaceAdmin } from "../lib/role";
@@ -220,6 +220,7 @@ export function Sidebar() {
   const [conflictCount, setConflictCount] = useState<number | null>(null);
   // A recent automatic retirement: the queue's Auto-resolved tab has something to show.
   const [autoResolved, setAutoResolved] = useState(false);
+  const [proposalWaits, setProposalWaits] = useState(false);
   // Lean notification surface: badge admin items that have actionable
   // state right now. Over-cap on Usage = burning $; new-since-24h on
   // Agents = unexpected client connected.
@@ -245,8 +246,9 @@ export function Sidebar() {
   // fails; polling on "unknown" would fire conflicts.list + cost.budget_status every 30 s
   // into AUTH_INSUFFICIENT. Unknown does not poll.
   const roleHere = roleOnNamespace(whoami, myNamespaces, identity?.namespace ?? "");
-  // The badges count conflicts, budget and agents of the memory plane; a code index or a
-  // tracker namespace has none, so its admin is not polled for them either.
+  // The badges (conflicts and recent auto-resolutions, budget, agents, waiting proposals)
+  // are the memory plane's; a code index or a tracker namespace has none, so its admin is
+  // not polled for them either.
   const pollsBadges = roleHere === "admin" && isMemoryNamespace(identity?.namespace ?? "", myNamespaces);
 
   // Layer status badges onto the static ADMIN list. Usage gets a
@@ -270,21 +272,22 @@ export function Sidebar() {
   const reviewBadge = openConflicts ? conflictCount : undefined;
   const visibleAdmin: NavItem[] = !canAdmin
     ? []
-    : openConflicts || autoResolved
+    : openConflicts || autoResolved || proposalWaits
       ? [
-          // Open conflicts warn; recent auto-resolutions alone use the Auto-resolved tab's icon.
+          // Open conflicts warn; recent auto-resolutions use the Auto-resolved tab's icon,
+          // and proposals alone the Proposals tab's.
           {
             id: "admin:review_queue",
             label: "Review queue",
-            icon: openConflicts ? "warning" : "flash",
+            icon: openConflicts ? "warning" : autoResolved ? "flash" : "user",
             badge: reviewBadge,
           },
           ...adminWithBadges,
         ]
       : adminWithBadges;
 
-  // Fetch conflict count + recent auto-resolutions + budget + agents activity on identity
-  // change and refresh every 60s. All four are fail-quiet — a missing
+  // Fetch conflict count + recent auto-resolutions + waiting proposals + budget + agents
+  // activity on identity change and refresh every 60s. All of them are fail-quiet — a missing
   // backend op just leaves its badge hidden. Only for a known admin of this
   // namespace: otherwise a viewer-only token draws AUTH_INSUFFICIENT 403s on every page
   // load, and a token-only principal through the fail-open gate. Each call also passes
@@ -299,12 +302,16 @@ export function Sidebar() {
   useEffect(() => {
     if (!badgeKey) return;
     agentsTick.current = 0;
-    const last = readSession<{ conflicts: number | null; autoResolved?: boolean; overCap: boolean; newAgents: number }>(
-      badgeKey,
-      BADGE_SESSION_TTL_MS,
-    );
+    const last = readSession<{
+      conflicts: number | null;
+      autoResolved?: boolean;
+      proposalWaits?: boolean;
+      overCap: boolean;
+      newAgents: number;
+    }>(badgeKey, BADGE_SESSION_TTL_MS);
     setConflictCount(last ? last.conflicts : null);
     setAutoResolved(last ? !!last.autoResolved : false);
+    setProposalWaits(last ? !!last.proposalWaits : false);
     setOverCap(last ? last.overCap : false);
     setNewAgent24hCount(last ? last.newAgents : 0);
   }, [badgeKey]);
@@ -313,7 +320,13 @@ export function Sidebar() {
     let cancelled = false;
     const fetch_ = async () => {
       const tasks: Promise<void>[] = [];
-      const next = { conflicts: null as number | null, autoResolved: false, overCap: false, newAgents: 0 };
+      const next = {
+        conflicts: null as number | null,
+        autoResolved: false,
+        proposalWaits: false,
+        overCap: false,
+        newAgents: 0,
+      };
       if (canCall("conflicts.list", roleHere, whoami)) {
         tasks.push(
           // The badge asks for the number, not 100 rows with their values (33 MB per tick
@@ -340,6 +353,23 @@ export function Sidebar() {
               if (!cancelled) {
                 next.autoResolved = found;
                 setAutoResolved(found);
+              }
+            })
+            .catch(() => {
+              /* hide */
+            }),
+        );
+      }
+      if (canCall("memory.proposals", roleHere, whoami)) {
+        tasks.push(
+          // Whether an agent's proposal waits for a decision (the Proposals tab). The read
+          // scans the namespace's proposed rows (at most memory_proposals_scan_cap) and
+          // grades one.
+          listProposals({ org: identity.org, namespace: identity.namespace }, 1)
+            .then((r) => {
+              if (!cancelled) {
+                next.proposalWaits = (r.total ?? 0) > 0;
+                setProposalWaits(next.proposalWaits);
               }
             })
             .catch(() => {

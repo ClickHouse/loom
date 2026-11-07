@@ -20,8 +20,8 @@ export interface ListToolbarProps {
   /** The bar holds a search field, so it is a `search` landmark; false for a bar of filters,
    *  a time window or a count alone, which is a named group instead. */
   search?: boolean;
-  /** The search field and the filters in force, on one line. */
-  children: ReactNode;
+  /** The search field and the filters in force, on one line; none for a count alone. */
+  children?: ReactNode;
   /** Where the list stands, at the end of the bar ("1–50 of 1,234"). */
   count?: ReactNode;
   /** While rows are selected: their number and what can be done to them. */

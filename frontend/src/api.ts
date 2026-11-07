@@ -1528,5 +1528,6 @@ export * from "./api/profile";
 export * from "./api/code";
 export * from "./api/runs";
 export * from "./api/facts";
+export * from "./api/proposals";
 export * from "./api/tracker";
 export * from "./api/assistant";

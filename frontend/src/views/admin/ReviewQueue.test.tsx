@@ -25,6 +25,8 @@ vi.mock("../../api", async (importOriginal) => {
     removeAllowlist: vi.fn(async () => ({ removed: true })),
     listLearnings: vi.fn(),
     reviewLearning: vi.fn(),
+    listProposals: vi.fn(),
+    decideProposal: vi.fn(),
     listAutoResolved: vi.fn(),
     listUnsuperseded: vi.fn(),
     restoreMemory: vi.fn(),
@@ -45,11 +47,13 @@ vi.mock("../../components/Toast", async (importOriginal) => ({
 import { hasAutoResolved } from "../../api/audit";
 import {
   countConflicts,
+  decideProposal,
   getMemoryById,
   listAllowlist,
   listAutoResolved,
   listConflicts,
   listLearnings,
+  listProposals,
   listUnsuperseded,
   resolveConflict,
   restoreMemory,
@@ -148,6 +152,9 @@ describe("ReviewQueue", () => {
     vi.mocked(listLearnings).mockReset();
     vi.mocked(listAllowlist).mockResolvedValue({ rows: [] });
     vi.mocked(listLearnings).mockResolvedValue({ rows: [] });
+    vi.mocked(listProposals).mockReset();
+    vi.mocked(listProposals).mockResolvedValue({ proposals: [], total: 0 });
+    vi.mocked(decideProposal).mockReset();
     vi.mocked(listAutoResolved).mockReset();
     vi.mocked(listUnsuperseded).mockReset();
     vi.mocked(restoreMemory).mockReset();
@@ -717,6 +724,278 @@ describe("ReviewQueue", () => {
     expect(within(table).queryByRole("button", { name: "a/older" })).toBeNull();
     // Nor does the old queue's focus hand-off move focus into the new one.
     expect(within(table).getByRole("button", { name: "b/key" })).not.toHaveFocus();
+  });
+
+  it("lists an agent's proposal with its trial, and accepts it with the reason given", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    const proposal = {
+      memory_key: "deploy/window",
+      memory_id: "m1",
+      agent: "claude",
+      value_preview: "Deploys run on Tuesdays",
+      created_at: "2026-09-20T00:00:00Z",
+      graded_passes: 2,
+      graded_fails: 0,
+      ready: "accept" as const,
+    };
+    vi.mocked(listProposals).mockResolvedValue({ proposals: [proposal], total: 1 });
+    vi.mocked(decideProposal).mockResolvedValue({
+      decided: 1,
+      results: [{ memory_key: "deploy/window", decided: true, status: "active" }],
+    });
+    seed("ns-a", "writer");
+    const { container } = render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await screen.findByText("Deploys run on Tuesdays", {}, WAIT);
+    expect(screen.getByText(/2 graded passes, 0 fails · the policy would accept it/)).toBeTruthy();
+    expect(await axeViolations(container)).toEqual([]);
+    await userEvent.type(screen.getByLabelText("Reason for the decision on deploy/window"), "checked the calendar");
+    await userEvent.click(screen.getByRole("button", { name: "Accept deploy/window" }));
+    await waitFor(
+      () =>
+        expect(decideProposal).toHaveBeenCalledWith(
+          { org: ORG, namespace: "ns-a" },
+          "deploy/window",
+          "accept",
+          "checked the calendar",
+        ),
+      WAIT,
+    );
+    expect(toast).toHaveBeenCalledWith("Accepted", "ok");
+  });
+
+  it("rejects with the reason given, says when a key is no longer a proposal, and counts past the rows read", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listProposals).mockResolvedValue({
+      proposals: [{ memory_key: "k", memory_id: "m1", value_preview: "a proposed fact" }],
+      total: 120,
+    });
+    vi.mocked(decideProposal).mockResolvedValue({
+      decided: 0,
+      results: [{ memory_key: "k", decided: false, reason: "not a proposal (status active)" }],
+    });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await screen.findByText("a proposed fact", {}, WAIT);
+    expect(screen.getByText(/the newest 1 of 120 proposals read/)).toBeTruthy();
+    await userEvent.type(screen.getByLabelText("Reason for the decision on k"), "wrong");
+    await userEvent.click(screen.getByRole("button", { name: "Reject k" }));
+    await waitFor(
+      () => expect(decideProposal).toHaveBeenCalledWith({ org: ORG, namespace: "ns-a" }, "k", "reject", "wrong"),
+      WAIT,
+    );
+    expect(toast).toHaveBeenCalledWith("Not decided: not a proposal (status active)", "error");
+  });
+
+  it("says a contradicted proposal it accepted now waits as a conflict", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listProposals).mockResolvedValue({
+      proposals: [{ memory_key: "k", memory_id: "m1", value_preview: "a proposed fact" }],
+      total: 1,
+    });
+    vi.mocked(decideProposal).mockResolvedValue({
+      decided: 1,
+      results: [{ memory_key: "k", decided: true, status: "conflicted" }],
+    });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Accept k" }, WAIT));
+    await waitFor(
+      () =>
+        expect(toast).toHaveBeenCalledWith(
+          "Accepted; it contradicts a live fact, which now waits in the Conflicts tab",
+          "ok",
+        ),
+      WAIT,
+    );
+  });
+
+  it("keeps focus on the list when the last proposal decided gives way to one that arrived", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listProposals)
+      .mockResolvedValueOnce({ proposals: [{ memory_key: "k1", memory_id: "m1", value_preview: "first" }], total: 1 })
+      .mockResolvedValue({ proposals: [{ memory_key: "k2", memory_id: "m2", value_preview: "arrived" }], total: 1 });
+    vi.mocked(decideProposal).mockResolvedValue({
+      decided: 1,
+      results: [{ memory_key: "k1", decided: true, status: "active" }],
+    });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Accept k1" }, WAIT));
+    await screen.findByText("arrived", {}, WAIT);
+    expect(screen.getByRole("region", { name: "Proposals" })).toHaveFocus();
+  });
+
+  it("leaves focus where the person moved it while a decision was out", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    const b = { memory_key: "b", memory_id: "m2", value_preview: "second" };
+    const c = { memory_key: "c", memory_id: "m3", value_preview: "third" };
+    vi.mocked(listProposals)
+      .mockResolvedValueOnce({
+        proposals: [{ memory_key: "a", memory_id: "m1", value_preview: "first" }, b, c],
+        total: 3,
+      })
+      .mockResolvedValue({ proposals: [b, c], total: 2 });
+    let answer: (v: { decided: number; results: { memory_key: string; decided: boolean }[] }) => void = () => {};
+    vi.mocked(decideProposal).mockImplementation(() => new Promise((r) => (answer = r)));
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Accept a" }, WAIT));
+    const elsewhere = screen.getByLabelText("Reason for the decision on c");
+    elsewhere.focus();
+    await act(async () => answer({ decided: 1, results: [{ memory_key: "a", decided: true }] }));
+    await waitFor(() => expect(screen.queryByText("first")).toBeNull(), WAIT);
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it("moves focus to the row that took a decided one's place when two decisions are out", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    const p = (k: string) => ({ memory_key: k, memory_id: `m-${k}`, value_preview: `value ${k}` });
+    vi.mocked(listProposals)
+      .mockResolvedValueOnce({ proposals: [p("a"), p("b"), p("c"), p("d")], total: 4 })
+      .mockResolvedValue({ proposals: [p("c"), p("d")], total: 2 });
+    const answers: ((v: { decided: number; results: { memory_key: string; decided: boolean }[] }) => void)[] = [];
+    vi.mocked(decideProposal).mockImplementation(() => new Promise((r) => answers.push(r)));
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Accept a" }, WAIT));
+    await userEvent.click(screen.getByRole("button", { name: "Accept b" }));
+    await act(async () => answers[0]({ decided: 1, results: [{ memory_key: "a", decided: true }] }));
+    await act(async () => answers[1]({ decided: 1, results: [{ memory_key: "b", decided: true }] }));
+    await waitFor(() => expect(screen.getByLabelText("Reason for the decision on c")).toHaveFocus(), WAIT);
+  });
+
+  it("marks a cut preview and opens the whole value from the key", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    const long = "x".repeat(400);
+    vi.mocked(listProposals).mockResolvedValue({
+      proposals: [{ memory_key: "k", memory_id: "m1", value_preview: long, agent: "claude" }],
+      total: 1,
+    });
+    const inspect = vi.fn();
+    useStore.setState({ inspect });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    expect(await screen.findByText(`${long}…`, {}, WAIT)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Open k in full" }));
+    expect(inspect).toHaveBeenCalledWith("k", { agent: "claude" });
+  });
+
+  it("keeps a decided key off the list when a re-read still returns it", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    const a = { memory_key: "a", memory_id: "m1", value_preview: "first" };
+    const b = { memory_key: "b", memory_id: "m2", value_preview: "second" };
+    // A replica that has not seen the decision yet answers the re-read.
+    vi.mocked(listProposals).mockResolvedValue({ proposals: [a, b], total: 2 });
+    vi.mocked(decideProposal).mockResolvedValue({ decided: 1, results: [{ memory_key: "a", decided: true }] });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Accept a" }, WAIT));
+    // The page's probe, then the re-read after the decision.
+    await waitFor(() => expect(listProposals).toHaveBeenCalledTimes(2), WAIT);
+    await screen.findByText("second", {}, WAIT);
+    expect(screen.queryByText("first")).toBeNull();
+    expect(screen.getByText("second")).toBeTruthy();
+  });
+
+  it("hands focus to the error when the read after a decision fails", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listProposals)
+      .mockResolvedValueOnce({
+        proposals: [
+          { memory_key: "k1", memory_id: "m1", value_preview: "first" },
+          { memory_key: "k2", memory_id: "m2", value_preview: "second" },
+        ],
+        total: 2,
+      })
+      .mockRejectedValue(new Error("down"));
+    vi.mocked(decideProposal).mockResolvedValue({
+      decided: 1,
+      results: [{ memory_key: "k1", decided: true, status: "active" }],
+    });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Accept k1" }, WAIT));
+    const box = await screen.findByRole("region", { name: "Proposals" }, WAIT);
+    await waitFor(() => expect(box).toHaveFocus(), WAIT);
+    expect(within(box).getByRole("button", { name: /Retry/ })).toBeTruthy();
+  });
+
+  it("paints no proposal of the namespace left, and leaves the tab, on a namespace switch", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listProposals).mockImplementation(async (id) =>
+      id.namespace === "ns-a"
+        ? { proposals: [{ memory_key: "a/k", memory_id: "m1", value_preview: "a's fact" }], total: 1 }
+        : { proposals: [], total: 0 },
+    );
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await screen.findByText("a's fact", {}, WAIT);
+    seed("ns-b", "writer");
+    expect(screen.queryByText("a's fact")).toBeNull();
+    await screen.findByText("No conflicts", {}, WAIT);
+    expect(screen.queryByRole("tab", { name: /Proposals/ })).toBeNull();
+    // Only the page's probe asks for the new namespace; the panel it hides asks nothing.
+    expect(vi.mocked(listProposals).mock.calls.filter(([id]) => id.namespace === "ns-b")).toHaveLength(1);
+  });
+
+  it("hands focus to the proposal that takes the decided one's place", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    const p = (key: string) => ({ memory_key: key, memory_id: `m-${key}`, value_preview: `fact ${key}` });
+    vi.mocked(listProposals)
+      .mockResolvedValueOnce({ proposals: [p("a"), p("b")], total: 2 })
+      .mockResolvedValue({ proposals: [p("b")], total: 1 });
+    vi.mocked(decideProposal).mockResolvedValue({ decided: 1, results: [{ memory_key: "a", decided: true }] });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Accept a" }, WAIT));
+    await waitFor(
+      () => expect(document.activeElement).toBe(screen.getByLabelText("Reason for the decision on b")),
+      WAIT,
+    );
+  });
+
+  it("shows a high-sensitivity proposal as sensitive, not as an empty value", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listProposals).mockResolvedValue({
+      proposals: [{ memory_key: "door/code", memory_id: "m1", value_preview: "", sensitivity: "high" }],
+      total: 1,
+    });
+    seed("ns-a", "viewer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await screen.findByText(SENSITIVE_READ_BY_KEY, {}, WAIT);
+  });
+
+  it("shows a viewer the proposals but no decision to make", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listProposals).mockResolvedValue({
+      proposals: [{ memory_key: "k", memory_id: "m1", value_preview: "a proposed fact" }],
+      total: 1,
+    });
+    seed("ns-a", "viewer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await screen.findByText("a proposed fact", {}, WAIT);
+    expect(screen.queryByRole("button", { name: /^Accept/ })).toBeNull();
+  });
+
+  it("asks for no proposals while the role is unknown", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText(/Most users never see anything here/, {}, WAIT);
+    expect(listProposals).not.toHaveBeenCalled();
   });
 
   it("opens Learnings from the probe without a second read, and reads afresh when it opens again", async () => {

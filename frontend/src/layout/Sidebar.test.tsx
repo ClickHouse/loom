@@ -25,6 +25,7 @@ vi.mock("../api", async (importOriginal) => {
     countConflicts: vi.fn(async () => 0),
     getBudgetStatus: vi.fn(async () => ({ over_cap: false })),
     countNewAgents: vi.fn(async () => 0), // The badge asks for a number
+    listProposals: vi.fn(async () => ({ proposals: [], total: 0 })),
   };
 });
 // The sidebar asks through sharedHasAutoResolved, which calls api/audit.
@@ -32,7 +33,7 @@ vi.mock("../api/audit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/audit")>()),
   hasAutoResolved: vi.fn(async () => false),
 }));
-import { getBudgetStatus, countConflicts, countNewAgents } from "../api";
+import { getBudgetStatus, countConflicts, countNewAgents, listProposals } from "../api";
 import { hasAutoResolved } from "../api/audit";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
@@ -192,7 +193,22 @@ describe("Sidebar admin drawer", () => {
     expect(screen.getByRole("link", { name: /Review queue/ })).not.toHaveTextContent(/\d/);
   });
 
-  it("hides the Review queue with no open conflict and no recent auto-resolution", async () => {
+  // An agent's proposal waiting for a decision lists the Review queue in the drawer.
+  it("shows the Review queue when a proposal waits", async () => {
+    sessionStorage.clear();
+    vi.mocked(listProposals).mockResolvedValueOnce({
+      proposals: [{ memory_key: "k", memory_id: "m1", value_preview: "a proposed fact" }],
+      total: 2,
+    });
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    await painted();
+    expect(listProposals).toHaveBeenCalledWith({ org: "dev", namespace: "team-a" }, 1);
+    expect(screen.getByRole("link", { name: /Review queue/ })).not.toHaveTextContent(/\d/);
+  });
+
+  it("hides the Review queue with no open conflict, recent auto-resolution or waiting proposal", async () => {
     sessionStorage.clear();
     seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
     useStore.setState({ view: "admin:health" });

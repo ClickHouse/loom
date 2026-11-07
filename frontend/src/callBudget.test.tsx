@@ -179,6 +179,8 @@ const BUDGET: Record<string, { render: () => JSX.Element; view: View; allow: Rec
       "/v1/conflicts.list": 1,
       // Fifty retirement records: whether the Review queue's Auto-resolved tab has anything.
       "/v1/memory.auto_retirements": 1,
+      // One proposal: whether an agent's proposal waits in the Review queue.
+      "/v1/memory.proposals": 1,
       "/v1/cost.budget_status": 1,
       "/v1/agents.connected": 1,
       "/v1/grants.pending_for_me": 1,

@@ -358,6 +358,8 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "memory.promote": ("sdk_method",),
+    "memory.proposal_decide": ("dashboard",),
+    "memory.proposals": ("dashboard",),
     "memory.provenance": (
         "sdk_method",
         "dashboard",

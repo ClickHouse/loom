@@ -249,8 +249,6 @@ DASHBOARD_PENDING: frozenset[str] = frozenset(
         "memory.dedup_collapse",
         "memory.dedup_list",
         "memory.dedup_resolve",
-        "memory.proposal_decide",
-        "memory.proposals",
         "memory.resolve_orphan_duplicates",
         # settings
         "extraction_policy.clear",

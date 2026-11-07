@@ -61,6 +61,10 @@ export const OP_MIN_ROLE = {
   "blacklist.add": { min: "writer", by: "namespace" },
   "blacklist.remove": { min: "admin", by: "namespace" },
   "memory.auto_retirements": { min: "viewer", by: "namespace" },
+  // The Review queue's Proposals tab lists to any reader and offers Accept / Reject only
+  // to a role that may decide (`server/memory/api/ops_proposals.py`).
+  "memory.proposals": { min: "viewer", by: "namespace" },
+  "memory.proposal_decide": { min: "writer", by: "namespace" },
   "memory.list": { min: "viewer", by: "namespace" },
   // The Memories view's "Usage audit" panel offers the button only to a role that reaches
   // `namespace.audit` (VIEWER); the inspector's "Rename (keep redirect)" only to one that

@@ -436,11 +436,14 @@ describe("a link's namespace", () => {
     expect(address()).toBe("/memories?namespace=group-b-shared&memory=k");
     // The picker is there, on the namespace under the page.
     expect(screen.getByRole("button", { name: `Namespace: ${NS}` })).toBeInTheDocument();
-    await until(() => calls.some((c) => c.path === "memory.auto_retirements"));
+    await until(() => calls.some((c) => c.path === "memory.proposals"));
     expect(calls.some((c) => c.body?.namespace === "group-b-shared")).toBe(false);
     expect(
       calls.filter((c) => c.path.startsWith("memory.")).map((c) => ({ path: c.path, namespace: c.body?.namespace })),
-    ).toEqual([{ path: "memory.auto_retirements", namespace: NS }]);
+    ).toEqual([
+      { path: "memory.auto_retirements", namespace: NS },
+      { path: "memory.proposals", namespace: NS },
+    ]);
     expect(localStorage.getItem("loom_namespace_v1")).toBe(NS);
     expect(savedDefault()).toBe(false);
     // Continue: the page the link asked for, on the namespace the picker shows.
@@ -482,11 +485,14 @@ describe("a link's namespace", () => {
     expect(useStore.getState()).toMatchObject({ identity: { namespace: NS }, deniedNamespace: "joined" });
     expect(screen.queryByText(/cannot read/)).toBeNull();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-    await until(() => calls.some((c) => c.path === "memory.auto_retirements"));
+    await until(() => calls.some((c) => c.path === "memory.proposals"));
     expect(calls.some((c) => c.body?.namespace === "joined")).toBe(false);
     expect(
       calls.filter((c) => c.path.startsWith("memory.")).map((c) => ({ path: c.path, namespace: c.body?.namespace })),
-    ).toEqual([{ path: "memory.auto_retirements", namespace: NS }]);
+    ).toEqual([
+      { path: "memory.auto_retirements", namespace: NS },
+      { path: "memory.proposals", namespace: NS },
+    ]);
   });
 
   it("when the membership read fails, a reload still opens the saved pick: the server answers its reads", async () => {

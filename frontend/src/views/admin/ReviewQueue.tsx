@@ -14,6 +14,8 @@ import {
   removeAllowlist,
   listLearnings,
   reviewLearning,
+  listProposals,
+  decideProposal,
   listAutoResolved,
   listUnsuperseded,
   auditInstant,
@@ -27,6 +29,8 @@ import {
   type ResolveDecision,
   type LearningEntry,
   type LearningStatus,
+  type MemoryProposal,
+  type ProposalList,
 } from "../../api";
 import { useIdentity, useStore } from "../../lib/state";
 import { IconButton } from "../../components/IconButton";
@@ -37,6 +41,7 @@ import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
 import { BusyButton } from "../../components/ui/BusyButton";
+import { AgentBadge } from "../../components/AgentBadge";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
@@ -45,6 +50,7 @@ import { useAbortableEffect } from "../../lib/hooks";
 import { useNamespaceRole } from "../../lib/namespaceRole";
 import { canCall } from "../../lib/canCall";
 import { sharedHasAutoResolved } from "../../lib/sharedReads";
+import { useResetOnKey } from "../../lib/useResetOnKey";
 import { useRowNav } from "../../lib/useRowNav";
 import { PageContainer } from "../../layout/PageContainer";
 
@@ -59,6 +65,8 @@ import { PageContainer } from "../../layout/PageContainer";
  * Sub-tabs:
  *   - Conflicts:   pairs of memories that disagree on a value
  *   - Learnings:   facts the extractor proposed for promotion
+ *   - Proposals:   facts an agent wrote with `memory.set(proposed=true)`, live only once
+ *                  someone accepts them (`memory.proposal_decide`)
  *   - Auto-resolved: memories Loom retired on its own (`memory.auto_supersede`), each
  *                    with an Undo (`memory.restore`)
  *   - Exceptions:  allowlist of pairs we've explicitly said may coexist
@@ -68,7 +76,7 @@ const LONE_PANEL = { role: undefined, "aria-labelledby": undefined, tabIndex: un
 
 export function ReviewQueue() {
   const identity = useIdentity();
-  // Probe whether the two niche sub-tabs (Learnings, Exceptions) have
+  // Probe whether the sub-tabs (Learnings, Proposals, Auto-resolved, Exceptions) have
   // any content before showing them. Learnings is empty by default in
   // single-user / dev mode. Exceptions only populates as a side-effect
   // of resolving conflicts. Hiding empty sub-tabs until they have
@@ -77,12 +85,14 @@ export function ReviewQueue() {
   // a second time.
   const [probedLearnings, setProbedLearnings] = useState<LearningEntry[] | null>(null);
   const [probedExceptions, setProbedExceptions] = useState<AllowlistRow[] | null>(null);
+  const [probedProposals, setProbedProposals] = useState<(ProposalList & { scope: string }) | null>(null);
   const hasLearnings = (probedLearnings?.length ?? 0) > 0;
   const hasExceptions = (probedExceptions?.length ?? 0) > 0;
   // The probe's yes/no, tagged with the namespace it read: the reset after a namespace
   // switch runs a tick after the first render of the new namespace, which must not show
   // the previous namespace's tab.
   const scopeKey = `${identity.org}/${identity.namespace}`;
+  const hasProposals = probedProposals?.scope === scopeKey && probedProposals.proposals.length > 0;
   const [probedAuto, setProbedAuto] = useState<{ found: boolean; scope: string } | null>(null);
   const hasAuto = probedAuto?.scope === scopeKey && probedAuto.found;
   // The Auto-resolved panel reads its rows when the tab is first opened, then stays mounted.
@@ -92,7 +102,7 @@ export function ReviewQueue() {
   const whoami = useStore((s) => s.whoami);
   const role = useNamespaceRole(identity.namespace);
   const autoReadable = canCall("memory.auto_retirements", role, whoami) && canCall("audit.list", role, whoami);
-  const tabbed = hasLearnings || hasExceptions || hasAuto;
+  const tabbed = hasLearnings || hasProposals || hasExceptions || hasAuto;
   // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
   // they revealed) must not outlive it, or a namespace with neither sub-tab strands the
   // viewer on a hidden panel.
@@ -100,12 +110,12 @@ export function ReviewQueue() {
   // A probe seeds its panel's first view once: a panel opened again (the tabs unmount an
   // inactive one) reads afresh, so a learning promoted or an exception removed since does
   // not come back from the probe.
-  const [seedsUsed, setSeedsUsed] = useState({ learnings: false, exceptions: false });
+  const [seedsUsed, setSeedsUsed] = useState({ learnings: false, proposals: false, exceptions: false });
   useAbortableEffect(
     (signal, live) => {
       setProbedLearnings(null);
       setProbedExceptions(null);
-      setSeedsUsed({ learnings: false, exceptions: false });
+      setSeedsUsed({ learnings: false, proposals: false, exceptions: false });
       setTab("conflicts");
       setAutoOpened(false);
       listLearnings({ org: identity.org, namespace: identity.namespace }, "pending", LEARNINGS_READ, { signal })
@@ -124,6 +134,24 @@ export function ReviewQueue() {
         });
     },
     [identity.org, identity.namespace],
+  );
+  const proposalsReadable = canCall("memory.proposals", role, whoami);
+  useAbortableEffect(
+    (signal, live) => {
+      setProbedProposals(null);
+      if (!proposalsReadable) {
+        setTab((t) => (t === "proposals" ? "conflicts" : t));
+        return;
+      }
+      listProposals({ org: identity.org, namespace: identity.namespace }, PROPOSALS_READ, { signal })
+        .then((r) => {
+          if (live()) setProbedProposals({ proposals: r.proposals || [], total: r.total ?? 0, scope: scopeKey });
+        })
+        .catch(() => {
+          if (live()) setProbedProposals({ proposals: [], total: 0, scope: scopeKey });
+        });
+    },
+    [identity.org, identity.namespace, proposalsReadable],
   );
   useAbortableEffect(
     (_signal, live) => {
@@ -150,8 +178,8 @@ export function ReviewQueue() {
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
       <p className="text-sm text-text-muted mb-5 max-w-2xl">
-        Memory disputes needing a human decision — your agent flip-flopped on a fact, or the extractor wants to promote
-        one. Most users never see anything here; that's a feature.
+        Memory decisions needing a human — your agent flip-flopped on a fact, proposed one for review, or the extractor
+        wants to promote one. Most users never see anything here; that's a feature.
       </p>
       {/* Conflicts mounts (and reads) once, at once; the sub-tabs join it when a probe finds
           rows. Until then the lone panel is the page itself, not a tab panel without tabs. */}
@@ -170,6 +198,11 @@ export function ReviewQueue() {
             {hasLearnings && (
               <TabTrigger value="learnings" icon="sparkle">
                 Learnings
+              </TabTrigger>
+            )}
+            {hasProposals && (
+              <TabTrigger value="proposals" icon="user">
+                Proposals
               </TabTrigger>
             )}
             {hasAuto && (
@@ -192,6 +225,14 @@ export function ReviewQueue() {
             <LearningsPanel
               initialPending={seedsUsed.learnings ? null : probedLearnings}
               onSeedUsed={() => setSeedsUsed((u) => ({ ...u, learnings: true }))}
+            />
+          </Tabs.Content>
+        )}
+        {hasProposals && (
+          <Tabs.Content value="proposals">
+            <ProposalsPanel
+              initial={seedsUsed.proposals ? null : probedProposals}
+              onSeedUsed={() => setSeedsUsed((u) => ({ ...u, proposals: true }))}
             />
           </Tabs.Content>
         )}
@@ -656,13 +697,10 @@ function LearningsPanel({
   const [error, setError] = useState<unknown>(null);
   // Another namespace or status starts from the skeleton, during render, so the old list
   // (and its Promote / Reject buttons) never paints under it.
-  const listKey = `${identity.org}/${identity.namespace}/${status}`;
-  const [listFor, setListFor] = useState(listKey);
-  if (listFor !== listKey) {
-    setListFor(listKey);
+  useResetOnKey(`${identity.org}/${identity.namespace}/${status}`, () => {
     setRows(null);
     setError(null);
-  }
+  });
 
   useAbortableEffect(
     (signal, live) => {
@@ -806,6 +844,259 @@ function LearningsPanel({
             </Panel>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Proposals panel ───────────────────────────────────────────────────
+
+// Proposals read per view; the toolbar says when the list may hold only the newest.
+const PROPOSALS_READ = 50;
+
+/** One line on how the proposal has done on trial. */
+function trialLabel(r: MemoryProposal): string {
+  const passes = r.graded_passes ?? 0;
+  const graded = `${passes} graded ${passes === 1 ? "pass" : "passes"}, ${plural(r.graded_fails ?? 0, "fail")}`;
+  return r.ready ? `${graded} · the policy would ${r.ready} it` : graded;
+}
+
+// The characters of a proposal's value `memory.proposals` sends.
+const PREVIEW_CHARS = 400;
+
+function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null; onSeedUsed: () => void }) {
+  const identity = useIdentity();
+  const whoami = useStore((s) => s.whoami);
+  const inspect = useStore((s) => s.inspect);
+  const role = useNamespaceRole(identity.namespace);
+  const mayDecide = canCall("memory.proposal_decide", role, whoami);
+  // Keys this panel decided: a re-read from a replica that has not seen the decision yet
+  // must not bring them back. Each is kept until a read no longer returns it.
+  const decided = useRef(new Set<string>());
+  const [rows, setRows] = useState<MemoryProposal[] | null>(initial?.proposals ?? null);
+  const [total, setTotal] = useState(initial?.total ?? 0);
+  const [reason, setReason] = useState<Record<string, string>>({});
+  // The keys a decision is out for: their buttons wait, so a second click sends nothing.
+  const [deciding, setDeciding] = useState<ReadonlySet<string>>(new Set());
+  // Where focus goes once the decided row leaves the list: the row that took its place,
+  // else the last row, else the list itself.
+  const focusAt = useRef<number | null>(null);
+  const listBox = useRef<HTMLElement>(null);
+  // A failed read that replaces a list holding focus hands it to the error's section.
+  const errorBox = useRef<HTMLElement>(null);
+  const rowBoxes = useRef(new Map<string, HTMLElement>());
+  // The rows as last rendered, for a decision whose answer arrives after others changed them.
+  const rowsNow = useRef(rows);
+  rowsNow.current = rows;
+  const focusError = useRef(false);
+  const seeded = useRef(initial != null);
+  const [reload, setReload] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  // A namespace switch unmounts this panel (the page's probe is tagged with its
+  // namespace), so it never holds another namespace's rows.
+
+  useAbortableEffect(
+    (signal, live) => {
+      // The first view was already fetched by the page's probe.
+      if (seeded.current) {
+        seeded.current = false;
+        onSeedUsed();
+        return;
+      }
+      setRefreshing(true);
+      setError(null);
+      listProposals({ org: identity.org, namespace: identity.namespace }, PROPOSALS_READ, { signal })
+        .then((r) => {
+          if (!live()) return;
+          const read = r.proposals || [];
+          decided.current = new Set(read.filter((p) => decided.current.has(p.memory_key)).map((p) => p.memory_key));
+          setRows(read.filter((p) => !decided.current.has(p.memory_key)));
+          setTotal(Math.max(0, (r.total ?? 0) - decided.current.size));
+        })
+        .catch((e) => {
+          if (!live()) return;
+          focusError.current = !!listBox.current?.contains(document.activeElement);
+          setError(e);
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
+        });
+    },
+    [identity.org, identity.namespace, reload],
+  );
+
+  useEffect(() => {
+    const at = focusAt.current;
+    if (at === null || rows === null) return;
+    focusAt.current = null;
+    const fields = [...(listBox.current?.querySelectorAll<HTMLElement>("textarea") ?? [])];
+    (fields[at] ?? fields.at(-1) ?? listBox.current)?.focus();
+  }, [rows]);
+
+  useEffect(() => {
+    if (!error || !focusError.current) return;
+    focusError.current = false;
+    errorBox.current?.focus();
+  }, [error]);
+
+  const decide = async (key: string, decision: "accept" | "reject") => {
+    const row = rowBoxes.current.get(key);
+    setDeciding((d) => new Set(d).add(key));
+    try {
+      const out = await decideProposal(
+        { org: identity.org, namespace: identity.namespace },
+        key,
+        decision,
+        reason[key] || "",
+      );
+      const result = out.results?.[0];
+      if (result && !result.decided) toast(`Not decided: ${result.reason || "no longer a proposal"}`, "error");
+      else if (result?.status === "conflicted")
+        toast("Accepted; it contradicts a live fact, which now waits in the Conflicts tab", "ok");
+      else toast(decision === "accept" ? "Accepted" : "Rejected", "ok");
+      // Where the decided row is now, not where it was when clicked: another decision may
+      // have taken a row above it off the list meanwhile, or a re-read the row itself.
+      const at = Math.max(0, rowsNow.current?.findIndex((r) => r.memory_key === key) ?? 0);
+      decided.current.add(key);
+      // Off the list at once, so its buttons cannot send the decision again.
+      setRows((rs) => rs?.filter((r) => r.memory_key !== key) ?? rs);
+      setReason(({ [key]: _gone, ...rest }) => rest);
+      setTotal((t) => Math.max(0, t - 1));
+      // Only when focus is still in the decided row or was lost: never pull it away from
+      // a field the person moved to while the decision was out.
+      const active = document.activeElement;
+      if (!active || active === document.body || row?.contains(active)) focusAt.current = at;
+      setReload((n) => n + 1);
+    } catch (e) {
+      toast(`Failed: ${humanizeError(e)}`, "error");
+    } finally {
+      setDeciding((d) => {
+        const next = new Set(d);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
+
+  return (
+    <div>
+      <ListToolbar
+        label="Proposals"
+        search={false}
+        count={
+          !error && rows !== null
+            ? total > rows.length
+              ? `the newest ${rows.length} of ${total} proposals read`
+              : `${rows.length} ${rows.length === 1 ? "proposal" : "proposals"}`
+            : undefined
+        }
+      />
+      {!!error && (
+        <section ref={errorBox} tabIndex={-1} aria-label="Proposals">
+          <ListState kind="error" things="proposals" error={error} onRetry={() => setReload((n) => n + 1)} />
+        </section>
+      )}
+      {!error && rows === null && (
+        <LoadingSkeleton label="Loading proposals">
+          <Skeleton className="h-40 w-full" />
+        </LoadingSkeleton>
+      )}
+      {!error && rows !== null && (
+        // One section for the empty state and the rows, so focus on it survives either
+        // turning into the other.
+        <section
+          ref={listBox}
+          tabIndex={-1}
+          aria-label="Proposals"
+          className="space-y-2"
+          aria-busy={refreshing || undefined}
+        >
+          {rows.length === 0 && (
+            <ListState
+              kind="empty"
+              icon="user"
+              title="No proposals"
+              description="A proposal is a fact an agent wrote for review (memory.set with proposed=true). Searches leave it out until someone accepts it here."
+            />
+          )}
+          {rows.map((r) => (
+            <Panel
+              key={r.memory_id || r.memory_key}
+              ref={(el) => {
+                if (el) rowBoxes.current.set(r.memory_key, el);
+                else rowBoxes.current.delete(r.memory_key);
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                <Link
+                  component="button"
+                  type="button"
+                  size="sm"
+                  weight="mono"
+                  className="min-w-0 break-all text-left"
+                  aria-label={`Open ${r.memory_key} in full`}
+                  onClick={() => inspect(r.memory_key, { agent: r.agent })}
+                >
+                  {r.memory_key}
+                </Link>
+                <span className="flex items-center gap-2 text-xs text-text-muted tabular">
+                  {r.agent && <AgentBadge agent={r.agent} quiet />}
+                  {r.created_at && <ListTime time={r.created_at} quiet />}
+                </span>
+              </div>
+              {r.sensitivity === "high" ? (
+                <div className="text-sm text-text-muted mb-2">{SENSITIVE_READ_BY_KEY}</div>
+              ) : (
+                <div className="text-sm text-text mb-2 whitespace-pre-wrap break-words">
+                  {r.value_preview ?? ""}
+                  {/* The server sends the first 400 characters: the key opens the whole value. */}
+                  {(r.value_preview?.length ?? 0) >= PREVIEW_CHARS && "…"}
+                </div>
+              )}
+              <div className="text-xs text-text-muted mb-2">
+                {trialLabel(r)}
+                {(r.conflict_with?.length ?? 0) > 0 && (
+                  <> · contradicts {r.conflict_with?.length === 1 ? "1 fact" : `${r.conflict_with?.length} facts`}</>
+                )}
+              </div>
+              {mayDecide && (
+                <>
+                  <TextAreaField
+                    label={`Reason for the decision on ${r.memory_key}`}
+                    value={reason[r.memory_key] || ""}
+                    onChange={(value) => setReason((m) => ({ ...m, [r.memory_key]: value }))}
+                    placeholder="Optional — its first 200 characters go in the audit trail; a rejection keeps it whole"
+                    rows={2}
+                    maxLength={512}
+                  />
+                  <div className="mt-2 flex items-center justify-end gap-2">
+                    <BusyButton
+                      busy={deciding.has(r.memory_key)}
+                      type="secondary"
+                      htmlType="button"
+                      iconLeft="cross"
+                      aria-label={`Reject ${r.memory_key}`}
+                      onClick={() => decide(r.memory_key, "reject")}
+                    >
+                      Reject
+                    </BusyButton>
+                    <BusyButton
+                      busy={deciding.has(r.memory_key)}
+                      type="secondary"
+                      htmlType="button"
+                      iconLeft="check"
+                      aria-label={`Accept ${r.memory_key}`}
+                      onClick={() => decide(r.memory_key, "accept")}
+                    >
+                      Accept
+                    </BusyButton>
+                  </div>
+                </>
+              )}
+            </Panel>
+          ))}
+        </section>
       )}
     </div>
   );
@@ -1104,13 +1395,10 @@ function AllowlistPanel({ initial, onSeedUsed }: { initial?: AllowlistRow[] | nu
   const [error, setError] = useState<unknown>(null);
   // Another namespace starts from the skeleton, during render, so the old pairs (and
   // their Remove buttons) never paint under it.
-  const listKey = `${identity.org}/${identity.namespace}`;
-  const [listFor, setListFor] = useState(listKey);
-  if (listFor !== listKey) {
-    setListFor(listKey);
+  useResetOnKey(`${identity.org}/${identity.namespace}`, () => {
     setRows(null);
     setError(null);
-  }
+  });
 
   useAbortableEffect(
     (signal, live) => {

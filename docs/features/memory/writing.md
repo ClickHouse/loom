@@ -334,6 +334,29 @@ does not add them: state them again once it is established. A key that already h
 `proposal_policy.mode` to `auto` (`min_passes`, `max_fails`, `reject_after_fails`). See
 [runs](../runs.md).
 
+### An agent proposes, a person approves
+
+The flow for a fact an agent should not make live on its own:
+
+1. The agent writes it with `memory.set(proposed=true)`. Only reads that pass
+   `include_proposed` see it; a run that relies on it names it in `memories_used`, and
+   its grades (`run.grade`) are its trial.
+2. The dashboard's **Review queue** (`/admin/review_queue`) shows a **Proposals** tab while
+   one waits; for an admin of the namespace the drawer lists the queue then too. Each
+   proposal shows its key, value, the agent that wrote it, the graded runs that relied on
+   it and what the policy thresholds would decide.
+3. A writer accepts it (it becomes `active`, or `conflicted` when it was contradicted on
+   trial) or rejects it (`rejected`), optionally with a reason. A viewer sees the list
+   without the buttons. The same decision is `memory.proposal_decide` for a script or
+   another agent.
+
+Knowledge has review steps of its own. A fact several writers back, or a rule a bot stated
+about itself, waits as a learning and is published to the namespace's knowledge only when
+a person promotes it, from the same page's **Learnings** tab (`learnings.review`;
+[procedures and learnings](./procedures-and-learnings.md#learnings-review-queue)). A table
+an ingested file held is served as a dataset only once a writer approves it, from the
+Knowledge view (`knowledge.dataset_approve`; [datasets](../knowledge.md#datasets)).
+
 ## Typed records
 
 Records are rows with exact fields, for data that has identity (a ticket, a customer).
