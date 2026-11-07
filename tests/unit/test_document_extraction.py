@@ -721,10 +721,10 @@ def test_a_stray_caption_end_in_an_html_cell_is_ignored() -> None:
         ("<ul><li>a <caption>b</caption> c</li></ul>", [("list", "a b c")]),
     ],
 )
-def test_a_caption_outside_an_html_table_is_ignored(
+def test_a_caption_outside_an_html_table_opens_no_block(
     page: str, blocks: list[tuple[str, str]]
 ) -> None:
-    """As a browser ignores the tag there: it neither opens a block nor ends one."""
+    """There it is a container: the block it sits in stays one."""
     assert [(b.type, b.text) for b in extract(page.encode(), "t.html").blocks] == blocks
 
 

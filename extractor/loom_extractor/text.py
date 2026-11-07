@@ -276,7 +276,7 @@ _CONTAINERS = {
     "form",
     "details",
     "summary",
-    "caption",  # outside a table it opens no block, as a browser ignores the tag there
+    "caption",  # outside a table a container: it opens no block
 }
 
 
