@@ -3,6 +3,7 @@ aligned columns, headings from type, columns, page furniture and turned pages.""
 
 from __future__ import annotations
 
+import time
 from collections import Counter
 from collections.abc import Callable
 from io import BytesIO
@@ -194,6 +195,17 @@ def test_a_page_of_more_rules_than_the_bound_is_read_without_ruled_tables() -> N
     assert layout.drawing(reader.pages[0], reader, lambda x, y: (x, y)).rules == []
 
 
+class _CmapStream:
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+
+    def get_object(self) -> _CmapStream:
+        return self
+
+    def get_data(self) -> bytes:
+        return self.data
+
+
 def test_a_fonts_unicode_map_gives_its_codes_widths() -> None:
     cmap = (
         b"begincmap 2 beginbfchar <0003> <0020> <0004> <0041> endbfchar"
@@ -201,14 +213,7 @@ def test_a_fonts_unicode_map_gives_its_codes_widths() -> None:
         b" 1 beginbfrange <0020> <0021> [<0062> <00660069>] endbfrange endcmap"
     )
 
-    class Stream:
-        def get_object(self) -> Stream:
-            return self
-
-        def get_data(self) -> bytes:
-            return cmap
-
-    assert layout._to_unicode({"/ToUnicode": Stream()}) == {
+    assert layout._to_unicode({"/ToUnicode": _CmapStream(cmap)}) == {
         3: " ",
         4: "A",
         0x10: "a",
@@ -217,6 +222,25 @@ def test_a_fonts_unicode_map_gives_its_codes_widths() -> None:
         0x20: "b",
         0x21: "fi",
     }
+
+
+@pytest.mark.parametrize("block", [b"beginbfchar", b"beginbfrange"])
+def test_an_unclosed_unicode_map_block_is_read_in_linear_time(block: bytes) -> None:
+    """A map of block openings with no close is read once, not rescanned from each
+    opening to the end: four times the openings cost about four times the time."""
+
+    def cpu(n: int) -> float:
+        start = time.process_time()
+        assert layout._to_unicode({"/ToUnicode": _CmapStream(block * n)}) == {}
+        return time.process_time() - start
+
+    small, large = cpu(2_000), cpu(8_000)
+    assert large < 8 * small + 0.05, (small, large)
+
+
+def test_a_map_block_runs_to_its_first_close() -> None:
+    cmap = b"beginbfchar <01> <0041> beginbfchar <02> <0042> endbfchar <03> <0043> endbfchar"
+    assert layout._to_unicode({"/ToUnicode": _CmapStream(cmap)}) == {1: "A", 2: "B"}
 
 
 def _cid_font(widths: list[object], cmap: bytes) -> object:
