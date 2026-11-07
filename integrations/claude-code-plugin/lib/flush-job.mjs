@@ -44,6 +44,9 @@ export function dispatchFlush(job, { timeoutMs = 15000, spawnImpl = spawn, tmp }
     const child = spawnImpl(process.execPath, [FLUSHER, jobPath], {
       detached: true,
       stdio: "ignore",
+      // A detached child on Windows gets its own console unless hidden: no
+      // window flashes per Stop.
+      windowsHide: true,
       env: { ...process.env, LOOM_HOOK_TIMEOUT_MS: String(timeoutMs) },
     });
     // A spawn failure arrives as an 'error' event; unheard, it would crash the hook.

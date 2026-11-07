@@ -9,6 +9,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { hostEnv } from "./host-env.mjs";
 
 const bin = (name) => fileURLToPath(new URL(`../bin/${name}`, import.meta.url));
 const TOKEN = [
@@ -22,7 +23,7 @@ function launch(name, args, env, stdin = "") {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "loom-bin-"));
     const child = spawn(process.execPath, [bin(name), ...args], {
       cwd: home,
-      env: { PATH: process.env.PATH, HOME: home, TMPDIR: home, LOOM_AUTO_SIGNUP: "off", ...env },
+      env: hostEnv({ PATH: process.env.PATH, HOME: home, TMPDIR: home, LOOM_AUTO_SIGNUP: "off", ...env }),
     });
     let stdout = "";
     let stderr = "";

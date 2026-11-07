@@ -1,7 +1,7 @@
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decideBlock, gatePayload, gateSignature, renderGate, sessionScope } from "../lib/test-gate.mjs";
+import { decideBlock, gatePayload, gateSignature, renderGate, sessionScope, venvPython } from "../lib/test-gate.mjs";
 
 const GATE = {
   obligations: true,
@@ -153,6 +153,27 @@ test("a shell command naming the path counts; a longer name containing it does n
   assert.deepEqual(sessionScope(DIRTY, pytest, { root: ROOT }), ["tests/test_a.py"]);
   const near = [use("Bash", { command: "python data.py; ls src/a.pyc; echo /other/r/src/b.py" })];
   assert.deepEqual(sessionScope(DIRTY, near, { root: ROOT }), []);
+});
+
+test("on Windows a command names an absolute path with either slash or drive case, or as Git Bash writes it", {
+  skip: process.platform !== "win32",
+}, () => {
+  const root = "C:\\r";
+  for (const named of ["C:\\r\\src\\b.py", "C:/r/src/b.py", "c:/r/src/b.py", "c:\\r\\src\\b.py", "/c/r/src/b.py"]) {
+    const cmd = [use("Bash", { command: `sed -i 's/x/y/' ${named}` })];
+    assert.deepEqual(sessionScope(["src/b.py"], cmd, { root }), ["src/b.py"], named);
+  }
+});
+
+test("a virtualenv's interpreter: bin/python, and Scripts\\python.exe on Windows", () => {
+  assert.equal(venvPython("/r/.venv", "linux"), "/r/.venv/bin/python");
+  assert.equal(venvPython("/r/.venv", "darwin"), "/r/.venv/bin/python");
+  assert.equal(venvPython("C:\\r\\.venv", "win32"), "C:\\r\\.venv\\Scripts\\python.exe");
+});
+
+test("a PowerShell command naming the path counts, as a Bash one does", () => {
+  const ps = [use("PowerShell", { command: "(Get-Content src/b.py) -replace 'x','y' | Set-Content src/b.py" })];
+  assert.deepEqual(sessionScope(DIRTY, ps, { root: ROOT }), ["src/b.py"]);
 });
 
 test("Codex shapes: argv shell commands and apply_patch envelopes", () => {

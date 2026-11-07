@@ -8,9 +8,18 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // --- bounds -------------------------------------------------------------------
@@ -240,7 +249,7 @@ function renewAgentToken(env) {
   // on Windows, starts with a slash before the drive.
   const script = fileURLToPath(new URL("../bin/loom-agent-token.mjs", import.meta.url));
   try {
-    execFileSync(process.execPath, [script], { env, timeout: 3000, stdio: "ignore" });
+    execFileSync(process.execPath, [script], { env, timeout: 3000, stdio: "ignore", windowsHide: true });
   } catch {
     // Loom away or the workload token refused: what is saved still serves.
   }
@@ -323,7 +332,7 @@ export function resolveProject(cwd, { top } = {}) {
   const override = (process.env.LOOM_PROJECT_NAME || "").trim();
   if (override) return override;
   const root = top === undefined ? gitToplevel(dir) : top;
-  return basename(root || dir) || "default";
+  return basename(gitSpelling.get(root) || root || dir) || "default";
 }
 
 // --- the repository's stable identity -------------------------
@@ -371,6 +380,7 @@ export function git(args, cwd, { timeoutMs = 1500, raw = false, maxBuffer = 16 *
       timeout: timeoutMs,
       maxBuffer,
       stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
     });
     return raw ? out : out.trim();
   } catch {
@@ -378,15 +388,77 @@ export function git(args, cwd, { timeoutMs = 1500, raw = false, maxBuffer = 16 *
   }
 }
 
-/** The checkout root for `cwd`; "" outside a repository. */
+/** `p` as the file system names it: symlinks resolved and, on Windows,
+ *  long names, drive-letter case and backslashes. Two spellings of one place
+ *  (macOS /tmp and /private/tmp, a Windows 8.3 temp path, git's C:/ form)
+ *  come out equal. The part of `p` that does not exist yet is kept as given. */
+export function realPath(p) {
+  let head = resolve(String(p));
+  const rest = [];
+  for (;;) {
+    try {
+      return join(realpathSync.native(head), ...rest);
+    } catch {
+      const up = dirname(head);
+      if (up === head) return resolve(String(p));
+      rest.unshift(basename(head));
+      head = up;
+    }
+  }
+}
+
+function isDirectory(p) {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isSymlink(p) {
+  try {
+    return lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/** `p` relative to `root` with `/` separators ("" for the root itself), or
+ *  null when `p` lies outside it. Both are compared as realPath names them,
+ *  so a payload path and git's toplevel agree however each is spelled; when
+ *  `p` itself is a symlink to a file its own name is kept, so one in the
+ *  checkout (a virtualenv's bin/python) stays where it is. */
+export function pathUnder(root, p) {
+  if (!root || !p) return null;
+  const abs = resolve(String(p));
+  const keepName = isSymlink(abs) && !isDirectory(abs);
+  const rel = relative(realPath(root), keepName ? join(realPath(dirname(abs)), basename(abs)) : realPath(abs));
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
+  return rel.split(sep).join("/");
+}
+
+// The toplevel as git printed it, by its realPath: the project name is that
+// folder's name as git spells it, so a changed spelling (letter case, an 8.3
+// name on Windows) never moves a project to another namespace.
+const gitSpelling = new Map();
+
+/** The checkout root for `cwd`, as realPath names it; "" outside a
+ *  repository. */
 export function gitToplevel(cwd) {
-  return git(["rev-parse", "--show-toplevel"], cwd);
+  const top = git(["rev-parse", "--show-toplevel"], cwd);
+  if (!top) return "";
+  const real = realPath(top);
+  gitSpelling.set(real, top);
+  return real;
 }
 
 /** The per-checkout repository cache every hook shares (lib/repo-scope.mjs
- *  reads and writes it): $TMPDIR/loom-shunt-<sha1(root)[0:12]>.json. */
+ *  reads and writes it): $TMPDIR/loom-shunt-<sha1(root)[0:12]>.json. A root
+ *  path is keyed as realPath names it, so every spelling of one checkout
+ *  shares the entry. */
 export function shuntCachePath(root, tmp = tmpdir()) {
-  return tmpStatePath("shunt", String(root), { tmp });
+  const key = isAbsolute(String(root)) ? realPath(root) : String(root);
+  return tmpStatePath("shunt", key, { tmp });
 }
 
 /** The remote URL of the repository the checkout's index
@@ -426,7 +498,7 @@ export function resolveRelDir(cwd, { top } = {}) {
   const dir = dirOf(cwd);
   const root = top === undefined ? gitToplevel(dir) : top;
   if (!root) return "";
-  return dir.replace(/\\/g, "/").slice(root.length).replace(/^\/+/, "");
+  return pathUnder(root, dir) ?? "";
 }
 
 /**
@@ -540,7 +612,17 @@ export function patchFiles(text) {
 // is deferred to Loom's async worker / session-end batch, server-side.
 
 const _EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "str_replace_editor", "apply_patch"]);
-const _RUN_TOOLS = new Set(["Bash", "BashOutput", "Shell", "command_run", "shell", "exec_command", "local_shell"]);
+// PowerShell is Claude Code's shell tool on Windows without Git Bash.
+const _RUN_TOOLS = new Set([
+  "Bash",
+  "BashOutput",
+  "PowerShell",
+  "Shell",
+  "command_run",
+  "shell",
+  "exec_command",
+  "local_shell",
+]);
 const _FETCH_TOOLS = new Set(["WebFetch", "WebSearch", "Fetch"]);
 const _READ_TOOLS = new Set(["Read", "Grep", "Glob", "LS"]);
 
@@ -724,7 +806,51 @@ const TOKEN_SHAPES_RE =
 // `password=…`, `"api_key": "…"`, `AWS_SECRET_ACCESS_KEY=…`: the name stays, the value goes.
 const SECRET_ASSIGNMENT_RE =
   /\b([\w.-]{0,64}?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
-const JWT_RE = /\beyJ[\w-]{0,512}\.[\w-]{1,8192}\.[\w-]{0,1024}/g;
+// A JWT's header and payload limits, shared by the pattern and redactJwts.
+const JWT_HEADER_MAX = 512;
+const JWT_PAYLOAD_MAX = 8192;
+export const JWT_RE = new RegExp(
+  String.raw`\beyJ[\w-]{0,${JWT_HEADER_MAX}}\.[\w-]{1,${JWT_PAYLOAD_MAX}}\.[\w-]{0,1024}`,
+  "g",
+);
+const JWT_AT = new RegExp(JWT_RE.source, "y");
+const JWT_START = /\beyJ/g;
+const WORD_RUN = /[\w-]*/y;
+
+/** `s` with JWT_RE's matches replaced, in one pass. JWT_RE alone retries its
+ *  header and payload scans from every `eyJ` in a long [\w-] run; but each
+ *  part ends only where its run does, so each run is scanned once and a start
+ *  is tried only when its header run ends in a dot within 512 characters and
+ *  the payload run after it is 1 to 8192 characters ending in a dot. */
+export function redactJwts(s) {
+  let out = "";
+  let last = 0;
+  let runEnd = -1;
+  let payloadOk = false;
+  JWT_START.lastIndex = 0;
+  for (let m = JWT_START.exec(s); m; m = JWT_START.exec(s)) {
+    const i = m.index;
+    if (i >= runEnd) {
+      WORD_RUN.lastIndex = i + 3;
+      WORD_RUN.exec(s);
+      runEnd = WORD_RUN.lastIndex;
+      // The payload is the next run: 1 to 8192 characters, then a dot.
+      WORD_RUN.lastIndex = runEnd + 1;
+      WORD_RUN.exec(s);
+      const payload = WORD_RUN.lastIndex - runEnd - 1;
+      payloadOk = s[runEnd] === "." && payload >= 1 && payload <= JWT_PAYLOAD_MAX && s[WORD_RUN.lastIndex] === ".";
+    }
+    if (!payloadOk || runEnd - i - 3 > JWT_HEADER_MAX) continue;
+    JWT_AT.lastIndex = i;
+    const jwt = JWT_AT.exec(s);
+    if (!jwt) continue; // the checks above imply a match; a pattern edit must not throw in a hook
+    out += s.slice(last, i) + "[redacted]";
+    last = i + jwt[0].length;
+    JWT_START.lastIndex = last;
+    runEnd = -1;
+  }
+  return out + s.slice(last);
+}
 const BEARER_RE = /\b(Bearer)\s+[^\s"'\\]+/gi;
 const BASIC_AUTH_RE = /(\bAuthorization["']?\s*[:=]\s*["']?Basic)\s+[^\s"'\\]+/gi;
 // `https://user:pass@host`: the scheme and host stay, the credentials go.
@@ -742,11 +868,11 @@ function quoted(value, replacement) {
 export function redactSecrets(text, token = resolveToken()) {
   let s = String(text ?? "");
   if (token && token.length >= 8) s = s.split(token).join("[redacted]");
-  return s
+  s = s
     .replace(PRIVATE_KEY_RE, "[redacted private key]")
     .replace(TOKEN_SHAPES_RE, "[redacted]")
-    .replace(SECRET_ASSIGNMENT_RE, (_, name, value) => name + quoted(value, "[redacted]"))
-    .replace(JWT_RE, "[redacted]")
+    .replace(SECRET_ASSIGNMENT_RE, (_, name, value) => name + quoted(value, "[redacted]"));
+  return redactJwts(s)
     .replace(BEARER_RE, "$1 [redacted]")
     .replace(BASIC_AUTH_RE, "$1 [redacted]")
     .replace(URL_CREDENTIALS_RE, "$1[redacted]@");

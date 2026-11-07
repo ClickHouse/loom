@@ -9,6 +9,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { hostEnv } from "./host-env.mjs";
 
 const HOOK = fileURLToPath(new URL("../hooks/loom-flush.mjs", import.meta.url));
 
@@ -29,7 +30,7 @@ function flush(dir, url, job) {
   fs.writeFileSync(jobPath, JSON.stringify(job), { mode: 0o600 });
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [HOOK, jobPath], {
-      env: { PATH: process.env.PATH, HOME: dir, TMPDIR: dir, LOOM_BASE_URL: url, LOOM_API_KEY: "t.tok" },
+      env: hostEnv({ PATH: process.env.PATH, HOME: dir, TMPDIR: dir, LOOM_BASE_URL: url, LOOM_API_KEY: "t.tok" }),
     });
     child.on("close", () => resolve(jobPath));
   });

@@ -29,8 +29,9 @@ test("dispatchFlush writes the job and spawns the flusher detached with the requ
   };
   assert.equal(dispatchFlush({ posts: [{ op: "x", body: {} }] }, { timeoutMs: 1234, spawnImpl, tmp: dir }), true);
   assert.equal(calls.length, 1);
-  assert.match(calls[0].args[0], /hooks\/loom-flush\.mjs$/);
+  assert.match(calls[0].args[0], /hooks[\\/]loom-flush\.mjs$/);
   assert.equal(calls[0].opts.detached, true);
+  assert.equal(calls[0].opts.windowsHide, true);
   assert.equal(calls[0].opts.env.LOOM_HOOK_TIMEOUT_MS, "1234");
   const job = JSON.parse(fs.readFileSync(calls[0].args[1], "utf8"));
   assert.deepEqual(job, { posts: [{ op: "x", body: {} }] });

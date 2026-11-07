@@ -74,6 +74,7 @@ test("the primer states the switch instead of claiming automatic logging", () =>
 
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { hostEnv } from "./host-env.mjs";
 
 test("the Stop hook sends no turns while recording is cached off, and moves past them", () => {
   const dir = tmp();
@@ -93,7 +94,7 @@ test("the Stop hook sends no turns while recording is cached off, and moves past
       .map((o) => JSON.stringify(o))
       .join("\n") + "\n",
   );
-  const env = {
+  const env = hostEnv({
     PATH: process.env.PATH,
     HOME: home,
     TMPDIR: dir,
@@ -102,7 +103,7 @@ test("the Stop hook sends no turns while recording is cached off, and moves past
     LOOM_ORG: "acme",
     LOOM_NAMESPACE: "agent-x",
     LOOM_CONV_SETTLE_MS: "0",
-  };
+  });
   const run = () =>
     spawnSync(process.execPath, [hook, "Stop"], {
       input: JSON.stringify({ session_id: "s-recording", transcript_path: transcript, cwd: dir }),

@@ -7,6 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import http from "node:http";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
@@ -19,9 +20,10 @@ const BIN = path.join(HERE, "..", "bin");
 /** The first executable `name` on PATH outside the shim's own bin/. */
 function nativeTool(name) {
   const own = fs.realpathSync(BIN);
-  for (const dir of (process.env.PATH || "").split(":")) {
+  const exe = process.platform === "win32" ? `${name}.exe` : name;
+  for (const dir of (process.env.PATH || "").split(path.delimiter)) {
     if (!dir) continue;
-    const cand = path.join(dir, name);
+    const cand = path.join(dir, exe);
     try {
       fs.accessSync(cand, fs.constants.X_OK);
       if (fs.realpathSync(dir) === own || fs.realpathSync(cand).includes(`${path.sep}grep-shim${path.sep}`)) continue;
@@ -151,7 +153,9 @@ test("grep, Loom unreachable: every shape is byte-identical to native grep, exit
   const dir = checkout();
   for (const args of GREP_CASES) {
     const input = "foo on stdin\nbar\n";
-    const want = await runRaw(NATIVE.grep, args, { cwd: dir, input });
+    // Started as `grep`, as the shim starts it: Git for Windows' grep names
+    // itself in errors by the path it was started with.
+    const want = await runRaw(NATIVE.grep, args, { cwd: dir, input, argv0: "grep" });
     for (const env of [{}, { LOOM_API_KEY: "t", LOOM_BASE_URL: "http://127.0.0.1:9" }, { LOOM_GREP_SHIM: "off" }]) {
       const got = await shim("grep", args, { cwd: dir, input, env });
       const label = `grep ${args.join(" ")} ${JSON.stringify(env)}`;
@@ -179,6 +183,27 @@ test("grep, Loom answering: annotated shapes gain only suffixes; everything else
     assert.match(r.out.toString(), new RegExp(`src/a\\.cpp:1:int foo\\(\\) \\{${MARK}a\\.cpp::fn1\n`));
     assert.ok(seen.every((s) => s.url === "/v1/code.enclosing" && s.body.consumer === "grep-shim"));
   });
+});
+
+test("grep, Loom answering: an operand reached through a symlink is the checkout's own path", {
+  skip: (!NATIVE.grep && "no native grep on PATH") || (process.platform === "win32" && "symlinks need privileges"),
+}, async () => {
+  const dir = checkout();
+  const link = `${dir}-link`;
+  fs.symlinkSync(dir, link);
+  try {
+    await withServer("ok", async (url, seen) => {
+      const env = { LOOM_API_KEY: "t", LOOM_BASE_URL: url, LOOM_GREP_SHIM_QUIET: "1" };
+      const r = await shim("grep", ["-n", "foo", path.join(link, "src", "a.cpp")], { cwd: link, env });
+      assert.match(r.out.toString(), new RegExp(`${MARK}a\\.cpp::fn1`));
+      assert.ok(
+        seen.some((s) => (s.body.locations || []).includes("src/a.cpp:1")),
+        JSON.stringify(seen),
+      );
+    });
+  } finally {
+    fs.rmSync(link, { force: true });
+  }
 });
 
 test("grep: output that is not valid UTF-8 is passed through as the same bytes", {
@@ -233,7 +258,39 @@ test("grep: past the buffer cap the output streams unannotated and whole", {
 });
 
 test("grep: a reader that closes the pipe early ends the shim quietly", {
-  skip: !NATIVE.grep && "no native grep on PATH",
+  skip: (!NATIVE.grep && "no native grep on PATH") || (process.platform === "win32" && "no FIFOs"),
+}, async () => {
+  const dir = checkout();
+  fs.writeFileSync(path.join(dir, "src", "big.txt"), "foo line\n".repeat(200000));
+  // A real pipe, as in `grep ... | head`: a child's "pipe" stdio is a socket
+  // pair, where a write after the reader closed with data unread can fail
+  // with ECONNRESET instead of EPIPE, and native grep then reports it.
+  const fifo = path.join(dir, "out.fifo");
+  execFileSync("mkfifo", [fifo]);
+  // The read end first, without blocking, so opening the write end returns.
+  const reader = new net.Socket({ fd: fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK) });
+  const out = fs.openSync(fifo, "w");
+  const r = await new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(BIN, "grep"), "-n", "foo", "src/big.txt"], {
+      cwd: dir,
+      env: { PATH: process.env.PATH, HOME: dir, LOOM_GREP_REAL: NATIVE.grep, LOOM_GREP_SHIM_MAX_BYTES: "4096" },
+      stdio: ["ignore", out, "pipe"],
+    });
+    fs.closeSync(out);
+    let err = "";
+    child.stderr.on("data", (c) => (err += c));
+    reader.once("data", () => reader.destroy());
+    child.on("close", (code, signal) => resolve({ code, signal, err }));
+  });
+  assert.equal(r.err, "", "no stack trace on a closed pipe");
+  assert.equal(r.signal === "SIGPIPE" || r.code === 141, true, `ended ${r.signal || r.code}`);
+});
+
+// Windows has no FIFOs; a child's "pipe" stdio there is a named pipe, which
+// gives the writer EPIPE as a FIFO does. Git's grep.exe then dies of SIGPIPE
+// and exits 13 << 8 (3328), which the shim reports as a shell would: 141.
+test("grep: a reader that closes a Windows pipe early ends the shim quietly", {
+  skip: (!NATIVE.grep && "no native grep on PATH") || (process.platform !== "win32" && "the FIFO case above"),
 }, async () => {
   const dir = checkout();
   fs.writeFileSync(path.join(dir, "src", "big.txt"), "foo line\n".repeat(200000));
@@ -252,8 +309,39 @@ test("grep: a reader that closes the pipe early ends the shim quietly", {
   assert.equal(r.signal === "SIGPIPE" || r.code === 141, true, `ended ${r.signal || r.code}`);
 });
 
-test("grep: a native grep killed by a signal is reported the same way", {
+test("grep, annotating: a reader that closes a socket stdout early ends the shim quietly", {
   skip: !NATIVE.grep && "no native grep on PATH",
+}, async () => {
+  const dir = checkout();
+  fs.writeFileSync(path.join(dir, "src", "big.txt"), "foo line\n".repeat(200000));
+  await withServer("ok", async (url) => {
+    // A child's "pipe" stdio is a socket pair, as an agent's often is: a
+    // reader that closes with data unread can show the shim ECONNRESET.
+    const r = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [path.join(BIN, "grep"), "-n", "foo", "src/big.txt"], {
+        cwd: dir,
+        env: {
+          PATH: process.env.PATH,
+          HOME: dir,
+          LOOM_GREP_REAL: NATIVE.grep,
+          LOOM_API_KEY: "t",
+          LOOM_BASE_URL: url,
+          LOOM_GREP_SHIM_MAX_BYTES: "4096",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let err = "";
+      child.stderr.on("data", (c) => (err += c));
+      child.stdout.once("data", () => child.stdout.destroy());
+      child.on("close", (code, signal) => resolve({ code, signal, err }));
+    });
+    assert.equal(r.err, "", "no stack trace and no write error");
+    assert.equal(r.signal === "SIGPIPE" || r.code === 141, true, `ended ${r.signal || r.code}`);
+  });
+});
+
+test("grep: a native grep killed by a signal is reported the same way", {
+  skip: (!NATIVE.grep && "no native grep on PATH") || (process.platform === "win32" && "a sh fake and POSIX signals"),
 }, async () => {
   const dir = checkout();
   const fake = path.join(dir, "fake-grep");

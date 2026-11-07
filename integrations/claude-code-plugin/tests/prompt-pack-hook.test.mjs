@@ -12,6 +12,7 @@ import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { cachePathFor } from "../lib/repo-scope.mjs";
+import { hostEnv } from "./host-env.mjs";
 
 const HOOK = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "hooks", "loom-prompt-pack.mjs");
 
@@ -69,7 +70,7 @@ test("on, in an indexed checkout: one code.search, the pointers injected, no hoo
   try {
     const r = await run(
       { session_id: "s", cwd: dir, hook_event_name: "UserPromptSubmit", prompt: "where are merges scheduled" },
-      {
+      hostEnv({
         PATH: process.env.PATH,
         HOME: tmp,
         TMPDIR: tmp,
@@ -77,7 +78,7 @@ test("on, in an indexed checkout: one code.search, the pointers injected, no hoo
         LOOM_API_KEY: "t",
         LOOM_PROMPT_PACK: "on",
         LOOM_HOOK_DEBUG: "1",
-      },
+      }),
     );
     assert.equal(r.code, 0);
     assert.equal(r.err, "", "the hook reports no error of its own");

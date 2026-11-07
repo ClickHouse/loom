@@ -1,0 +1,9 @@
+# Scripts a POSIX shell reads keep LF line endings in every checkout. Git for
+# Windows converts text to CRLF by default, and sh (Git Bash included) reads a
+# CR as part of each command. A plugin marketplace install is a clone.
+*.sh text eol=lf
+integrations/*/bin/loom-node text eol=lf
+integrations/grep-shim/bin/* text eol=lf
+# Skills are read by each agent's frontmatter parser: one line ending for all.
+integrations/*/skills/** text eol=lf
+skills/** text eol=lf

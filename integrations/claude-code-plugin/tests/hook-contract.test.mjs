@@ -12,6 +12,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { hostEnv } from "./host-env.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, "..");
@@ -24,7 +25,8 @@ function wired() {
   for (const [event, groups] of Object.entries(manifest.hooks)) {
     for (const g of groups) {
       for (const h of g.hooks) {
-        const m = h.command.match(/hooks\/([a-z-]+\.mjs)" (\w+)$/);
+        // The sh line of the command: hooks/<script>" <Event> ends it.
+        const m = h.command.match(/hooks\/([a-z-]+\.mjs)" (\w+)$/m);
         assert.ok(m, `unparsed command: ${h.command}`);
         assert.equal(m[2], event, `${h.command} names the event it is wired under`);
         out.push({ event, script: m[1] });
@@ -169,6 +171,11 @@ function runHook({ script, event, stdin, env, closeStdin = true }) {
     const started = Date.now();
     const child = spawn(process.execPath, [path.join(root, "hooks", script), event], {
       env,
+      // A payload with no cwd falls back to the hook's own: the temp
+      // directory, not the large checkout the suite runs from, whose git
+      // calls a loaded runner stretches past the bound. Not the sandbox: a
+      // detached flusher working there would hold it open on Windows.
+      cwd: os.tmpdir(),
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -187,7 +194,7 @@ function runHook({ script, event, stdin, env, closeStdin = true }) {
 }
 
 function baseEnv(box, serverUrl, extra = {}) {
-  const env = {
+  const env = hostEnv({
     PATH: process.env.PATH,
     HOME: box.home,
     TMPDIR: box.tmp,
@@ -195,10 +202,15 @@ function baseEnv(box, serverUrl, extra = {}) {
     LOOM_AUTO_SIGNUP: "off",
     LOOM_CONV_SETTLE_MS: "0",
     LOOM_HOOK_TIMEOUT_MS: "700",
+    // The shunt's repository lookup has its own bound, 8 s by default: 1000,
+    // the floor resolveTimeoutMs allows, keeps a hanging server's cost near
+    // the other hooks'. code-hooks-failopen.test.mjs holds the hook to its
+    // deadline (4 s in all with a 1000 ms lookup bound).
+    LOOM_SHUNT_RESOLVE_TIMEOUT_MS: "1000",
     // A hook's swallowed error then reaches stderr, which every case checks.
     LOOM_HOOK_DEBUG: "on",
     ...extra,
-  };
+  });
   return env;
 }
 
@@ -312,7 +324,9 @@ test("server unreachable, answering 401, or hanging: every hook stays within its
       cases.push({ ...h, label: "hang", stdin, env: env(hang.url) });
     }
     // A hanging server costs a hook at most a few request bounds (700 ms
-    // here) plus node start-up; far below any host timeout.
+    // here, and the shunt's lookup at its 1000 ms floor) plus node start-up;
+    // far below any host timeout. The shunt's shipped lookup bound (8 s, a
+    // 12 s deadline) is not run here.
     assertContract(await runAll(cases), 8000);
   } finally {
     await unauthorized.close();

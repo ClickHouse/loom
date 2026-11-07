@@ -15,7 +15,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { accessSync, closeSync, constants, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { constants as osConstants, homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   annotatable,
   fileOperands,
@@ -68,9 +68,11 @@ export function nativeTool(tool, env = process.env, self = process.argv[1]) {
   } catch {
     /* unknown self: the marker still guards */
   }
-  for (const dir of (env.PATH || "").split(":")) {
+  // Windows separates PATH with `;` and the tool is grep.exe (Git's usr\bin).
+  const name = process.platform === "win32" ? `${tool}.exe` : tool;
+  for (const dir of (env.PATH || "").split(delimiter)) {
     if (!dir) continue;
-    const cand = join(dir, tool);
+    const cand = join(dir, name);
     try {
       accessSync(cand, constants.X_OK);
       const real = realpathSync(cand);
@@ -83,6 +85,9 @@ export function nativeTool(tool, env = process.env, self = process.argv[1]) {
   return tool === "rg" ? "/usr/bin/rg" : "/usr/bin/grep";
 }
 
+// Windows has no SIGPIPE number of its own; a shell's is 13.
+const SIGNAL_NUMBERS = { SIGPIPE: 13 };
+
 /** Leave the way the native tool left: its status, or its signal. */
 function exitLike(code, signal) {
   if (signal) {
@@ -93,14 +98,19 @@ function exitLike(code, signal) {
       /* fall through to the conventional status */
     }
     // Node ignores SIGPIPE, so a native tool that died of it ends as a shell reports it.
-    process.exit(128 + (osConstants.signals[signal] || 0));
+    process.exit(128 + (osConstants.signals[signal] || SIGNAL_NUMBERS[signal] || 0));
+  }
+  // An MSYS tool (Git for Windows' grep.exe) killed by signal N exits with
+  // N << 8, which a shell reports as 128 + N.
+  if (process.platform === "win32" && code > 255 && (code & 0xff) === 0 && code >> 8 < 65) {
+    process.exit(128 + (code >> 8));
   }
   process.exit(code === null ? 1 : code);
 }
 
 /** Run the native tool; forward the shim's signals to it. */
 function runNative(bin, argv, tool, stdout) {
-  const child = spawn(bin, argv, { stdio: ["inherit", stdout, "inherit"], argv0: tool });
+  const child = spawn(bin, argv, { stdio: ["inherit", stdout, "inherit"], argv0: tool, windowsHide: true });
   for (const sig of FORWARDED_SIGNALS) process.on(sig, () => child.kill(sig));
   child.on("error", (e) => {
     process.stderr.write(`${tool}: ${bin}: ${e.code === "ENOENT" ? "not found" : e.message}\n`);
@@ -135,6 +145,16 @@ function resolveToken(env, cfg) {
   }
 }
 
+/** `p` with symlinks, 8.3 names and drive-letter case resolved; `p` itself
+ *  when it cannot be. */
+function physical(p) {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    return p;
+  }
+}
+
 function repoRoot() {
   try {
     return (
@@ -142,6 +162,7 @@ function repoRoot() {
         encoding: "utf8",
         timeout: 1000,
         stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
       }).trim() || process.cwd()
     );
   } catch {
@@ -161,11 +182,14 @@ function singleFileOperand(argv, tool) {
   }
 }
 
-/** Write to stdout; a reader that went away ends the shim quietly. */
+/** Write to stdout; a reader that went away ends the shim quietly. Over a
+ *  pipe that is EPIPE; over the socket pair an agent often gives a tool's
+ *  stdout, a reader that closed with data unread shows as ECONNRESET. */
 function onStdoutClosed(child) {
   process.stdout.on("error", (e) => {
-    if (e.code !== "EPIPE") return;
-    child.kill("SIGPIPE");
+    if (e.code !== "EPIPE" && e.code !== "ECONNRESET") return;
+    // Windows has no SIGPIPE to send: a plain kill ends the tool there.
+    child.kill(process.platform === "win32" ? undefined : "SIGPIPE");
     exitLike(null, "SIGPIPE");
   });
 }
@@ -232,7 +256,7 @@ async function decorate(raw, { single, env, cfg, token, url, opts }) {
   }
   // Decoded only to find `path:line:` prefixes; the bytes written are the originals.
   const lines = lineBufs.map((b) => b.toString("utf8"));
-  const root = repoRoot();
+  const root = physical(repoRoot());
   const cwd = process.cwd();
   const relCache = new Map();
   const toRel = (p) => {
@@ -240,8 +264,12 @@ async function decorate(raw, { single, env, cfg, token, url, opts }) {
     let rel = null;
     try {
       const abs = isAbsolute(p) ? p : resolve(cwd, p);
-      const r = relative(root, abs);
-      if (r && !r.startsWith("..") && !isAbsolute(r) && statSync(abs).isFile()) rel = r;
+      // The file's directory as the file system names it, so git's toplevel
+      // and the operand compare whatever their spelling (macOS /private/tmp,
+      // a Windows 8.3 name); the file keeps its own name. The server takes `/`.
+      const r = relative(root, join(physical(dirname(abs)), basename(abs)));
+      const outside = r === ".." || r.startsWith(`..${sep}`) || isAbsolute(r);
+      if (r && !outside && statSync(abs).isFile()) rel = r.split(sep).join("/");
     } catch {
       rel = null;
     }

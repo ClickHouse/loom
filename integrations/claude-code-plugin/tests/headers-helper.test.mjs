@@ -13,6 +13,7 @@ process.env.LOOM_HOOK_NO_MAIN = "1";
 import { checkoutScope, headersFor, hookToken } from "../bin/loom-mcp-headers.mjs";
 import { cachePathFor, scopeHeader } from "../lib/repo-scope.mjs";
 import { execSync } from "node:child_process";
+import { hostEnv, withTmpdir } from "./host-env.mjs";
 
 const HELPER = fileURLToPath(new URL("../bin/loom-mcp-headers.mjs", import.meta.url));
 
@@ -29,24 +30,11 @@ function sandbox() {
 function run(env, box = sandbox()) {
   const out = execFileSync(process.execPath, [HELPER], {
     encoding: "utf8",
-    env: { PATH: process.env.PATH, HOME: box.home, TMPDIR: box.tmp, LOOM_MCP_HOOK_WAIT_MS: "0", ...env },
+    env: hostEnv({ PATH: process.env.PATH, HOME: box.home, TMPDIR: box.tmp, LOOM_MCP_HOOK_WAIT_MS: "0", ...env }),
     cwd: box.cwd,
     timeout: 5000,
   });
   return { ...box, out, parsed: JSON.parse(out) };
-}
-
-/** Run `fn` with this process's TMPDIR pointed at `tmp`, for the in-process
- *  lookups that write the cache under os.tmpdir(). */
-async function withTmpdir(tmp, fn) {
-  const saved = process.env.TMPDIR;
-  process.env.TMPDIR = tmp;
-  try {
-    return await fn();
-  } finally {
-    if (saved === undefined) delete process.env.TMPDIR;
-    else process.env.TMPDIR = saved;
-  }
 }
 
 test("headersFor: a bearer for a token, an empty object for none", () => {
@@ -87,6 +75,7 @@ test("the plugin's .mcp.json uses the helper and a localhost default URL", () =>
   const loom = block.mcpServers.loom;
   assert.equal(loom.type, "http");
   assert.equal(loom.url, "${user_config.server_url}/mcp?toolset=${user_config.toolset}"); // the toolset is a setting
+  assert.match(loom.headersHelper, /process\.env\.CLAUDE_PLUGIN_ROOT,'bin','loom-mcp-headers\.mjs'/);
   assert.match(loom.headersHelper, /\$CLAUDE_PLUGIN_ROOT\/bin\/loom-mcp-headers\.mjs/);
   assert.equal(loom.headers, undefined, "no static header: the helper supplies it");
 });
@@ -249,13 +238,13 @@ test("no token, sign-up reachable → the helper signs up and sends the bearer",
           encoding: "utf8",
           timeout: 10000,
           cwd: box.cwd,
-          env: {
+          env: hostEnv({
             PATH: process.env.PATH,
             HOME: box.home,
             TMPDIR: box.tmp,
             LOOM_BASE_URL: url,
             LOOM_MCP_CODE_SCOPE: "off",
-          },
+          }),
         },
         (e, so) => (e ? reject(e) : resolve(so)),
       ),

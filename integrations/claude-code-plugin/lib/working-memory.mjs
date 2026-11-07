@@ -15,7 +15,8 @@
 // and this block is never embedded or ranked: working memory is not
 // retrieval memory.
 
-import { contentText, redactHead, resolveToken } from "./loom-client.mjs";
+import { isAbsolute } from "node:path";
+import { contentText, pathUnder, redactHead, resolveToken } from "./loom-client.mjs";
 
 export const BLOCK_CHAR_LIMIT = 3000;
 const GOAL_MAX = 300;
@@ -86,9 +87,10 @@ export function parseGitStatus(text) {
   return { branch, changed };
 }
 
+/** An absolute `p` relative to `cwd` when it lies under it (either slash, any
+ *  spelling of the directory); anything else as given. */
 function short(p, cwd) {
-  const c = String(cwd || "");
-  return c && p.startsWith(c + "/") ? p.slice(c.length + 1) : p;
+  return (cwd && isAbsolute(String(p)) && pathUnder(String(cwd), p)) || p;
 }
 
 /** The block body. Deterministic for the same inputs (the hook dedupes on

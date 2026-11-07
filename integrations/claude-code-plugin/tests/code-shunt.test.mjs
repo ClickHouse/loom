@@ -4,6 +4,7 @@ import { test } from "node:test";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { pathUnder } from "../lib/loom-client.mjs";
 import assert from "node:assert/strict";
 import {
   classifyGrep,
@@ -17,7 +18,6 @@ import {
   localFirstOn,
   localGrepText,
   runLocalGrep,
-  relPath,
   repoSlug,
   symbolAnswerText,
   symbolInPattern,
@@ -30,6 +30,7 @@ import {
   ghRepoSlug,
   patternSearchShape,
   parseBashBulk,
+  gitBashPath,
   parseBashBulkSegments,
   splitOutsideQuotes,
 } from "../lib/shell-command.mjs";
@@ -46,9 +47,9 @@ test("repoSlug normalises remote shapes", () => {
   assert.equal(repoSlug(""), "");
 });
 
-test("relPath and prefixes", () => {
-  assert.equal(relPath("/r", "/r/src/a.cpp"), "src/a.cpp");
-  assert.equal(relPath("/r", "/elsewhere/x"), null);
+test("pathUnder and prefixes", () => {
+  assert.equal(pathUnder("/r", "/r/src/a.cpp"), "src/a.cpp");
+  assert.equal(pathUnder("/r", "/elsewhere/x"), null);
   assert.equal(underPrefixes("src/Storages", PREFIXES), true);
   assert.equal(underPrefixes("docs/en", PREFIXES), false);
   assert.equal(underPrefixes("", PREFIXES), true);
@@ -144,6 +145,19 @@ test("Bash segments: a chained read is judged, not passed in silence", () => {
     "a relative cd and a discarded stderr",
   );
   assert.deepEqual(parseBashBulkSegments("cd a; cd b; cat c.py")[0].cwd, "a/b");
+  // A Windows path is absolute by its drive, and an 8.3 name's ~ is literal.
+  assert.deepEqual(parseBashBulkSegments("cd a; cd C:/Users/RUNNER~1/app; cat c.py")[0].cwd, "C:/Users/RUNNER~1/app");
+  // Git Bash's /c/ spelling is the drive on Windows, a plain path elsewhere.
+  assert.equal(gitBashPath("/c/Users/me/app", "win32"), "C:/Users/me/app");
+  assert.equal(gitBashPath("/c", "win32"), "C:/");
+  assert.equal(gitBashPath("/c/Users/me/app", "linux"), "/c/Users/me/app");
+  assert.equal(gitBashPath("/srv/app", "win32"), "/srv/app");
+  if (process.platform === "win32") {
+    assert.equal(parseBashBulkSegments("cat /c/Users/me/app/a.py")[0].file, "C:/Users/me/app/a.py");
+    assert.equal(parseBashBulkSegments("grep -rn foo /c/Users/me/app")[0].dir, "C:/Users/me/app");
+  } else {
+    assert.equal(parseBashBulkSegments("cat /c/Users/me/app/a.py")[0].file, "/c/Users/me/app/a.py");
+  }
   assert.deepEqual(parseBashBulkSegments("make test || cat log.txt")[0].file, "log.txt");
 });
 
@@ -151,6 +165,7 @@ test("Bash segments: what stays unjudged", () => {
   assert.deepEqual(parseBashBulkSegments("cat a.cpp | wc -l"), [], "a read piped onward may be sliced");
   assert.deepEqual(parseBashBulkSegments("git status; git log --oneline"), []);
   assert.deepEqual(parseBashBulkSegments("cd $HOME; cat a.py"), [], "a cd the parser cannot follow ends the scan");
+  assert.deepEqual(parseBashBulkSegments("cd ~/app; cat a.py"), [], "nor a home-relative one");
   assert.deepEqual(parseBashBulkSegments("cd; cat a.py"), []);
   assert.deepEqual(parseBashBulkSegments("x=$(cat a.py); echo $x"), [], "command substitution");
   assert.deepEqual(parseBashBulkSegments("python3 - <<'EOF'\ncat a.py\nEOF"), [], "a heredoc body is not commands");
@@ -387,7 +402,22 @@ test("the accounting adds under 50 ms to a hook run (1,000 decisions + a flush f
     { ...base, modified: "untracked" },
     { ...base, lineCount: 50 },
   ];
-  const t0 = process.hrtime.bigint();
+  // One run, as a hook pays it. The main thread's time is at most both
+  // clocks: wall-clock time also counts the runner preempting the suite, and
+  // process CPU time also counts V8's compiler and GC threads, which a cold
+  // run keeps busy (a run can show more CPU than wall time).
+  const wallStart = performance.now();
+  const started = process.cpuUsage();
+  const agg = foldThousand(variants);
+  const { user, system } = process.cpuUsage(started);
+  const ms = Math.min(performance.now() - wallStart, (user + system) / 1000);
+  assert.equal(agg.lines, 1000);
+  assert.ok(ms < 50, `accounting took ${ms.toFixed(1)} ms for 1,000 decisions`);
+  console.log(`# shunt accounting: 1,000 decisions classified, logged and folded in ${ms.toFixed(2)} ms`);
+});
+
+/** 1,000 decisions classified and logged, then the log folded. */
+function foldThousand(variants) {
   let text = "";
   for (let i = 0; i < 1000; i++) {
     const ctx = variants[i % variants.length];
@@ -405,12 +435,8 @@ test("the accounting adds under 50 ms to a hook run (1,000 decisions + a flush f
       endLine: span.end,
     });
   }
-  const agg = aggregateShuntLog(text);
-  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.equal(agg.lines, 1000);
-  assert.ok(ms < 50, `accounting took ${ms.toFixed(1)} ms for 1,000 decisions`);
-  console.log(`# shunt accounting: 1,000 decisions classified, logged and folded in ${ms.toFixed(2)} ms`);
-});
+  return aggregateShuntLog(text);
+}
 
 test("shouldFlushShunt: on a deny, or once the backlog is worth a request", () => {
   assert.equal(shouldFlushShunt({ denied: true, pending: 1 }), true);
@@ -1032,6 +1058,11 @@ test("a gh issue search is the tracker_search shape, chains and escapes included
     ghIssueSearchInCommand(`gh issue list --repo a/b --state all --search "\\"part covers parts\\"" --json number`),
     { kind: "tracker_search", query: "part covers parts", frames: [], repo: "a/b" },
     "backslash-escaped quotes",
+  );
+  assert.deepEqual(
+    ghIssueSearchInCommand(String.raw`gh issue list --repo a/b --search "escape foo\nbar \"x\""`).query,
+    String.raw`escape foo\nbar x`,
+    'as in sh, a backslash before anything but $ \` " \\ stays',
   );
   assert.deepEqual(
     ghIssueSearchInCommand("gh issue list -S 'LOGICAL_ERROR renameTempPartAndAdd is:open' --repo a/b"),

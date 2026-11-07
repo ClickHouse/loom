@@ -16,6 +16,7 @@ import {
   saveInstallServerUrl,
   statusServerUrl,
 } from "../lib/plugin-options.mjs";
+import { assertMode } from "./host-env.mjs";
 
 function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "loom-opts-"));
@@ -65,7 +66,7 @@ test("applyPluginOptions writes token + url once, 0600, merging other keys", () 
   assert.equal(r1.write, true);
   const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
   assert.deepEqual(written, { token: "opt.tok", url: "https://loom.test" });
-  assert.equal(fs.statSync(configPath).mode & 0o777, 0o600);
+  assertMode(configPath, 0o600);
   // second run: the config now has a token → nothing written; the saved url rides along
   const r2 = applyPluginOptions(env, { configPath, tokenPath });
   assert.equal(r2.reason, "config has a token");

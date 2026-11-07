@@ -28,6 +28,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import {
   git,
+  gitToplevel,
+  pathUnder,
   postBounded,
   postFireAndForget,
   readStdinJson,
@@ -54,7 +56,6 @@ import {
   localGrepText,
   otherSearchRepo,
   readSpan,
-  relPath,
   runLocalGrep,
   spendCapBudget,
   symbolAnswerText,
@@ -362,7 +363,7 @@ async function answerSymbolDeny(verdict, repo, ctx, { cwd = repo.root, files = [
       { timeoutMs: 2500 },
     );
     const dirtyFiles = files.filter((f) => {
-      const rel = relPath(repo.root, path.resolve(cwd, f));
+      const rel = pathUnder(repo.root, path.resolve(cwd, f));
       return rel != null && gitStatusClass(repo.root, rel) !== "";
     });
     const localGrep = dirtyFiles.length
@@ -450,7 +451,7 @@ async function main() {
   // stands the guard down entirely, whatever the commits.
   if (localFirstOn()) return;
 
-  const root = git(["rev-parse", "--show-toplevel"], cwd);
+  const root = gitToplevel(cwd);
   if (!root) return;
   const repo = { ...(await resolveIndexedRepo(root)), root };
   // No freshness stand-down — neither commit distance nor an
@@ -468,7 +469,7 @@ async function main() {
 
   if (tool === "Read") {
     const abs = path.resolve(cwd, String(input.file_path || ""));
-    const rel = relPath(root, abs);
+    const rel = pathUnder(root, abs);
     if (rel == null) return;
     settleRead(repo, { tool, rel, abs, offset: input.offset, limit: input.limit, sessionId, ctxBase });
     return;
@@ -476,7 +477,7 @@ async function main() {
 
   if (tool === "Grep" && SHUNT_GREP) {
     const abs = path.resolve(cwd, String(input.path || "."));
-    const rel = relPath(root, abs);
+    const rel = pathUnder(root, abs);
     let isFile = false;
     try {
       isFile = fs.statSync(abs).isFile();
@@ -524,7 +525,7 @@ async function settleBashBulk(repo, { bulk, cwd, sessionId, ctxBase }) {
   const root = repo.root;
   if (bulk.kind === "read") {
     const abs = path.resolve(cwd, bulk.file);
-    const rel = relPath(root, abs);
+    const rel = pathUnder(root, abs);
     if (rel == null) return false;
     // A `sed -n 'A,Bp'` / `head -n N` / `tail -n +A` /
     // `awk 'NR>=A && NR<=B'` slice carries its span, so the read-window
@@ -546,7 +547,7 @@ async function settleBashBulk(repo, { bulk, cwd, sessionId, ctxBase }) {
     });
   }
   const abs = path.resolve(cwd, bulk.dir);
-  const rel = relPath(root, abs);
+  const rel = pathUnder(root, abs);
   let isFile = false;
   try {
     isFile = fs.statSync(abs).isFile();

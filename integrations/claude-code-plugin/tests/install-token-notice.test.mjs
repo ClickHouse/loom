@@ -10,6 +10,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { hostEnv } from "./host-env.mjs";
 
 const HOOK = fileURLToPath(new URL("../hooks/loom-session-start.mjs", import.meta.url));
 const SAVED_FOR = "https://a.example";
@@ -39,7 +40,7 @@ function run(dir, env, args = []) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [HOOK, ...args], {
       cwd: dir,
-      env: { PATH: process.env.PATH, HOME: dir, TMPDIR: dir, LOOM_CODE_MAP: "false", ...env },
+      env: hostEnv({ PATH: process.env.PATH, HOME: dir, TMPDIR: dir, LOOM_CODE_MAP: "false", ...env }),
     });
     let stdout = "";
     child.stdout.on("data", (c) => (stdout += c));

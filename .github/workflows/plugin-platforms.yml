@@ -1,0 +1,172 @@
+name: plugin platforms
+
+# The Claude Code and Codex plugins run inside the user's agent, on the
+# user's OS: every hook goes through a shell the agent picks (sh, Git Bash,
+# PowerShell, cmd.exe) and starts Node through bin/loom-node. Each job runs
+# the plugin suite, then one real session per agent with the plugin
+# installed from this checkout (tests/e2e/agent-session.mjs: a local fake
+# answers the model API and Loom, so no provider is called).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "integrations/**"
+      - ".claude-plugin/**"
+      - ".agents/plugins/**"
+      - ".gitattributes"
+      - ".github/workflows/plugin-platforms.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "integrations/**"
+      - ".claude-plugin/**"
+      - ".agents/plugins/**"
+      - ".gitattributes"
+      - ".github/workflows/plugin-platforms.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22"
+  # The agent versions the end-to-end sessions run.
+  CLAUDE_CODE_VERSION: "2.1.319"
+  CODEX_VERSION: "0.162.1"
+
+jobs:
+  platform:
+    name: plugins on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Git for Windows checks text files out with CRLF unless told
+      # otherwise, and a plugin marketplace is a git clone: check out the
+      # way a Windows user's clone is.
+      - name: check out with Git for Windows' line endings
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: node --test (plugin suite)
+        run: node --test integrations/claude-code-plugin/tests/*.test.mjs
+      - name: node --test (grep shim)
+        if: ${{ !cancelled() }}
+        run: node --test integrations/grep-shim/tests/*.test.mjs
+      # The sessions run whatever the suites said: each step is its own signal.
+      - name: install the agent CLIs
+        if: ${{ !cancelled() }}
+        run: |
+          npm install --global --no-fund --no-audit "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" "@openai/codex@$CODEX_VERSION"
+          root=$(npm root --global)
+          exe=''
+          if [ "$RUNNER_OS" = Windows ]; then root=$(cygpath -m "$root"); exe=.exe; fi
+          codex=$(ls "$root"/@openai/codex/node_modules/@openai/codex-*/vendor/*/bin/codex$exe | head -1)
+          echo "CLAUDE_BIN=$root/@anthropic-ai/claude-code/bin/claude.exe" >> "$GITHUB_ENV"
+          echo "CODEX_BIN=$codex" >> "$GITHUB_ENV"
+      - name: Claude Code session
+        if: ${{ !cancelled() }}
+        run: node integrations/claude-code-plugin/tests/e2e/agent-session.mjs claude --bin "$CLAUDE_BIN" --expect-tool Bash
+      - name: Codex session
+        if: ${{ !cancelled() }}
+        run: node integrations/claude-code-plugin/tests/e2e/agent-session.mjs codex --bin "$CODEX_BIN"
+      # Started from the Dock or a desktop launcher, the agent has no node on
+      # PATH: the launcher finds it under a version manager.
+      - name: Claude Code session, node off PATH
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
+        run: node integrations/claude-code-plugin/tests/e2e/agent-session.mjs claude --bin "$CLAUDE_BIN" --expect-tool Bash --node-off-path
+      - name: Codex session, node off PATH
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
+        run: node integrations/claude-code-plugin/tests/e2e/agent-session.mjs codex --bin "$CODEX_BIN" --node-off-path
+      # Without Git Bash, Claude Code runs hooks under PowerShell. Last step:
+      # it moves Git for Windows away.
+      - name: Claude Code session, no Git Bash
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          Rename-Item "$env:ProgramFiles\Git" "Git-hidden"
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch '\\Git\\' }) -join ';'
+          node integrations/claude-code-plugin/tests/e2e/agent-session.mjs claude --bin "$env:CLAUDE_BIN" --expect-tool PowerShell
+
+  # musl and BusyBox sh, where agents run in containers. JavaScript actions
+  # do not run inside an Alpine container, so the job runs one itself.
+  alpine:
+    name: plugins on Alpine (musl, BusyBox sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # node:22-alpine, pinned by digest like the rest of CI's third-party code.
+      ALPINE_IMAGE: node:22-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # bash is for Claude Code's own shell tool; the hooks run under BusyBox sh.
+      - name: suite and sessions in node:22-alpine
+        run: |
+          docker run --rm -v "$PWD:/src:ro" -e CLAUDE_CODE_VERSION -e CODEX_VERSION "$ALPINE_IMAGE" sh -euc '
+            apk add --quiet git bash
+            cp -r /src /tmp/repo && chown -R node /tmp/repo
+            npm install --global --no-fund --no-audit "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" "@openai/codex@$CODEX_VERSION" >/dev/null
+            root=$(npm root --global)
+            codex=$(ls "$root"/@openai/codex/node_modules/@openai/codex-linux-*/vendor/*/bin/codex | head -1)
+            su node -s /bin/sh -c "
+              set -e
+              cd /tmp/repo
+              git config --global user.email ci@example.com
+              git config --global user.name ci
+              node --test integrations/claude-code-plugin/tests/*.test.mjs
+              node --test integrations/grep-shim/tests/*.test.mjs
+              node integrations/claude-code-plugin/tests/e2e/agent-session.mjs claude --bin $root/@anthropic-ai/claude-code/bin/claude.exe --expect-tool Bash
+              node integrations/claude-code-plugin/tests/e2e/agent-session.mjs codex --bin $codex
+            "
+          '
+
+  # WSL 2 runs the Linux build in a Linux kernel under Windows; its PATH also
+  # carries Windows directories. Node 18 from Ubuntu's archive: the oldest the
+  # plugins support.
+  wsl:
+    name: plugins on WSL 2 (Ubuntu 24.04, Node 18)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: wsl-bash {0}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: Vampire/setup-wsl@4c48163d9f981914dd8caa0fc335fe19cca5bff4 # v7.2.0
+        with:
+          distribution: Ubuntu-24.04
+          additional-packages: git ca-certificates nodejs npm
+      - name: suite and sessions in WSL
+        run: |
+          useradd -m ci
+          # A clone inside WSL, with Linux modes and line endings, as a WSL user's is.
+          git -c safe.directory='*' clone --quiet --no-local . /home/ci/repo
+          chown -R ci /home/ci/repo
+          npm install --global --no-fund --no-audit "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" "@openai/codex@$CODEX_VERSION" >/dev/null
+          root=$(npm root --global)
+          codex=$(ls "$root"/@openai/codex/node_modules/@openai/codex-linux-*/vendor/*/bin/codex | head -1)
+          su ci -s /bin/sh -c "
+            set -e
+            cd /home/ci/repo
+            node --version
+            git config --global user.email ci@example.com
+            git config --global user.name ci
+            node --test integrations/claude-code-plugin/tests/*.test.mjs
+            node --test integrations/grep-shim/tests/*.test.mjs
+            node integrations/claude-code-plugin/tests/e2e/agent-session.mjs claude --bin $root/@anthropic-ai/claude-code/bin/claude.exe --expect-tool Bash
+            node integrations/claude-code-plugin/tests/e2e/agent-session.mjs codex --bin $codex
+          "
+        env:
+          WSLENV: CLAUDE_CODE_VERSION:CODEX_VERSION
