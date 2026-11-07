@@ -893,7 +893,7 @@ _USERS_OWN_ORIGINALS = (
     " WHERE org = {org:String} AND user_id != {uid:String} AND expires_at > now64(3)"
     " UNION ALL SELECT namespace, toString(sha256) FROM loom.knowledge_ingestions FINAL"
     " WHERE org = {org:String} AND user_id != {uid:String}"
-    " AND state IN {open:Array(String)})"
+    " AND state IN ('pending', 'processing'))"
 )
 # The catalog rows of those originals, by the pairs bound: reading the subquery
 # again could name rows whose objects the step did not delete.
@@ -1173,7 +1173,7 @@ _KEEP_OTHERS_CANCELS = (
     " AND (namespace, ingestion_id) IN ("
     "SELECT namespace, ingestion_id FROM loom.knowledge_ingestions FINAL"
     " WHERE org = {org:String} AND user_id != {uid:String}"
-    " AND state IN ('pending', 'processing'))"
+    " AND state IN {open:Array(String)})"
 )
 
 
