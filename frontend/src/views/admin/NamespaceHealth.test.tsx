@@ -56,7 +56,7 @@ describe("NamespaceHealthPanel", () => {
     expect(screen.getByText("bge-small")).toBeInTheDocument();
     expect(screen.getByText("0.310")).toBeInTheDocument();
     expect(screen.getByText("From this namespace's calibration.")).toBeInTheDocument();
-    expect(screen.getByText("The newest 1: 1 pending · 0 failed")).toBeInTheDocument();
+    expect(screen.getByText("1 batch: 1 pending, 0 failed")).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Recent extractions" })).toBeInTheDocument();
   });
 

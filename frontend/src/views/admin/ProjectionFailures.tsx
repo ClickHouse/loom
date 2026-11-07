@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Table } from "@clickhouse/click-ui/Table";
 import {
+  FAILURE_LIST_LIMIT,
   listProjectionFailures,
   resolveProjectionFailures,
   retryProjectionFailures,
@@ -14,9 +15,6 @@ import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
 import { TableSkeleton } from "../../components/Skeleton";
-
-// The server's default list page; a full page means there are more.
-const FAILURE_LIST_LIMIT = 100;
 
 /**
  * Projection failures: derived rows (an embedding, a graph edge, a summary) a write
@@ -42,10 +40,10 @@ export function ProjectionFailuresPanel() {
     [identity.org, identity.namespace, reload],
   );
 
-  const act = async (work: () => Promise<string>) => {
+  const act = async (work: () => Promise<void>) => {
     setBusy(true);
     try {
-      toast(await work(), "ok");
+      await work();
       refresh();
     } catch (e) {
       toastError("Projection failures", e);
@@ -56,24 +54,16 @@ export function ProjectionFailuresPanel() {
   const retry = () =>
     act(async () => {
       const r = await retryProjectionFailures(identity);
-      return `Retried ${r.retried}: ${r.resolved} fixed, ${r.abandoned} given up`;
+      const noPath = r.results.length - r.retried;
+      const none = noPath ? `; ${noPath} have no retry` : "";
+      toast(`Retried ${r.retried}: ${r.resolved} fixed, ${r.abandoned} given up${none}`, r.retried ? "ok" : "info");
     });
   const dismiss = (id: string) =>
     act(async () => {
       await resolveProjectionFailures(identity.org, [id]);
-      return "Dismissed";
+      toast("Dismissed", "ok");
     });
 
-  if (error) return <ListState kind="error" things="projection failures" error={error} onRetry={refresh} />;
-  if (rows?.length === 0)
-    return (
-      <ListState
-        kind="empty"
-        icon="check-in-circle"
-        title="No projection failures"
-        description="Every write here produced its embeddings, graph edges and summaries."
-      />
-    );
   return (
     <>
       <ListToolbar
@@ -85,50 +75,61 @@ export function ProjectionFailuresPanel() {
           type="secondary"
           htmlType="button"
           iconLeft="refresh"
-          disabled={busy || !rows}
+          disabled={busy || !rows?.length}
           onClick={() => void retry()}
         >
           Retry failures
         </Button>
       </ListToolbar>
-      <Table
-        aria-label="Projection failures"
-        aria-busy={rows === null || undefined}
-        noDataMessage={rows === null ? <TableSkeleton label="Loading projection failures" /> : undefined}
-        size="sm"
-        headers={[
-          { label: "Projection", width: "140px" },
-          { label: "Memories" },
-          { label: "Error" },
-          { label: "When", width: "110px" },
-          { label: <span className="sr-only">Actions</span>, width: "100px" },
-        ]}
-        rows={(rows ?? []).map((f) => ({
-          id: f.failure_id,
-          items: [
-            { label: <span className="font-mono text-xs">{f.projection}</span> },
-            {
-              label: <span className="font-mono text-xs">{f.memory_keys.join(", ") || "—"}</span>,
-              overflowMode: "wrap",
-            },
-            { label: <span className="text-xs">{f.error_message || f.error_type}</span>, overflowMode: "wrap" },
-            { label: f.created_at ? <ListTime time={f.created_at} quiet /> : "—" },
-            {
-              label: (
-                <Button
-                  type="empty"
-                  htmlType="button"
-                  disabled={busy}
-                  aria-label={`Dismiss failure ${f.failure_id}`}
-                  onClick={() => void dismiss(f.failure_id)}
-                >
-                  Dismiss
-                </Button>
-              ),
-            },
-          ],
-        }))}
-      />
+      {error ? (
+        <ListState kind="error" things="projection failures" error={error} onRetry={refresh} />
+      ) : rows?.length === 0 ? (
+        <ListState
+          kind="empty"
+          icon="check-in-circle"
+          title="No projection failures"
+          description="No write here is waiting on a projection."
+        />
+      ) : (
+        <Table
+          aria-label="Projection failures"
+          aria-busy={rows === null || undefined}
+          noDataMessage={rows === null ? <TableSkeleton label="Loading projection failures" /> : undefined}
+          size="sm"
+          headers={[
+            { label: "Projection", width: "140px" },
+            { label: "Memories" },
+            { label: "Error" },
+            { label: "When", width: "110px" },
+            { label: <span className="sr-only">Actions</span>, width: "100px" },
+          ]}
+          rows={(rows ?? []).map((f) => ({
+            id: f.failure_id,
+            items: [
+              { label: <span className="font-mono text-xs">{f.projection}</span> },
+              {
+                label: <span className="font-mono text-xs">{f.memory_keys.join(", ") || "—"}</span>,
+                overflowMode: "wrap",
+              },
+              { label: <span className="text-xs">{f.error_message || f.error_type}</span>, overflowMode: "wrap" },
+              { label: f.created_at ? <ListTime time={f.created_at} quiet /> : "—" },
+              {
+                label: (
+                  <Button
+                    type="empty"
+                    htmlType="button"
+                    disabled={busy}
+                    aria-label={`Dismiss the ${f.projection} failure of ${f.memory_keys[0] ?? f.source_operation}`}
+                    onClick={() => void dismiss(f.failure_id)}
+                  >
+                    Dismiss
+                  </Button>
+                ),
+              },
+            ],
+          }))}
+        />
+      )}
     </>
   );
 }

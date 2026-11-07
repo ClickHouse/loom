@@ -2,6 +2,7 @@ import { act, cleanup, render, screen, waitFor } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api/maintenance";
+import { toast } from "../../components/Toast";
 import { useStore } from "../../lib/state";
 import { ProjectionFailuresPanel } from "./ProjectionFailures";
 
@@ -11,7 +12,6 @@ vi.mock("../../api/maintenance", async (importOriginal) => {
   return {
     ...actual,
     listProjectionFailures: vi.fn(async () => ({
-      total: 1,
       rows: [
         {
           failure_id: "f1",
@@ -25,7 +25,7 @@ vi.mock("../../api/maintenance", async (importOriginal) => {
         },
       ],
     })),
-    retryProjectionFailures: vi.fn(async () => ({ retried: 1, resolved: 1, abandoned: 0 })),
+    retryProjectionFailures: vi.fn(async () => ({ results: [{}], retried: 1, resolved: 1, abandoned: 0 })),
     resolveProjectionFailures: vi.fn(async () => ({ resolved: 1 })),
   };
 });
@@ -44,14 +44,28 @@ describe("ProjectionFailuresPanel", () => {
     await waitFor(() =>
       expect(api.retryProjectionFailures).toHaveBeenCalledWith(expect.objectContaining({ namespace: "team" })),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Dismiss failure f1" }));
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss the embedding failure of deploy_window" }));
     await waitFor(() => expect(api.resolveProjectionFailures).toHaveBeenCalledWith("acme", ["f1"]));
   });
 
+  it("says when the failures it tried have no retry", async () => {
+    vi.mocked(api.retryProjectionFailures).mockResolvedValueOnce({
+      results: [{}, {}],
+      retried: 0,
+      resolved: 0,
+      abandoned: 0,
+    });
+    render(<ProjectionFailuresPanel />);
+    await userEvent.click(await screen.findByRole("button", { name: "Retry failures" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Retried 0: 0 fixed, 0 given up; 2 have no retry", "info"));
+  });
+
   it("says when there is nothing to retry", async () => {
-    vi.mocked(api.listProjectionFailures).mockResolvedValueOnce({ total: 0, rows: [] });
+    vi.mocked(api.listProjectionFailures).mockResolvedValueOnce({ rows: [] });
     render(<ProjectionFailuresPanel />);
     expect(await screen.findByText("No projection failures")).toBeInTheDocument();
+    // The toolbar stays above the empty state.
+    expect(screen.getByRole("button", { name: "Retry failures" })).toBeDisabled();
   });
 
   it("says a failed read failed, and Retry reads again", async () => {
@@ -68,6 +82,6 @@ describe("ProjectionFailuresPanel", () => {
     vi.mocked(api.listProjectionFailures).mockImplementationOnce(() => new Promise(() => {}));
     act(() => useStore.setState({ identity: { org: "acme", namespace: "other", agent: "loom-ui" } }));
     await waitFor(() => expect(screen.queryByText("embedder timed out")).toBeNull());
-    expect(screen.queryByRole("button", { name: "Dismiss failure f1" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Dismiss the embedding failure of deploy_window" })).toBeNull();
   });
 });

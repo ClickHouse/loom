@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api/maintenance";
 import { confirmAction } from "../../components/ConfirmDialog";
+import { toast } from "../../components/Toast";
 import { useStore } from "../../lib/state";
 import { RepairsPanel } from "./Repairs";
 
@@ -12,12 +13,19 @@ vi.mock("../../api/maintenance", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/maintenance")>();
   return {
     ...actual,
-    sweepExpired: vi.fn(async () => ({ scanned: 9, tombstoned: 2, demoted: 0, anonymized: 0, locked_skipped: 1 })),
-    reembedMemories: vi.fn(async () => ({ processed: 4, skipped_already_current: 0, target_model: "m" })),
+    sweepExpired: vi.fn(async () => ({
+      scanned: 9,
+      tombstoned: 2,
+      demoted: 0,
+      anonymized: 0,
+      locked_skipped: 1,
+      failures: [] as string[],
+    })),
+    reembedMemories: vi.fn(async () => ({ processed: 4, target_model: "m" })),
     expireAdapterFacts: vi.fn(async () => ({ expired_triples: 5, expired_triple_memories: 2 })),
     rollbackNamespace: vi.fn(async () => ({ reinstate: 3, remove: 1, truncated: false })),
     snapshotNamespace: vi.fn(async () => ({ snapshot_id: "s1" })),
-    restoreNamespace: vi.fn(async () => ({ restored: true, counts: { memories: 7 } })),
+    restoreNamespace: vi.fn(async () => ({ restored: true, counts: { memories: 7, erased_skipped: 0 } })),
   };
 });
 
@@ -46,6 +54,7 @@ describe("RepairsPanel", () => {
       demoted: 0,
       anonymized: 0,
       locked_skipped: 0,
+      failures: [],
     });
     render(<RepairsPanel />);
     const apply = screen.getByRole("button", { name: "Apply expiries now" });
@@ -57,6 +66,36 @@ describe("RepairsPanel", () => {
     await waitFor(() => expect(confirmAction).toHaveBeenCalled());
     // The second dry run, and no write after the declined confirmation.
     expect(vi.mocked(api.sweepExpired).mock.calls.map((c) => c[1])).toEqual([true, true]);
+  });
+
+  it("says an apply that did not all land failed", async () => {
+    vi.mocked(api.sweepExpired)
+      .mockResolvedValueOnce({ scanned: 9, tombstoned: 2, demoted: 0, anonymized: 0, locked_skipped: 0, failures: [] })
+      .mockResolvedValueOnce({
+        scanned: 9,
+        tombstoned: 2,
+        demoted: 0,
+        anonymized: 0,
+        locked_skipped: 0,
+        failures: ["insert: down"],
+      });
+    render(<RepairsPanel />);
+    await userEvent.click(screen.getByRole("button", { name: "Apply expiries now" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("The expiry did not all land: insert: down", "error"));
+  });
+
+  it("re-embeds, and says when every memory already uses the model or more remain", async () => {
+    vi.mocked(api.reembedMemories)
+      .mockResolvedValueOnce({ processed: 0, target_model: "m" })
+      .mockResolvedValueOnce({ processed: api.REEMBED_LIMIT, target_model: "m" });
+    render(<RepairsPanel />);
+    const reembed = screen.getByRole("button", { name: "Re-embed stale vectors" });
+    await userEvent.click(reembed);
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Every memory already uses m.", "info"));
+    await userEvent.click(reembed);
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(`Re-embedded ${api.REEMBED_LIMIT} with m; run it again for the rest`, "ok"),
+    );
   });
 
   it("removes one extractor's facts once it is named", async () => {
@@ -87,5 +126,19 @@ describe("RepairsPanel", () => {
     await userEvent.upload(screen.getByLabelText("Snapshot file"), file);
     await waitFor(() => expect(api.restoreNamespace).toHaveBeenCalledWith("acme", "team", { snapshot_id: "s1" }));
     expect(confirmAction).toHaveBeenCalledWith(expect.objectContaining({ danger: true }));
+  });
+
+  it("says a snapshot of another namespace brings its members' grants here", async () => {
+    render(<RepairsPanel />);
+    const payload = { source_namespace: "team-a", created_at: "2000-01-01 00:00:00", memory_count: 3 };
+    const file = new File([JSON.stringify(payload)], "team-a.json", { type: "application/json" });
+    await userEvent.upload(screen.getByLabelText("Snapshot file"), file);
+    await waitFor(() => expect(api.restoreNamespace).toHaveBeenCalled());
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "It holds 3 memories, taken 2000-01-01 00:00:00. It is a snapshot of team-a: its memories are written here, and its members get the grants they had there.",
+      }),
+    );
   });
 });

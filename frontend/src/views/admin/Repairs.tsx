@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import {
+  REEMBED_LIMIT,
+  SWEEP_LIMIT,
   expireAdapterFacts,
   reembedMemories,
   restoreNamespace,
@@ -51,19 +53,23 @@ export function RepairsPanel() {
       )
         return;
       const r = await sweepExpired(identity, false);
-      toast(`Expired ${r.tombstoned + r.demoted + r.anonymized}; ${r.locked_skipped} locked kept`, "ok");
+      if (r.failures.length) return toast(`The expiry did not all land: ${r.failures.join("; ")}`, "error");
+      const rest = r.scanned === SWEEP_LIMIT ? "; run it again for the rest" : "";
+      toast(`Expired ${r.tombstoned + r.demoted + r.anonymized}; ${r.locked_skipped} locked kept${rest}`, "ok");
     });
 
   const reembed = () =>
     run(async () => {
       const ok = await confirmAction({
         title: `Re-embed the memories in ${identity.namespace} made by another embedding model?`,
-        message: "Up to 200 a run; each is one embedding call.",
+        message: `Up to ${REEMBED_LIMIT} memories a run.`,
         confirmLabel: "Re-embed",
       });
       if (!ok) return;
       const r = await reembedMemories(identity);
-      toast(`Re-embedded ${r.processed} with ${r.target_model}; ${r.skipped_already_current} already current`, "ok");
+      if (r.processed === 0) return toast(`Every memory already uses ${r.target_model}.`, "info");
+      const rest = r.processed === REEMBED_LIMIT ? "; run it again for the rest" : "";
+      toast(`Re-embedded ${r.processed} with ${r.target_model}${rest}`, "ok");
     });
 
   const expire = () =>
@@ -109,17 +115,15 @@ export function RepairsPanel() {
       const payload: unknown = JSON.parse(await file.text());
       const ok = await confirmAction({
         title: `Restore ${file.name} into ${identity.namespace}?`,
-        message:
-          "Its memories replace their current versions here, deleted ones come back, and its grants are active again, including any revoked since.",
+        message: restoreWarning(payload, identity.namespace),
         confirmLabel: "Restore",
         danger: true,
       });
       if (!ok) return;
       const r = await restoreNamespace(identity.org, identity.namespace, payload);
-      toast(
-        r.restored ? `Restored ${r.counts.memories ?? 0} memories` : "This snapshot was already restored here",
-        "ok",
-      );
+      if (!r.restored) return toast("This snapshot was already restored here", "info");
+      const erased = r.counts.erased_skipped ? `, ${r.counts.erased_skipped} skipped as erased` : "";
+      toast(`Restored ${r.counts.memories} memories${erased}`, "ok");
     });
 
   return (
@@ -194,4 +198,18 @@ export function RepairsPanel() {
       </Panel>
     </div>
   );
+}
+
+/** What a restore of `payload` does to `namespace`: a snapshot of another namespace adds
+ *  its memories and its members' grants; one of this namespace puts it back as it was. */
+function restoreWarning(payload: unknown, namespace: string): string {
+  const p = (typeof payload === "object" && payload !== null ? payload : {}) as {
+    source_namespace?: string;
+    created_at?: string;
+    memory_count?: number;
+  };
+  const taken = `It holds ${p.memory_count ?? "an unknown number of"} memories, taken ${p.created_at ?? "at an unknown time"}.`;
+  if (p.source_namespace && p.source_namespace !== namespace)
+    return `${taken} It is a snapshot of ${p.source_namespace}: its memories are written here, and its members get the grants they had there.`;
+  return `${taken} Its memories replace their current versions here, deleted ones come back, and its grants are active again, including any revoked since.`;
 }

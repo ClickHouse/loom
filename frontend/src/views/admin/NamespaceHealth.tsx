@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Table } from "@clickhouse/click-ui/Table";
 import {
+  EXTRACTION_LIMIT,
   getCalibration,
   getExtractionBatches,
   getMemoryHealth,
@@ -113,7 +114,7 @@ function Extractions({ batches }: { batches: ExtractionBatches }) {
       <SectionHeading
         label="Recent extractions"
         level={2}
-        caption={`The newest ${batches.batches.length}: ${batches.pending} pending · ${batches.failed} failed`}
+        caption={`${batchCount(batches.batches.length)}: ${batches.pending} pending, ${batches.failed} failed`}
       />
       {batches.batches.length === 0 ? (
         <p className="text-sm text-text-muted">No transcript was queued for extraction.</p>
@@ -150,4 +151,9 @@ function Extractions({ batches }: { batches: ExtractionBatches }) {
       )}
     </section>
   );
+}
+
+function batchCount(n: number): string {
+  if (n === EXTRACTION_LIMIT) return `The newest ${n}`;
+  return n === 1 ? "1 batch" : `${n} batches`;
 }

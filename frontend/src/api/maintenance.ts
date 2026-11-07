@@ -53,9 +53,15 @@ export interface ExtractionBatches {
   failed: number;
 }
 
+export const EXTRACTION_LIMIT = 50;
+
 /** POST /v1/memory.extraction_status, across the namespace's agents and users. */
 export async function getExtractionBatches(id: Scope, opts: RequestOpts = {}): Promise<ExtractionBatches> {
-  return post("/v1/memory.extraction_status", { org: id.org, namespace: id.namespace, agent: "*" }, opts.signal);
+  return post(
+    "/v1/memory.extraction_status",
+    { org: id.org, namespace: id.namespace, agent: "*", limit: EXTRACTION_LIMIT },
+    opts.signal,
+  );
 }
 
 // ===== Repairs (namespace admin) =====
@@ -66,18 +72,27 @@ export interface ExpirySweep {
   demoted: number;
   anonymized: number;
   locked_skipped: number;
+  /** What the pass could not do (`scan:`, `insert:`, `mirror:`); empty when it all landed. */
+  failures: string[];
 }
+
+export const SWEEP_LIMIT = 500;
 
 /** POST /v1/memory.sweep_expired: the expiry worker's pass, now, for this namespace. */
 export async function sweepExpired(id: Scope, dryRun: boolean): Promise<ExpirySweep> {
-  return post("/v1/memory.sweep_expired", { org: id.org, namespace: id.namespace, dry_run: dryRun });
+  return post("/v1/memory.sweep_expired", {
+    org: id.org,
+    namespace: id.namespace,
+    dry_run: dryRun,
+    limit: SWEEP_LIMIT,
+  });
 }
 
-/** POST /v1/memory.reindex: re-embed up to 200 memories another embedding model made. */
-export async function reembedMemories(
-  id: Scope,
-): Promise<{ processed: number; skipped_already_current: number; target_model: string }> {
-  return post("/v1/memory.reindex", { org: id.org, namespace: id.namespace, limit: 200 });
+export const REEMBED_LIMIT = 200;
+
+/** POST /v1/memory.reindex: re-embed up to REEMBED_LIMIT memories another embedding model made. */
+export async function reembedMemories(id: Scope): Promise<{ processed: number; target_model: string }> {
+  return post("/v1/memory.reindex", { org: id.org, namespace: id.namespace, limit: REEMBED_LIMIT });
 }
 
 /** POST /v1/facts.expire_by_adapter: tombstone the graph facts one extractor emitted. */
@@ -111,7 +126,7 @@ export async function restoreNamespace(
   org: string,
   target: string,
   payload: unknown,
-): Promise<{ restored: boolean; counts: Record<string, number> }> {
+): Promise<{ restored: boolean; counts: { memories: number; erased_skipped: number } }> {
   return post("/v1/namespace.restore", { org, target_namespace: target, payload });
 }
 
@@ -129,16 +144,23 @@ export interface ProjectionFailure {
   created_at: string | null;
 }
 
+export const FAILURE_LIST_LIMIT = 100;
+
 export async function listProjectionFailures(
   id: Scope,
   opts: RequestOpts = {},
-): Promise<{ rows: ProjectionFailure[]; total: number }> {
-  return post("/v1/ops.projection_failures.list", { org: id.org, namespace: id.namespace }, opts.signal);
+): Promise<{ rows: ProjectionFailure[] }> {
+  return post(
+    "/v1/ops.projection_failures.list",
+    { org: id.org, namespace: id.namespace, limit: FAILURE_LIST_LIMIT },
+    opts.signal,
+  );
 }
 
+/** `results` has one entry per failure tried; `retried` counts those with a retry path. */
 export async function retryProjectionFailures(
   id: Scope,
-): Promise<{ retried: number; resolved: number; abandoned: number }> {
+): Promise<{ results: unknown[]; retried: number; resolved: number; abandoned: number }> {
   return post("/v1/ops.projection_failures.retry", { org: id.org, namespace: id.namespace });
 }
 
