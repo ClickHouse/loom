@@ -321,10 +321,56 @@ describe("MemoryInspector lifecycle actions", () => {
     await act(async () => finish({ version: 4, pinned: false }));
     // The late answer neither closes the next key's editor nor reads the key left again.
     expect(screen.getByRole("button", { name: "Save new version" })).toBeInTheDocument();
-    expect(vi.mocked(api.getMemory).mock.calls.slice(readsBefore).map((c) => c[1])).not.toContain("coffee_pref");
+    expect(
+      vi
+        .mocked(api.getMemory)
+        .mock.calls.slice(readsBefore)
+        .map((c) => c[1]),
+    ).not.toContain("coffee_pref");
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByText("black")).toBeInTheDocument();
     expect(api.setMemory).toHaveBeenCalledTimes(1);
+  });
+
+  it("a late save closes no Edit opened again on the same key after a round trip", async () => {
+    let finish: (v: { version: number; pinned: boolean }) => void = () => {};
+    vi.mocked(api.setMemory).mockImplementationOnce(() => new Promise((r) => (finish = r)));
+    const other = { ...LIVE, memory_id: "m-other", value: "black" };
+    vi.mocked(api.getMemory).mockImplementation(async (_id, key) => (key === "morning_routine" ? other : LIVE));
+    useStore.setState({ authed: true, whoami: person, myNamespaces: [grant("writer")], identity });
+    const drawer = (key: string) => (
+      <MemoryInspector identity={identity} memoryKey={key} onClose={() => {}} onChanged={() => {}} />
+    );
+    const view = render(drawer("coffee_pref"));
+    await screen.findByText("oat milk, no sugar");
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Save new version" }));
+    view.rerender(drawer("morning_routine"));
+    await screen.findByText("black");
+    view.rerender(drawer("coffee_pref"));
+    await screen.findByText("oat milk, no sugar");
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await act(async () => finish({ version: 4, pinned: false }));
+    // The first visit's save does not close this visit's editor.
+    expect(screen.getByRole("button", { name: "Save new version" })).toBeInTheDocument();
+  });
+
+  it("closes an open reason dialog when the drawer moves", async () => {
+    vi.mocked(api.getMemory).mockImplementation(async (_id, key) =>
+      key === "morning_routine" ? { ...LIVE, memory_id: "m-other", value: "black" } : LIVE,
+    );
+    useStore.setState({ authed: true, whoami: person, myNamespaces: [grant("writer")], identity });
+    const view = render(
+      <MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />,
+    );
+    await screen.findByText("oat milk, no sugar");
+    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Lock…" }));
+    await screen.findByRole("dialog", { name: "Lock memory" });
+    view.rerender(
+      <MemoryInspector identity={identity} memoryKey="morning_routine" onClose={() => {}} onChanged={() => {}} />,
+    );
+    await screen.findByText("black");
+    expect(screen.queryByRole("dialog", { name: "Lock memory" })).toBeNull();
   });
 
   it("offers no Edit while a rename is open, by button or by key", async () => {

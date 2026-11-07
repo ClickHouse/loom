@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryDetail, MemoryMoveResult, MyNamespaceEntry, WhoAmI } from "../api";
@@ -202,6 +202,32 @@ describe("MemoryInspector rename with redirect", () => {
     await userEvent.click(within(form).getByRole("button", { name: "Rename" }));
     await waitFor(() => expect(moveMemory).toHaveBeenCalled());
     expect(vi.mocked(moveMemory).mock.calls[0][3]).toEqual({ keepRedirect: true, dryRun: false });
+  });
+
+  it("a rename that answers after the drawer moved leaves the new key's drawer, and says where the old key went", async () => {
+    seed("writer");
+    let finish: (r: unknown) => void = () => {};
+    vi.mocked(moveMemory).mockImplementationOnce(() => new Promise((r) => (finish = r)) as never);
+    const view = render(
+      <MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />,
+    );
+    await screen.findByText("oat milk, no sugar");
+    await openRename();
+    const form = screen.getByTestId("rename-form");
+    const input = within(form).getByLabelText("New key");
+    await userEvent.clear(input);
+    await userEvent.type(input, "prefs/coffee");
+    await userEvent.click(within(form).getByRole("button", { name: "Rename" }));
+    vi.mocked(getMemory).mockResolvedValue({ ...LIVE, value: "black" });
+    view.rerender(
+      <MemoryInspector identity={identity} memoryKey="morning_routine" onClose={() => {}} onChanged={() => {}} />,
+    );
+    await screen.findByText("black");
+    await act(async () =>
+      finish({ from_key: "coffee_pref", to_key: "prefs/coffee", redirected: false, dry_run: false }),
+    );
+    expect(useStore.getState().inspectedMemoryKey).toBe("coffee_pref");
+    expect(toast).toHaveBeenCalledWith("Renamed coffee_pref to prefs/coffee", "ok");
   });
 
   it("unticking the redirect sends keep_redirect false and follows the new key", async () => {

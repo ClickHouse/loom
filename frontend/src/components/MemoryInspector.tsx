@@ -201,9 +201,11 @@ export function MemoryInspector({
   const requested = useRef<Set<SectionId>>(new Set());
   // Bumped whenever the drawer moves to another memory or identity, or closes.
   const inspection = useRef(0);
-  // The memory the drawer has open, so a restore that answers late can tell
-  // whether the drawer came back to it. Compared by value: parents rebuild identity.
+  // The memory the drawer has open, compared by value (parents rebuild identity): a write
+  // that answers late checks it before touching the drawer.
   const shown = useRef<string | null>(null);
+  // Bumped by each Edit, so a save that answers late closes only the edit it saved.
+  const editSession = useRef(0);
   const toggleSection = (id: SectionId) =>
     setSections((cur) => {
       const next = { ...cur, [id]: !cur[id] };
@@ -578,8 +580,6 @@ export function MemoryInspector({
       .catch(() => {});
   };
 
-  // A write changes the row: read it again. A failed re-read leaves the drawer as it was;
-  // the write itself already landed.
   // A write changes the row: read it again, unless the drawer moved off the key this
   // closure was made for; a failed re-read leaves the drawer as it was.
   const showing = () => shown.current === shownAs(identity, memoryKey);
@@ -674,6 +674,7 @@ export function MemoryInspector({
 
   const onStartEdit = () => {
     if (!detail) return;
+    editSession.current += 1;
     setDraft(formatValue(detail.value));
     setEditing(true);
   };
@@ -732,6 +733,7 @@ export function MemoryInspector({
 
   const onSaveEdit = async () => {
     if (!detail) return;
+    const session = editSession.current;
     try {
       // Parse JSON if it looks like an object/array; else keep the string.
       let nextValue: unknown = draft;
@@ -749,8 +751,9 @@ export function MemoryInspector({
         charLimit: detail.char_limit ?? undefined,
       });
       toast("Saved", "ok");
-      // A save that answers after the drawer moved leaves the next key's editor open.
-      if (showing()) setEditing(false);
+      // A save that answers after the drawer moved, or after another Edit, leaves that
+      // editor open.
+      if (showing() && editSession.current === session) setEditing(false);
     } catch (e) {
       toast(`Save failed: ${humanizeError(e)}`, "error");
       return;
@@ -762,9 +765,11 @@ export function MemoryInspector({
   // `canonical_key`), so the row is re-read and the badge appears; without
   // one the old key is tombstoned and the drawer follows the new key.
   const onRenamed = async (r: MemoryMoveResult) => {
-    // A move that answers after the drawer moved leaves the next key's drawer as it is.
+    // A move that answers after the drawer moved leaves the next key's drawer as it is,
+    // and says where the key it left went.
     if (!showing()) {
       onChanged();
+      toast(`Renamed ${memoryKey} to ${r.to_key}`, "ok");
       return;
     }
     setRenaming(false);
@@ -805,7 +810,7 @@ export function MemoryInspector({
         toast(r.restored ? `Restored ${memoryKey}` : `Nothing to restore for ${memoryKey}`, r.restored ? "ok" : "info");
         // Back on this memory (A, B, A): its load read may have shown the row before the
         // restore, so read it again.
-        if (r.restored && shown.current === shownAs(identity, memoryKey)) {
+        if (r.restored && showing()) {
           const now = inspection.current;
           getMemory(identity, memoryKey, { include_recall_breakdown: true })
             .then((fresh) => {
