@@ -1741,7 +1741,7 @@ Mark a memory as explicitly rejected (extractor / user review decided the candid
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `rejected` | `bool` | Always True, also when no live row matched (nothing is written then); a locked row in any session refuses the whole reject with 423 LOCKED and writes nothing. |
+| `rejected` | `bool` | True on every 200 answer, also when no live row matched (nothing is written then); a locked row in any session refuses the whole reject with 423 LOCKED. |
 | `rejected_at` | `datetime \| None` | The server time of the reject. |
 
 ## `memory.related`

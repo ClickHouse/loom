@@ -149,8 +149,7 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
                     "AND memory_id = {mid:UUID} AND tombstoned_at IS NULL",
                     params={"org": input.org, "ns": input.namespace, "mid": memory_id},
                 )
-                # Leave a locked memory and all its copies alone; otherwise leave only the
-                # locked copies.
+                # A locked memory is not quarantined; the reject skips any locked copy.
                 if idr and not refuses_retirement(row):
                     written = await reject_by_identity(
                         input.org,

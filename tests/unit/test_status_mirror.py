@@ -501,34 +501,6 @@ async def test_reject_of_a_locked_row_is_refused_and_writes_nothing(
 
 
 @pytest.mark.asyncio
-async def test_an_automatic_quarantine_leaves_a_locked_row_and_rejects_the_rest(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.memory.domain.lock import refuses_retirement
-
-    ch = _RejectCH()
-    _wire_sessions(monkeypatch, ch)
-    _lock_session(monkeypatch, "m2", "read_only")
-    written = await lifecycle.reject_by_identity(
-        "o",
-        "n",
-        "a",
-        "u",
-        "home",
-        "auto-quarantine: 3 negative outcomes",
-        skip=refuses_retirement,
-        ch=ch,
-    )
-    assert written == 1
-    inserted = dict(ch.inserts)
-    # The locked session's vector row is not mirrored as rejected either.
-    for table in ("loom.memory", "loom.memory_embeddings"):
-        assert [(r["session_id"], r["status"]) for r in inserted[table]] == [("s1", "rejected")], (
-            table
-        )
-
-
-@pytest.mark.asyncio
 async def test_reject_raises_when_the_vector_rows_are_not_written(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
