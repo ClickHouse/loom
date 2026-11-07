@@ -113,7 +113,7 @@ def refusal(row: Any, action: str, *, op: str, mode: str) -> HTTPException:
 
 
 def refuses(row: Any, action: LockAction, *, now: datetime | None = None) -> bool:
-    """Whether the lock in force on `row` refuses `action`; no row has no lock."""
+    """Whether the lock in force on `row` refuses `action`; a missing row (None) is unlocked."""
     mode = effective_mode(row, now=now)
     return bool(mode) and action in REFUSES[mode]
 

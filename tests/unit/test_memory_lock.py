@@ -25,6 +25,7 @@ from server.memory.api.models_crud import (
     MemoryUpdateByIdInput,
 )
 from server.memory.api.models_lock import MemoryLockInput, MemoryUnlockInput
+from server.memory.app import blacklist_guard, conflicts, namespace_types
 from server.memory.app import handlers as mem_handlers
 from server.memory.app import restore as _restore_mod
 from server.memory.app import stack as _stack_mod
@@ -235,8 +236,6 @@ async def test_set_refuses_a_changed_value_under_read_only(monkeypatch: pytest.M
 
 
 def _thirty_day_type(monkeypatch: pytest.MonkeyPatch) -> None:
-    from server.memory.app import blacklist_guard, namespace_types
-
     async def thirty_days(*_: Any) -> Any:
         return namespace_types.TypeConfig(
             retention_days=30, dedup_threshold=None, hot_quota=0, conflict_policy=""
@@ -253,11 +252,8 @@ async def _restate(monkeypatch: pytest.MonkeyPatch, existing: MemoryRow) -> dict
     """The loom.memory row a same-value memory.set writes over `existing`."""
     _thirty_day_type(monkeypatch)
     ch = _stub_repo(monkeypatch, existing)
-    # The whole write path runs: every read it makes answers from the same fake.
-    import server.memory.app.conflicts as _cf
-
-    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
-    monkeypatch.setattr(_cf, "get_client", lambda: ch, raising=False)
+    # The whole write path runs: the conflict check reads from the same fake.
+    monkeypatch.setattr(conflicts, "get_client", lambda: ch)
     await write_mod.handle_memory_set(
         MemorySetInput(**_ID, memory_key="deploy_window", value="Tue and Thu only", classify=False)
     )
@@ -282,11 +278,19 @@ async def test_a_read_only_restatement_lands_with_the_live_expiry_or_none(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("lock_mode", ["", "no_delete"])
-async def test_an_unlocked_or_no_delete_row_takes_the_type_retention(
-    monkeypatch: pytest.MonkeyPatch, lock_mode: str
+@pytest.mark.parametrize(
+    "lock",
+    [
+        {},
+        {"lock_mode": "no_delete"},
+        {"lock_mode": "read_only", "lock_until": naive_utc_now() - timedelta(seconds=1)},
+    ],
+    ids=["unlocked", "no_delete", "lapsed read_only"],
+)
+async def test_a_row_without_a_read_only_lock_takes_the_type_retention(
+    monkeypatch: pytest.MonkeyPatch, lock: dict[str, Any]
 ) -> None:
-    row = await _restate(monkeypatch, _row(lock_mode=lock_mode))
+    row = await _restate(monkeypatch, _row(**lock))
     assert row["expires_at"] is not None
     assert to_naive_utc(row["expires_at"]) - naive_utc_now() > timedelta(days=29)
 

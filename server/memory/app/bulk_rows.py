@@ -315,7 +315,7 @@ def _refuse_locked(state: _BulkWriteState, memory_key: str) -> None:
 
 
 class _LockView:
-    """Attribute view of a lookup row for `memory_lock.effective_mode`."""
+    """Attribute view of a lookup row for `lock.refuses`."""
 
     __slots__ = ("lock_mode", "lock_until")
 
