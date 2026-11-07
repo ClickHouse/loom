@@ -15,7 +15,8 @@ them, which this parser does not read. A slide of text with a picture OCR does
 not read (one under a fifth of it, one as a fill or background, or an
 alternate content's fallback picture), a chart, a diagram or an embedded object
 is read for its text and listed in `attrs.images_unread`, with one warning for
-the file, unless the slide failed for what it shows, which its failure names.
+the file, unless the slide failed for what it shows: its failure names the first
+thing that stopped it, not all it holds.
 
 Pure and I/O-free.
 """

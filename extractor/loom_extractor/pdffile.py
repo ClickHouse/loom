@@ -242,18 +242,17 @@ def _read_layout(
     texted = bool(read.text.strip())
     area = read.width * read.page_height
     problems = []
-    # each image once (`drawing` collects it where it is first drawn)
+    # each image once (`drawing` collects it where it is first drawn); one shown under
+    # a point wide (a spacer, a tracking pixel) holds no text
+    shown = [p for p in pictures if math.hypot(p.ctm[0], p.ctm[1]) >= 1]
     targets = [
         p
-        for p in pictures
-        # one shown under a point wide (a spacer, a tracking pixel) holds no text
-        if math.hypot(p.ctm[0], p.ctm[1]) >= 1
-        and (not texted or (p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p)))
+        for p in shown
+        if not texted or (p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p))
     ]
     # The pictures OCR leaves on a page of text: under a fifth of it, and not a scan
     # its own text fills (a page partial for its pictures is named there instead).
     shown_inline = [p for p in (drew.inline if drew else []) if math.hypot(p.ctm[0], p.ctm[1]) >= 1]
-    shown = [p for p in pictures if math.hypot(p.ctm[0], p.ctm[1]) >= 1]
     read.unread = texted and any(
         p.area < ocr.PICTURE_SHARE * area and not _filled(found, p) for p in [*shown, *shown_inline]
     )
