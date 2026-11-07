@@ -22,8 +22,8 @@ CI. Edit the source and regenerate; never edit a generated table by hand.
 | [Schema](./schema.md)               | Every table and materialized view with engine, keys, TTL and indexes; plus the column conventions.            | `schemas/schema.sql`                                                                 | `python scripts/codegen/docs_reference.py`     |
 
 On the `docs_reference.py` pages only the regions between the
-`<!-- BEGIN GENERATED: … -->` and `<!-- END GENERATED: … -->` markers is generated; the prose
-around it is hand-written. The op tables inside the SDK packages (`sdk/python/loom/ops.py`,
+`<!-- BEGIN GENERATED: … -->` and `<!-- END GENERATED: … -->` markers are generated; the prose
+around them is hand-written. The op tables inside the SDK packages (`sdk/python/loom/ops.py`,
 `sdk/typescript/src/generated/ops.ts`) are generated too, by
 `scripts/codegen/sdk_py_gen.py` and `sdk_ts_gen.py`; see
 [Code generation](../development/code-generation.md).

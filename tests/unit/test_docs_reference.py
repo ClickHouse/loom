@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from scripts.codegen import docs_reference as gen
@@ -87,3 +89,13 @@ def test_status_switches_list_what_loads_false_not_what_is_declared_false(monkey
         gen._loaded_defaults.cache_clear()
     assert "`LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED`" not in rendered
     assert "| `LOOM_CODE_ORG_READABLE` |" in rendered
+
+
+def test_status_ops_counts_each_groups_ops_once() -> None:
+    """Each group's Stable count plus its experimental links is the group's size."""
+    groups = gen._op_groups()
+    for line in gen.render_status_ops().splitlines():
+        m = re.match(r"\| `([a-z_]+)` \| (\d+) \| (.*) \|$", line)
+        if m:
+            group, stable, experimental = m.group(1), int(m.group(2)), m.group(3)
+            assert stable + experimental.count("](operations/") == len(groups[group]), group

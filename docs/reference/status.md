@@ -7,7 +7,8 @@ boolean setting that loads false. Both tables are generated from the code: each 
 
 ## Operations
 
-- **Stable** ops are meant to have production callers.
+- **Stable** ops are reached by more than a raw HTTP POST (the reach census fails a
+  stable op otherwise) and are meant to have production callers.
 - **Experimental** ops may have none yet.
 
 The label is set by hand from what the 30-day reach census reports. What it decides is in
@@ -66,11 +67,11 @@ serves is in the [MCP reference](./mcp.md#toolsets).
 
 ## Settings that are off by default
 
-The boolean settings that load false in a deployment with a real LLM provider and nothing
-else set (a setting resolved at load, such as `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED`, is
-listed only when it resolves to false). Each row is the first sentence of the setting's
-description; read its full entry in the [configuration reference](./configuration.md)
-before turning it on. Settings that are not
+This table lists the boolean settings that load false with a real LLM provider and
+nothing else set; a setting resolved at load, such as
+`LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED`, is listed only when it resolves to false. Each row
+is the first sentence of the setting's description; read its full entry in the
+[configuration reference](./configuration.md) before turning it on. Settings that are not
 boolean (`LOOM_POLICY_MODE`, `LOOM_SELF_SIGNUP` and others whose default is `off`) are not
 listed here.
 

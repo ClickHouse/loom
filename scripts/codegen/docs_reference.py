@@ -90,25 +90,25 @@ def _first_sentence(text: str | None, limit: int = 200) -> str:
 # --- operations ---------------------------------------------------------------
 
 
-def _op_summary(op: object, curated: dict[str, str]) -> str:
+def _op_summary(op: Operation, curated: dict[str, str]) -> str:
     """Developer prose first (the input model's docstring), then the MCP guidance,
     then the handler's docstring."""
-    model_doc = op.input_model.__doc__  # type: ignore[attr-defined]
+    model_doc = op.input_model.__doc__
     if model_doc and "Usage docs: https://docs.pydantic.dev" in model_doc:
         model_doc = None  # pydantic's inherited BaseModel docstring
-    for text in (model_doc, curated.get(op.name), op.handler.__doc__):  # type: ignore[attr-defined]
+    for text in (model_doc, curated.get(op.name), op.handler.__doc__):
         s = _first_sentence(text)
         if s:
             return s
     return ""
 
 
-def _listed_under_all(op: object) -> bool:
+def _listed_under_all(op: Operation) -> bool:
     """Whether an MCP `tools/list` on `LOOM_MCP_TOOLSET=all` lists `op`. The
     `code.*` ops also need `LOOM_MCP_CODE_TOOLS=true`; the legend says so."""
     from server.operations.toolsets import listed_under_all
 
-    return listed_under_all(op)  # type: ignore[arg-type]
+    return listed_under_all(op)
 
 
 def _op_groups() -> dict[str, list[Operation]]:
