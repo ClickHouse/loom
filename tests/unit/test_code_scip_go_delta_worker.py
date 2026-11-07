@@ -6,6 +6,7 @@ harness over those only, an unbuildable module is named, not fatal."""
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -164,7 +165,10 @@ async def test_first_run_is_full_over_every_module_and_applies_each_delta(monkey
     assert git_calls[1] == ("checkout", "--force", "b" * 40)
     assert sorted(applied) == ["lib/a.go", "svc/a.go"]
     assert res.modules_skipped == ["code-go: experiments/broken: go mod download failed: x"]
-    repo.set_state.assert_awaited_with("org", "code-go", "scip_commit_go", "b" * 40)
+    repo.set_state.assert_any_await("org", "code-go", "scip_commit_go", "b" * 40)
+    # the module that would not build fails the tier's record; the pass is no error
+    _org, _ns, key, value = repo.set_state.await_args.args[:4]
+    assert key == "tier_health:go" and '"state": "failing"' in value
 
 
 @pytest.mark.asyncio
@@ -286,3 +290,63 @@ def test_registry_gives_the_go_worker_its_own_deadline(monkeypatch):
     spec = next(w for w in registry.enabled_workers() if w.name == "code_scip_go_delta")
     assert spec.deadline_seconds() == 7200.0 + registry._TIER_HEADROOM_S
     assert spec.interval_seconds == settings.code_scip_go_delta_interval_seconds
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        "TierDegraded: svc: go mod download failed: x",
+        "TierDegraded: svc: go mod download failed: dial tcp 1.2.3.4:443: connect: "
+        "connection refused",
+        # many modules: the stored error keeps only its end
+        "TierDegraded: " + "; ".join(f"m{i}: go mod download failed: 404" for i in range(40)),
+        "fatal: auth",
+    ],
+)
+async def test_a_pass_that_builds_nothing_keeps_a_module_failure_and_clears_any_other(
+    error: str,
+) -> None:
+    from server.code.domain.index import tier_health
+
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    state = {
+        "git_head": "b" * 40,
+        "scip_commit_go": "b" * 40,  # current: nothing to build
+        "tier_health:go": tier_health.failed(None, "go", error, t0).to_json(),
+    }
+    repo = AsyncMock()
+
+    async def get_state(org, ns, key):
+        return state.get(key, "")
+
+    async def set_state(org, ns, key, value, detail=""):
+        state[key] = value
+
+    repo.get_state.side_effect = get_state
+    repo.set_state.side_effect = set_state
+    p1, p2 = _patched(repo, [_Cfg()])
+    with p1, p2:
+        await w.run_pass()
+    still = tier_health.parse("go", state["tier_health:go"]).failing
+    assert still is ("go mod download failed" in error)
+
+
+@pytest.mark.asyncio
+async def test_a_harness_that_failed_outright_is_a_harness_failure_not_a_module(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from server.code.domain.index import tier_health
+
+    async def failed(*_: Any, **__: Any) -> tuple[int, str]:
+        return 123, "skip a: go mod download failed: 404\ndone b\nconvert_delta: panic: boom\n"
+
+    monkeypatch.setattr(w, "_harness_env", lambda *_: {})
+    monkeypatch.setattr(w, "_make_cache_dirs", lambda *_: [])
+    monkeypatch.setattr(w, "_bin_dirs", lambda: [])
+    monkeypatch.setattr(w, "run_harness", failed)
+    with pytest.raises(RuntimeError) as err:
+        await w._run_harness(tmp_path, "a" * 40, "b" * 40, tmp_path, [], _Cfg())
+    text = f"RuntimeError: {err.value}"
+    assert "go mod download failed" not in text
+    assert tier_health.classify(text) == "harness"

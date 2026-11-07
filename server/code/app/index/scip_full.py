@@ -35,6 +35,7 @@ WATERMARK = "scip_commit"
 # failed), and of the last one applied.
 FULL_AT = "scip_full_at"
 FULL_DONE_AT = "scip_full_done_at"
+PRODUCER = "clang"
 
 
 # A run's directory left this long is a crashed run's: past the longest a full run

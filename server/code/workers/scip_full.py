@@ -23,7 +23,13 @@ from server.code.app.index.compiler_tier import (
     resolve_checkout,
     run_tier,
 )
-from server.code.app.index.scip_full import FULL_AT, FULL_DONE_AT, WATERMARK, full_index
+from server.code.app.index.scip_full import (
+    FULL_AT,
+    FULL_DONE_AT,
+    PRODUCER,
+    WATERMARK,
+    full_index,
+)
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -31,8 +37,6 @@ if TYPE_CHECKING:
     from server.code.store.index import CodeRepo
 
 logger = logging.getLogger("loom.workers.code_scip_full")
-
-PRODUCER = "clang"
 
 
 @dataclass
@@ -55,6 +59,7 @@ async def run_pass() -> CodeScipFullResult:
         entry_locked=True,
         runs_repo_code=True,
         gc_checkout=True,
+        health_tier="clang_full",
     )
 
 
@@ -81,19 +86,21 @@ def _resolve_paths(cfg: RepoConfig) -> tuple[Path, Path, Path, str | None]:
     return checkout, bare, scip_clang, missing
 
 
-async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipFullResult) -> None:
+async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipFullResult) -> bool:
+    """Whether the entry's full run was attempted: False when another entry ran this
+    pass, it is not due, or it is skipped (named in `result.skipped`)."""
     if result.started:
-        return  # one entry per pass
+        return False  # one entry per pass
     target = await compiler_target(repo, cfg)
     if not target:
         result.skipped.append(f"{cfg.namespace}: git_head not seeded")
-        return
+        return False
     if not await _due(repo, cfg):
-        return
+        return False
     checkout, bare, scip_clang, missing = await asyncio.to_thread(_resolve_paths, cfg)
     if missing:
         result.skipped.append(f"{cfg.namespace}: {missing}")
-        return
+        return False
     result.started += 1
     stats, _out = await full_index(
         repo,
@@ -109,3 +116,4 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipFullResult)
     logger.info(
         "code_scip_full: %s at %s applied %s", cfg.namespace, target[:8], stats.model_dump()
     )
+    return True

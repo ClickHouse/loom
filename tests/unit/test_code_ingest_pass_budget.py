@@ -704,7 +704,7 @@ def test_the_outcome_states_the_rows_three_counts_and_the_first_sixteen_carry_pa
     result.files_planned, result.files_done = 640, 425
     result.commits_planned, result.commits_done = 20, 7
     result.chunks_new, result.symbols_new, result.edges_new = 10, 5, 30
-    result.cut("code-clickhouse-26-3:rechunk@3600/22014")
+    result.cut("code-clickhouse-26-3:rechunk@3600/22014", cfg=_cfg("code-clickhouse-26-3"))
     outcome = w.pass_outcome(result)
     assert list(outcome)[:5] == ["items_planned", "items_done", "rows_written", "partial", "resume"]
     assert status_store.counts(outcome) == (640, 425, 45)

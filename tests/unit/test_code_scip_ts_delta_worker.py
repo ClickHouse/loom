@@ -246,4 +246,5 @@ async def test_dependency_failure_does_not_run_indexer_or_advance_watermark(monk
         result = await w.run_pass()
     assert result.errors and "install failed" in result.errors[0]
     harness.assert_not_awaited()
-    repo.set_state.assert_not_awaited()
+    # the only write is the failure's health record, never the watermark
+    assert [c.args[2] for c in repo.set_state.await_args_list] == ["tier_health:typescript"]

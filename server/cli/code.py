@@ -41,6 +41,7 @@ from server.cli.code_prs import (
 )
 from server.cli.code_run import _identity, _run
 from server.cli.code_scip import _entries, _entry_locked, _scip_delta, _scip_full, _scip_retry
+from server.code.domain.index.tier_health import COMPILER_TIERS
 
 
 def _add_common(p: argparse.ArgumentParser) -> None:
@@ -135,6 +136,17 @@ def _add_scip_full_parser(csub: Any) -> None:
         "lease is lost mid-run (the command is stopped).",
     )
     _add_common(p_run)
+    p_run.add_argument(
+        "--tier",
+        choices=COMPILER_TIERS,
+        default="",
+        help="Record the command's outcome as this compiler tier's health on the entry: "
+        "exit 0 clears a failure, except that for go the modules its output names as not "
+        "built fail it; exit 3 (the window's base is gone) records nothing; any other exit "
+        "records a failure with the end of the output, a timeout when a SIGTERM to entry-lock "
+        "(the caller's time limit) stopped it. The command's output, stderr included, is "
+        "relayed to stdout.",
+    )
     p_run.add_argument("command", nargs=argparse.REMAINDER, help="-- <command> [args…]")
     p_run.set_defaults(func=_cmd_entry_lock)
 

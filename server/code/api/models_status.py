@@ -103,6 +103,30 @@ class CodeCompilerTier(BaseModel):
     note: str = ""
 
 
+class CodeTierHealth(BaseModel):
+    """One tier's last recorded outcome on the entry.
+
+    A tier with no record has not failed since records began, or no longer runs on the
+    entry. `state` is `failing` from the first failed pass until the next pass that
+    succeeds; `kind` classifies the error and `fix` is the one action that clears it."""
+
+    # fetch | ingest | clang | typescript | go | python | clang_full (the weekly C++ full run)
+    tier: str
+    state: str = "ok"  # ok | failing
+    # credential | pin_missing | submodule_url | egress | network | timeout | disk | harness |
+    # module | unknown
+    kind: str = ""
+    error: str = ""  # the end of the error output, credentials redacted
+    fix: str = ""
+    failing_since: str = ""  # ISO-8601 UTC of the first failed pass in the current run
+    last_failed_at: str = ""
+    failed_passes: int = 0  # failed passes in a row
+    last_ok_at: str = ""  # the pass that cleared the last run of failures
+    # Commits the tier's watermark trails the fetched tip by; -1 unknown or not a
+    # watermark tier (fetch).
+    lag_commits: int = -1
+
+
 class CodeIndexStatusOutput(BaseModel):
     # The repository identity. Non-GitHub remotes include their host.
     repo: str
@@ -132,6 +156,10 @@ class CodeIndexStatusOutput(BaseModel):
     scip_producer: str = ""
     # Every compiler tier with a watermark or configured for the entry, the primary first.
     compiler_tiers: list[CodeCompilerTier] = Field(default_factory=list)
+    # The last recorded outcome of each tier that has one (fetch, ingest, the compiler
+    # tiers and the weekly C++ full run): a failing tier names its error kind, since
+    # when, and the fix.
+    tier_health: list[CodeTierHealth] = Field(default_factory=list)
     # The PR-history poller's cursor: the newest `updated_at` (ISO-8601) of the merged PRs it
     # fetched; '' before its first pass.
     pr_cursor: str = ""

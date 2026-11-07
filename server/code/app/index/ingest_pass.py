@@ -48,6 +48,8 @@ async def run_pass(org: str = "", namespace: str = "") -> CodeIngestResult:
     result = CodeIngestResult()
     with record_pass("code_ingest") as rec:
         await _run(result, org, namespace)
+        # Only when the pass ran to its end: a cancelled pass may have lost its lease.
+        await _record_tier_health(result)
         log_pass_errors(logger, "code_ingest", result.errors)
         rec.outcome = pass_outcome(result)
     return result
@@ -94,6 +96,23 @@ def pass_outcome(result: CodeIngestResult) -> dict[str, Any]:
     }
 
 
+def _ingest_served(cfg: Any, result: CodeIngestResult) -> None:
+    """The parser tier is ok on an entry the pass served in full: no budget cut or held
+    model call stopped it (its record otherwise stays as it was)."""
+    if (cfg.org, cfg.namespace) not in result.unserved:
+        result.tier_ok(cfg, "ingest")
+
+
+async def _record_tier_health(result: CodeIngestResult) -> None:
+    """Each entry's fetch and ingest outcome of this pass as its tier-health record."""
+    from server.code.app.index import tier_health
+    from server.code.store.index import CodeRepo
+
+    repo = CodeRepo()
+    for (org, ns, tier), error in result.tier_outcomes.items():
+        await tier_health.record(repo, org, ns, tier, error or None)
+
+
 def selected_repos(org: str = "", namespace: str = "") -> list[Any]:
     """The repos a pass covers: all configured repos, or just the addressed
     one. An addressed identity that is NOT configured selects nothing — a
@@ -138,7 +157,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
     plans: list[RepoPass] = []
     for i, cfg in enumerate(repos):
         if commit_budget.exhausted():
-            result.cut(f"{cfg.namespace}:commits")
+            result.cut(f"{cfg.namespace}:commits", cfg=cfg)
             logger.warning(
                 "code_ingest: commit phase budget (%.0f s of %.0f) reached before %d entr%s "
                 "fetched: %s — the next pass starts there",
@@ -165,6 +184,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
             result.errors.append(f"{cfg.label}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: repo %s failed", cfg.label)
             pass_context.note_failure(e, cfg.namespace)
+            result.tier_failed(cfg, "ingest", f"{type(e).__name__}: {e}")
             continue
         if plan is not None:
             plans.append(plan)
@@ -192,6 +212,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
     for plan in plans:
         pass_context.set_namespace(plan.cfg.namespace)
         await _post_steps(plan, result)
+        _ingest_served(plan.cfg, result)
     result.elapsed_s = round(budget.elapsed(), 1)
     if result.partial:
         pass_context.set_cursor(result.resume)
@@ -208,7 +229,8 @@ async def _run_leg(
     an entry's failure is recorded, never fatal."""
     for i, plan in enumerate(plans):
         if budget.exhausted():
-            result.cut(f"{plan.cfg.namespace}:{leg}")
+            for unserved in plans[i:]:
+                result.cut(f"{unserved.cfg.namespace}:{leg}", cfg=unserved.cfg)
             logger.warning(
                 "code_ingest: pass budget (%.0f s) reached before the %s of %d entr%s: %s — "
                 "the next pass continues there",
@@ -227,11 +249,13 @@ async def _run_leg(
             ):
                 await run(plan, result, budget)
         except customer.HOLDS:
-            pass  # a held call is no failure: the leg runs once the org is back
+            # a held call is no failure: the leg runs once the org is back
+            result.held(plan.cfg)
         except Exception as e:
             result.errors.append(f"{plan.cfg.label}: {leg}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: %s of %s failed", leg, plan.cfg.label)
             pass_context.note_failure(e, f"{plan.cfg.namespace}:{leg}")
+            result.tier_failed(plan.cfg, "ingest", f"{leg}: {type(e).__name__}: {e}")
 
 
 async def _bootstrap_leg(plan: RepoPass, result: CodeIngestResult, budget: PassBudget) -> None:
@@ -250,7 +274,7 @@ async def _bootstrap_leg(plan: RepoPass, result: CodeIngestResult, budget: PassB
     result.files_done += max(0, done - before)
     result.bootstrap_files += max(0, done - before)
     if progress.get("partial"):
-        result.cut(f"{plan.cfg.namespace}:bootstrap@{done}/{progress.get('total')}")
+        result.cut(f"{plan.cfg.namespace}:bootstrap@{done}/{progress.get('total')}", cfg=plan.cfg)
     result.note = f"bootstrap {progress['stage']}: {progress['done']}/{progress['total']}"
 
 
@@ -362,6 +386,7 @@ async def _run_repo(
         present, failed = await clone_in_background(cfg, repo)
         if failed:
             result.errors.append(f"{cfg.label}: clone failed (retrying): {failed}")
+            result.tier_failed(cfg, "fetch", f"clone {cfg.git_remote}: {failed}")
         if not present:
             result.note = f"{cfg.label}: cloning into {git_dir}"
             return None
@@ -429,7 +454,7 @@ async def _steady_state(
     cursors, in `_post_steps`."""
     await _maybe_reconcile(repo, cfg, head, result, budget=budget)
     if budget is not None and budget.exhausted():
-        result.cut(f"{cfg.namespace}:rechunk")
+        result.cut(f"{cfg.namespace}:rechunk", cfg=cfg)
         return
     await _maybe_rechunk(repo, cfg, head, result, budget=budget)
 
@@ -573,7 +598,8 @@ async def _maybe_reconcile(
             result.read_misses += int(getattr(healed, "read_misses", 0) or 0)
             if getattr(healed, "partial", False):
                 result.cut(
-                    f"{cfg.namespace}:heal@{healed.attempted}/{len(found.stale[:heal_budget])}"
+                    f"{cfg.namespace}:heal@{healed.attempted}/{len(found.stale[:heal_budget])}",
+                    cfg=cfg,
                 )
         backfilled, refused, unindexable = await _backfill_missing(
             repo,
@@ -644,6 +670,7 @@ async def _maybe_reconcile(
     except Exception as e:
         result.errors.append(f"reconcile: {type(e).__name__}: {e}")
         logger.exception("code_ingest: reconcile failed for %s", cfg.label)
+        result.tier_failed(cfg, "ingest", f"reconcile: {type(e).__name__}: {e}")
 
 
 def _stage_plan(
@@ -806,7 +833,7 @@ async def _rechunk_batch(
     result.read_hits += int(getattr(healed, "read_hits", 0) or 0)
     result.read_misses += int(getattr(healed, "read_misses", 0) or 0)
     if getattr(healed, "partial", False):
-        result.cut(f"{cfg.namespace}:rechunk@{cursor + attempted}/{total}")
+        result.cut(f"{cfg.namespace}:rechunk@{cursor + attempted}/{total}", cfg=cfg)
     return attempted, identical
 
 
@@ -956,3 +983,4 @@ async def _maybe_rechunk(
     except Exception as e:
         result.errors.append(f"rechunk: {type(e).__name__}: {e}")
         logger.exception("code_ingest: extractor re-chunk failed for %s", cfg.label)
+        result.tier_failed(cfg, "ingest", f"rechunk: {type(e).__name__}: {e}")

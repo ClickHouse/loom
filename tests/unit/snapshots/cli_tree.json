@@ -2118,7 +2118,8 @@
            "dests": [
             "help",
             "org",
-            "namespace"
+            "namespace",
+            "tier"
            ]
           }
          ],
@@ -2168,6 +2169,26 @@
            "type": null,
            "required": false,
            "help": "default: LOOM_CODE_NAMESPACE",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--tier"
+           ],
+           "dest": "tier",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": [
+            "clang",
+            "typescript",
+            "go",
+            "python"
+           ],
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Record the command's outcome as this compiler tier's health on the entry: exit 0 clears a failure, except that for go the modules its output names as not built fail it; exit 3 (the window's base is gone) records nothing; any other exit records a failure with the end of the output, a timeout when a SIGTERM to entry-lock (the caller's time limit) stopped it. The command's output, stderr included, is relayed to stdout.",
            "metavar": null
           },
           {
