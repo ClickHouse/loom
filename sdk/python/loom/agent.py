@@ -540,7 +540,9 @@ class Agent:
             if self.ambient_run is not None:
                 await self.ambient_run.complete(failed=failed)
         finally:
-            # A close() cancelled while sets are still going out lets them land, up to
-            # one request's timeout, before the pool closes under them.
-            await self.memory._wait_for_sets(self._timeout_s)
-            await self.transport.close()  # the pool closes even when the flush fails
+            try:
+                # A close() cancelled while sets are still going out lets them land, up
+                # to one request's timeout, before the pool closes under them.
+                await self.memory._wait_for_sets(self._timeout_s)
+            finally:
+                await self.transport.close()  # even when the flush fails or is cancelled

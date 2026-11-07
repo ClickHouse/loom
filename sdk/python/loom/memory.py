@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import contextlib
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -128,6 +129,8 @@ class _SetCoalescer:
         if window is None:
             window = _CoalesceWindow(now, identity)
             self._windows[key] = window
+            # It ends at its time, flushed if it gathered sets, so an idle one is not kept.
+            window.timer = loop.call_later(COALESCE_WINDOW_S, self._close, key, window)
         window.count += 1
         if window.count < COALESCE_MIN_BURST:
             first = self._after(
@@ -143,9 +146,6 @@ class _SetCoalescer:
         window.pending.append((entry, fut))
         if len(window.pending) >= COALESCE_MAX_BATCH:
             self._close(key, window)
-        elif window.timer is None:
-            remaining = max(0.0, COALESCE_WINDOW_S - (now - window.t0))
-            window.timer = loop.call_later(remaining, self._close, key, window)
         return await fut
 
     def _close(self, key: tuple[str, ...], window: _CoalesceWindow) -> None:
@@ -157,9 +157,9 @@ class _SetCoalescer:
         if not window.pending:
             return
         batch, window.pending = window.pending, []
+        first_sets, window.first_sets = window.first_sets, []
         task = self._after(
-            [self._flushes.get(key), *window.first_sets],
-            lambda: self._flush(window.identity, batch),
+            [self._flushes.get(key), *first_sets], lambda: self._flush(window.identity, batch)
         )
         self._flushes[key] = task
         self._inflight.add(task)
@@ -287,15 +287,11 @@ class _SetCoalescer:
         if not fut.done():
             fut.set_result(res)
 
-    async def wait(self, timeout_s: float) -> None:
-        """Wait up to `timeout_s` for the flushes and first sets still out."""
-        if self._inflight:
-            await asyncio.wait(list(self._inflight), timeout=timeout_s)
-
     async def flush(self) -> None:
-        """Send every gathered set now and wait for the writes to land, those made
-        while it waits too."""
-        while self._windows or self._inflight:
+        """Send every gathered set now and wait for the writes to land: those there now,
+        then those made while they went out (a writer that never stops is not waited
+        for)."""
+        for _ in range(2):
             for key, window in list(self._windows.items()):
                 self._close(key, window)
             if self._inflight:
@@ -667,9 +663,11 @@ class MemoryClient:
             await self._coalescer.flush()
 
     async def _wait_for_sets(self, timeout_s: float) -> None:
-        """Wait up to `timeout_s` for the coalesced sets still going out, sending none."""
+        """`flush_sets()`, for at most `timeout_s`: the writes it has not seen land by then
+        keep going."""
         if self._coalescer is not None:
-            await self._coalescer.wait(timeout_s)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._coalescer.flush(), timeout_s)
 
     def _identity(
         self,

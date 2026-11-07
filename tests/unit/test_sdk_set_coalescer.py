@@ -756,3 +756,72 @@ async def test_a_cancelled_close_lets_the_writes_land_before_the_transport_close
         await closing
     assert t.closed
     assert all(r["version"] for r in await asyncio.gather(*sets))
+
+
+async def test_close_returns_while_a_writer_keeps_setting(agent: Agent) -> None:
+    # close() waits for the sets there when it starts and those made while they go out,
+    # not for a writer that never stops.
+    stop = asyncio.Event()
+
+    async def writer() -> None:
+        i = 0
+        while not stop.is_set():
+            try:
+                await agent.memory.set(f"k{i}", i)
+            except Exception:  # noqa: BLE001 — the transport closed under the writer
+                return
+            i += 1
+
+    writing = asyncio.create_task(writer())
+    await asyncio.sleep(0.05)
+    await asyncio.wait_for(agent.close(), 5)
+    stop.set()
+    await writing
+
+
+async def test_a_set_made_after_a_cancelled_close_began_is_written(agent: Agent) -> None:
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    earlier = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
+    await _settle()
+    closing = asyncio.create_task(agent.close())
+    await _settle()
+    closing.cancel()
+    await _settle()
+    late = [asyncio.create_task(agent.memory.set(k, k)) for k in "fghi"]
+    await _settle()
+    t.bulk_gate.set()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    assert all(r["version"] for r in await asyncio.gather(*earlier, *late))
+    assert t.closed
+
+
+async def test_the_transport_closes_when_a_cancelled_close_is_cancelled_again(
+    agent: Agent,
+) -> None:
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    sets = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
+    await _settle()
+    closing = asyncio.create_task(agent.close())
+    await _settle()
+    closing.cancel()
+    await _settle()
+    closing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    assert t.closed
+    t.bulk_gate.set()
+    await asyncio.gather(*sets, return_exceptions=True)
+
+
+async def test_windows_of_many_identities_do_not_pile_up(
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A window with only its first sets ends at its time like any other.
+    monkeypatch.setattr(loom.memory, "COALESCE_WINDOW_S", 0.01)
+    await asyncio.gather(*[agent.memory.set("k", i, session_id=f"s{i}") for i in range(200)])
+    await asyncio.sleep(0.05)
+    co: Any = agent.memory._coalescer
+    assert co._windows == {}
