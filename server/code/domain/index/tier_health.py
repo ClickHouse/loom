@@ -75,11 +75,7 @@ def parse(tier: str, raw: str) -> TierHealth | None:
         k: str(data.get(k) or "")
         for k in ("state", "kind", "error", "fix", "failing_since", "last_failed_at", "last_ok_at")
     }
-    try:
-        passes = int(data.get("failed_passes") or 0)
-    except (TypeError, ValueError):
-        passes = 0
-    return TierHealth(tier=tier, failed_passes=passes, **texts)
+    return TierHealth(tier=tier, failed_passes=int(data.get("failed_passes") or 0), **texts)
 
 
 def from_state(state: IndexState) -> dict[str, TierHealth]:
@@ -145,8 +141,11 @@ def redact(text: str) -> str:
 # --- classification ----------------------------------------------------------------
 
 # First match wins: a missing credential also makes the submodule pin look missing
-# ("did not contain <sha>"), so the credential test comes before the pin test.
+# ("did not contain <sha>"), so the credential test comes before the pin test, and a
+# full disk comes before the network.
 _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    # A full disk also cuts a transfer short ("the remote end hung up"): it goes first.
+    ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
     (
         "credential",
         re.compile(
@@ -162,7 +161,7 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "pin_missing",
         re.compile(
             r"did not contain [0-9a-f]{7,64}|not our ref|reference is not a tree"
-            r"|unadvertised object|upload-pack: not our ref|no such remote ref [0-9a-f]{7,64}",
+            r"|unadvertised object|no such remote ref [0-9a-f]{7,64}",
             re.IGNORECASE,
         ),
     ),
@@ -183,7 +182,6 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
-    ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
     (
         "timeout",
         re.compile(
@@ -204,25 +202,25 @@ def classify(text: str) -> str:
 
 
 _HOST_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://(?:[^/\s@]+@)?([A-Za-z0-9.-]+)(/[^\s'\"]*)?")
-_SUBMODULE_RE = re.compile(r"submodule path '([^']+)'")
+# git names a submodule relative to the checkout ("Failed to clone 'contrib/x'") and,
+# in other lines, by its absolute path ("into submodule path '/srv/…/contrib/x'").
+_SUBMODULE_RE = re.compile(r"(?:submodule path|failed to clone) '([^']+)'", re.IGNORECASE)
 
 
 def _where(text: str) -> str:
     """'<host>/<repo>' and the submodule path the error names, as far as it names them:
-    the first URL with a path wins over a bare host, and an absolute submodule path is
-    cut to its last two segments (the checkout's own location is not the point)."""
+    the first URL with a path wins over a bare host, and a relative submodule path over
+    an absolute one."""
     parts: list[str] = []
     urls = [
-        (m.group(1), (m.group(2) or "").rstrip("/").removesuffix(".git"))
+        (m.group(1), (m.group(2) or "").rstrip("/:.,;)").removesuffix(".git"))
         for m in _HOST_RE.finditer(text)
     ]
     if urls:
         host, path = next(((h, p) for h, p in urls if p), urls[0])
         parts.append(f"{host}{path}")
-    if sub := _SUBMODULE_RE.search(text):
-        path = sub.group(1)
-        if path.startswith("/"):
-            path = "/".join(path.rstrip("/").split("/")[-2:])
+    if paths := _SUBMODULE_RE.findall(text):
+        path = next((p for p in paths if not p.startswith("/")), paths[0])
         parts.append(f"submodule {path}")
     return ", ".join(parts)
 
@@ -231,6 +229,11 @@ def fix_for(kind: str, text: str) -> str:
     """The one fix for a failure of `kind`, naming what the error names."""
     where = _where(text)
     at = f" ({where})" if where else ""
+    if kind == "credential" and "publickey" in text.lower():
+        return (
+            f"The ssh key was refused{at}: give this host's ssh key read access to the "
+            "repository, or use its https remote with a token."
+        )
     if kind == "credential":
         return (
             f"No credential with access{at}: set LOOM_CODE_GITHUB_TOKEN, or the entry's "

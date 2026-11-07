@@ -48,7 +48,7 @@ async def run_pass(org: str = "", namespace: str = "") -> CodeIngestResult:
     result = CodeIngestResult()
     with record_pass("code_ingest") as rec:
         await _run(result, org, namespace)
-        # Not on a cancellation: the pass may have lost its lease to another process.
+        # Only when the pass ran to its end: a cancelled pass may have lost its lease.
         await _record_tier_health(result)
         log_pass_errors(logger, "code_ingest", result.errors)
         rec.outcome = pass_outcome(result)
@@ -94,6 +94,13 @@ def pass_outcome(result: CodeIngestResult) -> dict[str, Any]:
         "read_misses": result.read_misses,
         "note": result.note,
     }
+
+
+def _ingest_served(cfg: Any, result: CodeIngestResult) -> None:
+    """The parser tier is ok on an entry the pass served in full: no budget cut stopped
+    it (its record otherwise stays as it was)."""
+    if cfg.namespace not in result.cut_namespaces:
+        result.tier_ok(cfg, "ingest")
 
 
 async def _record_tier_health(result: CodeIngestResult) -> None:
@@ -205,8 +212,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
     for plan in plans:
         pass_context.set_namespace(plan.cfg.namespace)
         await _post_steps(plan, result)
-        if plan.cfg.namespace not in result.cut_namespaces:  # served in full this pass
-            result.tier_ok(plan.cfg, "ingest")
+        _ingest_served(plan.cfg, result)
     result.elapsed_s = round(budget.elapsed(), 1)
     if result.partial:
         pass_context.set_cursor(result.resume)

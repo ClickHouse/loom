@@ -73,7 +73,7 @@
  "loom code entry-lock": [
   "usage: loom code entry-lock [-h] [--org ORG] [--namespace NAMESPACE] [--tier {clang,typescript,go,python}] ...",
   "positional arguments: command -- <command> [args…]",
-  "options: -h, --help show this help message and exit --org ORG default: LOOM_CODE_ORG --namespace NAMESPACE default: LOOM_CODE_NAMESPACE --tier {clang,typescript,go,python} Record the command's outcome as this compiler tier's health on the entry: exit 0 clears a failure, any other exit records one with the end of its output. The command's output, stderr included, is relayed to stdout."
+  "options: -h, --help show this help message and exit --org ORG default: LOOM_CODE_ORG --namespace NAMESPACE default: LOOM_CODE_NAMESPACE --tier {clang,typescript,go,python} Record the command's outcome as this compiler tier's health on the entry: exit 0 clears a failure; exit 3 (the window's base is gone) records nothing; a SIGTERM to entry-lock (the caller's time limit) records a timeout; any other exit records a failure with the end of the output. The command's output, stderr included, is relayed to stdout."
  ],
  "loom code scip-delta": [
   "usage: loom code scip-delta [-h]",

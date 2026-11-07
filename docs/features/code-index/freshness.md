@@ -45,8 +45,8 @@ status ops report the mirror's age:
   `fast_tier_lag`, `scip_lag` / `scip_py_lag`, the `compiler_tiers` list,
   `last_refresh_at` and `chunks_total` / `chunks_embedded` / `embedding_coverage`.
 - Both return `tier_health`: each tier's last recorded outcome (fetch, ingest, the
-  compiler tiers and the weekly C++ full run), with the error kind, `failing_since`, `failed_passes` and the fix
-  while it fails.
+  compiler tiers and the weekly C++ full run), with the error kind, `failing_since`,
+  `failed_passes` and the fix while it fails.
 - `code.repos` rows carry `searchable`: `embedding_coverage` has reached
   `LOOM_CODE_READY_EMBED_COVERAGE`.
 

@@ -265,3 +265,41 @@ def test_new_fields_default_so_older_rows_are_unchanged() -> None:
 
     row = CodeRepoSummary(org=ORG, namespace=MASTER, repo="r", branch="b")
     assert row.has_maintainer is True and row.unreadable_reason == "" and row.my_role == ""
+
+
+@pytest.mark.asyncio
+async def test_a_readable_row_carries_the_tier_records_and_an_unreadable_one_none(
+    plane, monkeypatch
+) -> None:
+    from server.code.api.models_repos import CodeReposInput
+    from server.code.api.models_status import CodeTierHealth
+
+    failing = CodeTierHealth(tier="clang", state="failing", kind="credential", lag_commits=413)
+
+    async def _status(cfg):
+        return SimpleNamespace(
+            org=cfg.org,
+            namespace=cfg.namespace,
+            repo=cfg.repo,
+            branch=cfg.git_branch,
+            git_head="h",
+            clone_head="h",
+            fast_tier_lag=0,
+            scip_lag=413,
+            scip_py_lag=0,
+            tier_health=[failing],
+            state={},
+            last_refresh_at="",
+            counts={},
+            chunks_total=0,
+            chunks_embedded=0,
+            embedding_coverage=1.0,
+        )
+
+    monkeypatch.setattr(index_status, "_repo_status", _status)
+    index_status.reset_repo_status_cache()
+    set_current_auth(_login_token())
+    out = await repos_mod.handle_code_repos(CodeReposInput(org=ORG))
+    by = {r.namespace: r for r in out.repos}
+    assert by[MASTER].tier_health == [failing]
+    assert by[PRIVATE].tier_health == []  # an unreadable row shows nothing of the index

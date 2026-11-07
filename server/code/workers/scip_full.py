@@ -86,20 +86,21 @@ def _resolve_paths(cfg: RepoConfig) -> tuple[Path, Path, Path, str | None]:
     return checkout, bare, scip_clang, missing
 
 
-async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipFullResult) -> bool:
-    """False when the entry was not attempted (another ran this pass, or it is not due)."""
+async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipFullResult) -> bool | None:
+    """False when the entry was not attempted (another ran this pass, or it is not due);
+    a skip is named in `result.skipped`, which `run_tier` also records nothing for."""
     if result.started:
         return False  # one entry per pass
     target = await compiler_target(repo, cfg)
     if not target:
         result.skipped.append(f"{cfg.namespace}: git_head not seeded")
-        return False
+        return None
     if not await _due(repo, cfg):
         return False
     checkout, bare, scip_clang, missing = await asyncio.to_thread(_resolve_paths, cfg)
     if missing:
         result.skipped.append(f"{cfg.namespace}: {missing}")
-        return False
+        return None
     result.started += 1
     stats, _out = await full_index(
         repo,

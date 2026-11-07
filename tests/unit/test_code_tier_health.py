@@ -278,14 +278,15 @@ def test_status_rows_carry_each_recorded_tier_with_its_own_lag() -> None:
     assert rows["ingest"].state == "ok" and rows["ingest"].lag_commits == 0
 
 
-def test_a_fix_names_the_repository_url_over_a_bare_host_and_a_short_submodule_path() -> None:
+def test_a_fix_names_the_repository_url_over_a_bare_host() -> None:
     text = (
         "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n"
         "fatal: clone of 'https://github.com/o/private.git' into submodule path "
         "'/srv/loom/checkout/contrib/private' failed"
     )
     fix = tier_health.fix_for("credential", text)
-    assert "(github.com/o/private, submodule contrib/private)" in fix
+    # with no relative form in the output, the path as git printed it
+    assert "(github.com/o/private, submodule /srv/loom/checkout/contrib/private)" in fix
 
 
 @pytest.mark.asyncio
@@ -296,8 +297,11 @@ async def test_entry_lock_records_a_stopped_command_as_a_timeout_and_drops_a_cut
 
     repo = _StateRepo()
     with patch("server.code.store.index.CodeRepo", return_value=repo):
-        await code_scip._record_tier("o", "ns", "python", -15, b"")
+        await code_scip._record_tier("o", "ns", "python", -15, b"", stopped=True)
         assert tier_health.parse("python", repo.state["tier_health:python"]).kind == "timeout"
+        # killed by something other than the caller's limit (the OOM killer): not a timeout
+        await code_scip._record_tier("o", "ns", "python", -9, b"Killed")
+        assert tier_health.parse("python", repo.state["tier_health:python"]).kind == "harness"
         # a token whose prefix the 4 KiB cut dropped is on the first, partial line
         tail = b"abcdefghijklmnopqrstuvwxyz0123456789 leaked\n" + b"x" * 4000 + b"\nharness exit 2"
         await code_scip._record_tier("o", "ns", "python", 2, tail[-code_scip._TAIL_BYTES :])
@@ -561,3 +565,58 @@ async def test_scip_full_records_the_full_run(
     else:
         assert health.failed_passes == 2
         assert health.kind == {"harness": "harness", "error": "network"}[outcome]
+
+
+@pytest.mark.parametrize(
+    ("text", "fix"),
+    [
+        (
+            "fatal: clone of 'https://github.com/o/p.git' into submodule path "
+            "'/srv/c/contrib/deep/p' failed\nFailed to clone 'contrib/deep/p' a second time",
+            "submodule contrib/deep/p",
+        ),
+        ("fetch https://github.com/o/r.git: fatal: could not read Username", "(github.com/o/r)"),
+        ("git@github.com: Permission denied (publickey).", "ssh key was refused"),
+    ],
+)
+def test_a_fix_names_what_the_error_names(text: str, fix: str) -> None:
+    assert fix in tier_health.fix_for("credential", text)
+
+
+def test_a_full_disk_is_disk_even_when_the_transfer_hung_up() -> None:
+    text = "error: No space left on device\nfatal: the remote end hung up unexpectedly"
+    assert tier_health.classify(text) == "disk"
+
+
+def test_an_ingest_pass_records_the_parser_tier_ok_only_for_an_entry_served_in_full() -> None:
+    from server.code.app.index import ingest_pass
+    from server.code.app.index.pass_budget import CodeIngestResult
+
+    cut_cfg = type("Cut", (_Cfg,), {"namespace": "code-y"})()
+    result = CodeIngestResult()
+    result.cut("code-y:walk")
+    ingest_pass._ingest_served(_Cfg(), result)
+    ingest_pass._ingest_served(cut_cfg, result)
+    assert result.tier_outcomes == {("o", "code-x", "ingest"): ""}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_clone_records_the_fetch_tier(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from server.code.app.index import bootstrap, ingest_pass
+    from server.code.app.index.pass_budget import CodeIngestResult
+
+    async def failed_clone(*_: Any) -> tuple[bool, str]:
+        return False, "fatal: could not read Username for 'https://github.com'"
+
+    monkeypatch.setattr(bootstrap, "clone_in_background", failed_clone)
+    cfg = type(
+        "Remote",
+        (_Cfg,),
+        {"git_dir": str(tmp_path / "none.git"), "git_remote": "https://github.com/o/r.git"},
+    )()
+    result = CodeIngestResult()
+    assert await ingest_pass._run_repo(cfg, result) is None
+    error = result.tier_outcomes[("o", "code-x", "fetch")]
+    assert error.startswith("clone https://github.com/o/r.git: fatal: could not read Username")

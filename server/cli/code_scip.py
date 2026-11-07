@@ -125,9 +125,14 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
         return 2
 
     if getattr(args, "apply_delta", ""):
-        rc = await _scip_apply_only(args, repo, org, ns, git_head)
-        if rc == 0:  # the full run's index is applied
-            await tier_health.record(repo, org, ns, "clang_full")
+        try:
+            rc = await _scip_apply_only(args, repo, org, ns, git_head)
+        except EntryLockLost:
+            raise  # the entry is another host's now: no further write
+        except Exception as e:
+            await tier_health.record(repo, org, ns, "clang_full", e)
+            raise
+        await tier_health.record(repo, org, ns, "clang_full")  # the full run's index applied
         return rc
 
     def _paths() -> tuple[Path, Path, Path, list[str]]:
@@ -216,12 +221,15 @@ async def _entry_locked(args: argparse.Namespace) -> int:
     org, ns = _identity(args)
     tier = args.tier
     tail = bytearray() if tier else None
+    stopped = asyncio.Event()  # set by a SIGTERM to this process: the caller's time limit
     try:
         async with entry_lock(org, ns, wait=False):
             # Its uploads name the holder, so the server refuses them once the lease moved.
-            rc = await _run_while_held(command, env={HOLDER_ENV: current_holder()}, tail=tail)
+            rc = await _run_while_held(
+                command, env={HOLDER_ENV: current_holder()}, tail=tail, stopped=stopped
+            )
             if tier:
-                await _record_tier(org, ns, tier, rc, bytes(tail or b""))
+                await _record_tier(org, ns, tier, rc, bytes(tail or b""), stopped=stopped.is_set())
             return rc
     except EntryLockHeld:
         print(f"entry-lock {org}/{ns}: held by another pass")
@@ -234,7 +242,9 @@ async def _entry_locked(args: argparse.Namespace) -> int:
         return 1
 
 
-async def _record_tier(org: str, ns: str, tier: str, rc: int, tail: bytes) -> None:
+async def _record_tier(
+    org: str, ns: str, tier: str, rc: int, tail: bytes, *, stopped: bool = False
+) -> None:
     """`entry-lock --tier`: the command's exit as the tier's health record, its error
     the end of the command's output."""
     from server.code.app.index import tier_health
@@ -244,8 +254,8 @@ async def _record_tier(org: str, ns: str, tier: str, rc: int, tail: bytes) -> No
     if rc == BASE_UNKNOWN_EXIT:
         return  # the window's base is gone: the next run indexes in full, as in run_tier
     error = None
-    if rc == -signal.SIGTERM:  # what a caller's time limit (`timeout`) sends
-        error = f"harness exit {rc}: stopped by signal {-rc}"
+    if stopped:  # the caller's time limit (`timeout`) stopped it, by SIGTERM or after
+        error = f"harness exit {rc}: stopped by signal (the caller's time limit)"
     elif rc != 0:
         # The kept tail may start inside a line, a token's prefix cut off: redaction
         # matches whole tokens, so that first partial line goes.
@@ -280,12 +290,17 @@ async def _relay(proc: asyncio.subprocess.Process, tail: bytearray) -> int:
 
 
 async def _run_while_held(
-    command: list[str], *, env: dict[str, str] | None = None, tail: bytearray | None = None
+    command: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    tail: bytearray | None = None,
+    stopped: asyncio.Event | None = None,
 ) -> int:
     """Run `command` in its own process group to its end. A cancellation (the lease
     was lost) kills the whole group at once; SIGTERM to this process (a caller's
-    timeout) sends the group SIGTERM, then SIGKILL after _ENTRY_STOP_GRACE_S. With
-    `tail` its output (stdout and stderr) is relayed and its end kept there."""
+    timeout) sets `stopped` and sends the group SIGTERM, then SIGKILL after
+    _ENTRY_STOP_GRACE_S. With `tail` its output (stdout and stderr) is relayed and its
+    end kept there."""
     import os
 
     from server.code.app.index.gitrepo import communicate_or_kill
@@ -303,7 +318,7 @@ async def _run_while_held(
         if tail is not None
         else communicate_or_kill(proc, timeout_s=math.inf, group=True)
     )
-    term = asyncio.Event()
+    term = stopped or asyncio.Event()
     with contextlib.suppress(NotImplementedError):
         asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, term.set)
     stopping = asyncio.ensure_future(term.wait())

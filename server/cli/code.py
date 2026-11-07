@@ -141,8 +141,10 @@ def _add_scip_full_parser(csub: Any) -> None:
         choices=COMPILER_TIERS,
         default="",
         help="Record the command's outcome as this compiler tier's health on the entry: "
-        "exit 0 clears a failure, any other exit records one with the end of its output. "
-        "The command's output, stderr included, is relayed to stdout.",
+        "exit 0 clears a failure; exit 3 (the window's base is gone) records nothing; a "
+        "SIGTERM to entry-lock (the caller's time limit) records a timeout; any other exit "
+        "records a failure with the end of the output. The command's output, stderr "
+        "included, is relayed to stdout.",
     )
     p_run.add_argument("command", nargs=argparse.REMAINDER, help="-- <command> [args…]")
     p_run.set_defaults(func=_cmd_entry_lock)
