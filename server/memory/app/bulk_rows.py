@@ -302,13 +302,10 @@ def _full_version_row(
     return memory_repo.build_first_version_row(memory_row, now=now)
 
 
-def _bulk_locked(state: _BulkWriteState, memory_key: str, action: str) -> bool:
+def _bulk_locked(state: _BulkWriteState, memory_key: str, action: _lock.LockAction) -> bool:
     """The live row's lock in force refuses `action` ('value' or 'expire': read_only)."""
     live = state.existing_carried.get(memory_key)
-    if not live:
-        return False
-    mode = _lock.effective_mode(_LockView(live))
-    return action in _lock.REFUSES.get(mode, frozenset())
+    return live is not None and _lock.refuses(_LockView(live), action)
 
 
 def _refuse_locked(state: _BulkWriteState, memory_key: str) -> None:
@@ -318,7 +315,7 @@ def _refuse_locked(state: _BulkWriteState, memory_key: str) -> None:
 
 
 class _LockView:
-    """Attribute view of a lookup row for `memory_lock.effective_mode`."""
+    """Attribute view of a lookup row for `lock.refuses`."""
 
     __slots__ = ("lock_mode", "lock_until")
 

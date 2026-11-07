@@ -339,6 +339,9 @@ async def _set_expiry(
         # re-setting an expired key is a fresh write, not a revival of a
         # row the reads already hide.
         expires_at = existing.expires_at
+    elif _lock.refuses(existing, "expire"):
+        # A read_only lock refuses an expiry change, so the type's retention is not applied.
+        expires_at = None
     else:
         # New row (or had no expiry) — apply per-type retention default
         # if declared. NULL → table-level TTL.
