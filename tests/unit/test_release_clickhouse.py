@@ -98,7 +98,7 @@ def test_a_re_run_keeps_its_published_bundles_release(resolve: Resolve) -> None:
     assert "::warning::clickhouse_image=ch:b ignored" in result.stderr
 
 
-def test_a_final_keeps_its_highest_candidates_release(resolve: Resolve) -> None:
+def test_a_final_keeps_its_highest_numbered_candidates_release(resolve: Resolve) -> None:
     result = resolve("1.2.0", {"v1.2.0-rc.9": "ch:old", "v1.2.0-rc.10": "ch:soaked"})
     assert result.stdout == "ch:soaked\n", result.stderr
 
