@@ -1416,11 +1416,18 @@ def test_a_walk_with_an_unexpected_parent_keeps_the_child(
 
 
 def test_a_page_whose_address_is_taken_during_the_fetch_is_counted_skipped(
-    world: _Store, monkeypatch: pytest.MonkeyPatch
+    world: _Store,
 ) -> None:
-    async def _taken(*a: Any, **kw: Any) -> bool:
-        return False  # another writer saved at the address while it was fetched
+    """The address is free when the page is listed; a person writes there while its
+    blocks are read. The write step reads the address again and leaves theirs."""
+    uri = _uri(world, PAGE)
 
-    monkeypatch.setattr(source_sync, "write_document", _taken)
+    def _blocks(request: httpx.Request) -> httpx.Response:
+        world.docs[uri] = {"actor": "human:ann", "tags": [], "metadata": {}}
+        return httpx.Response(200, json={"results": [_para("Text.")], "has_more": False})
+
+    world.answers[f"/blocks/{PAGE}/children"] = _blocks
     out = _run()
-    assert (out.skipped, out.changed) == (3, 0)
+    assert world.upserts == 2  # the two database pages
+    assert world.docs[uri]["actor"] == "human:ann"
+    assert (out.skipped, out.changed) == (1, 2)

@@ -551,12 +551,21 @@ def test_a_project_s_documents_are_mined_by_the_same_leg(world: _World, tracker:
 
 
 def test_an_address_taken_during_the_fetch_is_counted_skipped(
-    world: _World, tracker: _Tracker, monkeypatch: pytest.MonkeyPatch
+    world: _World, tracker: _Tracker
 ) -> None:
-    async def _taken(*a: Any, **kw: Any) -> bool:
-        return False  # another writer saved at the address while it was fetched
+    """The address is free when the project is listed; a person writes there while the
+    document is fetched. The write step reads the address again and leaves theirs."""
+    node = _node(1, "2026-01-01T00:00:00.000Z")
+    tracker.projects[PROJECT] = [node]
+    uri = "https://tracker.example.com/acme/document/design-1-1"
 
-    monkeypatch.setattr(source_sync, "write_document", _taken)
-    tracker.projects[PROJECT] = [_node(1, "2026-01-01T00:00:00.000Z")]
+    def _fetch(request: httpx.Request) -> httpx.Response:
+        world.docs[uri] = {"actor": "human:ann", "tags": [], "metadata": {}}
+        document = {**node, "content": "# Design 1\n\nWe keep the hash join.\n"}
+        return httpx.Response(200, json={"data": {"document": document}})
+
+    tracker.answers[_doc_id(1)] = _fetch
     result = _sync()
+    assert world.upserts == []
+    assert world.docs[uri]["actor"] == "human:ann"
     assert (result.skipped, result.changed) == (1, 0)
