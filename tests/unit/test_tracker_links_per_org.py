@@ -359,15 +359,27 @@ def test_a_refresh_after_a_write_reads_its_own_writes(monkeypatch) -> None:
     assert seen == [False, True, True, False]
 
 
-def test_branches_following_names_only_registered_branches_in_the_org(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "code_self_service_enabled", True)
-    _set_registry(monkeypatch, [_entry(ORG_X, "code-widgets-26-8")])
-    binding.reset_overrides_for_tests(
-        branches={
-            (ORG_X, "code-widgets-26-8"): CODE,
-            (ORG_X, "code-widgets-gone"): CODE,  # no registry entry
-            (ORG_Y, "code-widgets-26-8"): CODE,  # another org
-        }
+def test_branches_following_names_only_the_branches_that_read_the_links(monkeypatch) -> None:
+    """The same test `tracker_namespaces_for` makes: a registered branch of an operator
+    repository with no `qa_binding` of its own."""
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        json.dumps([{"org": ORG_X, "namespace": CODE, "repo": "Acme/widgets"}]),
     )
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    names = ["code-widgets-26-8", "code-widgets-own", "code-widgets-cleared"]
+    _set_registry(monkeypatch, [_entry(ORG_X, n) for n in names] + [_entry(ORG_Y, names[0])])
+    branches = {(ORG_X, n): CODE for n in [*names, "code-widgets-gone"]}  # gone: no entry
+    branches[(ORG_Y, names[0])] = CODE  # another org, where CODE is no operator entry
+    own = {(ORG_X, "code-widgets-own"): "tracker-own", (ORG_X, "code-widgets-cleared"): ""}
+    binding.reset_overrides_for_tests(own, branches=branches)
     assert binding.branches_following(ORG_X, CODE) == ["code-widgets-26-8"]
+    assert [binding.tracker_namespaces_for(ORG_X, n) for n in names] == [
+        binding.tracker_namespaces_for(ORG_X, CODE),
+        ["tracker-own"],
+        [],
+    ]
     assert binding.branches_following(ORG_Y, CODE) == []
+    monkeypatch.setattr(settings, "code_repos_json", "[]")  # the root left the config
+    assert binding.branches_following(ORG_X, CODE) == []

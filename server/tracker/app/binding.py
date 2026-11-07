@@ -31,6 +31,7 @@ Unauthorized or unbound → "" and the caller adds nothing.
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import json
 import logging
@@ -117,10 +118,7 @@ async def refresh_overrides(*, force: bool = False) -> None:
         if getattr(get_client(), "_client", "absent") is None:
             return
         forgotten, after_write = _FORGOTTEN, force or _AFTER_WRITE
-        if after_write:
-            with own_write_reads():
-                rows = await code_index().state_values_for_keys([OVERRIDE_KEY, BRANCH_OF_KEY])
-        else:
+        with own_write_reads() if after_write else contextlib.nullcontext():
             rows = await code_index().state_values_for_keys([OVERRIDE_KEY, BRANCH_OF_KEY])
         if forgotten != _FORGOTTEN:
             _OVERRIDES_AT = -math.inf  # the next call reads again
@@ -145,13 +143,19 @@ def forget_links(org: str, code_namespace: str) -> None:
 
 
 def branches_following(org: str, code_namespace: str) -> list[str]:
-    """The registered branches whose `qa_branch_of` row names the org's namespace: they
-    read its links too (as of the last refresh)."""
+    """The branches that read the org's operator repository's links too, as of the last
+    refresh: registered, naming it in `qa_branch_of`, with no `qa_binding` of their own
+    (the same test `tracker_namespaces_for` makes)."""
+    if (org, code_namespace) not in operator_repositories():
+        return []
     registered = repos.registry_namespaces()
     return sorted(
         ns
         for (o, ns), root in _BRANCH_OF.items()
-        if o == org and root == code_namespace and (o, ns) in registered
+        if o == org
+        and root == code_namespace
+        and (o, ns) in registered
+        and override_for(o, ns) is None
     )
 
 

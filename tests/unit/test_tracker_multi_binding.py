@@ -506,9 +506,13 @@ async def test_set_source_says_which_branches_read_the_links_too(wired, monkeypa
     the tracker admin who sets it is told which."""
     import server.code.app.repo_admin as adm
     from server.code.api.models_repos import CodeRepoSetSourceInput
+    from server.core import ch as ch_mod
+
+    sequential: list[bool] = []
 
     class _Repo:
         async def get_state(self, org, ns, key):
+            sequential.append(ch_mod.sequential_reads_active())
             return ""
 
         async def set_state(self, org, ns, key, value, detail=""):
@@ -539,3 +543,5 @@ async def test_set_source_says_which_branches_read_the_links_too(wired, monkeypa
         CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[])
     )
     assert "read these links too" not in out.warning  # a clear delegates nothing
+    # the stored links that decide which link is new read their own writes
+    assert sequential == [True, True]

@@ -718,6 +718,7 @@ async def handle_code_repo_set_source(input: Any) -> Any:
         detail=f"tracker links set by {subject or 'maintainer'}",
     )
     await binding.refresh_overrides(force=True)
+    following = binding.branches_following(input.org, input.namespace) if wanted else []
     return CodeRepoSetSourceOutput(
         org=input.org,
         namespace=input.namespace,
@@ -731,11 +732,7 @@ async def handle_code_repo_set_source(input: Any) -> Any:
                 f"not {repo}: its reads will not return {repo}'s issues and PRs"
                 for qa, t in missing
             ]
-            + (
-                [f"the readers of {', '.join(following)} read these links too"]
-                if wanted and (following := binding.branches_following(input.org, input.namespace))
-                else []
-            )
+            + ([f"the readers of {', '.join(following)} read these links too"] if following else [])
         ),
     )
 
