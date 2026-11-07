@@ -72,11 +72,11 @@ FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).t
             "network",
         ),
         (
-            "harness exit 1: CMake Error: Could not resolve host: h\n>> cmake reconfigure failed\n",
+            "harness exit 1: CMake Error: Could not resolve host: h\n>> cmake configure failed\n",
             "cmake",
         ),
         (
-            "harness exit 1: CMake Error: No space left on device\n>> cmake reconfigure failed\n",
+            "harness exit 1: CMake Error: No space left on device\n>> cmake configure failed\n",
             "disk",
         ),
         ("RuntimeError: harness timed out after 600.0s", "timeout"),

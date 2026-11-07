@@ -27,6 +27,17 @@ cd "$CHECKOUT"
 HEAD_SHA=${HEAD_SHA:-$(git rev-parse HEAD)}
 
 # 1. compile_commands.json — cmake configure only (no build).
+
+# cmake_configure <cmake args...>: a configure that fails fails the run, with
+# CMake's last lines and one line the tier-health record classifies as `cmake`.
+cmake_configure() {
+  if ! cmake "$@" >"$WORK/cmake.log" 2>&1; then
+    tail -n 20 "$WORK/cmake.log"
+    echo ">> cmake configure failed" >&2
+    exit 1
+  fi
+}
+
 CONFIGURED=
 if [[ ! -f build/compile_commands.json ]]; then
   # ClickHouse's CMake refuses GCC ("Compiler GNU is not supported"), and a
@@ -39,10 +50,10 @@ if [[ ! -f build/compile_commands.json ]]; then
   # CMake refuses to switch compilers on an existing cache ("You have changed
   # variables that require your cache to be deleted"), so start clean.
   rm -rf build/CMakeCache.txt build/CMakeFiles
-  cmake -B build -S . -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  cmake_configure -B build -S . -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DCMAKE_C_COMPILER="$CC_BIN" -DCMAKE_CXX_COMPILER="$CXX_BIN" \
-    -DCOMPILER_CACHE=disabled -DENABLE_RUST=0 >/dev/null
+    -DCOMPILER_CACHE=disabled -DENABLE_RUST=0
   # ^ the two gates a fresh checkout hits: cmake/ccache.cmake errors without ccache/sccache, and
   #   corrosion wants a Rust toolchain the indexer host does not have.
   CONFIGURED=1
@@ -54,11 +65,7 @@ fi
 reconfigure() {
   if [[ -z "$CONFIGURED" ]]; then
     echo ">> cmake reconfigure (compile_commands.json): $1"
-    if ! cmake -B build -S . >"$WORK/cmake.log" 2>&1; then
-      tail -n 20 "$WORK/cmake.log"
-      echo ">> cmake reconfigure failed" >&2
-      exit 1
-    fi
+    cmake_configure -B build -S .
   fi
 }
 

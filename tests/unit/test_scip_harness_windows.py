@@ -252,14 +252,8 @@ class _CppWindow:
         }
 
     def run(self, head: str, index_docs: list[str]) -> dict | None:
-        _write_index(self.index, index_docs)
-        subprocess.run(
-            ["bash", str(_HARNESS / "run_delta.sh"), str(self.repo), self.base, head, "-"],
-            env=self.env,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        proc = self.run_unchecked(head, tuple(index_docs))
+        assert proc.returncode == 0, proc.stdout
         return json.loads(self.delta.read_text()) if self.delta.exists() else None
 
     def run_unchecked(
@@ -379,7 +373,7 @@ def test_a_full_index_whose_reconfigure_fails_fails(tmp_path: Path) -> None:
     w = _CppWindow(tmp_path)
     proc = w.run_unchecked(CMAKE_FAIL="1")
     assert proc.returncode == 1 and w.compdbs == []
-    assert "cmake reconfigure failed" in proc.stdout
+    assert "cmake configure failed" in proc.stdout
 
 
 def test_a_first_configure_is_not_followed_by_a_reconfigure(tmp_path: Path) -> None:

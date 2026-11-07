@@ -165,9 +165,9 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("submodule_url", re.compile(r"transport 'file' not allowed", re.IGNORECASE)),
     # A full disk also cuts a transfer short ("the remote end hung up"): before network.
     ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
-    # the C/C++ harness's CMake reconfigure failed: CMake's own last lines come before
+    # the C/C++ harness's CMake configure failed: CMake's own last lines come before
     # its line, and can read as any later kind
-    ("cmake", re.compile(r"^>> cmake reconfigure failed$", re.MULTILINE)),
+    ("cmake", re.compile(r"^>> cmake configure failed$", re.MULTILINE)),
     (
         "credential",
         re.compile(
@@ -322,7 +322,7 @@ def fix_for(kind: str, text: str) -> str:
         )
     if kind == "cmake":
         return (
-            "CMake could not reconfigure the build tree; its last lines are in the error. "
+            "CMake could not configure the build tree; its last lines are in the error. "
             "The tier retries the run: fix the build, or give the host what the "
             "configure needs."
         )
