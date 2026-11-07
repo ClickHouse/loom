@@ -26,10 +26,10 @@ from tests.unit.test_code_ingest_pass_budget import _cfg, _Clock, _wire_run
 
 def test_a_cut_per_phase_is_kept_and_the_cursor_lists_them_first_cut_first() -> None:
     r = ingest_budget.CodeIngestResult()
-    r.cut("code-p:commits@abcdef123456+3")
-    r.cut("code-q:commits")  # a later cut of the same phase: not the start
-    r.cut("code-r:rechunk@700/22136")
-    r.cut("code-s:heal@10/40")
+    r.cut("code-p:commits@abcdef123456+3", cfg=_cfg("code-p"))
+    r.cut("code-q:commits", cfg=_cfg("code-q"))  # a later cut of the same phase: not the start
+    r.cut("code-r:rechunk@700/22136", cfg=_cfg("code-r"))
+    r.cut("code-s:heal@10/40", cfg=_cfg("code-s"))
     assert r.partial is True
     assert r.cuts == {
         "commits": "code-p:commits@abcdef123456+3",

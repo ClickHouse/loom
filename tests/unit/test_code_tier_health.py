@@ -508,7 +508,7 @@ async def test_an_entry_the_budget_cut_is_not_recorded_healthy() -> None:
         raise AssertionError("a cut leg runs nothing")
 
     await ingest_pass._run_leg(result, spent, [served, cut], "walk", never)
-    assert result.unserved_namespaces == {"code-x", "code-y"}
+    assert result.unserved == {("o", "code-x"), ("o", "code-y")}
     assert result.resume == "code-x:walk"  # the next pass starts at the first
 
 
@@ -527,9 +527,31 @@ async def test_an_entry_a_held_call_stopped_is_not_recorded_healthy() -> None:
     fresh = PassBudget(started=time.monotonic(), stop_after=time.monotonic() + 600)
     await ingest_pass._run_leg(result, fresh, [plan], "walk", held)
     ingest_pass._ingest_served(plan.cfg, result)
-    assert result.unserved_namespaces == {"code-x"}
+    assert result.unserved == {("o", "code-x")}
     assert result.tier_outcomes == {}
     assert not result.partial
+
+
+@pytest.mark.asyncio
+async def test_a_held_commit_is_not_recorded_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.code.app.index import ingest_pass, pass_stream
+    from server.code.app.index.pass_budget import CodeIngestResult
+    from server.llm import customer
+
+    async def held(*_: Any, **__: Any) -> int:
+        raise customer.HOLDS[0]("held")
+
+    async def nothing(*_: Any, **__: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(pass_stream, "_ingest_commit", held)
+    monkeypatch.setattr(pass_stream, "_slice_done", nothing)
+    result = CodeIngestResult()
+    stream = pass_stream.CommitStream(_Cfg(), _StateRepo(), "b" * 40, "a" * 40, ["c" * 40], result)
+    stream._ctx = {}
+    assert await stream.step(None) is False
+    ingest_pass._ingest_served(_Cfg(), result)
+    assert result.tier_outcomes == {}
 
 
 @pytest.mark.asyncio
@@ -636,11 +658,13 @@ def test_an_ingest_pass_records_the_parser_tier_ok_only_for_an_entry_served_in_f
     from server.code.app.index.pass_budget import CodeIngestResult
 
     cut_cfg = type("Cut", (_Cfg,), {"namespace": "code-y"})()
+    other_org = type("Other", (_Cfg,), {"org": "p", "namespace": "code-y"})()
     result = CodeIngestResult()
-    result.cut("code-y:walk")
-    ingest_pass._ingest_served(_Cfg(), result)
-    ingest_pass._ingest_served(cut_cfg, result)
-    assert result.tier_outcomes == {("o", "code-x", "ingest"): ""}
+    result.cut("code-y:walk", cfg=cut_cfg)
+    for cfg in (_Cfg(), cut_cfg, other_org):
+        ingest_pass._ingest_served(cfg, result)
+    # another org's entry of the same namespace was served: the cut is not its
+    assert result.tier_outcomes == {("o", "code-x", "ingest"): "", ("p", "code-y", "ingest"): ""}
 
 
 @pytest.mark.asyncio
@@ -663,3 +687,43 @@ async def test_a_failed_clone_records_the_fetch_tier(
     assert await ingest_pass._run_repo(cfg, result) is None
     error = result.tier_outcomes[("o", "code-x", "fetch")]
     assert error.startswith("clone https://github.com/o/r.git: fatal: could not read Username")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["missing", "bad", "boom", "ok"])
+async def test_apply_delta_records_the_apply_not_the_callers_input(
+    outcome: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import argparse
+
+    from server.cli import code_scip
+    from server.code.app.index import entry_lock, scip_delta, scip_full
+
+    path = tmp_path / "delta.json"
+    if outcome != "missing":
+        path.write_text("{" if outcome == "bad" else json.dumps({"commit": "a" * 40}))
+
+    async def apply(*_: Any) -> Any:
+        if outcome == "boom":
+            raise RuntimeError("clickhouse down")
+        return scip_delta.ScipApplyStats()
+
+    monkeypatch.setattr(scip_delta, "apply_delta", apply)
+    monkeypatch.setattr(scip_full, "mark_done", AsyncMock())
+    monkeypatch.setattr(entry_lock, "check_held", lambda: None)
+    monkeypatch.setattr(code_scip, "_note", lambda **_: None)
+    failing = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).to_json()
+    repo = _StateRepo({"tier_health:clang_full": failing})
+    args = argparse.Namespace(apply_delta=str(path))
+    if outcome == "ok":
+        assert await code_scip._scip_apply_recorded(args, repo, "o", "ns", "a" * 40) == 0
+    else:
+        with pytest.raises((OSError, ValueError, RuntimeError)):
+            await code_scip._scip_apply_recorded(args, repo, "o", "ns", "a" * 40)
+    record = tier_health.parse("clang_full", repo.state["tier_health:clang_full"])
+    if outcome in ("missing", "bad"):
+        assert repo.writes == []  # the caller's input: the tier did not run
+    elif outcome == "boom":
+        assert record.failed_passes == 2
+    else:
+        assert not record.failing

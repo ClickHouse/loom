@@ -17,25 +17,33 @@ from server.cli.code_backfill import _record_manual_pass
 from server.cli.code_run import _identity, _note, _repo_cfg
 
 
+async def _read_delta(path: str) -> Any:
+    """The kept delta `--apply-delta` names. A missing or unreadable file is the
+    caller's input, not a failure of the tier: it is read before anything is recorded."""
+    import json as _json
+
+    from server.code.app.index.scip_delta import ScipDelta
+
+    raw = await asyncio.to_thread(Path(path).read_text)
+    return ScipDelta.model_validate(_json.loads(raw))
+
+
 async def _scip_apply_only(
     args: argparse.Namespace,
     repo: Any,
     org: str,
     ns: str,
     git_head: str,
+    delta: Any,
 ) -> int:
     """`scip-full --apply-delta`: apply a delta the harness already produced
     (`--keep-delta`). The apply is idempotent — a re-run key-diffs against
     the live rows and writes only what is missing — so an interrupted first
     apply resumes here without paying the index step again."""
-    import json as _json
-
     from server.code.app.index.entry_lock import check_held
-    from server.code.app.index.scip_delta import ScipDelta, apply_delta
+    from server.code.app.index.scip_delta import apply_delta
     from server.code.workers.scip_apply import watermark_key_for
 
-    raw = await asyncio.to_thread(Path(args.apply_delta).read_text)
-    delta = ScipDelta.model_validate(_json.loads(raw))
     if delta.commit != git_head:
         print(
             f"note: delta is at {delta.commit[:12]}, git_head is {git_head[:12]} — "
@@ -108,12 +116,13 @@ def _write_tail(out: str) -> None:
 async def _scip_apply_recorded(
     args: argparse.Namespace, repo: Any, org: str, ns: str, git_head: str
 ) -> int:
-    """`--apply-delta`, recording its outcome as the full run's tier."""
+    """`--apply-delta`, recording the apply's outcome as the full run's tier."""
     from server.code.app.index import tier_health
     from server.code.app.index.entry_lock import EntryLockLost
 
+    delta = await _read_delta(args.apply_delta)
     try:
-        rc = await _scip_apply_only(args, repo, org, ns, git_head)
+        rc = await _scip_apply_only(args, repo, org, ns, git_head, delta)
     except EntryLockLost:
         raise  # the entry is another host's now: no further write
     except Exception as e:

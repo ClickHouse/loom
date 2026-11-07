@@ -99,7 +99,7 @@ def pass_outcome(result: CodeIngestResult) -> dict[str, Any]:
 def _ingest_served(cfg: Any, result: CodeIngestResult) -> None:
     """The parser tier is ok on an entry the pass served in full: no budget cut or held
     model call stopped it (its record otherwise stays as it was)."""
-    if cfg.namespace not in result.unserved_namespaces:
+    if (cfg.org, cfg.namespace) not in result.unserved:
         result.tier_ok(cfg, "ingest")
 
 
@@ -157,7 +157,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
     plans: list[RepoPass] = []
     for i, cfg in enumerate(repos):
         if commit_budget.exhausted():
-            result.cut(f"{cfg.namespace}:commits")
+            result.cut(f"{cfg.namespace}:commits", cfg=cfg)
             logger.warning(
                 "code_ingest: commit phase budget (%.0f s of %.0f) reached before %d entr%s "
                 "fetched: %s — the next pass starts there",
@@ -230,7 +230,7 @@ async def _run_leg(
     for i, plan in enumerate(plans):
         if budget.exhausted():
             for unserved in plans[i:]:
-                result.cut(f"{unserved.cfg.namespace}:{leg}")
+                result.cut(f"{unserved.cfg.namespace}:{leg}", cfg=unserved.cfg)
             logger.warning(
                 "code_ingest: pass budget (%.0f s) reached before the %s of %d entr%s: %s — "
                 "the next pass continues there",
@@ -250,7 +250,7 @@ async def _run_leg(
                 await run(plan, result, budget)
         except customer.HOLDS:
             # a held call is no failure: the leg runs once the org is back
-            result.unserved_namespaces.add(plan.cfg.namespace)
+            result.held(plan.cfg)
         except Exception as e:
             result.errors.append(f"{plan.cfg.label}: {leg}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: %s of %s failed", leg, plan.cfg.label)
@@ -274,7 +274,7 @@ async def _bootstrap_leg(plan: RepoPass, result: CodeIngestResult, budget: PassB
     result.files_done += max(0, done - before)
     result.bootstrap_files += max(0, done - before)
     if progress.get("partial"):
-        result.cut(f"{plan.cfg.namespace}:bootstrap@{done}/{progress.get('total')}")
+        result.cut(f"{plan.cfg.namespace}:bootstrap@{done}/{progress.get('total')}", cfg=plan.cfg)
     result.note = f"bootstrap {progress['stage']}: {progress['done']}/{progress['total']}"
 
 
@@ -454,7 +454,7 @@ async def _steady_state(
     cursors, in `_post_steps`."""
     await _maybe_reconcile(repo, cfg, head, result, budget=budget)
     if budget is not None and budget.exhausted():
-        result.cut(f"{cfg.namespace}:rechunk")
+        result.cut(f"{cfg.namespace}:rechunk", cfg=cfg)
         return
     await _maybe_rechunk(repo, cfg, head, result, budget=budget)
 
@@ -598,7 +598,8 @@ async def _maybe_reconcile(
             result.read_misses += int(getattr(healed, "read_misses", 0) or 0)
             if getattr(healed, "partial", False):
                 result.cut(
-                    f"{cfg.namespace}:heal@{healed.attempted}/{len(found.stale[:heal_budget])}"
+                    f"{cfg.namespace}:heal@{healed.attempted}/{len(found.stale[:heal_budget])}",
+                    cfg=cfg,
                 )
         backfilled, refused, unindexable = await _backfill_missing(
             repo,
@@ -831,7 +832,7 @@ async def _rechunk_batch(
     result.read_hits += int(getattr(healed, "read_hits", 0) or 0)
     result.read_misses += int(getattr(healed, "read_misses", 0) or 0)
     if getattr(healed, "partial", False):
-        result.cut(f"{cfg.namespace}:rechunk@{cursor + attempted}/{total}")
+        result.cut(f"{cfg.namespace}:rechunk@{cursor + attempted}/{total}", cfg=cfg)
     return attempted, identical
 
 

@@ -71,9 +71,9 @@ class CodeIngestResult:
     # `walk`), so the next pass starts each phase at the entry this one
     # starved; `resume` shows them all, first cut first.
     cuts: dict[str, str] = field(default_factory=dict)
-    # Every namespace a cut or a held model call stopped this pass before it was served
-    # in full: its parser tier is not known healthy from this pass.
-    unserved_namespaces: set[str] = field(default_factory=set)
+    # Every (org, namespace) a cut or a held model call stopped this pass before it was
+    # served in full: its parser tier is not known healthy from this pass.
+    unserved: set[tuple[str, str]] = field(default_factory=set)
     budget_s: float = 0.0
     elapsed_s: float = 0.0
     # Per-file resolution reads the rounds answered from memory / sent on.
@@ -92,12 +92,16 @@ class CodeIngestResult:
         if not self.tier_outcomes.get(key):
             self.tier_outcomes[key] = error
 
-    def cut(self, where: str) -> None:
-        """The budget stopped the pass before `where` started. `where` is
-        `<namespace>:<leg>[@detail]`; the first cut per phase is kept and
-        `resume` lists them, first cut first."""
+    def held(self, cfg: RepoConfig) -> None:
+        """A held model call stopped the entry this pass: no failure, not served."""
+        self.unserved.add((cfg.org, cfg.namespace))
+
+    def cut(self, where: str, *, cfg: RepoConfig) -> None:
+        """The budget stopped the pass before `where` started on entry `cfg`. `where`
+        is `<namespace>:<leg>[@detail]`; the first cut per phase is kept and `resume`
+        lists them, first cut first."""
         self.partial = True
-        self.unserved_namespaces.add(where.partition(":")[0])
+        self.unserved.add((cfg.org, cfg.namespace))
         phase = cut_phase(where)
         if phase and phase not in self.cuts:
             self.cuts[phase] = where
