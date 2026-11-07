@@ -272,6 +272,9 @@ def test_payment_and_identity_numbers_are_labelled_on_write(
         "char_limit": None,
         "recall_count": 0,
         "last_recalled_at": None,
+        # Served reads are counted only under include_recall_breakdown.
+        "served_count": None,
+        "last_served_at": None,
         "verified_by": "",
         "verified_at": None,
         "verification": "none",
