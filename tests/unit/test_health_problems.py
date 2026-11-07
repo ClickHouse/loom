@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from server import boot
+from server import __version__, boot
 from server.observability.problems import (
     HealthState,
     Problem,
@@ -465,6 +465,7 @@ def test_health_carries_problems_and_stays_ok_on_the_stock_stack(
     ):
         assert key in body, key
     assert body["fake_llm"] is True and body["fake_embedding"] is True
+    assert body["version"] == __version__
 
 
 def test_health_degraded_under_require_real_providers(

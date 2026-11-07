@@ -2,10 +2,10 @@ import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
 import { installApi } from "./fixtures";
 
-// The Assistant page reads nothing on mount, so the route-wide axe and layout runs see only
-// its starters. This spec draws every panel it has, with the server's full-length text and a
-// long subject id, and checks it at desktop and phone width: no horizontal scroll, no axe
-// violation.
+// The Assistant page reads only its overview on load, so the route-wide axe and layout
+// runs see no inspection, documents or drafts. This spec draws every panel it has, with the
+// server's full-length text and a long subject id, and checks it at desktop and phone
+// width: no horizontal scroll, no axe violation.
 
 const LONG_ID = `user-${"x".repeat(200)}`;
 const OWN_USER =
@@ -573,7 +573,7 @@ const TUNE = {
   model_used: false,
 };
 
-async function openWithEveryPanel(page: Page) {
+async function installAssistant(page: Page) {
   await installApi(page);
   // Routes added after installApi answer first.
   for (const [op, body] of [
@@ -584,38 +584,19 @@ async function openWithEveryPanel(page: Page) {
   ] as const)
     await page.route(`**/v1/${op}`, (r) => r.fulfill({ json: body }));
   await page.goto("/assistant");
-  await expect(page.getByRole("heading", { level: 1, name: "Assistant" })).toBeVisible();
-  await page.getByRole("button", { name: "Documents", exact: true }).click();
-  await page.getByRole("button", { name: "Inspect", exact: true }).click();
-  await expect(page.getByTestId("assistant-documents")).toBeVisible();
-  await page.getByRole("button", { name: "User", exact: true }).click();
-  await page.getByRole("button", { name: "What is in this project?" }).click();
-  await expect(page.getByRole("table", { name: "What this namespace holds" })).toBeVisible();
-  await page.getByLabel("User id").fill(LONG_ID);
-  await page.getByLabel("User id").press("Enter");
-  await expect(page.getByTestId("assistant-inspection")).toBeVisible();
-  await page.getByRole("button", { name: "Configure this project" }).click();
-  await expect(page.getByTestId("assistant-review")).toBeVisible();
-  await page.waitForTimeout(300); // entry animations
+  await expect(page.getByTestId("assistant-populations")).toBeVisible();
 }
 
-// One starter panel is open at a time; each is measured in turn with the rest drawn.
-const STARTER_PANELS: Array<[string, (page: Page) => Promise<void>]> = [
-  [
-    "What is in this project?",
-    async (page) => expect(page.getByRole("table", { name: "What this namespace holds" })).toBeVisible(),
-  ],
-  [
-    "Who are the users in this project?",
-    async (page) => expect(page.getByTestId("assistant-populations")).toBeVisible(),
-  ],
-  ["Show relationships between facts", async (page) => expect(page.getByLabel("Entity")).toBeVisible()],
-];
-
-async function openStarter(page: Page, [name, shown]: (typeof STARTER_PANELS)[number]) {
-  await page.getByRole("button", { name }).click();
-  await shown(page);
-  await page.waitForTimeout(300);
+async function openWithEveryPanel(page: Page) {
+  await installAssistant(page);
+  await page.getByRole("button", { name: "Inspect documents" }).click();
+  await expect(page.getByTestId("assistant-documents")).toBeVisible();
+  // The longest user id, picked from the overview.
+  await page.getByTestId("pick-user").first().click();
+  await expect(page.getByTestId("assistant-inspection")).toBeVisible();
+  await page.getByRole("button", { name: "Draft improvements" }).click();
+  await expect(page.getByTestId("assistant-review")).toBeVisible();
+  await page.waitForTimeout(300); // entry animations
 }
 
 async function clipped(page: Page): Promise<string[]> {
@@ -643,33 +624,63 @@ for (const width of [1400, 375]) {
 
     test("every panel fits the page width", async ({ page }) => {
       await openWithEveryPanel(page);
-      for (const starter of STARTER_PANELS) {
-        await openStarter(page, starter);
-        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-        expect(overflow, starter[0]).toBeLessThanOrEqual(0);
-        expect(await clipped(page), starter[0]).toEqual([]);
-      }
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(overflow).toBeLessThanOrEqual(0);
+      expect(await clipped(page)).toEqual([]);
     });
 
     test("every panel has no WCAG A/AA violations", async ({ page }) => {
       await openWithEveryPanel(page);
-      for (const starter of STARTER_PANELS) {
-        await openStarter(page, starter);
-        expect(await violations(page), starter[0]).toEqual([]);
-      }
+      expect(await violations(page)).toEqual([]);
     });
   });
 }
 
-test("Back from the graph lands on the Relationships starter", async ({ page }) => {
+test("a pick is named by its aria-label, shows a cut id whole in its tip, and focuses the answer", async ({ page }) => {
+  await installAssistant(page);
+  await expect(page.getByRole("button", { name: "ada 3 memories", exact: true })).toBeVisible();
+  const longest = page.getByTestId("pick-user").first();
+  await longest.hover();
+  await expect(page.getByRole("tooltip")).toContainText(LONG_ID);
+  await longest.click();
+  await expect(page.getByTestId("assistant-inspection")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Memories", exact: true })).toBeFocused();
+});
+
+test("blocked picks with a long id fit the phone width", async ({ page }) => {
+  // A token pinned to one user: the overview lists its user, and every pick is blocked.
+  await page.setViewportSize({ width: 375, height: 900 });
+  await installApi(page);
+  const pinned = { ...INVENTORY, scope: { ...INVENTORY.scope, read_scope: "own_user", user_id: LONG_ID } };
+  await page.route("**/v1/namespace.inventory", (r) => r.fulfill({ json: pinned }));
+  await page.goto("/assistant");
+  const pick = page.getByTestId("pick-user").first();
+  await expect(pick).toHaveAttribute("aria-disabled", "true");
+  // The reason describes it; the tip adds the whole id under the reason.
+  await expect(pick).toHaveAccessibleDescription(/bound to one user or session/);
+  await pick.hover();
+  await expect(page.getByRole("tooltip")).toContainText(LONG_ID);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  expect(await clipped(page)).toEqual([]);
+});
+
+test("Back from the graph lands on the button that opened it", async ({ page }) => {
   await installApi(page);
   await page.goto("/assistant");
-  await page.getByRole("button", { name: "Show relationships between facts" }).click();
-  await page.getByLabel("Entity").fill("invoices");
+  await page.getByLabel("Start from (optional)").fill("invoices");
   await page.getByRole("button", { name: "Open the graph" }).click();
   await expect(page).toHaveURL(/\/graph\?.*seed=invoices/);
   await page.goBack();
-  await expect(page.getByRole("button", { name: "Show relationships between facts" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Open the graph" })).toBeFocused();
+});
+
+test("the graph opens with no entity typed", async ({ page }) => {
+  await installApi(page);
+  await page.goto("/assistant");
+  await page.getByRole("button", { name: "Open the graph" }).click();
+  await expect(page).toHaveURL(/\/graph/);
+  expect(page.url()).not.toContain("seed=");
 });
 
 test("a listed or cited row opens in the inspector under its whole writer identity", async ({ page }) => {
@@ -695,7 +706,7 @@ test("a listed or cited row opens in the inspector under its whole writer identi
   await expect.poll(() => gets.length).toBeGreaterThan(0);
   expect(gets.at(-1)).toMatchObject({ memory_key: key, agent: "claude-code", user_id: LONG_ID, session_id: "-" });
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Configure this project" }).click();
+  await page.getByRole("button", { name: "Draft improvements" }).click();
   const before = gets.length;
   await page
     .getByTestId("assistant-review")

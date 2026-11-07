@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+import server
+
 ROOT = Path(__file__).resolve().parents[2]
 CLAUDE = ROOT / "integrations" / "claude-code-plugin"
 CODEX = ROOT / "integrations" / "codex-plugin"
@@ -234,6 +236,17 @@ def test_both_plugins_ship_one_version() -> None:
         ).read_text()
     )["version"]
     assert codex == claude
+
+
+def test_both_plugins_declare_one_minimum_server_version() -> None:
+    """Both manifests name one X.Y.Z minimum, no newer than the server (when it rises: .claude/rules/plugins.md)."""
+    codex = json.loads((CODEX / ".codex-plugin" / "plugin.json").read_text())
+    claude = json.loads((CLAUDE / ".claude-plugin" / "plugin.json").read_text())
+    minimum = claude["minServerVersion"]
+    assert codex["minServerVersion"] == minimum
+    assert re.fullmatch(r"\d+\.\d+\.\d+", minimum), minimum
+    current = tuple(int(p) for p in server.__version__.split("-")[0].split("."))
+    assert tuple(int(p) for p in minimum.split(".")) <= current
 
 
 def test_listing_icons_are_files_the_plugins_ship() -> None:

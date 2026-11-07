@@ -1,9 +1,7 @@
 import { fmtInt } from "../../lib/format";
 import { Badge } from "@clickhouse/click-ui/Badge";
-import { Button } from "@clickhouse/click-ui/Button";
 import { Table } from "@clickhouse/click-ui/Table";
 import type { ChunkStats, ChunkingSample, NamespaceTune, TuneApply, TuneProposal, TuneTarget } from "../../api";
-import { Unavailable } from "../../components/ui";
 import { AgentBadge } from "../../components/AgentBadge";
 import { KeyButton } from "../../components/ui/KeyButton";
 import { CodeBlock } from "./CodeBlock";
@@ -21,16 +19,9 @@ const TARGET_LABEL: Record<TuneTarget, string> = {
 // change, not memories, and their evidence cites source URIs.
 const DOCUMENT_TARGETS = new Set<TuneTarget>(["settings.knowledge_chunking", "settings.document_extractors_json"]);
 
-/** The drafts namespace.tune returned. Each is a proposal only: Apply is not in this
- *  release, so the panel names the write and guard a person would make, and changes nothing. */
-export function ReviewChanges({ tune }: { tune: NamespaceTune | null }) {
-  if (!tune) {
-    return (
-      <p className="text-sm text-text-muted">
-        No drafts yet. "Configure this project" reads the namespace and drafts changes to what creates its memories.
-      </p>
-    );
-  }
+/** The drafts namespace.tune returned. Each is a proposal only: the page applies none, so
+ *  each card names the write and guard a person would make, and changes nothing. */
+export function ReviewChanges({ tune }: { tune: NamespaceTune }) {
   return (
     <div className="space-y-4" data-testid="assistant-review">
       {tune.proposals.length === 0 ? (
@@ -87,16 +78,17 @@ function writeName(a: TuneApply): string {
   return a.op;
 }
 
-/** Why Apply is unavailable, and who would make the change instead. */
-function applyReason(p: TuneProposal): string {
+/** A required role as a reader says it: `platform_admin` is "platform admin". */
+const roleName = (role: string) => role.replaceAll("_", " ");
+
+/** Who makes the change and how, since this page applies no draft. */
+function howToApply(p: TuneProposal): string {
   const a = p.apply;
+  const who = `A ${roleName(a.required_role)}`;
   if (a.via === "environment")
-    return `Apply is not in this release. A ${a.required_role} sets ${a.op} in the deployment; it is in force once each server and worker restarts.`;
-  if (a.via === "admin_route")
-    return `Apply is not in this release. A ${a.required_role} sends POST /v1/admin/${a.op} with the arguments below.`;
-  return a.args_complete
-    ? `Apply is not in this release. A ${a.required_role} on this namespace sends ${a.op} with the arguments below.`
-    : "Apply is not in this release, and no single call applies this.";
+    return `${who} sets the variable below in the deployment; it takes effect once each server and worker restarts.`;
+  if (a.via === "admin_route") return `${who} sends the admin request below.`;
+  return a.args_complete ? `${who} on this namespace sends the request below.` : "No single request applies this.";
 }
 
 /** What the line above a write's arguments says they are. */
@@ -111,7 +103,7 @@ function ApplyBlock({ apply: a, testId }: { apply: TuneApply; testId: string }) 
   return (
     <div className="space-y-1" data-via={a.via ?? "op"}>
       <p className="text-xs text-text-muted">
-        <span className="font-mono">{writeName(a)}</span> · {a.required_role} · {a.guard}
+        <span className="font-mono">{writeName(a)}</span> · {roleName(a.required_role)} · {a.guard}
       </p>
       <p className="text-xs text-text-muted">{argsCaption(a)}</p>
       <CodeBlock testId={testId}>{JSON.stringify(a.args, null, 2)}</CodeBlock>
@@ -263,11 +255,9 @@ function ProposalCard({ proposal: p }: { proposal: TuneProposal }) {
         {p.limits && ` ${p.limits}`}
       </p>
       <div className="space-y-2">
-        <Unavailable reason={applyReason(p)}>
-          <Button type="secondary" htmlType="button">
-            Apply
-          </Button>
-        </Unavailable>
+        <p className="text-xs text-text" data-testid="how-to-apply">
+          <span className="font-medium">How to apply:</span> {howToApply(p)}
+        </p>
         <ApplyBlock apply={p.apply} testId="proposal-args" />
         {(p.apply_also?.length ?? 0) > 0 && (
           <div className="space-y-2" data-testid="proposal-also">

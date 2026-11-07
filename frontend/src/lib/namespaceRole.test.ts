@@ -1,6 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
-import { canWrite, roleOnNamespace, canEditGuide } from "./namespaceRole";
+import {
+  canWrite,
+  roleOnNamespace,
+  canEditGuide,
+  resetNamespaceRoleCache,
+  useNamespaceRoleRead,
+} from "./namespaceRole";
+import { useStore } from "./state";
+
+const listMine = vi.fn<(org: string) => Promise<MyNamespaceEntry[]>>();
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  listMine: (org: string) => listMine(org),
+}));
 
 // The role chip and the write-CTA gate share this one rule.
 
@@ -77,5 +91,67 @@ describe("canEditGuide", () => {
     expect(canEditGuide("viewer", "team")).toBe(false);
     expect(canEditGuide(null, "team")).toBe(false);
     expect(canEditGuide("admin", "col-me-alice")).toBe(false);
+  });
+});
+
+describe("useNamespaceRoleRead", () => {
+  afterEach(() => {
+    resetNamespaceRoleCache();
+    listMine.mockReset();
+    useStore.setState({ whoami: null, identity: null, myNamespaces: null });
+  });
+
+  const signIn = () =>
+    useStore.setState({
+      whoami: user(["USER"]),
+      identity: { org: "dev", namespace: "team", agent: "loom-ui" },
+      myNamespaces: null,
+    });
+
+  it("is loading until list_mine answers, then holds the role", async () => {
+    let answer: (rows: MyNamespaceEntry[]) => void = () => {};
+    listMine.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    signIn();
+    const { result } = renderHook(() => useNamespaceRoleRead("team"));
+    expect(result.current).toEqual({ role: null, loading: true });
+    await act(async () => answer([row("team", "viewer")]));
+    expect(result.current).toEqual({ role: "viewer", loading: false });
+  });
+
+  it("stops loading when list_mine fails, with the role unknown", async () => {
+    listMine.mockRejectedValueOnce(new Error("down"));
+    signIn();
+    const { result } = renderHook(() => useNamespaceRoleRead("team"));
+    await act(async () => {});
+    expect(result.current).toEqual({ role: null, loading: false });
+  });
+
+  it("drops the rows of the org it left, and loads again for the new one", async () => {
+    listMine.mockResolvedValueOnce([row("team", "writer")]);
+    signIn();
+    const { result } = renderHook(() => useNamespaceRoleRead("team"));
+    await act(async () => {});
+    expect(result.current).toEqual({ role: "writer", loading: false });
+    let answer: (rows: MyNamespaceEntry[]) => void = () => {};
+    listMine.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    act(() => useStore.setState({ identity: { org: "acme", namespace: "team", agent: "loom-ui" } }));
+    expect(result.current).toEqual({ role: null, loading: true });
+    await act(async () => answer([row("team", "viewer")]));
+    expect(result.current).toEqual({ role: "viewer", loading: false });
+    expect(listMine).toHaveBeenLastCalledWith("acme");
+  });
+
+  it("is not loading before an org is chosen", () => {
+    useStore.setState({ whoami: user(["USER"]), identity: null, myNamespaces: null });
+    const { result } = renderHook(() => useNamespaceRoleRead("team"));
+    expect(result.current).toEqual({ role: null, loading: false });
+  });
+
+  it("reads nothing when the store already holds the rows", () => {
+    signIn();
+    useStore.setState({ myNamespaces: [row("team", "writer")] });
+    const { result } = renderHook(() => useNamespaceRoleRead("team"));
+    expect(result.current).toEqual({ role: "writer", loading: false });
+    expect(listMine).not.toHaveBeenCalled();
   });
 });

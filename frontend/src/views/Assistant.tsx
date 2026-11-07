@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -22,48 +22,32 @@ import { Loading, PageHeader, Panel, SectionHeading, Unavailable } from "../comp
 import { PageContainer } from "../layout/PageContainer";
 import { canCall } from "../lib/canCall";
 import { openGraphAt } from "../lib/graphLink";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { useStore } from "../lib/state";
 import { DocumentInspection } from "./assistant/DocumentInspection";
 import { Inspection } from "./assistant/Inspection";
 import { InventoryPopulations, InventoryScopeNote, InventorySections } from "./assistant/Inventory";
 import { ReviewChanges } from "./assistant/ReviewChanges";
+import { INSPECTED_AS, SUBJECT_COPY, shownName } from "./assistant/subjects";
 import { tokenReadScope } from "./assistant/tokenScope";
 import { useScopedRead } from "./assistant/useScopedRead";
 
 /**
- * Assistant — inspect what a user, agent or session remembers and what the namespace's
- * documents are, and draft changes to the categories, instructions and guide that create
- * those memories and to the settings that cut and extract the documents. Every read is
- * deterministic (no model) and read-only: namespace.inventory, memory.inspect,
- * knowledge.inspect and namespace.tune, each on a click, never on mount. A draft is never
- * applied here.
+ * Assistant — what a namespace holds and who appears in it (namespace.inventory, read on
+ * load), what one user, agent or session remembers (memory.inspect), what its documents are
+ * (knowledge.inspect), and drafts of changes to what creates them (namespace.tune). Every
+ * read is deterministic (no model) and read-only; a draft is never applied here.
  */
 
-// Documents are the namespace's, so that subject takes no id.
-type Subject = InspectSubject | "documents";
-
-const SUBJECTS: Array<{ value: Subject; label: string }> = [
-  { value: "user", label: "User" },
-  { value: "agent", label: "Agent" },
-  { value: "session", label: "Session" },
-  { value: "documents", label: "Documents" },
-];
-
-type Starter = "relationships" | "inventory" | "analyze" | "users" | "configure";
-
-const STARTERS: Array<{ id: Starter; label: string }> = [
-  { id: "relationships", label: "Show relationships between facts" },
-  { id: "inventory", label: "What is in this project?" },
-  { id: "analyze", label: "Analyze one user's memories" },
-  { id: "users", label: "Who are the users in this project?" },
-  { id: "configure", label: "Configure this project" },
-];
+const SUBJECT_OPTIONS = (Object.keys(SUBJECT_COPY) as InspectSubject[]).map((value) => ({
+  value,
+  label: SUBJECT_COPY[value].label,
+}));
 
 export function Assistant() {
   const identity = useStore((s) => s.identity);
   const whoami = useStore((s) => s.whoami);
-  const role = useNamespaceRole(identity?.namespace ?? "");
+  const { role, loading: roleLoading } = useNamespaceRoleRead(identity?.namespace ?? "");
   // The answers belong to the namespace and to the token's read scope: a token signed in
   // again with another scope (the page stays mounted) drops what the old one read.
   const tokenScope = tokenReadScope(storedToken());
@@ -72,21 +56,13 @@ export function Assistant() {
   const inspection = useScopedRead<MemoryInspection>(scope);
   const documents = useScopedRead<KnowledgeInspection>(scope);
   const tune = useScopedRead<NamespaceTune>(scope);
-  // The open starter, with the scope it was opened in: another namespace or token shows none.
-  const [opened, setOpened] = useState<{ scope: string; id: Starter } | null>(null);
-  const starter = opened?.scope === scope ? opened.id : null;
-  const [subject, setSubject] = useState<Subject>("user");
+  const [subject, setSubject] = useState<InspectSubject>("user");
   const [subjectId, setSubjectId] = useState("");
   const [entity, setEntity] = useState("");
 
-  if (!identity) return null;
-  const where = { org: identity.org, namespace: identity.namespace };
-  // Each read is gated on its own op. All four are VIEWER, which every namespace role
-  // reaches, so a canCall refusal means the role is unknown (list_mine not read, failed, or
-  // with no row for the namespace). The server refuses memory.inspect and namespace.tune to a
-  // token pinned to one user or session (neither is a scoped op); namespace.inventory and
-  // knowledge.inspect are scoped and answer it. The token's claims say so up front; for an
-  // end-user token, or behind a proxy (no token here), only the inventory's answer does.
+  // Each read is gated on its own op. All four are VIEWER, so a canCall refusal means the role
+  // is unknown; the server refuses memory.inspect and namespace.tune to a pinned token. With
+  // no claim to read (an end-user token, or behind a proxy), the inventory's answer says so.
   const narrowed =
     tokenScope?.readScope != null || (inventory.data !== null && inventory.data.scope.read_scope !== "namespace");
   // A scoped read under `own_session`, or under `own_user` with no `read_user_id`, needs the
@@ -95,44 +71,63 @@ export function Assistant() {
     tokenScope?.readScope === "own_session" || (tokenScope?.readScope === "own_user" && !tokenScope.readUserId);
   const gate = (op: "namespace.inventory" | "knowledge.inspect" | "memory.inspect" | "namespace.tune") => {
     const scoped = op === "namespace.inventory" || op === "knowledge.inspect";
-    return !canCall(op, role, whoami)
-      ? "Your role on this namespace is not known."
-      : incomplete && scoped
-        ? "Your token's read scope needs a user or session id this page does not send."
-        : narrowed && !scoped
-          ? "Your token is bound to one user or session; inspecting and drafting need a token for the whole namespace."
-          : null;
+    if (roleLoading) return "Your role on this namespace is still loading.";
+    if (!canCall(op, role, whoami)) return "Your role on this namespace is not known.";
+    if (incomplete && scoped) return "Your token's read scope needs a user or session id this page does not send.";
+    if (narrowed && !scoped)
+      return "Your token is bound to one user or session; inspecting memories and drafting need a token for the whole namespace.";
+    return null;
   };
-  const starterGate: Record<Starter, string | null> = {
-    relationships: null,
-    inventory: gate("namespace.inventory"),
-    users: gate("namespace.inventory"),
-    analyze: gate("memory.inspect"),
-    configure: gate("namespace.tune"),
-  };
-  const inspectBlocked =
-    subject === "documents"
-      ? gate("knowledge.inspect")
-      : (gate("memory.inspect") ?? (subjectId.trim() ? null : "Enter an id to inspect."));
+  const overviewGate = gate("namespace.inventory");
+  const memoryGate = gate("memory.inspect");
+  const documentsGate = gate("knowledge.inspect");
+  const tuneGate = gate("namespace.tune");
+  const copy = SUBJECT_COPY[subject];
+  const suggestions = inventory.data?.populations.find((p) => INSPECTED_AS[p.population] === subject)?.top ?? [];
+  const suggest = suggestions.length > 0;
+  const emptyReason = suggest && copy.pick ? copy.pick : copy.empty;
+  // Only users and agents are picked; authors and members are listed, not inspected.
+  const pickable = inventory.data?.populations.some((p) => INSPECTED_AS[p.population] && p.top.length > 0) ?? false;
+  const inspectBlocked = memoryGate ?? (subjectId.trim() ? null : emptyReason);
 
-  const start = (id: Starter) => {
-    setOpened({ scope, id });
-    // Each starter reads again on a click, so its answer is as fresh as the click.
-    if (id === "inventory" || id === "users") inventory.run((signal) => namespaceInventory(where, { signal }));
-    if (id === "analyze") {
-      // From Documents the id field is not mounted yet: render it before focusing it.
-      flushSync(() => setSubject("user"));
-      document.getElementById("assistant-subject-id")?.focus();
-    }
-    if (id === "configure") tune.run((signal) => tuneNamespace(where, { signal }));
+  const org = identity?.org ?? "";
+  const namespace = identity?.namespace ?? "";
+  const { run: runInventory } = inventory;
+  const readOverview = useCallback(
+    () => runInventory((signal) => namespaceInventory({ org, namespace }, { signal })),
+    [runInventory, org, namespace],
+  );
+  // The overview is the page's first answer: read on load, as soon as the role allows it,
+  // again when the namespace or token scope changes, and on Refresh.
+  useEffect(() => {
+    if (org && overviewGate === null) readOverview();
+  }, [org, overviewGate, readOverview]);
+  // An id or entity picked or typed in one namespace is not meant for the next one. A new
+  // token on the same namespace drops the answers (they are keyed by scope) but keeps what
+  // was typed: it still names someone in this namespace.
+  const [formNamespace, setFormNamespace] = useState(`${org}/${namespace}`);
+  if (formNamespace !== `${org}/${namespace}`) {
+    setFormNamespace(`${org}/${namespace}`);
+    setSubjectId("");
+    setEntity("");
+  }
+
+  if (!identity) return null;
+  const where = { org, namespace };
+
+  const inspect = (who: InspectSubject, id: string) => {
+    inspection.run((signal) => inspectMemories(where, who, id, { signal }));
   };
-  const runInspect = () => {
-    if (subject === "documents") {
-      documents.run((signal) => inspectKnowledge(where, { signal }));
-      return;
-    }
-    const id = subjectId.trim();
-    if (id) inspection.run((signal) => inspectMemories(where, subject, id, { signal }));
+  // A pick in the overview fills the form, inspects, and moves the focus to the answer,
+  // which is further down the page. The read runs inside flushSync: the Memories heading
+  // mounts once it is busy, and must exist before it is focused.
+  const pick = (who: InspectSubject, id: string) => {
+    flushSync(() => {
+      setSubject(who);
+      setSubjectId(id);
+      inspect(who, id);
+    });
+    document.getElementById("assistant-inspection-heading")?.focus();
   };
 
   return (
@@ -141,137 +136,124 @@ export function Assistant() {
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
       <p className="text-sm text-text-muted mb-4 max-w-[72ch]">
-        Inspect what a user, agent or session remembers in this namespace, or what its documents are, then draft changes
-        to the categories, extraction instructions and guide that create those memories and to the settings that cut and
-        extract the documents. Everything here reads; nothing is changed, and a draft is applied only by a person who
-        makes its write.
+        See what this namespace holds and what each user, agent or session remembers, then draft improvements. Nothing
+        on this page changes your data.
       </p>
 
-      <Panel as="section" aria-labelledby="assistant-scope" className="mb-5">
+      <Panel as="section" aria-labelledby="assistant-overview" className="mb-5">
         <SectionHeading
-          id="assistant-scope"
+          id="assistant-overview"
           level={2}
-          label="Scope"
-          hint="A user, agent or session filters rows inside this namespace; it never reaches rows your token cannot read. Documents are the namespace's. Switch namespaces in the header."
+          label="Overview"
+          actions={
+            <Unavailable reason={overviewGate}>
+              <BusyButton type="secondary" htmlType="button" busy={inventory.busy} onClick={readOverview}>
+                Refresh
+              </BusyButton>
+            </Unavailable>
+          }
         />
+        {roleLoading ? (
+          <Loading layout="inline" label="Loading the overview" />
+        ) : overviewGate ? (
+          <p className="text-sm text-text-muted">{overviewGate}</p>
+        ) : (
+          <>
+            <ReadState read={inventory} label="the overview" />
+            {inventory.data && (
+              <div aria-busy={inventory.busy || undefined} className="space-y-4">
+                <InventoryScopeNote inventory={inventory.data} />
+                <section aria-labelledby="assistant-holds">
+                  <SectionHeading id="assistant-holds" level={3} label="What this namespace holds" />
+                  <InventorySections inventory={inventory.data} />
+                </section>
+                <section aria-labelledby="assistant-people">
+                  <SectionHeading
+                    id="assistant-people"
+                    level={3}
+                    label="Who appears here"
+                    hint={pickable && !memoryGate ? "Pick a user or agent to see what it remembers." : undefined}
+                  />
+                  <InventoryPopulations inventory={inventory.data} onPick={pick} pickBlocked={memoryGate} />
+                </section>
+                <ReadAt time={inventory.data.computed_at} />
+              </div>
+            )}
+          </>
+        )}
+      </Panel>
+
+      <Panel as="section" aria-labelledby="assistant-inspect" className="mb-5">
+        <SectionHeading id="assistant-inspect" level={2} label="Inspect" />
         <form
           className="flex flex-wrap items-end gap-3"
+          aria-label="Inspect memories"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!inspectBlocked) runInspect();
+            if (!inspectBlocked) inspect(subject, subjectId.trim());
           }}
         >
           <ButtonGroup
-            aria-label="Subject"
-            options={SUBJECTS}
+            aria-label="Whose memories"
+            options={SUBJECT_OPTIONS}
             selected={subject}
-            onClick={(v) => setSubject(v as Subject)}
+            onClick={(v) => {
+              if (v === subject) return; // ButtonGroup calls onClick for the selected option too
+              setSubject(v as InspectSubject);
+              setSubjectId(""); // a user id is not an agent name or a session id
+            }}
           />
-          {subject === "documents" ? (
-            <p className="text-sm text-text-muted pb-2">Every document of this namespace.</p>
-          ) : (
-            <div className="w-64">
-              <TextField
-                id="assistant-subject-id"
-                label={`${SUBJECTS.find((s) => s.value === subject)?.label} id`}
-                value={subjectId}
-                onChange={(v) => setSubjectId(v)}
-              />
-            </div>
-          )}
-          {inspectBlocked ? (
-            <Unavailable reason={inspectBlocked}>
-              <Button type="primary" htmlType="submit">
-                Inspect
-              </Button>
-            </Unavailable>
-          ) : (
-            // BusyButton keeps the focus while the read runs; Unavailable needs a ref it
-            // does not forward, so a blocked Inspect is the plain button.
-            <BusyButton
-              type="primary"
-              htmlType="submit"
-              busy={subject === "documents" ? documents.busy : inspection.busy}
-            >
-              Inspect
+          <div className="w-64 max-w-full">
+            {/* A text input with a datalist is the native combobox: it suggests the users or
+                agents the overview found and still takes any other id. */}
+            <TextField
+              id="assistant-subject-id"
+              label={copy.field}
+              placeholder={suggest ? "Pick or type" : undefined}
+              list={suggest ? "assistant-subject-suggestions" : undefined}
+              autoComplete="off"
+              value={subjectId}
+              onChange={(v) => setSubjectId(v)}
+            />
+            {suggest && (
+              <datalist id="assistant-subject-suggestions">
+                {suggestions.map((s) => (
+                  <option key={s.name} value={s.name}>
+                    {shownName(subject, s.name)}
+                  </option>
+                ))}
+              </datalist>
+            )}
+          </div>
+          <Unavailable reason={inspectBlocked}>
+            <BusyButton type="primary" htmlType="submit" busy={inspection.busy}>
+              Inspect memories
             </BusyButton>
-          )}
+          </Unavailable>
         </form>
-      </Panel>
-
-      <Panel as="section" aria-labelledby="assistant-starters" className="mb-5">
-        <SectionHeading id="assistant-starters" level={2} label="Start with" />
-        <div className="flex flex-wrap gap-2">
-          {STARTERS.map((s) => (
-            <Unavailable key={s.id} reason={starterGate[s.id]}>
-              <Button
-                type="secondary"
-                htmlType="button"
-                onClick={() => start(s.id)}
-                data-focus-key={`assistant-starter-${s.id}`}
-              >
-                {s.label}
-              </Button>
-            </Unavailable>
-          ))}
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Unavailable reason={documentsGate}>
+            <BusyButton
+              type="secondary"
+              htmlType="button"
+              busy={documents.busy}
+              onClick={() => documents.run((signal) => inspectKnowledge(where, { signal }))}
+              // While blocked, Unavailable's reason replaces this description.
+              aria-describedby="assistant-documents-what"
+            >
+              Inspect documents
+            </BusyButton>
+          </Unavailable>
+          <p id="assistant-documents-what" className="text-sm text-text-muted">
+            Every document here: formats, what search serves, and ingest health.
+          </p>
         </div>
       </Panel>
 
-      {starter === "relationships" && (
-        <Panel as="section" aria-labelledby="assistant-graph" className="mb-5">
-          <SectionHeading
-            id="assistant-graph"
-            level={2}
-            label="Relationships"
-            hint="The graph walks the facts you can read from one entity, with each edge's source facts and validity. A connection is not a cause."
-          />
-          <form
-            className="flex flex-wrap items-end gap-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              // Back lands on the page with its panels closed, focused on the starter.
-              if (entity.trim())
-                openGraphAt(entity, { from: "Assistant", focusKey: "assistant-starter-relationships" });
-            }}
-          >
-            <div className="w-64">
-              <TextField id="assistant-entity" label="Entity" value={entity} onChange={(v) => setEntity(v)} />
-            </div>
-            <Unavailable reason={entity.trim() ? null : "Enter an entity to walk from."}>
-              <Button type="secondary" htmlType="submit">
-                Open the graph
-              </Button>
-            </Unavailable>
-          </form>
-        </Panel>
-      )}
-
-      {(starter === "inventory" || starter === "users") && (
-        <Panel as="section" aria-labelledby="assistant-inventory-heading" className="mb-5">
-          <SectionHeading
-            id="assistant-inventory-heading"
-            level={2}
-            label={starter === "inventory" ? "What this namespace holds" : "Who appears in this namespace"}
-          />
-          <ReadState read={inventory} label="the inventory" />
-          {inventory.data && (
-            <div aria-busy={inventory.busy || undefined}>
-              <InventoryScopeNote inventory={inventory.data} />
-              {starter === "inventory" ? (
-                <InventorySections inventory={inventory.data} />
-              ) : (
-                <InventoryPopulations inventory={inventory.data} />
-              )}
-              <ReadAt time={inventory.data.computed_at} />
-            </div>
-          )}
-        </Panel>
-      )}
-
       {(inspection.busy || inspection.data || inspection.error) && (
         <Panel as="section" aria-labelledby="assistant-inspection-heading" className="mb-5">
-          <SectionHeading id="assistant-inspection-heading" level={2} label="Inspection" />
-          <ReadState read={inspection} label="the inspection" />
+          <SectionHeading id="assistant-inspection-heading" level={2} label="Memories" focusable />
+          <ReadState read={inspection} label="the memories" />
           {inspection.data && (
             <div aria-busy={inspection.busy || undefined}>
               <Inspection result={inspection.data} />
@@ -294,20 +276,67 @@ export function Assistant() {
         </Panel>
       )}
 
-      <Panel as="section" aria-labelledby="assistant-review-heading" className="mb-5">
+      <Panel as="section" aria-labelledby="assistant-graph" className="mb-5">
         <SectionHeading
-          id="assistant-review-heading"
+          id="assistant-graph"
           level={2}
-          label="Review changes"
-          count={tune.data?.proposals.length}
-          hint="Drafts from namespace.tune, each naming its target, current value, evidence and the write that would apply it. Apply is not in this release."
+          label="Relationships"
+          hint="The graph shows how the facts in your memories connect."
         />
-        <ReadState read={tune} label="the drafts" />
-        {!(tune.busy && !tune.data) && (
-          <div aria-busy={tune.busy || undefined}>
-            <ReviewChanges tune={tune.data} />
-            {tune.data && <ReadAt time={tune.data.computed_at} />}
+        <form
+          className="flex flex-wrap items-end gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            // Back lands on this page, focused on the button. With no entity the graph
+            // opens on its own starting points and suggestions.
+            openGraphAt(entity, { from: "Assistant", focusKey: "assistant-open-graph" });
+          }}
+        >
+          <div className="w-64 max-w-full">
+            <TextField
+              id="assistant-entity"
+              label="Start from (optional)"
+              placeholder="A person, project or thing"
+              value={entity}
+              onChange={(v) => setEntity(v)}
+            />
           </div>
+          <Button type="secondary" htmlType="submit" data-focus-key="assistant-open-graph">
+            Open the graph
+          </Button>
+        </form>
+      </Panel>
+
+      <Panel as="section" aria-labelledby="assistant-improve" className="mb-5">
+        <SectionHeading id="assistant-improve" level={2} label="Improve this namespace" />
+        <p className="text-sm text-text-muted mb-3 max-w-[72ch]">
+          Draft changes to the categories, guide and extraction instructions that shape new memories, and to how
+          documents are split. Drafts are suggestions: each says what to change, why, and who applies it.
+        </p>
+        <Unavailable reason={tuneGate}>
+          <BusyButton
+            type="secondary"
+            htmlType="button"
+            busy={tune.busy}
+            onClick={() => tune.run((signal) => tuneNamespace(where, { signal }))}
+          >
+            Draft improvements
+          </BusyButton>
+        </Unavailable>
+        <div className="mt-3">
+          <ReadState read={tune} label="the drafts" />
+        </div>
+        {tune.data && (
+          <section className="mt-4" aria-labelledby="assistant-review-heading" aria-busy={tune.busy || undefined}>
+            <SectionHeading
+              id="assistant-review-heading"
+              level={3}
+              label="Review changes"
+              count={tune.data.proposals.length}
+            />
+            <ReviewChanges tune={tune.data} />
+            <ReadAt time={tune.data.computed_at} />
+          </section>
         )}
       </Panel>
     </PageContainer>
