@@ -1392,7 +1392,7 @@ def test_merges_after_a_later_part_of_the_sheet_still_count_a_cut(
 @pytest.mark.parametrize("start", [',"a', '"a,', ',"', "'a;"])
 def test_the_delimiter_is_sniffed_in_bounded_time(start: str) -> None:
     data = (start * (70_000 // len(start)) + "\n1\n").encode()
-    _within(5.0, lambda: extract(data, "s.csv"))
+    _within(1.0, lambda: extract(data, "s.csv"))
 
 
 def test_shared_strings_past_their_bound_stop_being_read_and_the_sheets_are_read(
