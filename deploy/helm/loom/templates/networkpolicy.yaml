@@ -9,7 +9,7 @@
 {{- /* Off: every pod and every address but `egressExcept`; pods are named apart
 because engines differ on whether an ipBlock matches pod IPs. A missing
 `guardMetadata` counts as on: `helm upgrade --reuse-values` keeps the old values. */}}
-{{- $guarded := and (ne $guard false) .Values.networkPolicy.egressExcept }}
+{{- $guarded := and (ne $guard false) $except }}
 {{- if or .Values.networkPolicy.enabled $guarded }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

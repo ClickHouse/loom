@@ -427,12 +427,13 @@ jobs:
           refused "$token" "${extractor[@]}" --set env.LOOM_DOCUMENT_EXTRACTOR_TOKEN=x
           refused "$token" "${extractor[@]}" --set "extraEnv[0].name=LOOM_DOCUMENT_EXTRACTOR_TOKEN"
           refused "$token" "${extractor[@]}" --set settingsFile.document_extractor_token=x
-          # guardMetadata is a bool; a string or number is refused by name, with the policy on or off.
+          # guardMetadata is a bool and egressExcept a list; anything else is refused by name.
           refused "networkPolicy.guardMetadata must be true or false" --set-string networkPolicy.guardMetadata=false
           refused "networkPolicy.guardMetadata must be true or false" --set networkPolicy.guardMetadata=0
           refused "networkPolicy.guardMetadata must be true or false" --set networkPolicy.enabled=true --set-string networkPolicy.guardMetadata=true
           refused "networkPolicy.egressExcept must be a list of CIDRs" --set networkPolicy.egressExcept=169.254.169.254/32
           refused "networkPolicy.egressExcept must be a list of CIDRs" --set networkPolicy.egressExcept=
+          refused "networkPolicy.egressExcept must be a list of CIDRs" --set networkPolicy.egressExcept=0
       - name: install PyYAML for the render gates
         run: python3 -m pip install --quiet --user pyyaml==6.0.3
       # What the extractor's pods can be reached by and reach, read off the render.
