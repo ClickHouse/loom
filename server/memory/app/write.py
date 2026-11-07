@@ -329,6 +329,10 @@ async def _set_expiry(
         expires_at = None
     elif input.ttl_seconds is not None:
         expires_at = datetime.now(UTC) + timedelta(seconds=input.ttl_seconds)
+    elif existing is not None and "expire" in _lock.REFUSES.get(_lock.effective_mode(existing), ()):
+        # A lock that refuses an expiry change keeps the row's own, lapsed or not: the
+        # type's retention is a default for a row without one, not a change to this one.
+        expires_at = existing.expires_at
     elif (
         existing is not None
         and existing.expires_at is not None
@@ -684,10 +688,6 @@ async def _memory_set_once(input: MemorySetInput, *, embedder: Any = None) -> Me
         return _pin_refusal
 
     expires_at = await _set_expiry(input, existing, _cfg_task, resolved_memory_type)
-    # A type's retention stamped on a row with no live expiry is an expiry change too: a
-    # read_only lock refuses it, as it refuses a ttl_seconds and the sensitive window.
-    if existing is not None and expires_at is not None and expires_at != existing.expires_at:
-        _lock.assert_unlocked(existing, "expire", op="memory.set")
 
     w = _SetWrite(
         input=input,

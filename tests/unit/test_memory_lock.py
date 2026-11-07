@@ -9,7 +9,8 @@ tighten, clear reports what it left behind.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -233,32 +234,45 @@ async def test_set_refuses_a_changed_value_under_read_only(monkeypatch: pytest.M
     assert e.value.detail["refused_action"] == "expire"
 
 
-@pytest.mark.asyncio
-async def test_set_refuses_a_type_retention_on_a_read_only_row(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A restatement with new tags stamps the type's retention on a row with no expiry: that
-    # is an expiry change, which read_only refuses.
-    from types import SimpleNamespace
+async def _expiry_after_set(
+    monkeypatch: pytest.MonkeyPatch, existing: MemoryRow
+) -> datetime | None:
+    """The expiry a same-value memory.set gives `existing`, under a type keeping 30 days."""
+    from server.memory.app import namespace_types
+    from server.memory.app.conflicts import WriteConfig
 
-    from server.memory.app import conflicts
-
-    async def retention(*_: Any) -> Any:
-        return SimpleNamespace(retention_days=30)
-
-    monkeypatch.setattr(conflicts, "type_config_for", retention)
-    _stub_repo(monkeypatch, _row(lock_mode="read_only", lock_reason="hold"))
-    with pytest.raises(HTTPException) as e:
-        await write_mod.handle_memory_set(
-            MemorySetInput(
-                **_ID,
-                memory_key="deploy_window",
-                value="Tue and Thu only",
-                tags=["ops"],
-                classify=False,
-            )
+    async def thirty_days(*_: Any) -> Any:
+        return namespace_types.TypeConfig(
+            retention_days=30, dedup_threshold=None, hot_quota=0, conflict_policy=""
         )
-    assert e.value.status_code == 423 and e.value.detail["refused_action"] == "expire"
+
+    monkeypatch.setattr(namespace_types, "get_type_config", thirty_days)
+    restatement = MemorySetInput(
+        **_ID, memory_key="deploy_window", value="Tue and Thu only", classify=False
+    )
+    no_prefetch = asyncio.get_running_loop().create_future()
+    no_prefetch.set_result(WriteConfig())
+    return await write_mod._set_expiry(restatement, existing, no_prefetch, "semantic")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expires_at", [None, _NOW - timedelta(days=1), _NOW + timedelta(days=2)])
+async def test_a_read_only_row_keeps_its_expiry_through_a_restatement(
+    monkeypatch: pytest.MonkeyPatch, expires_at: datetime | None
+) -> None:
+    # The type's retention is a default for a row without an expiry; a read_only row keeps
+    # its own, none or lapsed included.
+    row = _row(lock_mode="read_only", lock_reason="hold", expires_at=expires_at)
+    assert await _expiry_after_set(monkeypatch, row) == expires_at
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lock_mode", ["", "no_delete"])
+async def test_a_row_its_lock_lets_expire_takes_the_type_retention(
+    monkeypatch: pytest.MonkeyPatch, lock_mode: str
+) -> None:
+    expires_at = await _expiry_after_set(monkeypatch, _row(lock_mode=lock_mode))
+    assert expires_at is not None and expires_at - datetime.now(UTC) > timedelta(days=29)
 
 
 @pytest.mark.asyncio
