@@ -188,8 +188,9 @@ flowchart TD
 ### The federated cascade
 
 Data Loom sent elsewhere is erased in the same saga. The external steps fail closed: a
-backend that cannot confirm deletion (5xx, timeout, network drop) fails the step, and the
-worker retries. "Nothing to delete" (404, zero rows) counts as success.
+backend that cannot confirm deletion (5xx, timeout, network drop, a Langfuse health answer
+with no version) fails the step, and the worker retries. "Nothing to delete" (zero matching
+rows, or a ClickStack table the service does not have) counts as success.
 
 | Backend    | Configured by                                              | Erases                                                                                            |
 | ---------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
