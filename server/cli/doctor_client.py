@@ -102,7 +102,7 @@ def server_check(base_url: str, source: str, get_json: GetJson) -> tuple[Check, 
             {},
         )
     problems = body.get("problems") if isinstance(body, dict) else None
-    # the codes that degrade it: a repository's failing tier is an error that does not
+    # the error codes that degrade it (a repository's failing tier does not)
     errors = [
         p.get("code")
         for p in problems or []

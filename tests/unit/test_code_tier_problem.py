@@ -185,7 +185,7 @@ def test_the_problem_names_the_tier_kind_since_lag_and_fix_but_no_entry() -> Non
     (p,) = _problem((row,))
     assert p.severity == "error" and p.source == "workers"
     assert "clang (credential, 12 failed passes since 2026-01-01T12:00:00+00:00" in p.message
-    assert "413 commits behind" in p.message and "code-a" not in p.message
+    assert "at least 413 commits behind" in p.message and "code-a" not in p.message
     assert p.fix == row["fix"]
 
 

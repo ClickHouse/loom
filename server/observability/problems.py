@@ -830,7 +830,8 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
 
     def named(r: Mapping[str, Any]) -> str:
         lag, passes = int(r["lag_commits"]), int(r["failed_passes"])
-        behind = f", {lag} commit{'' if lag == 1 else 's'} behind" if lag >= 0 else ""
+        # the count the entry's last published status made: a lower bound
+        behind = f", at least {lag} commit{'' if lag == 1 else 's'} behind" if lag >= 0 else ""
         return (
             f"{r['tier']} ({r['kind']}, {passes} failed pass{'' if passes == 1 else 'es'} "
             f"since {r['since']}{behind})"
