@@ -159,10 +159,10 @@ LibreChat:
 
 A boot that stopped halfway leaves the row at a step the next one finishes. Answers run
 on the stored key whatever a sign-in does. A row whose sealed value opens with neither
-root, and a sign-in that fails (LibreChat's database restored from another deployment,
-say), are `loom doctor` problems with one fix: empty LibreChat's database and drop the
-row, which the next boot recreates. Until the row has its key and agent id, the
-assistant answers `ASSISTANT_UNAVAILABLE`.
+the signing secret nor `LOOM_JWT_SECRET_PREVIOUS`, and a sign-in that fails (LibreChat's
+database restored from another deployment, say), are `loom doctor` problems with one
+fix: empty LibreChat's database and drop the row, which the next boot recreates. Until
+the row has its key and agent id, the assistant answers `ASSISTANT_UNAVAILABLE`.
 
 **Conversations live with the caller.** LibreChat's agents API (the OpenAI-compatible
 `/api/agents/v1/chat/completions`) saves no messages: it runs the agent over the
@@ -309,11 +309,13 @@ by the newest build's CLI, is outside the rules below because plain SQL takes no
 and checks no version, and is run, not kept. `loom ch-setup` itself keeps the rules: it
 holds the lease and writes unless the stored version is newer than its own, so it is
 also the repair on a server that cannot write the entities. The secrets row is drawn,
-when there is none, by `loom ch-setup`, by `--print-analyst-sql` (which stores it before
-it prints) or by a server that sees no analyst user; a server that cannot see the users
-answers `ANALYSIS_UNAVAILABLE` until `loom ch-setup` runs. The allowlist lives in code
-with the column comments that become the agent's catalog, so the grants, the policies
-and the catalog come from one definition. The rules a write keeps:
+when there is none and no analyst user exists, by `loom ch-setup`, by
+`--print-analyst-sql` (which stores it before it prints) or by a server that sees the
+users; over a lost row with the user still there, both refuse and name
+`--rotate-analysis-key`; a server that cannot see the users answers
+`ANALYSIS_UNAVAILABLE` until `loom ch-setup` runs. The allowlist lives in code with the
+column comments that become the agent's catalog, so the grants, the policies and the
+catalog come from one definition. The rules a write keeps:
 
 - **One writer at a time.** A write holds the cluster lease `analysis.entities`
   (`server/core/leases.py`), waiting for it when another holds it, and reads what the
@@ -321,31 +323,35 @@ and the catalog come from one definition. The rules a write keeps:
 - **Never over a newer build.** The analyst's main settings profile carries the stored
   version, written last; a version names exactly one set of grants and policies (a unit
   test pins it), so a change to either is a new version. A build writes when there is no
-  stored version or its own is newer, so during a rolling upgrade a build N-1 never
-  narrows N's grants or loosens N's policies. N-1 keeps answering on N's entities: its
-  statements that name a column N dropped are refused until the roll forward. The caps
-  are deployment settings, kept in a second profile of their own: a write holding the
-  lease (a boot, `loom ch-setup`) writes them when the stored ones differ from its
-  settings, the printed SQL always writes them, and nothing else does, so they never
-  touch the version. They are read at boot, not live, and `loom doctor` reports a caps
-  profile that differs from the server's settings.
-- **No granted table without its policy.** ClickHouse lets a user with no policy on a
-  table read every row of it, so each policy is replaced in place before any grant is
-  given, every grant outside the allowlist and the canary is revoked after, and a policy
-  is never dropped: a table that leaves the allowlist keeps one that reads nothing.
+  stored version or its own is newer, and at its own version only to repair (below) or
+  as `loom ch-setup`, so during a rolling upgrade a build N-1 never narrows N's grants
+  or loosens N's policies. N-1 keeps answering on N's entities: its statements that name
+  a column N dropped are refused until the roll forward. The caps are deployment
+  settings, kept in a second profile of their own: a write holding the lease (a boot,
+  `loom ch-setup`) writes them when the stored ones differ from its settings, the
+  printed SQL always writes them, and nothing else does, so they never touch the
+  version. They are read at boot, not live, and `loom doctor` reports a caps profile
+  that differs from the server's settings.
+- **No granted table without its policy.** By default ClickHouse lets a user with no
+  policy on a table read every row of it, so each policy is replaced in place before any
+  grant is given, every grant outside the allowlist and the canary is revoked after, and
+  a policy is never dropped: a table that leaves the allowlist keeps one that reads
+  nothing.
 - **The key never changes by itself.** The secrets row is drawn once, and every read of
   it, the one under the lease included, runs with the read-your-writes setting Loom uses
   across replicas (`own_write_reads` in `server/core/ch.py`). A replica reads the key
   from the row before each statement. A row that does not open, or is gone while the
   analyst user exists, answers `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem.
-  `loom ch-setup --new-analysis-key` is the recovery, and refuses while the stored row
-  opens: it draws a new key and password, sets the password on the analyst user, writes
-  every policy under the key (the canary's last), and stores the row last. Until the row
-  is stored no replica has a key to sign with, so every replica answers
-  `ANALYSIS_UNAVAILABLE`, never an empty answer, and a run cut short leaves that state
-  for the next run to finish. A rotation on purpose, after a key may have leaked, is
-  `--new-analysis-key --rotate`, which first drops the row, so analysis is unavailable
-  for the length of the run.
+  `loom ch-setup --rotate-analysis-key` is the recovery. It first proves its own secrets
+  are the deployment's, by opening another stored credential (a `SEALED` row), and
+  refuses while the analysis row opens; then it draws a new key and password, sets the
+  password on the analyst user, writes every policy under the key, and stores the row
+  last. Until the row is stored no replica has a key to sign with, so every replica
+  answers `ANALYSIS_UNAVAILABLE`, never an empty answer, and a run cut short leaves that
+  state for the next run to finish. A rotation on purpose, after a key may have leaked,
+  is the same command with `--live`, which drops the row before it starts, so analysis
+  is unavailable for the length of the run; a replica that still holds the old password
+  gets an authentication failure, which answers `ANALYSIS_UNAVAILABLE` too.
 
 A replica probes the analyst user at boot and then a minute after each probe, in the
 background, as the analyst itself, so the probe needs no access management:
@@ -373,12 +379,14 @@ cannot. The canary shows only that its own policy has the key; a single table's 
 under another key, which only a partly run printed SQL or a hand edit leaves, shows as
 empty answers from that table.
 
-Between a policy dropped by hand and the next probe, ClickHouse would let the analyst
-read every row of that table, so the ClickHouse configuration Loom ships (Compose and
-Helm) sets `access_control_improvements.users_without_row_policies_can_read_rows` to
-false, under which a user with no policy on a table that has policies reads nothing; the
-permissive `USING 1` policy keeps every other user reading. A self-managed ClickHouse
-without that setting has that window, one probe long.
+Between a policy dropped by hand and the next probe, ClickHouse by default lets the
+analyst read every row of that table. The ClickHouse that Loom configures itself (the
+Compose stack and the chart's development ClickHouse) sets
+`access_control_improvements.users_without_row_policies_can_read_rows` to false, under
+which a user with no policy on a table that has policies reads nothing, while the
+permissive `USING 1` policy keeps every other user reading. Every other server,
+ClickHouse Cloud and a self-managed one included, keeps the default and has that window,
+one probe long.
 
 ### What it can read
 
@@ -454,10 +462,11 @@ viewer token. Each case must be refused or return no canary:
 - `SETTINGS` that set a scope value to a number, an array or a malformed string: no
   answer quotes the policy or its key;
 - an extra grant (`GRANT SELECT ON loom.* TO loom_analyst`) and a table with its policy
-  dropped, each of which the probe turns into `ANALYSIS_UNAVAILABLE` (a dropped policy
-  reads nothing meanwhile under the shipped configuration), with and without access
-  management for Loom's user; a table taken off the allowlist, which reads nothing
-  whether or not its grant is still there;
+  dropped, each of which the probe turns into `ANALYSIS_UNAVAILABLE` (under the
+  configuration Loom ships, a dropped policy reads nothing meanwhile; under the server
+  default, the probe closes the window), with and without access management for Loom's
+  user; a table taken off the allowlist, which reads nothing whether or not its grant is
+  still there;
 - two boots writing at once (a build N-1 beside N with a table taken off the allowlist),
   which the lease serialises, and a build N-1 beside N, which keeps answering on N's
   entities and never writes them;
@@ -467,10 +476,12 @@ viewer token. Each case must be refused or return no canary:
   that added a column and took a table off the allowlist, which keeps answering; and two
   replicas with different cap settings, which write the caps at boot only;
 - a canary under another key, which the probe catches; a secrets row that does not open
-  or is gone while the user is not, which answers `ANALYSIS_UNAVAILABLE`; and
-  `--new-analysis-key` after a lost row and `--rotate` on a live one, each followed by a
-  statement that answers with the right rows, and each cut short at every step, which
-  leaves `ANALYSIS_UNAVAILABLE`, never an empty answer;
+  or is gone while the user is not, which answers `ANALYSIS_UNAVAILABLE`;
+  `--rotate-analysis-key` after a lost row and with `--live` on a healthy one, refused
+  when the CLI's secrets are not the deployment's, and plain `loom ch-setup` and
+  `--print-analyst-sql` refused over a lost row; each followed by a statement that
+  answers with the right rows, and each cut short at every step, which leaves
+  `ANALYSIS_UNAVAILABLE`, never an empty answer;
 - `loom.analysis_secrets` and `loom.analysis_canary` read directly, and neither the
   statement's text nor the key in `system.query_log`.
 
@@ -610,7 +621,9 @@ by an older build.
 
 ## Build order
 
-1. `insights.query`, `insights.catalog` and the analyst user, with the isolation proof.
+1. `insights.query`, `insights.catalog` and the analyst user, with the isolation proof,
+   and `users_without_row_policies_can_read_rows = false` in the ClickHouse
+   configuration Loom ships.
 2. LibreChat deployed headless, the seeded agent definition, re-qualified with analysis
    questions.
 3. The bridge: the chat route, `assistant.ask`, the SDK clients.
