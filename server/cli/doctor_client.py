@@ -676,9 +676,10 @@ def codex_checks(
                 "[mcp_servers.loom] for a different server.",
             )
         )
-    cache = home / ".codex" / "plugins" / "cache"
+    # The loom marketplace's copy, the one the skills and the header helper read.
+    cache = home / ".codex" / "plugins" / "cache" / "loom" / "loom"
     plugin = (
-        codex_plugin_enabled(text) and any(p.is_dir() for p in cache.glob("*/loom/*"))
+        codex_plugin_enabled(text) and any(p.is_dir() for p in cache.glob("*"))
         if cache.is_dir()
         else False
     )

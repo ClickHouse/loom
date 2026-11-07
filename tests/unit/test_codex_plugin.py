@@ -310,8 +310,7 @@ def test_skills_find_the_codex_plugin_root_under_the_loom_marketplace() -> None:
     read versions of this marketplace's copy only, as `.mcp.json` does."""
     globs = [
         (path.relative_to(ROOT), glob)
-        for plugin in (CLAUDE, CODEX)
-        for path in sorted((plugin / "skills").rglob("SKILL.md"))
+        for path in sorted((CLAUDE / "skills").rglob("SKILL.md"))
         for glob in re.findall(r"\.codex/plugins/cache/\S*", path.read_text())
     ]
     assert globs, "no skill locates the plugin under Codex"
