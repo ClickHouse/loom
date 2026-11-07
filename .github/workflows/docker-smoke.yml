@@ -125,7 +125,7 @@ jobs:
           context: .
           load: true
           tags: loom:docker-smoke
-          # The weekly or dispatched scan sees the packages a release would build with.
+          # The weekly or dispatched scan sees the packages the archives serve today.
           no-cache: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
           platforms: linux/${{ matrix.arch }}
           cache-from: type=gha,scope=docker-smoke-${{ matrix.arch }}
@@ -138,7 +138,7 @@ jobs:
           file: extractor/Dockerfile
           load: true
           tags: loom-extractor:docker-smoke
-          # The weekly or dispatched scan sees the packages a release would build with.
+          # The weekly or dispatched scan sees the packages the archives serve today.
           no-cache: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
           platforms: linux/${{ matrix.arch }}
           cache-from: type=gha,scope=docker-smoke-extractor-${{ matrix.arch }}
@@ -150,8 +150,8 @@ jobs:
           python3 scripts/gates/docker_quickstart_smoke.py --image loom:docker-smoke \
             --extractor-image loom-extractor:docker-smoke \
             --clickhouse-image "$CLICKHOUSE_IMAGE"
-      # Trivy copies a loaded image out of the daemon into /tmp; the amd64 runner
-      # has no room for the server image beside the hosted toolchains it carries.
+      # Trivy copies a loaded image out of the daemon into /tmp; a hosted runner
+      # has no room for the server image beside the toolchains it carries.
       - name: Make room for the image scans
         if: ${{ !cancelled() && (steps.server.outcome == 'success' || steps.extractor.outcome == 'success') }}
         run: |
