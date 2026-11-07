@@ -25,7 +25,7 @@ import secrets
 import time
 from typing import Any
 
-from server.auth import shielded
+from server.core import shielded
 
 log = logging.getLogger(__name__)
 

@@ -416,7 +416,7 @@ Periodic consolidation pass — merges fragmented memories about the same subjec
 | `consolidated` | `list[MemoryConsolidateResult]` | One entry per cluster merged (or that would be, under `dry_run`). |
 | `examined` | `int` | Eligible rows read: live, unpinned, unlocked, embedded, older than `min_age_seconds`, and neither labelled `high` nor reading as `high` (never sent to the merge model). |
 | `clusters_found` | `int` | Clusters of two or more rows found. |
-| `clusters_failed` | `int` | Clusters whose merge LLM call failed or returned an unparseable / incomplete JSON object. |
+| `clusters_failed` | `int` | Clusters not merged: the merge LLM call failed or returned an unparseable or incomplete JSON object, the merge guard refused it, a merged row changed since the read, the summary's keys were taken, or the summary could not be embedded. |
 | `clusters_refused_lossy` | `int` | Of the failed clusters, those the merge guard refused because the merged text lost a date, quantity, identifier, name or negation one source carried; the sources stay as they were. |
 | `skipped_in_flight` | `int` | Always 0: rows newer than `min_age_seconds` are left out of the read, not counted. |
 | `tokens_in` | `int` | Prompt tokens of the merge LLM calls. |
@@ -914,7 +914,7 @@ Fetch a memory by its UUID (not memory_key).
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `found` | `bool` | False when no live row carries this id in the org, or the caller cannot read its namespace. |
+| `found` | `bool` | False when no live row carries this id in the org (with `as_of`, one that was also valid then), the caller cannot read its namespace, or it can read more than one holding it (a restored namespace keeps the ids; use memory.get by key). |
 | `memory_id` | `str` | The id asked for; '' when not found. |
 | `namespace` | `str` | The namespace the op reads or writes. |
 | `agent` | `str` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
@@ -1812,6 +1812,7 @@ Bring back a deleted memory (within 14 days) or one Loom retired on its own.
 | `memory_id` | `str \| None` | Empty / None when nothing was tombstoned or superseded for this key (no-op). |
 | `version` | `int \| None` | Version of the restored row, or of the already-live row on a no-op. |
 | `expired` | `bool` | Surfaces "you missed the window" cleanly rather than 404-ing. |
+| `redacted` | `bool` | True when the deleted row's text was redacted: there is nothing to bring back. |
 | `from_status` | `str` | What the row was restored FROM: "tombstoned" (a delete undone) or "superseded" (an automatic retirement reversed). |
 
 ## `memory.search`
@@ -1909,6 +1910,7 @@ Semantic search over the agent's own memory.
 | `namespaces_searched` | `list[str]` | The namespaces in this search's scope: the addressed one first, then the fan-out under namespace_scope=all_mine. |
 | `namespaces_skipped` | `list[str]` | Namespaces of the caller the fan-out did not read because it stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
 | `candidates_total` | `int` | Distinct memories in the fused pool before the top_k cut ("showing 10 of 124"); the handle that serves the next slice when the caller asked for paging and there was more; and this page's offset into the parked list (0 for a fresh search). |
+| `stale_dropped` | `int` | Memory hits left out because the Postgres authority no longer serves what they show (always 0 under the ClickHouse authority); a short or empty page may have more behind `next_page`, so keep paging while it is set. |
 | `next_page` | `str` | Handle to pass as `page` for the next slice; empty when `paging` was off or no more candidates remained. |
 | `page_offset` | `int` | This page's offset into the parked list; 0 for a fresh search. |
 | `chunk_share` | `float` | Share of the returned window that is verbatim chunks: the reader for "did chunks crowd out the facts" on the ledger. |
@@ -2028,11 +2030,12 @@ Same shape as memory.search; returns the vector leg's per-candidate scoring brea
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `results` | `list[_SearchTraceHit]` | Every candidate the fact leg scored, in the leg's rank order, with its breakdown. |
+| `results` | `list[_SearchTraceHit]` | Every candidate the fact leg scored that is still served (all of them under an `as_of` replay), in the leg's rank order, with its breakdown. |
 | `embedding_model` | `str` | The embedding model the query was embedded with. |
 | `entity_filter` | `list[str]` | The request's `entity_filter`, lowercased as it was matched. |
 | `query_spellings` | `dict[str, str]` | Query words embedded in the corpus's spelling instead of as typed (`memory_search_query_spelling_max_words`); {} when none was. |
 | `query_spellings_skipped` | `bool` | True when the query was embedded as typed because the spelling lookup did not answer (failed, timed out, namespace backing off) or the respelled text's embed failed. |
+| `stale_dropped` | `int` | Under the Postgres authority: candidates left out because the authority no longer serves what they show, as memory.search's `stale_dropped`. 0 under ClickHouse and under an `as_of` replay. |
 
 ## `memory.search_trace_log`
 
@@ -2248,6 +2251,7 @@ Run one expiry-sweep pass now — the same pass the `memory_expiry_sweep` worker
 | `demoted` | `int` | Rows demoted: expiry cleared, confidence scaled down (or would be, under `dry_run`). |
 | `anonymized` | `int` | Rows anonymized: value replaced by a marker, embeddings tombstoned, the shell row kept (or would be, under `dry_run`). |
 | `locked_skipped` | `int` | Rows left as they are because a lock refuses their post-action; reads still hide them. |
+| `moved_skipped` | `int` | Rows left for the next pass because their head moved on since the read (renewed, rewritten or deleted); 0 under the ClickHouse authority. |
 | `dry_run` | `bool` | Echo of the request's `dry_run`. |
 | `sample` | `list[dict[str, Any]]` | Up to 20 handled rows: memory_key, namespace, agent, action, expired_at. |
 | `failures` | `list[str]` | Errors of the pass (`scan:`, `insert:`, `mirror:`); empty on a clean run. |
@@ -2415,7 +2419,7 @@ Update a memory by UUID with an optimistic concurrency check.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `updated` | `bool` | False if memory_id not found |
+| `updated` | `bool` | False when memory_id has no live row in a namespace the caller can write, or when the caller can write more than one namespace holding a live row of it (a restored namespace keeps the ids; use memory.update by key there). |
 | `new_version` | `int` | Nanosecond version of the written row; 0 when nothing was written. |
 | `content_sha256` | `str` | SHA-256 of the just-written value |
 | `conflict_verdict` | `str` | The semantic conflict verdict on the new value, as memory.set computes it — "" when the check did not run (flag off or a non-searchable type), else clear \| duplicate \| merge \| conflict \| refines. |
@@ -2442,7 +2446,7 @@ Attest to (or revoke the attestation on) one memory.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `found` | `bool` | False when the row does not exist or the caller cannot write its namespace. |
+| `found` | `bool` | False when the row does not exist or the caller cannot write its namespace; by memory_id, also when the caller can write more than one live namespace holding it (a restored namespace keeps the ids; pass namespace + memory_key there). |
 | `changed` | `bool` | False when the call was a no-op (already attested by this actor and unchanged, or revoking a row with no attestation). |
 | `memory_id` | `str` | Stable id of the attested row; '' when not found. |
 | `memory_key` | `str` | The row's key; '' when not found. |

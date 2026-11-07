@@ -20,6 +20,7 @@ from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
+from server.erasure.store import steps_pg as pg_steps
 from server.erasure.store import steps_principals as principal_steps
 from server.memory.app.code_links import queue_lease
 from server.workers.registry import DEADLINE_CAP_SECONDS
@@ -219,10 +220,25 @@ _LATE_STEPS_USER: tuple[UserStep, ...] = (
     ("idempotency.delete", ledger_steps.delete_idempotency_by_user),
 )
 
+
+# Steps a ClickHouse-authority saga never runs.
+_PG_ONLY_STEPS = frozenset({"pg_memory.delete"})
+
+
+def authority_steps[StepT: tuple[str, Any]](steps: tuple[StepT, ...]) -> list[StepT]:
+    """The steps a saga runs: the Postgres authority's step only under that authority."""
+    from server.core import pg
+
+    return [s for s in steps if pg.enabled() or s[0] not in _PG_ONLY_STEPS]
+
+
 # The loom-side steps of a user erasure over (org, user_id), in saga order.
 # The step names are stored in the ledger's `steps_completed`: renaming one
 # makes a resumed saga run it again.
 USER_STEPS: tuple[UserStep, ...] = (
+    # First: the authority's copy, then the wait for its publishers, so every
+    # ClickHouse copy the steps below look for has landed.
+    ("pg_memory.delete", pg_steps.delete_pg_memory_by_user),
     ("memory.tombstone", memory_steps.tombstone_memory_by_user),
     ("memory_embeddings.tombstone", memory_steps.tombstone_embeddings_by_user),
     ("memory_versions.delete", memory_steps.delete_memory_versions_by_user),
@@ -272,6 +288,7 @@ USER_STEPS: tuple[UserStep, ...] = (
 # The loom-side steps of a namespace erasure over (org, namespace or list), in
 # saga order. Names as for USER_STEPS.
 NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
+    ("pg_memory.delete", pg_steps.delete_pg_memory_by_namespace),
     ("memory.tombstone", memory_steps.tombstone_memory_by_namespace),
     ("memory_embeddings.tombstone", memory_steps.tombstone_embeddings_by_namespace),
     ("memory_versions.delete", memory_steps.delete_memory_versions_by_namespace),

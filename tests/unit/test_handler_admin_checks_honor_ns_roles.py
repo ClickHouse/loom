@@ -116,7 +116,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 def _snapshot() -> NamespaceSnapshotOutput:
     return NamespaceSnapshotOutput(
-        snapshot_id="s1",
+        snapshot_id="99999999-9999-9999-9999-999999999999",
         org="o",
         source_namespace="A",
         created_at=datetime(2026, 9, 1, tzinfo=UTC),

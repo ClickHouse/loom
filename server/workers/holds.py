@@ -1,10 +1,12 @@
-"""What a background job left because its identity's model calls are held.
+"""Work a background job set aside until its hold ends.
 
 A job whose call for one identity is held (`customer.GROUP_HOLDS`: the inference
 gateway refused it or asked it to wait, or what names the identity could not be
 read) leaves that work and goes on with other work. It keeps the work's key here
 until the hold ends, so its next selections skip the work instead of picking it
-again, ahead of other identities' work, only to be held again.
+again, ahead of other identities' work, only to be held again. The conflict resolver
+also sets aside a row whose flagged peer is behind its delivery, for
+`LOOM_PG_DELIVERY_LEASE_SECONDS`.
 """
 
 from __future__ import annotations

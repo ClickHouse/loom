@@ -32,7 +32,7 @@ from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
 from server.memory.domain.delete_marks import carried_trace
 from server.memory.domain.memory_types import is_searchable_type
-from server.memory.store.rows import next_version
+from server.memory.store.rows import version_over
 
 if TYPE_CHECKING:
     from server.memory.store import MemoryRow
@@ -134,12 +134,12 @@ async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any) -> None:
     now = naive_utc_now()
     row = memory_repo.build_memory_version_row(
         source,
-        version=next_version(),
+        version=version_over(source),
         status="duplicate",
         duplicate_of=dest_id,
         updated_at=now,
     )
-    await memory_repo.insert_memory_versions([row], ch=ch)
+    await memory_repo.insert_versions_over_heads([row], [source], ch=ch)
     # The source key now reads as a redirect to the destination.
     await webhooks.announce([("memory.revised", row)])
     try:

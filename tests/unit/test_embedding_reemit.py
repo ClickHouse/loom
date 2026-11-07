@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -52,6 +53,7 @@ _LIVE = {
     "memory_key": "k",
     "scope": "private",
     "embedding_model": "m",
+    "created_at": datetime(2026, 1, 1),
     "embedding_dim": 3,
     "embedding": [0.1, 0.2, 0.3],
     "memory_key_embedding": [0.4, 0.5, 0.6],
@@ -132,9 +134,22 @@ async def test_shared_reemit_reads_the_scope_shared_rows_of_the_key() -> None:
     assert rows[0]["scope"] == "shared" and rows[0]["tombstoned_at"] == ts
 
 
+def _of_keys(rows: list[dict[str, Any]], params: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """`rows` narrowed to a keyed read's identity keys, as its PREWHERE narrows them."""
+    if not params or "o" not in params:
+        return rows
+    keys = set(zip(*(params[c] for c in ("o", "n", "a", "u", "s", "k")), strict=True))
+    return [r for r in rows if M.identity_key(r) in keys]
+
+
+def _selected(sql: str) -> list[str]:
+    """The columns a read selects (`*` for all of them)."""
+    return [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
+
+
 class _VectorsCH(_CH):
-    """Answers the memory_embeddings read with `rows` and the entity_vectors read
-    with `entity_rows`."""
+    """Answers the memory_embeddings read with `rows`, each trimmed to the columns it
+    selects as ClickHouse would, and the entity_vectors read with `entity_rows`."""
 
     def __init__(self, rows: list[dict[str, Any]], entity_rows: list[dict[str, Any]]) -> None:
         super().__init__(rows)
@@ -142,7 +157,11 @@ class _VectorsCH(_CH):
 
     async def query_all(self, sql, params=None):
         self.query_all_calls.append((sql, params or {}))
-        return list(self.entity_rows if "loom.entity_vectors" in sql else self.rows)
+        if "loom.entity_vectors" in sql:
+            return list(self.entity_rows)
+        rows = _of_keys(self.rows, params)
+        columns = _selected(sql)
+        return rows if columns == ["*"] else [{c: r[c] for c in columns} for r in rows]
 
 
 @pytest.mark.asyncio
@@ -212,7 +231,34 @@ async def test_retiring_leaves_a_newer_writes_vectors_alone() -> None:
     assert await M.retire_vectors_for_keys([(("o", "n", "a", "u", "s", "k"), v)], ch=ch) == 1
     (_, emb_rows, _), (_, ent_rows, _) = ch.insert_calls
     assert [r["embedding_model"] for r in emb_rows] == ["m"]
+    # The retired row itself, so a restore and a replay keep its vector.
+    (tomb,) = emb_rows
+    copied = ("content_excerpt", "embedding", "memory_key_embedding", "tags", "created_at")
+    assert all(tomb[c] == _LIVE[c] for c in copied)
+    assert tomb["version"] == v and tomb["tombstoned_at"] is not None
     assert [r["entity_text"] for r in ent_rows] == ["old"]
+
+
+@pytest.mark.asyncio
+async def test_a_bare_retirement_keeps_no_text_and_merges_with_the_row_it_retires() -> None:
+    """Each tombstone keeps the retired row's sort key and partition at the retiring
+    version and nothing else, so it merges with that row, holds nothing a redaction would
+    scrub, and is a fence the redaction's purge leaves in place (no excerpt, vector,
+    entities or concepts)."""
+    v = 1_800_000_000 * 10**9 + 5
+    newer = {**_LIVE, "embedding_model": "m2", "version": v + 1}
+    ch = _VectorsCH([{**_LIVE, "version": 1}, newer], [])
+    assert (
+        await M.retire_vectors_for_keys([(("o", "n", "a", "u", "s", "k"), v)], ch=ch, bare=True)
+        == 1
+    )
+    (_, (tomb,), _) = ch.insert_calls[0]
+    sort_key = ("org", "namespace", "agent", "user_id", "session_id", "scope", "embedding_model")
+    assert all(tomb[c] == _LIVE[c] for c in (*sort_key, "memory_key", "created_at"))
+    assert (tomb["version"], tomb["tombstoned_at"] is not None) == (v, True)
+    text = ("content_excerpt", "embedding", "memory_key_embedding", "tags", "entities")
+    assert [tomb[c] for c in text] == ["", [], [], [], []]
+    assert (tomb["embedding_dim"], tomb["concepts"]) == (0, [])
 
 
 class _RMTCH:
@@ -234,7 +280,7 @@ class _RMTCH:
     def live_emb(self) -> list[dict[str, Any]]:
         return self._final(
             self.emb,
-            lambda r: (r["agent"], r["embedding_model"], r["memory_key"]),
+            lambda r: (r["agent"], r["session_id"], r["embedding_model"], r["memory_key"]),
             lambda r: r["version"],
         )
 
@@ -244,10 +290,175 @@ class _RMTCH:
         )
 
     async def query_all(self, sql, params=None):
-        return [dict(r) for r in (self.live_ent() if "entity_vectors" in sql else self.live_emb())]
+        if "entity_vectors" in sql:
+            return [dict(r) for r in self.live_ent()]
+        return [dict(r) for r in _of_keys(self.live_emb(), params)]
 
     async def insert(self, table, rows, settings=None):
         (self.ent if table == "loom.entity_vectors" else self.emb).extend(dict(r) for r in rows)
+
+
+class _Head(dict[str, Any]):
+    """A head as `_hydrate` gives it, read by column and by attribute."""
+
+    @property
+    def version(self) -> int:
+        return int(self.get("version", 0))
+
+    @property
+    def memory_id(self) -> str:
+        return str(self.get("memory_id", ""))
+
+
+@pytest.mark.asyncio
+async def test_a_reject_copies_the_heads_own_rows_and_retires_the_rest_bare(monkeypatch) -> None:
+    """Under Postgres a rejected head's rows of its own text are copied at the reject's
+    version with the status and stay live; a row of older text and a redacted head's row
+    are retired with no text, before the publish clears the delivery a redaction waits
+    out; the key's entity vectors are left as they were."""
+    from server.core import pg
+    from server.core.ch import sequential_reads_active
+    from server.memory.store import lifecycle, pg_memory, pg_publish
+
+    sha = "a" * 64
+    ch = _RMTCH()
+    ent = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "memory_key": "k"}
+    ch.ent.append({**ent, "entity_text": "e", "created_at": datetime(2026, 1, 1)})
+    ch.emb += [
+        {**_LIVE, "content_sha256": sha},
+        {**_LIVE, "embedding_model": "m2", "content_sha256": "b" * 64, "content_excerpt": "old"},
+        {**_LIVE, "session_id": "s2", "content_sha256": "c" * 64, "content_excerpt": "secret"},
+    ]
+    heads = [
+        {**ent, "session_id": "s", "content_sha256": sha},
+        {
+            **ent,
+            "session_id": "s2",
+            "content_sha256": "c" * 64,
+            "redacted_at": datetime(2026, 2, 1),
+        },
+    ]
+
+    async def _heads(*_: object) -> list[dict[str, Any]]:
+        return heads
+
+    async def _commit(rows: Any, **_: object) -> pg_memory.Committed:
+        deadline = time.monotonic() + 30
+        targets = [0] * len(rows)
+        return pg_memory.Committed(
+            rows=rows, audits=[], seqs=[], targets=targets, deadline=deadline
+        )
+
+    async def _publish(*_: object, **__: object) -> None:
+        assert [r["status"] for r in ch.live_emb()] == ["rejected"]
+
+    # A one-process fake shows no replica: what it checks is that the read is made in scope.
+    read_sequentially: list[bool] = []
+    read = ch.query_all
+
+    async def _query_all(sql: str, params: Any = None) -> list[dict[str, Any]]:
+        read_sequentially.append(sequential_reads_active())
+        return await read(sql, params)
+
+    monkeypatch.setattr(ch, "query_all", _query_all)
+    monkeypatch.setattr(pg_memory, "live_heads_of", _heads)
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(lifecycle, "check_memory_rows", lambda rows: None)
+    monkeypatch.setattr(lifecycle, "_hydrate", _Head)
+    monkeypatch.setattr(lifecycle, "build_memory_version_row", lambda h, **o: {**h, **o})
+    monkeypatch.setattr(pg_publish, "commit", _commit)
+    monkeypatch.setattr(pg_publish, "publish", _publish)
+    await lifecycle._reject_heads("o", "n", "a", "u", "k", "spam", ch=ch)
+    (live,) = ch.live_emb()
+    assert (live["session_id"], live["embedding_model"], live["status"]) == ("s", "m", "rejected")
+    assert live["content_excerpt"] == "text" and live["embedding"] == _LIVE["embedding"]
+    tombs = [r for r in ch.emb[3:] if r.get("tombstoned_at") is not None]
+    assert sorted((r["session_id"], r["embedding_model"]) for r in tombs) == [
+        ("s", "m2"),
+        ("s2", "m"),
+    ]
+    assert all((r["content_excerpt"], r["embedding"]) == ("", []) for r in tombs)
+    assert [r["entity_text"] for r in ch.live_ent()] == ["e"]
+    assert read_sequentially == [True, True]  # one read per kind of key, each sequential
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["lease ended", "insert refused"])
+async def test_a_reject_whose_vector_copy_fails_still_stands_and_publishes(
+    monkeypatch, failure: str
+) -> None:
+    """A lease that ran out before the copy, or a ClickHouse that refuses it, leaves the
+    vectors as they were; the committed reject is still published, and a refusal is
+    answered once it is, as on ClickHouse, so the caller retries."""
+    from server.core import pg
+    from server.memory.store import lifecycle, pg_memory, pg_publish
+
+    ch = _RMTCH()
+    ch.emb.append({**_LIVE, "content_sha256": "a" * 64})
+    published: list[Any] = []
+    deadline = 0.0 if failure == "lease ended" else time.monotonic() + 30
+
+    async def _refused(*_: object, **__: object) -> None:
+        raise RuntimeError("ClickHouse refused the insert")
+
+    if failure == "insert refused":
+        monkeypatch.setattr(ch, "insert", _refused)
+
+    async def _heads(*_: object) -> list[dict[str, Any]]:
+        return [{**_LIVE, "content_sha256": "a" * 64}]
+
+    async def _commit(rows: Any, **_: object) -> pg_memory.Committed:
+        return pg_memory.Committed(rows=rows, audits=[], seqs=[], targets=[0], deadline=deadline)
+
+    async def _publish(committed: Any, **_: object) -> None:
+        published.append(committed)
+
+    monkeypatch.setattr(pg_memory, "live_heads_of", _heads)
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(lifecycle, "check_memory_rows", lambda rows: None)
+    monkeypatch.setattr(lifecycle, "_hydrate", _Head)
+    monkeypatch.setattr(lifecycle, "build_memory_version_row", lambda h, **o: {**h, **o})
+    monkeypatch.setattr(pg_publish, "commit", _commit)
+    monkeypatch.setattr(pg_publish, "publish", _publish)
+    if failure == "insert refused":
+        with pytest.raises(RuntimeError, match="refused"):
+            await lifecycle._reject_heads("o", "n", "a", "u", "k", "spam", ch=ch)
+    else:
+        await lifecycle._reject_heads("o", "n", "a", "u", "k", "spam", ch=ch)
+    assert len(ch.emb) == 1 and len(published) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sha", ["", "0"])
+async def test_a_rejected_head_with_no_hash_retires_every_row_with_no_text(sha: str) -> None:
+    """A head with no real hash cannot tell its own rows from older text: none is copied."""
+    from server.memory.store import lifecycle
+
+    ch = _RMTCH()
+    ch.emb += [{**_LIVE, "content_sha256": sha}, {**_LIVE, "embedding_model": "m2"}]
+    head = {**_LIVE, "content_sha256": sha, "version": 50}
+    await lifecycle._reject_vectors([head], ch=ch)
+    assert ch.live_emb() == []
+    assert all((r["content_excerpt"], r["embedding"]) == ("", []) for r in ch.emb[2:])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("head", [{"sensitivity": "high"}, {"memory_type": "episodic"}])
+async def test_a_rejected_head_with_no_search_document_copies_no_row_of_its_text(
+    head: dict[str, Any],
+) -> None:
+    """A head made 'high' or unsearchable over rows of the same text, whose retirement has
+    not landed: the reject copies none of them above it, and retires them with no text."""
+    from server.memory.store import lifecycle
+
+    sha = "a" * 64
+    ch = _RMTCH()
+    ch.emb.append({**_LIVE, "content_sha256": sha})
+    rejected = {**_LIVE, "memory_type": "semantic", "content_sha256": sha, "version": 50}
+    await lifecycle._reject_vectors([rejected | head], ch=ch)
+    assert ch.live_emb() == []
+    (tomb,) = ch.emb[1:]
+    assert (tomb["version"], tomb["content_excerpt"], tomb["embedding"]) == (50, "", [])
 
 
 @pytest.mark.asyncio
@@ -486,6 +697,10 @@ def _memory_row(**over: Any) -> Any:
     return M.MemoryRow(**(base | over))
 
 
+async def _async(value: Any) -> Any:
+    return value
+
+
 def _patch_memory_io(mp: pytest.MonkeyPatch, ch: Any, row: Any) -> None:
     async def get_by_id(*_a, **_k):
         return row
@@ -496,7 +711,7 @@ def _patch_memory_io(mp: pytest.MonkeyPatch, ch: Any, row: Any) -> None:
     mp.setattr("server.memory.store.lifecycle.get_by_id", get_by_id)
     mp.setattr("server.memory.store.lifecycle.insert_memory_versions", no_insert)
     mp.setattr("server.memory.store.insert_memory_versions", no_insert)
-    mp.setattr("server.memory.app.expiry.insert_memory_versions", no_insert)
+    mp.setattr("server.memory.store.insert_versions_over_heads", no_insert)
     mp.setattr("server.memory.store.embeddings._default_client", lambda: ch)
     mp.setattr("server.memory.store.lifecycle._default_client", lambda: ch)
     mp.setattr("server.memory.store.shared._default_client", lambda: ch)
@@ -550,11 +765,15 @@ async def _site_sensitivity_high(ch, mp):
     async def relabelled(*_a, **_k):
         return 1
 
-    mp.setattr("server.memory.store.write_versions_by_ids", relabelled)
+    async def scanned_head(keys, **_k):
+        return {_KEY: _memory_row(memory_type="semantic")}
+
+    mp.setattr("server.memory.store.insert_versions_over_heads", relabelled)
+    mp.setattr("server.memory.store.memory_rows_by_identity_keys", scanned_head)
     await sweep.apply(
         [
             sweep.SweepCandidate(
-                "mid", *_KEY, "high", ("credential",), dict(zip(SORT_KEY, _KEY, strict=True))
+                "mid", *_KEY, "high", ("credential",), dict(zip(SORT_KEY, _KEY, strict=True)), 1
             )
         ],
         ch=ch,
@@ -562,7 +781,7 @@ async def _site_sensitivity_high(ch, mp):
 
 
 async def _site_cascade(ch, mp):
-    await M.tombstone_cascade_by_ids("o", ["mid"], when=datetime.now(), ch=ch)
+    await M.tombstone_cascade_by_ids("o", ["mid"], when=datetime.now(), namespace="n", ch=ch)
 
 
 async def _site_supersede(ch, mp):
@@ -577,27 +796,27 @@ async def _site_supersede(ch, mp):
             )
         ),
     }
-    await M.supersede_duplicates("o", [victim], ch=ch)
+    await M.supersede_duplicates("o", [victim], namespace="n", ch=ch)
 
 
 async def _site_consolidated_dependent(ch, mp):
     from server.memory.store import lifecycle
 
-    async def deps(*_a, **_k):
-        return [
-            {
-                "mid": "mid",
-                **{c: _LIVE[c] for c in ("namespace", "agent", "user_id", "session_id")},
-                "memory_key": "k",
-                "tags": ["consolidated", "src:gone"],
-            }
-        ]
+    summary = _memory_row(tags=["consolidated", "src:gone"])
+
+    async def summaries(*_a, **_k):
+        return {M.identity_key(summary): frozenset({"gone"})}
 
     async def none_live(*_a, **_k):
-        return 0
+        return set()
 
-    mp.setattr(lifecycle, "consolidated_dependents_of", deps)
-    mp.setattr(lifecycle, "live_source_count", none_live)
+    mp.setattr(lifecycle, "consolidated_dependents_of", summaries)
+    mp.setattr(lifecycle, "live_source_keys", none_live)
+
+    async def heads(keys, **_k):
+        return {k: summary for k in keys}
+
+    mp.setattr(lifecycle, "memory_rows_by_identity_keys", heads)
     await M.downgrade_consolidated_dependents("o", "n", "gone", ch=ch)
 
 
@@ -605,7 +824,8 @@ async def _site_consolidate_merge(ch, mp):
     from server.memory.api.models_admin import MemoryConsolidateInput
     from server.memory.app import consolidate
 
-    async def written(*_a, **_k):
+    async def written(org, ids, update, **_k):
+        update(_memory_row())  # the head each tombstone goes above
         return 1
 
     mp.setattr("server.memory.store.write_versions_by_ids", written)
@@ -916,3 +1136,190 @@ async def test_a_judged_mirror_leaves_a_vector_a_supersede_hid_meanwhile() -> No
     assert await M.mirror_status_to_embeddings([_judged_memory_row()], ch=ch, judged=True) == 0
     (live,) = ch.live_emb()
     assert live["status"] == "superseded"
+
+
+@pytest.mark.asyncio
+async def test_a_reject_copies_only_rows_of_the_heads_hash() -> None:
+    """A row of older text, or with no hash (which may hold older text too), is retired
+    with no text at the reject's version, as is every row of a redacted head (no hash
+    given); a row at or above that version is a newer write's and is left alone."""
+    own, redacted = ("o", "n", "a", "u", "s", "k"), ("o", "n", "a", "u", "s2", "k")
+    ch = _VectorsCH(
+        [
+            {**_LIVE, "content_sha256": "b" * 64},
+            {**_LIVE, "embedding_model": "m2", "content_sha256": "a" * 64},
+            {**_LIVE, "embedding_model": "m3", "content_sha256": ""},
+            {**_LIVE, "embedding_model": "m4", "content_sha256": "c" * 64, "version": 99},
+            {**_LIVE, "embedding_model": "m5", "content_sha256": "a" * 64, "version": 99},
+            {**_LIVE, "session_id": "s2", "content_sha256": "a" * 64},
+        ],
+        [],
+    )
+    assert await M.reject_embedding_rows([(own, 50, "a" * 64), (redacted, 50, None)], ch=ch) == 4
+    # One read for the hashed key, and one for the redacted key that fetches no text.
+    fetched = {params["s"][0]: _selected(sql) for sql, params in ch.query_all_calls}
+    assert len(ch.query_all_calls) == 2 and sorted(fetched) == ["s", "s2"]
+    assert sorted(fetched["s2"]) == sorted(
+        [
+            "org",
+            "namespace",
+            "agent",
+            "user_id",
+            "session_id",
+            "scope",
+            "embedding_model",
+            "memory_key",
+            "created_at",
+            "version",
+        ]
+    )
+    rows = [r for _, inserted, _ in ch.insert_calls for r in inserted]
+    written = {(r["session_id"], r["embedding_model"]): r for r in rows}
+    assert sorted(written) == [("s", "m"), ("s", "m2"), ("s", "m3"), ("s2", "m")]
+    assert written[("s", "m2")]["status"] == "rejected" and written[("s", "m2")]["version"] == 50
+    assert written[("s", "m2")]["content_excerpt"] == "text"
+    for k in (("s", "m"), ("s", "m3"), ("s2", "m")):
+        tomb = written[k]
+        assert (tomb["version"], tomb["content_excerpt"], tomb["embedding"]) == (50, "", [])
+        assert tomb["tombstoned_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_a_reject_lands_above_a_head_from_a_clock_ahead(monkeypatch) -> None:
+    """Under Postgres a head written on a replica whose clock is a second ahead would keep
+    a reject drawn here below it, unrejected and served: the reject goes above it."""
+    from server.core import pg
+    from server.memory.store import lifecycle, pg_memory, pg_publish
+
+    ahead = M.next_version() + 10**9
+    head = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "session_id": "s"}
+    committed: list[dict[str, Any]] = []
+
+    async def _heads(*_: object) -> list[dict[str, Any]]:
+        return [{**head, "memory_key": "k", "version": ahead}]
+
+    async def _commit(rows: Any, **_: object) -> pg_memory.Committed:
+        committed.extend(rows)
+        return pg_memory.Committed(
+            rows=rows, audits=[], seqs=[], targets=[0], deadline=time.monotonic() + 30
+        )
+
+    async def _nothing(*_: object, **__: object) -> None:
+        return None
+
+    monkeypatch.setattr(pg_memory, "live_heads_of", _heads)
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(lifecycle, "check_memory_rows", lambda rows: None)
+    monkeypatch.setattr(lifecycle, "_hydrate", _Head)
+    monkeypatch.setattr(lifecycle, "build_memory_version_row", lambda h, **o: {**h, **o})
+    monkeypatch.setattr(pg_publish, "commit", _commit)
+    monkeypatch.setattr(pg_publish, "publish", _nothing)
+    monkeypatch.setattr(lifecycle, "_reject_vectors", _nothing)
+    await lifecycle._reject_heads("o", "n", "a", "u", "k", "spam", ch=_RMTCH())
+    assert [r["version"] for r in committed] == [ahead + 2]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("moves", [1, 3])
+async def test_a_reject_over_a_head_that_moved_reads_it_again(monkeypatch, moves: int) -> None:
+    """A write between the reject's read and its commit refuses the commit; the reject
+    reads the heads again and rejects the newer one, or answers contended when every
+    round moves."""
+    from server.core import pg
+    from server.memory.store import lifecycle, pg_memory, pg_publish
+
+    head = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "session_id": "s"}
+    reads: list[int] = []
+    committed: list[int] = []
+
+    async def _heads(*_: object) -> list[dict[str, Any]]:
+        reads.append(len(reads) + 1)
+        return [{**head, "memory_key": "k", "version": 10 * len(reads)}]
+
+    async def _commit(rows: Any, **_: object) -> pg_memory.Committed:
+        if len(reads) <= moves:
+            raise pg_memory.HeadMoved()
+        committed.extend(int(r["version"]) for r in rows)
+        return pg_memory.Committed(
+            rows=rows, audits=[], seqs=[], targets=[0], deadline=time.monotonic() + 30
+        )
+
+    async def _nothing(*_: object, **__: object) -> int:
+        return 0
+
+    monkeypatch.setattr(pg_memory, "live_heads_of", _heads)
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(lifecycle, "check_memory_rows", lambda rows: None)
+    monkeypatch.setattr(lifecycle, "_hydrate", _Head)
+    monkeypatch.setattr(lifecycle, "build_memory_version_row", lambda h, **o: {**h, **o})
+    monkeypatch.setattr(lifecycle, "version_over", lambda h: h.version + 1)
+    monkeypatch.setattr(lifecycle, "_reject_vectors", _nothing)
+    monkeypatch.setattr(pg_publish, "commit", _commit)
+    monkeypatch.setattr(pg_publish, "publish", _nothing)
+    if moves >= 3:
+        with pytest.raises(pg_memory.AdmissionContendedError):
+            await lifecycle._reject_heads("o", "n", "a", "u", "k", "spam", ch=_RMTCH())
+        assert committed == []
+    else:
+        assert len(await lifecycle._reject_heads("o", "n", "a", "u", "k", "spam", ch=_RMTCH())) == 1
+        assert reads == [1, 2] and committed == [21]
+
+
+@pytest.mark.asyncio
+async def test_a_merge_retires_only_the_rows_still_holding_the_text_it_read(monkeypatch) -> None:
+    """A merged-from key rewritten, pinned or locked since the cluster read is not the
+    merge's to retire: it stays, and so do its vectors."""
+    from server.memory.api.models_admin import MemoryConsolidateInput
+    from server.memory.app import consolidate
+
+    retired: list[str] = []
+    asked: dict[str, Any] = {}
+
+    async def written(org, ids, update, *, skip, strong, **_k):
+        asked["strong"] = strong
+        heads = [
+            _memory_row(memory_id="m-same", content_sha256="a" * 64),
+            _memory_row(memory_id="m-rewritten", content_sha256="b" * 64),
+            _memory_row(memory_id="m-pinned", content_sha256="a" * 64, pinned=True),
+            _memory_row(memory_id="m-locked", content_sha256="a" * 64, lock_mode="no_delete"),
+        ]
+        rows = [update(h) for h in heads if not skip(h)]
+        return len(rows)
+
+    async def tombstone(*a, **k):
+        retired.append(a[5])
+
+    async def no_chunks(**_k):
+        return None
+
+    monkeypatch.setattr("server.memory.store.write_versions_by_ids", written)
+    monkeypatch.setattr("server.memory.store.tombstone_embeddings_for_key", tombstone)
+    monkeypatch.setattr("server.memory.app.set_chunks.tombstone_set_chunks_fail_open", no_chunks)
+    await consolidate._retire_merged(
+        object(),
+        MemoryConsolidateInput(org="o", namespace="n", agent="a", user_id="u", session_id="s"),
+        [
+            {"memory_id": "m-same", "memory_key": "k-same", "content_sha256": "a" * 64},
+            {"memory_id": "m-rewritten", "memory_key": "k-rewritten", "content_sha256": "a" * 64},
+            {"memory_id": "m-pinned", "memory_key": "k-pinned", "content_sha256": "a" * 64},
+            {"memory_id": "m-locked", "memory_key": "k-locked", "content_sha256": "a" * 64},
+        ],
+        canonical_key="canon",
+        now_naive=datetime.now(),
+    )
+    assert asked["strong"] is True and retired == ["k-same"]
+
+
+@pytest.mark.asyncio
+async def test_a_copy_of_one_content_leaves_another_versions_vectors_alone() -> None:
+    """`of_content` copies only the rows of the head's hash: a row of another version's
+    text, which a redaction may be purging, is not carried forward."""
+    ch = _SiteCH()
+    ch.emb.append({**_LIVE, "content_sha256": "a" * 64, "version": 10})
+    ch.emb.append({**_LIVE, "embedding_model": "m2", "content_sha256": "b" * 64, "version": 10})
+    n = await M.reemit_embedding_rows_for_keys(
+        [(_KEY, {"status": "conflicted", "version": 20})], ch=ch, of_content={_KEY: "a" * 64}
+    )
+    assert n == 1
+    copied = [r for r in ch.emb if r["version"] == 20]
+    assert [r["content_sha256"] for r in copied] == ["a" * 64]

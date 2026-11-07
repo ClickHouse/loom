@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from server.memory.domain.conflict_resolution import PROMPT_VERSION
+from server.memory.store import lifecycle
 from tests.integration._resources import unique_org
 
 NS = "resolver"
@@ -250,7 +251,10 @@ async def _seed(ch: Any, org: str, monkeypatch: pytest.MonkeyPatch) -> None:
     # The compatible pair, flagged by cosine alone before this build judged it.
     rows = await _rows(ch, org)
     landed = await conflicts.mark_peers_conflicted(
-        org=org, new_memory_id=rows["standup_lead"]["id"], peer_ids=[rows["lead_name"]["id"]]
+        org=org,
+        new_memory_id=rows["standup_lead"]["id"],
+        peer_ids=[rows["lead_name"]["id"]],
+        namespace=NS,
     )
     assert landed == "conflict"
 
@@ -971,8 +975,8 @@ async def test_a_flag_never_lands_on_a_peer_changed_after_it_was_judged(
     org, _ = wired
     await _pair(ch, org, "office_city", "office_location", 60)
     ids = {k: r["id"] for k, r in (await _rows(ch, org)).items()}
-    row = await resolver._head(org, ids["office_location"])
-    judged_peer = await resolver._head(org, ids["office_city"])
+    row = await resolver._head(org, NS, ids["office_location"])
+    judged_peer = await resolver._head(org, NS, ids["office_city"])
     if change == "revised":
         await handle_memory_update_by_id(
             MemoryUpdateByIdInput(org=org, memory_id=ids["office_city"], value="Paris, 3rd floor")
@@ -1031,10 +1035,10 @@ async def test_closer_rows_of_another_type_do_not_hide_a_peer(ch, wired) -> None
 
 def _past_the_writers_grace(monkeypatch: pytest.MonkeyPatch) -> None:
     """The repair takes over a fresh FOLLOW_OWED intent, as it does once its writer had
-    FOLLOW_OWED_GRACE_S to finish."""
+    OWED_GRACE_S to finish."""
     from server.memory.app import projection_failures
 
-    monkeypatch.setattr(projection_failures, "FOLLOW_OWED_GRACE_S", 0)
+    monkeypatch.setattr(projection_failures, "OWED_GRACE_S", 0)
 
 
 async def _follow_intents(ch: Any, org: str, want_active: int) -> list[dict[str, Any]]:
@@ -1134,7 +1138,10 @@ async def test_a_flagged_peer_of_another_user_is_never_judged_or_retired(
     await _place(ch, org, "s2", "office_location", _vec((70, 0.8), (71, 0.6)), owed=True)
     rows = await _rows(ch, org)
     landed = await conflicts.mark_peers_conflicted(
-        org=org, new_memory_id=rows["office_location"]["id"], peer_ids=[rows["office_city"]["id"]]
+        org=org,
+        new_memory_id=rows["office_location"]["id"],
+        peer_ids=[rows["office_city"]["id"]],
+        namespace=NS,
     )
     assert landed == "conflict"
 
@@ -1228,7 +1235,10 @@ async def test_a_retirement_clears_the_winners_flag_against_the_retired_row(
     await _pair(ch, org, "office_city", "office_location", 74)
     rows = await _rows(ch, org)
     landed = await conflicts.mark_peers_conflicted(
-        org=org, new_memory_id=rows["office_location"]["id"], peer_ids=[rows["office_city"]["id"]]
+        org=org,
+        new_memory_id=rows["office_location"]["id"],
+        peer_ids=[rows["office_city"]["id"]],
+        namespace=NS,
     )
     assert landed == "conflict"
     if clear_fails:
@@ -1398,13 +1408,12 @@ async def test_a_write_that_started_before_a_retirement_stays_the_head(
     the overtaken retirement records nothing."""
     import server.memory.store as M
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
-    from server.memory.store import lifecycle
     from server.memory.workers.conflict_resolver import run_pass
 
     org, _ = wired
     await _pair(ch, org, "office_city", "office_location", 84)
     peer_id = (await _rows(ch, org))["office_city"]["id"]
-    peer = await M.get_by_id(peer_id, org=org, scope=WHOLE_NAMESPACE, strong=True)
+    peer = await _by_id(peer_id, org=org, scope=WHOLE_NAMESPACE, strong=True)
     drawn = M.next_version()  # the user's write, drawn before the resolver acts
     if write == "set":
         late = M.build_memory_version_row(
@@ -1969,7 +1978,6 @@ async def test_a_supersede_whose_response_was_lost_is_still_followed(
 ) -> None:
     """The supersede commits, but its insert call raises (a lost response): the row is
     retired, so its record and its graph follow are still made."""
-    from server.memory.store import lifecycle
     from server.memory.workers.conflict_resolver import run_pass
 
     org, _ = wired
@@ -1996,7 +2004,6 @@ async def test_a_date_corrected_during_the_call_decides_the_order(ch, wired, mon
 
     import server.memory.store as M
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
-    from server.memory.store import lifecycle
     from server.memory.workers.conflict_resolver import run_pass
 
     org, llm = wired
@@ -2004,7 +2011,7 @@ async def test_a_date_corrected_during_the_call_decides_the_order(ch, wired, mon
 
     async def dated(key: str, when: datetime) -> None:
         mid = (await _rows(ch, org))[key]["id"]
-        row = await M.get_by_id(mid, org=org, scope=WHOLE_NAMESPACE, strong=True)
+        row = await _by_id(mid, org=org, scope=WHOLE_NAMESPACE, strong=True)
         moved = M.build_memory_version_row(row, version=M.next_version(), valid_at=when)
         await lifecycle.insert_memory_versions([moved], ch=ch)
 
@@ -2029,16 +2036,13 @@ async def test_a_row_flagged_against_thousands_of_rows_is_still_judged(ch, wired
 
     import server.memory.store as M
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
-    from server.memory.store import lifecycle
     from server.memory.workers.conflict_resolver import run_pass
 
     org, llm = wired
     await _pair(ch, org, "office_city", "office_location", 218)
     rows = await _rows(ch, org)
     flags = [rows["office_city"]["id"]] + [str(uuid.uuid4()) for _ in range(3999)]
-    row = await M.get_by_id(
-        rows["office_location"]["id"], org=org, scope=WHOLE_NAMESPACE, strong=True
-    )
+    row = await _by_id(rows["office_location"]["id"], org=org, scope=WHOLE_NAMESPACE, strong=True)
     flagged = M.build_memory_version_row(
         row, version=M.next_version(), status="conflicted", conflict_with=flags
     )
@@ -2143,15 +2147,14 @@ async def test_a_flag_against_a_row_no_longer_live_is_cleared(ch, wired) -> None
     import server.memory.store as M
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.app.conflict_resolver import AUDIT_EVENT
-    from server.memory.store import lifecycle
     from server.memory.workers.conflict_resolver import run_pass
 
     org, llm = wired
     await _pair(ch, org, "office_city", "office_location", 230)
     rows = await _rows(ch, org)
     old_id, new_id = rows["office_city"]["id"], rows["office_location"]["id"]
-    old = await M.get_by_id(old_id, org=org, scope=WHOLE_NAMESPACE, strong=True)
-    new = await M.get_by_id(new_id, org=org, scope=WHOLE_NAMESPACE, strong=True)
+    old = await _by_id(old_id, org=org, scope=WHOLE_NAMESPACE, strong=True)
+    new = await _by_id(new_id, org=org, scope=WHOLE_NAMESPACE, strong=True)
     await lifecycle.insert_memory_versions(
         [
             M.build_memory_version_row(
@@ -2410,7 +2413,10 @@ async def test_an_undo_holds_while_a_left_out_flag_keeps_the_winner_owed(
     await _place(ch, org, "s2", "office_location", _vec((400, 0.8), (401, 0.6)), owed=True)
     rows = await _rows(ch, org)
     landed = await conflicts.mark_peers_conflicted(
-        org=org, new_memory_id=rows["office_location"]["id"], peer_ids=[rows["lead_name"]["id"]]
+        org=org,
+        new_memory_id=rows["office_location"]["id"],
+        peer_ids=[rows["lead_name"]["id"]],
+        namespace=NS,
     )
     assert landed == "conflict"
     assert (await run_pass())["retired"] == 1
@@ -2476,7 +2482,10 @@ async def test_a_flagged_peer_the_model_keeps_leaving_out_stops_costing_calls(
     await _place(ch, org, "s2", "office_location", _vec((500, 0.8), (501, 0.6)), owed=True)
     rows = await _rows(ch, org)
     await conflicts.mark_peers_conflicted(
-        org=org, new_memory_id=rows["office_location"]["id"], peer_ids=[rows["lead_name"]["id"]]
+        org=org,
+        new_memory_id=rows["office_location"]["id"],
+        peer_ids=[rows["lead_name"]["id"]],
+        namespace=NS,
     )
     calls = []
     for _ in range(5):
@@ -2711,7 +2720,10 @@ async def test_a_row_left_owed_is_judged_once_a_pass_whatever_the_burst_reads(
     await _place(ch, org, "s2", "leftout_row", _vec((990, 0.9), (991, 0.43)), owed=True)
     rows = await _rows(ch, org)
     await conflicts.mark_peers_conflicted(
-        org=org, new_memory_id=rows["leftout_row"]["id"], peer_ids=[rows["leftout_flag"]["id"]]
+        org=org,
+        new_memory_id=rows["leftout_row"]["id"],
+        peer_ids=[rows["leftout_flag"]["id"]],
+        namespace=NS,
     )
     await worker.run_pass()
     # One judgement: the answer leaves a peer out, so it is asked once more with room.
@@ -2832,7 +2844,10 @@ async def test_a_flag_no_cluster_can_hold_does_not_keep_the_row_owed(
     await _place(ch, org, "s2", "judged_row", _vec((900, 0.8), (903, 0.6)), owed=True)
     rows = await _rows(ch, org)
     landed = await conflicts.mark_peers_conflicted(
-        org=org, new_memory_id=rows["judged_row"]["id"], peer_ids=[rows["other_user_row"]["id"]]
+        org=org,
+        new_memory_id=rows["judged_row"]["id"],
+        peer_ids=[rows["other_user_row"]["id"]],
+        namespace=NS,
     )
     assert landed == "conflict"
     for _ in range(3):
@@ -2913,7 +2928,7 @@ async def test_an_undo_of_a_value_update_retirement_holds(ch, wired, winner_vali
     winner, loser = rows["office_location"]["id"], rows["office_city"]["id"]
     ended = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=2) if winner_valid_at else None
     await memory_repo.write_versions_by_ids(
-        org, [loser], _supersession_update(winner, ended), ch=ch, strong=True
+        org, [loser], _supersession_update(winner, ended), ch=ch, strong=True, namespace=NS
     )
     assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
     undone = await handle_memory_restore(
@@ -3085,7 +3100,7 @@ async def test_an_undo_whose_restore_failed_does_not_hold_a_later_restatement(
     writer then states Paris again: a statement after the Undo, judged as new, so it
     retires Rome."""
     from server.core.errors import BackendUnavailableError
-    from server.memory.app import after_write, conflicts, restore
+    from server.memory.app import after_write, conflicts
     from server.memory.domain.conflicts import ConflictResult
     from server.memory.workers.conflict_resolver import run_pass
 
@@ -3101,7 +3116,7 @@ async def test_an_undo_whose_restore_failed_does_not_hold_a_later_restatement(
         return ConflictResult(verdict="clear", peers=[])
 
     with monkeypatch.context() as m:
-        m.setattr(restore, "insert_memory_versions", lost)
+        m.setattr(lifecycle, "insert_memory_versions", lost)
         with pytest.raises(BackendUnavailableError, match="may not have landed"):
             await _undo(org, "office_city", winner)
     assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
@@ -3166,21 +3181,20 @@ async def test_an_attest_of_a_retired_row_keeps_its_first_assertion(ch, wired, m
 async def test_an_undo_whose_insert_answer_was_lost_finishes(ch, wired, monkeypatch) -> None:
     """The restore's insert lands but its answer is lost: the re-read finds the restore,
     so the Undo goes on (search row, facts) and answers restored."""
-    from server.memory.app import restore
     from server.memory.workers.conflict_resolver import run_pass
 
     org, _ = wired
     await _pair(ch, org, "office_city", "office_location", 2101)
     assert (await run_pass())["retired"] == 1
     winner = (await _rows(ch, org))["office_location"]["id"]
-    real = restore.insert_memory_versions
+    real = lifecycle.insert_memory_versions
 
     async def lost(rows: Any, **kw: Any) -> None:
         await real(rows, **kw)
         raise TimeoutError("answer lost")
 
     with monkeypatch.context() as m:
-        m.setattr(restore, "insert_memory_versions", lost)
+        m.setattr(lifecycle, "insert_memory_versions", lost)
         out = await _undo(org, "office_city", winner)
     assert out.restored
     assert (await _rows(ch, org))["office_city"]["status"] == "active"
@@ -3250,14 +3264,13 @@ async def test_a_retried_undo_finishes_a_restore_that_landed_after_its_503(
     person's retry finds the row served at the version its record names: it finishes
     that Undo (the search row served again) and answers restored."""
     from server.core.errors import BackendUnavailableError
-    from server.memory.app import restore
     from server.memory.workers.conflict_resolver import run_pass
 
     org, _ = wired
     await _pair(ch, org, "office_city", "office_location", 2190)
     assert (await run_pass())["retired"] == 1
     winner = (await _rows(ch, org))["office_location"]["id"]
-    real = restore.insert_memory_versions
+    real = lifecycle.insert_memory_versions
     late: list[Any] = []
 
     async def lost(rows: Any, **kw: Any) -> None:
@@ -3265,7 +3278,7 @@ async def test_a_retried_undo_finishes_a_restore_that_landed_after_its_503(
         raise TimeoutError("answer lost")
 
     with monkeypatch.context() as m:
-        m.setattr(restore, "insert_memory_versions", lost)
+        m.setattr(lifecycle, "insert_memory_versions", lost)
         with pytest.raises(BackendUnavailableError):
             await _undo(org, "office_city", winner)
     rows, kw = late[0]
@@ -3310,7 +3323,6 @@ async def test_an_undo_naming_another_memory_after_a_restore_changes_nothing(ch,
 async def _late_undo(org: str, winner: str, monkeypatch: Any) -> tuple[Any, dict[str, Any]]:
     """An Undo whose insert is held back (its answer lost): the rows and kwargs to land."""
     from server.core.errors import BackendUnavailableError
-    from server.memory.app import restore
 
     held: list[Any] = []
 
@@ -3319,7 +3331,7 @@ async def _late_undo(org: str, winner: str, monkeypatch: Any) -> tuple[Any, dict
         raise TimeoutError("answer lost")
 
     with monkeypatch.context() as m:
-        m.setattr(restore, "insert_memory_versions", lost)
+        m.setattr(lifecycle, "insert_memory_versions", lost)
         with pytest.raises(BackendUnavailableError):
             await _undo(org, "office_city", winner)
     return held[0]
@@ -3338,7 +3350,6 @@ async def _search_status(ch: Any, org: str, key: str) -> set[str]:
 async def test_two_lost_undos_landing_out_of_order_finish_on_retry(ch, wired, monkeypatch) -> None:
     """Two Undo attempts both answered 503; the later one's insert lands first. The head
     is the later restore, which its own record names: the retry finishes it."""
-    from server.memory.app import restore
     from server.memory.workers.conflict_resolver import run_pass
 
     org, _ = wired
@@ -3348,7 +3359,7 @@ async def test_two_lost_undos_landing_out_of_order_finish_on_retry(ch, wired, mo
     first = await _late_undo(org, winner, monkeypatch)
     second = await _late_undo(org, winner, monkeypatch)
     for rows, kw in (second, first):
-        await restore.insert_memory_versions(rows, **kw)
+        await lifecycle.insert_memory_versions(rows, **kw)
     out = await _undo(org, "office_city", winner)
     assert out.restored and out.version == second[0][0]["version"]
     assert await _search_status(ch, org, "office_city") == {"active"}
@@ -3366,7 +3377,7 @@ async def test_an_unguarded_retry_finishes_an_undo_that_landed_late(ch, wired, m
     assert (await run_pass())["retired"] == 1
     winner = (await _rows(ch, org))["office_location"]["id"]
     rows, kw = await _late_undo(org, winner, monkeypatch)
-    await restore.insert_memory_versions(rows, **kw)
+    await lifecycle.insert_memory_versions(rows, **kw)
     reopened: list[str] = []
     real = restore._reopen_facts
 
@@ -3708,14 +3719,14 @@ async def test_an_undelete_whose_insert_answer_was_lost_finishes(ch, wired, monk
     await asyncio.sleep(1.0)
     await handle_memory_delete(MemoryDeleteInput(**key, memory_key="home2"))
     await asyncio.sleep(1.0)
-    real = restore.insert_memory_versions
+    real = lifecycle.insert_memory_versions
 
     async def lands_then_fails(rows: Any, **kw: Any) -> None:
         await real(rows, **kw)
         raise RuntimeError("answer lost")
 
     with monkeypatch.context() as m:
-        m.setattr(restore, "insert_memory_versions", lands_then_fails)
+        m.setattr(lifecycle, "insert_memory_versions", lands_then_fails)
         out = await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="home2"))
     assert out.restored and out.from_status == "tombstoned"
     search = await ch.query_all(
@@ -3765,10 +3776,9 @@ async def test_an_undo_retry_whose_record_read_fails_answers_503(ch, wired, monk
     await _pair(ch, org, "office_city", "office_location", 2199)
     assert (await run_pass())["retired"] == 1
     winner = (await _rows(ch, org))["office_location"]["id"]
-    from server.memory.app import restore
 
     rows, kw = await _late_undo(org, winner, monkeypatch)
-    await restore.insert_memory_versions(rows, **kw)
+    await lifecycle.insert_memory_versions(rows, **kw)
 
     async def down(*a: Any, **k: Any) -> bool:
         raise RuntimeError("audit_log unreachable")
@@ -3830,20 +3840,21 @@ async def test_an_undelete_whose_answer_and_reread_were_lost_finishes_on_retry(
     await asyncio.sleep(1.0)
     await handle_memory_delete(MemoryDeleteInput(**key, memory_key="home3"))
     await asyncio.sleep(1.0)
-    real = restore.insert_memory_versions
+    real = lifecycle.insert_memory_versions
 
     async def lands_then_fails(rows: Any, **kw: Any) -> None:
         await real(rows, **kw)
         raise RuntimeError("answer lost")
 
-    async def unread(*a: Any, **kw: Any) -> bool:
-        return False
+    async def unread(*a: Any, **kw: Any) -> None:
+        return None  # the re-read fails too: ClickHouse never settles a miss
 
     with monkeypatch.context() as m:
-        m.setattr(restore, "insert_memory_versions", lands_then_fails)
+        m.setattr(lifecycle, "insert_memory_versions", lands_then_fails)
         m.setattr(restore, "_restore_landed", unread)
-        with pytest.raises(BackendUnavailableError):
+        with pytest.raises(BackendUnavailableError) as lost:
             await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="home3"))
+        assert lost.value.extra["outcome_unknown"]
     out = await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="home3"))
     assert out.restored and out.from_status == "tombstoned"
     search = await ch.query_all(
@@ -3909,20 +3920,21 @@ async def test_a_high_row_restored_after_a_lost_undelete_answers_not_restored(
     await asyncio.sleep(1.0)
     await handle_memory_delete(MemoryDeleteInput(**key, memory_key="vault4"))
     await asyncio.sleep(1.0)
-    real = restore.insert_memory_versions
+    real = lifecycle.insert_memory_versions
 
     async def lands_then_fails(rows: Any, **kw: Any) -> None:
         await real(rows, **kw)
         raise RuntimeError("answer lost")
 
-    async def unread(*a: Any, **kw: Any) -> bool:
-        return False
+    async def unread(*a: Any, **kw: Any) -> None:
+        return None  # the re-read fails too: ClickHouse never settles a miss
 
     with monkeypatch.context() as m:
-        m.setattr(restore, "insert_memory_versions", lands_then_fails)
+        m.setattr(lifecycle, "insert_memory_versions", lands_then_fails)
         m.setattr(restore, "_restore_landed", unread)
-        with pytest.raises(BackendUnavailableError):
+        with pytest.raises(BackendUnavailableError) as lost:
             await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="vault4"))
+        assert lost.value.extra["outcome_unknown"]
     out = await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="vault4"))
     assert not out.restored
 
@@ -4014,3 +4026,11 @@ async def test_auto_retirements_reads_only_the_callers_users_records(ch) -> None
     )
     assert [r.user_id for r in first.rows] == ["u2"] and first.next_cursor
     assert await users(limit=1, cursor=first.next_cursor) == ["u1"]
+
+
+async def _by_id(memory_id: str, **kw: Any) -> Any:
+    """A row by id, in the one namespace that holds it."""
+    import server.memory.store as M
+
+    (namespace,) = await M.namespaces_of_id(kw["org"], memory_id, strong=False)
+    return await M.get_by_id(memory_id, namespace=namespace, **kw)

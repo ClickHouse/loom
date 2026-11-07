@@ -290,6 +290,9 @@ def test_redact_by_key_statements_are_org_scoped_has_lookups() -> None:
     assert "has(arrayConcat(window_keys, cited_keys), {key:String})" in ch.commands[0][0]
 
 
+_MEMORY = "11111111-1111-1111-1111-111111111111"
+
+
 async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(monkeypatch) -> None:
     from server.memory.app import curation as cur
 
@@ -301,24 +304,38 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
         "memory_key": "user_employer",
         "version": 7,
         "tombstoned_at": None,
+        "content_sha256": "c" * 64,
     }
 
-    async def _find(org, mid):
+    async def _find(org, mid, _version):
         return HistoryTarget.from_row({**target, "org": org, "memory_id": mid})
 
+    events: list[str] = []
+
+    def _stamp() -> int:
+        events.append("stamp")
+        return 1
+
     async def _head(identity, key, *, fresh=False, strong=False, scope=None):
-        return SimpleNamespace(version=9, pinned=False, locked_until=None, lock_mode="")
+        events.append("read")
+        return SimpleNamespace(
+            memory_id=_MEMORY,
+            version=9,
+            pinned=False,
+            locked_until=None,
+            lock_mode="",
+            redacted_at=None,
+            content_sha256="d" * 64,
+        )
 
     async def _scope(org, ns, role, *, hides_answer=True):
         return True
 
-    redacted: list[tuple[str, str, int]] = []
+    redacted: list[tuple[Any, ...]] = []
 
-    async def _redact_versions(org, namespace, user_id, mid, version, *, when, reason_blob):
-        redacted.append((org, mid, version))
-
-    async def _exists(org, target, mid, version):
-        return True
+    async def _redact_versions(key, mid, version, *, head, **_):
+        redacted.append((key, mid, version, head))
+        return [12]  # a later copy of the version's text on the key, scrubbed with it
 
     deleted: list[tuple[str, str, str]] = []
 
@@ -332,10 +349,20 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
 
     monkeypatch.setattr(memory_repo, "find_history_target", _find)
     monkeypatch.setattr(memory_repo, "get_by_key", _head)
+
     scrubbed: list[tuple[Any, ...]] = []
 
-    async def _derivatives(*ident: Any, head_live: bool, live_link_inputs: str) -> list[str]:
-        scrubbed.append((*ident, head_live, live_link_inputs))
+    async def _derivatives(
+        *ident: Any,
+        head_live: bool,
+        live_link_inputs: str,
+        through: int,
+        redacted_sha: str,
+        live_sha: str,
+        set_chunks_kept: list[str] | None,
+    ) -> list[str]:
+        scrubbed.append((*ident, head_live, live_link_inputs, redacted_sha, live_sha))
+        assert set_chunks_kept is None  # ClickHouse is the authority here
         return ["scrub"]
 
     async def _live_inputs(org: str, head: Any) -> str:
@@ -349,8 +376,15 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
         return []
 
     monkeypatch.setattr(memory_repo, "profile_keys_built_from", _profiles)
-    monkeypatch.setattr(memory_repo, "version_exists", _exists)
     monkeypatch.setattr(memory_repo, "redact_versions", _redact_versions)
+    monkeypatch.setattr(memory_repo, "next_version", _stamp)
+    announced: list[tuple[str, int]] = []
+
+    async def _announce(changes: list[Any]) -> int:
+        announced.extend((event, int(change["version"])) for event, change in changes)
+        return len(changes)
+
+    monkeypatch.setattr(cur.webhooks, "announce", _announce)
     monkeypatch.setattr(memory_repo, "key_derivative_scrubs", _derivatives)
     monkeypatch.setattr(cur, "_live_link_inputs", _live_inputs)
     monkeypatch.setattr(memory_repo, "run_scrubs", _run)
@@ -360,16 +394,25 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
     monkeypatch.setattr(memory_repo, "delete_ask_precedents_by_key", _prec)
     inp = SimpleNamespace(
         org="o",
-        memory_id="11111111-1111-1111-1111-111111111111",
+        memory_id=_MEMORY,
         version=7,
         reason="leak",
         redacted_by="ops",
     )
     out = await cur.handle_memory_redact(inp)
     assert out.redacted is True and out.cache_rows_deleted == 2 and out.precedent_rows_deleted == 1
-    assert redacted == [("o", inp.memory_id, 7)]
+    # The key and the live head the handler checked go with the scrub, for its
+    # transaction to recheck.
+    key = ("o", "n", "a", "u", "s", "user_employer")
+    assert redacted == [(key, inp.memory_id, 7, (_MEMORY, 9))]
+    assert announced == [("memory.redacted", 7), ("memory.redacted", 12)]
+    # The stamp that bounds the search-row purge is taken before the head is read.
+    assert events[:2] == ["stamp", "read"]
     # The key's derived rows are scrubbed too; the head is live, so its text stays.
-    assert scrubbed == [("o", "n", "a", "u", "s", "user_employer", True, "head-inputs")]
+    # The redacted version's hash goes too: its search rows go whatever their stamp.
+    assert scrubbed == [
+        ("o", "n", "a", "u", "s", "user_employer", True, "head-inputs", "c" * 64, "d" * 64)
+    ]
     assert deleted == [
         ("cache", "o", "user_employer"),
         ("prec", "o", "user_employer"),

@@ -244,6 +244,8 @@ async def test_entity_extractor_records_parse_failures(monkeypatch: pytest.Monke
         "memory_key": "k1",
         "memory_type": "semantic",
         "value": "Alice at ClickHouse",
+        "version": 1,
+        "content_sha256": "",
     }
 
     async def _rows(**kw):

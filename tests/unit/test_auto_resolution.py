@@ -123,14 +123,24 @@ async def test_a_failing_audit_write_never_raises_and_says_so(monkeypatch) -> No
 
 def test_the_tracker_records_only_rows_it_passed_that_were_written() -> None:
     t = ar.RetirementTracker(lambda row: row.memory_id == "locked")
-    assert t.skip(SimpleNamespace(memory_id="ok", status="active", pinned=False)) is False
-    assert t.skip(SimpleNamespace(memory_id="dup", status="duplicate", pinned=False)) is False
-    assert t.skip(SimpleNamespace(memory_id="locked", status="active", pinned=False)) is True
+    assert (
+        t.skip(SimpleNamespace(memory_id="ok", status="active", pinned=False, version=0)) is False
+    )
+    assert (
+        t.skip(SimpleNamespace(memory_id="dup", status="duplicate", pinned=False, version=0))
+        is False
+    )
+    assert (
+        t.skip(SimpleNamespace(memory_id="locked", status="active", pinned=False, version=0))
+        is True
+    )
     # A pin is a write-time invariant: nothing automatic retires it.
-    assert t.skip(SimpleNamespace(memory_id="pin", status="active", pinned=True)) is True
+    assert t.skip(SimpleNamespace(memory_id="pin", status="active", pinned=True, version=0)) is True
     # Retired already (or tombstoned, proposed): not re-pointed, not recorded.
     for status in ("superseded", "tombstoned", "proposed"):
-        assert t.skip(SimpleNamespace(memory_id="x", status=status, pinned=False)) is True
+        assert (
+            t.skip(SimpleNamespace(memory_id="x", status=status, pinned=False, version=0)) is True
+        )
     t.written([{"memory_id": "ok", "version": 7}])
     victims = [{"memory_id": m} for m in ("ok", "dup", "locked", "never_read")]
     # `dup` passed the skip but its retirement never took effect.
@@ -160,6 +170,7 @@ def _fake_supersede(monkeypatch, stored: dict[str, str] | set[str], *, fail: str
         org,
         victims,
         *,
+        namespace,
         ch=None,
         skip=None,
         strong=False,
@@ -170,7 +181,9 @@ def _fake_supersede(monkeypatch, stored: dict[str, str] | set[str], *, fail: str
         # A lagging replica's row would be rebuilt over a revision at a higher version.
         assert strong, "the retirement reads read-your-writes"
         rows = [
-            SimpleNamespace(memory_id=v["memory_id"], status=statuses[v["memory_id"]], pinned=False)
+            SimpleNamespace(
+                memory_id=v["memory_id"], status=statuses[v["memory_id"]], pinned=False, version=0
+            )
             for v in victims
             if v["memory_id"] in statuses
         ]
@@ -284,9 +297,11 @@ async def test_the_real_store_reports_what_its_insert_wrote_before_the_mirror_fa
     from server.memory.store import lifecycle
 
     rows = {
-        "ok": SimpleNamespace(memory_id="ok", status="active", pinned=False),
-        "locked": SimpleNamespace(memory_id="locked", status="active", pinned=False),
-        "retired": SimpleNamespace(memory_id="retired", status="superseded", pinned=False),
+        "ok": SimpleNamespace(memory_id="ok", status="active", pinned=False, version=0),
+        "locked": SimpleNamespace(memory_id="locked", status="active", pinned=False, version=0),
+        "retired": SimpleNamespace(
+            memory_id="retired", status="superseded", pinned=False, version=0
+        ),
     }
     inserted: list = []
 
@@ -307,7 +322,12 @@ async def test_the_real_store_reports_what_its_insert_wrote_before_the_mirror_fa
     victims = [{"memory_id": m, "superseded_by": "n1"} for m in ("ok", "locked", "retired", "gone")]
     with pytest.raises(RuntimeError, match="mirror down"):
         await lifecycle.supersede_duplicates(
-            "o", victims, ch=_Heads(inserted), skip=tracker.skip, on_written=tracker.written
+            "o",
+            victims,
+            namespace="ns",
+            ch=_Heads(inserted),
+            skip=tracker.skip,
+            on_written=tracker.written,
         )
     assert len(inserted) == 1
     assert [v["memory_id"] for v in tracker.retired(victims)] == ["ok"]
@@ -338,7 +358,10 @@ async def test_a_retirement_a_later_write_overtook_is_not_reported_or_mirrored(m
     # higher version: the head is still active and locked.
     from server.memory.store import lifecycle
 
-    rows = {m: SimpleNamespace(memory_id=m, status="active", pinned=False) for m in ("won", "lost")}
+    rows = {
+        m: SimpleNamespace(memory_id=m, status="active", pinned=False, version=0)
+        for m in ("won", "lost")
+    }
     inserted: list = []
     mirrored: list = []
 
@@ -360,6 +383,7 @@ async def test_a_retirement_a_later_write_overtook_is_not_reported_or_mirrored(m
     n = await lifecycle.supersede_duplicates(
         "o",
         victims,
+        namespace="ns",
         ch=_Heads(inserted, raced=frozenset({"lost"})),
         skip=tracker.skip,
         on_written=tracker.written,
@@ -372,7 +396,7 @@ async def test_the_real_store_reports_nothing_when_its_insert_fails(monkeypatch)
     from server.memory.store import lifecycle
 
     async def get_by_id(mid, **kw):
-        return SimpleNamespace(memory_id=mid, status="active", pinned=False)
+        return SimpleNamespace(memory_id=mid, status="active", pinned=False, version=0)
 
     async def insert(batch, *, ch=None):
         raise RuntimeError("insert down")
@@ -387,6 +411,7 @@ async def test_the_real_store_reports_nothing_when_its_insert_fails(monkeypatch)
             "o",
             ["ok"],
             lambda row: {"status": "superseded"},
+            namespace="ns",
             ch=object(),
             skip=tracker.skip,
             on_written=tracker.written,
@@ -696,7 +721,16 @@ async def _value_updates(
     wrote: list[str] = []
 
     async def write(
-        org, ids, update, *, ch=None, skip=None, strong=False, on_written=None, on_unconfirmed=None
+        org,
+        ids,
+        update,
+        *,
+        namespace,
+        ch=None,
+        skip=None,
+        strong=False,
+        on_written=None,
+        on_unconfirmed=None,
     ):
         assert strong, "the retirement reads read-your-writes"
         found = [
@@ -820,7 +854,10 @@ async def test_an_unconfirmed_retirement_is_left_for_the_reconcile(monkeypatch) 
     # result counts it; the record marks it, and the reconcile mirrors the head later.
     from server.memory.store import lifecycle
 
-    rows = {m: SimpleNamespace(memory_id=m, status="active", pinned=False) for m in ("a", "b")}
+    rows = {
+        m: SimpleNamespace(memory_id=m, status="active", pinned=False, version=0)
+        for m in ("a", "b")
+    }
     inserted: list = []
     mirrored: list = []
 
@@ -861,6 +898,7 @@ async def test_an_unconfirmed_retirement_is_left_for_the_reconcile(monkeypatch) 
         n = await lifecycle.supersede_duplicates(
             "o",
             victims,
+            namespace="ns",
             ch=ch,
             skip=tracker.skip,
             on_written=tracker.written,
@@ -917,7 +955,7 @@ async def _marks(
 
     monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", write)
-    await mark_peers_conflicted(org="o", new_memory_id="n1", peer_ids=list(peers))
+    await mark_peers_conflicted(org="o", namespace="ns", new_memory_id="n1", peer_ids=list(peers))
     return wrote
 
 
@@ -964,7 +1002,7 @@ async def test_a_deferred_mark_with_every_peer_retired_says_if_the_row_moved(
     monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", write)
     landed = await mark_peers_conflicted(
-        org="o", new_memory_id="n1", peer_ids=["q"], expected_sha256="judged"
+        org="o", namespace="ns", new_memory_id="n1", peer_ids=["q"], expected_sha256="judged"
     )
     assert landed == marked
 

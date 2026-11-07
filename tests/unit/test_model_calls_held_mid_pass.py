@@ -285,7 +285,7 @@ def test_the_period_digest_records_no_failure_when_its_call_is_held(monkeypatch,
 
     monkeypatch.setattr(pd, "_fetch_namespaces", idents)
     monkeypatch.setattr(pd, "_fetch_digests", nothing)
-    monkeypatch.setattr(pd, "_existing_period_keys", nothing)
+    monkeypatch.setattr(pd, "_skipped_period_keys", nothing)
     monkeypatch.setattr(pd, "plan_periods", lambda *a, **k: ([period], 0))
     monkeypatch.setattr(pd, "build_period_prompt", lambda p: ("system", "user"))
     llm = SimpleNamespace(complete=_raise(error))
@@ -509,7 +509,7 @@ def test_a_bulk_write_answers_a_held_conflict_check(monkeypatch, error) -> None:
     with pytest.raises(type(error)):  # not "unchecked": the org's write is held
         asyncio.run(
             bulk_set._bulk_conflict_verdicts(
-                put, [{}], [(entry, "v", None, None, None)], [(0, None, None, None)], [[0.1]]
+                put, [{}], [(entry, "v", None, None, None)], [(0, None, None, None)], [[0.1]], {}
             )
         )
 

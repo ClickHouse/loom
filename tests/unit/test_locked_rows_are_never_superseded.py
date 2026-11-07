@@ -52,7 +52,13 @@ async def test_supersede_leaves_a_locked_victim_live_in_both_tables(monkeypatch)
     }
 
     async def _get(
-        mid: str, *, org: str, ch: Any = None, scope: Any = None, strong: bool = False
+        mid: str,
+        *,
+        org: str,
+        namespace: str | None = None,
+        ch: Any = None,
+        scope: Any = None,
+        strong: bool = False,
     ) -> MemoryRow | None:
         return heads.get(mid)
 
@@ -81,7 +87,7 @@ async def test_supersede_leaves_a_locked_victim_live_in_both_tables(monkeypatch)
         for mid in heads
     ]
     ch = _CH()
-    n = await lc.supersede_duplicates("o", victims, ch=ch, skip=refuses_retirement)
+    n = await lc.supersede_duplicates("o", victims, ch=ch, skip=refuses_retirement, namespace="ns")
     written = {r["memory_id"] for _, rows in ch.inserted for r in rows}
     assert written == {"free", "lapsed"} and n == 2
     assert sorted(embedded) == ["k-free", "k-lapsed"]  # locked rows stay live in recall too

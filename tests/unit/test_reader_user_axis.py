@@ -44,7 +44,7 @@ async def test_anchor_tier_reads_rows_written_under_actor_user_ids(monkeypatch):
         run_id="r1",
         top_k=3,
     )
-    out = await _prepend_anchor([SimpleNamespace(memory_key="sim", rank_score=0.9)], inp)
+    out, _ = await _prepend_anchor([SimpleNamespace(memory_key="sim", rank_score=0.9)], inp, {})
     assert seen == ["*"]
     assert [x.memory_key for x in out] == ["jennifer_plan", "sim"]
 
@@ -70,5 +70,5 @@ async def test_named_user_stays_pinned_for_the_recent_tier(monkeypatch):
         run_id="",
         top_k=3,
     )
-    await _prepend_recent([], inp)
+    await _prepend_recent([], inp, {})
     assert seen == ["eric"]

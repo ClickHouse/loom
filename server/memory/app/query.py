@@ -7,7 +7,7 @@ import logging
 import re
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException
 
@@ -173,6 +173,16 @@ def reset_list_counts_cache() -> None:
     _list_counts_cache.clear()
 
 
+# Each status a listing hides unless the request asks for it, and the flag that asks.
+_STATUS_FLAGS: tuple[
+    tuple[str, Literal["include_duplicates", "include_superseded", "include_proposed"]], ...
+] = (
+    ("duplicate", "include_duplicates"),
+    ("superseded", "include_superseded"),
+    ("proposed", "include_proposed"),
+)
+
+
 async def _hidden_under_prefix(
     input: MemoryListInput,
     identity: Any,
@@ -186,12 +196,7 @@ async def _hidden_under_prefix(
     pays no extra count."""
     import server.memory.store as memory_repo
 
-    pairs = (
-        ("duplicate", "include_duplicates"),
-        ("superseded", "include_superseded"),
-        ("proposed", "include_proposed"),
-    )
-    hides = [(s, f) for s, f in pairs if not served[f]]  # type: ignore[literal-required]
+    hides = [(s, f) for s, f in _STATUS_FLAGS if not served[f]]
     if total or not input.prefix or not hides or input.count_only:
         return {}
     every = await memory_repo.count_by_namespace(
@@ -294,6 +299,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         )
     truncated = len(rows) > input.limit
     rows = rows[: input.limit]
+    rows = await _served_by_authority(input, rows, _served)
     if _wants_usage(keep):
         rows = await memory_repo.overlay_usage_totals_many(rows)
     # The two counts under FINAL are remembered per (scope, namespace version, UTC day) — a
@@ -410,6 +416,23 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
     )
 
 
+async def _served_by_authority(
+    input: MemoryListInput, rows: list[Any], served: ServedFlags
+) -> list[Any]:
+    """Under Postgres, only what the authority still serves at this version: a delete, a
+    rewrite or a redaction not yet published leaves the page. A recovery listing shows a
+    head the authority has since only deleted as that deleted head, within the listing's
+    own filters."""
+    import server.memory.store as memory_repo
+
+    if not input.include_tombstoned:
+        return await memory_repo.served_rows(rows)
+    hidden = frozenset(status for status, flag in _STATUS_FLAGS if not served[flag])
+    return await memory_repo.recovered_rows(
+        rows, source_trace=input.source_trace or None, hidden_statuses=hidden, as_of=input.as_of
+    )
+
+
 async def _list_by_score(
     input: MemoryListInput, tag_filter: TagFilter | None, served: ServedFlags
 ) -> MemoryListOutput:
@@ -476,7 +499,7 @@ async def _list_by_score(
             evidence_count, recall_count, last_recalled_at,
             tags, entities, source_trace, sensitivity,
             verified_by, verified_sha256, content_sha256,
-            agent, user_id, session_id,
+            agent, user_id, session_id, redacted_at,
             value_preview AS value,
             value_len > 2048 AS value_truncated
         FROM loom.memory FINAL
@@ -500,7 +523,9 @@ async def _list_by_score(
                 break
         rows_dict = kept
     truncated = len(rows_dict) > input.limit
-    rows_dict = rows_dict[: input.limit]
+    rows_dict = await memory_repo.served_rows(
+        [{**r, "org": input.org, "namespace": input.namespace} for r in rows_dict[: input.limit]]
+    )
     # Total in scope (pre-limit, pre-quota) so callers can show "N of TOTAL".
     _total_row = await get_client().query_one(
         f"SELECT count() AS n FROM loom.memory FINAL WHERE {' AND '.join(where)}",
@@ -701,14 +726,13 @@ async def follow_duplicate(input: Any, row: Any) -> tuple[Any, str | None]:
         canon = await memory_repo.get_by_id(
             target,
             org=input.org,
+            namespace=input.namespace,
             as_of=input.as_of,
             include_usage_totals=True,
             fresh=True,
             scope=request_scope(),
         )
         if canon is None or getattr(canon, "tombstoned_at", None) is not None:
-            break
-        if str(getattr(canon, "namespace", "") or "") != str(input.namespace):
             break
         exp = getattr(canon, "expires_at", None)
         if exp is not None and exp.replace(tzinfo=None) <= naive_utc_now():
@@ -783,10 +807,10 @@ async def handle_memory_bulk_get(
     # The literal keys too: `memory.set` takes a key shaped like a chunk id, and its own row
     # answers before the parent (the alias below fills only a real miss).
     wanted = list(dict.fromkeys([*input.memory_keys, *parent_of.values()]))
-    rows = await memory_repo.get_many_by_keys(identity, wanted, scope=request_scope())
     # Like memory.list, a bulk read serves a row past `expires_at` until the expiry sweep
     # tombstones it (memory.get does not), so the export lists and reads the same rows. The
     # read leaves out a 'high' row past its retention window: the window is why it has one.
+    rows = await memory_repo.get_many_by_keys(identity, wanted, scope=request_scope())
     if _wants_usage(keep):
         rows = await memory_repo.overlay_usage_totals_many(rows)
     canonical = await _canonical_keys_for_rows(input.org, input.namespace, rows)
@@ -809,7 +833,7 @@ async def handle_memory_bulk_get(
     # Only the keys asked are served (and audited): a parent read to fill a chunk-id alias
     # answers under that alias, never under its own key unless that was asked too.
     results: dict[str, MemoryGetOutput] = {}
-    served_rows: dict[str, MemoryRow] = {}
+    answered: dict[str, MemoryRow] = {}
     for k in input.memory_keys:
         if k in fetched:
             row, served = fetched[k]
@@ -826,10 +850,10 @@ async def handle_memory_bulk_get(
             results[k] = alias
         else:
             continue
-        served_rows[str(row.memory_id)] = row
+        answered[str(row.memory_id)] = row
     high = [
         {"memory_key": r.memory_key, "memory_id": mid}
-        for mid, r in served_rows.items()
+        for mid, r in answered.items()
         if r.sensitivity == "high"
     ]
     # A key read of a 'high' row is audited, as memory.get audits it.
@@ -844,7 +868,7 @@ async def handle_memory_bulk_get(
     )
     # the rows served, by their own keys: a chunk id answers with its parent's row
     _record_read_exposure(
-        "memory.bulk_get", input, list(dict.fromkeys(r.memory_key for r in served_rows.values()))
+        "memory.bulk_get", input, list(dict.fromkeys(r.memory_key for r in answered.values()))
     )
     missing = [k for k in input.memory_keys if k not in results]
     return MemoryBulkGetOutput(results=results, missing=missing)

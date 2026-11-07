@@ -4,8 +4,10 @@ tombstone copies."""
 from __future__ import annotations
 
 from datetime import datetime
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
+from server.core import pg
+from server.core.ch import late_send, start_guard, write_limit_s
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.decision_schema import PROPOSED_TAG, SCHEMA_NAME
@@ -65,16 +67,37 @@ _TOMBSTONE_DECISION_RECORDS = f"""{_COPY_ACTIVE_RECORDS}
   AND (memory_key, identity_agent, user_id, session_id) NOT IN ({_LIVE_WRITERS})
 {_SEQUENTIAL}"""
 
-# The newest active record whose writer still has a live decision row under the key.
-_LIVE_WRITER_RECORD = f"""
+# The same against the live writers the Postgres authority holds, read apart from the copy:
+# only records below a version drawn before that read, and starting by `start_by` (server
+# ms) like a carried insert, so it never lands after an erasure waited out its publisher.
+_TOMBSTONE_DECISION_RECORDS_EXCEPT_WRITERS = f"""{_COPY_ACTIVE_RECORDS}
+  AND memory_key IN {{keys:Array(String)}}
+  AND (memory_key, identity_agent, user_id, session_id)
+      NOT IN {{live:Array(Tuple(String, String, String, String))}}
+  AND version < {{ver:UInt64}}
+  AND {start_guard("{start_by:Int64}")}
+{_SEQUENTIAL}"""
+
+
+def _live_writer_record(writers: str) -> str:
+    """The newest active record whose writer is among `writers` under the key."""
+    return f"""
 SELECT identity_agent, user_id, session_id, record_json, created_at
 FROM loom.memory_records FINAL
 WHERE {_ACTIVE}
   AND memory_key IN {{keys:Array(String)}}
-  AND (memory_key, identity_agent, user_id, session_id) IN ({_LIVE_WRITERS})
+  AND (memory_key, identity_agent, user_id, session_id) IN {writers}
 ORDER BY version DESC
 LIMIT 1
 {_SEQUENTIAL}"""
+
+
+# The writers with a live decision row: in ClickHouse, or the heads the Postgres
+# authority holds, which ClickHouse may not have yet.
+_LIVE_WRITER_RECORD = _live_writer_record(f"({_LIVE_WRITERS})")
+_LIVE_WRITER_RECORD_AMONG = _live_writer_record(
+    "{live:Array(Tuple(String, String, String, String))}"
+)
 
 # The key's newest active record.
 _ACTIVE_RECORD_ROW = f"""
@@ -159,26 +182,49 @@ async def tombstone_decision_records(
     *,
     version: int,
     ch: _CHClient | None = None,
+    live: list[tuple[str, str, str, str]] | None = None,
 ) -> None:
     """Tombstone each key's active decision record unless its writer still has a live
-    decision row there, in one statement. Stamps `tombstoned_at` and the closed `valid_to`
-    with the current time."""
+    decision row there, in one statement. Stamps `tombstoned_at` and the closed
+    `valid_to` with the current time.
+
+    Under Postgres the live writers are the heads the authority holds (`live` when the
+    caller read them), and only records below `version` are copied."""
     ch = ch or _default_client()
     now = naive_utc_now_seconds()
-    await ch.execute(
-        _TOMBSTONE_DECISION_RECORDS,
-        params={
-            "org": org,
-            "ns": namespace,
-            "schema": SCHEMA_NAME,
-            "keys": keys,
-            "status": "tombstoned",
-            "close": now,
-            "ver": version,
-            "now": now,
-            "tombstoned_at": now,
-        },
-    )
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "schema": SCHEMA_NAME,
+        "keys": keys,
+        "status": "tombstoned",
+        "close": now,
+        "ver": version,
+        "now": now,
+        "tombstoned_at": now,
+    }
+    if not pg.enabled():
+        await ch.execute(_TOMBSTONE_DECISION_RECORDS, params=params)
+        return
+    from server.core import rmt_carry
+    from server.memory.store import pg_memory
+
+    if live is None:
+        live = await pg_memory.live_decision_writers(org, namespace, keys)
+    params["live"] = live
+    params["start_by"] = round(await rmt_carry.measured_send_deadline(ch) * 1000)
+    try:
+        await ch.execute(
+            _TOMBSTONE_DECISION_RECORDS_EXCEPT_WRITERS,
+            params=params,
+            # Bounded as `pg.insert_bound_s` counts it, a zero write timeout included.
+            settings={"max_execution_time": write_limit_s()},
+        )
+    except Exception as e:
+        late = late_send(e, "a decision record retirement")
+        if late is None:
+            raise
+        raise late from None
 
 
 async def active_record(
@@ -231,12 +277,24 @@ async def live_writer_record(
     ch: _CHClient | None = None,
 ) -> WriterRecord | None:
     """The newest active decision record under `memory_key` whose writer still has a live
-    decision row there, read with that writer, or None."""
+    decision row there (under Postgres, a head the authority holds), read with that
+    writer, or None."""
     ch = ch or _default_client()
-    row = await ch.query_one(
-        _LIVE_WRITER_RECORD,
-        params={"org": org, "ns": namespace, "schema": SCHEMA_NAME, "keys": [memory_key]},
-    )
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "schema": SCHEMA_NAME,
+        "keys": [memory_key],
+    }
+    sql = _LIVE_WRITER_RECORD
+    if pg.enabled():
+        from server.memory.store import pg_memory
+
+        params["live"] = await pg_memory.live_decision_writers(org, namespace, [memory_key])
+        if not params["live"]:
+            return None
+        sql = _LIVE_WRITER_RECORD_AMONG
+    row = await ch.query_one(sql, params=params)
     if row is None:
         return None
     return WriterRecord(

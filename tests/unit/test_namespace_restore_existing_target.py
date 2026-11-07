@@ -5,6 +5,7 @@ soft-deleted target carries its row forward. Both refuse a collection name.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -92,6 +93,7 @@ def wire(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(authz, "grant_role_for", _grant)
     monkeypatch.setattr(_audit, "emit", _no_audit)
+    monkeypatch.setattr(_audit, "emit_strict", _no_audit)
     nc.reset()
 
     def _install(row: dict[str, Any] | None, caller: str, role: Role) -> _CH:
@@ -117,7 +119,7 @@ def wire(monkeypatch: pytest.MonkeyPatch):
 
 def _restore_input(target: str = NS) -> NamespaceRestoreInput:
     payload = NamespaceSnapshotOutput(
-        snapshot_id="snap-1",
+        snapshot_id="88888888-8888-8888-8888-888888888888",
         org=ORG,
         source_namespace="elsewhere",
         created_at=datetime.now(UTC),
@@ -240,7 +242,7 @@ async def test_a_non_admin_learns_nothing_from_the_idempotency_probe(wire) -> No
     async def query_one(sql: str, params: Any = None, **kw: Any) -> dict[str, Any] | None:
         if "FROM loom.audit_log" in sql:
             probed.append(sql)
-            return {"x": 1}
+            return {"subject": "{}"}
         return await base(sql, params, **kw)
 
     ch.query_one = query_one  # type: ignore[method-assign]
@@ -305,3 +307,100 @@ async def test_no_account_rewrite_puts_back_a_row_released_meanwhile(wire, monke
         _released_on_claim(monkeypatch, ch, h, namespace_snapshot, conversation_logging)
         await change()
         assert all(r["password_hash"] == "" for r in ch.rows_for("loom.namespaces"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("counts", "skipped"),
+    [({"memories": 2, "types": 0, "grants": 0, "erased_skipped": 1}, 1), ({"memories": 2}, 0)],
+)
+async def test_a_replay_answers_the_counts_of_the_restore_it_repeats(
+    wire, counts: dict[str, int], skipped: int
+) -> None:
+    """A replay writes nothing and answers what its restore recorded; a restore by a build
+    before `erased_skipped` left out nothing."""
+    install, grants = wire
+    grants[(ORG, NS, "owner@x")] = Role.ADMIN
+    ch = install(_deleted_row(active=True), "owner@x", Role.ADMIN)
+    set_current_auth(
+        AuthInfo(
+            subject="owner@x",
+            org=ORG,
+            namespaces=(NS,),
+            roles=(Role.ADMIN,),
+            is_service_account=False,
+        )
+    )
+    base = ch.query_one
+
+    async def query_one(sql: str, params: Any = None, **kw: Any) -> dict[str, Any] | None:
+        if "FROM loom.audit_log" in sql:
+            return {
+                "subject": json.dumps(
+                    {"snapshot_id": "88888888-8888-8888-8888-888888888888", "counts": counts}
+                )
+            }
+        return await base(sql, params, **kw)
+
+    ch.query_one = query_one  # type: ignore[method-assign]
+    out = await namespace_snapshot.handle_namespace_restore(_restore_input())
+    assert out.restored is False
+    assert out.counts["erased_skipped"] == skipped and out.counts["memories"] == 2
+    assert ch.rows_for("loom.namespaces") == []
+
+
+@pytest.mark.asyncio
+async def test_a_restore_records_itself_after_its_memories_commit(wire, monkeypatch) -> None:
+    """The restore's audit row, which marks it done for a replay, is written once its
+    memories are committed, with the counts a replay answers."""
+    from server.identity.api.models import _SnapshotMemoryRow
+    from server.memory.app import snapshot_rows
+    from server.observability import audit as _audit
+
+    install, grants = wire
+    grants[(ORG, NS, "owner@x")] = Role.ADMIN
+    install(_deleted_row(active=True), "owner@x", Role.ADMIN)
+    set_current_auth(
+        AuthInfo(
+            subject="owner@x",
+            org=ORG,
+            namespaces=(NS,),
+            roles=(Role.ADMIN,),
+            is_service_account=False,
+        )
+    )
+    order: list[str] = []
+
+    async def _insert(rows: Any, *, ch: Any) -> bool:
+        order.append(f"memories:{len(rows)}")
+        return True  # a batch's publication left to the delivery worker
+
+    async def _record(*_a: Any, subject: dict[str, Any], **_k: Any) -> str:
+        order.append(f"audit:{subject['counts']}")
+        return ""
+
+    monkeypatch.setattr(snapshot_rows, "insert_version_rows", _insert)
+    monkeypatch.setattr(_audit, "emit_strict", _record)
+    inp = _restore_input()
+    memory = {
+        "memory_id": "33333333-3333-3333-3333-333333333333",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "run_id": "-",
+        "memory_key": "k",
+        "memory_type": "semantic",
+        "value": '"v"',
+        "confidence": 1.0,
+        "source_trace": "",
+        "pinned": False,
+    }
+    payload = inp.payload.model_copy(
+        update={"memories": [_SnapshotMemoryRow(**memory)], "memory_count": 1}
+    )
+    out = await namespace_snapshot.handle_namespace_restore(
+        inp.model_copy(update={"payload": payload})
+    )
+    assert out.restored is True and out.publication_pending is True
+    counts = {"memories": 1, "types": 0, "grants": 0, "erased_skipped": 0}
+    assert order == ["memories:1", f"audit:{counts}"]

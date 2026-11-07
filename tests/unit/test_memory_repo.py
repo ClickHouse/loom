@@ -26,8 +26,10 @@ from server.memory.store import (
     count_by_namespace,
     get_by_id,
     get_by_key,
+    identity_key,
     list_by_namespace,
 )
+from tests.unit.memory_rows import projection_row
 
 # ----------------------------------------------------------------------
 # Test double: a stub CH client recording each call
@@ -355,27 +357,57 @@ async def test_get_by_id_uses_uuid_param_type() -> None:
     a regression would silently use string-comparison and return nothing."""
     ch = StubCH()
     ch.query_one_returns.append(None)
-    await get_by_id("11111111-2222-3333-4444-555555555555", ch=ch, scope=WHOLE_NAMESPACE)
+    await get_by_id(
+        "11111111-2222-3333-4444-555555555555",
+        org="o",
+        namespace="n",
+        ch=ch,
+        scope=WHOLE_NAMESPACE,
+    )
     sql, params = ch.query_one_calls[0]
     assert "{mid:UUID}" in sql
     assert params["mid"] == "11111111-2222-3333-4444-555555555555"
-    # No org filter when not requested — for trusted internal callers.
-    assert "org = " not in sql
-    assert "org" not in params
 
 
 @pytest.mark.asyncio
-async def test_get_by_id_scopes_by_org_when_requested() -> None:
-    """User-facing memory.get_by_id passes org so a leaked memory_id
-    can't surface another tenant's row."""
+async def test_get_by_id_scopes_by_org_and_namespace() -> None:
+    """A leaked memory_id can't surface another tenant's row, and a restored copy of
+    the id in another namespace is not this namespace's row."""
     ch = StubCH()
     ch.query_one_returns.append(None)
     await get_by_id(
         "11111111-2222-3333-4444-555555555555",
         org="clickhouse",
+        namespace="ns",
         ch=ch,
         scope=WHOLE_NAMESPACE,
     )
     sql, params = ch.query_one_calls[0]
-    assert "org = {org:String}" in sql
-    assert params["org"] == "clickhouse"
+    assert "org = {org:String} AND namespace = {in_ns:String}" in sql
+    assert (params["org"], params["in_ns"]) == ("clickhouse", "ns")
+
+
+def test_identity_key_reads_a_model_a_dict_and_a_driver_record_alike() -> None:
+    cols = dict(org="o", namespace="n", agent="a", user_id="u", session_id="s", memory_key="k")
+
+    class Record:  # indexed by column name only, as a Postgres driver record is
+        def __getitem__(self, name: str) -> Any:
+            return cols[name]
+
+    row = projection_row(**cols)
+    expected = ("o", "n", "a", "u", "s", "k")
+    assert identity_key(row) == expected
+    assert identity_key(MemoryRow.from_snapshot(row)) == expected
+    assert identity_key(Record()) == expected
+
+
+def test_a_copy_is_drawn_above_the_head_it_copies(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A head written on a replica whose clock is ahead would overtake a copy drawn here
+    (a lock answering locked while the head stays unlocked): the copy goes above it."""
+    from types import SimpleNamespace
+
+    from server.memory.store import rows
+
+    monkeypatch.setattr(rows, "next_version", lambda: 100)
+    assert rows.version_over(SimpleNamespace(version=150)) == 152
+    assert rows.version_over(SimpleNamespace(version=40)) == 100

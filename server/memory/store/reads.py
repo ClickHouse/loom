@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
+from server.core import pg
 from server.core.hashing import served_content_sha256
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.core.tag_sql import TagFilter, tag_where
@@ -19,13 +20,20 @@ from server.memory.domain.identity_columns import IdentityColumn
 from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
 from server.memory.domain.temporal_sql import as_of_predicate, served_status_sql
 from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL
-from server.memory.store.rows import Identity, MemoryRow, _hydrate, parse_memory_value
+from server.memory.store import pg_memory
+from server.memory.store.rows import (
+    Identity,
+    IdentityKey,
+    MemoryRow,
+    _hydrate,
+    identity_key,
+    parse_memory_value,
+)
 from server.memory.store.sql import (
     _IDENTITY_KEY_TUPLE,
     _MEMORY_FINAL_PROJECTION,
     _SEQUENTIAL,
     SERVED_VALUE,
-    _identity_key,
     _is_full_row,
     read_your_writes_enabled,
 )
@@ -104,6 +112,24 @@ async def get_by_key(
     write path that reads the row it replaces passes `WHOLE_NAMESPACE`.
     """
     ch = ch or _default_client()
+    if pg.enabled() and as_of is None:
+        head = await pg_memory.head_by_key(
+            (
+                identity.org,
+                identity.namespace,
+                identity.agent,
+                identity.user_id,
+                identity.session_id,
+                memory_key,
+            ),
+            scope=scope,
+            include_tombstoned=include_tombstoned,
+            include_expired=include_expired,
+        )
+        if head is None:
+            return None
+        hydrated = _hydrate(head)
+        return await _overlay_usage_totals(hydrated, ch) if include_usage_totals else hydrated
     as_of_clause = "AND " + as_of_predicate("valid_time") if as_of is not None else ""
     tomb_clause = "" if include_tombstoned else "AND tombstoned_at IS NULL"
     if not include_expired and as_of is None:
@@ -207,11 +233,47 @@ async def statuses_by_ids(
     ]
 
 
+async def namespaces_of_id(
+    org: str, memory_id: str, *, strong: bool, ch: _CHClient | None = None
+) -> list[str]:
+    """The namespaces of `org` whose head of `memory_id` is live (a namespace restored
+    from another's snapshot keeps its memory ids). A miss is read again with sequential
+    consistency, as a point read's is: the id may have been handed out moments ago.
+    `strong`: read with sequential consistency at once, for a write that acts on the
+    answer."""
+    if pg.enabled():
+        return await pg_memory.namespaces_of_id(org, memory_id)
+    ch = ch or _default_client()
+    # Judged per key by its newest row: a namespace restored into itself under another
+    # agent holds the id under two keys, one deleted leaves the other live, and a
+    # restore over a key replaces its id without a delete.
+    sql = """
+        SELECT DISTINCT namespace FROM (
+            SELECT namespace FROM loom.memory
+            WHERE org = {org:String}
+              AND (namespace, agent, user_id, session_id, memory_key) IN (
+                  SELECT namespace, agent, user_id, session_id, memory_key FROM loom.memory
+                  WHERE org = {org:String} AND memory_id = {mid:UUID})
+            GROUP BY namespace, agent, user_id, session_id, memory_key
+            HAVING argMax(memory_id, version) = {mid:UUID}
+               AND argMax(tombstoned_at IS NULL, version)
+        )
+        ORDER BY namespace
+        """
+    params = {"org": org, "mid": memory_id}
+    sequential = strong and read_your_writes_enabled()
+    rows = await ch.query_all(sql + (_SEQUENTIAL if sequential else ""), params=params)
+    if not rows and not sequential and read_your_writes_enabled():
+        rows = await ch.query_all(sql + _SEQUENTIAL, params=params)
+    return [str(r["namespace"]) for r in rows]
+
+
 async def get_by_id(
     memory_id: str,
     *,
     scope: ReadFilters,
-    org: str | None = None,
+    org: str,
+    namespace: str,
     ch: _CHClient | None = None,
     as_of: datetime | None = None,
     include_usage_totals: bool = False,
@@ -219,15 +281,13 @@ async def get_by_id(
     strong: bool = False,
     include_tombstoned: bool = False,
 ) -> MemoryRow | None:
-    """Lookup by surrogate ID. Used by ops that address memories by their
+    """Lookup by surrogate ID within `org`. Used by ops that address memories by their
     UUID rather than the (identity, key) tuple — `memory.update_by_id`,
     conflict-resolution flows, audit-log replays.
 
-    `org` (recommended on user-facing paths): when supplied, filters
-    the lookup by `org` as well as memory_id. Required for any caller
-    that doesn't already trust the memory_id came from the same tenant
-    — without it, a leaked memory_id from one tenant could surface
-    another tenant's row.
+    `namespace`: the row of that namespace. A namespace restored from another's snapshot
+    keeps its memory ids, so every lookup names the namespace; an op addressed by the id
+    alone finds it first (`id_namespace.namespace_for_id`).
 
     `as_of`: bi-temporal filter — see `get_by_key`. `fresh`: the row may have
     been written moments ago — on a miss, read once more with sequential
@@ -237,25 +297,34 @@ async def get_by_id(
     `include_tombstoned`: a deleted row is returned too, as get_by_key's.
     """
     ch = ch or _default_client()
-    params: dict[str, Any] = {"mid": memory_id}
-    org_pred = ""
-    if org is not None:
-        org_pred = "AND org = {org:String}"
-        params["org"] = org
+    if pg.enabled() and as_of is None:
+        head = await pg_memory.head_by_id(
+            memory_id,
+            scope=scope,
+            org=org,
+            namespace=namespace,
+            include_tombstoned=include_tombstoned,
+        )
+        if head is None:
+            return None
+        hydrated = _hydrate(head)
+        return await _overlay_usage_totals(hydrated, ch) if include_usage_totals else hydrated
+    params: dict[str, Any] = {"mid": memory_id, "org": org, "in_ns": namespace}
+    org_pred = "AND org = {org:String} AND namespace = {in_ns:String}"
     org_pred += scope_and(scope, params)
-    # Discover the row's org, namespace, created_at and memory_key without
-    # FINAL, then read by them. loom.memory is sorted by (org, namespace,
-    # agent, user_id, session_id, memory_key); memory_id is not in the sort
-    # key and is found by its bloom-filter skip index, but under FINAL the
-    # skip-index selection is re-expanded to every granule that shares the primary-key range
-    # (PrimaryKeyExpand) — every column of most granules, ~300 MiB for one
-    # row. The key columns never change across a memory's versions, so any
-    # version answers phase 1; phase 2 reads under FINAL where the key leaves
-    # nothing to expand (2 granules).
+    # Discover the row's created_at and memory_key without FINAL, then read by them.
+    # loom.memory is sorted by (org, namespace, agent, user_id, session_id, memory_key);
+    # memory_id is not in the sort key and is found by its bloom-filter skip index, but
+    # under FINAL the skip-index selection is re-expanded to every granule that shares
+    # the primary-key range (PrimaryKeyExpand): every column of most granules, ~300 MiB
+    # for one row. The key columns never change across a memory's versions, so any
+    # version answers phase 1 (an id under two keys of the namespace comes from a restore,
+    # which keeps `created_at`); phase 2 reads under FINAL where the key leaves nothing
+    # to expand (2 granules).
     key = await _point_lookup(
         ch,
         f"""
-        SELECT org, namespace, created_at, memory_key
+        SELECT created_at, memory_key
         FROM loom.memory
         WHERE memory_id = {{mid:UUID}} {org_pred}
         LIMIT 1
@@ -266,24 +335,20 @@ async def get_by_id(
     )
     if key is None:
         return None
-    # The three sort-key columns the key read returned go in PREWHERE (per
-    # part, before the FINAL merge); created_at, memory_id and the tombstone
-    # are not key columns and stay in WHERE.
+    # The sort-key columns go in PREWHERE (per part, before the FINAL merge), the read
+    # scope's among them: phase 2 picks the newest of the id's rows on the key, in scope
+    # as phase 1 was. created_at, memory_id and the tombstone are not key columns and
+    # stay in WHERE.
     prewhere = [
         "org = {org:String}",
-        "namespace = {ns:String}",
+        "namespace = {in_ns:String}",
         "memory_key = {k:String}",
+        *scope_where(scope, params),
     ]
     where = ["created_at = {ca:DateTime}", "memory_id = {mid:UUID}"]
     if not include_tombstoned:
         where.append("tombstoned_at IS NULL")
-    params = {
-        **params,
-        "org": str(key["org"]),
-        "ns": str(key["namespace"]),
-        "ca": key["created_at"],
-        "k": str(key["memory_key"]),
-    }
+    params = {**params, "ca": key["created_at"], "k": str(key["memory_key"])}
     if as_of is not None:
         where.append(as_of_predicate("valid_time"))
         params["as_of"] = as_of
@@ -293,6 +358,7 @@ async def get_by_id(
         f"""{_MEMORY_FINAL_PROJECTION}
         PREWHERE {" AND ".join(prewhere)}
         WHERE {" AND ".join(where)}
+        ORDER BY version DESC
         LIMIT 1
         """,
         params,
@@ -306,29 +372,60 @@ async def get_by_id(
 
 
 async def memory_rows_by_identity_keys(
-    keys: Sequence[tuple[str, str, str, str, str, str]],
+    keys: Sequence[IdentityKey],
     *,
     ch: _CHClient | None = None,
     sequential: bool = False,
-) -> dict[tuple[str, str, str, str, str, str], MemoryRow]:
-    """`get_by_key` for N exact identity keys in one statement: the same
-    projection under FINAL, the full sort key in PREWHERE, tombstones
-    filtered after the merge. Keyed by the six-tuple; a key with no live row
-    is absent. `sequential` reads with sequential consistency (a write
-    decides on the answer)."""
+    include_tombstoned: bool = False,
+) -> dict[IdentityKey, MemoryRow]:
+    """`get_by_key` for N exact identity keys, in statements whose keys each fit one form
+    field (`query_all_sliced`): the same projection under FINAL, the full sort key in
+    PREWHERE, tombstones filtered after the merge (kept with `include_tombstoned`). Keyed
+    by the six-tuple; a key with no such row is absent. `sequential` reads with
+    sequential consistency (a write decides on the answer). Under Postgres, the
+    authority's heads (`pg_memory.heads_by_keys`)."""
     if not keys:
         return {}
+    if pg.enabled():
+        heads = await pg_memory.heads_by_keys(keys, include_tombstoned=include_tombstoned)
+        return {k: _hydrate(h) for k, h in heads.items()}
     ch = ch or _default_client()
-    rows = await ch.query_all(
+    # Bound a slice at a time: one parameter holds as many keys as a form field does.
+    rows = await query_all_sliced(
+        ch,
         f"""{_MEMORY_FINAL_PROJECTION}
         PREWHERE (org, namespace, agent, user_id, session_id, memory_key)
                  IN {{keys:{_IDENTITY_KEY_TUPLE}}}
-        WHERE tombstoned_at IS NULL
+        {"" if include_tombstoned else "WHERE tombstoned_at IS NULL"}
         {_SEQUENTIAL if sequential else ""}
         """,
-        params={"keys": [tuple(str(x) for x in k) for k in keys]},
+        {"keys": list(keys)},
+        "keys",
     )
-    return {_identity_key(r): _hydrate(r) for r in rows}
+    return {identity_key(r): _hydrate(r) for r in rows}
+
+
+async def clickhouse_head_versions(
+    keys: Sequence[IdentityKey], *, ch: _CHClient | None = None
+) -> dict[IdentityKey, int]:
+    """ClickHouse's head version per identity key, a tombstone included, read with
+    sequential consistency: what the projections derived from `loom.memory` judge from,
+    whichever store is the authority. A key with no row is absent."""
+    if not keys:
+        return {}
+    rows = await query_all_sliced(
+        ch or _default_client(),
+        f"""
+        SELECT org, namespace, agent, user_id, session_id, memory_key, version
+        FROM loom.memory FINAL
+        PREWHERE (org, namespace, agent, user_id, session_id, memory_key)
+                 IN {{keys:{_IDENTITY_KEY_TUPLE}}}
+        {_SEQUENTIAL}
+        """,
+        {"keys": list(keys)},
+        "keys",
+    )
+    return {identity_key(r): int(r["version"]) for r in rows}
 
 
 async def served_key_rows(
@@ -388,9 +485,14 @@ async def key_heads_across_sessions(
     """The newest version of each of `memory_keys` across the sessions of the identity
     `(org, namespace, agent, user_id)` that `scope` may read, tombstones and every status
     included: `memory_key`, `deleted`, `head_status`, `head_sha256`, `head_sensitivity`.
-    Sequentially consistent, since a write decides on the answer."""
+    Sequentially consistent, since a write decides on the answer; under Postgres, the
+    authority's heads."""
     if not memory_keys:
         return []
+    if pg.enabled():
+        return await pg_memory.key_heads_across_sessions(
+            org, namespace, agent, user_id, memory_keys, scope=scope
+        )
     ch = ch or _default_client()
     params: dict[str, Any] = {
         "org": org,
@@ -532,10 +634,13 @@ async def get_many_by_keys(
     strong: bool = False,
     exclude_high_sensitivity: bool = False,
 ) -> list[MemoryRow]:
-    """Bulk read: one CH round-trip for N keys under one identity tuple.
+    """Bulk read: one round trip for N keys under one identity tuple. Under Postgres the
+    authority's heads (`pg_memory.heads_for_identity`), so a write ClickHouse has not
+    published reads as memory.get reads it.
 
-    Used by memory.bulk_get, and by procedure.match and procedure.list for
-    their candidate bodies. Tombstoned rows are filtered out. Empty
+    Used by memory.bulk_get, by procedure.match and procedure.list for their
+    candidate bodies, by a search's `bodies="unit"` read, by the extraction
+    prompt's and by memory.proposals'. Tombstoned rows are filtered out. Empty
     `memory_keys` → empty result, no CH call. `exclude_high_sensitivity`
     (the procedure, search-body and extraction-prompt reads) leaves 'high'
     rows out of the locate, so under an open axis the newest other row of
@@ -543,6 +648,22 @@ async def get_many_by_keys(
     """
     if not memory_keys:
         return []
+    if pg.enabled():
+        heads = await pg_memory.heads_for_identity(
+            (
+                identity.org,
+                identity.namespace,
+                identity.agent,
+                identity.user_id,
+                identity.session_id,
+            ),
+            memory_keys,
+            scope=scope,
+            exclude_high_sensitivity=exclude_high_sensitivity,
+            # A strong read feeds a write (memory.touch may extend the window) and sees it.
+            retained_only=not strong,
+        )
+        return [_hydrate(h) for h in heads.values()]
     ch = ch or _default_client()
     # agent="*" is the documented wildcard — fan out across agents (mirrors
     # search_sql.py); procedure.match relies on it. The "-" sentinel stays a
@@ -1009,7 +1130,7 @@ async def list_by_namespace(
             org, namespace, agent, user_id, session_id,
             memory_key, memory_type, value, 0 AS value_truncated, confidence, version, pinned,
             char_limit,
-            created_at, updated_at, expires_at, valid_at, tombstoned_at,
+            created_at, updated_at, expires_at, valid_at, tombstoned_at, redacted_at,
             status, run_id, source_trace, tags, entities,
             evidence_count, recall_count, last_recalled_at, sensitivity,
             content_sha256, verified_by, verified_at, verified_sha256, actor, source_class
@@ -1044,7 +1165,7 @@ async def _locate_then_preview(
             org, namespace, agent, user_id, session_id,
             memory_key, memory_type, value_len > 2048 AS value_truncated,
             confidence, version, pinned, char_limit,
-            created_at, updated_at, expires_at, valid_at, tombstoned_at,
+            created_at, updated_at, expires_at, valid_at, tombstoned_at, redacted_at,
             status, run_id, source_trace, tags, entities,
             evidence_count, recall_count, last_recalled_at, sensitivity,
             content_sha256, verified_by, verified_at, verified_sha256, actor, source_class
@@ -1472,11 +1593,21 @@ async def _served_hashes(
     """The hash memory.get serves for each revision, by its row key and version: the hash
     of the value it serves, not the stored column, which can differ for an object (the
     JSON column drops a null field). The value is read by each row's whole sorting key
-    (the primary index prunes to their granules), hashed here and never returned. A row
-    revised between the two reads gets none rather than another revision's."""
+    (the primary index prunes to their granules), hashed here and never returned. Under
+    Postgres the value is the authority's head's, at the version ClickHouse selected. A
+    row revised between the two reads gets none rather than another revision's."""
     if not revisions:
         return {}
     keys = [(r["agent"], r["user_id"], r["session_id"], r["memory_key"]) for r in revisions]
+    if pg.enabled():
+        # memory.get serves the authority's head, whose value keeps a null field.
+        heads = await pg_memory.heads_by_keys([(org, namespace, *k) for k in keys])
+        wanted = {_revision_key(r) for r in revisions}
+        return {
+            rk: served_content_sha256(parse_memory_value(h.get("value")))
+            for k, h in heads.items()
+            if (rk := (*k[2:], int(h["version"]))) in wanted
+        }
     rows = await ch.query_all(
         f"""
         SELECT agent, user_id, session_id, memory_key, version, {SERVED_VALUE} AS value

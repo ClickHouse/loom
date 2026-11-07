@@ -22,7 +22,15 @@ def _row(monkeypatch):
     import server.memory.store as memory_repo
 
     async def get_by_id(memory_id, **kw):
-        return SimpleNamespace(memory_id=memory_id, namespace="n")
+        return SimpleNamespace(
+            memory_id=memory_id,
+            namespace="n",
+            agent="a",
+            user_id="-",
+            memory_key="k",
+            lock_mode="",
+            lock_until=None,
+        )
 
     monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
 
@@ -84,7 +92,7 @@ class _QuarantineCH(_StubCH):
         return []
 
 
-def _session_row(session_id, lock_mode=""):
+def _session_row(session_id, lock_mode="", version=1):
     return SimpleNamespace(
         org="o",
         namespace="n",
@@ -94,7 +102,7 @@ def _session_row(session_id, lock_mode=""):
         memory_key="k",
         memory_id=f"mid-{session_id}",
         status="active",
-        version=1,
+        version=version,
         invalid_at=None,
         lock_mode=lock_mode,
         lock_until=None,
@@ -137,14 +145,19 @@ def _negative():
     )
 
 
-async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
-    ch = _wire_quarantine(monkeypatch, {"mid-s1": _session_row("s1")})
+@pytest.mark.parametrize("ahead", [0, 10**9])
+async def test_negative_escalation_quarantines_at_threshold(monkeypatch, ahead):
+    """`ahead`: the head's writer's clock runs ahead, and the rejected row goes above it."""
+    from server.memory.store.rows import next_version
+
+    head = _session_row("s1", version=next_version() + ahead if ahead else 1)
+    ch = _wire_quarantine(monkeypatch, {"mid-s1": head})
 
     out = await ops.handle_memory_outcome(_negative())
     assert out.quarantined is True
     written = {t: rows for t, rows in ch.inserts if t in ("loom.memory", "loom.memory_embeddings")}
     (mem,) = written["loom.memory"]
-    assert mem["status"] == "rejected" and mem["version"] > 2
+    assert mem["status"] == "rejected" and mem["version"] > max(2, head.version)
     assert mem["rejection_reason"] == "auto-quarantine: 3 negative outcomes"
     (emb,) = written["loom.memory_embeddings"]
     assert emb["status"] == "rejected" and emb["memory_key"] == "k"
@@ -230,3 +243,94 @@ async def test_threshold_off_by_default_skips_counting(monkeypatch):
     out = await ops.handle_memory_outcome(_negative())
     assert out.quarantined is False
     assert ch.inserts == []  # no rejection event recorded when disabled
+
+
+async def test_a_contended_quarantine_records_the_outcome_and_answers_not_quarantined(
+    monkeypatch,
+):
+    """The outcome's usage events are in: a 503 asking for a retry would count it twice."""
+    from server.memory.store import pg_memory
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_negative_demote_threshold", 3)
+    ch = _StubCH([{"n": 3}, {"evidence_count": 0}])
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+
+    async def contended(*_a, **_k):
+        raise pg_memory.AdmissionContendedError("the key's heads kept changing")
+
+    monkeypatch.setattr(ops, "reject_by_identity", contended)
+    out = await ops.handle_memory_outcome(
+        MemoryOutcomeInput(org="o", namespace="n", memory_id="mid-1", outcome="negative")
+    )
+    assert out.recorded is True and out.quarantined is False
+
+
+def _pg_reject(monkeypatch, passes):
+    """The Postgres reject reading `passes` (each pass's heads), the first passes'
+    commits contended: what each commit attempt was handed."""
+    from server.core import pg
+    from server.memory.store import lifecycle, pg_memory
+
+    reads = iter(passes)
+    commits: list[list[dict]] = []
+
+    async def heads(*_a):
+        return next(reads)
+
+    async def insert(rows, read, **_k):
+        commits.append(rows)
+        if len(commits) < len(passes):
+            raise pg_memory.AdmissionContendedError("a head moved")
+        return len(rows)
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "live_heads_of", heads)
+    monkeypatch.setattr(lifecycle, "_hydrate", lambda h: SimpleNamespace(**h))
+    monkeypatch.setattr(lifecycle, "build_memory_version_row", lambda h, **o: {**vars(h), **o})
+    monkeypatch.setattr(lifecycle, "insert_versions_over_heads", insert)
+    return commits
+
+
+def _pg_head(session_id, lock_mode=""):
+    return vars(_session_row(session_id, lock_mode=lock_mode))
+
+
+async def test_under_postgres_a_reject_refuses_a_locked_head_before_any_commit(monkeypatch):
+    from fastapi import HTTPException
+
+    from server.memory.store import lifecycle
+
+    commits = _pg_reject(monkeypatch, [[_pg_head("s1"), _pg_head("s2", lock_mode="no_delete")]])
+    with pytest.raises(HTTPException) as e:
+        await lifecycle.reject_by_identity("o", "n", "a", "-", "k", "spam")
+    assert e.value.status_code == 423 and commits == []
+
+
+@pytest.mark.parametrize(
+    "second_pass",
+    [
+        pytest.param([_pg_head("s1", lock_mode="read_only"), _pg_head("s2")], id="locked"),
+        pytest.param([_pg_head("s2")], id="deleted"),
+    ],
+)
+async def test_under_postgres_a_head_changed_between_passes_is_not_quarantined(
+    monkeypatch, second_pass
+):
+    """The first pass's commit is contended by a lock on, or a delete of, the named head;
+    the pass that commits leaves it, so the quarantine says it was not rejected."""
+    from server.settings import settings
+
+    commits = _pg_reject(monkeypatch, [[_pg_head("s1"), _pg_head("s2")], second_pass])
+    monkeypatch.setattr(settings, "memory_negative_demote_threshold", 3)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _QuarantineCH(ids=[]))
+
+    import server.memory.store as memory_repo
+
+    async def first_read(memory_id, **kw):
+        return _session_row("s1")
+
+    monkeypatch.setattr(memory_repo, "get_by_id", first_read)
+    out = await ops.handle_memory_outcome(_negative())
+    assert out.recorded is True and out.quarantined is False
+    assert [[r["session_id"] for r in rows] for rows in commits] == [["s1", "s2"], ["s2"]]

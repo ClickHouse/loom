@@ -277,7 +277,7 @@ def blacklist(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     over a cache built from this list; empty by default."""
     patterns: list[str] = []
 
-    async def loaded() -> None:
+    async def loaded(policy: Any = None) -> None:
         blacklist_guard._cache = [
             blacklist_guard.BlacklistPattern(
                 pattern_id=text,

@@ -66,6 +66,8 @@ _BODIES: dict[str, dict[str, Any]] = {
     "code.outcome": {"action": "opened_file", "trace_run_id": "r"},
     "code.scip_ingest": {"batch_id": "00000000-0000-4000-8000-000000000001"},
     "knowledge.synthesize": {"source_uris": ["doc://a"]},
+    # A snapshot id is a UUID, as the snapshot mints it.
+    "namespace.restore": {"payload": {"snapshot_id": "00000000-0000-4000-8000-000000000002"}},
 }
 
 
@@ -120,7 +122,10 @@ def _required(model: type[BaseModel]) -> dict[str, Any]:
 
 
 def _body(op: Operation) -> dict[str, Any]:
-    body = {**_required(op.input_model), **_BODIES.get(op.name, {})}
+    body = _required(op.input_model)
+    for name, value in _BODIES.get(op.name, {}).items():
+        nested = isinstance(value, dict) and isinstance(body.get(name), dict)
+        body[name] = {**body[name], **value} if nested else value
     fields = op.input_model.model_fields
     for name, value in (("org", ORG), ("namespace", NAMESPACE), ("agent", "probe")):
         if name in fields:

@@ -216,6 +216,15 @@ _WORKERS: tuple[_Worker, ...] = (
         "projection_repair_enabled",
         "projection_repair_interval_seconds",
     ),
+    # The Postgres authority's revisions a request did not publish; idle under the
+    # ClickHouse authority.
+    _Worker(
+        "pg_delivery",
+        "server.memory.workers.pg_delivery",
+        "pg_delivery_enabled",
+        "pg_delivery_interval_seconds",
+        idle_interval="pg_delivery_idle_interval_seconds",
+    ),
     _Worker(
         "usage_fold",
         "server.memory.workers.usage_fold",

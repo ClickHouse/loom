@@ -48,7 +48,9 @@ async def test_undo_restores_only_the_retirement_it_lists(ch, org) -> None:
     irish = _row(org, "s2", "User is Irish", datetime(2023, 5, 1))
     await M.insert_memory_versions([irish], ch=ch)
     japanese = await _retire(ch, org, "User is Japanese", datetime(2023, 6, 1), "s3")
-    head = await M.get_by_id(irish["memory_id"], org=org, ch=ch, scope=WHOLE_NAMESPACE)
+    head = await M.get_by_id(
+        irish["memory_id"], org=org, ch=ch, scope=WHOLE_NAMESPACE, namespace=NS
+    )
     await M.insert_memory_versions(
         [
             M.build_memory_version_row(
@@ -121,7 +123,7 @@ async def test_an_undo_never_overwrites_a_conditional_revision_made_while_it_ran
     undone = await handle_memory_restore(_undo(org, japanese))
     assert (await revising[0]).updated
     head = await M.get_by_id(
-        str(irish["memory_id"]), org=org, ch=ch, strong=True, scope=WHOLE_NAMESPACE
+        str(irish["memory_id"]), org=org, ch=ch, strong=True, scope=WHOLE_NAMESPACE, namespace=NS
     )
     assert "Brazilian" in str(head.value)
     if revised == "under_the_lock":
@@ -139,7 +141,9 @@ async def test_undo_survives_a_re_emit_and_refuses_a_later_delete(ch, org) -> No
     await M.insert_memory_versions([irish], ch=ch)
     winner = await _retire(ch, org, "User is Japanese", datetime(2023, 6, 1), "s3")
     # The entity tagger re-emits a retired row under a new version, retirement kept.
-    head = await M.get_by_id(irish["memory_id"], org=org, ch=ch, scope=WHOLE_NAMESPACE)
+    head = await M.get_by_id(
+        irish["memory_id"], org=org, ch=ch, scope=WHOLE_NAMESPACE, namespace=NS
+    )
     await M.insert_memory_versions(
         [M.build_memory_version_row(head, version=M.next_version(), entities=["irish"])], ch=ch
     )
@@ -147,7 +151,9 @@ async def test_undo_survives_a_re_emit_and_refuses_a_later_delete(ch, org) -> No
 
     # Retired again, then deleted by hand: the Undo leaves the delete alone.
     winner = await _retire(ch, org, "User is Korean", datetime(2023, 8, 1), "s4")
-    head = await M.get_by_id(irish["memory_id"], org=org, ch=ch, scope=WHOLE_NAMESPACE)
+    head = await M.get_by_id(
+        irish["memory_id"], org=org, ch=ch, scope=WHOLE_NAMESPACE, namespace=NS
+    )
     await M.insert_memory_versions(
         [
             M.build_memory_version_row(
@@ -171,7 +177,9 @@ async def test_a_retirement_a_later_write_overtook_is_not_reported(ch, org, monk
     insert = lifecycle.insert_memory_versions
 
     async def revision_first(rows: list[dict[str, Any]], *, ch: Any) -> None:
-        head = await M.get_by_id(row["memory_id"], org=org, ch=ch, scope=WHOLE_NAMESPACE)
+        head = await M.get_by_id(
+            row["memory_id"], org=org, ch=ch, scope=WHOLE_NAMESPACE, namespace=NS
+        )
         revision = M.build_memory_version_row(head, version=M.next_version(), lock_mode="no_delete")
         await insert([revision], ch=ch)
         await insert(rows, ch=ch)
@@ -180,10 +188,16 @@ async def test_a_retirement_a_later_write_overtook_is_not_reported(ch, org, monk
     tracker = RetirementTracker()
     victims = [{**row, "superseded_by": "winner"}]
     n = await M.supersede_duplicates(
-        org, victims, ch=ch, skip=tracker.skip, strong=True, on_written=tracker.written
+        org,
+        victims,
+        ch=ch,
+        skip=tracker.skip,
+        strong=True,
+        on_written=tracker.written,
+        namespace=NS,
     )
     assert n == 0 and tracker.retired(victims) == []
-    head = await M.get_by_id(row["memory_id"], org=org, ch=ch, scope=WHOLE_NAMESPACE)
+    head = await M.get_by_id(row["memory_id"], org=org, ch=ch, scope=WHOLE_NAMESPACE, namespace=NS)
     assert head.status == "active" and head.lock_mode == "no_delete"
 
 
@@ -207,7 +221,13 @@ async def test_a_key_set_again_under_a_new_id_overtakes_the_retirement(
     tracker = RetirementTracker()
     victims = [{**row, "superseded_by": "winner"}]
     n = await M.supersede_duplicates(
-        org, victims, ch=ch, skip=tracker.skip, strong=True, on_written=tracker.written
+        org,
+        victims,
+        ch=ch,
+        skip=tracker.skip,
+        strong=True,
+        on_written=tracker.written,
+        namespace=NS,
     )
     assert n == 0 and tracker.retired(victims) == []
 
@@ -829,7 +849,7 @@ async def test_a_point_write_retirement_whose_record_failed_gets_it_from_the_rep
         return [json.loads(r["subject"]) for r in rows]
 
     assert await records() == []
-    monkeypatch.setattr(projection_failures, "FOLLOW_OWED_GRACE_S", 0)
+    monkeypatch.setattr(projection_failures, "OWED_GRACE_S", 0)
     for _ in range(2):  # a second replay writes no second record
         await retry_projection_failures(org=org, projection="triples_follow_owed", ch=ch)
     (record,) = await records()
@@ -934,7 +954,7 @@ async def test_a_retirement_intent_holds_no_value_and_leaves_with_its_user(
             }
         ],
     )
-    secret = "The office door code is 4417"
+    secret = "The office door code is plum-kestrel"
     for session, value in (("s1", secret), ("s2", "The office door code changed")):
         await handle_memory_set(
             MemorySetInput(
@@ -949,7 +969,9 @@ async def test_a_retirement_intent_holds_no_value_and_leaves_with_its_user(
         )
         await after_write.drain()
     intents = await _owed(ch, org, "active")
-    assert intents and all("4417" not in i["payload"] for i in intents)
+    # Words of the value that are neither hex (so in no id) nor in the key: a hit is a leak.
+    words = ("office", "plum", "kestrel")
+    assert intents and not any(w in i["payload"] for i in intents for w in words)
     await steps_ledgers.delete_projection_failures_by_user(org, USER, ch=ch)
     left = await ch.query_all(
         "SELECT count() AS n FROM loom.memory_projection_failures WHERE org = {org:String}"

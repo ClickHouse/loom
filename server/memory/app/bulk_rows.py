@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid as _uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -39,7 +40,8 @@ from server.memory.domain.expire_reasons import carried_reason
 from server.memory.domain.memory_types import is_embedded
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
 from server.memory.domain.sensitive_retention import sensitive_retention
-from server.memory.store.rows import next_version
+from server.memory.store.pg_memory import PublicationPending, policy_part
+from server.memory.store.rows import next_version, version_over
 
 if TYPE_CHECKING:
     from server.memory.app.search.clock import StageClock
@@ -115,6 +117,26 @@ class _Held:
     step: _Step | None = None
 
 
+@dataclass
+class BatchRetry:
+    """State a bulk_set keeps across its passes (more than one only under the Postgres
+    authority): the contention deadline, started at its first commit, and the contexts
+    it already wrote, so its model calls are paid once (its vectors are in
+    `ReusedVectors`)."""
+
+    deadline: float | None = None
+    contexts: dict[tuple[str, ...], list[str]] = field(default_factory=dict)
+
+    def start(self) -> None:
+        from server.settings import settings
+
+        if self.deadline is None:
+            self.deadline = time.monotonic() + settings.pg_admission_deadline_ms / 1000
+
+    def passed(self) -> bool:
+        return self.deadline is not None and time.monotonic() >= self.deadline
+
+
 @dataclass(slots=True)
 class _BulkWriteState:
     """Request-scoped state that flows between the phases of
@@ -141,6 +163,8 @@ class _BulkWriteState:
     existing_carried: dict[str, dict[str, Any]] = field(default_factory=dict)
     # The live rows themselves, from the same read: a revision carries them forward.
     existing_rows: dict[str, Any] = field(default_factory=dict)
+    # Under Postgres, each other key's deleted head: a write goes above it too.
+    deleted_heads: dict[str, Any] = field(default_factory=dict)
     # Whether the batched lookup below actually succeeded. It is fail-open
     # (log-and-continue), so on a ClickHouse hiccup `existing_ids` is empty and every entry
     # would look new, emitting N `created` ticks for a re-ingest of an unchanged corpus: the
@@ -148,6 +172,15 @@ class _BulkWriteState:
     # trusted. MUST be initialised here, before the lookup: initialising it after the lookup
     # would clobber the success assignment and classify every batch as `unknown`.
     existing_lookup_ok: bool = False
+    # Under the Postgres authority: the scope generations the verdicts are reached at,
+    # and each memory type's (threshold, reach) the verdicts resolved.
+    generations: dict[tuple[str, str], int] = field(default_factory=dict)
+    floors: dict[str, tuple[float, float]] = field(default_factory=dict)
+    # A commit whose publication is left to the delivery worker: raised once the batch's
+    # follow-ups ran.
+    unpublished: PublicationPending | None = None
+    # What the batch carries across its passes (`bulk_set` passes one in).
+    retry: BatchRetry = field(default_factory=BatchRetry)
     # Identity dedup: entry key -> the keeper key that holds its bytes, and the keepers' ids
     # to reinforce.
     identity_duplicates: dict[str, str] = field(default_factory=dict)
@@ -213,6 +246,33 @@ _BULK_CARRIED_DEFAULTS: dict[str, Any] = {
     "on_expire": "",
     "expire_reason": "",
 }
+
+
+async def _blacklisted(
+    input: Any, state: _BulkWriteState, memory_key: str, serialized_value: str
+) -> bool:
+    """Whether the blacklist refuses this entry (a pattern matches, or the value is too
+    long to check); a refused one is recorded on `state`. Under the Postgres authority
+    the check covers the policy generations the batch captured before its guards."""
+    from server.memory.app.blacklist_guard import find_match, note_hit
+
+    policy = policy_part(state.generations, input.org) or None
+    bl_hit = await find_match(
+        org=input.org, namespace=input.namespace, value=serialized_value, policy=policy
+    )
+    if bl_hit is None:
+        return False
+    await note_hit(bl_hit.pattern_id)
+    verdict = BLACKLISTED if bl_hit.pattern_id else UNCHECKED
+    _refuse_entry(state, memory_key, verdict)
+    log.warning(
+        "bulk_set dropped entry key=%r verdict=%s pattern=%s scope=%s",
+        memory_key,
+        verdict,
+        bl_hit.pattern_id,
+        bl_hit.scope,
+    )
+    return True
 
 
 def _bulk_carried(state: _BulkWriteState, memory_key: str) -> dict[str, Any]:
@@ -689,7 +749,6 @@ async def _bulk_build_rows(
     char_limit (raises 422), blacklist, procedural retype — and append one
     full-column memory row, a result and (when searchable) a pending embed
     item per kept entry to `state`."""
-    from server.memory.app.blacklist_guard import find_match, note_hit
 
     now_utc = state.now_utc
     read = 0  # characters the sensitivity detector read for the entries before this one
@@ -703,6 +762,15 @@ async def _bulk_build_rows(
         if _bulk_skip_gate(entry, entry_sha, state, identity_dupes):
             continue
         version = next_version()
+        head = state.existing_rows.get(entry.memory_key) or state.deleted_heads.get(
+            entry.memory_key
+        )
+        if head is not None:
+            version = version_over(head, version)  # above a head from a clock ahead too
+        latest = state.built.get(entry.memory_key)
+        if latest is not None:
+            # A later entry of the key goes above the batch's earlier one, never ties it.
+            version = max(version, int(latest.row["version"]) + 1)
         serialized_value = json.dumps(entry.value)
         decoded_value = await decoded_text(serialized_value)
         # Sensitivity tier: caller's level, the repeated value's, or detected from the
@@ -712,7 +780,6 @@ async def _bulk_build_rows(
             getattr(entry, "sensitivity", ""), decoded_value, read_before=read
         )
         read += len(decoded_value)
-        latest = state.built.get(entry.memory_key)
         held = _held_by(latest) if latest is not None else _stored_held(state, entry.memory_key)
         entry_sensitivity, expires_at, entry_on_expire = _labels(
             state, entry, entry_sha, own_level, held
@@ -738,18 +805,7 @@ async def _bulk_build_rows(
             )
         # Refuse (blacklist): the point path 422s; here a match DROPS just
         # the offending entry + logs, rather than failing the whole batch.
-        bl_hit = await find_match(org=input.org, namespace=input.namespace, value=serialized_value)
-        if bl_hit is not None:
-            await note_hit(bl_hit.pattern_id)
-            verdict = BLACKLISTED if bl_hit.pattern_id else UNCHECKED
-            _refuse_entry(state, entry.memory_key, verdict)
-            log.warning(
-                "bulk_set dropped entry key=%r verdict=%s pattern=%s scope=%s",
-                entry.memory_key,
-                verdict,
-                bl_hit.pattern_id,
-                bl_hit.scope,
-            )
+        if await _blacklisted(input, state, entry.memory_key, serialized_value):
             continue
         original_entry = entry  # what a later restatement is compared with
         entry = _retyped(state, entry)
@@ -871,10 +927,12 @@ async def _bulk_contextualize(
     input: MemoryBulkSetInput,
     pending: list[tuple[int, str, str, str]],
     clock: StageClock,
+    written: dict[tuple[str, ...], list[str]],
 ) -> list[tuple[int, str, str, str]]:
     """Phase 5 (opt-in): the pending embed items with a model-written context
     line in front of each text and excerpt; the list unchanged when off, over
-    the cap, or on any failure."""
+    the cap, or on any failure. `written`: the contexts an earlier pass of the
+    batch wrote, reused and added to."""
     if pending and bool(input.contextualize):
         # This call's entries are one document; each embedded text and excerpt gets a
         # model-written one-line context in front. Fail-open: a missing context leaves that
@@ -890,15 +948,21 @@ async def _bulk_contextualize(
                 from server.memory.app.chunk_context import contextualize_chunks, prefixed
 
                 document = "\n\n".join(excerpt for _, _, excerpt, _ in pending)
-                # An unreadable policy lands in the fail-open below: no context.
-                policy = await extraction_policy.effective(input.org, input.namespace)
-                contexts = await contextualize_chunks(
-                    get_llm_client(),
-                    document,
-                    [excerpt for _, _, excerpt, _ in pending],
-                    concurrency=int(_cx_settings.memory_bulk_contextualize_concurrency),
-                    operator_policy=policy,
-                )
+                excerpts = [excerpt for _, _, excerpt, _ in pending]
+                memo_key = (document, *excerpts)
+                if memo_key in written:
+                    contexts = written[memo_key]
+                else:
+                    # An unreadable policy lands in the fail-open below: no context.
+                    policy = await extraction_policy.effective(input.org, input.namespace)
+                    contexts = await contextualize_chunks(
+                        get_llm_client(),
+                        document,
+                        excerpts,
+                        concurrency=int(_cx_settings.memory_bulk_contextualize_concurrency),
+                        operator_policy=policy,
+                    )
+                    written[memo_key] = contexts
                 contextualized = [
                     (idx, prefixed(cx, embed_text), prefixed(cx, excerpt), key_text)
                     for (idx, embed_text, excerpt, key_text), cx in zip(
@@ -939,7 +1003,7 @@ async def _bulk_embed_rows(
         }
     )
     entity_embeddings: dict[str, list[float]] = {}
-    state.pending = await _bulk_contextualize(input, state.pending, clock)
+    state.pending = await _bulk_contextualize(input, state.pending, clock, state.retry.contexts)
     if state.pending:
         # ONE batched embed call: value texts first, key texts appended.
         # Search ranks on min(value_distance, key_distance), and embeddings is

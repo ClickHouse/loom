@@ -26,7 +26,7 @@ cases/               one module per plane; each exposes cases() -> list[Case]
   planes.py          handlers through their Input models (`filled` axis fills every
                      optional field with a typed dummy) + the plane repositories
   workers.py         pure *_sql builders and constants, recall builder, worker passes,
-                     admin readers
+                     admin readers, boot reads
   tracker.py         tracker links, daily roll-up, backport report and record-vector readers
 shapes.txt           committed shape list: <shape12>\t<200-char head, literals masked>
 test_corpus.py       the tests CI runs

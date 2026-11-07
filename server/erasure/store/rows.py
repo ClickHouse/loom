@@ -193,3 +193,9 @@ class AuditExportRow(TypedDict):
     actor: str
     subject: str
     request_id: str
+
+
+def census_kept(verified_at: datetime | None, residue_count: int | None) -> bool:
+    """Whether a census belongs on a terminal row: it ran over every store, or it found
+    residue though it could not count them all."""
+    return verified_at is not None or bool(residue_count)

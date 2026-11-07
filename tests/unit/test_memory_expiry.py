@@ -8,6 +8,7 @@ EXPIRED refusal with revive.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -20,6 +21,7 @@ from server.memory.app import restore as _restore_mod
 from server.memory.app import stack as _stack_mod
 from server.memory.app import update as update_mod
 from server.memory.store import MemoryRow
+from tests.unit.memory_store import one_holder
 
 _NOW = datetime(2026, 9, 12, 12, 0, 0)
 # A row the handlers see as expired has to be expired by the wall clock.
@@ -214,6 +216,8 @@ async def test_update_by_id_refuses_an_expired_row_unless_revived(
         return row
 
     monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
+
+    monkeypatch.setattr("server.memory.store.namespaces_of_id", one_holder)
 
     async def _enforce(**_: Any) -> None:
         return None
@@ -427,3 +431,37 @@ async def test_rows_whose_lock_refuses_their_expiry_are_left_out_before_the_limi
     for action in ACTIONS:
         assert _LOCK_CLASS[action] in memory_lock.REFUSES["read_only"]
         assert (_LOCK_CLASS[action] in memory_lock.REFUSES["no_delete"]) == (action == "tombstone")
+
+
+@pytest.mark.asyncio
+async def test_a_candidate_is_expired_from_the_authoritys_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under the Postgres authority each candidate is expired from the head Postgres
+    holds: one renewed or deleted since is left alone and counted as moved, one only
+    rewritten is still expired (its newer head past its expiry too), so a key whose
+    delivery is parked is not passed over on every run."""
+    rows = [_row(memory_key=k, version=100) for k in ("same", "renewed", "deleted", "rewritten")]
+    _stub(monkeypatch, rows)
+    heads = {
+        "same": rows[0],
+        "renewed": _row(
+            memory_key="renewed", version=101, expires_at=_REAL_NOW + timedelta(days=1)
+        ),
+        "deleted": None,
+        "rewritten": _row(memory_key="rewritten", version=101, value="newer"),
+    }
+
+    async def _authority(found: list[MemoryRow]) -> list[MemoryRow | None]:
+        return [heads[r.memory_key] for r in found]
+
+    monkeypatch.setattr("server.memory.store.lifecycle.authority_heads", _authority)
+    res = await X.run_pass(X.ExpiryConfig(dry_run=True))
+    assert (res.scanned, res.moved_skipped, res.tombstoned) == (4, 2, 2)
+    assert sorted(s["memory_key"] for s in res.sample) == ["rewritten", "same"]
+    events: list[Any] = []
+    monkeypatch.setattr(
+        "server.observability.events.get_emitter", lambda: SimpleNamespace(emit=events.append)
+    )
+    X.emit_sweep_event(res, latency_ms=1)
+    assert events[0].args["moved_skipped"] == "2"

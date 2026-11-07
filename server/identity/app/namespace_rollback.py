@@ -2,8 +2,8 @@
 
 Head-state rollback over loom.memory_versions: for every key whose live head differs from the
 highest version stamped at or before `as_of`, that older version is re-inserted as a new head
-(every column carried forward, a fresh version stamp so it wins FINAL); a key that did not
-exist at `as_of` is tombstoned. Embedding rows are written as `embedding_dim = 0` stubs
+(every column carried forward, at a version above the key's head so it wins FINAL); a key
+that did not exist at `as_of` is tombstoned. Embedding rows are written as `embedding_dim = 0` stubs
 carrying the reinstated text, which the embedding worker drains (the same route
 memory.copy_to and the orphan reconciler use), so search converges on the reinstated content
 without an inline embed here.
@@ -91,24 +91,35 @@ async def handle_namespace_rollback(
         return out
 
     applied_at = _naive_utc(now)
-    await memory_rollback.apply_rollback(
-        input.org, input.namespace, plan, applied_at=applied_at, ch=ch
-    )
-
-    caller = resolve_subject()
-    await _audit.emit(
-        event_type="namespace.rollback",
-        org=input.org,
-        namespace=input.namespace,
-        actor=caller,
-        subject={
-            "as_of": as_of.isoformat(),
-            "version_at": version_at,
-            "reinstate": len(plan.reinstate),
-            "remove": len(plan.remove),
-            "truncated": truncated,
-            "memory_keys": input.memory_keys or [],
-        },
-    )
+    applied = memory_rollback.Applied()
+    completed = False
+    try:
+        await memory_rollback.apply_rollback(
+            input.org, input.namespace, plan, applied_at=applied_at, ch=ch, applied=applied
+        )
+        completed = True
+    finally:
+        # Audited with what landed, a rollback a 503 cut off after its first batches too.
+        if completed or applied.reinstated or applied.removed:
+            await _audit.emit(
+                event_type="namespace.rollback",
+                org=input.org,
+                namespace=input.namespace,
+                actor=resolve_subject(),
+                subject={
+                    "as_of": as_of.isoformat(),
+                    "version_at": version_at,
+                    "reinstate": applied.reinstated,
+                    "remove": applied.removed,
+                    # False: an error stopped it after these landed.
+                    "completed": completed,
+                    "truncated": truncated,
+                    "memory_keys": input.memory_keys or [],
+                },
+            )
+    # A key erased, or deleted, since the plan was left as the plan leaves one.
+    out.skipped_no_head += out.reinstate - applied.reinstated
+    out.skipped_already_gone += out.remove - applied.removed
+    out.reinstate, out.remove = applied.reinstated, applied.removed
     out.applied_at = applied_at
     return out

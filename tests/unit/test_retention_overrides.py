@@ -599,3 +599,26 @@ def test_every_managed_table_reads_its_own_retention_and_tiering_settings() -> N
         plan = retention_overrides.compute_alters(fake)
         assert [t.table for t, _, _ in plan] == [target.table]
         assert plan[0][2]["retention_global"] == 30 and plan[0][2]["tiering_global"] == 7
+
+
+def test_no_ttl_deletes_memory_or_its_vectors_under_the_postgres_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Postgres holds the memory: a namespace's retention still reaches the other
+    tables, never ClickHouse's copy of the memory or its search documents."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    out = retention_overrides.compute_alters(
+        _FakeSettings(tiering_memory_warm_days=30),
+        namespace_overrides=[
+            {"org": "o", "namespace": "n", "retention_days": 30, "warm_days": 0},
+        ],
+    )
+    by_table = {target.table: sql for target, sql, _ in out}
+    assert "DELETE" in by_table["loom.audit_log"]
+    assert "DELETE" not in by_table["loom.memory"] and "TO VOLUME" in by_table["loom.memory"]
+    assert (
+        "loom.memory_embeddings" not in by_table
+        or "DELETE" not in by_table["loom.memory_embeddings"]
+    )

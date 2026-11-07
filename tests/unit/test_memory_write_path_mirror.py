@@ -381,6 +381,7 @@ def _patch_update_by_id_deps(
     embedder: _RecordingEmbedder,
     blacklist_calls: list[str],
     blacklist_raises: bool = False,
+    existing: MemoryRow | None = None,
 ) -> None:
     monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
     monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)
@@ -392,11 +393,17 @@ def _patch_update_by_id_deps(
     monkeypatch.setattr("server.memory.app.update.get_embedder", mem_handlers.get_embedder)
 
     async def _get_by_id(*_: Any, **__: Any) -> MemoryRow:
-        return _mk_row()
+        return existing or _mk_row()
 
     monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
 
-    async def _enforce(*, org: str, namespace: str, value: str) -> None:
+    async def _namespaces_of_id(*_: Any, **__: Any) -> list[str]:
+        return [(existing or _mk_row()).namespace]
+
+    monkeypatch.setattr("server.memory.store.namespaces_of_id", _namespaces_of_id)
+
+    async def _enforce(*, org: str, namespace: str, value: str, policy: object = None) -> None:
+        assert policy is None  # the ClickHouse authority has no policy generations
         blacklist_calls.append(value)
         if blacklist_raises:
             raise HTTPException(status_code=422, detail={"code": "BLACKLISTED"})
@@ -479,6 +486,26 @@ async def test_update_by_id_preserves_memory_id_and_humanizes_key(
     assert len(emb_rows) == 1
     assert emb_rows[0]["memory_key_embedding"] == [2.0, 2.0, 2.0]
     assert emb_rows[0]["memory_key_embedding_dim"] == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("value", "redacted"), [("Dog is now named Bowie", False), (None, True)])
+async def test_update_by_id_clears_a_redaction_only_with_a_new_value(
+    monkeypatch: pytest.MonkeyPatch, value: str | None, redacted: bool
+) -> None:
+    """A new value is not the redacted text, so its version is not marked redacted; a
+    rewrite that keeps the value keeps the mark."""
+    ch = _StubCH()
+    scrubbed = _mk_row(value="[REDACTED]", redacted_at=_NOW, redaction_reason="pii|admin")
+    _patch_update_by_id_deps(
+        monkeypatch, ch=ch, embedder=_RecordingEmbedder(), blacklist_calls=[], existing=scrubbed
+    )
+    out = await update_mod.handle_memory_update_by_id(
+        MemoryUpdateByIdInput(org="test", memory_id="mid-123", value=value, tags=["kept"])
+    )
+    assert out.updated is True
+    [row] = ch.rows_for("loom.memory")
+    assert (row["redacted_at"] is not None, bool(row["redaction_reason"])) == (redacted, redacted)
 
 
 @pytest.mark.asyncio

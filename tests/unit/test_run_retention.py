@@ -113,7 +113,9 @@ def test_demote_writes_scaled_confidence_and_mirrors_it(monkeypatch) -> None:
     written: list[tuple[list[str], dict[str, Any]]] = []
     mirrored: list[tuple[str, dict[str, Any]]] = []
 
-    async def fake_write(org: str, ids: list[str], update: Any, *, ch: Any = None) -> int:
+    async def fake_write(
+        org: str, ids: list[str], update: Any, *, namespace: str, ch: Any = None
+    ) -> int:
         written.append((ids, _overrides(update(_Existing(0.8)))))
         return len(ids)
 
@@ -160,7 +162,9 @@ def test_expire_sets_expiry_and_demote_post_action(monkeypatch) -> None:
     written: list[dict[str, Any]] = []
     mirrored: list[tuple[str, dict[str, Any]]] = []
 
-    async def fake_write(org: str, ids: list[str], update: Any, *, ch: Any = None) -> int:
+    async def fake_write(
+        org: str, ids: list[str], update: Any, *, namespace: str, ch: Any = None
+    ) -> int:
         written.append(_overrides(update(_Existing(0.8))))
         return len(ids)
 

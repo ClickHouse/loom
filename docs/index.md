@@ -41,6 +41,7 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
   [Troubleshooting](operations/troubleshooting.md) ·
   [Code-index operations](operations/code-index-operations.md) ·
   [Running N replicas](operations/replicas.md): identical Looms behind one URL ·
+  [Postgres](operations/postgres.md): the Postgres memory authority ·
   [Kubernetes](operations/kubernetes.md): the Helm chart, with EKS and kind overlays ·
   [Copying a namespace to another Loom](operations/okf-sync.md) ·
   [Exporting usage to a data warehouse](operations/analytics-export.md)
@@ -125,6 +126,7 @@ client sees one the server no longer reads.
 [Server layout](architecture/server-layout.md) ·
 [ClickHouse](architecture/clickhouse.md) ·
 [Memory architecture](architecture/memory-architecture.md) ·
+[Storage authority](architecture/storage-authority.md) ·
 [Code-index architecture](architecture/code-index-architecture.md) ·
 [Document extraction](architecture/document-extraction.md) ·
 [LLM and embeddings](architecture/llm-architecture.md) ·

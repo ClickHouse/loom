@@ -446,9 +446,10 @@ Restore a snapshot payload into a target namespace.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `restored` | `bool` | False when this `snapshot_id` was already restored into the target (nothing written). |
+| `publication_pending` | `bool` | Some memories this call wrote are committed but not yet searchable (Postgres authority): the delivery worker publishes them, and a search waits for it. |
 | `target_namespace` | `str` | The namespace written to (echoes the request). |
 | `snapshot_id` | `str` | The restored payload's id. |
-| `counts` | `dict[str, int]` | `memories`, `types` and `grants` as the payload counted them. |
+| `counts` | `dict[str, int]` | `memories`, `types` and `grants` as the payload counted them, and `erased_skipped`, how many of its memories an erasure had removed from the target (always 0 under ClickHouse); on a replay, the counts its first restore recorded. |
 
 ## `namespace.rollback`
 

@@ -34,13 +34,9 @@ from server.core.ch_writes import committed_insert_settings
 from server.core.datetimes import naive_utc_now
 from server.memory.app.chunk_projection import chunk_text_with_ranges, chunk_text_with_truncation
 from server.memory.app.sensitive_passages import embed_chunks_of
+from server.memory.domain.set_chunk_session import SESSION_PREFIX, set_chunk_session_id
 
 log = logging.getLogger(__name__)
-
-# The session id (and `source_url`) a key's chunks are written under. Both
-# derive from the key alone so a later write for the same key finds them by
-# primary key and a reader can tell a memory.set chunk from a conversation one.
-SESSION_PREFIX = "memory.set:"
 
 # Fallback for `settings.memory_set_chunk_max_chunks` when the setting is
 # unreadable: 48 chunks at 800/100 is ~34 KB of text.
@@ -67,11 +63,6 @@ _CHUNK_COLUMNS = (
     "source_url",
     "source_local_path",
 )
-
-
-def set_chunk_session_id(memory_key: str) -> str:
-    """The deterministic `session_id` of a key's memory.set chunks."""
-    return f"{SESSION_PREFIX}{memory_key}"
 
 
 def human_text(value: Any, memory_type: str = "") -> str:
@@ -279,12 +270,13 @@ async def tombstone_row_chunks_fail_open(
 
 
 def set_chunk_identities(
-    value: Any, memory_type: str, memory_key: str
+    value: Any, memory_type: str, memory_key: str, *, at_least: int = 0
 ) -> frozenset[tuple[int, str]]:
     """The `(chunk_index, content_sha256)` of each chunk `write_set_chunks` writes for
-    `value` under `memory_key`: the identities of that value's chunk rows."""
-    chunks, _truncated = plan_set_chunks(value, memory_type, memory_key)
-    return frozenset((i, _chunk_sha(chunk)) for i, (chunk, _start, _end) in enumerate(chunks))
+    `value` under `memory_key`: the identities of that value's chunk rows. `at_least`:
+    plan that many if today's cap is lower, for rows written under a higher one."""
+    planned, _truncated = plan_set_chunks(value, memory_type, memory_key, at_least=at_least)
+    return frozenset((i, _chunk_sha(chunk)) for i, (chunk, _start, _end) in enumerate(planned))
 
 
 def passage_identities(value: Any, memory_type: str) -> frozenset[tuple[int, str]]:
@@ -361,14 +353,20 @@ async def _embed_chunks(embedder: Any, chunks: list[str]) -> list[list[float]]:
 
 
 def plan_set_chunks(
-    value: Any, memory_type: str, memory_key: str, *, limit: int | None = None
+    value: Any,
+    memory_type: str,
+    memory_key: str,
+    *,
+    limit: int | None = None,
+    at_least: int = 0,
 ) -> tuple[list[tuple[str, int, int]], int]:
-    """The `(chunk, line_start, line_end)` passages `write_set_chunks` would
-    write for a value, and the trailing characters the chunk cap leaves out;
-    `([], 0)` when the value is short or the type is not searchable. Pure: no
-    embedding, no read, no write."""
+    """The `(chunk, line_start, line_end)` passages `write_set_chunks` would write for a
+    value, and the trailing characters the chunk cap leaves out; `([], 0)` when the
+    value is short or the type is not searchable. `at_least` raises the cap to that many
+    when today's is lower. Pure: no embedding, no read, no write."""
     return chunk_text_with_truncation(
-        _chunked_text(value, memory_type, memory_key, limit), max_chunks=_max_chunks()
+        _chunked_text(value, memory_type, memory_key, limit),
+        max_chunks=max(_max_chunks(), at_least),
     )
 
 

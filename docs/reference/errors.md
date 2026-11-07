@@ -119,7 +119,7 @@ deduplicates; a `Retry-After` honoured up to 60 s. Each op's kind is in the
 | `AUTH_INSUFFICIENT`                 | 403  | The token's role or namespace access does not cover the op (over MCP the result carries `required_role`).                                                                                                                                                                                                                                                                                                             | Compare the op's role in the [operations reference](./operations.md) with the token (`GET /v1/whoami`); ask a namespace admin for a grant.                                                                                                                                                                                                                            |
 | `POLICY_FORBIDDEN`                  | 403  | A history-policy rule denied the call (`decision`, `determining_rules`, `errors`) with `LOOM_POLICY_MODE=enforce`.                                                                                                                                                                                                                                                                                                    | Read `determining_rules`; `errors` tells "denied by policy" from "could not evaluate". See [Tokens and grants](../guides/tokens-and-grants.md).                                                                                                                                                                                                                       |
 | `RESOURCE_NOT_FOUND`                | 404  | The addressed row, namespace or document does not exist, or is not visible to the caller.                                                                                                                                                                                                                                                                                                                             | Check the identity tuple and key. Ops addressed by an org-wide id answer `found: false` rather than 404 for a row in another namespace, so they never confirm it exists.                                                                                                                                                                                              |
-| `PRECONDITION_FAILED`               | 409  | `if_match_sha256` does not match the live row: another writer changed it.                                                                                                                                                                                                                                                                                                                                             | `detail.current_sha256` is the live hash. Re-read if your change depends on the new value, then resend with that hash; no separate read is needed to retry a blind overwrite.                                                                                                                                                                                         |
+| `PRECONDITION_FAILED`               | 409  | `if_match_sha256` does not match the live row: another writer changed it. Under the Postgres authority, also an erasure that removed some of a snapshot's memories from the namespace while a `namespace.restore` of it ran.                                                                                                                                                                                          | `detail.current_sha256` is the live hash. Re-read if your change depends on the new value, then resend with that hash; no separate read is needed to retry a blind overwrite. For the restore (no hash), retry it: it leaves out the erased memories.                                                                                                                 |
 | `PINNED_CONFLICT`                   | 409  | `memory.set` on a key, or close to a fact, that is pinned. A write that does not pin never replaces a pinned memory. `detail.pinned_blocker_id` names the blocking row.                                                                                                                                                                                                                                               | Change it with `memory.update` (keeps the pin) or `memory.pin` (re-pins), or store the new fact under its own key.                                                                                                                                                                                                                                                    |
 | `IDEMPOTENT_CONFLICT`               | 409  | An `Idempotency-Key` (or MCP `_idempotency_key`) reused with a different body for the same op and caller.                                                                                                                                                                                                                                                                                                             | Use a new key per distinct request. Resending the original body with the old key replays the stored answer.                                                                                                                                                                                                                                                           |
 | `READS_LLM_FREE`                    | 409  | `memory.ask` or `code.ask` asked for a model's answer while `LOOM_READS_LLM_FREE` is on.                                                                                                                                                                                                                                                                                                                              | Not retried: resending the same request is refused again. Ask with `allow_synthesis=false` / `synthesize=false` for the recalled evidence.                                                                                                                                                                                                                            |
@@ -164,6 +164,10 @@ Each code below is an anchor: `errors.md#<code in lowercase>` is the address an 
 #### `ACTIVITY_UNAVAILABLE`
 
 Raised in `server/memory/app/profile.py`.
+
+#### `ADMISSION_CONTENDED`
+
+HTTP 503, raised as `server.memory.store.pg_memory.AdmissionContendedError`. 503 — commits kept landing in this write's scope faster than it could re-check against them.
 
 #### `AMBIGUOUS_KEY`
 
@@ -433,6 +437,10 @@ Raised in `server/tracker/app/sources.py`.
 
 Raised in `server/transport/http.py`. What to do: [common errors](#common-errors-and-what-to-do).
 
+#### `IDEMPOTENT_TAKEN_OVER`
+
+HTTP 503, raised as `server.memory.store.pg_memory.IdempotencyFenced`. 503 — this request's idempotency claim is no longer its own: a retry with the key took it over, or an erasure in the org fenced it.
+
 #### `IDENTITY_INCOMPLETE`
 
 HTTP 400, raised as `server.core.errors.IdentityIncompleteError`. A scoped token was presented without org+namespace in the request body. What to do: [common errors](#common-errors-and-what-to-do).
@@ -601,9 +609,25 @@ Raised in `server/memory/app/set_commit.py`, `server/memory/app/update.py`, `ser
 
 HTTP 403, raised as `server.identity.app.policy_gate.PolicyForbiddenError`. 403 with the decision attached: which rules denied, per-leaf values, and any evaluation errors — "denied by policy" and "denied because the check could not run" are distinguishable by `errors`. What to do: [common errors](#common-errors-and-what-to-do).
 
+#### `POSTGRES_REFUSED`
+
+HTTP 500, raised as `server.core.pg.PostgresRefusedError`. 500 — Postgres refused a statement with a data or constraint error.
+
+#### `POSTGRES_UNAVAILABLE`
+
+HTTP 503, raised as `server.core.pg.PostgresUnavailableError`. 503 — Postgres, the memory authority, could not answer.
+
 #### `PRECONDITION_FAILED`
 
-HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_match_sha256` mismatch. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_match_sha256` mismatch, or an erasure that landed while a `namespace.restore` ran. What to do: [common errors](#common-errors-and-what-to-do).
+
+#### `PROJECTION_BEHIND`
+
+HTTP 503, raised as `server.memory.app.pg_admission.ProjectionBehindError`. 503 — earlier commits in this namespace have not reached search, so a conflict check, a search, a search trace, a blacklist sweep or a namespace.inventory now would miss them.
+
+#### `PUBLICATION_PENDING`
+
+HTTP 503, raised as `server.memory.store.pg_memory.PublicationPending`. 503: the write is committed and the delivery worker publishes its rows; it is not to be made again.
 
 #### `RATE_LIMITED`
 

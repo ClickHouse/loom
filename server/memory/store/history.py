@@ -9,9 +9,17 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from server.core.repo_base import _CHClient, _default_client
+from server.core import pg
+from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.identity.domain.read_scope import ReadFilters, scope_and
-from server.memory.store.rows import MEMORY_PERSISTED_COLS, Identity, MemoryRow, _hydrate
+from server.memory.store import pg_memory
+from server.memory.store.rows import (
+    MEMORY_PERSISTED_COLS,
+    Identity,
+    MemoryRow,
+    _hydrate,
+    identity_key,
+)
 from server.memory.store.sql import _SEQUENTIAL, _is_full_row, read_your_writes_enabled
 
 
@@ -79,7 +87,7 @@ class HistoryVersion:
 
 @dataclass(frozen=True, slots=True)
 class HistoryTarget:
-    """The identity and state of a memory_id's latest version."""
+    """The identity of one version of a memory: the key a redaction of it acts on."""
 
     namespace: str
     agent: str
@@ -90,6 +98,7 @@ class HistoryTarget:
     tombstoned_at: Any
     org: str
     memory_id: str
+    content_sha256: str  # the hash of the version's text, which its search rows carry too
 
     @classmethod
     def from_row(cls, r: Mapping[str, Any]) -> HistoryTarget:
@@ -103,6 +112,7 @@ class HistoryTarget:
             memory_key=str(r.get("memory_key") or ""),
             version=int(r.get("version") or 0),
             tombstoned_at=r.get("tombstoned_at"),
+            content_sha256=str(r.get("content_sha256") or ""),
         )
 
 
@@ -220,68 +230,38 @@ async def list_history(
 async def find_history_target(
     org: str,
     memory_id: str,
-    *,
-    ch: _CHClient | None = None,
-) -> HistoryTarget | None:
-    """Lookup the latest-version row (NOT FINAL) for a memory_id. Used
-    by redact, which needs to know the identity tuple + tombstone state
-    before mutating in place."""
-    ch = ch or _default_client()
-    cols = (
-        "org, memory_id, namespace, agent, user_id, session_id, memory_key, version, tombstoned_at"
-    )
-    r = await ch.query_one(
-        f"""
-        SELECT org, toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
-               memory_key, version, tombstoned_at
-        FROM (
-            SELECT {cols} FROM loom.memory_versions
-            WHERE org = {{org:String}} AND memory_id = {{mid:UUID}}
-            UNION ALL
-            SELECT {cols} FROM loom.memory
-            WHERE org = {{org:String}} AND memory_id = {{mid:UUID}}
-        )
-        ORDER BY version DESC
-        LIMIT 1
-        """,
-        params={"org": org, "mid": memory_id},
-    )
-    return None if r is None else HistoryTarget.from_row(r)
-
-
-async def version_exists(
-    org: str,
-    target: HistoryTarget,
-    memory_id: str,
     version: int,
     *,
     ch: _CHClient | None = None,
-) -> bool:
-    """Whether the mirror holds (memory_id, version): memory.redact checks the
-    named version before it scrubs anything built from the memory. `target`
-    carries the sort-key columns, so this is a point read."""
+) -> HistoryTarget | None:
+    """The row of `(memory_id, version)`, or None when there is none (a version that does
+    not exist scrubs nothing): the key a redaction of it acts on. A namespace restored
+    from another, or into itself under another agent, keeps the id under other keys and
+    fresh versions, so the version names one row. Under the Postgres authority it is read
+    from the revision journal: a version not yet delivered to ClickHouse is redacted too."""
+    if pg.enabled():
+        row = await pg_memory.history_target(org, memory_id, version)
+        return None if row is None else HistoryTarget.from_row(row)
     ch = ch or _default_client()
+    cols = (
+        "org, memory_id, namespace, agent, user_id, session_id, memory_key, version, "
+        "tombstoned_at, toStringCutToZero(content_sha256) AS content_sha256"
+    )
+    at = "org = {org:String} AND memory_id = {mid:UUID} AND version = {v:UInt64}"
     r = await ch.query_one(
-        """
-        SELECT 1 AS found FROM loom.memory_versions
-        WHERE org = {org:String} AND namespace = {ns:String} AND agent = {a:String}
-          AND user_id = {u:String} AND session_id = {s:String}
-          AND memory_key = {k:String} AND version = {v:UInt64}
-          AND memory_id = {mid:UUID}
+        f"""
+        SELECT org, toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
+               memory_key, version, tombstoned_at, content_sha256
+        FROM (
+            SELECT {cols} FROM loom.memory_versions WHERE {at}
+            UNION ALL
+            SELECT {cols} FROM loom.memory WHERE {at}
+        )
         LIMIT 1
         """,
-        params={
-            "org": org,
-            "ns": target.namespace,
-            "a": target.agent,
-            "u": target.user_id,
-            "s": target.session_id,
-            "k": target.memory_key,
-            "v": version,
-            "mid": memory_id,
-        },
+        params={"org": org, "mid": memory_id, "v": version},
     )
-    return r is not None
+    return None if r is None else HistoryTarget.from_row(r)
 
 
 async def rollback_change_rows(
@@ -348,16 +328,54 @@ async def fetch_version_rows(
         return []
     ch = ch or _default_client()
     settings = _SEQUENTIAL if sequential and read_your_writes_enabled() else ""
-    rows = await ch.query_all(
+    # Bound a slice at a time: one parameter holds as many pairs as a form field does.
+    rows = await query_all_sliced(
+        ch,
         f"""
         SELECT * FROM loom.memory_versions FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND (memory_key, version) IN {{pairs:Array(Tuple(String, UInt64))}}
         {settings}
         """,
-        params={"org": org, "ns": namespace, "pairs": [(k, int(v)) for k, v in pairs]},
+        {"org": org, "ns": namespace, "pairs": [(k, int(v)) for k, v in pairs]},
+        "pairs",
     )
     return [_hydrate(r) for r in rows]
+
+
+async def status_before(row: MemoryRow, *, ch: _CHClient | None = None) -> str:
+    """The status of `row`'s key before `row.version`, skipping `superseded` versions: what
+    an Undo of its retirement starts from; empty when none. The key is matched with the
+    memory id: a namespace restored into itself under another agent holds the id under
+    another key. Under Postgres it is read from the authority's revisions: ClickHouse's
+    history may still lack one whose publication is owed."""
+    key = identity_key(row)
+    if pg.enabled():
+        return await pg_memory.status_before(key, str(row.memory_id), int(row.version))
+    org, namespace, agent, user_id, session_id, memory_key = key
+    ch = ch or _default_client()
+    found = await ch.query_one(
+        f"""
+        SELECT status AS was FROM loom.memory_versions
+        WHERE org = {{org:String}} AND namespace = {{ns:String}} AND agent = {{a:String}}
+          AND user_id = {{u:String}} AND session_id = {{s:String}}
+          AND memory_key = {{k:String}} AND memory_id = {{id:UUID}}
+          AND version < {{version:UInt64}} AND status != 'superseded'
+        ORDER BY version DESC LIMIT 1
+        {_SEQUENTIAL}
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "a": agent,
+            "u": user_id,
+            "s": session_id,
+            "k": memory_key,
+            "id": str(row.memory_id),
+            "version": int(row.version),
+        },
+    )
+    return found["was"] if found else ""
 
 
 async def earliest_version_in_namespace(

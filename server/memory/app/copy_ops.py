@@ -125,16 +125,16 @@ async def handle_memory_cross_promote(
                 f"{caller!r} is not an admin of {input.from_org}/{ns}; cannot cross-promote"
             )
 
+    # In from_namespace, the one the ADMIN check above covered: a row of the id in any
+    # other namespace reads as not found, so the answer doesn't confirm it exists.
     src = await memory_repo.get_by_id(
         input.from_memory_id,
         org=input.from_org,
+        namespace=input.from_namespace,
         fresh=True,
         scope=request_scope(),
     )
-    # The id is org-wide; the ADMIN check above covered from_namespace only. A row
-    # in any other namespace reads as not found, so the copy can't reach it and
-    # the answer doesn't confirm the id exists.
-    if src is None or src.namespace != input.from_namespace:
+    if src is None:
         raise NotFoundError(
             f"source memory {input.from_memory_id!r} not found in "
             f"{input.from_org}/{input.from_namespace}"

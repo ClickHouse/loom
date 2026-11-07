@@ -11,9 +11,10 @@ Rules, all enforced here rather than trusted from the body:
     `process:<subject>` for a service account. The body's `actor` is ignored.
     An agent therefore cannot mark its own write `human:`.
   * Without auth (dev mode) the body must supply a well-formed actor.
-  * The caller must hold WRITER on the row's namespace (`row_in_scope`;
-    memory_id addressing bypasses the transport's namespace check, so it is
-    re-done), and a row it cannot reach by id reads as not found.
+  * The caller must hold WRITER on the row's namespace: by (namespace, key)
+    checked before the lookup; by memory_id, the namespace holding the id is the
+    one the caller can write (`id_namespace.namespace_for_id`), and a row it
+    cannot reach reads as not found.
   * A new ReplacingMergeTree version row is written through
     `build_memory_version_row`, carrying every column forward; the three
     attestation columns and `content_sha256` are the only deltas. The
@@ -39,8 +40,7 @@ from server.core.hashing import served_content_sha256
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import MemoryVerifyInput, MemoryVerifyOutput
 from server.memory.domain import trust
-from server.memory.store.inserts import insert_memory_versions
-from server.memory.store.rows import next_version
+from server.memory.store.rows import version_over
 from server.operations.base import Role
 
 if TYPE_CHECKING:
@@ -72,8 +72,20 @@ async def _resolve_row(input: MemoryVerifyInput) -> MemoryRow | None:
     import server.memory.store as memory_repo
 
     if input.memory_id:
+        from server.memory.app.id_namespace import namespace_for_id
+
+        # By id the row's own namespace decides: MCP fills `namespace` with the caller's
+        # default. A namespace the caller cannot write reads as not found.
+        namespace = await namespace_for_id(input.org, input.memory_id, Role.WRITER, strong=True)
+        if namespace is None:
+            return None
         return await memory_repo.get_by_id(
-            input.memory_id, org=input.org, fresh=True, scope=WHOLE_NAMESPACE
+            input.memory_id,
+            org=input.org,
+            namespace=namespace,
+            fresh=True,
+            strong=True,
+            scope=WHOLE_NAMESPACE,
         )
     if not (input.namespace and input.memory_key):
         raise HTTPException(
@@ -93,10 +105,10 @@ async def _resolve_row(input: MemoryVerifyInput) -> MemoryRow | None:
         user_id=input.user_id or "-",
         session_id=input.session_id or "-",
     )
-    # fresh: verify follows set in the same breath; a replica-lag miss must not
-    # answer "not found" for a row the caller was just handed a memory_id for.
+    # Read current: verify often follows set in the same breath, and the attestation is a
+    # version built from what this reads.
     return await memory_repo.get_by_key(
-        identity, input.memory_key, fresh=True, scope=WHOLE_NAMESPACE
+        identity, input.memory_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
     )
 
 
@@ -128,10 +140,6 @@ async def handle_memory_verify(input: MemoryVerifyInput) -> MemoryVerifyOutput:
     row = await _resolve_row(input)
     if row is None:
         return MemoryVerifyOutput(found=False)
-    # Addressed by an org-wide id: a row the caller cannot reach reads as not
-    # found — a 403 would confirm the id exists.
-    if not await row_in_scope(input.org, row.namespace, Role.WRITER):
-        return MemoryVerifyOutput(found=False)
 
     sha = current_content_sha256(row)
     before = trust.verification_state(row.verified_by, row.verified_sha256, sha)
@@ -161,7 +169,7 @@ async def handle_memory_verify(input: MemoryVerifyInput) -> MemoryVerifyOutput:
             content_sha256=sha,
         )
 
-    version = next_version()
+    version = version_over(row)
     new_row = memory_repo.build_memory_version_row(
         row,
         version=version,
@@ -172,7 +180,7 @@ async def handle_memory_verify(input: MemoryVerifyInput) -> MemoryVerifyOutput:
         # agrees with the attestation (a row holding the DEFAULT reads '0').
         content_sha256=sha,
     )
-    await insert_memory_versions([new_row], ch=get_client())
+    await memory_repo.insert_versions_over_heads([new_row], [row], ch=get_client())
     # The caller waits for the durable attestation, not for the ranking signal. The
     # embeddings mirror (a FINAL read of the row's vector plus a second committed insert,
     # best-effort by contract) runs after this answer on the request's loop, and the next

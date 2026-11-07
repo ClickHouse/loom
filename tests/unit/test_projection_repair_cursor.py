@@ -160,6 +160,11 @@ async def test_scan_uses_the_same_native_key_for_comparison_and_order(after):
     await pf.scan_active_projection_failures(after=(at, failure_id) if after else None, ch=ch)
     assert "ORDER BY f.created_at ASC, f.failure_id ASC" in ch.sql
     assert "held" not in ch.params
+    # Intents a retry leaves alone within their grace hold no place in the page.
+    assert "AND NOT (projection IN {graced:Array(String)}" in ch.sql
+    assert "created_at > now() - INTERVAL {grace:UInt32} SECOND)" in ch.sql
+    assert set(ch.params["graced"]) == {pf.FOLLOW_OWED, pf.SENSITIVITY_FACTS}
+    assert ch.params["grace"] == pf.OWED_GRACE_S
     if after:
         assert "(f.created_at, f.failure_id) > ({after_at:DateTime}, {after_id:UUID})" in ch.sql
         assert ch.params["after_at"] == at.replace(tzinfo=UTC)

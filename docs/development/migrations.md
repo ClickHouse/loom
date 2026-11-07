@@ -141,6 +141,23 @@ A key with other columns merges other rows and is listed with its reason in
 `tests/unit/test_migrations_additive.py`. Name the rebuild in the release notes as an
 operator step ([release process](./release-process.md#release-notes)).
 
+## Postgres migrations
+
+`schemas/pg_migrations/NNN_*.sql` follow the same rules: numbered, additive, never
+edited once merged. A boot applies them under a Postgres advisory lock, each file in one
+transaction with its ledger row. A migration waits at most 5 s for a table lock
+(`lock_timeout`, then retried), so an `ALTER` never queues every query of the table
+behind a long transaction. A build serves a ledger that holds a later build's files, with
+a warning naming them; a ledger file it does not carry numbered at or below its own last
+file, or one whose checksum changed, refuses the boot.
+
+Every file runs in one transaction, so a migration builds no index on a large table: the
+build would hold off the table's writes, every commit answering 503, until it ends. Such
+an index needs `CREATE INDEX CONCURRENTLY` outside a transaction, and a boot waiting on
+the advisory lock deadlocks with it (a waiting session holds a snapshot the build waits
+out): a change that adds such a file also takes the lock by retrying
+`pg_try_advisory_lock`.
+
 ## Schema dump and check
 
 `schemas/schema.sql` is the dumped result of applying every migration: read it to

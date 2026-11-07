@@ -6,7 +6,6 @@ tuple type.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
 # The value memory.get serves: the native JSON column when populated, else the stored text.
@@ -60,9 +59,10 @@ def attested_sql(alias: str = "") -> str:
 # On ClickHouse Cloud (Shared*MergeTree, several replicas) a SELECT that lands
 # on a different replica than the INSERT can miss a row written moments ago,
 # even with synchronous inserts. `select_sequential_consistency = 1` forces a fresh
-# metadata snapshot so the row is visible; it costs latency, so it is paid
-# only on a MISS, only once, and only where the caller says the row may be
-# fresh. A no-op on single-node MergeTree.
+# metadata snapshot so the row is visible; it costs latency, so a read path
+# pays it only on a MISS, only once, and only where the caller says the row may
+# be fresh, or where a write acts on what it reads. A no-op on single-node
+# MergeTree.
 _SEQUENTIAL = "SETTINGS select_sequential_consistency = 1"
 
 
@@ -79,14 +79,3 @@ def _is_full_row(row: dict[str, Any] | None) -> bool:
 
 
 _IDENTITY_KEY_TUPLE = "Array(Tuple(String, String, String, String, String, String))"
-
-
-def _identity_key(r: Mapping[str, Any]) -> tuple[str, str, str, str, str, str]:
-    return (
-        str(r["org"]),
-        str(r["namespace"]),
-        str(r["agent"]),
-        str(r["user_id"]),
-        str(r["session_id"]),
-        str(r["memory_key"]),
-    )

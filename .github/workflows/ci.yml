@@ -733,6 +733,160 @@ jobs:
             server-auth.log
             extractor.log
 
+  integration-postgres:
+    name: pytest integration (Postgres ${{ matrix.postgres }} memory authority)
+    needs: clickhouse
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The oldest supported major and the newest.
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["16", "18"]
+    env:
+      LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
+      LOOM_CH_HOST: localhost
+      LOOM_CH_PORT: "8123"
+      LOOM_CH_USER: loom
+      LOOM_CH_READER_USER: loom_reader
+      LOOM_CH_PASSWORD: loomdev
+      LOOM_CH_DATABASE: loom
+      LOOM_CH_SECURE: "false"
+      LOOM_AUTH_REQUIRED: "false"
+      LOOM_JWT_SECRET: ci-only-jwt-secret
+      LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS: "1"
+      LOOM_BASE_URL: http://localhost:7777
+      LOOM_EMBEDDING_MODEL: fake-ngram-1024
+      LOOM_LLM_PROVIDER: fake
+      LOOM_LATENCY_BUDGET_MULTIPLIER: "10"
+      LOOM_BACKGROUND_WORKERS: "off"
+      LOOM_INSTANCE_LABEL: "ci:integration-postgres"
+      # The deployment's default code namespace, which the leakage gates' code-scope
+      # cases resolve bare code.* calls to.
+      LOOM_CODE_ORG: ci
+      LOOM_CODE_NAMESPACE: code-ci
+      LOOM_CODE_REPO: example/ci
+      # The end-user policy cases wait out a refresh: 2 s, as the integration parts use.
+      LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS: "2"
+      # Stock Postgres with one synchronous standby (dev/ci_start_postgres.sh).
+      LOOM_STORAGE_AUTHORITY: postgres
+      LOOM_PG_DSN: postgres://loom:loomdev@localhost:5432/loom
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        id: python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Loom from uv.lock (dev, code extras)
+        run: |
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Start ClickHouse (loom config + lemmagen dictionary)
+        run: bash dev/ci_start_clickhouse.sh
+      - name: Start Postgres with a synchronous standby
+        env:
+          LOOM_PG_IMAGE: postgres:${{ matrix.postgres }}
+        run: bash dev/ci_start_postgres.sh
+      - name: Apply migrations
+        run: python -m server.core.schema.migrate
+      # The service in front of Loom that signs a token per end user, so the isolation
+      # gates' end-user cases run against the Postgres read paths too.
+      - name: Test end-user issuer
+        id: issuer
+        run: python -m tests.end_user_issuer "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Boot control plane
+        run: |
+          LOOM_WEB_WORKERS=3 nohup sh scripts/serve.sh > server.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -fsS http://localhost:7777/v1/health && exit 0
+            sleep 1
+          done
+          echo "control plane never became healthy"
+          tail -100 server.log
+          exit 1
+      - name: pytest (Postgres authority, memory and isolation)
+        run: >-
+          pytest -q
+          tests/integration/test_pg_authority.py
+          tests/integration/test_restored_memory_ids.py
+          tests/integration/test_memory_import.py
+          tests/integration/test_cross_principal_leakage.py
+          tests/integration/test_memory_get.py
+          tests/integration/test_served_reads.py
+          tests/integration/test_memory_by_id.py
+          tests/integration/test_memory_bulk.py
+          tests/integration/test_memory_pin.py
+          tests/integration/test_memory_lock.py
+          tests/integration/test_memory_precondition.py
+          tests/integration/test_memory_delete_list.py
+          tests/integration/test_memory_conflicts.py
+          tests/integration/test_memory_touch.py
+          tests/integration/test_memory_history_redact.py
+          tests/integration/test_memory_expiry.py
+          tests/integration/test_memory_promote.py
+          tests/integration/test_memory_search.py
+          tests/integration/test_memory_apply.py
+          tests/integration/test_memory_valid_at.py
+          tests/integration/test_memory_verify.py
+          tests/integration/test_bulk_conflicts.py
+          tests/integration/test_blacklist.py
+          tests/integration/test_idempotency.py
+          tests/integration/test_erasure.py
+      # The tenant-isolation gates again, against a second server that enforces auth:
+      # the Postgres read paths (heads by key and by id, narrowed scopes) see real tokens.
+      # They run whether or not the memory suites passed (`!cancelled()`).
+      - name: Boot control plane with auth on
+        id: auth_on
+        if: ${{ !cancelled() && steps.issuer.outcome == 'success' }}
+        env:
+          LOOM_AUTH_REQUIRED: "true"
+          LOOM_INSTANCE_LABEL: "ci:integration-postgres-auth"
+        run: |
+          LOOM_WEB_WORKERS=3 PORT=7778 nohup sh scripts/serve.sh > server-auth.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -fsS http://localhost:7778/v1/health && exit 0
+            sleep 1
+          done
+          echo "auth-on control plane never became healthy"
+          tail -100 server-auth.log
+          exit 1
+      # The isolation files that write or read memory. Two read-scope tests seed
+      # superseded and duplicate rows by writing ClickHouse directly, rows the Postgres
+      # authority never held, and the isolation part's other files (run claims, the
+      # extraction queue, projection failures) hold no Postgres row: they run on the
+      # ClickHouse job.
+      - name: pytest isolation gates (Postgres authority, auth on)
+        if: ${{ !cancelled() && steps.auth_on.outcome == 'success' }}
+        env:
+          LOOM_AUTH_REQUIRED: "true"
+          LOOM_BASE_URL: http://localhost:7778
+        run: >-
+          pytest -q
+          tests/integration/test_cross_principal_leakage.py
+          tests/integration/test_read_scope_isolation.py
+          tests/integration/test_session_briefs.py
+          tests/integration/test_me_setup_mcp_config.py
+          tests/integration/test_mcp_session_run_scope.py
+          tests/integration/test_onboard_tenant.py
+          tests/integration/test_blacklist.py
+          tests/integration/test_sensitivity_high_canary.py
+          tests/integration/test_pg_authority.py
+          -k "not test_a_duplicate_never_resolves_to_a_canonical_outside_the_scope
+          and not test_a_superseded_hit_never_names_a_successor_outside_the_scope"
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: server-log-postgres-${{ matrix.postgres }}
+          path: |
+            server.log
+            server-auth.log
+
   mixed-version:
     name: builds N-1 and N on one ClickHouse
     runs-on: ubuntu-latest

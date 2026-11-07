@@ -47,6 +47,7 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
     "runtime_overrides": ("builder", "test_runtime_overrides.py"),
     "signing_keys": ("builder", "test_signing_keyring.py"),
     "carry_acks": ("builder", "test_rmt_carry.py"),
+    "storage_authority": ("builder", "test_pg_authority.py"),
     "frontend_assets": ("builder", "test_shared_state_writers.py"),
     "embedder_calibration": ("builder", "test_shared_state_writers.py"),
     "usage_acted_credits": ("builder", "test_shared_state_writers.py"),

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
+from server.core import pg
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.rows import (
     AgentEventExportRow,
@@ -82,6 +83,69 @@ async def export_memory(
     )
     # memory_id is a UUID column; the export carries it as a string.
     return cast("list[MemoryExportRow]", [{**r, "memory_id": str(r["memory_id"])} for r in rows])
+
+
+# The export's columns of a head's row JSON that are times, stored as ISO text: a subset
+# of `pg_memory.DATETIME_COLS`, which this layer cannot import (pinned in a unit test).
+_PG_TIMES = ("tombstoned_at", "created_at", "expires_at")
+
+
+async def export_memory_heads(
+    org: str,
+    scope_type: str,
+    scope_value: str,
+    *,
+    include_tombstoned: bool,
+    limit: int,
+    shown: Shown = _EVERY,
+) -> list[MemoryExportRow]:
+    """`export_memory` under the Postgres authority: the heads it holds, so a committed
+    write ClickHouse has not received yet is in, and a delete it has not received is
+    out. Returns +1 row beyond the requested limit, as `export_memory` does."""
+    if pg.unstorable((org, scope_value)):
+        return []  # no head holds what Postgres cannot store
+    column = "user_id" if scope_type == "user_id" else "namespace"
+    hidden = [n for n in shown.hidden if not pg.unstorable(n)]
+    args: list[Any] = [org, scope_value, int(limit), hidden]
+    where = f"org = $1 AND {column} = $2 AND NOT (namespace = ANY($4::text[]))"
+    if not include_tombstoned:
+        where += " AND row->>'tombstoned_at' IS NULL"
+    if shown.collections is not None:
+        args += [shown.collection_prefix, [n for n in shown.collections if not pg.unstorable(n)]]
+        where += " AND (NOT starts_with(namespace, $5) OR namespace = ANY($6::text[]))"
+    rows = await pg.fetch(
+        "SELECT org, namespace, agent, user_id, session_id, memory_id::text AS memory_id, "
+        "memory_key, version, row FROM loom.memory_current "
+        f"WHERE {where} ORDER BY namespace, agent, memory_key LIMIT $3",
+        *args,
+    )
+    out: list[MemoryExportRow] = []
+    for r in rows:
+        head = r["row"]
+        times = {
+            col: datetime.fromisoformat(head[col]) if head.get(col) else None for col in _PG_TIMES
+        }
+        # The keys in `export_memory`'s SELECT order, so the JSON reads the same.
+        row = {
+            "org": r["org"],
+            "namespace": r["namespace"],
+            "agent": r["agent"],
+            "user_id": r["user_id"],
+            "session_id": r["session_id"],
+            "memory_id": r["memory_id"],
+            "memory_key": r["memory_key"],
+            "memory_type": head["memory_type"],
+            "value": head["value"],
+            "confidence": head["confidence"],
+            "source_trace": head["source_trace"],
+            "version": r["version"],
+            "tombstoned_at": times["tombstoned_at"],
+            "created_at": times["created_at"],
+            "expires_at": times["expires_at"],
+            "sensitivity": head["sensitivity"],
+        }
+        out.append(cast("MemoryExportRow", row))
+    return out
 
 
 async def export_knowledge(

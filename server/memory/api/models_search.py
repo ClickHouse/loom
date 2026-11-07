@@ -15,6 +15,7 @@ from pydantic import (
 from server.memory.api.models_common import MemoryType, _Identity
 from server.memory.domain.code_change import CodeState
 from server.memory.domain.rerank_names import RerankName
+from server.memory.domain.search_types import ChunkRef
 from server.operations.base import MCP_HIDDEN
 
 # ============================================================
@@ -518,6 +519,12 @@ class _MemorySearchHit(BaseModel):
     # The stored memory's (agent, user_id, session_id) as the leg read them, private and
     # never on the wire: the code annotation reads that memory's links. None = not read.
     _row_identity: tuple[str, str, str] | None = None
+    # Private, what `pg_validation` checks. The set chunk whose passage the hit shows.
+    _row_chunk: ChunkRef | None = None
+    # The stored version when the wire's is 0.
+    _row_version: int = 0
+    # A chunk made into its row's hit shows the chunk's type, not the row's.
+    _chunk_typed: bool = False
     # The hit's code links in repositories the caller may read, as the search's code
     # annotation read them; None = not read (memory.ask reads them itself then).
     _code_links: list[dict[str, Any]] | None = None
@@ -693,6 +700,10 @@ class MemorySearchOutput(BaseModel):
     # caller asked for paging and there was more; and this page's offset
     # into the parked list (0 for a fresh search).
     candidates_total: int = 0
+    # Memory hits left out because the Postgres authority no longer serves what they
+    # show (always 0 under the ClickHouse authority); a short or empty page may have more
+    # behind `next_page`, so keep paging while it is set.
+    stale_dropped: int = 0
     # Handle to pass as `page` for the next slice; empty when `paging` was off or no
     # more candidates remained.
     next_page: str = ""
@@ -748,6 +759,7 @@ class MemorySearchOutput(BaseModel):
     top_k_ceiling: int = 0
     # True when retrieval cannot honestly answer: no hit survived the noise floor,
     # the top similarity or calibrated confidence was too low, or a named entity is absent.
+    # False for an empty parked page while `next_page` still names more.
     abstain: bool = False
     # Human-readable reason for `abstain`; empty when it is False.
     abstain_reason: str = ""
@@ -891,7 +903,8 @@ class _SearchTraceHit(BaseModel):
 
 
 class MemorySearchTraceOutput(BaseModel):
-    # Every candidate the fact leg scored, in the leg's rank order, with its breakdown.
+    # Every candidate the fact leg scored that is still served (all of them under an
+    # `as_of` replay), in the leg's rank order, with its breakdown.
     results: list[_SearchTraceHit]
     # The embedding model the query was embedded with.
     embedding_model: str
@@ -904,6 +917,10 @@ class MemorySearchTraceOutput(BaseModel):
     # did not answer (failed, timed out, namespace backing off) or the
     # respelled text's embed failed.
     query_spellings_skipped: bool = False
+    # Under the Postgres authority: candidates left out because the authority no longer
+    # serves what they show, as memory.search's `stale_dropped`. 0 under ClickHouse and
+    # under an `as_of` replay.
+    stale_dropped: int = 0
 
 
 # ============================================================

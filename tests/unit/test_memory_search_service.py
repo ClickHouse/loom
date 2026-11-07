@@ -436,6 +436,10 @@ async def test_vector_search_trace_exposes_entity_boost_and_rank_score() -> None
                 **_hit(),
                 "entity_boost": 0.5,
                 "rank_score": 1.62,
+                "version": 7,
+                "agent": "a",
+                "user_id": "u",
+                "session_id": "s",
             }
         ]
     )
@@ -445,6 +449,11 @@ async def test_vector_search_trace_exposes_entity_boost_and_rank_score() -> None
     assert isinstance(h, SearchTraceHit)
     assert h.entity_boost == 0.5
     assert h.rank_score == 1.62
+    # What the Postgres authority's check reads (`trace._served`).
+    assert (h.version, h.identity) == (7, ("a", "u", "s"))
+    sql = " ".join(ch.query_all_calls[0][0].split())
+    for column in ("agent", "user_id", "session_id"):
+        assert f"e.{column} AS {column}" in sql
 
 
 @pytest.mark.asyncio

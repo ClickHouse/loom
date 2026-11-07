@@ -32,6 +32,7 @@ from server.memory.app import write as write_mod
 from server.memory.app.lock import handle_memory_lock, handle_memory_unlock
 from server.memory.domain import lock as L
 from server.memory.store import MemoryRow
+from tests.unit.memory_store import one_holder
 
 _NOW = datetime(2026, 9, 12, 12, 0, 0)
 
@@ -161,6 +162,7 @@ def _stub_repo(monkeypatch: pytest.MonkeyPatch, row: MemoryRow | None) -> _CH:
 
     monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
     monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
+    monkeypatch.setattr("server.memory.store.namespaces_of_id", one_holder)
     return ch
 
 
@@ -401,3 +403,30 @@ def test_the_read_projection_carries_every_persisted_column() -> None:
     names = set(re.findall(r"[a-z_0-9]+", R._MEMORY_FINAL_PROJECTION))
     missing = [c for c in R.MEMORY_PERSISTED_COLS if c not in names]
     assert missing == [], missing
+
+
+@pytest.mark.asyncio
+async def test_a_lock_or_delete_lands_above_a_head_from_a_clock_ahead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A head written on a replica whose clock is a second ahead outranks a version drawn
+    here: the lock, unlock and delete write above it, and answer the version written."""
+    from server.memory.store.rows import next_version
+
+    ahead = next_version() + 10**9
+    ch = _stub_repo(monkeypatch, _row(version=ahead))
+    locked = await handle_memory_lock(
+        MemoryLockInput(**_ID, memory_key="deploy_window", mode="no_delete", reason="keep")
+    )
+    assert locked.version == ahead + 2 == ch.inserts[-1][1][0]["version"]
+
+    ch = _stub_repo(monkeypatch, _row(version=ahead, lock_mode="no_delete", lock_reason="k"))
+    unlocked = await handle_memory_unlock(MemoryUnlockInput(**_ID, memory_key="deploy_window"))
+    assert unlocked.version == ahead + 2 == ch.inserts[-1][1][0]["version"]
+
+    ch = _stub_repo(monkeypatch, _row(version=ahead))
+    deleted = await mem_handlers.handle_memory_delete(
+        MemoryDeleteInput(**_ID, memory_key="deploy_window")
+    )
+    memory_rows = [rows for table, rows in ch.inserts if table == "loom.memory"]
+    assert deleted.version == ahead + 2 == memory_rows[0][0]["version"]

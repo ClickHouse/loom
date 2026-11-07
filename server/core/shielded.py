@@ -1,6 +1,6 @@
 """Writes a cancelled request must still finish: an OAuth credential put back,
-a Keeper change undone. Each is held until done, and shutdown drains them
-before the ClickHouse client goes."""
+a Keeper change undone, a 'high' row's fence. Each is held until done, and shutdown
+drains them before the ClickHouse client goes."""
 
 from __future__ import annotations
 
@@ -20,10 +20,11 @@ async def shielded(write: Coroutine[Any, Any, None], *, name: str) -> None:
     await asyncio.shield(_running.spawn(write, name=name))
 
 
-async def drain(timeout_s: float = 5.0) -> int:
+async def drain(timeout_s: float = 5.0) -> list[str]:
     """Wait for the shielded writes still running (at most `timeout_s`);
-    returns how many were."""
+    returns the names of those left running."""
     live = [t for t in _running if not t.done()]
-    if live:
-        await asyncio.wait(live, timeout=timeout_s)
-    return len(live)
+    if not live:
+        return []
+    _done, pending = await asyncio.wait(live, timeout=timeout_s)
+    return sorted(t.get_name() for t in pending)

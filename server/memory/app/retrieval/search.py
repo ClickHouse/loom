@@ -453,6 +453,9 @@ async def vector_search_trace(
             e.content_excerpt  AS content_excerpt,
             e.status           AS status,
             e.version          AS version,
+            e.agent            AS agent,
+            e.user_id          AS user_id,
+            e.session_id       AS session_id,
             cosineDistance(e.embedding, {{q:Array(Float32)}}) AS distance,
             {entity_boost_select},
             (1.0 - distance) + entity_boost AS rank_score
@@ -471,6 +474,8 @@ async def vector_search_trace(
             distance=float(r["distance"]),
             entity_boost=float(r["entity_boost"]),
             rank_score=float(r["rank_score"]),
+            version=int(r["version"]),
+            identity=row_identity(r),
         )
         for r in rows
     ]

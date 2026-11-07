@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable
+from contextlib import nullcontext
 from datetime import datetime
 from typing import cast, get_args
 
@@ -20,6 +21,7 @@ from server.auth import sharing
 from server.auth.authz import check_authorized, is_org_readable_code_namespace
 from server.auth.context import current_auth
 from server.auth.fail_closed import note_answered_unverified
+from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.errors import BACKEND_NOT_NOW
 from server.embedding.embedder import embedder_is_fake
@@ -43,6 +45,7 @@ from server.knowledge.app.document_reads import document_tally
 from server.llm.client import llm_is_fake
 from server.memory.app.query import identity_tally, memory_tally
 from server.memory.app.records import record_tally
+from server.memory.app.search import pg_validation
 from server.memory.app.webhooks import webhook_tally
 from server.memory.domain.identity_columns import IdentityColumn
 from server.operations.base import Role
@@ -60,6 +63,15 @@ _COLUMN: dict[ObservedPopulation, IdentityColumn] = {
 
 
 async def handle_namespace_inventory(input: NamespaceInventoryInput) -> NamespaceInventoryOutput:
+    # Under Postgres the whole inventory waits until ClickHouse holds what was committed in
+    # the namespace (503 PROJECTION_BEHIND past the bound), then reads sequentially, as a
+    # search does.
+    behind = await pg_validation.admit(input.org, [input.namespace])
+    with sequential_reads() if behind else nullcontext():
+        return await _inventory(input)
+
+
+async def _inventory(input: NamespaceInventoryInput) -> NamespaceInventoryOutput:
     computed_at = naive_utc_now_seconds()
     scope = request_scope()
     org, ns = input.org, input.namespace

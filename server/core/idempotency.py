@@ -23,15 +23,18 @@ import asyncio
 import hashlib
 import json
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
 from typing import Any
 
-from server.core import leases
+from server.core import leases, pg
 from server.core.background import TaskSet
 from server.core.ch import get_client, own_write_reads
 from server.core.datetimes import naive_utc_now
+from server.core.error_summary import error_summary
+from server.core.errors import NotFoundError
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +63,26 @@ class CacheResult:
 # frees the key after this.
 IN_PROGRESS_TTL_S = 60
 _releases = TaskSet()
+# Under the Postgres authority: the (org, key, lease token) this request claimed and
+# its operation; a memory commit of the operation marks the key committed in the same
+# transaction.
+_bound: ContextVar[tuple[str, str, int] | None] = ContextVar("loom_idempotency_key", default=None)
+_bound_op: ContextVar[str] = ContextVar("loom_idempotency_op", default="")
+# The operations whose answer `_committed_hit` rebuilds from their revisions. Another
+# operation's commit (`profile.set` writes through memory.set) leaves its key running.
+COMMITTED_REPLAY_OPS = frozenset({"memory.set", "memory.bulk_set"})
+
+
+def bound_key() -> tuple[str, str, int] | None:
+    """The claim a commit marks committed, when the request's operation replays one."""
+    return _bound.get() if _bound_op.get() in COMMITTED_REPLAY_OPS else None
+
+
+def unbind() -> None:
+    """Forget the claim of the previous call in this context (an MCP batch runs its
+    calls in one), so a call without a key commits under none."""
+    _bound.set(None)
+    _bound_op.set("")
 
 
 def hash_body(body: Any) -> str:
@@ -235,6 +258,9 @@ async def store(
     a failed insert just means the next retry re-executes the handler.
     `org` and `subject` are the admitted caller's (the `Scope` the key was
     made from), so erasure can delete the row."""
+    if pg.enabled():
+        await _pg_store(org, idempotency_key, status_code, response_body, response_headers)
+        return
     now = naive_utc_now()
     try:
         await get_client().insert(
@@ -256,3 +282,228 @@ async def store(
         )
     except Exception:  # the cache fails open: a failed write re-executes on retry
         log.exception("idempotency.store failed for key=%s op=%s", idempotency_key, operation)
+
+
+# ---- the Postgres authority ----------------------------------------------------
+
+_PG_READ = """
+SELECT request_digest, state, operation, lease_token,
+       coalesce(lease_until > now(), false) AS held, expires_at < now() AS expired,
+       status_code, response_body, response_headers, revisions
+FROM loom.idempotency WHERE org = $1 AND key_hash = $2 FOR UPDATE
+"""
+
+
+async def check_owned(owner: Scope, operation: str, body_hash: str) -> CacheResult:
+    """`check` under the Postgres authority: the key lives in `loom.idempotency` beside
+    the revisions it commits, and fails closed (Postgres down is 503). The key's row
+    is read and claimed in one transaction.
+
+    No row (or an expired one): this request claims it (`running`, a lease, token
+    1) and runs. `done`: the stored answer. `committed`: the revisions a request
+    committed before its answer was lost, replayed as such (`_committed_hit`).
+    `running` or `committed` under a live lease: IDEMPOTENT_IN_PROGRESS. `running`
+    past its lease: taken over under the next token, so the request it replaces
+    can no longer commit under the key. Another body under the key: a conflict."""
+    from server.core import request_tail
+
+    in_request = request_tail.active()
+    async with pg.transaction() as conn:
+        # A claim made now is either fenced by an erasure's step or stamped after it; the
+        # step's fence is brief, so a request that meets it is told to retry.
+        if in_request and not await pg.try_claim_lock(conn, owner.org):
+            return CacheResult(hit=None, conflict=True, in_progress=True)
+        row = await conn.fetchrow(_PG_READ, owner.org, owner.key)
+        if row is not None and row["expired"]:
+            await conn.execute(
+                "DELETE FROM loom.idempotency WHERE org = $1 AND key_hash = $2",
+                owner.org,
+                owner.key,
+            )
+            row = None
+        if row is not None and row["request_digest"] != body_hash:
+            return CacheResult(hit=None, conflict=True)
+        if row is not None and row["state"] == "done":
+            return CacheResult(hit=_done_hit(row), conflict=False)
+        if row is not None and row["held"]:
+            return CacheResult(hit=None, conflict=True, in_progress=True)
+        if row is not None and row["state"] == "committed":
+            return CacheResult(hit=await _committed_hit(conn, row), conflict=False)
+        if not in_request:
+            return CacheResult(hit=None, conflict=False)
+        if row is None:
+            token = await conn.fetchval(
+                "INSERT INTO loom.idempotency (org, key_hash, subject, operation, "
+                "request_digest, state, lease_until, expires_at, created_at) "
+                "VALUES ($1, $2, $3, $4, $5, 'running', now() + make_interval(secs => $6), "
+                "now() + make_interval(secs => $7), clock_timestamp()) "
+                "ON CONFLICT (org, key_hash) DO NOTHING RETURNING lease_token",
+                owner.org,
+                owner.key,
+                owner.subject,
+                operation,
+                body_hash,
+                float(IN_PROGRESS_TTL_S),
+                TTL.total_seconds(),
+            )
+            if token is None:  # claimed by a request that read no row either
+                return CacheResult(hit=None, conflict=True, in_progress=True)
+        else:
+            token = await conn.fetchval(
+                # The claim is this request's from now: an erasure's census reads
+                # `created_at` (`steps_pg.pg_residue`).
+                "UPDATE loom.idempotency SET lease_token = lease_token + 1, "
+                "lease_until = now() + make_interval(secs => $3), created_at = clock_timestamp(), "
+                "expires_at = now() + make_interval(secs => $4) "
+                "WHERE org = $1 AND key_hash = $2 RETURNING lease_token",
+                owner.org,
+                owner.key,
+                float(IN_PROGRESS_TTL_S),
+                TTL.total_seconds(),
+            )
+    _bound.set((owner.org, owner.key, int(token)))
+    _bound_op.set(operation)
+    renewing = _releases.spawn(
+        _pg_renew(owner.org, owner.key, int(token)), name="loom-idempotency-renew"
+    )
+    request_tail.defer(partial(_pg_release, owner.org, owner.key, int(token), renewing))
+    return CacheResult(hit=None, conflict=False)
+
+
+async def _pg_renew(org: str, key: str, token: int) -> None:
+    """Keep this request's claim while it runs, so its retry does not take it over: its
+    lease is extended every third of it, under the request's token, until the answer
+    is stored or the claim released."""
+    while True:
+        await asyncio.sleep(IN_PROGRESS_TTL_S / 3)
+        try:
+            held = await pg.execute(
+                "UPDATE loom.idempotency SET lease_until = now() + make_interval(secs => $4) "
+                "WHERE org = $1 AND key_hash = $2 AND lease_token = $3 AND state <> 'done'",
+                org,
+                key,
+                token,
+                float(IN_PROGRESS_TTL_S),
+            )
+        except Exception:  # noqa: BLE001 — the lease runs out instead
+            log.warning("idempotency: claim renewal failed for key=%s", key)
+            continue
+        if held == "UPDATE 0":
+            return
+
+
+def _done_hit(row: Any) -> CacheHit:
+    return CacheHit(
+        status_code=int(row["status_code"] or 200),
+        body=row["response_body"],
+        headers=dict(row["response_headers"] or {}),
+    )
+
+
+async def _committed_hit(conn: Any, row: Any) -> CacheHit:
+    """What a request committed before its answer was lost, in its op's answer shape
+    (only those of COMMITTED_REPLAY_OPS mark their keys committed): each revision's
+    identity, the first one's at the top level for memory.set, one `written` result
+    per row for memory.bulk_set, marked `idempotent_replay: committed`. Their
+    ClickHouse delivery is the delivery worker's, as for any commit."""
+    refs = list(row["revisions"] or [])
+    revs = await conn.fetch(
+        "SELECT r.namespace, r.seq, r.memory_id::text AS memory_id, r.version, "
+        "r.content_sha256, r.row->>'memory_key' AS memory_key "
+        "FROM loom.memory_revisions r "
+        "JOIN unnest($1::text[], $2::text[], $3::bigint[]) AS k(org, namespace, seq) "
+        "USING (org, namespace, seq) ORDER BY r.seq",
+        [str(r[0]) for r in refs],
+        [str(r[1]) for r in refs],
+        [int(r[2]) for r in refs],
+    )
+    if len(revs) < len(refs):
+        # An erasure removed some of what it committed (a batch across users or
+        # namespaces may keep the rest): no answer names what is gone, so none is given.
+        raise NotFoundError("the memory this request committed was erased")
+    revisions = [
+        {
+            "namespace": r["namespace"],
+            "memory_key": r["memory_key"],
+            "memory_id": r["memory_id"],
+            "version": int(r["version"]),
+            "content_sha256": r["content_sha256"],
+        }
+        for r in revs
+    ]
+    body: dict[str, Any]
+    if row["operation"] == "memory.bulk_set":  # its answer's own shape: one result per row
+        body = {
+            "written": [
+                {k: r[k] for k in ("memory_key", "version", "memory_id")} for r in revisions
+            ]
+        }
+    else:  # memory.set's: the row at the top level
+        body = {**(revisions[0] if revisions else {}), "revisions": revisions}
+    body["idempotent_replay"] = "committed"
+    return CacheHit(status_code=200, body=body, headers={"X-Loom-Idempotent-Replay": "committed"})
+
+
+async def _pg_store(
+    org: str,
+    key: str,
+    status_code: int,
+    response_body: Any,
+    response_headers: dict[str, str] | None,
+) -> None:
+    bound = _bound.get()
+    if bound is None or bound[:2] != (org, key):
+        return
+    try:
+        # In a transaction: its commit waits for the standby, so a failover keeps the
+        # answer and a retry replays it instead of running the op again.
+        async with pg.transaction() as conn:
+            await conn.execute(
+                "UPDATE loom.idempotency SET state = 'done', status_code = $4, "
+                "response_body = $5, response_headers = $6, lease_until = NULL "
+                "WHERE org = $1 AND key_hash = $2 AND lease_token = $3",
+                org,
+                key,
+                bound[2],
+                status_code,
+                # Through JSON once: a datetime or a model in the body becomes its text.
+                json.loads(json.dumps(response_body, default=str)),
+                response_headers or {},
+            )
+    except Exception as e:  # noqa: BLE001 — the answer stands; a retry gets the committed replay
+        # Its type and code only: the error may quote the answer.
+        log.warning("idempotency.store failed for key=%s: %s", key, error_summary(e))
+
+
+async def sweep_expired(limit: int) -> int:
+    """Delete up to `limit` idempotency keys past their retention, oldest first: a retry
+    with one of them runs as a new request."""
+    n = await pg.fetchval(
+        "WITH gone AS (DELETE FROM loom.idempotency WHERE ctid IN ("
+        "  SELECT ctid FROM loom.idempotency WHERE expires_at < now() "
+        "  ORDER BY expires_at LIMIT $1 FOR UPDATE SKIP LOCKED) RETURNING 1) "
+        "SELECT count(*) FROM gone",
+        limit,
+    )
+    return int(n or 0)
+
+
+async def _pg_release(org: str, key: str, token: int, renewing: Any = None) -> None:
+    """A request that answered without a stored answer gives its claim up, so the next
+    retry does not wait out the lease: one that never committed deletes it (the retry
+    runs), one that committed (an error after its commit) ends its lease (the retry
+    gets the committed replay)."""
+    if renewing is not None:
+        renewing.cancel()
+    try:
+        await pg.execute(
+            "WITH gone AS (DELETE FROM loom.idempotency "
+            "  WHERE org = $1 AND key_hash = $2 AND lease_token = $3 AND state = 'running') "
+            "UPDATE loom.idempotency SET lease_until = now() "
+            "WHERE org = $1 AND key_hash = $2 AND lease_token = $3 AND state = 'committed'",
+            org,
+            key,
+            token,
+        )
+    except Exception:  # noqa: BLE001 — the lease runs out instead
+        log.warning("idempotency: claim release failed for key=%s", key)

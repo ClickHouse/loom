@@ -202,14 +202,37 @@ def test_every_loom_shared_insert_reaches_its_builder() -> None:
 # AST lint: every memory_embeddings write is a builder row
 # ---------------------------------------------------------------------------
 
-_EMBEDDING_BUILDER_NAMES = {"build_embedding_row", "EMBEDDING_PERSISTED_COLS"}
+# search_document_row builds its row with build_embedding_row.
+_EMBEDDING_BUILDER_NAMES = {
+    "build_embedding_row",
+    "EMBEDDING_PERSISTED_COLS",
+    "search_document_row",
+}
 # (file, function) → why its rows are builder rows the lint cannot see.
 _EMBEDDING_ALLOW: dict[tuple[str, str], str] = {
     # The funnel every other write goes through: it inserts what it is handed.
     ("server/memory/store/inserts.py", "insert_embedding_rows"): "the funnel",
-    ("server/memory/app/bulk_set.py", "_bulk_insert"): (
+    ("server/memory/store/lifecycle.py", "insert_documented_versions"): (
+        "inserts the documents its caller built (period_digest.build_period_memory_rows, "
+        "with build_embedding_row) within the commit's lease"
+    ),
+    ("server/memory/app/set_commit.py", "_insert_embedding"): (
+        "_insert_row_and_vector inserts the row its caller built with search_document_row"
+    ),
+    ("server/memory/app/bulk_set.py", "_insert_embedding_rows"): (
         "bulk_set's embed phase builds each row with build_embedding_row into "
-        "_BulkWriteState.embedding_rows; this phase only inserts them"
+        "_BulkWriteState.embedding_rows; _bulk_insert's nested insert only inserts them"
+    ),
+    ("server/memory/app/update.py", "_insert_revision"): (
+        "_write_revision builds emb_rows with _update_embedding_row (build_embedding_row) "
+        "and hands them over"
+    ),
+    ("server/memory/app/update.py", "_document"): (
+        "_commit_revision's nested insert of the emb_rows _write_revision built"
+    ),
+    ("server/memory/app/namespace_rollback.py", "_follow_ups"): (
+        "apply_rollback builds each stub with build_embedding_row (_stub); _write's nested "
+        "follow-up inserts them under the commit's lease"
     ),
 }
 
@@ -322,8 +345,8 @@ def _every_column_row() -> mr.MemoryRow:
         value_json='{"x":1}',
         redacted_at=None,
         redaction_reason="",
-        conflict_with=["c1"],
-        duplicate_of="dup",
+        conflict_with=["66666666-6666-6666-6666-666666666666"],
+        duplicate_of="77777777-7777-7777-7777-777777777777",
         evidence_count=4,
         cross_promoted_from_memory_id="",
         cross_promoted_from_namespace="",
@@ -388,7 +411,7 @@ def test_an_older_payload_restores_with_the_model_defaults_and_a_fresh_created_a
     from server.memory.app.snapshot_rows import restore_rows
 
     old = _SnapshotMemoryRow(
-        memory_id="m",
+        memory_id="44444444-4444-4444-4444-444444444444",
         agent="a",
         user_id="-",
         session_id="-",

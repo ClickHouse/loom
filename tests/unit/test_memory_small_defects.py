@@ -329,7 +329,9 @@ def follow_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
 
     async def get_by_id(memory_id: str, **kw: Any) -> Any:
         e.id_calls.append((memory_id, kw.get("org")))
-        return e.by_id.get(memory_id)
+        row = e.by_id.get(memory_id)
+        # The store reads the id in the namespace it is given.
+        return row if row is not None and row.namespace == kw["namespace"] else None
 
     async def canonical_rows_by_ids(
         org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None

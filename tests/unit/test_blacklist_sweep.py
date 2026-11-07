@@ -44,8 +44,9 @@ async def test_sweep_tombstones_matches_through_the_cascade_and_records_drops(mo
         memory_id="m1",
     )
 
-    async def fake_cascade(org, ids, *, when, update=None, ch=None):
-        calls["ids"] = list(ids)
+    async def fake_cascade(org, ids, *, when, namespace, update=None, ch=None, skip=None):
+        # One call per namespace: a restored namespace keeps the memory ids.
+        calls.setdefault("ids", []).extend((namespace, mid) for mid in ids)
         calls["override"] = update(row) if update else {}
         return [{"memory_id": mid, "version": 7} for mid in ids]
 
@@ -78,7 +79,7 @@ async def test_sweep_tombstones_matches_through_the_cascade_and_records_drops(mo
         ch=ch,
     )
     assert (res.matched, res.tombstoned, res.truncated) == (3, 3, False)
-    assert calls["ids"] == ["m1", "m2", "m3"]
+    assert calls["ids"] == [("a", "m1"), ("a", "m2"), ("b", "m3")]
     assert calls["override"] == {"expire_reason": "blacklist.sweep:p1"}
     # One event per row the cascade tombstoned, at the version it wrote.
     assert [(event, change["memory_id"], change["version"]) for event, change in announced] == [
@@ -96,7 +97,7 @@ async def test_sweep_tombstones_matches_through_the_cascade_and_records_drops(mo
 
 
 async def test_sweep_reports_truncation_and_a_failed_regex(monkeypatch) -> None:
-    async def fake_cascade(org, ids, *, when, update=None, ch=None):
+    async def fake_cascade(org, ids, *, when, namespace, update=None, ch=None, skip=None):
         return [{"memory_id": mid} for mid in ids]
 
     monkeypatch.setattr("server.memory.store.tombstone_cascade_by_ids", fake_cascade)

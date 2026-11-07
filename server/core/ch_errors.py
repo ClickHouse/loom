@@ -1,4 +1,5 @@
-"""Which driver errors `CHClient` retries, and how.
+"""Which driver errors `CHClient` retries, and how; and how a ClickHouse error reads
+to a caller that must tell the server's state from a refusal of its rows.
 
 A transient network failure is retried on a reconnect; an error that is a
 property of the replica that answered is retried on a fresh connection so the
@@ -9,6 +10,10 @@ setting mid-upgrade is retried without it. Everything else is re-raised.
 from __future__ import annotations
 
 import re
+
+from clickhouse_connect.driver.exceptions import DatabaseError, OperationalError
+
+from server.core.errors import BackendUnavailableError, OverloadedError
 
 # Transient connection failures worth a reconnect-retry. NOT ClickHouseError:
 # semantic errors (syntax/permission/type) won't fix on retry. The aiohttp
@@ -32,10 +37,6 @@ def is_transient_network_error(e: BaseException) -> bool:
     was sent — the driver cannot tell which, and neither can loom."""
     if isinstance(e, _RECONNECTABLE_EXCEPTIONS) and not isinstance(e, TimeoutError):
         return True
-    try:
-        from clickhouse_connect.driver.exceptions import OperationalError
-    except Exception:  # noqa: BLE001 — driver missing in some test contexts
-        return False
     return isinstance(e, OperationalError) and _NETWORK_ERROR_MARK in str(e)
 
 
@@ -69,11 +70,42 @@ QUANTIZED_SETTING = "vector_search_use_quantized_codes"
 _QUANTIZED_FRAGMENT_RE = re.compile(r",\s*vector_search_use_quantized_codes\s*=\s*1")
 
 
+# Server states that clear on their own; the same insert lands once they do.
+# 202 TOO_MANY_SIMULTANEOUS_QUERIES, 225 NO_ZOOKEEPER, 242 TABLE_IS_READ_ONLY,
+# 252 TOO_MANY_PARTS (a merge backlog), 319 UNKNOWN_STATUS_OF_INSERT, 999 KEEPER_EXCEPTION
+_SERVER_STATE_CODES: tuple[int, ...] = (202, 225, 242, 252, 319, 999)
+# Code 252 for an INSERT block spanning more partitions than the server allows: the rows'
+# own refusal, which a smaller batch avoids.
+_ROWS_SPAN_PARTITIONS = "Too many partitions for single INSERT block"
+# 241 MEMORY_LIMIT_EXCEEDED against the server's whole memory or the user's, which other
+# queries share, not the query's own limit: "(total)" or "(for user)" in the message.
+_SHARED_MEMORY = ("(total)", "(for user)")
+
+
+def is_passing_state(e: BaseException) -> bool:
+    """ClickHouse answered with a state of its own that clears by itself (a merge
+    backlog, Keeper lost, too many queries), or every pooled connection was busy: the
+    rows were not refused, and the same insert lands later."""
+    if isinstance(e, OverloadedError):
+        return True
+    if isinstance(e, DatabaseError) and error_code(e) == 241:
+        return any(scope in str(e).lower() for scope in _SHARED_MEMORY)
+    return (
+        isinstance(e, DatabaseError)
+        and error_code(e) in _SERVER_STATE_CODES
+        and _ROWS_SPAN_PARTITIONS not in str(e)
+    )
+
+
+def is_connection_failure(e: BaseException) -> bool:
+    """No answer from ClickHouse to the request: the client's reconnect gave up
+    (`BackendUnavailableError`), or the driver's connection dropped, timed out or met a
+    proxy's own status (`OperationalError`). Whether the server or the request is at
+    fault only a probe of the server tells."""
+    return isinstance(e, BackendUnavailableError | OperationalError)
+
+
 def is_unknown_quantized_setting(e: BaseException) -> bool:
-    try:
-        from clickhouse_connect.driver.exceptions import DatabaseError
-    except Exception:  # noqa: BLE001 — an error classifier never raises
-        return False
     if not isinstance(e, DatabaseError):
         return False
     msg = str(e)
@@ -109,10 +141,6 @@ def error_code(e: BaseException | str) -> int | None:
 
 
 def is_replica_bound_error(e: BaseException) -> bool:
-    try:
-        from clickhouse_connect.driver.exceptions import DatabaseError
-    except Exception:  # noqa: BLE001 — driver missing in some test contexts
-        return False
     if not isinstance(e, DatabaseError):
         return False
     msg = str(e)
@@ -124,6 +152,8 @@ def is_replica_bound_error(e: BaseException) -> bool:
 __all__ = [
     "QUANTIZED_SETTING",
     "error_code",
+    "is_connection_failure",
+    "is_passing_state",
     "is_replica_bound_error",
     "is_transient_network_error",
     "is_unknown_quantized_setting",

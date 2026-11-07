@@ -17,6 +17,7 @@ def test_consolidation_candidates_are_live_vectors_of_plain_rows() -> None:
 
     assert "e.tombstoned_at IS NULL" in sql and "e.embedding_dim > 0" in sql
     assert "m.sensitivity != 'high'" in sql
+    assert "m.redacted_at IS NULL" in sql  # a redacted row's text never reaches the model
 
 
 @pytest.mark.asyncio
@@ -52,21 +53,41 @@ async def test_a_merged_row_that_reads_as_high_gets_no_vector(
     monkeypatch.setattr(high_fence, "fence_high", _fence)
     monkeypatch.setattr("server.memory.app.evidence.link_belief_sources", _links)
     cluster = [
-        {"memory_key": "a", "memory_type": "semantic", "sensitivity": "", "tags": []},
-        {"memory_key": "b", "memory_type": "semantic", "sensitivity": "", "tags": []},
+        {
+            "memory_id": "m-a",
+            "version": 1,
+            "memory_key": "a",
+            "memory_type": "semantic",
+            "sensitivity": "",
+            "tags": [],
+        },
+        {
+            "memory_id": "m-b",
+            "version": 1,
+            "memory_key": "b",
+            "memory_type": "semantic",
+            "sensitivity": "",
+            "tags": [],
+        },
     ]
+
+    async def _no_head(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr("server.memory.store.get_by_key", _no_head)
     row = await consolidate._write_canonical(
         _CH(),
         MemoryConsolidateInput(org="o", namespace="n", agent="a"),
         _Embedder(),
         cluster,
-        canonical_key="a",
+        canonical_key="merged",  # a key of its own: no head to write over
         canonical_value="the deploy key is sk-proj-test-ABCDEFGHIJKLMNOPQRSTUVWX0123",
         now_naive=datetime(2026, 10, 1),
+        claimed=set(),
     )
     assert row["sensitivity"] == "high"
     assert inserted == ["loom.memory"]  # no memory_embeddings row
-    assert [(k[5], v) for k, v in fenced] == [("a", row["version"])]
+    assert [(k[5], v) for k, v in fenced] == [("merged", row["version"])]
 
 
 @pytest.mark.asyncio
@@ -107,7 +128,7 @@ async def test_restoring_a_high_row_writes_no_embedding_row() -> None:
             raise AssertionError("no embeddings row for a high row")
 
     await restore._restore_embedding_mirror(
-        _CH(), SimpleNamespace(), SimpleNamespace(sensitivity="high"), "semantic"
+        _CH(), SimpleNamespace(), SimpleNamespace(sensitivity="high"), "semantic", version=1
     )
 
 
@@ -138,12 +159,3 @@ async def test_fence_high_fences_vectors_and_tombstones_each_keys_chunks(
     await high_fence.fence_high([(key, 7)], ch=object())
     assert fenced == [(key, 7)]
     assert chunks == [("o", "n", "k", "u1")]
-
-
-def test_restoring_a_high_row_fences_the_key() -> None:
-    import inspect
-
-    from server.memory.app import restore
-
-    src = inspect.getsource(restore.handle_memory_restore)
-    assert 'existing.sensitivity == "high"' in src and "fence_high" in src

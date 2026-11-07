@@ -101,6 +101,7 @@ async def _serve(fd: int, alive_fd: int) -> None:
     beat = asyncio.create_task(child.beat(alive_fd), name="loom-workers-child-beat")
     ch = get_client()
     await ch.connect()
+    await boot.open_storage_authority()
     try:
         services = await _start_services(ch)
         supervisor = get_supervisor()
@@ -116,6 +117,7 @@ async def _serve(fd: int, alive_fd: int) -> None:
     finally:
         beat.cancel()
         await boot.leave_deployment(ch, budget_s=SHUTDOWN_RETIRE_S)
+        await boot.close_storage_authority()
 
 
 def main(argv: list[str] | None = None) -> None:

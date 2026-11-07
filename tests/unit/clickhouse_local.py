@@ -98,6 +98,15 @@ _CREATED = re.compile(r"\bCREATE TABLE (?:IF NOT EXISTS )?([\w.]+)")
 _UNREAD = {"loom.audit_log", "loom.memory_projection_failures"}
 
 
+def _unwrap(column_type: str) -> str:
+    """The value type inside Nullable(...) or SimpleAggregateFunction(fn, ...)."""
+    if column_type.startswith("SimpleAggregateFunction("):
+        column_type = column_type.split(", ", 1)[1][:-1]
+    if column_type.startswith("Nullable("):
+        column_type = column_type.removeprefix("Nullable(")[:-1]
+    return column_type
+
+
 class KeptCH:
     """A ClickHouse client over clickhouse-local whose database is kept under `path`, so
     each statement sees what the earlier ones wrote. An insert into one of the `_UNREAD`
@@ -133,8 +142,9 @@ class KeptCH:
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
         lines = _output([], sql, params, path=self.path, fmt="JSONCompactEachRowWithNamesAndTypes")
         names, types, *rows = lines
-        # A DateTime column as the driver answers it: a datetime, not JSON text.
-        dated = [t.removeprefix("Nullable(").startswith("DateTime") for t in types]
+        # A DateTime column as the driver answers it: a datetime, not JSON text, also
+        # inside Nullable or a SimpleAggregateFunction such as max(bumped_at).
+        dated = [_unwrap(t).startswith("DateTime") for t in types]
         return [
             {
                 k: datetime.fromisoformat(v) if d and isinstance(v, str) else v

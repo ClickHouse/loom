@@ -279,7 +279,9 @@ async def test_a_tombstone_by_id_retires_the_record(local: KeptCH) -> None:
     await _write_decision_rows(local, "claude")
     identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
     row = await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE)
-    await memory_repo.tombstone_cascade_by_ids("o", [row.memory_id], when=datetime.now(UTC))
+    await memory_repo.tombstone_cascade_by_ids(
+        "o", [row.memory_id], namespace="n", when=datetime.now(UTC)
+    )
     assert await _seed_decision() is None
     assert await _history() == ["tombstoned", "active"]
 
@@ -292,7 +294,9 @@ async def test_a_tombstone_by_id_of_another_identitys_row_leaves_the_record(loca
     await _write_decision_rows(local, "claude", "maintainer")
     identity = memory_repo.Identity(org="o", namespace="n", agent="maintainer")
     row = await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE)
-    await memory_repo.tombstone_cascade_by_ids("o", [row.memory_id], when=datetime.now(UTC))
+    await memory_repo.tombstone_cascade_by_ids(
+        "o", [row.memory_id], namespace="n", when=datetime.now(UTC)
+    )
     assert await _seed_decision() is not None
     assert await _history() == ["active"]
 

@@ -295,3 +295,15 @@ def test_only_the_deployments_leader_counts_as_the_root_recorder(monkeypatch) ->
     assert keyring._is_leader() is False  # a test or iso server's own lease
     monkeypatch.setattr(settings, "deployment", True)
     assert keyring._is_leader() is True
+
+
+def test_an_offline_mint_for_another_deployment_is_refused_not_root_signed() -> None:
+    from server.core.pg import AuthorityMismatch
+
+    def _refuse(_go: object) -> bool:
+        raise AuthorityMismatch("this deployment's memory authority is postgres")
+
+    keyring._reset_for_tests(loaded=False)
+    with pytest.raises(AuthorityMismatch):
+        keyring.load_for_offline_mint(run=_refuse)
+    assert keyring._view.loaded is False

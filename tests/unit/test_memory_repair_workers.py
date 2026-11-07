@@ -463,7 +463,7 @@ async def test_a_fresh_follow_owed_intent_is_left_to_its_writer(
     fresh = dataclasses.replace(_failure(1, pf.FOLLOW_OWED), created_at=naive_utc_now())
     (out,) = await pf.retry_failures([fresh], ch=object())
     assert (out.retried, out.reason) == (False, "pending") and replayed == []
-    past_grace = timedelta(seconds=pf.FOLLOW_OWED_GRACE_S + 1)
+    past_grace = timedelta(seconds=pf.OWED_GRACE_S + 1)
     aged = dataclasses.replace(fresh, created_at=naive_utc_now() - past_grace)
     marks: list[Any] = []
 

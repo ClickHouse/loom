@@ -27,11 +27,15 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from server.core import pg
 from server.core.datetimes import naive_utc_now
 from server.memory.domain.search_types import RowKey, hit_row_key
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.memory.api.models_search import _MemorySearchHit
 
 PAGE_PREFIX = "page/"
 PAGE_VERSION = 1
@@ -56,6 +60,48 @@ def split_tail(pool: list[Any], final: list[Any]) -> tuple[int, list[Any]]:
     return len(seen | served), tail
 
 
+def _parked(hit: Any) -> dict[str, Any]:
+    """A hit as a page stores it, with what a later page's check against the Postgres
+    authority reads (`row_identity`, `row_chunk`, `row_version`, `chunk_typed`, off the
+    wire)."""
+    if not hasattr(hit, "model_dump"):
+        return dict(hit)
+    out: dict[str, Any] = hit.model_dump()
+    if not pg.enabled():
+        return out
+    if getattr(hit, "_row_identity", None) is not None:
+        out["row_identity"] = list(hit._row_identity)
+    if getattr(hit, "_row_chunk", None) is not None:
+        out["row_chunk"] = list(hit._row_chunk)
+    if getattr(hit, "_row_version", 0):
+        out["row_version"] = int(hit._row_version)
+    if getattr(hit, "_chunk_typed", False):
+        out["chunk_typed"] = True
+    return out
+
+
+def unparked(row: dict[str, Any]) -> _MemorySearchHit | None:
+    """A parked row back as a hit, with what `_parked` kept off the wire; None for a row
+    this build cannot read."""
+    from server.memory.api.models_search import _MemorySearchHit
+
+    r = dict(row)
+    identity, chunk = r.pop("row_identity", None), r.pop("row_chunk", None)
+    row_version = int(r.pop("row_version", 0) or 0)
+    chunk_typed = bool(r.pop("chunk_typed", False))
+    try:
+        hit = _MemorySearchHit.model_validate(r)
+    except Exception:  # noqa: BLE001 — a row this build cannot read is skipped
+        return None
+    if identity is not None:
+        hit._row_identity = tuple(identity)
+    if chunk is not None:
+        hit._row_chunk = tuple(chunk)
+    hit._row_version = row_version
+    hit._chunk_typed = chunk_typed
+    return hit
+
+
 def encode_page(
     *,
     query: str,
@@ -64,18 +110,24 @@ def encode_page(
     tail: list[Any],
     namespaces_searched: list[str],
     namespaces_skipped: list[str],
+    replay: bool = False,
 ) -> str:
-    hits = [h.model_dump() if hasattr(h, "model_dump") else dict(h) for h in tail]
+    """`replay`: the search was an `as_of` replay, whose pages the Postgres authority does
+    not check (`pg_validation`)."""
+    hits = [_parked(h) for h in tail]
+    page: dict[str, Any] = {
+        "v": PAGE_VERSION,
+        "query": query,
+        "top_k": int(top_k),
+        "candidates_total": int(candidates_total),
+        "namespaces_searched": namespaces_searched,
+        "namespaces_skipped": namespaces_skipped,
+        "hits": hits,
+    }
+    if replay:
+        page["replay"] = True
     return json.dumps(
-        {
-            "v": PAGE_VERSION,
-            "query": query,
-            "top_k": int(top_k),
-            "candidates_total": int(candidates_total),
-            "namespaces_searched": namespaces_searched,
-            "namespaces_skipped": namespaces_skipped,
-            "hits": hits,
-        },
+        page,
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -98,16 +150,6 @@ def parse_handle(handle: str) -> tuple[str, int] | None:
     if not off.isdigit() or len(key) <= len(PAGE_PREFIX):
         return None
     return key, int(off)
-
-
-def slice_page(
-    payload: dict[str, Any], *, offset: int, top_k: int
-) -> tuple[list[dict[str, Any]], int]:
-    """(hits for this page, next offset or -1 when the tail is exhausted)."""
-    hits = list(payload.get("hits") or [])
-    page = hits[offset : offset + top_k]
-    nxt = offset + len(page)
-    return page, (nxt if nxt < len(hits) else -1)
 
 
 # The fire-and-forget idiom; the page is read seconds later by a caller that

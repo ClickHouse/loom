@@ -103,7 +103,7 @@ def scan_sql(
     if after:
         in_range += f" AND ({_key_bound('after', after, '>', '>')})"
     return f"""
-        SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key,
+        SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key, version,
                value, {_VALUE_JSON} AS object_text
         FROM loom.memory FINAL
         WHERE {where}

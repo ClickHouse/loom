@@ -169,8 +169,8 @@ async def test_namespace_erasure_leaves_no_object_and_the_census_proves_it(
     await steps_memory.delete_document_blobs_by_namespace(org, ["a", "b"], ch=ch)
     assert await erasure_census.object_residue(org, ["a", "b"]) == 0
     assert [k.split("/")[3] for k in _keys(s3, f"it/originals/{org}/")] == ["keep"]
-    census, bucket_error = await erasure_census.evidence_census(org, "namespace", ["a", "b"], ch=ch)
-    assert bucket_error is None
+    census, unread = await erasure_census.evidence_census(org, "namespace", ["a", "b"], ch=ch)
+    assert unread == {}
     assert census[erasure_census.OBJECT_RESIDUE] == 0 and census["loom.document_blobs"] == 0
 
 

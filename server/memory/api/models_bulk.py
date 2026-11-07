@@ -383,7 +383,9 @@ def refused_facts(results: list[_BulkSetResult]) -> list[_RefusedFact]:
 
 
 class MemoryBulkSetOutput(BaseModel):
-    # One result per entry, in order: key, version (0 when not inserted) and verdict.
+    # One result per entry, in order: key, version (0 when not inserted) and verdict. A
+    # replay of a commit whose answer was lost (`idempotent_replay: committed`) names only
+    # the rows the batch committed, in their commit order.
     written: list[_BulkSetResult]
     # Keys whose live row is pinned: skipped (result version=0) rather than
     # overwritten, since overwriting would also unpin (entries default pinned=False).

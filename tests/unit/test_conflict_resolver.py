@@ -315,11 +315,15 @@ def _near(session: str, key: str, dist: float) -> dict[str, Any]:
 def _peer_row(mid: str, session: str, key: str, value: str) -> dict[str, Any]:
     return {
         "memory_id": mid,
+        "org": "o",
+        "namespace": "ns",
         "agent": "a",
         "user_id": "u",
         "session_id": session,
         "memory_key": key,
         "value": value,
+        "version": 1,
+        "redacted_at": None,
         "pinned": 0,
         "content_sha256": f"sha-{mid}",
         "status": "active",
@@ -512,7 +516,7 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         ]
         return queue.Asserted({i: e.asserted[i] for i, _ in rows if i in e.asserted}, undos)
 
-    async def head(org: str, mid: str) -> Any:
+    async def head(org: str, namespace: str, mid: str) -> Any:
         return e.heads.get(mid)
 
     async def retire(org: str, namespace: str, row: Any, peer: Any, *, why: Any) -> Any:
@@ -917,6 +921,78 @@ async def test_a_row_or_peer_labelled_high_before_the_prompt_is_never_sent(row_e
     assert row_env.llm_calls == 0 and row_env.acted == []
 
 
+async def test_a_peer_the_authority_no_longer_serves_is_never_sent(
+    row_env: NS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Under Postgres ClickHouse's copy of a peer can trail a delete, a rewrite, a status
+    # or a label: the peer goes to the model only while its head is the version read.
+    from server.core import pg
+    from server.memory.store import pg_memory
+
+    key = ("o", "ns", "a", "u", "s2", "office_city")
+    heads: dict[Any, Any] = {}
+
+    async def _heads(keys: list[Any], **_k: Any) -> dict[Any, Any]:
+        return {k: heads[k] for k in keys if k in heads}
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", _heads)
+    counts = await _resolve()
+    assert row_env.llm_calls == 0 and counts.judged == 0, "the only peer is gone"
+    assert row_env.stamped == ["office_city"], "an unflagged peer leaves nothing owed"
+    heads[key] = {"version": 2, "redacted_at": None}
+    await _resolve()
+    assert row_env.llm_calls == 0, "a version since the read is not what was read"
+    heads[key] = {"version": 1, "redacted_at": None}
+    await _resolve()
+    assert row_env.llm_calls == 1 and row_env.notes[0].value == "Office is in Paris"
+
+
+@pytest.mark.parametrize(
+    ("flags", "beside_a_served_peer", "held"),
+    [
+        pytest.param([], True, False, id="behind-unflagged-other-served"),
+        pytest.param(["m2"], True, False, id="behind-unflagged-other-flagged"),
+        pytest.param(["m3"], True, True, id="behind-flagged-other-served"),
+        pytest.param(["m3"], False, True, id="behind-flagged-other-behind"),
+    ],
+)
+async def test_a_peer_behind_its_delivery_holds_the_row_back_only_when_flagged(
+    row_env: NS,
+    monkeypatch: pytest.MonkeyPatch,
+    flags: list[str],
+    beside_a_served_peer: bool,
+    held: bool,
+) -> None:
+    # m3 is behind. Unflagged, it is left out and the row is judged against the rest; flagged,
+    # the row waits with no call, whatever else the cluster holds: judging the other peers
+    # now would be paid again once ClickHouse holds m3's change.
+    from server.core import pg
+    from server.memory.store import pg_memory
+
+    row_env.peers.append(
+        _peer_row("m3", "s3", "office_city", '"Office is in Lyon"') | {"similarity": 0.7}
+    )
+    row_env.heads["m3"] = _mem("m3", session_id="s3", content_sha256="sha-m3")
+    served = {"s2"} if beside_a_served_peer else set()
+
+    async def _heads(keys: list[Any], **_k: Any) -> dict[Any, Any]:
+        return {k: {"version": 1, "redacted_at": None} for k in keys if k[4] in served}
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", _heads)
+    row_env.mem.conflict_with = flags
+    counts = resolver.Counts()
+    if held:
+        with pytest.raises(resolver.PeerBehind):
+            await resolver.resolve_row(_q(), policy="newest_wins", counts=counts)
+        assert row_env.llm_calls == 0 and row_env.stamped == [] and counts.judged == 0
+    else:
+        assert await resolver.resolve_row(_q(), policy="newest_wins", counts=counts) is None
+        assert [n.memory_id for n in row_env.notes] == ["m2"] and counts.judged == 1
+        assert row_env.stamped == ["office_city"]
+
+
 async def test_a_cancellation_while_acting_lets_the_act_and_its_audit_finish(
     row_env: NS, monkeypatch
 ) -> None:
@@ -1171,7 +1247,7 @@ def retire_env(monkeypatch: pytest.MonkeyPatch) -> NS:
 
     e.heads = {}  # the loser's head, read when nothing was tracked
 
-    async def head(org: str, mid: str) -> Any:
+    async def head(org: str, namespace: str, mid: str) -> Any:
         return e.heads.get(mid)
 
     monkeypatch.setattr(resolver, "_head", head)
@@ -2324,3 +2400,42 @@ async def test_another_anonymous_session_still_flagging_the_row_is_judged(row_en
     row_env.answer = _answer(_entry("p1", "related", 0.99))
     counts = await _resolve(policy="auto_reinforce")
     assert row_env.llm_calls == 1 and counts.cleared == 1
+
+
+async def test_a_row_held_back_by_a_peer_behind_is_held_with_no_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.workers import conflict_resolver as w
+    from server.workers import holds
+
+    async def behind(*a: Any, **k: Any) -> Any:
+        raise resolver.PeerBehind()
+
+    async def over_cap(*a: Any, **k: Any) -> bool:
+        return False
+
+    async def flush() -> None:
+        return None
+
+    monkeypatch.setattr(resolver, "resolve_row", behind)
+    monkeypatch.setattr("server.observability.budget.namespace_over_cap", over_cap)
+    monkeypatch.setattr(
+        "server.observability.events.get_emitter", lambda: SimpleNamespace(flush_now=flush)
+    )
+    monkeypatch.setattr("server.workers.cost_event.emit_worker_cost_event_for", lambda **k: None)
+    monkeypatch.setattr(w, "_state", w._State())
+    monkeypatch.setattr(w, "_HELD", holds.Held())
+    lease = 45
+    monkeypatch.setattr(w.settings, "pg_delivery_lease_seconds", lease)
+    row = {"org": "o", "namespace": "ns", "agent": "a", "user_id": "u", "session_id": "s1"}
+    row |= {"memory_key": "office_city", "content_sha256": "sha"}
+    earlier = {w._attempt_key(row): (1, frozenset({"m2"}))}
+    w._state.attempts.update(earlier)
+    p = w._Pass()
+    await w._resolve_one(p, row, "newest_wins")
+    assert p.counts.skipped_behind == 1 and p.counts.errored == 0 and p.errors == []
+    assert w._state.attempts == earlier, "no attempt spent, the peers shown before kept"
+    assert w._HELD.current() == frozenset({w._identity(row)})
+    assert holds.UNREAD_HOLD_S < w._HELD.left(w._identity(row)) <= lease, "held for a lease"

@@ -95,3 +95,79 @@ async def test_refusals_are_coalesced_into_one_write_per_pattern_per_interval(en
     await bl.note_hit("00000000-0000-0000-0000-000000000001")
     assert await bl.flush_hits() == 1 and executed[-1]["n"] == 1
     assert await bl.flush_hits() == 0
+
+
+async def test_a_refresh_that_read_earlier_never_replaces_one_that_read_later(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two refreshes overlap: the one that started first and finishes last leaves the
+    later one's cache in place."""
+    import asyncio
+
+    reads = iter([(1, 1), (2, 2)])
+    slow = asyncio.Event()
+
+    async def _version() -> tuple[int, int]:
+        return next(reads)
+
+    async def _rows(*, ch: object) -> list[dict[str, object]]:
+        if not slow.is_set():
+            slow.set()
+            await asyncio.sleep(0.05)  # the first read is held back past the second's
+        return []
+
+    monkeypatch.setattr(bl, "_current_version", _version)
+    monkeypatch.setattr(bl._repo, "active_patterns", _rows)
+    monkeypatch.setattr(bl, "get_client", lambda: object())
+    for name, value in (("_installed", -1), ("_invalidated", -1), ("_cache", []), ("_dirty", True)):
+        monkeypatch.setattr(bl, name, value)
+    # The refresh overwrites these: kept as they are, so they are restored after the test.
+    for name in ("_cached_version", "_last_version_check", "_loaded_at"):
+        monkeypatch.setattr(bl, name, getattr(bl, name))
+    await asyncio.gather(bl._refresh_cache(), bl._refresh_cache())
+    assert bl._cached_version == (2, 2)
+
+
+async def test_a_refresh_that_started_before_an_invalidation_leaves_the_cache_dirty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pattern added while a refresh reads: that read predates it, so the cache it
+    installs (a cold one keeps the patterns it read) stays dirty, and the next check
+    reads again."""
+    import asyncio
+
+    reading = asyncio.Event()
+    row = {
+        "pattern_id": "p1",
+        "org": "o",
+        "namespace": "ns",
+        "pattern": "secret",
+        "pattern_type": "substring",
+        "scope": "org",
+        "reason": "",
+    }
+
+    async def _version() -> tuple[int, int]:
+        return (1, 1)
+
+    async def _rows(*, ch: object) -> list[dict[str, object]]:
+        reading.set()
+        await asyncio.sleep(0.05)
+        return [row]
+
+    monkeypatch.setattr(bl, "_current_version", _version)
+    monkeypatch.setattr(bl._repo, "active_patterns", _rows)
+    monkeypatch.setattr(bl, "get_client", lambda: object())
+    for name, value in (("_installed", -1), ("_invalidated", -1), ("_cache", []), ("_dirty", True)):
+        monkeypatch.setattr(bl, name, value)
+    # The refresh overwrites these: kept as they are, so they are restored after the test.
+    for name in ("_cached_version", "_last_version_check", "_loaded_at"):
+        monkeypatch.setattr(bl, name, getattr(bl, name))
+
+    async def _add_while_reading() -> None:
+        await reading.wait()
+        bl.invalidate_cache()
+
+    await asyncio.gather(bl._refresh_cache(), _add_while_reading())
+    assert [p.pattern_id for p in bl._cache] == ["p1"]
+    assert bl._dirty

@@ -99,7 +99,7 @@ async def test_by_id_lookup_retries_the_same_way() -> None:
     # retry hit, phase-2 hit.
     ch = _CH([None, _ROW, _ROW])
     row = await memory_repo.get_by_id(
-        _ROW["memory_id"], org="o", ch=ch, fresh=True, scope=WHOLE_NAMESPACE
+        _ROW["memory_id"], org="o", namespace="ns", ch=ch, fresh=True, scope=WHOLE_NAMESPACE
     )  # type: ignore[arg-type]
     assert row is not None and len(ch.sqls) == 3
     assert "FROM loom.memory\n" in ch.sqls[0] and "FINAL" not in ch.sqls[0]
@@ -108,7 +108,7 @@ async def test_by_id_lookup_retries_the_same_way() -> None:
     assert "FROM loom.memory FINAL" in ch.sqls[2]
     for pred in (
         "org = {org:String}",
-        "namespace = {ns:String}",
+        "namespace = {in_ns:String}",
         "created_at = {ca:DateTime}",
         "memory_key = {k:String}",
         "memory_id = {mid:UUID}",
@@ -118,7 +118,9 @@ async def test_by_id_lookup_retries_the_same_way() -> None:
     # a key that resolves to no live row (tombstoned, or a lagging replica) is None, no third read
     ch = _CH([_ROW, None])
     assert (
-        await memory_repo.get_by_id(_ROW["memory_id"], org="o", ch=ch, scope=WHOLE_NAMESPACE)
+        await memory_repo.get_by_id(
+            _ROW["memory_id"], org="o", namespace="ns", ch=ch, scope=WHOLE_NAMESPACE
+        )
         is None
     )  # type: ignore[arg-type]
     assert len(ch.sqls) == 2
@@ -198,7 +200,7 @@ async def test_strong_reads_with_sequential_consistency_first() -> None:
     assert ch.sqls[0].rstrip().endswith("SETTINGS select_sequential_consistency = 1")
     ch = _CH([_ROW, _ROW])
     await memory_repo.get_by_id(
-        _ROW["memory_id"], org="o", ch=ch, strong=True, scope=WHOLE_NAMESPACE
+        _ROW["memory_id"], org="o", namespace="ns", ch=ch, strong=True, scope=WHOLE_NAMESPACE
     )  # type: ignore[arg-type]
     # both phases of the by-id read carry the setting
     assert len(ch.sqls) == 2 and all("select_sequential_consistency = 1" in q for q in ch.sqls)

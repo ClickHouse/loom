@@ -177,3 +177,16 @@ async def test_memory_pin_over_a_pinned_key_writes_the_new_value(monkeypatch) ->
     assert out.pinned is True
     rows = [r for t, rs in ch.inserts if t == "loom.memory" for r in rs]
     assert rows and rows[0]["pinned"] == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_set_goes_above_a_head_written_ahead_of_this_clock(monkeypatch) -> None:
+    # under Postgres the commit keeps the newer head: a value below it would be committed
+    # and never served
+    from server.memory.store.rows import next_version
+
+    ahead = next_version() + 15 * 60 * 10**9  # a replica whose clock runs 15 min ahead
+    ch = _wire(monkeypatch, _row(pinned=False, version=ahead))
+    out = await write_mod.handle_memory_set(_set("Release branches are cut on Fridays"))
+    rows = [r for t, rs in ch.inserts if t == "loom.memory" for r in rs]
+    assert out.version == rows[0]["version"] == ahead + 2

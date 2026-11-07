@@ -78,3 +78,38 @@ async def test_the_undo_of_a_delete_takes_the_keys_write_lock(monkeypatch) -> No
     with pytest.raises(PreconditionFailedError) as e:
         await restore.handle_memory_restore(undo)
     assert e.value.status_code == 409 and "retry the restore" in str(e.value).lower()
+
+
+async def test_a_deleted_key_whose_text_was_redacted_is_not_restored(monkeypatch) -> None:
+    """Deleted, then redacted: the tombstone holds only the placeholder, so a restore
+    answers `redacted` and writes nothing."""
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    import server.memory.store as memory_repo
+
+    class CH:
+        async def query_one(self, sql: str, params: object = None) -> dict:
+            return {"memory_id": "m1", "tombstoned_at": datetime.now(UTC), "version": 3}
+
+    @asynccontextmanager
+    async def hold(*_args):
+        yield
+
+    async def tombstone(*_a, **_k):
+        return SimpleNamespace(
+            memory_id="m1", version=3, tombstoned_at=datetime.now(UTC), redacted_at=datetime.now()
+        )
+
+    async def never(*_a, **_k):
+        raise AssertionError("nothing is written for a redacted tombstone")
+
+    monkeypatch.setattr(restore, "get_client", lambda: CH())
+    monkeypatch.setattr(key_write_lock.key_write_locks, "hold", hold)
+    monkeypatch.setattr(memory_repo, "get_by_key", tombstone)
+    monkeypatch.setattr(memory_repo, "insert_versions_over_heads", never)
+    monkeypatch.setattr(restore.webhooks, "announce", never)
+    out = await restore.handle_memory_restore(
+        MemoryRestoreInput(org="o", namespace="ns", agent="a", memory_key="k")
+    )
+    assert (out.restored, out.redacted, out.version) == (False, True, 3)

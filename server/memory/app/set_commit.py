@@ -16,7 +16,8 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from server.core.datetimes import naive_utc_now, to_naive_utc
+from server.core import pg
+from server.core.datetimes import to_naive_utc
 from server.core.hashing import served_content_sha256
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
@@ -34,18 +35,28 @@ from server.memory.api.models_crud import (
     MemorySetInput,
     MemorySetOutput,
 )
-from server.memory.app import after_write, webhooks
+from server.memory.app import after_write, pg_admission, webhooks
 from server.memory.app.auto_resolution import Follow, follow_beside_response
 from server.memory.app.drops import record_drop
 from server.memory.app.edge_links import drop_undeclared_edges_beside, owes_undeclared_drop
-from server.memory.app.high_fence import fence_high
+from server.memory.app.high_fence import fence_high, fenced_once_committed
 from server.memory.app.set_entities import declared_entities
 from server.memory.app.triple_projections import project_stated_relations
 from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 from server.memory.domain.embed_text import embedding_texts
-from server.memory.domain.trust import attests
 from server.memory.domain.webhook_events import EventType
+from server.memory.store import pg_memory, pg_publish
 from server.memory.store.inserts import insert_memory_versions
+from server.memory.store.pg_memory import (
+    AUDIT_ROW,
+    MEMORY_ROW,
+    SEARCH_DOC,
+    Admission,
+    AdmissionMoved,
+    PeerErased,
+    heads_unchanged,
+)
+from server.memory.store.rows import identity_key
 
 log = logging.getLogger(__name__)
 
@@ -252,6 +263,90 @@ class _SetWrite:
     key_text: str = ""
     # The (loser, winner) pairs this write retired, followed once its relations are in.
     follows: list[Follow] = field(default_factory=list)
+    # Under the Postgres authority: the scope generations the verdict was reached at,
+    # the peer rows it was reached against (None: fetch them) and how far they reach.
+    generations: dict[tuple[str, str], int] = field(default_factory=dict)
+    # ... and the policy generations captured before the write's guards ran: a blacklist
+    # or access change after its check sends it back to the check, whatever round it is in.
+    policy: dict[tuple[str, str], int] = field(default_factory=dict)
+    peer_rows: list[dict[str, Any]] | None = None
+    # A commit whose publication is left to the delivery worker: raised once the write's
+    # follow-ups (conflict marks, supersession, audit) ran.
+    pending: pg_memory.PublicationPending | None = None
+    max_distance: float = 0.0
+
+
+async def settled[T](w: _SetWrite, step: Awaitable[T]) -> T:
+    """`step`'s result, or the commit's PublicationPending once it ran: a write whose
+    publication is pending answers so, and a follow-up that fails after such a commit
+    does not hide that it committed."""
+    try:
+        out = await step
+    except VerdictStale:
+        raise
+    except Exception as e:
+        if w.pending is not None:
+            raise w.pending from e
+        raise
+    return out
+
+
+async def finished[T](w: _SetWrite, step: Awaitable[T]) -> T:
+    """`settled`, then the commit's PublicationPending if its publication is pending."""
+    out = await settled(w, step)
+    if w.pending is not None:
+        raise w.pending
+    return out
+
+
+class VerdictStale(Exception):
+    """Commits landed in this write's scope while it was checked: its verdict is
+    reached again, against the peer rows those commits left (`w.peer_rows`)."""
+
+
+async def commit_set_rows(
+    w: _SetWrite, rows: list[dict[str, Any]], targets: int, *, semantic: bool = False
+) -> Any:
+    """Commit a memory.set's rows to the Postgres authority, rechecking its head and,
+    for a `semantic` write, the generations its verdict was reached at. When they
+    moved, the commits in between are added to the verdict's peer rows and
+    VerdictStale sends the write back to its verdict."""
+    admission = Admission(
+        generations=dict(w.generations),
+        recheck=heads_unchanged(
+            {identity_key(w.memory_row): w.existing}, exact=bool(w.input.if_match_sha256)
+        ),
+    )
+    if semantic and w.peer_rows is not None:
+        admission.gap_check = pg_admission.set_gap_check(
+            memory_type=w.input.memory_type,
+            memory_key=w.input.memory_key,
+            embedding=w.embedding,
+            reach=w.max_distance,
+            peer_ids={str(p.get("memory_id")) for p in w.peer_rows},
+        )
+    try:
+        return await pg_publish.commit(rows, targets=targets, admission=admission, idempotent=True)
+    except AdmissionMoved as moved:
+        pg_admission.restart_on_policy(moved.generations)
+        absorbed = None
+        if semantic and w.peer_rows is not None and not isinstance(moved, PeerErased):
+            absorbed = await pg_admission.absorb(
+                captured=admission.generations,
+                moved=moved.generations,
+                org=w.input.org,
+                namespace=w.input.namespace,
+                memory_type=w.input.memory_type,
+                memory_key=w.input.memory_key,
+                embedding=w.embedding,
+                max_distance=w.max_distance,
+                peers=w.peer_rows,
+            )
+        if absorbed is None:
+            w.generations, w.peer_rows = {}, None
+        else:
+            w.generations, w.peer_rows = absorbed
+        raise VerdictStale() from moved
 
 
 async def _lift_above_deletes(w: _SetWrite, ch: Any) -> None:
@@ -321,15 +416,57 @@ async def _announce_set(w: _SetWrite) -> None:
     await webhooks.announce([(event, w.memory_row)])
 
 
+async def _land_plain_row(w: _SetWrite, ch: Any, *, high: bool) -> int:
+    """Write the plain row (under Postgres: commit, then publish), lift and announce it,
+    and fence a 'high' one whenever it may be in. Returns the version it landed at."""
+    import server.memory.store as memory_repo
+    from server.observability.otel import traced
+
+    memory_row = w.memory_row
+
+    def _fence() -> list[tuple[Any, int]]:
+        return [(identity_key(memory_row), int(memory_row["version"]))] if high else []
+
+    if pg.enabled():
+        # No verdict to keep: only its head and the policy it was guarded under, so
+        # nothing waits on search. The publish retires a head's vectors (`OLD_VECTORS`).
+        w.generations = dict(w.policy)
+        async with fenced_once_committed(_fence, op="memory.set", ch=ch) as answer:
+            with traced("pg.commit.memory"):
+                committed = await commit_set_rows(w, [memory_row], MEMORY_ROW | AUDIT_ROW)
+            answer.mark_committed()
+            try:
+                try:
+                    with traced("ch.insert.memory", table="loom.memory"):
+                        await pg_publish.publish(committed, ch=ch)
+                except pg_memory.PublicationPending as e:
+                    w.pending = e  # committed: what follows still runs
+                return await _lift_after_insert(w, ch)
+            finally:
+                await _announce_set(w)  # the row is in, whatever failed after it
+    landed = False
+    try:
+        with traced("ch.insert.memory", table="loom.memory"):
+            await insert_memory_versions([memory_row], ch=ch)
+        landed = True
+        try:
+            version = await _lift_after_insert(w, ch)
+        finally:
+            await _announce_set(w)  # the row is in, whatever failed after it
+        await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
+        return version
+    finally:  # the row is in: a failed lift or retire must not also skip the fence
+        if landed and (fence := _fence()):
+            await fence_high(fence, ch=ch)
+
+
 async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     """Phase 7 of memory.set: the non-embedded write — one loom.memory row, no peers.
 
     Taken for a non-searchable type or a 'high' sensitivity row. A dry run
     answers without writing; otherwise insert, project entities, count.
     """
-    import server.memory.store as memory_repo
     from server.observability import degradations as _degradations
-    from server.observability.otel import traced
 
     input, retyped_from, version = w.input, w.retyped_from, w.version
     memory_id, new_sha, memory_row = w.memory_id, w.new_sha, w.memory_row
@@ -351,24 +488,11 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
             dry_run=True,
         )
     await _lift_above_deletes(w, ch)
-    with traced("ch.insert.memory", table="loom.memory"):
-        await insert_memory_versions([memory_row], ch=ch)
-    try:
-        version = await _lift_after_insert(w, ch)
-    finally:
-        await _announce_set(w)  # the row is in, whatever failed after it
-    # The version this replaces may have been embedded (re-set as 'high', or retyped).
-    try:
-        await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
-    finally:  # the row is in: a failed retire must not also skip the fence
-        if memory_row.get("sensitivity") == "high":
-            await fence_high(
-                [(memory_repo.embedding_key(memory_row), int(memory_row["version"]))], ch=ch
-            )
+    high = memory_row.get("sensitivity") == "high"
+    version = await _land_plain_row(w, ch, high=high)
     # A high row's value is never mined into the graph; the entities its writer declared
     # still project. Fenced on its value as `_set_post_insert` projects it: a revision
     # awaits it, a first write leaves it running beside the response.
-    high = memory_row.get("sensitivity") == "high"
     declared = declared_entities(input.entities) if high else None
     if not high or declared:
         await asyncio.gather(
@@ -409,7 +533,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     )
 
 
-async def _set_embed(w: _SetWrite) -> None:
+async def _set_embed(w: _SetWrite, embedder: Any = None) -> None:
     """Phase 8 of memory.set: the excerpt and both vectors (value axis, key axis).
 
     Sets embedder, excerpt, embedding, key_embedding and key_text ("" when the
@@ -419,7 +543,7 @@ async def _set_embed(w: _SetWrite) -> None:
 
     input, serialized_value = w.input, w.serialized_value
 
-    embedder = get_embedder()
+    embedder = embedder or get_embedder()
     # Procedural rows carry their graph, counters and trace log in the value; embedding that
     # JSON would let statistics churn drift the situation vector on every evolve. Embed and
     # excerpt the procedure's text only (situation, name, steps); the verbatim value column
@@ -439,10 +563,10 @@ async def _set_embed(w: _SetWrite) -> None:
             # Embedder protocol (the local embedder lacks it), hence the probe.
             embed_many = getattr(embedder, "embed_many", None)
             if embed_many is not None:
-                vectors = await embed_many([embed_text, key_text])
-                if len(vectors) != 2:
-                    raise RuntimeError(f"embed_many returned {len(vectors)} vectors for 2 inputs")
-                embedding, key_embedding = vectors[0], vectors[1]
+                pair = await embed_many([embed_text, key_text])
+                if len(pair) != 2:
+                    raise RuntimeError(f"embed_many returned {len(pair)} vectors for 2 inputs")
+                embedding, key_embedding = pair[0], pair[1]
             else:
                 embedding, key_embedding = await asyncio.gather(
                     embedder.embed(embed_text),
@@ -479,7 +603,11 @@ async def _set_conflict_verdict(
 
     with traced("conflicts.check_on_commit", memory_type=input.memory_type):
         _cfg = await _cfg_task
+        check_kwargs = _cfg.check_kwargs()
+        if pg.enabled():
+            check_kwargs["resolved_policy"] = await _pg_peer_rows(w, _cfg)
         conflict_result = await check_on_commit(
+            candidate_rows=w.peer_rows if pg.enabled() else None,
             org=input.org,
             namespace=input.namespace,
             agent=input.agent,
@@ -489,7 +617,7 @@ async def _set_conflict_verdict(
             new_embedding=embedding,
             new_run_id=input.run_id,
             new_valid_at=getattr(input, "valid_at", None),
-            **_cfg.check_kwargs(),
+            **check_kwargs,
         )
     # The rows the verdict was reached against ride the response so the caller can act on
     # the verdict without a second read.
@@ -537,6 +665,38 @@ async def _set_conflict_verdict(
     return _cfg, conflict_result, peers_out, None
 
 
+async def _pg_peer_rows(w: _SetWrite, cfg: Any) -> str:
+    """The peer rows a Postgres-authority verdict is reached against, fetched here and
+    passed in so a commit landing during the check can be added to them
+    (`pg_admission.absorb`) instead of reading them all again; returns the namespace's
+    conflict policy, resolved first (an `append_only` namespace reads no peer). The
+    peers are read with sequential consistency: every row the captured watermark
+    counts as published is visible to the check, on any replica."""
+    from server.core.ch import get_client, sequential_reads
+    from server.memory.app.conflicts import namespace_conflict_policy, peer_distance, peer_rows
+    from server.memory.domain.conflicts import APPEND_ONLY_POLICY
+
+    input = w.input
+    policy = cfg.policy or await namespace_conflict_policy(
+        input.org, input.namespace, ch=get_client()
+    )
+    if w.peer_rows is None:
+        w.max_distance = await peer_distance(input.org, input.namespace, input.memory_type, cfg)
+        if policy == APPEND_ONLY_POLICY:
+            w.peer_rows = []
+        else:
+            with sequential_reads():
+                w.peer_rows = await peer_rows(
+                    org=input.org,
+                    namespace=input.namespace,
+                    memory_type=input.memory_type,
+                    memory_key=input.memory_key,
+                    embedding=w.embedding,
+                    max_distance=w.max_distance,
+                )
+    return str(policy)
+
+
 def _writers_own(row: Any, input: MemorySetInput) -> bool:
     """The same agent and user: another session of theirs is still theirs."""
     return (row.agent, row.user_id) == (input.agent, input.user_id)
@@ -571,6 +731,7 @@ async def _set_merge(
     existing = await memory_repo.get_by_id(
         conflict_result.existing_memory_id or "",
         org=input.org,
+        namespace=input.namespace,
         fresh=True,
         strong=True,  # the conflict check just saw it; read the latest head
         scope=WHOLE_NAMESPACE,
@@ -701,6 +862,65 @@ def _set_dry_run_answer(
     )
 
 
+async def _insert_row_and_vector(w: _SetWrite, ch: Any, embedding_row: dict[str, Any]) -> None:
+    """The version row and its embedding row, inserted concurrently; under the Postgres
+    authority, committed there first and published from the commit."""
+    from server.observability.otel import traced
+
+    memory_row = w.memory_row
+    committed: Any = None
+    if pg.enabled():
+        with traced("pg.commit.memory"):
+            committed = await commit_set_rows(
+                w, [memory_row], MEMORY_ROW | SEARCH_DOC | AUDIT_ROW, semantic=True
+            )
+
+        pg_admission.remember(identity_key(memory_row), int(memory_row["version"]), w.embedding)
+
+    async def _insert_memory() -> None:
+        with traced("ch.insert.memory", table="loom.memory"):
+            if committed is not None:
+                await pg_publish.publish(committed, ch=ch)
+            else:
+                await insert_memory_versions([memory_row], ch=ch)
+
+    async def _insert_embedding() -> None:
+        with traced(
+            "ch.insert.memory_embeddings",
+            table="loom.memory_embeddings",
+            embedding_dim=w.embedder.dim,
+        ):
+            import server.memory.store as memory_repo
+
+            with pg_memory.leased(committed.deadline if committed is not None else None):
+                await memory_repo.insert_embedding_rows([embedding_row], ch=ch)
+
+    with traced("ch.insert.dual_write", concurrent=2):
+        memory_done, embedding_done = await asyncio.gather(
+            _insert_memory(), _insert_embedding(), return_exceptions=True
+        )
+    if isinstance(memory_done, BaseException):
+        if committed is None:
+            raise memory_done
+        await _announce_set(w)  # durable in Postgres: the worker publishes the row
+        if isinstance(memory_done, pg_memory.PublicationPending):
+            raise memory_done
+        raise pg_memory.PublicationPending.after(memory_done) from memory_done
+    try:
+        if isinstance(embedding_done, BaseException):
+            if committed is None or isinstance(embedding_done, pg_memory.PublicationPending):
+                raise embedding_done
+            raise pg_memory.PublicationPending.after(embedding_done) from embedding_done
+        if committed is not None:
+            try:
+                await pg_memory.complete(committed.seqs, pg_memory.SEARCH_DOC)
+            except Exception as e:
+                raise pg_memory.PublicationPending.after(e) from e
+        await _lift_after_insert(w, ch, [embedding_row])
+    finally:
+        await _announce_set(w)  # the row is in, whatever failed after it
+
+
 async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any) -> Any:
     """Phase 12 of memory.set: the version row and its embedding row, then the peer links.
 
@@ -712,13 +932,9 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
     from server.memory.app.conflicts import mark_peers_conflicted, same_key_mark
     from server.observability.otel import traced
 
-    input, memory_id, memory_row, expires_at = w.input, w.memory_id, w.memory_row, w.expires_at
-    source_class = w.source_class
-    reinforcement_count_for_insert = w.reinforcement_count
-    last_reinforced_at_for_insert = w.last_reinforced_at
+    input, memory_id, memory_row = w.input, w.memory_id, w.memory_row
     embedder, excerpt, embedding = w.embedder, w.excerpt, w.embedding
     key_embedding, key_text = w.key_embedding, w.key_text
-    embedding_dim_for_insert = embedder.dim
     # Owed a judgement when the check asks the conflict resolver to look, or another
     # session holds this key.
     mark = await same_key_mark(
@@ -735,80 +951,22 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
     # build_embedding_row fills every persisted column so a later RMT version
     # can't resurrect a default over a real value. Denormalized columns let
     # memory.search read them without a join back to loom.memory.
-    embedding_row = memory_repo.build_embedding_row(
-        org=input.org,
-        namespace=input.namespace,
-        agent=input.agent,
-        user_id=input.user_id,
-        session_id=input.session_id,
-        run_id=input.run_id,
-        memory_key=input.memory_key,
-        memory_type=input.memory_type,
-        scope="private",
-        content_excerpt=excerpt,
-        source_class=source_class,
+    embedding_row = memory_repo.search_document_row(
+        memory_row,
         embedding_model=embedder.model_name,
-        embedding_dim=embedding_dim_for_insert,
         embedding=embedding,
-        memory_key_embedding=key_embedding,
-        memory_key_embedding_dim=embedding_dim_for_insert if key_text else 0,
-        confidence=float(input.confidence),
-        tombstoned_at=None,
-        created_at=naive_utc_now(),
-        tags=list(input.tags or []),
-        files=memory_row["files"],
-        entities=memory_row["entities"],
-        source_resource_id=input.source_resource_id,
-        valid_at=input.valid_at,
-        valid_to=input.valid_to,
-        expires_at=expires_at,
-        reinforcement_count=reinforcement_count_for_insert,
-        last_reinforced_at=last_reinforced_at_for_insert,
-        # The mirror carries the row's lifecycle status from the first version: if it
-        # defaulted to `active` while loom.memory holds a `duplicate` verdict, the search
-        # pool would keep serving the duplicate.
-        status=str(memory_row.get("status") or "active"),
+        key_embedding=key_embedding,
+        key_text=key_text,
+        excerpt=excerpt,
         conflict_checked_at=mark,
-        content_sha256=str(memory_row.get("content_sha256") or ""),
-        # The memory row's version, not one drawn now: a newer write's retire or fence
-        # outranks this vector even when its embedding arrives late.
-        version=int(memory_row["version"]),
-        # A revision of unchanged content keeps its attestation; the mirror says so.
-        verified=int(
-            attests(
-                memory_row.get("verified_by"),
-                memory_row.get("verified_sha256"),
-                memory_row.get("content_sha256"),
-            )
-        ),
     )
 
-    async def _insert_memory() -> None:
-        with traced("ch.insert.memory", table="loom.memory"):
-            await insert_memory_versions([memory_row], ch=ch)
-
-    async def _insert_embedding() -> None:
-        with traced(
-            "ch.insert.memory_embeddings",
-            table="loom.memory_embeddings",
-            embedding_dim=embedding_dim_for_insert,
-        ):
-            import server.memory.store as memory_repo
-
-            await memory_repo.insert_embedding_rows([embedding_row], ch=ch)
-
-    with traced("ch.insert.dual_write", concurrent=2):
-        memory_done, embedding_done = await asyncio.gather(
-            _insert_memory(), _insert_embedding(), return_exceptions=True
-        )
-    if isinstance(memory_done, BaseException):
-        raise memory_done
     try:
-        if isinstance(embedding_done, BaseException):
-            raise embedding_done
-        await _lift_after_insert(w, ch, [embedding_row])
-    finally:
-        await _announce_set(w)  # the row is in, whatever failed after it
+        await _insert_row_and_vector(w, ch, embedding_row)
+    except pg_memory.PublicationPending as e:
+        # Committed: the write's own follow-ups still run, and the caller is told
+        # afterwards (`settled`).
+        w.pending = e
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     after_write.index_late_rows([embedding_row], ch=ch)
 
@@ -820,6 +978,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
                 org=input.org,
                 new_memory_id=memory_id,
                 peer_ids=[p.memory_id for p in conflict_result.peers],
+                namespace=input.namespace,
             )
         if landed != "conflict":
             # Every peer, or the new row itself, retired before the mark:

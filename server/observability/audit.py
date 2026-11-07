@@ -118,9 +118,9 @@ async def emit_strict(
     ts: datetime | None = None,
     consumer: str | None = None,
 ) -> str:
-    """`emit` that raises when the row is not written: for a record an op depends on
-    (an Undo's, which the conflict resolver reads), written before the op's change."""
-    row = _audit_row(
+    """`emit` that raises when the row is not written: for a record an op depends on (an
+    Undo's, which the conflict resolver reads; a restore's, which marks it done)."""
+    row = audit_row(
         event_type,
         org,
         namespace,
@@ -146,7 +146,7 @@ async def emit_many(
     if not subjects:
         return
     try:
-        rows = [_audit_row(event_type, org, namespace, actor, s) for s in subjects]
+        rows = [audit_row(event_type, org, namespace, actor, s) for s in subjects]
         await get_client().insert("loom.audit_log", rows, settings=batched_insert_settings())
     except Exception as e:  # fail open: an audit write never fails the op it records
         log.exception("audit.emit_many failed for event_type=%s: %s", event_type, e)
@@ -297,7 +297,7 @@ def input_subject(input_obj: BaseModel) -> dict[str, Any]:
     return _shape(type(input_obj), input_obj.model_dump(mode="json"))
 
 
-def _audit_row(
+def audit_row(
     event_type: str,
     org: str,
     namespace: str,
@@ -308,8 +308,9 @@ def _audit_row(
     ts: datetime | None = None,
     consumer: str | None = None,
 ) -> dict[str, Any]:
-    # A subject whose keys sort_keys cannot order (mixed str/int) raises TypeError;
-    # the callers catch it so it never reaches the write path.
+    """One audit row, hashed over its time, event, scope, actor, subject and request; the
+    build, consumer and token stamps sit outside the hash. A subject whose keys `sort_keys`
+    cannot order (mixed str and int) raises TypeError to the caller."""
     ts_norm = _normalize_ts(ts or datetime.now(UTC))
     subject_json = json.dumps(subject if subject is not None else {}, sort_keys=True, default=str)
     canonical = {
@@ -331,15 +332,13 @@ def _audit_row(
         "request_id": request_id,
         "row_hash": _row_hash(canonical),
     }
-    # Which build, process and launcher wrote the
-    # row; outside the hash payload.
+    # Which build, process and launcher wrote the row.
     stamp_row(row)
     from server.observability.consumer import current_consumer
 
     row["consumer"] = consumer if consumer is not None else current_consumer()
-    # The credential that made the request (jti, else the
-    # token's sha256 prefix — server/auth/jwt.py::token_id_of), outside
-    # the hash payload like consumer; '' outside a request.
+    # The credential that made the request (jti, else the token's sha256 prefix —
+    # server/auth/jwt.py::token_id_of); '' outside a request.
     row["token_id"] = _current_token_id()
     return row
 

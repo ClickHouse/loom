@@ -18,7 +18,7 @@ from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 
-_A, _B, _C, _D = (f"00000000-0000-0000-0000-00000000000{i}" for i in "abcd")
+_A, _B, _C, _D, _E, _F, _G, _H = (f"00000000-0000-0000-0000-00000000000{i}" for i in "abcdef98")
 
 
 class _LocalCH:
@@ -548,6 +548,125 @@ async def test_a_period_row_never_carries_a_high_sources_entities() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_period_row_takes_entities_only_from_sources_the_authority_serves(
+    monkeypatch,
+) -> None:
+    # Under Postgres a change ClickHouse has not published still reads as the old row here.
+    # A relabel to 'high', a rewrite, a supersede or a delete and set again lends no
+    # entities (the source keeps its place in the lineage); a copy of the same text (a
+    # pin, a touch) still lends them.
+    from types import SimpleNamespace
+
+    from server.core import pg
+    from server.memory.app import period_digest
+    from server.memory.store import pg_memory
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version, entities) VALUES "
+        f"('o', 'n', 'a', '-', '-', '{_A}', 'door', 'semantic', 'v', 'active', '', 1, "
+        f"['acme-prod']), ('o', 'n', 'a', '-', '-', '{_B}', 'tea', 'semantic', 'v', 'active', "
+        f"'', 1, ['oolong']), ('o', 'n', 'a', '-', '-', '{_C}', 'desk', 'semantic', 'w', "
+        f"'active', '', 1, ['teak']), ('o', 'n', 'a', '-', '-', '{_D}', 'chair', 'semantic', "
+        f"'x', 'active', '', 1, ['oak']), ('o', 'n', 'a', '-', '-', '{_E}', 'lamp', "
+        "'semantic', 'y', 'active', '', 1, ['brass'])",
+    )
+    read = {
+        r["memory_key"]: r
+        for r in await ch.query_all(
+            "SELECT memory_key, toString(memory_id) AS memory_id, "
+            "toString(content_sha256) AS content_sha256 FROM loom.memory FINAL"
+        )
+    }
+    newer = {
+        "door": {"sensitivity": "high"},  # labelled 'high' since the read
+        "tea": {},  # pinned since the read: the same text
+        "desk": {"content_sha256": "0" * 64},  # rewritten since the read
+        "chair": {"status": "superseded"},  # superseded since the read
+        "lamp": {"memory_id": _F},  # deleted and set again with the same text
+    }
+
+    async def _heads(keys, **_k):
+        return {
+            k: {
+                **read[k[5]],
+                "version": 2,
+                "status": "active",
+                "redacted_at": None,
+                "sensitivity": "",
+                **newer[k[5]],
+            }
+            for k in keys
+        }
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", _heads)
+    period = SimpleNamespace(
+        org="o",
+        namespace="n",
+        agent="a",
+        user_id="-",
+        digests=[{"derived_from": ["door", "tea", "desk", "chair", "lamp"]}],
+    )
+    ids, ents = await period_digest._source_memories(ch, period)  # type: ignore[arg-type]
+    assert sorted(ids) == sorted([_A, _B, _C, _D, _E]) and ents == ["oolong"]
+
+
+@pytest.mark.asyncio
+async def test_a_period_taken_out_counts_as_written_so_a_pass_never_writes_it_back() -> None:
+    from server.memory.app import period_digest
+
+    def row(
+        mid: str,
+        key: str,
+        status: str,
+        version: int,
+        *,
+        gone: bool = False,
+        redacted: bool = False,
+        **who: str,
+    ) -> str:
+        w = {"agent": "a", "user_id": "-", "session_id": "-", **who}
+        return (
+            f"('o', 'n', '{w['agent']}', '{w['user_id']}', '{w['session_id']}', '{mid}', "
+            f"'{key}', 'semantic', 'v', '{status}', {version}, {'now()' if gone else 'NULL'}, "
+            f"{'now()' if redacted else 'NULL'})"
+        )
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, version, tombstoned_at, redacted_at) VALUES "
+        + ", ".join(
+            [
+                row(_A, "period_digest_s1_s5", "active", 1),
+                row(_A, "period_digest_s1_s5", "active", 2, gone=True),  # deleted since
+                row(_B, "period_digest_s6_s10", "rejected", 1),
+                row(_C, "period_digest_s11_s15", "active", 1),
+                row(_D, "summary:s1", "active", 1),  # not a period
+                row(_E, "period_digest_s16_s20", "active", 1, agent="other"),
+                row(_F, "period_digest_s21_s25", "active", 1, session_id="s9"),
+                row(_G, "period_digest_s26_s30", "active", 1, gone=True),
+                row(_G, "period_digest_s26_s30", "active", 2),  # restored since
+                row(_H, "period_digest_s31_s35", "active", 1, redacted=True),
+            ]
+        ),
+    )
+    ident = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-"}
+    every = {
+        "period_digest_s1_s5",
+        "period_digest_s6_s10",
+        "period_digest_s11_s15",
+        "period_digest_s26_s30",
+        "period_digest_s31_s35",
+    }
+    assert await period_digest._skipped_period_keys(ch, ident, rewrite=False) == every
+    taken_out = {"period_digest_s1_s5", "period_digest_s6_s10", "period_digest_s31_s35"}
+    assert await period_digest._skipped_period_keys(ch, ident, rewrite=True) == taken_out
+
+
+@pytest.mark.asyncio
 async def test_the_taxonomy_never_counts_a_high_rows_entities() -> None:
     from server.identity.api.models_namespace_catalog import NamespaceTaxonomyInput
     from server.identity.app import namespace_catalog
@@ -588,6 +707,74 @@ async def test_a_distill_pass_never_reads_a_high_observation_into_its_context() 
     session = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "s"}
     context = await observe_extract._load_session_context(session, ch=ch)
     assert len(context) == 1 and "ran the tests" in str(context[0])
+
+
+@pytest.mark.asyncio
+async def test_a_distill_pass_reads_only_observations_the_authority_serves(monkeypatch) -> None:
+    # Under Postgres ClickHouse can still hold a row whose delete, rewrite or redaction is
+    # not published: the context is sent to the model, so it keeps what the authority's
+    # heads still show. An earlier pass's DONE mark changes only the tags: its row stays.
+    from datetime import datetime
+
+    from server.core import pg
+    from server.memory.domain.observation_tags import CRYSTALLIZE_DONE_TAG, OBSERVATION_TAG
+    from server.memory.store import pg_memory
+    from server.memory.workers import observe_extract
+
+    narratives = ["ran the tests", "deleted since", "rewritten", "redacted", "set again"]
+    narratives += ["labelled", "skipped", "retyped", "untagged"]
+    ids = (_A, _B, _C, _D, *(f"00000000-0000-0000-0000-0000000000{i}0" for i in range(1, 6)))
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version, tags) VALUES "
+        + ", ".join(
+            f"('o', 'n', 'a', '-', 's', '{mid}', 'obs/{i}', 'episodic', "
+            f"'{{\"narrative\": \"{text}\"}}', 'active', '', 1, ['{OBSERVATION_TAG}'])"
+            for i, (mid, text) in enumerate(zip(ids, narratives, strict=True))
+        ),
+    )
+    read = {
+        r["memory_key"]: r
+        for r in await ch.query_all(
+            "SELECT memory_key, toString(memory_id) AS memory_id, "
+            "toString(content_sha256) AS content_sha256 FROM loom.memory FINAL"
+        )
+    }
+    done = [OBSERVATION_TAG, CRYSTALLIZE_DONE_TAG]
+    newer = {
+        "obs/0": {"tags": done},
+        "obs/2": {"content_sha256": "0" * 64},
+        "obs/3": {"redacted_at": datetime(2026, 1, 1)},
+        # deleted, then set again with the same text: another memory
+        "obs/4": {"memory_id": "00000000-0000-0000-0000-0000000000ff"},
+        # the same memory and text, no longer an observation the statement selects
+        "obs/5": {"sensitivity": "high"},
+        "obs/6": {"tags": [OBSERVATION_TAG, "skipped:empty"]},
+        "obs/7": {"memory_type": "semantic"},
+        "obs/8": {"tags": []},
+    }
+
+    async def _heads(keys, **_k):
+        return {
+            k: {
+                **read[k[5]],
+                "version": 2,
+                "memory_type": "episodic",
+                "tags": [OBSERVATION_TAG],
+                "sensitivity": "",
+                "redacted_at": None,
+                **newer[k[5]],
+            }
+            for k in keys
+            if k[5] in newer
+        }
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", _heads)
+    session = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "s"}
+    context = await observe_extract._load_session_context(session, ch=ch)
+    assert [o.narrative for o in context] == ["ran the tests"]
 
 
 @pytest.mark.asyncio

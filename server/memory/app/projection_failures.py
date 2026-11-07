@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from server.core.ch import get_client
 from server.core.ch_writes import async_insert_settings
@@ -47,6 +47,7 @@ from server.memory.app.projection_errors import (
 from server.memory.domain.graph_quality import IntervalRepair
 from server.memory.domain.temporal_sql import HOLDS_VALUE_SQL
 from server.memory.domain.trust import subject_of
+from server.memory.store.rows import IdentityKey
 
 log = logging.getLogger(__name__)
 
@@ -89,10 +90,6 @@ FOLLOW_ROWS = "triples_follow_rows"
 # FOLLOW_ROWS. Its own name, since an older build replays FOLLOW_ROWS without checking
 # that the loser is still retired, and leaves a name it does not know active.
 FOLLOW_OWED = "triples_follow_owed"
-# A FOLLOW_OWED intent is written (a waited async insert) right before its supersede,
-# and its writer records and follows the retirement itself: the repair leaves it this
-# long, so the two never write the record side by side.
-FOLLOW_OWED_GRACE_S = 600  # not a setting: protocol timing between writer and repair
 # Triples a follow closed but could not re-check for a live row holding them.
 TRIPLES_REOPEN = "triples_reopen"
 # The facts of rows a revision or an Undo changed, not yet reconciled with them.
@@ -112,6 +109,19 @@ EDGES_DROP_UNDECLARED = "entity_edges_drop_undeclared"
 # it) and close_ids, the arguments of the restore. Its own name: a replay of the drop skips a
 # row no longer 'high', and that is the row whose links went.
 EDGES_RESTORE = "entity_edges_restore"
+# The facts of a row the sensitivity sweep relabels 'high', owed right before its commit
+# (`facts_owed_payload`). Closed once ClickHouse, which the graph is judged from, holds
+# the relabel; nothing is owed when it settled without it.
+SENSITIVITY_FACTS = "sensitivity_facts_owed"
+# Intents written (a waited async insert) right before the commit their writer then
+# settles itself: the repair leaves one this long, so the two never settle it side by side.
+_GRACED = (FOLLOW_OWED, SENSITIVITY_FACTS)
+OWED_GRACE_S = 600  # not a setting: protocol timing between writer and repair
+
+
+def facts_owed_payload(key: Sequence[str], memory_id: str, version: int) -> dict[str, Any]:
+    """A SENSITIVITY_FACTS payload: the identity key, the row and the relabel's version."""
+    return {"key": list(key), "memory_id": memory_id, "version": version}
 
 
 def projection_failure_row(
@@ -460,7 +470,7 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
 
     reason = ""
     try:
-        if failure.projection == FOLLOW_OWED and _younger_than(failure, FOLLOW_OWED_GRACE_S):
+        if failure.projection in _GRACED and _younger_than(failure, OWED_GRACE_S):
             return _pending(failure)
         # Read for each failure, right before its write: an erasure can be requested
         # mid-batch. A failed read raises below and leaves the row active.
@@ -491,6 +501,11 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
             reason = await _retry_edges_drop(failure, ch=ch)
         elif failure.projection == EDGES_RESTORE:
             reason = await _retry_edges_restore(failure, ch=ch)
+        elif failure.projection == SENSITIVITY_FACTS:
+            outcome = await _retry_sensitivity_facts(failure, ch=ch)
+            if outcome is None:
+                return _pending(failure)
+            reason = outcome
         else:
             return ProjectionFailureRetryResult(
                 failure_id=failure.failure_id,
@@ -556,16 +571,17 @@ async def scan_active_projection_failures(
 ) -> list[ProjectionFailureRow]:
     """Return active failures across orgs for the repair worker, oldest first. Failures
     a retry would only answer `pending` for are left out, so they hold no place ahead of
-    the rest: those of an org under erasure and follow intents within their grace, and
-    those of `exclude_orgs` (orgs whose model calls are switched off), which wait."""
+    the rest: those of an org under erasure, follow and owed-facts intents within their
+    grace, and those of `exclude_orgs` (orgs whose model calls are switched off), which
+    wait."""
     from server.memory.store.conflict_resolver import ERASING_ORGS_SQL
 
     ch = ch or get_client()
     params: dict[str, Any] = {
         "lim": int(limit),
         "off": sorted(exclude_orgs),
-        "follow_owed": FOLLOW_OWED,
-        "grace": FOLLOW_OWED_GRACE_S,
+        "graced": list(_GRACED),
+        "grace": OWED_GRACE_S,
     }
     cursor_sql = ""
     if after is not None:
@@ -593,7 +609,7 @@ async def scan_active_projection_failures(
           AND org NOT IN ({ERASING_ORGS_SQL})
           AND org NOT IN {{off:Array(String)}}
           {cursor_sql}
-          AND NOT (projection = {{follow_owed:String}}
+          AND NOT (projection IN {{graced:Array(String)}}
                    AND created_at > now() - INTERVAL {{grace:UInt32}} SECOND)
         ORDER BY f.created_at ASC, f.failure_id ASC
         LIMIT {{lim:UInt32}}
@@ -698,7 +714,14 @@ async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) ->
 
     for entry in failure.payload.get("retired") or []:
         loser, winner = str(entry["memory_id"]), str(entry["superseded_by"])
-        head = await get_by_id(loser, org=failure.org, ch=ch, scope=WHOLE_NAMESPACE, strong=True)
+        head = await get_by_id(
+            loser,
+            org=failure.org,
+            namespace=failure.namespace,
+            ch=ch,
+            scope=WHOLE_NAMESPACE,
+            strong=True,
+        )
         if head is None or head.status != "superseded" or str(head.superseded_by) != winner:
             continue
         await clear_retired_flag(failure.org, failure.namespace, winner, loser)
@@ -832,6 +855,22 @@ async def _retry_edges_restore(failure: ProjectionFailureRow, *, ch: Any) -> str
     await restore_kept_links(
         failure.payload, _failure_scope(failure), ch=ch, op=failure.source_operation
     )
+    return ""
+
+
+async def _retry_sensitivity_facts(failure: ProjectionFailureRow, *, ch: Any) -> str | None:
+    """Close the facts of a row relabelled 'high' (`close_owed_facts`). Returns "" once
+    nothing is owed, None while ClickHouse lacks the relabel (pending), and
+    "malformed_payload" for a payload no retry can read; a failed close raises."""
+    from server.memory.app.sensitivity_sweep import close_owed_facts
+
+    key, memory_id, version = (failure.payload.get(k) for k in ("key", "memory_id", "version"))
+    if not (isinstance(key, list) and len(key) == 6 and all(isinstance(k, str) for k in key)):
+        return "malformed_payload"
+    if not isinstance(memory_id, str) or not isinstance(version, int) or isinstance(version, bool):
+        return "malformed_payload"
+    if not await close_owed_facts(cast(IdentityKey, tuple(key)), memory_id, version, ch=ch):
+        return None
     return ""
 
 

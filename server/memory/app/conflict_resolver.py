@@ -61,6 +61,12 @@ class JudgedThenFailed(RuntimeError):
     the worker counts it as an attempt."""
 
 
+class PeerBehind(RuntimeError):
+    """A flagged peer's change is held by the Postgres authority but not yet by ClickHouse:
+    the row waits, with no call and no attempt, and is judged with all its peers once
+    ClickHouse holds it."""
+
+
 class Unjudgeable(RuntimeError):
     """The provider refused this row's request for a reason of its own (a 4xx other
     than 408, 409 and 429): asking again gets the same answer."""
@@ -78,6 +84,8 @@ class Counts:
     skipped_changed: int = 0
     skipped_pinned: int = 0
     skipped_budget: int = 0
+    # Rows held back while a flagged peer's change is not yet in ClickHouse.
+    skipped_behind: int = 0
     # Namespaces left out of the pass's queue read: over their daily cost cap.
     capped_namespaces: int = 0
     errored: int = 0
@@ -164,9 +172,9 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
     return verdicts, str(getattr(res, "model", "") or settings.conflict_resolver_model)
 
 
-async def _head(org: str, memory_id: str) -> Any:
+async def _head(org: str, namespace: str, memory_id: str) -> Any:
     return await memory_repo.get_by_id(
-        memory_id, org=org, scope=WHOLE_NAMESPACE, fresh=True, strong=True
+        memory_id, org=org, namespace=namespace, scope=WHOLE_NAMESPACE, fresh=True, strong=True
     )
 
 
@@ -300,7 +308,7 @@ async def _retire(
     retired = [{**r, "label": cr.UPDATE, **why} for r in into.get(CONFLICT_RESOLVER, [])]
     if not retired:
         # Nothing tracked does not mean nothing landed (a lost response): the head says.
-        head = await _head(org, pair[0])
+        head = await _head(org, namespace, pair[0])
         if head is None or (head.status, str(head.superseded_by)) != ("superseded", pair[1]):
             if _holds(head, namespace, loser_sha):
                 intent_marks.resolve_soon(org, [intent])  # still live as judged: none landed
@@ -359,6 +367,7 @@ async def _flag(org: str, row: Any, peer: Any) -> bool:
         peer_ids=[str(peer.memory_id)],
         expected_sha256=str(row.content_sha256 or ""),
         peer_sha256={str(peer.memory_id): str(peer.content_sha256 or "")},
+        namespace=row.namespace,
     )
     if landed != "conflict":
         return False
@@ -405,6 +414,7 @@ async def _unlink(org: str, row: Any, *other_ids: str) -> bool:
         org,
         [str(row.memory_id)],
         update,
+        namespace=row.namespace,
         skip=skip,
         strong=True,
         on_written=written.extend,
@@ -422,7 +432,7 @@ async def clear_retired_flag(org: str, namespace: str, winner_id: str, loser_id:
     whose clear failed. Under the winner's key lock, as every resolver write."""
     from server.memory.store.key_write_lock import key_write_locks
 
-    winner = await _head(org, winner_id)
+    winner = await _head(org, namespace, winner_id)
     if winner is not None and loser_id in winner.conflict_with:
         async with key_write_locks.hold(org, namespace, *queue.key_identity(winner)):
             await _unlink(org, winner, loser_id)
@@ -487,7 +497,8 @@ async def _settle_locked_pair(
     # re-read: the supersede (`apply_refines` with the judged hash) reads the winner again
     # and retires nothing once it holds another value.
     row, head = await asyncio.gather(
-        _head(org, str(judged.memory_id)), _head(org, str(peer["memory_id"]))
+        _head(org, namespace, str(judged.memory_id)),
+        _head(org, namespace, str(peer["memory_id"])),
     )
     if not (
         _holds(row, namespace, str(judged.content_sha256 or ""))
@@ -634,14 +645,20 @@ async def resolve_row(
         except PreconditionFailedError:
             counts.skipped_changed += 1  # the key is busy: the row stays owed
             return None
+    flagged = frozenset(str(x) for x in row.conflict_with)
     cluster = await queue.cluster_peers(
         q,
         floor=float(settings.memory_conflict_resolver_min_similarity),
         limit=int(settings.memory_conflict_resolver_max_peers),
-        prefer=frozenset(str(x) for x in row.conflict_with),
+        prefer=flagged,
         shown=shown,
     )
-    peers = cluster.peers
+    # A peer the Postgres authority no longer serves at the version read is never sent; an
+    # unflagged one is left out of this judgement, a flagged one holds the row back.
+    peers = await memory_repo.served_rows(cluster.peers)
+    behind = {str(p["memory_id"]) for p in cluster.peers} - {str(p["memory_id"]) for p in peers}
+    if behind & flagged:
+        raise PeerBehind()
     if peers:
         row, peers = await _still_unprotected(org, row, peers)
     if row is not None and peers:
@@ -666,7 +683,7 @@ async def _release_dead_flags(org: str, namespace: str, row: Any, counts: Counts
     if not dead:
         return
     async with key_write_locks.hold(org, namespace, *queue.key_identity(row)):
-        head = await _head(org, str(row.memory_id))
+        head = await _head(org, namespace, str(row.memory_id))
         if not _holds(head, namespace, str(row.content_sha256 or "")) or head.pinned:
             return
         if await queue.under_erasure(org) or not await _unlink(org, head, *dead):
@@ -685,7 +702,7 @@ async def _still_unprotected(
     or key holds a high shape the sweep has not labelled yet. (None, []) when the
     judged row is no longer eligible or holds one (it is stamped judged, with no model
     call); such a peer is dropped."""
-    fresh = await _head(org, str(row.memory_id))
+    fresh = await _head(org, str(row.namespace), str(row.memory_id))
     if not _holds(fresh, str(row.namespace), str(row.content_sha256 or "")):
         return None, []
     if _reads_high(fresh.value, fresh.memory_key):

@@ -236,16 +236,24 @@ def compute_alters(
     warm_volume = _warm_volume_name(settings_obj)
     out: list[tuple[RetentionTarget, str, dict[str, Any]]] = []
 
+    from server.core import pg
+
     for target in TARGETS:
         r_days = max(0, target.retention_days(settings_obj) or 0)
         t_days = max(0, target.warm_days(settings_obj) or 0)
+        overrides = ovr_all
+        if target.table in ("loom.memory", "loom.memory_embeddings") and pg.enabled():
+            # Postgres holds the memory: a TTL here would delete only ClickHouse's copy
+            # (or only its vectors, leaving live memories search no longer finds).
+            r_days = 0
+            overrides = [{**o, "retention_days": 0} for o in ovr_all]
 
         ttl_clause = _compose_ttl(
             target,
             retention_days=r_days,
             tiering_days=t_days,
             warm_volume=warm_volume,
-            namespace_overrides=ovr_all,
+            namespace_overrides=overrides,
         )
         if ttl_clause is None:
             continue

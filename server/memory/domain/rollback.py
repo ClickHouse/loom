@@ -42,8 +42,6 @@ class RollbackAction:
     action: str
     version_from: int
     version_to: int
-    # The key's head now is a tombstone: reinstating a live version revives it.
-    head_tombstoned: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -103,5 +101,5 @@ def plan_rollback(rows: list[dict[str, Any]]) -> RollbackPlan:
         if v_now == 0:
             plan.skipped_no_head += 1
             continue
-        plan.reinstate.append(RollbackAction(*ident, "reinstate", v_now, v_at, tomb_now))
+        plan.reinstate.append(RollbackAction(*ident, "reinstate", v_now, v_at))
     return plan

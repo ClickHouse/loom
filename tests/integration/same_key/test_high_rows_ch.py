@@ -11,6 +11,8 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.memory.store.sensitivity_sweep_sql import SORT_KEY
 from tests.integration.same_key._rows import (
     KEY,
     NS,
@@ -249,12 +251,42 @@ async def test_a_relabel_to_high_closes_mined_facts_and_keeps_declared_edges(ch,
         memory_key="door",
         level="high",
         shapes=("credential",),
-        sort_key={"org": org, "namespace": NS, "agent": "bot", "memory_key": "door"},
+        sort_key=dict(zip(SORT_KEY, (org, NS, "bot", USER, "s1", "door"), strict=True)),
+        version=out.version,
     )
     result = await sensitivity_sweep.apply([candidate], ch=ch)
     assert result.high == 1, result
     assert await _open_edge_pairs(ch, org) == declared
     assert await _open_facts(ch, org, set()) == set()
+
+
+async def test_the_sweep_leaves_a_head_written_since_its_scan(ch, org) -> None:
+    # Scanned unlabelled, the key is then written again and labelled high by its writer: the
+    # sweep's candidate from the scan must not relabel that head medium.
+    from server.memory import store as M
+    from server.memory.app import sensitivity_sweep
+
+    scanned = await _high_set(org, "s1", "door", "write to ana@example.com about the door")
+    newer = await _high_set(org, "s1", "door", "the door code is in the vault", sensitivity="high")
+    assert newer.memory_id == scanned.memory_id  # moved, not gone
+    candidate = sensitivity_sweep.SweepCandidate(
+        memory_id=scanned.memory_id,
+        org=org,
+        namespace=NS,
+        agent="bot",
+        user_id=USER,
+        session_id="s1",
+        memory_key="door",
+        level="medium",
+        shapes=("email",),
+        sort_key=dict(zip(SORT_KEY, (org, NS, "bot", USER, "s1", "door"), strict=True)),
+        version=scanned.version,
+    )
+    result = await sensitivity_sweep.apply([candidate], ch=ch)
+    assert (result.relabelled, len(result.left)) == (0, 1) and not result.failed
+    identity = M.Identity(org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1")
+    head = await M.get_by_key(identity, "door", scope=WHOLE_NAMESPACE, ch=ch, strong=True)
+    assert head is not None and (head.version, head.sensitivity) == (newer.version, "high")
 
 
 async def test_a_late_mined_projection_writes_nothing_on_a_row_made_high(

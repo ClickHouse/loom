@@ -310,3 +310,21 @@ async def test_a_rescheduled_date_retires_the_old_row(monkeypatch: pytest.Monkey
         ch=object(),
     )
     assert [v["memory_id"] for v in victims] == ["p1"], "the old date does not stay live"
+
+
+@pytest.mark.asyncio
+async def test_a_peer_erased_from_the_postgres_authority_is_no_peer(
+    env: NS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ClickHouse still holds an erased memory until the erasure's ClickHouse steps run:
+    a verdict reached on it would be refused at commit again and again."""
+    from server.memory.store import pg_memory
+    from server.settings import settings
+
+    async def _erased(org: str, namespace: str, ids: list[str]) -> set[str]:
+        return set(ids)
+
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    monkeypatch.setattr(pg_memory, "erased_ids", _erased)
+    res = await _check("PR 1 is about the merge join")
+    assert res.verdict == "clear" and res.peers == []

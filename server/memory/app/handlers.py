@@ -16,8 +16,10 @@ from fastapi import HTTPException
 
 from server.auth.context import current_auth
 from server.code.app.member_writes import assert_own_row
+from server.core import pg
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.error_summary import error_summary
 from server.core.errors import BackendUnavailableError, ValidationError
 from server.core.hashing import served_content_sha256
 from server.embedding import get_embedder
@@ -54,7 +56,7 @@ from server.memory.domain.served import served_totals
 from server.memory.domain.webhook_events import memory_change
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
-from server.memory.store.rows import Identity, next_version
+from server.memory.store.rows import Identity, next_version, version_over
 from server.observability import degradations
 from server.observability.budget_shape import note_budget_shape
 from server.settings import settings
@@ -572,7 +574,12 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
         operation="memory.unpin",
     ):
         head = await memory_repo.get_by_id(
-            str(existing.memory_id), org=input.org, scope=WHOLE_NAMESPACE, fresh=True, strong=True
+            str(existing.memory_id),
+            org=input.org,
+            namespace=existing.namespace,
+            scope=WHOLE_NAMESPACE,
+            fresh=True,
+            strong=True,
         )
         if head is None:
             return MemoryUnpinOutput(unpinned=False, reason="not_found")
@@ -580,11 +587,11 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
             return MemoryUnpinOutput(
                 unpinned=False, reason="not_pinned", memory_id=str(head.memory_id)
             )
-        version = next_version()
+        version = version_over(head)
         row = memory_repo.build_memory_version_row(
             head, version=version, updated_at=memory_repo.written_now(), pinned=False
         )
-        await insert_memory_versions([row], ch=ch)
+        await memory_repo.insert_versions_over_heads([row], [head], ch=ch)
     return MemoryUnpinOutput(unpinned=True, memory_id=str(head.memory_id), version=version)
 
 
@@ -631,7 +638,7 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     assert_own_row(existing, op="memory.delete")
     # The version is drawn here, right before the insert: the vector retire skips rows at
     # or above it, so the later it is drawn the fewer late vector writes it leaves live.
-    version = next_version()
+    version = version_over(existing)
     await _write_tombstone_row(existing, version=version)
     try:
         tombstoned, downgraded = await _retire_derived(
@@ -718,7 +725,7 @@ async def _delete_version_locked(
         return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
     _lock.assert_unlocked(existing, "delete", op="memory.delete_version")
     assert_own_row(existing, op="memory.delete_version")
-    version = next_version()
+    version = version_over(existing)
     # The check this delete owes after its tombstone, recorded first: when the check
     # cannot run now, a retry or the delete_version_check worker runs it, so a write it
     # would have found is never left under the tombstone. A record whose insert failed
@@ -1084,7 +1091,8 @@ async def _write_tombstone_row(existing: Any, *, version: int, trace: str = "") 
         expires_at=None,
     )
     with traced("ch.insert.memory.tombstone", table="loom.memory"):
-        await insert_memory_versions([tombstone_row], ch=get_client())
+        # Over the head it read: a lock taken since is never dropped by the tombstone.
+        await memory_repo.insert_versions_over_heads([tombstone_row], [existing], ch=get_client())
 
 
 async def _retire_derived(
@@ -1117,10 +1125,7 @@ async def _retire_derived(
             ch=ch,
         )
     except Exception as e:  # noqa: BLE001 — the memory row tombstone already landed; mirror is best-effort
-        log.warning(
-            "memory_embeddings tombstone write failed (non-fatal): %s",
-            e,
-        )
+        log.warning("memory_embeddings tombstone write failed (non-fatal): %s", error_summary(e))
 
     # The verbatim chunks a long value wrote under this key go with it, or search keeps
     # lifting a deleted fact through its own body.
@@ -1143,16 +1148,27 @@ async def _retire_derived(
                 existing.org, existing.namespace, existing.memory_key
             )
         except Exception as e:  # noqa: BLE001 — the tombstone stands
-            log.warning("%s: procedure_runs cascade failed for %s: %s", op, existing.memory_key, e)
+            log.warning(
+                "%s: procedure_runs cascade failed for %s: %s",
+                op,
+                existing.memory_key,
+                error_summary(e),
+            )
     # A decision's record is retired once its writer's row is gone, or decision.chain and
-    # decision.precedents keep serving the text the writer deleted.
-    if existing.memory_type == "decision":
+    # decision.precedents keep serving the text the writer deleted; under Postgres the
+    # tombstone's publication retires it (`pg_publish.retire_decision_records`).
+    if existing.memory_type == "decision" and not pg.enabled():
         try:
             await memory_repo.tombstone_decision_records(
                 existing.org, existing.namespace, [existing.memory_key], version=version, ch=ch
             )
         except Exception as e:  # noqa: BLE001 — the tombstone stands
-            log.warning("%s: decision record not retired for %s: %s", op, existing.memory_key, e)
+            log.warning(
+                "%s: decision record not retired for %s: %s",
+                op,
+                existing.memory_key,
+                error_summary(e),
+            )
     # A summary built from this row now says something its evidence no
     # longer supports. If none of its sources survive it goes too; otherwise
     # it is downgraded to `conflicted` (review queue) with a
@@ -1170,7 +1186,7 @@ async def _retire_derived(
             "%s: dependent summaries not downgraded for %s: %s",
             op,
             existing.memory_key,
-            e,
+            error_summary(e),
         )
     return dep_tomb, dep_down
 
@@ -1280,12 +1296,13 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
         new_expires_at = datetime.now(UTC) + timedelta(seconds=input.ttl_seconds or 0)
     naive_expiry = new_expires_at.replace(tzinfo=None) if new_expires_at else None
     touch_rows: list[dict[str, Any]] = []
+    touched: list[Any] = []  # the head each touch row is built from
     versions: dict[str, int] = {}
     for key in wanted:
         existing = by_key.get(key)
         if existing is None:
             continue
-        version = next_version()
+        version = version_over(existing)
         versions[key] = version
         # Mirror every persisted column; only the touch deltas override.
         overrides: dict[str, Any] = {"version": version, "expires_at": new_expires_at}
@@ -1294,8 +1311,9 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
         if input.expire_reason:
             overrides["expire_reason"] = input.expire_reason[:512]
         touch_rows.append(memory_repo.build_memory_version_row(existing, **overrides))
+        touched.append(existing)
     if touch_rows:
-        await insert_memory_versions(touch_rows, ch=ch)
+        await memory_repo.insert_versions_over_heads(touch_rows, touched, ch=ch)
         # search filters on the denormalized memory_embeddings.expires_at, so mirror the new
         # expiry there or a touched row vanishes from search at its old expiry. A versioned
         # re-emit of the keys' live embedding rows, not an in-place UPDATE (which would leave
@@ -1344,11 +1362,18 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
     """Resolve an opaque memory_id to the full memory row (latest version,
     non-tombstoned). Returns found=False if no row matches."""
     import server.memory.store as memory_repo
+    from server.memory.app.id_namespace import namespace_for_id
 
+    # Addressed by an org-wide id: the transport had no namespace to bind, so a
+    # namespace the caller cannot read is hidden, not refused.
+    namespace = await namespace_for_id(input.org, input.memory_id, strong=False)
+    if namespace is None:
+        return MemoryGetByIdOutput(found=False)
     row = await memory_repo.get_by_id(
         input.memory_id,
         org=input.org,
-        as_of=getattr(input, "as_of", None),
+        namespace=namespace,
+        as_of=input.as_of,
         include_usage_totals=True,
         fresh=True,
         scope=request_scope(),
@@ -1362,13 +1387,6 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
         and expires_at
         and expires_at.replace(tzinfo=None) <= naive_utc_now()
     ):
-        return MemoryGetByIdOutput(found=False)
-    # Addressed by an org-wide id: the transport had no namespace to bind, so
-    # the row's own namespace is checked here and a foreign row is hidden, not
-    # refused.
-    from server.auth.authz import row_in_scope
-
-    if not await row_in_scope(input.org, row.namespace):
         return MemoryGetByIdOutput(found=False)
     high = str(getattr(row, "sensitivity", "") or "") == "high"
     # A caller that only names the row (the dashboard's conflict peer) never reads a

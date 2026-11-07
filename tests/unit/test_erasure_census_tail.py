@@ -83,6 +83,7 @@ async def _run(
     monkeypatch.setattr(h, "checkpoint", fake_checkpoint)
     monkeypatch.setattr(h.audit, "emit", fake_emit)
     monkeypatch.setattr(erasure_census, "residue_census", fake_census)
+    monkeypatch.setattr(erasure_census, "table_residue", fake_census)
     inp = ErasureRequestInput(
         org="o", scope_type=scope_type, scope_value=scope_value, requester="t"
     )
@@ -244,6 +245,7 @@ async def test_a_user_scope_tail_counts_by_user(monkeypatch) -> None:
     monkeypatch.setattr(h, "checkpoint", noop)
     monkeypatch.setattr(h.audit, "emit", noop)
     monkeypatch.setattr(erasure_census, "residue_census", fake_census)
+    monkeypatch.setattr(erasure_census, "table_residue", fake_census)
     inp = ErasureRequestInput(org="o", scope_type="user_id", scope_value="alice", requester="t")
     out = await h.run_saga(
         input=inp,
@@ -523,6 +525,41 @@ def test_an_exhausted_row_without_a_census_abandons_with_no_verify_columns() -> 
     assert w._ledger_verify(partial) == {"verified_at": verified_at}
 
 
+@pytest.mark.parametrize("ch_residue", [{"loom.memory": 3}, {}], ids=["residue", "clean"])
+async def test_a_failed_saga_with_postgres_down_records_what_its_census_counted(
+    monkeypatch, ch_residue: dict[str, int]
+) -> None:
+    """The failed checkpoint keeps the ClickHouse residue its tail found, unverified, and
+    writes no census at all when it found nothing."""
+
+    async def pg_down(*_: Any, **__: Any) -> dict[str, int]:
+        raise ConnectionError("the authority is unreachable")
+
+    monkeypatch.setattr(erasure_census, "pg_residue", pg_down)
+    out, _, checkpoints = await _run(
+        monkeypatch, saga=_failing_external_step, census=lambda *_: dict(ch_residue)
+    )
+    assert out.status == "failed" and out.verified_at is None
+    kept = {"residue_count": 3, "verified_at": None, "residue": '{"loom.memory": 3}'}
+    assert checkpoints[-1]["extra"] == (kept if ch_residue else {})
+
+
+def test_a_census_that_left_a_store_uncounted_keeps_the_residue_it_found() -> None:
+    """No `verified_at`, as a store could not be counted, but residue found: the terminal
+    row keeps it, from the ledger and from a saga's output alike."""
+    from server.erasure.api.erasure import ErasureRequestOutput
+    from server.erasure.workers import recovery as w
+
+    uncounted = _ledger_row(attempts=5, residue_count=3, residue='{"loom.memory": 3}')
+    kept = {"residue_count": 3, "residue": '{"loom.memory": 3}', "verified_at": None}
+    assert w._ledger_verify(uncounted | {"verified_at": None}) == kept
+    out = ErasureRequestOutput.model_construct(
+        residue_count=3, residue={"loom.memory": 3}, verified_at=None
+    )
+    assert h.verify_columns_from_output(out) == kept
+    assert h.verify_columns_from_output(out.model_copy(update={"residue_count": 0})) == {}
+
+
 def test_the_exhausted_scan_skips_abandoned_rows() -> None:
     import inspect
 
@@ -712,6 +749,7 @@ async def test_re_verify_run_lists_censuses_and_resumes_from_the_checkpoint(monk
 
     monkeypatch.setattr(erasure_ledger, "list_failed_requests", fake_list)
     monkeypatch.setattr(erasure_census, "residue_census", fake_census)
+    monkeypatch.setattr(erasure_census, "table_residue", fake_census)
     monkeypatch.setattr(erasure_health, "integrity_counts", fake_counts)
     monkeypatch.setattr(h, "run_saga", fake_run_saga)
     args = argparse.Namespace(
@@ -741,6 +779,43 @@ async def test_re_verify_run_lists_censuses_and_resumes_from_the_checkpoint(monk
         False,
     )  # past the worker's budget, loom-only
     assert erasure_mutations.purge_mode() is False
+
+
+async def test_re_verify_run_fails_when_a_store_cannot_be_read(monkeypatch, capsys) -> None:
+    """No ClickHouse residue is no verdict while Postgres cannot be counted: the run says
+    so and exits 1."""
+    from server.cli import hygiene
+
+    async def fake_list(*, org=None, ch=None):
+        return [_ledger_row(attempts=5)]
+
+    async def no_tables(org, st, sv, *, ch=None):
+        return {"loom.memory": 0}
+
+    async def pg_down(*args: Any, **kw: Any) -> dict[str, int]:
+        raise ConnectionError("the authority is unreachable")
+
+    async def fake_counts(*, ch=None):
+        return {"orphan_entity_vectors": 0, "orphan_graph_namespaces": 0}
+
+    monkeypatch.setattr(erasure_ledger, "list_failed_requests", fake_list)
+    monkeypatch.setattr(erasure_census, "table_residue", no_tables)
+    monkeypatch.setattr(erasure_census, "pg_residue", pg_down)
+    monkeypatch.setattr(erasure_health, "integrity_counts", fake_counts)
+    args = argparse.Namespace(
+        org="o",
+        id=None,
+        resume=False,
+        skip_external=False,
+        orphan_graph=False,
+        erase=False,
+        batch=200,
+        show=20,
+        requester="t",
+        completed_since=None,
+    )
+    assert await hygiene._re_verify_run(object(), args) == 1
+    assert "postgres: could not be read (ConnectionError" in capsys.readouterr().out
 
 
 async def test_re_verify_orphan_graph_lists_and_erases_in_loom_only_purge_sagas(
@@ -852,6 +927,7 @@ async def test_completed_since_deletes_only_orphan_row_links(monkeypatch) -> Non
     monkeypatch.setattr(graph_steps, "count_orphan_row_links", fake_orphans)
     monkeypatch.setattr(graph_steps, "delete_orphan_row_links", fake_delete)
     monkeypatch.setattr(erasure_census, "residue_census", no_census)
+    monkeypatch.setattr(erasure_census, "table_residue", no_census)
     monkeypatch.setattr(erasure_health, "integrity_counts", fake_counts)
     monkeypatch.setattr(h, "run_saga", no_saga)
     args = argparse.Namespace(
@@ -1068,3 +1144,19 @@ def test_the_probe_and_the_cli_read_the_same_orphan_residue() -> None:
     )
     for col in ("agent", "user_id", "memory_key"):
         assert f"e.{col} = m.{col}" in erasure_health.ORPHAN_ENTITY_VECTORS_SQL
+
+
+async def test_the_evidence_census_passes_a_refusal_through(monkeypatch) -> None:
+    """A Postgres of another deployment is not a store that could not be read."""
+    from server.core.pg import AuthorityMismatch
+
+    async def _tables(*_a, **_k):
+        return {}
+
+    async def _refused(*_a, **_k):
+        raise AuthorityMismatch("LOOM_PG_DSN names a database that records no authority")
+
+    monkeypatch.setattr(erasure_census, "table_residue", _tables)
+    monkeypatch.setattr(erasure_census, "pg_residue", _refused)
+    with pytest.raises(AuthorityMismatch):
+        await erasure_census.evidence_census("o", "namespace", "ns")

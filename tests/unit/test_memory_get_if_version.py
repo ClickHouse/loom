@@ -15,6 +15,7 @@ from server.memory.api.models_crud import MemoryGetInput
 from server.memory.app import handlers as mem
 from server.memory.store.rows import MemoryRow
 from server.observability.budget_shape import current_budget_shape, note_budget_shape
+from tests.unit.memory_store import one_holder
 
 
 def _row(version: int = 7, sensitivity: str = "") -> MemoryRow:
@@ -194,7 +195,10 @@ async def test_a_high_read_by_id_is_audited_as_the_tokens_principal(
         return True
 
     monkeypatch.setattr(memory_repo, "get_by_id", by_id)
+
+    monkeypatch.setattr(memory_repo, "namespaces_of_id", one_holder)
     monkeypatch.setattr("server.auth.authz.row_in_scope", in_scope)
+    monkeypatch.setattr("server.auth.authz.row_reach", in_scope)
     set_current_auth(
         AuthInfo(
             subject="reader", org="acme", namespaces=("ns",), roles=(), is_service_account=True
@@ -239,7 +243,10 @@ async def test_a_get_by_id_is_held_to_the_audited_budget_only_when_it_audits(
         return True
 
     monkeypatch.setattr(memory_repo, "get_by_id", by_id)
+
+    monkeypatch.setattr(memory_repo, "namespaces_of_id", one_holder)
     monkeypatch.setattr("server.auth.authz.row_in_scope", in_scope)
+    monkeypatch.setattr("server.auth.authz.row_reach", in_scope)
     note_budget_shape("")
     await mem.handle_memory_get_by_id(
         MemoryGetByIdInput(

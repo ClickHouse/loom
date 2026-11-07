@@ -22,6 +22,7 @@ from server.erasure.store.predicates import (
     SUPPORTED_LEARNINGS,
     UID,
 )
+from server.erasure.store.steps_pg import delete_pg_idempotency
 from server.observability import events_stream
 from server.settings import settings
 
@@ -137,6 +138,7 @@ async def delete_idempotency_by_namespace(
     org '' leaves by the table's TTL."""
     del namespace  # the rows carry no namespace; the scope is the org
     n = await delete_scoped("loom.idempotency", org=org, scope_where="1", params={}, ch=ch)
+    n += await delete_pg_idempotency(org)
     await _drop_vectors(org, ch=ch)
     return n
 
@@ -150,6 +152,7 @@ async def delete_idempotency_by_user(org: str, user_id: str, *, ch: _CHClient | 
     deleted; the vectors' count is logged. Fail closed; the cost is cache misses."""
     del user_id  # no row column names the end user; the scope is the org
     n = await delete_scoped("loom.idempotency", org=org, scope_where="1", params={}, ch=ch)
+    n += await delete_pg_idempotency(org)
     await _drop_vectors(org, ch=ch)
     return n
 

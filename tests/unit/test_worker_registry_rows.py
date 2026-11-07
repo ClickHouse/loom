@@ -53,6 +53,7 @@ _CADENCE_SETTINGS = {
     "conflict_resolver": "memory_conflict_resolver_interval_seconds",
     "oauth_signin_state_sweep": "oauth_signin_state_sweep_interval_seconds",
     "mcp_session_run_sweep": "mcp_session_run_sweep_interval_seconds",
+    "pg_delivery": "pg_delivery_interval_seconds",
 }
 
 

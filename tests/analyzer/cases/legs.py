@@ -15,6 +15,7 @@ from server.memory.domain.search_types import RowKey
 from tests.analyzer.cases._common import AGENT, MODEL, NS, ORG, VEC, chunk_cand, rows_by_substring
 from tests.analyzer.cases.search import _q
 from tests.analyzer.corpus import Case, RecordingCH
+from tests.unit.memory_rows import memory_head
 
 MS = "server.memory.app.retrieval"
 HS = "server.memory.app.search.sql"
@@ -51,6 +52,12 @@ async def _chunks(ch: RecordingCH, c: dict[str, Any]) -> None:
         user_id="alice" if c["user_id"] else None,
     )
     await _search_memory_chunks(ch, q, {"q": q.query_vec})
+
+
+async def _search_trace(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.memory.app.retrieval import vector_search_trace
+
+    await vector_search_trace(_q(entity_filter=["nate"] if c["entities"] else []), ch=ch)
 
 
 async def _lexical(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -279,6 +286,7 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         as_of=as_of,
         include_usage_totals=c["as_of"],
         scope=WHOLE_NAMESPACE,
+        namespace=NS,
     )
     await M.list_by_namespace(
         ident,
@@ -378,12 +386,15 @@ async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:
         agent=AGENT,
         ch=ch,
     )
-    await M.find_history_target(ORG, "00000000-0000-0000-0000-000000000001", ch=ch)
+    await M.find_history_target(ORG, "00000000-0000-0000-0000-000000000001", 7, ch=ch)
     await M.get_canonical_row(ORG, "00000000-0000-0000-0000-000000000001", ch=ch)
     await M.consolidated_dependents_of(ORG, NS, "k1", ch=ch)
-    await M.live_source_count(ORG, NS, ["k1"], ch=ch)
+    await M.live_source_keys(ORG, NS, ["k1"], ch=ch)
     await M.earliest_version_in_namespace(ORG, NS, ch=ch)
     await M.fetch_version_rows(ORG, NS, [("k1", 1)], ch=ch)
+    await M.status_before(
+        memory_head(org=ORG, namespace=NS, agent=AGENT, memory_key="k1", version=7), ch=ch
+    )
     await M.rollback_change_rows(ORG, NS, 5, memory_keys=["k1"] if c["vector"] else None, ch=ch)
     await M.find_duplicate_clusters(ORG, NS, ch=ch)
     await M.find_orphan_duplicates(ORG, NS, ch=ch)
@@ -520,21 +531,61 @@ async def _memory_workers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await M.memory_rows_by_identity_keys([(ORG, NS, AGENT, "-", "-", "k1")], ch=ch)
     # bulk_set's live-row lookup reads the same keys with sequential consistency
     await M.memory_rows_by_identity_keys([(ORG, NS, AGENT, "-", "-", "k1")], ch=ch, sequential=True)
-    await M.apply_entities_batch(
-        [
-            {
-                "org": ORG,
-                "namespace": NS,
-                "agent": AGENT,
-                "user_id": "-",
-                "session_id": "-",
-                "memory_key": "k1",
-                "entities": ["alice"],
-            }
-        ],
-        ch=ch,
+    # namespace.rollback's reinstate reads each key's head, a deleted one included
+    await M.memory_rows_by_identity_keys(
+        [(ORG, NS, AGENT, "-", "-", "k1")], ch=ch, sequential=True, include_tombstoned=True
     )
+    # The sensitivity sweep's owed facts read ClickHouse's head version
+    await M.clickhouse_head_versions([(ORG, NS, AGENT, "-", "-", "k1")], ch=ch)
     await ch.query_all(M.status_divergence_sql(), {})
+
+
+_ENTITY_KEY = {
+    "org": ORG,
+    "namespace": NS,
+    "agent": AGENT,
+    "user_id": "-",
+    "session_id": "-",
+    "memory_key": "k1",
+}
+_ENTITY_SHA = "a" * 64
+
+
+def _entity_rows() -> Any:
+    """A head at the version extracted and one search document of it, so the entity pass
+    reaches its commit and its mirror copy."""
+    from server.memory import store as M
+    from tests.unit.memory_rows import projection_row
+
+    head = projection_row(
+        org=ORG, namespace=NS, agent=AGENT, memory_key="k1", version=1, content_sha256=_ENTITY_SHA
+    )
+    document = {
+        **M.EMBEDDING_PERSISTED_COLS,
+        **_ENTITY_KEY,
+        "scope": "private",
+        "embedding_model": MODEL,
+        "embedding": VEC,
+        "embedding_dim": len(VEC),
+        "content_sha256": _ENTITY_SHA,
+        "version": 1,
+    }
+    return rows_by_substring(
+        {
+            "FROM loom.memory_embeddings FINAL": [document],
+            "SELECT DISTINCT": [{**_ENTITY_KEY, "scope": "private", "embedding_model": MODEL}],
+            "FROM loom.memory FINAL": [head],
+        }
+    )
+
+
+async def _entity_write(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The entity extractor's candidate read and its batched write over the head read."""
+    from server.memory import store as M
+
+    await M.read_unentitied_rows([_ENTITY_KEY], ch=ch)
+    item = {**_ENTITY_KEY, "version": 1, "content_sha256": _ENTITY_SHA, "entities": ["alice"]}
+    await M.apply_entities_batch([item], ch=ch)
 
 
 async def _deep_evidence(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -599,6 +650,12 @@ def cases() -> list[Case]:
                 "user_id": (False, True),
             },
             rows=_CHUNK_ROWS,
+        ),
+        Case(
+            "search_trace",
+            f"{MS}.search",
+            _search_trace,
+            {"entities": (False, True)},
         ),
         Case(
             "lexical_fallback",
@@ -671,6 +728,7 @@ def cases() -> list[Case]:
             {"scope": ("private", "shared"), "user_id": (False, True), "vector": (False, True)},
         ),
         Case("memory_repo.workers", MR, _memory_workers, {"filters": (False, True)}),
+        Case("memory_repo.entity_write", MR, _entity_write, {}, rows=_entity_rows()),
         Case(
             "memory_repo.embedding_stubs",
             MR,

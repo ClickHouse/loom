@@ -25,6 +25,7 @@ from typing import Any
 from server.core.ch import statement_timeout
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and
+from server.memory.store.lifecycle import served_rows
 
 # `{types:Array(String)}` is the caller's parameter.
 CURRENT_FACTS = """
@@ -81,6 +82,11 @@ _LIVE_PROFILE = f"""{_PROFILE_HEAD}
 """
 
 
+# The sources tag of a profile built from fewer facts than its digest counted. No digest
+# matches it, not even the empty one of a user with no facts, so the profile reads as behind.
+SHORT = "short"
+
+
 def schema_tag(schema_sha256: str) -> str:
     return "profile_schema:" + schema_sha256[:16]
 
@@ -116,7 +122,10 @@ async def user_facts(
 ) -> list[dict[str, Any]]:
     """The user's current facts, most confident and most recently changed first, at
     most `limit`; each dated by when it became true, else when it last changed, with
-    its writer (`actor`) and `version`, whom a builder's model call is for."""
+    its writer (`actor`) and `version`, whom a builder's model call is for. Under
+    Postgres only those the authority still serves at the version read
+    (`lifecycle.served_rows`): a change ClickHouse has not published (a delete, a
+    rewrite, a status, a label, a redaction) is not sent to the model."""
     ch = ch or _default_client()
     params: dict[str, Any] = {
         "org": org,
@@ -129,7 +138,8 @@ async def user_facts(
     keys = "AND startsWith(memory_key, 'user_')" if user_keys_only else ""
     rows: list[dict[str, Any]] = await ch.query_all(
         f"""
-        SELECT toString(memory_id) AS memory_id, value, actor, version,
+        SELECT toString(memory_id) AS memory_id, org, namespace, agent, user_id, session_id,
+               memory_key, value, actor, version, redacted_at,
                toString(coalesce(valid_at, updated_at)) AS since
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
@@ -140,7 +150,7 @@ async def user_facts(
         """,
         params=params,
     )
-    return rows
+    return await served_rows(rows)
 
 
 async def sources_digest(
@@ -268,8 +278,8 @@ async def users_behind(
     recall or a backfill changes no digest, and an edit, a revert, a restore, a
     restatement (a new `updated_at`), a deletion, an expiry or a passed `valid_to`
     does. A rebuild waits out the cooldown, except when the user has fewer sources
-    than the profile was built from (a deletion), and a user whose sources are all
-    gone is behind too."""
+    than the profile counted (a deletion), and a user whose sources are all gone is
+    behind too."""
     ch = ch or _default_client()
     refused = refused or {}
     params: dict[str, Any] = {
@@ -305,7 +315,7 @@ async def users_behind(
             SELECT user_id, tags, updated_at, version,
                    toUInt32OrZero(substring(
                        arrayFirst(t -> startsWith(t, 'profile_count:'), tags), 15
-                   )) AS built_from
+                   )) AS counted
             FROM loom.memory FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id != '-'
               AND {_LIVE_PROFILE}{scope_and(scope, params)}
@@ -319,7 +329,7 @@ async def users_behind(
         WHERE if(s.user_id != '', s.user_id, p.user_id) NOT IN {{skip:Array(String)}}
           AND (NOT has(p.tags, {{schema_tag:String}})
                OR (NOT has(p.tags, concat('profile_sources:', s.digest))
-                   AND (s.n < p.built_from
+                   AND (s.n < p.counted
                         OR p.updated_at <= now() - toIntervalSecond({{cool:UInt32}}))))
         ORDER BY has({{refused:Array(String)}}, who), has(p.tags, {{schema_tag:String}}),
                  p.updated_at, who

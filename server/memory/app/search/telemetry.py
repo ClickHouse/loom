@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections import Counter
 from collections.abc import Awaitable
 from typing import TYPE_CHECKING, Any
 
@@ -410,3 +411,13 @@ async def _start_actual_work(input: MemorySearchInput) -> tuple[dict[str, Any], 
         log.debug("enumeration-shape check failed: %s", e)
 
     return actual_work, _clock
+
+
+def record_page(ctx: SearchContext) -> None:
+    """The page as served, on the ledger: its tokens, its hits by source, the candidates."""
+    hits = ctx.final_hits
+    ctx.actual_work["block_tokens"] = sum(len(h.content_excerpt) // 4 for h in hits)
+    ctx.actual_work["items_by_source"] = dict(
+        Counter(getattr(h, "source", "fact") or "fact" for h in hits)
+    )
+    ctx.actual_work["candidates_total"] = int(ctx.candidates_total)

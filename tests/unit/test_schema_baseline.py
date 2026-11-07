@@ -138,6 +138,7 @@ def test_the_journal_files() -> None:
         "082_knowledge_ingestion.sql",
         "083_knowledge_datasets.sql",
         "084_memory_served_daily.sql",
+        "085_storage_authority.sql",
     ]
 
 

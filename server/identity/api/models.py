@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -485,6 +486,10 @@ class NamespaceMarkSeenOutput(BaseModel):
     seen_at: datetime
 
 
+# A loom.memory UInt32 column's range.
+UInt32 = Annotated[int, Field(ge=0, lt=2**32)]
+
+
 class _SnapshotMemoryRow(BaseModel):
     """One memory row in a snapshot payload: every persisted loom.memory
     column but org, namespace (the restore target supplies them) and
@@ -527,11 +532,13 @@ class _SnapshotMemoryRow(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     value_json: str = "{}"
-    status: str = "active"
+    status: Literal[
+        "active", "conflicted", "tombstoned", "duplicate", "superseded", "rejected", "proposed"
+    ] = "active"
     conflict_with: list[str] = Field(default_factory=list)
     duplicate_of: str = ""
-    evidence_count: int = 1
-    recall_count: int = 0
+    evidence_count: UInt32 = 1
+    recall_count: UInt32 = 0
     last_recalled_at: datetime | None = None
     cross_promoted_from_memory_id: str = ""
     cross_promoted_from_namespace: str = ""
@@ -540,8 +547,8 @@ class _SnapshotMemoryRow(BaseModel):
     temporal_anchor: datetime | None = None
     temporal_confidence: float = 0.0
     invalid_at: datetime | None = None
-    char_limit: int | None = None
-    reinforcement_count: int = 1
+    char_limit: UInt32 | None = None
+    reinforcement_count: UInt32 = 1
     last_reinforced_at: datetime | None = None
     mentioned_at: datetime | None = None
     sensitivity: str = ""
@@ -556,6 +563,13 @@ class _SnapshotMemoryRow(BaseModel):
     expire_reason: str = ""
     files: list[str] = Field(default_factory=list)
     concepts: list[str] = Field(default_factory=list)
+
+    @field_validator("memory_id")
+    @classmethod
+    def _canonical_memory_id(cls, v: str) -> str:
+        """Stored as the server spells a UUID, so both authorities, and the erasure
+        evidence, read back the same id."""
+        return str(uuid.UUID(v))
 
     @field_validator("value_json", mode="before")
     @classmethod
@@ -638,6 +652,12 @@ class NamespaceSnapshotOutput(BaseModel):
     # The newest audit rows of the namespace, newest first, at most `include_audit_tail_n`.
     audit_tail: list[_SnapshotAuditRow]
 
+    @field_validator("snapshot_id")
+    @classmethod
+    def _canonical_snapshot_id(cls, v: str) -> str:
+        """Matched against earlier restores in the server's UUID spelling."""
+        return str(uuid.UUID(v))
+
 
 class NamespaceRestoreInput(BaseModel):
     """Restore a snapshot payload into a target namespace.
@@ -659,11 +679,16 @@ class NamespaceRestoreInput(BaseModel):
 class NamespaceRestoreOutput(BaseModel):
     # False when this `snapshot_id` was already restored into the target (nothing written).
     restored: bool
+    # Some memories this call wrote are committed but not yet searchable (Postgres
+    # authority): the delivery worker publishes them, and a search waits for it.
+    publication_pending: bool = False
     # The namespace written to (echoes the request).
     target_namespace: str
     # The restored payload's id.
     snapshot_id: str
-    # `memories`, `types` and `grants` as the payload counted them.
+    # `memories`, `types` and `grants` as the payload counted them, and `erased_skipped`,
+    # how many of its memories an erasure had removed from the target (always 0 under
+    # ClickHouse); on a replay, the counts its first restore recorded.
     counts: dict[str, int]
 
 

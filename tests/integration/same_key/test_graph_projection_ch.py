@@ -571,10 +571,19 @@ async def test_a_deleted_row_is_found_by_id_only_when_asked(ch, org) -> None:
     await M.insert_memory_versions([row, deleted], ch=ch)
     mid = str(row["memory_id"])
     seen = await M.get_by_id(
-        mid, org=org, ch=ch, scope=WHOLE_NAMESPACE, strong=True, include_tombstoned=True
+        mid,
+        org=org,
+        ch=ch,
+        scope=WHOLE_NAMESPACE,
+        strong=True,
+        include_tombstoned=True,
+        namespace=NS,
     )
     assert seen is not None and seen.tombstoned_at is not None
-    assert await M.get_by_id(mid, org=org, ch=ch, scope=WHOLE_NAMESPACE, strong=True) is None
+    assert (
+        await M.get_by_id(mid, org=org, ch=ch, scope=WHOLE_NAMESPACE, strong=True, namespace=NS)
+        is None
+    )
 
 
 async def test_a_revised_row_still_holds_open_the_successor_written_for_it(ch, org) -> None:
@@ -759,7 +768,9 @@ async def test_a_row_predating_row_links_holds_by_when_its_value_was_first_writt
         " AND memory_key = 'legacy'",
         params={"org": org},
     )
-    head = await M.get_by_id(str(old["memory_id"]), org=org, ch=ch, scope=WHOLE_NAMESPACE)
+    head = await M.get_by_id(
+        str(old["memory_id"]), org=org, ch=ch, scope=WHOLE_NAMESPACE, namespace=NS
+    )
     if changed == "pinned":
         again = {"pinned": True}
     else:  # a value written since links, which states no fact, holds none
@@ -1287,21 +1298,28 @@ async def test_a_successor_is_judged_by_an_unredacted_copy_of_its_value(
     versions = [london] + [{**london, "version": M.next_version()} for _ in range(copies - 1)]
     await M.insert_memory_versions(versions[1:], ch=ch)
     value = "I currently live in London."
-    await handle_memory_update_by_id(
+    updated = await handle_memory_update_by_id(
         MemoryUpdateByIdInput(org=org, memory_id=str(london["memory_id"]), value=value)
     )
     # The latest copy of the value the successor was written for is scrubbed; an
     # earlier copy, if any, still says it.
     when = datetime.now(UTC).replace(tzinfo=None)
     mid = str(london["memory_id"])
-    await redact_versions(
-        org,
+    key = (
+        str(london["org"]),
         str(london["namespace"]),
+        str(london["agent"]),
         str(london["user_id"]),
+        str(london["session_id"]),
+        str(london["memory_key"]),
+    )
+    await redact_versions(
+        key,
         mid,
         versions[-1]["version"],
         when=when,
         reason_blob="t",
+        head=(mid, int(updated.new_version)),  # the key's live head: the successor
         ch=ch,
     )
     other = await _stated(ch, org, "s3", "I currently live in London")
@@ -1671,7 +1689,9 @@ async def test_an_overtaken_version_ends_its_edge_though_its_row_holds_another(c
         )
     )
     await after_write.drain()
-    london = await M.get_by_id(str(out.memory_id), org=org, ch=ch, scope=WHOLE_NAMESPACE)
+    london = await M.get_by_id(
+        str(out.memory_id), org=org, ch=ch, scope=WHOLE_NAMESPACE, namespace=NS
+    )
     rome = M.build_memory_version_row(
         london,
         version=M.next_version(),
@@ -2050,7 +2070,7 @@ async def test_a_value_a_retirement_ended_ends_at_the_retirement(ch, org) -> Non
     row = _row(org, "s1", "User lives in London", None, **_written_earlier())
     await M.insert_memory_versions([row], ch=ch)
     assert await M.supersede_duplicates(
-        org, [{**row, "superseded_by": "winner"}], ch=ch, strong=True
+        org, [{**row, "superseded_by": "winner"}], ch=ch, strong=True, namespace=NS
     )
     versions = await ch.query_all(
         "SELECT updated_at, invalid_at FROM loom.memory_versions"
@@ -2075,7 +2095,9 @@ async def test_a_value_an_undated_value_update_ended_ends_at_the_retirement(ch, 
     await M.insert_memory_versions([row], ch=ch)
     retiring = naive_utc_now().replace(microsecond=0)
     update = _supersession_update("newer", None)
-    assert await M.write_versions_by_ids(org, [str(row["memory_id"])], update, ch=ch, strong=True)
+    assert await M.write_versions_by_ids(
+        org, [str(row["memory_id"])], update, ch=ch, strong=True, namespace=NS
+    )
     ended = await value_ended_at(org, NS, str(row["memory_id"]), row["content_sha256"], ch=ch)
     assert ended >= retiring > row["updated_at"]
 
@@ -2091,7 +2113,9 @@ async def test_a_value_a_back_dated_value_update_ended_ends_at_its_date(ch, org)
     await M.insert_memory_versions([row], ch=ch)
     newer_valid_at = datetime(2026, 3, 1)
     update = _supersession_update("newer", newer_valid_at)
-    assert await M.write_versions_by_ids(org, [str(row["memory_id"])], update, ch=ch, strong=True)
+    assert await M.write_versions_by_ids(
+        org, [str(row["memory_id"])], update, ch=ch, strong=True, namespace=NS
+    )
     ended = await value_ended_at(org, NS, str(row["memory_id"]), row["content_sha256"], ch=ch)
     assert ended == newer_valid_at
 
@@ -2105,7 +2129,9 @@ async def test_a_value_a_by_id_tombstone_ended_ends_at_the_tombstone(ch, org) ->
     row = _row(org, "s1", "User lives in London", None, **_written_earlier())
     await M.insert_memory_versions([row], ch=ch)
     when = naive_utc_now().replace(microsecond=0)
-    assert await M.tombstone_cascade_by_ids(org, [str(row["memory_id"])], when=when, ch=ch)
+    assert await M.tombstone_cascade_by_ids(
+        org, [str(row["memory_id"])], when=when, ch=ch, namespace=NS
+    )
     ended = await value_ended_at(org, NS, str(row["memory_id"]), row["content_sha256"], ch=ch)
     assert ended == when
 
@@ -2115,7 +2141,7 @@ async def test_a_restored_tombstone_is_not_left_retired(ch, org) -> None:
 
     row = await _restored_dependent(ch, org)
     head = await M.get_by_id(
-        str(row["memory_id"]), org=org, ch=ch, strong=True, scope=WHOLE_NAMESPACE
+        str(row["memory_id"]), org=org, ch=ch, strong=True, scope=WHOLE_NAMESPACE, namespace=NS
     )
     assert head.tombstoned_at is None and head.invalid_at is None
 

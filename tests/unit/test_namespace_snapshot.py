@@ -8,6 +8,7 @@ in the wire shape so accidental breakages surface in CI.
 from __future__ import annotations
 
 import sys
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -111,7 +112,7 @@ def test_snapshot_audits_each_high_row_it_carries(monkeypatch) -> None:
 
     def row(key: str, sensitivity: str) -> dict:
         return {
-            "memory_id": f"id-{key}",
+            "memory_id": str(uuid.uuid5(uuid.NAMESPACE_URL, key)),
             "agent": "a",
             "user_id": "-",
             "session_id": "-",

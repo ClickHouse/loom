@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Awaitable
 from typing import Any, cast
 
 from fastapi import APIRouter
@@ -78,7 +79,7 @@ def _health_provider_fields(
             probed_dim=probed_dim,
             width_mismatches=width_mismatches,
             provider_status=provider_status,
-            pending_migrations=boot.SKIPPED_PENDING_MIGRATIONS,
+            pending_migrations=boot.skipped_migrations(),
             worker_lease_held=bool(lease.held) if lease else None,
             worker_lease_error=lease.error if lease else "",
             worker_lease_given_up=lease.given_up if lease else "",
@@ -318,7 +319,7 @@ async def health(response: Response, include: str = "") -> dict[str, object]:
     does not**, so a probe that reads only the code (Docker's healthcheck,
     a load balancer, an uptime monitor) sees the outage.
 
-    `?include=workers,langfuse,events,embedding_cache,llm_cache,otel,mirrors` opts
+    `?include=workers,langfuse,events,embedding_cache,llm_cache,otel,mirrors,postgres` opts
     in to per-subsystem checks, each reported independently: only
     `clickhouse` makes the whole response degraded.
     """
@@ -344,11 +345,20 @@ async def health(response: Response, include: str = "") -> dict[str, object]:
         # dies without shutting down.
         "participant_id": str(process_identity()),
         "boot_migrate": bool(settings.boot_migrate),
-        "pending_migrations": list(boot.SKIPPED_PENDING_MIGRATIONS),
+        "pending_migrations": list(boot.skipped_migrations()),
         "ch_ok": ch_ok,
         "mode": _mode(),
+        # Which store holds live memory; under postgres, whether it answers.
+        "storage_authority": settings.storage_authority,
         **prov,
     }
+    from server.core import pg
+
+    if pg.enabled():
+        out["pg_ok"] = await _pg_ok()
+        # The detail is opt-in: the default answer stays one ping for a liveness probe.
+        if out["pg_ok"] and "postgres" in requested:
+            out["postgres"] = await _postgres_block()
     out["deployment_config"] = _deployment_config_block()
     if ch_error:
         out["ch_error"] = ch_error
@@ -368,6 +378,34 @@ async def health(response: Response, include: str = "") -> dict[str, object]:
         out["mirrors"] = await _mirrors_block()
     out.update(_included_blocks(requested))
     return out
+
+
+async def _pg_ok() -> bool:
+    from server.core import pg
+
+    return bool(await _bounded(pg.fetchval("SELECT 1"), 0) == 1)
+
+
+async def _postgres_block() -> dict[str, object]:
+    """How commits are acknowledged (`pg_profile.standby_now`), and the deliveries and
+    audit rows ClickHouse kept refusing past the attempt cap; each None when unread."""
+    from server.core import pg_profile
+    from server.memory.store import pg_memory
+
+    standby, deliveries, audits = await asyncio.gather(
+        _bounded(pg_profile.standby_now(), None),
+        _bounded(pg_memory.parked_count(), None),
+        _bounded(pg_memory.parked_audits_count(), None),
+    )
+    return {"standby": standby, "parked_deliveries": deliveries, "parked_audits": audits}
+
+
+async def _bounded(read: Awaitable[Any], default: Any) -> Any:
+    """`read`'s answer within two seconds, or `default`: each read is bounded on its own."""
+    try:
+        return await asyncio.wait_for(read, timeout=2.0)  # not a setting: health's bound
+    except Exception:  # noqa: BLE001 — the health answer reports it, never raises
+        return default
 
 
 def _deployment_config_block() -> dict[str, object]:

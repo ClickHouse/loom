@@ -72,8 +72,13 @@ def _row(memory_id: str, namespace: str) -> MemoryRow:
 _ROWS = {_OWN: _row(_OWN, "alerts-bot"), _FOREIGN: _row(_FOREIGN, "someone-else")}
 
 
-async def _fake_get_by_id(memory_id: str, **_: Any) -> MemoryRow | None:
-    return _ROWS.get(memory_id)
+async def _fake_get_by_id(memory_id: str, *, namespace: str, **_: Any) -> MemoryRow | None:
+    row = _ROWS.get(memory_id)
+    return row if row is not None and row.namespace == namespace else None
+
+
+async def _fake_namespaces_of_id(_org: str, memory_id: str, **_: Any) -> list[str]:
+    return [_ROWS[memory_id].namespace] if memory_id in _ROWS else []
 
 
 def _token(role: str = "writer") -> str:
@@ -97,6 +102,7 @@ def http(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
     monkeypatch.setattr(http_mod, "_emit_event", lambda *a, **k: None)
     monkeypatch.setattr(memory_repo, "get_by_id", _fake_get_by_id)
+    monkeypatch.setattr(memory_repo, "namespaces_of_id", _fake_namespaces_of_id)
     app = FastAPI()
     app.include_router(build_router())
     return TestClient(app)
@@ -119,10 +125,12 @@ def test_exactly_the_id_addressed_ops_are_row_scoped() -> None:
 
 def test_every_row_scoped_handler_authorizes_the_rows_namespace() -> None:
     """The flag moves the namespace check from the transport into the
-    handler; a handler that forgot it would serve any namespace's row."""
+    handler; a handler that forgot it would serve any namespace's row.
+    `namespace_for_id` keeps only the namespaces `row_in_scope` admits."""
+    gates = ("row_in_scope", "_authorize_status_read", "namespace_for_id")
     for name in _ROW_SCOPED:
         src = inspect.getsource(_op(name).handler)
-        assert "row_in_scope" in src or "_authorize_status_read" in src, name
+        assert any(g in src for g in gates), name
 
 
 def _scoped(role: str = "viewer", org: str = "dev") -> AuthInfo:
@@ -226,6 +234,7 @@ def test_scoped_writer_updates_by_id_over_mcp(
     from server.auth.jwt import verify_token
 
     monkeypatch.setattr(memory_repo, "get_by_id", _fake_get_by_id)
+    monkeypatch.setattr(memory_repo, "namespaces_of_id", _fake_namespaces_of_id)
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
         return {"org": "dev", "namespace": "alerts-bot", "agent": "claude-code"}
@@ -276,7 +285,7 @@ def redact_targets(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         },
     }
 
-    async def _find(org: str, memory_id: str, **_: Any) -> HistoryTarget | None:
+    async def _find(org: str, memory_id: str, _version: int, **_: Any) -> HistoryTarget | None:
         row = targets.get(memory_id)
         if row is None:
             return None

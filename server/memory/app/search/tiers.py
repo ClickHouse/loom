@@ -7,10 +7,14 @@ import json
 import logging
 from typing import Any
 
+from server.core.error_summary import error_summary
 from server.core.tag_sql import TagFilter
 from server.identity.app.request_scope import request_scope
+from server.memory.app.search import pg_validation
+from server.memory.app.search.context import StaleVersions
 from server.memory.app.search_tag_filter import request_hard_tags as _request_hard_tags
 from server.memory.app.search_tag_filter import stamp_row_tags
+from server.observability import degradations
 
 log = logging.getLogger(__package__)
 
@@ -49,14 +53,18 @@ def _tier_window(tier_rows: list[Any], hits: list[Any], input: Any) -> list[Any]
 _TIER_ORDER = {"anchor_first": "created_at_asc", "recent_first": "created_at_desc"}
 
 
-async def _prepend_tier(hits: list[Any], input: Any, tier: str) -> list[Any]:
+async def _prepend_tier(
+    hits: list[Any], input: Any, tier: str, counted: StaleVersions
+) -> tuple[list[Any], int]:
     """Run-scoped tier: place the request's `anchor_first` oldest / `recent_first` newest
     memories of this identity (and of `run_id` when the request names one) ahead of the
     similarity hits, de-duplicated, within top_k. Rows carry score_components[tier] = 1.0 and
-    rank_score 0, so a consumer can tell the tier from a match. Fail-open."""
+    rank_score 0, so a consumer can tell the tier from a match. Returns the hits and how
+    many tier rows it read the Postgres authority no longer serves; `counted`, the versions
+    already counted as dropped, gains this tier's."""
     n = int(getattr(input, tier, 0) or 0)
     if n <= 0:
-        return hits
+        return hits, 0
     try:
         from server.memory.api.models_search import _MemorySearchHit
         from server.memory.store import Identity, list_by_namespace
@@ -82,7 +90,7 @@ async def _prepend_tier(hits: list[Any], input: Any, tier: str) -> list[Any]:
         )
     except Exception as e:  # noqa: BLE001 — a tier never fails a search
         log.debug("%s tier read failed: %s", tier, e)
-        return hits
+        return hits, 0
     if run_id:
         rows = [r for r in rows if str(getattr(r, "run_id", "") or "") == run_id]
     rows = rows[:n]
@@ -110,18 +118,53 @@ async def _prepend_tier(hits: list[Any], input: Any, tier: str) -> list[Any]:
         who = [getattr(r, c, None) for c in ("agent", "user_id", "session_id")]
         if None not in who:
             hit._row_identity = (str(who[0]), str(who[1]), str(who[2]))
+        hit._row_version = int(getattr(r, "version", 0) or 0)
         # `_apply_bodies` reads them: a constraint keeps its excerpt.
         tier_rows.append(stamp_row_tags(hit, getattr(r, "tags", None)))
+    try:
+        tier_rows, stale = await _served(tier_rows, input, counted)
+    except Exception as e:  # noqa: BLE001 — a tier never fails a search
+        # Its rows are left out, none of them checked; the response says so.
+        log.warning("%s tier check failed: %s", tier, error_summary(e))
+        degradations.note("memory.search", f"{tier}_unchecked", error_summary(e), health=False)
+        return hits, 0
     # the tiers join after the pool's code annotation: theirs is read here
     from server.memory.app.code_link_reads import annotate_hits
 
     await annotate_hits(input, tier_rows)
-    return _tier_window(tier_rows, hits, input)
+    return _tier_window(tier_rows, hits, input), stale
 
 
-async def _prepend_anchor(hits: list[Any], input: Any) -> list[Any]:
-    return await _prepend_tier(hits, input, "anchor_first")
+async def _served(
+    tier_rows: list[Any], input: Any, counted: StaleVersions
+) -> tuple[list[Any], int]:
+    """The tier rows the authority still serves, and how many it no longer does. Checked
+    after the page, so a version the page already counted is not counted again
+    (`counted` gains this tier's)."""
+    flags = await pg_validation.stale_flags(input.org, input.namespace, tier_rows)
+    kept: list[Any] = []
+    stale = 0
+    for hit, refused in zip(tier_rows, flags, strict=True):
+        if not refused:
+            kept.append(hit)
+            continue
+        if hit._row_identity is None:  # refused unread: counted, never keyed
+            stale += 1
+            continue
+        doc, version = pg_validation.doc_key(hit, input.namespace), pg_validation.doc_version(hit)
+        if counted.get(doc) != version:
+            stale += 1
+        counted[doc] = version
+    return kept, stale
 
 
-async def _prepend_recent(hits: list[Any], input: Any) -> list[Any]:
-    return await _prepend_tier(hits, input, "recent_first")
+async def _prepend_anchor(
+    hits: list[Any], input: Any, counted: StaleVersions
+) -> tuple[list[Any], int]:
+    return await _prepend_tier(hits, input, "anchor_first", counted)
+
+
+async def _prepend_recent(
+    hits: list[Any], input: Any, counted: StaleVersions
+) -> tuple[list[Any], int]:
+    return await _prepend_tier(hits, input, "recent_first", counted)

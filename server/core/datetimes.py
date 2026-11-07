@@ -29,7 +29,17 @@ from typing import Any, overload
 # fact is still stored and searchable, it just carries no temporal anchor.
 # (Sub-1970 anchors would need a DateTime64 column to retain; out of scope.)
 _DT_MIN = datetime(1970, 1, 1)
+# A parsed date keeps a margin below the column's end; `fits_datetime_column` is exact.
 _DT_MAX = datetime(2106, 1, 1)
+_DT_END = datetime(2106, 2, 7, 6, 28, 16)  # 2^32 seconds after the epoch
+
+
+def fits_datetime_column(dt: datetime) -> bool:
+    """Whether a DateTime column holds `dt` (aware or naive UTC)."""
+    try:
+        return _DT_MIN <= to_naive_utc(dt) < _DT_END
+    except OverflowError:  # an aware time at the edge of `datetime`'s own range
+        return False
 
 
 def _in_dt_range(dt: datetime) -> datetime | None:
@@ -89,6 +99,11 @@ def to_naive_utc(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     return dt.astimezone(UTC).replace(tzinfo=None) if dt.tzinfo else dt
+
+
+def to_naive_utc_second(dt: datetime) -> datetime:
+    """`dt` as naive UTC to the second, as a ClickHouse DateTime holds it."""
+    return to_naive_utc(dt).replace(microsecond=0)
 
 
 @overload

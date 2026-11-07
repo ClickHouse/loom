@@ -344,7 +344,7 @@ async def test_a_bulk_write_in_flight_during_a_delete_lands_with_its_vectors(
     ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
     for name in ("index_late_rows", "retire_vectors_for_keys"):
         monkeypatch.setattr(memory_repo, name, _noop)
-    monkeypatch.setattr(bulk_set, "fence_high", _noop)
+    monkeypatch.setattr("server.memory.app.high_fence.fence_high", _noop)
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
     await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))
@@ -461,7 +461,8 @@ async def test_a_conditional_set_whose_check_passed_lands_above_the_row_it_check
     sha = served_content_sha256("Tuesdays")
     out = await _set_through_phases(ch, monkeypatch, sha=sha)
     got = await _read_back(ch)
-    assert got is not None and got.value == "Thursdays" and out.version == head + 1
+    # and above the head it writes over (`version_over`), which the second draw ties
+    assert got is not None and got.value == "Thursdays" and out.version == head + 2
 
 
 @pytest.mark.asyncio
@@ -870,7 +871,7 @@ async def test_a_batch_whose_fence_read_missed_a_conditional_delete_lands_with_i
     ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
     for name in ("index_late_rows", "retire_vectors_for_keys"):
         monkeypatch.setattr(memory_repo, name, _noop)
-    monkeypatch.setattr(bulk_set, "fence_high", _noop)
+    monkeypatch.setattr("server.memory.app.high_fence.fence_high", _noop)
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
     state = _BulkWriteState()

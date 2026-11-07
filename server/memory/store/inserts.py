@@ -34,14 +34,28 @@ async def insert_memory_versions(
     rows: Sequence[Mapping[str, Any]],
     *,
     ch: _CHClient | None = None,
+    published: bool = False,
+    publish_now: bool = True,
 ) -> int:
     """The one loom.memory write: every row is checked against
     MEMORY_PERSISTED_COLS before the insert (see `check_memory_rows`), and
-    the insert is committed. Returns the row count; an empty batch writes
-    nothing."""
+    the insert is committed. Under the Postgres authority the rows are committed
+    there first and published from the commit (`pg_publish`), which inserts them
+    here with `published`; with `publish_now` False they are only committed, for the
+    delivery worker to publish. Returns the row count; an empty batch writes nothing."""
     if not rows:
         return 0
     check_memory_rows(rows)
+    from server.core import pg
+
+    if pg.enabled() and not published:
+        from server.memory.store import pg_publish
+
+        if publish_now:
+            await pg_publish.commit_and_publish(rows, ch=ch)
+        else:
+            await pg_publish.commit(rows, publisher_lease=False)
+        return len(rows)
     ch = ch or _default_client()
     await ch.insert(
         "loom.memory",

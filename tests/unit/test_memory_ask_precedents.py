@@ -652,6 +652,24 @@ async def test_a_cited_row_that_changed_or_vanished_is_a_fast_miss(fast_env) -> 
 
 
 @pytest.mark.asyncio
+async def test_the_fast_path_is_off_under_the_postgres_authority(monkeypatch) -> None:
+    # Its marks and evidence are ClickHouse's, which can trail a delete the authority
+    # holds; the ask retrieves, and the precedent is judged against the checked pool.
+    from server.core import pg
+    from server.memory.app import precedents
+
+    read: list[Any] = []
+
+    async def _lookup(*a: Any, **_k: Any) -> None:
+        read.append(a)
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(repo, "lookup", _lookup)
+    assert await precedents.fast_reuse("k", org="o", namespace="ns") is None
+    assert read == [], "no precedent is read"
+
+
+@pytest.mark.asyncio
 async def test_the_fast_path_is_off_with_precedents_off(fast_env) -> None:
     await _ask()
     out = await _ask(precedents=False)

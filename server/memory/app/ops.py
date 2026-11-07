@@ -37,8 +37,10 @@ from server.memory.api.models_temporal import (
     MemoryOutcomeRunOutput,
 )
 from server.memory.domain.lock import refuses_retirement
-from server.memory.store import MemoryRow, categories
+from server.memory.store import categories
 from server.memory.store.lifecycle import reject_by_identity
+from server.memory.store.pg_memory import AdmissionContendedError
+from server.memory.store.rows import identity_key
 
 log = logging.getLogger(__name__)
 
@@ -56,15 +58,16 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
     from server.core.ch import get_client
 
     ch = get_client()
-    # Resolve the row first, by key or by id, under the request's scope: a row
-    # outside it (or in another namespace) answers like a missing one, before
-    # any counter is read or written.
+    # Resolve the row first, by key or by id, in the request's namespace and scope: a
+    # row outside them answers like a missing one, before any counter is read or written.
     if input.memory_id:
         row = await memory_repo.get_by_id(
-            input.memory_id, org=input.org, fresh=True, scope=request_scope()
+            input.memory_id,
+            org=input.org,
+            namespace=input.namespace,
+            fresh=True,
+            scope=request_scope(),
         )
-        if row is not None and row.namespace != input.namespace:
-            row = None
     elif input.memory_key:
         ident = memory_repo.Identity(
             org=input.org,
@@ -144,34 +147,25 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
             )
             # A locked memory is not quarantined; the reject skips any locked copy.
             if int((cnt or {}).get("n") or 0) >= threshold and not refuses_retirement(row):
-                idr = await ch.query_one(
-                    "SELECT agent, user_id, memory_key FROM loom.memory FINAL "
-                    "WHERE org = {org:String} AND namespace = {ns:String} "
-                    "AND memory_id = {mid:UUID} AND tombstoned_at IS NULL",
-                    params={"org": input.org, "ns": input.namespace, "mid": memory_id},
-                )
-                if idr:
-                    # Quarantined only if the named row itself was rejected; a lock or a
-                    # delete since the read above leaves it.
-                    rejected: set[str] = set()
-
-                    def leave_locked(r: MemoryRow) -> bool:
-                        if refuses_retirement(r):
-                            return True
-                        rejected.add(str(r.memory_id))
-                        return False
-
-                    await reject_by_identity(
+                # The row resolved above, as the authority holds it.
+                try:
+                    rejected = await reject_by_identity(
                         input.org,
                         input.namespace,
-                        str(idr["agent"]),
-                        str(idr["user_id"]),
-                        str(idr["memory_key"]),
+                        row.agent,
+                        row.user_id,
+                        row.memory_key,
                         f"auto-quarantine: {int((cnt or {}).get('n') or 0)} negative outcomes",
-                        skip=leave_locked,
+                        skip=refuses_retirement,
                         ch=ch,
                     )
+                    # Only if the named row itself was rejected: a lock or a delete since
+                    # the read above leaves it.
                     quarantined = memory_id in rejected
+                except AdmissionContendedError:
+                    # The outcome is recorded, and a retry would count it again: the
+                    # next negative outcome over the threshold quarantines the key.
+                    log.warning("memory.outcome: quarantine of %s contended, left", memory_id)
 
     usage = await ch.query_one(
         """
@@ -260,7 +254,7 @@ async def _recheck_reindexed_heads(
     from server.memory.store import read_your_writes_enabled
 
     sequential = read_your_writes_enabled()
-    read = {memory_repo.embedding_key(r): (r, w) for r, w in zip(rows, written, strict=True)}
+    read = {identity_key(r): (r, w) for r, w in zip(rows, written, strict=True)}
     heads = await memory_repo.memory_rows_by_identity_keys(list(read), ch=ch, sequential=sequential)
     gone: list[tuple[Any, int]] = []
     changed: list[Any] = []
@@ -280,7 +274,7 @@ async def _recheck_reindexed_heads(
     mirror = await memory_repo.memory_mirror_rows_for_keys(changed, ch=ch, sequential=sequential)
     out: list[dict[str, Any]] = []
     for m in mirror:
-        r, w = read[memory_repo.embedding_key(m)]
+        r, w = read[identity_key(m)]
         cols = {k: v for k, v in m.items() if k not in ("created_at", "version")}
         version = max(int(m["version"]), int(w["version"])) + 1
         same_text = (m["content_excerpt"], m["memory_type"]) == (
@@ -432,7 +426,7 @@ async def handle_memory_resolve_orphan_duplicates(
             memory_ids=memory_ids,
         )
 
-    await conflicts_repo.mark_active_by_ids(input.org, memory_ids)
+    await conflicts_repo.mark_active_by_ids(input.org, memory_ids, namespace=input.namespace)
     return MemoryResolveOrphanDuplicatesOutput(
         candidates=len(memory_ids),
         reactivated=len(memory_ids),
@@ -495,7 +489,10 @@ async def _open_conflict_for_edge(org: str, namespace: str, from_key: str, to_ke
     try:
         # A superseded or retired endpoint is not flagged: no conflict opened then.
         verdict = await mark_peers_conflicted(
-            org=org, new_memory_id=str(a.memory_id), peer_ids=[str(b.memory_id)]
+            org=org,
+            new_memory_id=str(a.memory_id),
+            peer_ids=[str(b.memory_id)],
+            namespace=namespace,
         )
     except Exception as e:  # noqa: BLE001 — the edge is kept
         log.warning("memory.link contradicts: mark_peers_conflicted failed: %s", e)

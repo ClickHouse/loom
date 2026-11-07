@@ -492,6 +492,39 @@ def _fenced_client(monkeypatch: pytest.MonkeyPatch, before_send: Any) -> tuple[A
     return ch_mod.CHClient(), driver
 
 
+def test_an_insert_under_a_lease_starts_by_its_end_carried_or_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """However long they waited after the lease was checked, the inserts sent under it
+    (gathered, as a publish sends them) start within the transit allowance of its end: a
+    carried one in its fenced statement, any other in one with the start guard alone, not
+    buffered, and each runs no longer than the write limit an erasure waits out."""
+    client, driver = _fenced_client(monkeypatch, lambda: None)
+    monkeypatch.setattr(rmt_carry, "_skew_at", rmt_carry.time.monotonic())
+    ended = rmt_carry.time.monotonic() - 10
+
+    async def _publish() -> None:
+        with rmt_carry.under_lease(ended):
+            await asyncio.gather(
+                client.insert(TABLE, [_row("k1")]),
+                client.insert("loom.audit_log", [{"row_hash": "h"}], settings={"async_insert": 1}),
+            )
+
+    asyncio.run(_publish())
+    expected_ms = (time.time() - 10 + 15) * 1000
+    sent = {
+        t: (stmt, settings)
+        for stmt, (t, settings) in zip(driver.statements, driver.sent, strict=True)
+    }
+    for table in (TABLE, "loom.audit_log"):
+        statement, settings = sent[table]
+        [deadline_ms] = re.findall(r"now64\(3\)\) > (\d+)", statement)
+        assert int(deadline_ms) == pytest.approx(expected_ms, abs=1000), table
+        assert settings["async_insert"] == 0 and settings["max_execution_time"] == 60
+    assert "system.columns" in sent[TABLE][0]
+    assert "system.columns" not in sent["loom.audit_log"][0]
+
+
 def test_the_acknowledgement_itself_is_not_fenced(monkeypatch: pytest.MonkeyPatch) -> None:
     """A renewal publishes from inside the write it renews for: its own insert
     must not be refused for the staleness it is curing."""
@@ -770,8 +803,8 @@ def test_a_boot_waits_long_enough_to_outwait_a_dead_writers_last_insert(
 ) -> None:
     """A longer write timeout lengthens how long a dead writer's insert may run;
     the boot's wait follows it instead of failing first."""
-    from server.core import ch as ch_mod
+    from server.settings import settings
 
     assert rmt_carry._boot_wait_s() == rmt_carry.ACK_WAIT_S  # the default write limit
-    monkeypatch.setattr(ch_mod, "class_timeout_s", lambda cls: 300.0)
+    monkeypatch.setattr(settings, "ch_timeout_write_s", 300)
     assert rmt_carry._boot_wait_s() > rmt_carry._writer_bound_s() > rmt_carry.ACK_WAIT_S

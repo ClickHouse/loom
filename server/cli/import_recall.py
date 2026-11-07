@@ -765,11 +765,12 @@ async def _make_writer(
 
         return _http_writer, client.aclose
 
+    from server.cli._ch import connect_checked, disconnect
     from server.core.ch import get_client
 
     handlers = inproc_ops()
     ch = get_client()
-    await ch.connect()
+    await connect_checked(ch)
     from server import boot
     from server.core.background import register_buffer_drainer
     from server.insights.app.provider_command import model_command
@@ -779,7 +780,7 @@ async def _make_writer(
     try:
         await command.__aenter__()
     except BaseException:
-        await ch.disconnect()
+        await disconnect(ch)
         raise
 
     async def _inproc_writer(op: str, payload: dict[str, Any]) -> None:
@@ -792,7 +793,7 @@ async def _make_writer(
         try:
             await command.__aexit__(None, None, None)
         finally:
-            await ch.disconnect()
+            await disconnect(ch)
 
     return _inproc_writer, close
 

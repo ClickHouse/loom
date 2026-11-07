@@ -102,12 +102,17 @@ async def fast_reuse(
     eligible, no plane any of its namespaces reads has been written since its window was
     retrieved, the blacklist has not changed, and every memory row it cites is still
     live with the same hash. None on any miss or any error; the caller then retrieves
-    and takes the post-retrieval precedent path, which may still serve the same row."""
+    and takes the post-retrieval precedent path, which may still serve the same row.
+    Always None under the Postgres authority: the marks and the evidence are ClickHouse's,
+    which can trail a delete or a label the authority holds."""
     import asyncio
 
     from server.core import namespace_write_marks as marks_repo
+    from server.core import pg
     from server.memory.store import ask_precedents as repo
 
+    if pg.enabled():
+        return None
     try:
         prec = await repo.lookup(org, namespace, key)
         if prec is None:

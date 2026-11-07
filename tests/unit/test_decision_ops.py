@@ -284,7 +284,7 @@ def env(monkeypatch):
     monkeypatch.setattr(msearch, "handle_memory_search", fake_search)
     import server.memory.app.blacklist_guard as blacklist
 
-    async def fake_find_match(*, org, namespace, value):
+    async def fake_find_match(*, org, namespace, value, policy=None):
         hit = any(re.search(p, value) for p in ch.blocked)
         return SimpleNamespace(pattern_id="bl-1", scope="namespace", reason="r") if hit else None
 
@@ -820,7 +820,9 @@ def test_a_pinned_decision_peer_is_marked_conflicted_and_stays_pinned(monkeypatc
     monkeypatch.setattr(lifecycle, "mirror_status_to_embeddings", mirror)
     monkeypatch.setattr(lifecycle, "_default_client", lambda: object())
     out = asyncio.run(
-        conflicts.mark_peers_conflicted(org="o", new_memory_id="new", peer_ids=["pin"])
+        conflicts.mark_peers_conflicted(
+            org="o", namespace="n", new_memory_id="new", peer_ids=["pin"]
+        )
     )
     assert out == "conflict"
     by_id = {str(r["memory_id"]): r for r in written}
@@ -1033,7 +1035,7 @@ def test_a_failed_blacklist_read_is_counted_as_an_error(monkeypatch, env) -> Non
     counted: list[str] = []
     monkeypatch.setattr(h, "count_write", lambda ns, outcome: counted.append(outcome))
 
-    async def unreadable(*, org, namespace, value):
+    async def unreadable(*, org, namespace, value, policy=None):
         raise RuntimeError("ClickHouse is down")
 
     monkeypatch.setattr(blacklist, "find_match", unreadable)

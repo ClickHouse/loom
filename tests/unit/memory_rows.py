@@ -34,3 +34,10 @@ def projection_row(
     )
     row["value_text"] = row["value"]
     return row
+
+
+def memory_head(*, org: str, namespace: str, **cols: Any) -> Any:
+    """The `MemoryRow` a head read returns for `projection_row(...)`."""
+    from server.memory import store as mr
+
+    return mr._hydrate(projection_row(org=org, namespace=namespace, **cols))

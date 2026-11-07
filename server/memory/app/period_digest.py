@@ -9,14 +9,18 @@ often all of them reach it.
 A period digest is the next scale: for one identity (org, namespace, agent, user_id) the
 digests are ordered by event time and cut into non-overlapping windows of
 `sessions_per_period`; each complete window is compressed by one LLM call into a dated
-paragraph and written as a `loom.memory` row of type `semantic` (the type the search legs
-read; `episodic` is the non-searchable type reserved for raw turn rows), key
+paragraph and written as a `loom.memory` row of type `semantic` (the type the search
+legs read; `episodic` is the non-searchable type reserved for raw turn rows), key
 `period_digest_<first>_<last>`, source_class `derived`, `valid_at` = the first session's
-date, tagged `period_digest` plus a `src:summary:<session>` tag per digest. Lineage: the row
-links `derived_from` to the memories its digests compressed, so the derived-row audit
-(`memory.evidence` scope `derived`, `derived_fmr`) judges a period row against the facts
-under it. A trailing window shorter than K is left for a later pass; a window whose key
-already exists is skipped, so the pass is idempotent and additive. Nothing is tombstoned.
+date, tagged `period_digest` plus a `src:summary:<session>` tag per digest. Lineage: the
+row links `derived_from` to the memories its digests compressed, so the derived-row
+audit (`memory.evidence` scope `derived`, `derived_fmr`) judges a period row against the
+facts under it; a row whose publication was pending, or whose lineage write failed, goes
+without it until a `rewrite_existing` pass. A trailing window shorter than K is left for
+a later pass; a window whose key has a version, a deleted one included, is skipped, so
+the pass is idempotent and additive and never writes back a period taken out.
+Under Postgres the authority's heads decide which periods are written, so one committed
+but not yet in ClickHouse is not written again. Nothing is tombstoned.
 
 The rows are plain memories: they compete in the vector legs like any fact,
 keep out of the session-digest leg (whose keys start with `summary:`) and
@@ -27,7 +31,6 @@ and `memory.evidence` like every other derived row.
 from __future__ import annotations
 
 import json
-import logging
 import re
 import uuid
 from collections import defaultdict
@@ -35,18 +38,19 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from server.core import pg
 from server.core.datetimes import naive_utc_now
+from server.core.error_summary import error_summary
 from server.llm import customer
 from server.llm.identity import reads_writer
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.trust import subject_of
-from server.memory.store.inserts import insert_memory_versions
+from server.memory.store import pg_memory
+from server.memory.store.lifecycle import insert_documented_versions, served_rows
 from server.memory.store.reads import session_writers
 from server.memory.store.rows import next_version
 from server.observability.genai import llm_stage
 from server.settings.budgets import llm_max_tokens
-
-log = logging.getLogger(__name__)
 
 PERIOD_KEY_PREFIX = "period_digest_"
 PERIOD_TAG = "period_digest"
@@ -78,8 +82,8 @@ class PeriodDigestConfig:
     # With an explicit namespace the operator has said which namespace; the
     # namespaces.consolidation_enabled opt-in gates the unscoped worker pass.
     require_opt_in: bool = True
-    # Rewrite windows whose key already exists (a new version replaces the
-    # old row under FINAL); for a prompt or shape change on rows already written.
+    # Rewrite live windows whose key already exists (a new version replaces the old row
+    # under FINAL), for a prompt or shape change; one taken out stays out.
     rewrite_existing: bool = False
 
 
@@ -88,7 +92,7 @@ class PeriodDigestResult:
     identities_scanned: int = 0
     periods_planned: int = 0
     periods_written: int = 0
-    periods_existing: int = 0
+    periods_skipped: int = 0
     digests_covered: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
@@ -140,14 +144,13 @@ def plan_periods(
     digests: list[dict[str, Any]],
     *,
     sessions_per_period: int,
-    existing_keys: set[str] | None = None,
-    max_periods_per_identity: int = 20,
+    skip_keys: set[str] | None = None,
 ) -> tuple[list[Period], int]:
     """Cut one namespace's digests into complete windows of K per identity,
-    ordered by event time then session_id; skip windows whose key already
-    exists. Returns (periods to write, periods already present). Pure."""
+    ordered by event time then session_id; skip windows whose key is in
+    `skip_keys`. Returns (periods to write, periods skipped). Pure."""
     k = max(2, int(sessions_per_period))
-    existing = existing_keys or set()
+    skip = skip_keys or set()
     by_identity: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for d in digests:
         if not str(d.get("session_id") or ""):
@@ -160,24 +163,19 @@ def plan_periods(
         )
         by_identity[ident].append(d)
     out: list[Period] = []
-    present = 0
+    skipped = 0
     for ident, items in sorted(by_identity.items()):
         ordered = sorted(
             items,
             key=lambda d: (_at(d) is None, _at(d) or datetime.min, str(d.get("session_id"))),
         )
-        made = 0
         for start in range(0, len(ordered) - k + 1, k):
-            window = tuple(ordered[start : start + k])
-            period = Period(*ident, digests=window)
-            if period.memory_key in existing:
-                present += 1
-                continue
-            if made >= max_periods_per_identity:
-                break
-            out.append(period)
-            made += 1
-    return out, present
+            period = Period(*ident, digests=tuple(ordered[start : start + k]))
+            if period.memory_key in skip:
+                skipped += 1
+            else:
+                out.append(period)
+    return out, skipped
 
 
 def build_period_prompt(period: Period) -> tuple[str, str]:
@@ -364,14 +362,19 @@ async def _fetch_digests(ch: Any, ident: dict[str, Any]) -> list[dict[str, Any]]
     return list(rows or [])
 
 
-async def _existing_period_keys(ch: Any, ident: dict[str, Any]) -> set[str]:
+async def _skipped_period_keys(ch: Any, ident: dict[str, Any], *, rewrite: bool) -> set[str]:
+    """On ClickHouse, the identity's period keys a pass skips: every key with a version, or
+    under a rewrite only those taken out (deleted, redacted or no longer active: an Undo
+    of a retirement brings a redacted version back as the live head)."""
     rows = await ch.query_all(
         """
-        SELECT DISTINCT memory_key FROM loom.memory FINAL
+        SELECT memory_key,
+               (status != 'active' OR tombstoned_at IS NOT NULL OR redacted_at IS NOT NULL)
+                   AS taken_out
+        FROM loom.memory FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
-          AND agent = {agent:String} AND user_id = {uid:String}
+          AND agent = {agent:String} AND user_id = {uid:String} AND session_id = '-'
           AND startsWith(memory_key, {pfx:String})
-          AND status = 'active' AND tombstoned_at IS NULL
         """,
         params={
             "org": ident["org"],
@@ -381,14 +384,34 @@ async def _existing_period_keys(ch: Any, ident: dict[str, Any]) -> set[str]:
             "pfx": PERIOD_KEY_PREFIX,
         },
     )
-    return {str(r.get("memory_key") or "") for r in (rows or [])}
+    return {str(r["memory_key"]) for r in rows if not rewrite or r["taken_out"]}
+
+
+async def _writable_in_authority(periods: list[Period], *, rewrite: bool) -> list[Period]:
+    """Under Postgres, the periods a pass may write: those the authority holds no head for,
+    or under a rewrite a live one (active, neither deleted nor redacted, as
+    `_skipped_period_keys` has it). A period committed but not yet in ClickHouse counts as
+    written."""
+    keys = [(p.org, p.namespace, p.agent, p.user_id, "-", p.memory_key) for p in periods]
+    heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True)
+    return [
+        p
+        for p, k in zip(periods, keys, strict=True)
+        if (h := heads.get(k)) is None
+        or (
+            rewrite
+            and h.get("status") == "active"
+            and h.get("tombstoned_at") is None
+            and h.get("redacted_at") is None
+        )
+    ]
 
 
 async def _source_memories(ch: Any, period: Period) -> tuple[list[str], list[str]]:
     """(memory_ids, entities) of the facts the period's digests compressed
     (their `derived_from` keys), bounded: the ids are the lineage the derived-row
     audit reads, the entities ride on the period row so the entity-ANN leg
-    and the chunk leg's entity overlap can reach it."""
+    and the chunk leg's entity overlap can reach it. A failed read raises."""
     keys: list[str] = []
     for d in period.digests:
         raw = d.get("derived_from") or []
@@ -401,11 +424,12 @@ async def _source_memories(ch: Any, period: Period) -> tuple[list[str], list[str
     keys = list(dict.fromkeys(keys))[:64]
     if not keys:
         return [], []
+    # A 'high' row's entities were mined from its value; the period row is plain and
+    # embedded, so it never carries them.
     rows = await ch.query_all(
         """
-        SELECT toString(memory_id) AS memory_id,
-               -- a 'high' row's entities were mined from its value; the period row is
-               -- plain and embedded, so it never carries them (the id stays, for lineage)
+        SELECT toString(memory_id) AS memory_id, org, namespace, agent, user_id, session_id,
+               memory_key, version, redacted_at, toString(content_sha256) AS content_sha256,
                if(sensitivity = 'high', [], entities) AS entities
         FROM loom.memory FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
@@ -421,16 +445,33 @@ async def _source_memories(ch: Any, period: Period) -> tuple[list[str], list[str
             "keys": keys,
         },
     )
-    ids = [str(r.get("memory_id")) for r in (rows or []) if r.get("memory_id")]
+    ids = [str(r.get("memory_id")) for r in rows if r.get("memory_id")]
+    # Only a source the authority still serves as read, or as a copy of it, lends its
+    # entities: a change ClickHouse has not published still reads as the old row here.
+    # Every source stays in the lineage; one left out lends none until a rewrite.
+    served = await served_rows(rows, _is_copy)
     ents = sorted(
         {
             str(e).strip().lower()
-            for r in (rows or [])
+            for r in served
             for e in (r.get("entities") or [])
             if str(e).strip()
         }
     )[:32]
     return ids, ents
+
+
+def _is_copy(row: dict[str, Any], head: dict[str, Any]) -> bool:
+    """Whether a newer head is a copy of the source read (a pin, a touch, a lock): the
+    same memory and text, still active and not labelled high. The row lends the entities
+    ClickHouse read, so a source whose newer extraction ClickHouse has not published lends
+    the ones it had before."""
+    return (
+        str(head.get("memory_id")) == row["memory_id"]
+        and str(head.get("content_sha256")) == row["content_sha256"]
+        and head.get("status") == "active"
+        and head.get("sensitivity") != "high"
+    )
 
 
 async def _period_writer(ch: Any, period: Period) -> str:
@@ -453,12 +494,23 @@ async def _period_writer(ch: Any, period: Period) -> str:
 async def _write_period(
     ch: Any, llm: Any, embedder: Any, period: Period, result: PeriodDigestResult
 ) -> bool:
+    """Write one period. A step that fails before the row is written fails the period
+    alone, recorded in `result.failures`, and a later pass writes it whole. The lineage
+    follows the row once it is in ClickHouse, where a user erasure reaches the lineage
+    through the row's key; a row whose publication is pending, or whose lineage write
+    failed, is recorded and goes without its lineage until a rewrite."""
+    try:
+        source_ids, source_entities = await _source_memories(ch, period)
+    except Exception as e:  # noqa: BLE001 — recorded in failures; the pass continues
+        result.failures.append(f"sources {period.memory_key}: {error_summary(e)}"[:256])
+        return False
+    try:
+        writer = await _period_writer(ch, period)
+    except Exception as e:  # noqa: BLE001 — recorded in failures; the pass continues
+        result.failures.append(f"writer {period.memory_key}: {error_summary(e)}"[:256])
+        return False
     system, user = build_period_prompt(period)
-    whose = {
-        "namespace": period.namespace,
-        "subject": await _period_writer(ch, period),
-        "user_id": period.user_id,
-    }
+    whose = {"namespace": period.namespace, "subject": writer, "user_id": period.user_id}
     try:
         with llm_stage("period_digest"), customer.for_org(period.org, **whose):
             out = await llm.complete(
@@ -467,7 +519,7 @@ async def _write_period(
     except customer.HOLDS:
         raise  # the identity waits for the org, its other periods included
     except Exception as e:  # noqa: BLE001 — recorded in failures; the pass continues
-        result.failures.append(f"llm {period.memory_key}: {type(e).__name__}: {e}"[:256])
+        result.failures.append(f"llm {period.memory_key}: {error_summary(e)}"[:256])
         return False
     result.tokens_in += int(getattr(out, "tokens_in", 0) or 0)
     result.tokens_out += int(getattr(out, "tokens_out", 0) or 0)
@@ -475,13 +527,14 @@ async def _write_period(
     if not text:
         result.failures.append(f"empty digest {period.memory_key}")
         return False
-    with customer.for_org(period.org, **whose):
-        embedding = await embedder.embed(text)
     try:
-        source_ids, source_entities = await _source_memories(ch, period)
-    except Exception as e:  # noqa: BLE001 — lineage and entities are additive
-        log.warning("period_digest: source lookup failed (non-fatal): %s", e)
-        source_ids, source_entities = [], []
+        with customer.for_org(period.org, **whose):
+            embedding = await embedder.embed(text)
+    except customer.HOLDS:
+        raise  # as for the model call: the identity waits for the org
+    except Exception as e:  # noqa: BLE001 — recorded in failures; the pass continues
+        result.failures.append(f"embed {period.memory_key}: {error_summary(e)}"[:256])
+        return False
     memory_row, embedding_row = build_period_memory_rows(
         period,
         text=text,
@@ -491,11 +544,17 @@ async def _write_period(
         version=next_version(),
         entities=source_entities,
     )
-    await insert_memory_versions([memory_row], ch=ch)
     try:
-        if source_ids:
-            from server.memory.app.evidence import link_belief_sources
+        published = await insert_documented_versions([memory_row], [embedding_row], ch=ch)
+    except Exception as e:  # noqa: BLE001 — recorded in failures; the pass continues
+        result.failures.append(f"write {period.memory_key}: {error_summary(e)}"[:256])
+        return False
+    if source_ids and not published:
+        result.failures.append(f"links {period.memory_key}: publication pending")
+    elif source_ids:
+        from server.memory.app.evidence import link_belief_sources
 
+        try:
             await link_belief_sources(
                 org=period.org,
                 namespace=period.namespace,
@@ -504,14 +563,26 @@ async def _write_period(
                 support_type="derived_from",
                 ch=ch,
             )
-    except Exception as e:  # noqa: BLE001 — lineage is additive
-        log.warning("period_digest: derived_from links failed (non-fatal): %s", e)
-    await ch.insert(
-        "loom.memory_embeddings",
-        [embedding_row],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
-    )
+        except Exception as e:  # noqa: BLE001 — recorded in failures; the row stands
+            result.failures.append(f"links {period.memory_key}: {error_summary(e)}"[:256])
     return True
+
+
+async def _plan_identity(
+    ch: Any, digests: list[dict[str, Any]], ident: dict[str, Any], cfg: PeriodDigestConfig
+) -> tuple[list[Period], int]:
+    """(the identity's periods to write, how many were skipped as written or taken out).
+    Under Postgres the authority's heads decide which are written, ClickHouse's
+    otherwise; the cap applies to what is left, so a period skipped takes no place in it."""
+    k, rewrite = cfg.sessions_per_period, cfg.rewrite_existing
+    if pg.enabled():
+        windows, _ = plan_periods(digests, sessions_per_period=k)
+        writable = await _writable_in_authority(windows, rewrite=rewrite)
+        skipped = len(windows) - len(writable)
+    else:
+        skip = await _skipped_period_keys(ch, ident, rewrite=rewrite)
+        writable, skipped = plan_periods(digests, sessions_per_period=k, skip_keys=skip)
+    return writable[: max(0, cfg.max_periods_per_identity)], skipped
 
 
 async def run_period_digest(
@@ -544,15 +615,9 @@ async def run_period_digest(
     for ident in identities:
         try:
             digests = await _fetch_digests(ch, ident)
-            existing = set() if cfg.rewrite_existing else await _existing_period_keys(ch, ident)
-            periods, present = plan_periods(
-                digests,
-                sessions_per_period=cfg.sessions_per_period,
-                existing_keys=existing,
-                max_periods_per_identity=cfg.max_periods_per_identity,
-            )
+            periods, skipped = await _plan_identity(ch, digests, ident, cfg)
             result.periods_planned += len(periods)
-            result.periods_existing += present
+            result.periods_skipped += skipped
             if dry_run:
                 continue
             for period in periods:
@@ -563,7 +628,7 @@ async def run_period_digest(
             continue  # a held call is no failure: its periods are written once the org is back
         except Exception as e:  # noqa: BLE001 — one identity never fails the pass
             result.failures.append(
-                f"{ident.get('org')}/{ident.get('namespace')}: {type(e).__name__}: {e}"[:256]
+                f"{ident.get('org')}/{ident.get('namespace')}: {error_summary(e)}"[:256]
             )
     return result
 

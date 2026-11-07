@@ -101,15 +101,19 @@ schema. These rules keep that safe. The operator procedure is in
 7. **Settings:** a removed setting warns at boot rather than refusing to start. A new
    setting's default accepts what N-1 is configured with.
 8. **Retiring a column or table:** stop using it in N, drop it in N+1 or later.
-9. **No state outside ClickHouse.** Anything a replica must agree on (leases, runs,
-   the conflict resolver's queue, the similarity calibration, the frontend bundle of every
-   live build) is in a table, so a request can land on any replica of either build. The
-   one exception is the bytes of document originals with `LOOM_DOCUMENT_OBJECT_STORE=s3`:
-   they live in an S3-compatible bucket that every replica reads the same way, and the
-   catalog row naming each object is in ClickHouse. A build that does not read that row's
-   location answers such a download 410 and cannot erase such an object, so the store is
-   switched on after the rollout, and no rollback goes past this build while rows name
-   objects.
+9. **Replica-wide state lives in the deployment's stores, never in a process.** Anything a
+   replica must agree on (leases, runs, the conflict resolver's queue, the similarity
+   calibration, the frontend bundle of every live build) is in a ClickHouse table, so a
+   request can land on any replica of either build. Under the Postgres memory authority
+   ([storage authority](storage-authority.md)) Postgres holds the memory heads, the
+   revision journal, the deliveries, the scope generations and the requests'
+   `Idempotency-Key` records, and N and later read and write them there (rule 33); the
+   ClickHouse rule holds for everything else. The one exception is the bytes of document
+   originals with `LOOM_DOCUMENT_OBJECT_STORE=s3`: they live in an S3-compatible bucket
+   that every replica reads the same way, and the catalog row naming each object is in
+   ClickHouse. A build that does not read that row's location answers such a download 410
+   and cannot erase such an object, so the store is switched on after the rollout, and no
+   rollback goes past this build while rows name objects.
 10. **A `task.create` key's exclusion holds only among N's replicas.** `task.create` with an
     idempotency key holds a lease on the poster and its key (`_one_create_per_key`) and
     inserts under the key's dedup token (`insert_created_task`); the coverage watch's
@@ -198,8 +202,8 @@ schema. These rules keep that safe. The operator procedure is in
     projection failure (N-1 erases them by namespace only), so a point-write retirement
     intent naming that user in `retired[]` stays until N erases the user again, or the
     intent is resolved and its TTL ends it. A projection repair on N-1 leaves every projection kind N adds
-    (rule 3), `triples_follow_owed`, `entity_edges_drop_undeclared` and
-    `entity_edges_restore` among them, active
+    (rule 3), `triples_follow_owed`, `entity_edges_drop_undeclared`,
+    `entity_edges_restore` and `sensitivity_facts_owed` among them, active
     as `unsupported_projection`; N's repair replays them once N-1 stops serving.
 18. **A new revocation key** (such as SCIM's `SCIM_PREFIX`): N-1 does not read
     it, so a token it revokes still works on an N-1 replica. The feature that writes
@@ -363,6 +367,16 @@ schema. These rules keep that safe. The operator procedure is in
     document N-1 writes holds until N's next full listing, and the check, which reads
     each document's stored text on every full listing, stays while a build that stores
     raw exports may serve. The mixed-version gate does not check this rule.
+33. **The memory authority** (`loom.storage_authority`, migration
+    `085_storage_authority.sql`; `schemas/pg_migrations/`): N records the deployment's
+    authority at the first boot that runs its migrations (`LOOM_BOOT_MIGRATE`) and refuses
+    to serve against another. A build before N does not read the record and writes
+    `loom.memory` directly, so once a Postgres deployment is recorded every replica must
+    run N or later, and it never rolls back past N. Postgres migrations follow rule 1:
+    additive, applied at boot under an advisory lock, and a build at or after N serves on a
+    later build's Postgres schema with a warning naming the files it does not carry ([Postgres
+    migrations](../development/migrations.md#postgres-migrations)). The mixed-version gate
+    does not check this rule.
 
 ## What checks them
 

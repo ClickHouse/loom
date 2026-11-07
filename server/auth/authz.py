@@ -686,6 +686,14 @@ async def row_in_scope(
     confirm the id exists. A refusal that could not be verified marks the
     request the server's (`fail_closed`); `hides_answer=False` when this
     refusal does not decide what the caller asked for."""
+    verdict = await row_reach(org, namespace, required_role)
+    if verdict is None and hides_answer:  # the server's failure
+        note_answered_unverified()
+    return bool(verdict)
+
+
+async def row_reach(org: str, namespace: str, required_role: Role = Role.VIEWER) -> bool | None:
+    """`row_in_scope`'s answer, None for a refusal that could not be verified."""
     from server.auth.context import current_auth
     from server.core.errors import IdentityIncompleteError
 
@@ -695,9 +703,7 @@ async def row_in_scope(
     try:
         await check_authorized(auth, required_role=required_role, org=org, namespace=namespace)
     except PermissionError as e:
-        if hides_answer and getattr(e, "unverified", False):  # the server's failure
-            note_answered_unverified()
-        return False
+        return None if getattr(e, "unverified", False) else False
     except IdentityIncompleteError:
         return False
     return True
@@ -717,5 +723,6 @@ __all__ = [
     "names_namespace",
     "restricted_allows",
     "row_in_scope",
+    "row_reach",
     "scope_flags",
 ]

@@ -393,7 +393,7 @@ def test_a_refresh_past_its_deadline_answers_busy_and_keeps_the_token(monkeypatc
 def test_a_failed_refresh_puts_its_token_back_even_when_cancelled(monkeypatch) -> None:
     # The rollback of a failed refresh runs to its end: a request cancelled
     # in it must not leave the token spent with nothing issued in its place.
-    from server.auth import shielded
+    from server.core import shielded
 
     c = _client()
     token = _signed_in_tokens(c)["refresh_token"]

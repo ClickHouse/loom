@@ -669,3 +669,73 @@ def test_an_uncounted_copy_that_ties_on_the_last_key_is_not_served() -> None:
         )
     )
     assert got == [] and left_out
+
+
+def test_under_postgres_the_memory_section_reads_the_authoritys_heads(monkeypatch) -> None:
+    """Under the Postgres authority the memory section is the heads Postgres holds (a
+    committed write ClickHouse has not received is in, a delete it has not received is
+    out), filtered by the same scope and visibility before the LIMIT; ClickHouse is not
+    read."""
+    from server.core import pg
+
+    seen: list[tuple[str, tuple[object, ...]]] = []
+
+    async def _fetch(sql, *args):
+        seen.append((sql, args))
+        return [
+            {
+                "org": ORG,
+                "namespace": STD,
+                "agent": "a",
+                "user_id": "u",
+                "session_id": "-",
+                "memory_id": "00000000-0000-0000-0000-000000000001",
+                "memory_key": "k",
+                "version": 7,
+                "row": {
+                    "memory_type": "semantic",
+                    "value": '"v"',
+                    "confidence": 0.5,
+                    "source_trace": "t",
+                    "sensitivity": "low",
+                    "created_at": "2026-01-02T03:04:05",
+                    "expires_at": None,
+                    "tombstoned_at": None,
+                },
+            }
+        ]
+
+    async def _no_clickhouse(*_a, **_k):
+        raise AssertionError("ClickHouse read under the Postgres authority")
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg, "fetch", _fetch)
+    monkeypatch.setattr(store_exports, "export_memory", _no_clickhouse)
+    shown = Shown(hidden=(PRIV,), collections=("col-a",))
+    kept, count, truncated = asyncio.run(
+        h._export_memory(ORG, "user_id", "u", include_tombstoned=False, limit=1, shown=shown)
+    )
+    assert (count, truncated) == (1, False)
+    assert kept[0]["value"] == '"v"' and kept[0]["version"] == 7
+    assert kept[0]["created_at"] == datetime(2026, 1, 2, 3, 4, 5)
+    assert kept[0]["tombstoned_at"] is None
+    [(sql, args)] = seen
+    assert "FROM loom.memory_current" in sql and "user_id = $2" in sql
+    assert "row->>'tombstoned_at' IS NULL" in sql
+    assert args == (ORG, "u", 2, [PRIV], "col-", ["col-a"])
+
+
+def test_under_postgres_a_scope_postgres_cannot_store_exports_no_memory(monkeypatch) -> None:
+    from server.core import pg
+
+    async def _fetch(*_a):
+        raise AssertionError("sent to Postgres")
+
+    monkeypatch.setattr(pg, "fetch", _fetch)
+    for scope in ("u\x00", "u\ud800"):
+        rows = asyncio.run(
+            store_exports.export_memory_heads(
+                ORG, "user_id", scope, include_tombstoned=True, limit=5
+            )
+        )
+        assert rows == []

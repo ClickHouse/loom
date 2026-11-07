@@ -410,3 +410,45 @@ def test_apply_op_is_a_writer_op_and_audited() -> None:
 
     op = {o.name: o for o in ALL_OPERATIONS}["memory.apply"]
     assert op.required_role == Role.WRITER and op.audit
+
+
+def test_a_newer_head_is_judged_by_the_filter_as_clickhouse_judges_it() -> None:
+    """Under Postgres a filter target's newer head is applied to only while it still
+    matches, compared as ClickHouse compares the read: `created_at` to the second and
+    `confidence` as a Float32."""
+    from server.core.numbers import float32
+    from server.memory.api.models_apply import ApplyFilter
+    from server.memory.app import apply
+
+    # 0.3 as a Float32 is a hair above 0.3: ClickHouse still finds it `<= 0.3`.
+    row = _row("k", confidence=float32(0.3), created_at=_NOW.replace(microsecond=400_000))
+    assert float32(0.3) > 0.3 and apply._matches(ApplyFilter(confidence_lte=0.3), row)
+    # Within the second of `created_after`, as a DateTime compares it.
+    assert apply._matches(ApplyFilter(created_after=_NOW.replace(microsecond=900_000)), row)
+    assert not apply._matches(ApplyFilter(created_before=_NOW.replace(microsecond=900_000)), row)
+    assert not apply._matches(ApplyFilter(tags_all=["q3", "missing"]), row)
+    assert apply._matches(ApplyFilter(tags_any=["infra"], key_prefix="k"), row)
+    assert not apply._matches(ApplyFilter(memory_type="episodic"), row)
+    assert not apply._matches(ApplyFilter(source_trace="elsewhere"), row)
+
+
+def test_every_filter_field_can_reject_a_newer_head() -> None:
+    """Each filter field, set so the row fails it, rejects the row: a field added later
+    with no check in `_matches` would apply to heads the ClickHouse read leaves out."""
+    from server.memory.api.models_apply import ApplyFilter
+    from server.memory.app import apply
+
+    row = _row("k", confidence=0.8, source_trace="t")
+    failing = {
+        "memory_type": "episodic",
+        "tags_any": ["missing"],
+        "tags_all": ["q3", "missing"],
+        "key_prefix": "other",
+        "created_before": _NOW - timedelta(days=30),
+        "created_after": _NOW,
+        "confidence_lte": 0.5,
+        "source_trace": "elsewhere",
+    }
+    assert set(failing) == set(ApplyFilter.model_fields)
+    for name, value in failing.items():
+        assert not apply._matches(ApplyFilter(**{name: value}), row), name

@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
 
 from server.code.app.member_writes import assert_own_row
+from server.core import pg
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import served_content_sha256
@@ -23,8 +25,11 @@ from server.memory.api.models_crud import (
     MemorySetInput,
     MemorySetOutput,
 )
+from server.memory.app import blacklist_guard, pg_admission
 from server.memory.app import provenance as app_provenance
+from server.memory.app.reused_vectors import ReusedVectors
 from server.memory.app.set_commit import (
+    VerdictStale,
     _set_after_write,
     _set_conflict_verdict,
     _set_dry_run_answer,
@@ -35,6 +40,8 @@ from server.memory.app.set_commit import (
     _SetWrite,
     count_attribute_tags,
     count_write,
+    finished,
+    settled,
 )
 from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
@@ -43,8 +50,9 @@ from server.memory.domain.files import files_for_set
 from server.memory.domain.graph_quality import canonical_entities
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
 from server.memory.domain.value_shape import value_shape_advisories
-from server.memory.store import key_write_lock
-from server.memory.store.rows import next_version
+from server.memory.store import key_write_lock, pg_memory
+from server.memory.store.pg_memory import AdmissionContendedError, HeadMoved
+from server.memory.store.rows import next_version, version_over
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -273,9 +281,10 @@ async def _set_resolve_type(input: MemorySetInput) -> tuple[MemorySetInput, str,
 
 
 async def _set_fetch_existing(input: MemorySetInput) -> tuple[Any, Any]:
-    """Phase 2 of memory.set: the live row under this key and the write-config prefetch.
+    """Phase 2 of memory.set: the row under this key and the write-config prefetch.
 
-    Returns (the scheduled write-config task, the existing row or None).
+    Returns (the scheduled write-config task, the key's head or None): its live head, or
+    under Postgres its deleted head too.
     """
     # Fetch existing up front to preserve fields that survive an update
     # (created_at, expires_at). Single read, reused below. The namespace's
@@ -288,7 +297,7 @@ async def _set_fetch_existing(input: MemorySetInput) -> tuple[Any, Any]:
         input.org, input.namespace, input.memory_type, input.memory_key
     )
     with traced("ch.query.existing_memory"):
-        existing = await _mr.get_by_key(
+        head = await _mr.get_by_key(
             _mr.Identity(
                 org=input.org,
                 namespace=input.namespace,
@@ -300,8 +309,10 @@ async def _set_fetch_existing(input: MemorySetInput) -> tuple[Any, Any]:
             fresh=True,
             strong=True,  # the guard sees the latest version
             scope=request_scope(),
+            # Under Postgres a deleted head comes in the same read: the write goes above it.
+            include_tombstoned=pg.enabled(),
         )
-    return _cfg_task, existing
+    return _cfg_task, head
 
 
 async def _set_expiry(
@@ -389,6 +400,7 @@ async def _set_prepare_value(w: _SetWrite) -> None:
             org=input.org,
             namespace=input.namespace,
             value=serialized_value,
+            policy=w.policy if pg.enabled() else None,
         )
 
     # Sensitivity tier: the caller's level, else detected from the value. 'high' rows take
@@ -637,15 +649,33 @@ async def _handle_memory_set(
 async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     """memory.set, as its phases in order (each `_set_*` above says what it does).
 
-    The shared request state is `w` (_SetWrite). Early returns: a lock/pin
-    refusal, the non-embedded path, a dry-run 'rejected', a merge, a dry run.
-    """
+    Under the Postgres authority a write whose key's head changed before its commit
+    starts over (HeadMoved), reusing its vectors, at most LOOM_PG_ADMISSION_ROUNDS
+    times."""
+    if not pg.enabled():
+        return await _memory_set_once(input)
+    embedder = ReusedVectors(get_embedder())
+    spent = blacklist_guard.regex_work_spent()
+    for _ in range(settings.pg_admission_rounds):
+        blacklist_guard.rewind_regex_work(spent)
+        try:
+            return await _memory_set_once(input.model_copy(), embedder=embedder)
+        except HeadMoved:
+            continue
+    raise AdmissionContendedError(f"{input.memory_key!r} kept changing during this write")
+
+
+async def _memory_set_once(input: MemorySetInput, *, embedder: Any = None) -> MemorySetOutput:
+    """One pass of memory.set's phases. The shared request state is `w` (_SetWrite).
+    Early returns: a lock/pin refusal, the non-embedded path, a dry-run 'rejected', a
+    merge, a dry run. `embedder`: one holding the vectors an earlier pass computed."""
     ch = get_client()
     version = next_version()
 
     input, resolved_memory_type, retyped_from = await _set_resolve_type(input)
 
-    _cfg_task, existing = await _set_fetch_existing(input)
+    _cfg_task, head = await _set_fetch_existing(input)
+    existing = head if head is not None and head.tombstoned_at is None else None
 
     # Same key, same bytes → a reinforcement. A lock or a pin refuses a changed value before
     # anything is embedded.
@@ -663,6 +693,9 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
         expires_at=expires_at,
         restated=_restated,
     )
+    if pg.enabled():
+        # Before the guards: what they checked is what the commit holds the write to.
+        w.policy = await pg_memory.policy_generations(input.org)
     await _set_prepare_value(w)
     if input.proposed:
         await _refuse_proposal_over_fact(input)
@@ -671,43 +704,68 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
         # The precondition was read under the key lock just now: the version is drawn
         # after it, so only a delete that lands after the check is above it (write_fence).
         w.version = next_version()
+    # Above the head it writes over, one from a replica whose clock is ahead included:
+    # under Postgres the commit keeps the newer head, a delete's tombstone too.
+    if head is not None:
+        w.version = version_over(head, w.version)
     _set_build_memory_row(w)
 
     # Non-searchable type, or a 'high' sensitivity row: single insert is the
     # only work — no embedding row means no search leg can return it.
     if not is_embedded(w.input.memory_type, w.effective_sensitivity):
-        return await _set_plain_insert(w, ch)
+        return await finished(w, _set_plain_insert(w, ch))
 
     # Searchable: build + insert the embedding row too. The two inserts
     # hit different tables and don't depend on each other; parallelize to
     # pay 1×RTT instead of 2 (RTT dominates on CH Cloud). A vector the coded
     # table cannot take fails the write before the calls it pays for.
     await codes_state.refuse_width("memory_embeddings", get_embedder().dim)
-    await _set_embed(w)
+    await _set_embed(w, embedder)
 
-    _cfg, conflict_result, peers_out, _rejected_dry_run = await _set_conflict_verdict(w, _cfg_task)
-    if _rejected_dry_run is not None:
-        return _rejected_dry_run
+    deadline = time.monotonic() + settings.pg_admission_deadline_ms / 1000
+    while True:
+        if pg.enabled() and w.peer_rows is None:
+            # The check below must see every commit through these generations.
+            captured = await pg_admission.capture(input.org, input.namespace)
+            w.generations = {**captured, **w.policy}
+        _cfg, conflict_result, peers_out, _rejected_dry_run = await _set_conflict_verdict(
+            w, _cfg_task
+        )
+        if _rejected_dry_run is not None:
+            return _rejected_dry_run
 
-    if conflict_result.verdict == "merge":
-        return await _set_merge(w, ch, _cfg, conflict_result, peers_out)
+        if conflict_result.verdict == "merge":
+            return await _set_merge(w, ch, _cfg, conflict_result, peers_out)
 
-    # duplicate tier: very-high similarity, canonical-form mismatch.
-    # Insert proceeds (unlike merge) with status='duplicate' +
-    # duplicate_of pointing at the canonical, surfaced to the caller.
-    duplicate_of_id = _stamp_lifecycle(w.memory_row, conflict_result, w.input)
+        # duplicate tier: very-high similarity, canonical-form mismatch.
+        # Insert proceeds (unlike merge) with status='duplicate' +
+        # duplicate_of pointing at the canonical, surfaced to the caller.
+        duplicate_of_id = _stamp_lifecycle(w.memory_row, conflict_result, w.input)
 
-    if w.input.dry_run:
-        # The verdict is the answer. No loom.memory row, no embedding row, no conflict marks,
-        # no supersession, no entity projection, no audit hash (that row records writes; none
-        # happened), no write tick. The version is 0 so nothing can mistake it for one.
-        return _set_dry_run_answer(w, conflict_result, peers_out, duplicate_of_id)
+        if w.input.dry_run:
+            # The verdict is the answer. No loom.memory row, no embedding row, no conflict
+            # marks, no supersession, no entity projection, no audit hash (that row records
+            # writes; none happened), no write tick. The version is 0 so nothing can
+            # mistake it for one.
+            return _set_dry_run_answer(w, conflict_result, peers_out, duplicate_of_id)
 
-    conflict_result = await _set_dual_write(w, ch, _cfg, conflict_result)
+        try:
+            conflict_result = await settled(w, _set_dual_write(w, ch, _cfg, conflict_result))
+            break
+        except VerdictStale:
+            # Writes that are each other's peers commit one at a time; past the
+            # deadline the namespace is busier than its admissions can follow.
+            if time.monotonic() >= deadline:
+                raise AdmissionContendedError(
+                    f"commits to {input.namespace!r} kept changing this write's verdict"
+                ) from None
+            _set_build_memory_row(w)  # the next verdict stamps a fresh row
     if conflict_result.verdict == "clear":
         peers_out = []  # a conflict the mark found no live peer for: none to resolve
 
-    return await _set_after_write(w, ch, _cfg, conflict_result, duplicate_of_id, peers_out)
+    return await finished(
+        w, _set_after_write(w, ch, _cfg, conflict_result, duplicate_of_id, peers_out)
+    )
 
 
 def _stamp_lifecycle(

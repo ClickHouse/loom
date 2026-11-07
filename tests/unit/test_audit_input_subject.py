@@ -168,9 +168,12 @@ def test_a_free_form_dict_is_hashed_whole(monkeypatch) -> None:
     assert (subject["schema_name"], subject["memory_key"]) == ("patient", "p1")
 
 
+_SNAPSHOT_ID = "00000000-0000-4000-8000-0000000000aa"
+
+
 def test_a_restored_snapshot_keeps_its_ids_and_counts_and_hashes_its_rows(monkeypatch) -> None:
     row = _SnapshotMemoryRow(
-        memory_id="m1",
+        memory_id="00000000-0000-4000-8000-000000000001",
         agent="a",
         user_id="-",
         session_id="-",
@@ -183,7 +186,7 @@ def test_a_restored_snapshot_keeps_its_ids_and_counts_and_hashes_its_rows(monkey
         pinned=False,
     )
     payload = NamespaceSnapshotOutput(
-        snapshot_id="snap-1",
+        snapshot_id=_SNAPSHOT_ID,
         org="o",
         source_namespace="src",
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
@@ -202,7 +205,7 @@ def test_a_restored_snapshot_keeps_its_ids_and_counts_and_hashes_its_rows(monkey
     assert SECRET not in json.dumps(subject)
     shaped = subject["payload"]
     assert (shaped["snapshot_id"], shaped["source_namespace"], shaped["memory_count"]) == (
-        "snap-1",
+        _SNAPSHOT_ID,
         "src",
         1,
     )

@@ -15,15 +15,17 @@ bytes back. CH-free.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import pydantic
 import pytest
 
 from server.core.hashing import sha256_value_json
 from server.identity.api.models import (
     NamespaceRestoreInput,
     NamespaceSnapshotInput,
+    NamespaceSnapshotOutput,
     _SnapshotMemoryRow,
 )
 from server.identity.app import namespace as registry
@@ -128,6 +130,7 @@ def _wire(monkeypatch: pytest.MonkeyPatch, memory_rows: list[dict[str, Any]]) ->
 
     monkeypatch.setattr(_types, "list_type_configs", _no_types)
     monkeypatch.setattr(_audit, "emit", _no_audit)
+    monkeypatch.setattr(_audit, "emit_strict", _no_audit)
     return ch
 
 
@@ -158,7 +161,7 @@ def test_the_snapshot_select_reads_the_json_column_as_text() -> None:
 def test_the_payload_row_dumps_a_parsed_json_column() -> None:
     """A dict where the model wants text."""
     kw: dict[str, Any] = dict(
-        memory_id="m",
+        memory_id="33333333-3333-3333-3333-333333333333",
         agent="a",
         user_id="-",
         session_id="-",
@@ -274,3 +277,169 @@ def test_an_older_payload_with_a_parsed_value_json_restores() -> None:
     )
     assert restored["value"] == stored
     assert isinstance(restored["value_json"], str) and json.loads(restored["value_json"]) == obj
+
+
+def _restored(**over: Any) -> dict[str, Any]:
+    row = _SnapshotMemoryRow(
+        memory_id="33333333-3333-3333-3333-333333333333",
+        agent="a",
+        user_id="-",
+        session_id="-",
+        run_id="-",
+        memory_key="k",
+        memory_type="semantic",
+        value='"v"',
+        confidence=1.0,
+        source_trace="",
+        pinned=False,
+    )
+    (built,) = snapshot_rows.restore_rows(
+        [row], org="o", target_namespace="n", rebind_agent=None, version_base=1, actor="t"
+    )
+    return {**built, **over}
+
+
+def test_a_snapshot_row_reads_back_what_clickhouse_holds() -> None:
+    """A snapshot is built from stored rows: a NUL in a tag or a NaN confidence, which a
+    ClickHouse column holds, does not stop it; an id is read back canonical."""
+    mid = "33333333-3333-3333-3333-33333333abcd"
+    row = _SnapshotMemoryRow(
+        memory_id=mid.upper(),
+        agent="a",
+        user_id="-",
+        session_id="-",
+        run_id="-",
+        memory_key="k",
+        memory_type="semantic",
+        value='"v"',
+        confidence=float("nan"),
+        source_trace="",
+        pinned=False,
+        tags=["a\x00b"],
+    )
+    assert row.memory_id == mid
+
+
+def test_a_restore_refuses_what_a_column_cannot_hold_before_it_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A payload is caller-written: its rows are checked before the restore writes
+    anything, ids stored canonical; under Postgres, text and floats the authority cannot
+    store are refused as well."""
+    from server.core import pg
+    from server.core.errors import ValidationError
+
+    mid = "33333333-3333-3333-3333-33333333abcd"
+    (row,) = snapshot_rows.checked_rows(
+        [_restored(conflict_with=["{" + mid.upper() + "}"], duplicate_of=mid.upper())]
+    )
+    assert row["conflict_with"] == [mid] and row["duplicate_of"] == mid
+    # ClickHouse's String column keeps a duplicate_of that is not an id.
+    (kept,) = snapshot_rows.checked_rows([_restored(duplicate_of="not-an-id")])
+    assert kept["duplicate_of"] == "not-an-id"
+    for bad in (
+        {"conflict_with": ["x"]},
+        {"cross_promoted_from_memory_id": "x"},
+        {"content_sha256": "ab"},
+        {"value_json": "{"},
+        {"value_json": "[1]"},
+        {"value_json": '{"a": NaN}'},
+        {"value_json": "[" * 100_000},
+        {"created_at": datetime(2200, 1, 1)},
+        {"created_at": datetime(1970, 1, 1, 0, 30, tzinfo=timezone(timedelta(hours=1)))},
+        {"created_at": datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=1)))},
+    ):
+        with pytest.raises(ValidationError):
+            snapshot_rows.checked_rows([_restored(**bad)])
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    for bad in (
+        {"tags": ["a\x00b"]},
+        {"confidence": float("nan")},
+        {"confidence": 1e39},
+        {"duplicate_of": "not-an-id"},
+    ):
+        with pytest.raises(ValidationError):
+            snapshot_rows.checked_rows([_restored(**bad)])
+
+
+@pytest.mark.parametrize("snapshot_id", ["", "snap-1"])
+def test_a_payload_snapshot_id_is_a_uuid(snapshot_id: str) -> None:
+    """The id is a server-minted UUID; a replay matches it in that spelling."""
+    with pytest.raises(pydantic.ValidationError):
+        NamespaceSnapshotOutput(
+            snapshot_id=snapshot_id,
+            org="o",
+            source_namespace="n",
+            created_at=datetime(2026, 1, 1),
+            memory_count=0,
+            type_count=0,
+            grant_count=0,
+            audit_tail_count=0,
+            include_embeddings=False,
+            memories=[],
+            types=[],
+            grants=[],
+            audit_tail=[],
+        )
+
+
+def test_a_snapshot_row_holds_a_memory_status_and_id() -> None:
+    kw: dict[str, Any] = dict(
+        agent="a",
+        user_id="-",
+        session_id="-",
+        run_id="-",
+        memory_key="k",
+        memory_type="semantic",
+        value='"v"',
+        confidence=1.0,
+        source_trace="",
+        pinned=False,
+    )
+    for bad in (
+        {"memory_id": "m"},
+        {"status": "bogus"},
+        {"evidence_count": -1},
+        {"reinforcement_count": 2**32},
+        {"char_limit": -1},
+    ):
+        with pytest.raises(pydantic.ValidationError):
+            _SnapshotMemoryRow(**{"memory_id": "33333333-3333-3333-3333-333333333333", **kw, **bad})
+
+
+def test_a_restored_memory_without_its_times_lands_created_at_or_the_restore_time() -> None:
+    created = datetime(2026, 1, 2, 3, 4, 5)
+    fresh = _restored()  # no time in the payload: the restore time, in every column
+    assert fresh["created_at"] == fresh["updated_at"] == fresh["last_reinforced_at"]
+    row = _SnapshotMemoryRow(
+        memory_id="33333333-3333-3333-3333-333333333333",
+        agent="a",
+        user_id="-",
+        session_id="-",
+        run_id="-",
+        memory_key="k",
+        memory_type="semantic",
+        value='"v"',
+        confidence=1.0,
+        source_trace="",
+        pinned=False,
+        created_at=created,
+    )
+    (built,) = snapshot_rows.restore_rows(
+        [row], org="o", target_namespace="n", rebind_agent=None, version_base=1, actor="t"
+    )
+    assert built["created_at"] == built["updated_at"] == built["last_reinforced_at"] == created
+
+
+def test_the_snapshot_status_is_the_memory_status_column() -> None:
+    """A snapshot reads back every stored row, so its status holds every value the
+    column does."""
+    import re
+    import typing
+
+    from tests.unit.clickhouse_local import ddl
+
+    enum = re.search(r"`status` Enum8\(([^)]*)\)", ddl("memory")).group(1)
+    assert set(typing.get_args(_SnapshotMemoryRow.model_fields["status"].annotation)) == set(
+        re.findall(r"'([a-z]+)'", enum)
+    )

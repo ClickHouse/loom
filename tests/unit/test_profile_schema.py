@@ -570,6 +570,23 @@ async def test_a_user_whose_memories_are_gone_is_rebuilt_empty() -> None:
     assert await _behind(_LocalCH(*emptied)) == []
 
 
+@_needs_ch
+@pytest.mark.asyncio
+async def test_a_profile_built_short_is_behind_with_sources_or_none() -> None:
+    # A build that read fewer facts than it counted carries SHORT, which no digest takes:
+    # not the live facts', nor the empty one of a user whose facts are all gone.
+    from server.memory.store.profile_sources import SHORT, profile_tags
+
+    live = _fact(_A, "u1", "tz", "a")
+    deleted = _fact(_A, "u1", "tz", "a", tombstoned_at="now()")
+    # As many facts as it counted (a fact behind its delivery): behind, after the cooldown.
+    short = _profile("u1", profile_tags(_SHA, SHORT, 1))
+    assert await _behind(_LocalCH(ddl("memory"), live, short)) == ["u1"]
+    assert await _behind(_LocalCH(ddl("memory"), live, short), cool=7200) == []
+    # Every fact gone since: behind at once, as any profile left with fewer sources.
+    assert await _behind(_LocalCH(ddl("memory"), deleted, short), cool=7200) == ["u1"]
+
+
 def test_a_number_that_is_not_finite_or_exact_reads_null() -> None:
     props = ps.parse(
         _schema(n={"type": "number", "description": "d"}, i={"type": "integer", "description": "d"})

@@ -710,7 +710,7 @@ async def test_a_put_back_finishes_though_the_request_is_cancelled_again() -> No
 
 
 async def test_shutdown_lands_a_put_back_its_cancelled_request_left_running() -> None:
-    from server.auth import shielded
+    from server.core import shielded
 
     saved = asyncio.Event()
 

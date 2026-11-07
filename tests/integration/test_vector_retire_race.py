@@ -41,14 +41,31 @@ async def ch() -> Any:
     await c.disconnect()
 
 
-def _high_candidate(memory_id: str, ns: str, key: str) -> Any:
-    """The sweep's candidate for a high row of AGENT, with its sort key as `scan` reads it."""
+async def _high_candidate(ch: Any, ns: str, key: str) -> Any:
+    """The sweep's candidate for AGENT's row `key` as `scan` reads it: its head, unlabelled,
+    stated high whatever the detector reads in it."""
     from server.memory.app.sensitivity_sweep import SweepCandidate
     from server.memory.store.sensitivity_sweep_sql import SORT_KEY
 
+    head = await ch.query_one(
+        "SELECT toString(memory_id) AS id, version, sensitivity FROM loom.memory FINAL"
+        " WHERE org = {o:String} AND namespace = {n:String} AND memory_key = {k:String}",
+        params={"o": ORG, "n": ns, "k": key},
+    )
+    assert head["sensitivity"] == ""
     ident = (ORG, ns, AGENT, USER, SESSION, key)
     return SweepCandidate(
-        memory_id, *ident, "high", ("credential",), dict(zip(SORT_KEY, ident, strict=True))
+        memory_id=head["id"],
+        org=ORG,
+        namespace=ns,
+        agent=AGENT,
+        user_id=USER,
+        session_id=SESSION,
+        memory_key=key,
+        level="high",
+        shapes=("credential",),
+        sort_key=dict(zip(SORT_KEY, ident, strict=True)),
+        version=head["version"],
     )
 
 
@@ -276,7 +293,9 @@ async def _memory_row_of(ch: Any, ns: str, key: str) -> Any:
         " WHERE org = {o:String} AND namespace = {n:String} AND memory_key = {k:String}",
         params={"o": ORG, "n": ns, "k": key},
     )
-    return await M.get_by_id(row["id"], org=ORG, ch=ch, fresh=True, scope=WHOLE_NAMESPACE)
+    return await M.get_by_id(
+        row["id"], org=ORG, namespace=ns, ch=ch, fresh=True, scope=WHOLE_NAMESPACE
+    )
 
 
 async def _expire_and_anonymize(ch: Any, ns: str, key: str) -> None:
@@ -369,13 +388,7 @@ async def test_a_metadata_reemit_paused_across_a_retire_does_not_restore_the_vec
                 elif retire == "orphan_reconcile":
                     await _orphan_and_reconcile(ch, ns, key, monkeypatch)
                 else:
-                    row = await ch.query_one(
-                        "SELECT toString(memory_id) AS id FROM loom.memory FINAL"
-                        " WHERE org = {o:String} AND namespace = {n:String}"
-                        " AND memory_key = {k:String}",
-                        params={"o": ORG, "n": ns, "k": key},
-                    )
-                    cand = _high_candidate(row["id"], ns, key)
+                    cand = await _high_candidate(ch, ns, key)
                     res = await sensitivity_sweep.apply([cand], ch=ch)
                     assert res.errors == [] and res.embeddings_tombstoned == 1
                 assert await live_vectors() == 0
@@ -392,12 +405,13 @@ async def test_a_metadata_reemit_paused_across_a_retire_does_not_restore_the_vec
                 )
 
 
-async def _memory_only_row(ch: Any, ns: str, key: str, value: str) -> None:
+async def _memory_only_row(ch: Any, ns: str, key: str, value: str) -> dict[str, Any]:
     """A live memory row with no vector of the served model."""
     from server.memory import store as M
 
-    row = _memory_row(ns, M.next_version(), value, "")
-    await M.insert_memory_versions([{**row, "memory_key": key}], ch=ch)
+    row = {**_memory_row(ns, M.next_version(), value, ""), "memory_key": key}
+    await M.insert_memory_versions([row], ch=ch)
+    return row
 
 
 class _PausedEmbedder:
@@ -486,12 +500,7 @@ async def test_an_older_writes_late_vector_stays_under_a_newer_high_write(
     async def sweep_relabels_high() -> None:
         from server.memory.app import sensitivity_sweep
 
-        row = await ch.query_one(
-            "SELECT toString(memory_id) AS id FROM loom.memory FINAL WHERE org = {o:String}"
-            " AND namespace = {n:String} AND memory_key = {k:String}",
-            params={"o": ORG, "n": ns, "k": key},
-        )
-        cand = _high_candidate(row["id"], ns, key)
+        cand = await _high_candidate(ch, ns, key)
         res = await sensitivity_sweep.apply([cand], ch=ch)
         assert res.errors == [] and res.high == 1
 
@@ -668,13 +677,7 @@ async def test_a_long_value_made_high_keeps_no_live_chunks(
                     )
                 )
             else:
-                row = await ch.query_one(
-                    "SELECT toString(memory_id) AS id FROM loom.memory FINAL"
-                    " WHERE org = {o:String} AND namespace = {n:String}"
-                    " AND memory_key = {k:String}",
-                    params={"o": ORG, "n": ns, "k": key},
-                )
-                cand = _high_candidate(row["id"], ns, key)
+                cand = await _high_candidate(ch, ns, key)
                 res = await sensitivity_sweep.apply([cand], ch=ch)
                 assert res.errors == [] and res.high == 1
             assert await live_chunks() == 0
@@ -724,12 +727,7 @@ async def test_a_reindex_paused_across_a_high_relabel_leaves_no_vector(
             ops.handle_memory_reindex(MemoryReindexInput(org=ORG, namespace=ns))
         )
         await asyncio.wait_for(paused.entered.wait(), 30)
-        row = await ch.query_one(
-            "SELECT toString(memory_id) AS id FROM loom.memory FINAL WHERE org = {o:String}"
-            " AND namespace = {n:String} AND memory_key = {k:String}",
-            params={"o": ORG, "n": ns, "k": key},
-        )
-        cand = _high_candidate(row["id"], ns, key)
+        cand = await _high_candidate(ch, ns, key)
         res = await sensitivity_sweep.apply([cand], ch=ch)
         assert res.errors == [] and res.high == 1
         paused.gate.set()
@@ -938,12 +936,7 @@ async def test_a_high_relabel_between_the_reindex_reads_leaves_no_vector(
     value = f"the {key} vault password is hunter2"
 
     async def relabel() -> None:
-        row = await ch.query_one(
-            "SELECT toString(memory_id) AS id FROM loom.memory FINAL WHERE org = {o:String}"
-            " AND namespace = {n:String} AND memory_key = {k:String}",
-            params={"o": ORG, "n": ns, "k": key},
-        )
-        cand = _high_candidate(row["id"], ns, key)
+        cand = await _high_candidate(ch, ns, key)
         res = await sensitivity_sweep.apply([cand], ch=ch)
         assert res.errors == [] and res.high == 1
 
@@ -1002,32 +995,26 @@ async def test_chunks_landing_between_the_sweeps_fence_and_its_relabel_are_retir
     c_entered, c_gate = asyncio.Event(), asyncio.Event()
     s_entered, s_gate = asyncio.Event(), asyncio.Event()
     real_embed_chunks = set_chunks._embed_chunks
-    real_wv = memory_repo.write_versions_by_ids
+    real_insert = memory_repo.insert_versions_over_heads
 
     async def paused_embed_chunks(embedder: Any, chunks: list[str]) -> list[list[float]]:
         c_entered.set()
         await c_gate.wait()
         return await real_embed_chunks(embedder, chunks)
 
-    async def paused_wv(*a: Any, **kw: Any) -> int:
+    async def paused_insert(*a: Any, **kw: Any) -> int:
         s_entered.set()
         await s_gate.wait()
-        return await real_wv(*a, **kw)
+        return await real_insert(*a, **kw)
 
     monkeypatch.setattr(set_chunks, "_embed_chunks", paused_embed_chunks)
-    monkeypatch.setattr(memory_repo, "write_versions_by_ids", paused_wv)
+    monkeypatch.setattr(memory_repo, "insert_versions_over_heads", paused_insert)
     try:
         task = asyncio.create_task(
             write.handle_memory_set(MemorySetInput(**ident, memory_key=key, value=long_val))
         )
         await asyncio.wait_for(c_entered.wait(), 30)
-        row = await ch.query_one(
-            "SELECT toString(memory_id) AS id, sensitivity FROM loom.memory FINAL"
-            " WHERE org = {o:String} AND namespace = {n:String} AND memory_key = {k:String}",
-            params={"o": ORG, "n": ns, "k": key},
-        )
-        assert row["sensitivity"] == ""
-        cand = _high_candidate(row["id"], ns, key)
+        cand = await _high_candidate(ch, ns, key)
         sweep = asyncio.create_task(sensitivity_sweep.apply([cand], ch=ch))
         await asyncio.wait_for(s_entered.wait(), 30)  # fenced, not yet relabelled
         c_gate.set()
@@ -1065,21 +1052,16 @@ async def test_a_reindex_between_the_sweeps_fence_and_its_relabel_leaves_no_vect
     ns = f"itest-{uuid.uuid4().hex[:12]}"
     key = f"sweep_reindex_{uuid.uuid4().hex[:6]}"
     await _memory_only_row(ch, ns, key, f"the {key} vault password is hunter2")
-    row = await ch.query_one(
-        "SELECT toString(memory_id) AS id FROM loom.memory FINAL WHERE org = {o:String}"
-        " AND namespace = {n:String} AND memory_key = {k:String}",
-        params={"o": ORG, "n": ns, "k": key},
-    )
+    cand = await _high_candidate(ch, ns, key)
     entered, gate = asyncio.Event(), asyncio.Event()
-    real_wv = memory_repo.write_versions_by_ids
+    real_insert = memory_repo.insert_versions_over_heads
 
-    async def paused_wv(*a: Any, **kw: Any) -> int:
+    async def paused_insert(*a: Any, **kw: Any) -> int:
         entered.set()
         await gate.wait()
-        return await real_wv(*a, **kw)
+        return await real_insert(*a, **kw)
 
-    monkeypatch.setattr(memory_repo, "write_versions_by_ids", paused_wv)
-    cand = _high_candidate(row["id"], ns, key)
+    monkeypatch.setattr(memory_repo, "insert_versions_over_heads", paused_insert)
     try:
         sweep = asyncio.create_task(sensitivity_sweep.apply([cand], ch=ch))
         await asyncio.wait_for(entered.wait(), 30)
@@ -1636,6 +1618,175 @@ async def _live_rows(ch: Any, ns: str, key: str) -> int:
         params={"o": ORG, "n": ns, "k": key},
     )
     return int(row["n"])
+
+
+async def test_a_high_candidate_whose_head_moved_retires_nothing(ch: Any) -> None:
+    """The key is written again after the scan, with text the detector did not read: the
+    sweep leaves that head unlabelled and its vector live."""
+    from server.embedding import get_embedder
+    from server.memory import store as M
+    from server.memory.app import sensitivity_sweep
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"moved_{uuid.uuid4().hex[:6]}"
+    try:
+        scanned = await _memory_only_row(ch, ns, key, f"the {key} vault password is hunter2")
+        cand = await _high_candidate(ch, ns, key)
+        text = "the door is blue"
+        newer = scanned | {
+            "version": M.next_version(),
+            "value": json.dumps(text),
+            "value_json": json.dumps({"v": text}),
+            "content_sha256": hashlib.sha256(text.encode()).hexdigest(),
+        }
+        await M.insert_memory_versions([newer], ch=ch)
+        embedder = get_embedder()
+        vector = M.build_embedding_row(
+            org=ORG,
+            namespace=ns,
+            agent=AGENT,
+            user_id=USER,
+            session_id=SESSION,
+            memory_key=key,
+            memory_type="semantic",
+            scope="private",
+            content_excerpt=text,
+            embedding_model=embedder.model_name,
+            embedding_dim=embedder.dim,
+            embedding=[0.1] * embedder.dim,
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            version=newer["version"],
+        )
+        await M.insert_embedding_rows([vector], ch=ch)
+        res = await sensitivity_sweep.apply([cand], ch=ch)
+        assert (res.relabelled, len(res.left), res.errors) == (0, 1, [])
+        assert await _live_rows(ch, ns, key) == 1
+        head = await ch.query_one(
+            "SELECT version, sensitivity FROM loom.memory FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}"
+            " SETTINGS select_sequential_consistency = 1",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        assert (head["version"], head["sensitivity"]) == (newer["version"], "")
+    finally:
+        for table in ("memory", "memory_embeddings", "entity_vectors", "memory_chunks"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )
+
+
+async def test_a_high_candidate_is_labelled_whatever_other_key_holds_its_id(ch: Any) -> None:
+    """A namespace restored into itself under another agent holds the id under two keys,
+    the copy's head newer: the sweep reads the candidate by its own key, labels it and
+    retires its vector, and leaves the copy as it is."""
+    from server.embedding import get_embedder
+    from server.memory import store as M
+    from server.memory.app import sensitivity_sweep
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"twin_{uuid.uuid4().hex[:6]}"
+    try:
+        scanned = await _memory_only_row(ch, ns, key, f"the {key} vault password is hunter2")
+        cand = await _high_candidate(ch, ns, key)
+        copy = scanned | {"agent": "restored", "version": M.next_version()}
+        await M.insert_memory_versions([copy], ch=ch)
+        embedder = get_embedder()
+        vector = M.build_embedding_row(
+            org=ORG,
+            namespace=ns,
+            agent=AGENT,
+            user_id=USER,
+            session_id=SESSION,
+            memory_key=key,
+            memory_type="semantic",
+            scope="private",
+            content_excerpt="the vault password",
+            embedding_model=embedder.model_name,
+            embedding_dim=embedder.dim,
+            embedding=[0.1] * embedder.dim,
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            version=scanned["version"],
+        )
+        await M.insert_embedding_rows([vector], ch=ch)
+        res = await sensitivity_sweep.apply([cand], ch=ch)
+        assert (res.high, res.left, res.errors) == (1, [], [])
+        assert await _live_rows(ch, ns, key) == 0
+        labels = await ch.query_all(
+            "SELECT agent, version, sensitivity FROM loom.memory FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String} ORDER BY agent"
+            " SETTINGS select_sequential_consistency = 1",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        by_agent = {r["agent"]: (r["version"], r["sensitivity"]) for r in labels}
+        assert by_agent[AGENT][0] > scanned["version"] and by_agent[AGENT][1] == "high"
+        assert by_agent["restored"] == (copy["version"], "")
+    finally:
+        for table in ("memory", "memory_embeddings", "entity_vectors", "memory_chunks"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )
+
+
+async def test_the_sweep_labels_a_row_stored_with_no_user_or_session(ch: Any) -> None:
+    """A user or session sent empty is stored as given: the sweep reads, labels and
+    retires the row under that stored key."""
+    from server.embedding import get_embedder
+    from server.memory import store as M
+    from server.memory.app import sensitivity_sweep
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"blank_{uuid.uuid4().hex[:6]}"
+    try:
+        row = {
+            **_memory_row(ns, M.next_version(), "the badge PIN is 4471", ""),
+            "memory_key": key,
+            "user_id": "",
+            "session_id": "",
+        }
+        await M.insert_memory_versions([row], ch=ch)
+        embedder = get_embedder()
+        vector = M.build_embedding_row(
+            org=ORG,
+            namespace=ns,
+            agent=AGENT,
+            user_id="",
+            session_id="",
+            memory_key=key,
+            memory_type="semantic",
+            scope="private",
+            content_excerpt="the badge PIN",
+            embedding_model=embedder.model_name,
+            embedding_dim=embedder.dim,
+            embedding=[0.1] * embedder.dim,
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            version=row["version"],
+        )
+        await M.insert_embedding_rows([vector], ch=ch)
+        report = await sensitivity_sweep.scan(
+            org=ORG, namespace=ns, limit=10, page_size=100, pages=1, ch=ch
+        )
+        assert [(c.memory_key, c.user_id, c.session_id) for c in report.candidates] == [
+            (key, "", "")
+        ]
+        res = await sensitivity_sweep.apply(report.candidates, ch=ch)
+        # The retire matched the stored key: the fence alone would hide the vector too.
+        assert (res.high, res.embeddings_tombstoned, res.left, res.errors) == (1, 1, [], [])
+        head = await ch.query_one(
+            "SELECT sensitivity FROM loom.memory FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}"
+            " SETTINGS select_sequential_consistency = 1",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        assert head["sensitivity"] == "high"
+        assert await _live_rows(ch, ns, key) == 0
+    finally:
+        for table in ("memory", "memory_embeddings", "entity_vectors", "memory_chunks"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )
 
 
 async def test_fence_high_retires_a_vector_written_above_its_fence(ch: Any) -> None:

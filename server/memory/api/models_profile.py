@@ -171,9 +171,9 @@ class ProfileStructuredInput(_Identity):
 
 
 class ProfileStructuredOutput(BaseModel):
-    # ready: current, or all null for a user with no facts; stale: memories or schema
-    # changed since the build; pending: no live profile yet (unbuilt, expired, redacted
-    # or high); no_schema: none set or it no longer parses.
+    # ready: current, or all null with no facts; stale: memories or schema changed, or a fact
+    # was not served at the build; pending: no live profile (unbuilt, expired, redacted or
+    # high); no_schema: none set or it no longer parses.
     status: Literal["ready", "stale", "pending", "no_schema"]
     # Every property of the schema, null where the memories do not settle it ({} under
     # `no_schema`).

@@ -159,6 +159,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             f"refusing to start workers against an inconsistent schema"
         )
     await boot.require_keeper(ch)
+    await boot.require_storage_authority(ch)
     await boot.warn_newer_schema()
     await boot.warn_collection_named_namespaces()
     # Nothing here writes a column a migration just added while another process
@@ -280,6 +281,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         instances_loop.cancel()
         boot.cancel_boot_tasks()
         await _shut_down(ch, lease, supervisor, emitter)
+        await boot.close_storage_authority()
 
 
 app = FastAPI(

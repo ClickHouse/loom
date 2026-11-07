@@ -3,6 +3,7 @@ audit rows as one payload, and that payload written back into a namespace."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -180,6 +181,8 @@ async def handle_namespace_restore(
         target_existing = await namespaces_repo.fetch_row(input.org, input.target_namespace, ch=ch)
         if target_existing is None:
             _registry.refuse_sso_name(input.target_namespace)
+        # A restore's audit row implies its namespace row (rewritten, never deleted), so a
+        # replay below is answered only past this check.
         if target_existing is not None:
             await _registry.require_admin_of_existing(
                 target_existing,
@@ -191,14 +194,16 @@ async def handle_namespace_restore(
             )
 
         # Idempotency: if this snapshot_id already appears as a restore
-        # event on the target namespace's audit log, skip.
+        # event on the target namespace's audit log, skip, answering its counts.
         existing = await ch.query_one(
             """
-            SELECT 1 AS x FROM loom.audit_log
+            SELECT subject FROM loom.audit_log
             WHERE org = {org:String} AND namespace = {ns:String}
               AND event_type = 'namespace.restore'
-              AND positionCaseInsensitive(subject, {sid:String}) > 0
+              AND lower(JSONExtractString(subject, 'snapshot_id')) = {sid:String}
+            ORDER BY ts
             LIMIT 1
+            SETTINGS select_sequential_consistency = 1
             """,
             params={
                 "org": input.org,
@@ -207,17 +212,32 @@ async def handle_namespace_restore(
             },
         )
         if existing is not None:
+            # Counts the first restore recorded; erased_skipped defaults to 0.
+            done = json.loads(existing["subject"]).get("counts", {})
             return NamespaceRestoreOutput(
                 restored=False,
                 target_namespace=input.target_namespace,
                 snapshot_id=payload.snapshot_id,
-                counts={
-                    "memories": payload.memory_count,
-                    "types": payload.type_count,
-                    "grants": payload.grant_count,
-                },
+                counts={"erased_skipped": 0, **done},
             )
 
+        memories, erased = await memory_snapshot.without_erased(
+            input.org, input.target_namespace, payload.memories
+        )
+        # Every persisted column, through the builder, and refused before anything is
+        # written where its column cannot hold it. Versions bump off one base so restored
+        # rows win against any pre-existing row with the same identity.
+        version_base = _time.time_ns()
+        rows = memory_snapshot.checked_rows(
+            memory_snapshot.restore_rows(
+                memories,
+                org=input.org,
+                target_namespace=input.target_namespace,
+                rebind_agent=input.rebind_agent,
+                version_base=version_base,
+                actor=writer_actor(),
+            )
+        )
         now = naive_utc_now_seconds()
 
         # Only CREATE the namespace row when absent — an RMT insert over an
@@ -252,21 +272,7 @@ async def handle_namespace_restore(
             )
     await _registry.insert_admin_grant(ch, input.org, input.target_namespace, caller)
 
-    # Bump versions off a single base so restored rows win against any
-    # pre-existing row with the same identity.
-    version_base = _time.time_ns()
-    if payload.memories:
-        # Every persisted column, through the builder; the typed insert refuses a row that is
-        # not a full version row.
-        rows = memory_snapshot.restore_rows(
-            payload.memories,
-            org=input.org,
-            target_namespace=input.target_namespace,
-            rebind_agent=input.rebind_agent,
-            version_base=version_base,
-            actor=writer_actor(),
-        )
-        await memory_snapshot.insert_version_rows(rows, ch=ch)
+    pending = await memory_snapshot.insert_version_rows(rows, ch=ch) if rows else False
 
     # Per-type configs.
     if payload.types:
@@ -309,9 +315,9 @@ async def handle_namespace_restore(
             ch=ch,
         )
 
-    # Provenance audit row — carries the snapshot_id in the subject for
-    # the idempotency lookup on re-restores.
-    await _audit.emit(
+    # The replay check reads this row: written strictly, so a restore that fails here is
+    # retried, not taken for done.
+    await _audit.emit_strict(
         event_type="namespace.restore",
         org=input.org,
         namespace=input.target_namespace,
@@ -325,6 +331,7 @@ async def handle_namespace_restore(
                 "memories": payload.memory_count,
                 "types": payload.type_count,
                 "grants": payload.grant_count,
+                "erased_skipped": erased,
             },
         },
         request_id=payload.snapshot_id,
@@ -332,11 +339,13 @@ async def handle_namespace_restore(
 
     return NamespaceRestoreOutput(
         restored=True,
+        publication_pending=pending,
         target_namespace=input.target_namespace,
         snapshot_id=payload.snapshot_id,
         counts={
             "memories": payload.memory_count,
             "types": payload.type_count,
             "grants": payload.grant_count,
+            "erased_skipped": erased,
         },
     )

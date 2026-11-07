@@ -58,6 +58,9 @@ dependencies = [
   # Python: code.grep's line step and context.fetch. Same engine as ClickHouse's
   # match(), so a pattern means the same thing in both places.
   "google-re2>=1.1",
+  # Postgres for the Postgres storage profile (LOOM_STORAGE_AUTHORITY=postgres): the async
+  # driver and its pool. Imported only when that profile is configured.
+  "asyncpg>=0.30",
   # lemmagen3 (the English lemmatizer) is the `[lemma]` extra below, not a
   # core dep: it ships no wheel and compiles against Python.h, and a host
   # that only wants the `loom` CLI (`loom up`) may have no build toolchain.
@@ -226,6 +229,11 @@ ignore_missing_imports = true
 # google-re2 ships no type information; server/core/caller_regex.py types its result as Any.
 [[tool.mypy.overrides]]
 module = ["re2"]
+ignore_missing_imports = true
+
+# asyncpg (the Postgres memory authority's driver) ships no type information.
+[[tool.mypy.overrides]]
+module = ["asyncpg", "asyncpg.*"]
 ignore_missing_imports = true
 
 # boto3 is the SDK's and the server's optional `aws` extra (a bot key in Secrets

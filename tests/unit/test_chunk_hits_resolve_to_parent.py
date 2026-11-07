@@ -18,6 +18,7 @@ import pytest
 from server.memory.app.handlers import chunk_parent_key, split_chunk_key
 from server.memory.app.retrieval.pool import effective_chunk_floor
 from server.memory.store.rows import MemoryRow
+from tests.unit.memory_store import one_holder
 
 # ------------------------------------------------------------- the id
 
@@ -397,6 +398,8 @@ async def test_get_by_id_never_serves_a_high_row_past_its_retention_window(
         return expired
 
     monkeypatch.setattr(memory_repo, "get_by_id", fake_get_by_id)
+
+    monkeypatch.setattr(memory_repo, "namespaces_of_id", one_holder)
     out = await handlers.handle_memory_get_by_id(
         MemoryGetByIdInput(org="o", memory_id=str(expired.memory_id))
     )

@@ -50,6 +50,73 @@ def test_run_connected_disconnects_after_a_failure(ch: _CH) -> None:
     assert ch.events == ["connect", "disconnect"]
 
 
+def test_a_command_for_another_authority_refuses_before_it_runs(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An erasure run from a shell configured for the other authority would skip its
+    store's rows: the command refuses, as a replica so configured does."""
+    from server.core import pg, pg_profile
+
+    async def _mismatch(_: object) -> None:
+        raise pg.AuthorityMismatch("this deployment's memory authority is postgres")
+
+    ran: list[object] = []
+
+    async def _run(c: object) -> int:
+        ran.append(c)
+        return 0
+
+    monkeypatch.setattr(pg_profile, "check_configured", _mismatch)
+    with pytest.raises(pg.AuthorityMismatch):
+        _ch.run_connected(_run)
+    assert ran == []
+    assert ch.events == ["connect", "disconnect"]
+
+
+def test_run_connected_closes_the_postgres_pool(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:
+    closed: list[str] = []
+
+    async def _close_pool() -> None:
+        closed.append("pool")
+
+    async def _run(_: object) -> int:
+        return 0
+
+    monkeypatch.setattr("server.core.pg.close_pool", _close_pool)
+    _ch.run_connected(_run)
+    assert closed == ["pool"] and ch.events == ["connect", "disconnect"]
+
+
+@pytest.mark.parametrize("importer", ["recall", "clickgap"])
+def test_an_in_process_import_for_another_authority_refuses(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch, importer: str
+) -> None:
+    """The importers that write memory in-process connect on their own, through the same
+    check: one run from a shell configured for the other authority would write rows the
+    deployment's authority never holds."""
+    import asyncio
+    import contextlib
+
+    from server.cli import import_clickgap, import_recall
+    from server.core import pg, pg_profile
+
+    async def _mismatch(_: object) -> None:
+        raise pg.AuthorityMismatch("this deployment's memory authority is postgres")
+
+    async def _connect() -> None:
+        if importer == "recall":
+            args = argparse.Namespace(base_url=None, token=None)
+            await import_recall._make_writer(args, dict, timeout_s=1.0)
+        else:
+            async with contextlib.AsyncExitStack() as stack:
+                await import_clickgap._clickgap_enroll(stack)
+
+    monkeypatch.setattr(pg_profile, "check_configured", _mismatch)
+    with pytest.raises(pg.AuthorityMismatch):
+        asyncio.run(_connect())
+    assert ch.events == ["connect", "disconnect"]
+
+
 def test_a_maintenance_command_closes_its_connection(
     ch: _CH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -109,3 +176,27 @@ def test_a_code_subcommand_sees_the_repositories_added_from_the_repositories_pag
 
     assert asyncio.run(code_run._then_disconnect(_sub())) == 0
     assert ch.events == ["connect", "disconnect"]
+
+
+def test_a_command_leaves_no_deployment_check_armed(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The next command in the process checks against its own record, not this one's: a
+    connection opened after this command reads no authority row."""
+    import asyncio
+
+    from server.core import pg, pg_profile
+
+    async def _arm(_: object) -> None:
+        pg.expect_deployment(("d", 1))
+
+    async def _run(_: object) -> int:
+        return 0
+
+    class _Conn:
+        async def fetchrow(self, sql: str) -> object:
+            raise AssertionError("the check ran again")
+
+    monkeypatch.setattr(pg_profile, "check_configured", _arm)
+    _ch.run_connected(_run)
+    asyncio.run(pg._check_deployment(_Conn()))

@@ -30,7 +30,7 @@ def test_snapshot_row_carries_attestation_and_provenance() -> None:
     fields = set(_SnapshotMemoryRow.model_fields)
     assert ATTESTATION <= fields, sorted(ATTESTATION - fields)
     row = _SnapshotMemoryRow(
-        memory_id="m",
+        memory_id="55555555-5555-5555-5555-555555555555",
         agent="a",
         user_id="-",
         session_id="-",
@@ -62,7 +62,7 @@ def test_snapshot_query_and_restore_row_agree_with_the_model() -> None:
     for col in selected:
         assert re.search(rf"\b{col}\b", SNAPSHOT_SELECT), col
     row = _SnapshotMemoryRow(
-        memory_id="m",
+        memory_id="55555555-5555-5555-5555-555555555555",
         agent="a",
         user_id="-",
         session_id="-",
@@ -78,7 +78,7 @@ def test_snapshot_query_and_restore_row_agree_with_the_model() -> None:
         grounding="quoted",
         evidence="q",
         valid_at=None,
-        content_sha256="ab",
+        content_sha256="ab" * 32,
         tags=["t"],
     )
     (out,) = restore_rows(
@@ -92,7 +92,7 @@ def test_snapshot_query_and_restore_row_agree_with_the_model() -> None:
     assert set(out) == set(MEMORY_PERSISTED_COLS)
     for col in ("verified_by", "verified_sha256", "grounding", "evidence", "valid_at"):
         assert out[col] == getattr(row, col), col
-    assert out["content_sha256"] == "ab" and out["tags"] == ["t"] and out["version"] == 7
+    assert out["content_sha256"] == "ab" * 32 and out["tags"] == ["t"] and out["version"] == 7
 
 
 def test_consolidation_writer_links_derived_from() -> None:

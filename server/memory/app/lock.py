@@ -29,8 +29,7 @@ from server.memory.api.models_lock import (
 )
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
-from server.memory.store.inserts import insert_memory_versions
-from server.memory.store.rows import next_version
+from server.memory.store.rows import version_over
 
 if TYPE_CHECKING:
     from server.memory.store import MemoryRow
@@ -93,7 +92,7 @@ async def handle_memory_lock(input: MemoryLockInput) -> MemoryLockOutput:
                 "ask them rather than looking for another route or credential."
             )
             raise exc
-    version = next_version()
+    version = version_over(existing)
     row = memory_repo.build_memory_version_row(
         existing,
         version=version,
@@ -104,7 +103,7 @@ async def handle_memory_lock(input: MemoryLockInput) -> MemoryLockOutput:
         locked_by=_actor(input.locked_by),
         locked_at=now,
     )
-    await insert_memory_versions([row], ch=get_client())
+    await memory_repo.insert_versions_over_heads([row], [existing], ch=get_client())
     return MemoryLockOutput(
         locked=True,
         memory_id=str(existing.memory_id),
@@ -131,7 +130,7 @@ async def handle_memory_unlock(input: MemoryUnlockInput) -> MemoryUnlockOutput:
             previous_mode="",
             reason="not_locked",
         )
-    version = next_version()
+    version = version_over(existing)
     row = memory_repo.build_memory_version_row(
         existing,
         version=version,
@@ -142,7 +141,7 @@ async def handle_memory_unlock(input: MemoryUnlockInput) -> MemoryUnlockOutput:
         locked_by="",
         locked_at=None,
     )
-    await insert_memory_versions([row], ch=get_client())
+    await memory_repo.insert_versions_over_heads([row], [existing], ch=get_client())
     return MemoryUnlockOutput(
         unlocked=True,
         memory_id=str(existing.memory_id),

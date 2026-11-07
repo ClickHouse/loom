@@ -13,9 +13,9 @@ from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, scope_and
 from server.memory.domain.search_types import RowKey
 from server.memory.store.embeddings import mirror_status_to_embeddings
-from server.memory.store.inserts import insert_memory_versions
+from server.memory.store.lifecycle import insert_versions_over_heads
 from server.memory.store.reads import get_by_id
-from server.memory.store.rows import build_memory_version_row, next_version
+from server.memory.store.rows import build_memory_version_row, version_over
 
 
 def _s(row: Mapping[str, Any], name: str) -> str:
@@ -559,9 +559,11 @@ async def clear_duplicate_tag(
     org: str,
     memory_id: str,
     *,
+    namespace: str,
+    duplicate_of: str,
     ch: _CHClient | None = None,
 ) -> bool:
-    """Flip a `status='duplicate'` row back to 'active' and clear
+    """Flip `namespace`'s `status='duplicate'` row back to 'active' and clear
     `duplicate_of`. Used by `memory.dedup_resolve` decisions
     `keep_duplicate` (the dup wins; it becomes the canonical) and
     `keep_both` (both stay live as peers).
@@ -569,14 +571,17 @@ async def clear_duplicate_tag(
     A new version carrying every column (so `memory_versions`, history and
     rollback record the flip), and the embeddings mirror re-emitted with the
     new status, which is what memory.search reads. False when no live row
-    has that id."""
+    has that id, or it is no longer a duplicate of `duplicate_of` (resolved or
+    flagged anew since)."""
     ch = ch or _default_client()
-    existing = await get_by_id(memory_id, org=org, ch=ch, fresh=True, scope=WHOLE_NAMESPACE)
-    if existing is None:
+    existing = await get_by_id(
+        memory_id, org=org, namespace=namespace, ch=ch, strong=True, scope=WHOLE_NAMESPACE
+    )
+    if existing is None or existing.status != "duplicate" or existing.duplicate_of != duplicate_of:
         return False
     row = build_memory_version_row(
-        existing, status="active", duplicate_of="", version=next_version()
+        existing, status="active", duplicate_of="", version=version_over(existing)
     )
-    await insert_memory_versions([row], ch=ch)
+    await insert_versions_over_heads([row], [existing], ch=ch)
     await mirror_status_to_embeddings([row], ch=ch)
     return True

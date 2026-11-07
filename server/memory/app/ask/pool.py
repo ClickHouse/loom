@@ -805,3 +805,19 @@ async def _tag_belt(ranked: list[Any], search_input: Any) -> list[Any]:
             work["tag_filter_dropped"],
         )
     return ranked
+
+
+async def _served_pool(ranked: list[Any], search_input: Any) -> list[Any]:
+    """The pool without the rows the Postgres authority no longer serves (deleted,
+    rewritten, relabelled high, redacted): the ask's own legs read ClickHouse after the
+    search's page was checked, and a delivery ClickHouse has not published would put a
+    row's old text in the prompt. The searches' own hits are checked again: the ask's
+    model calls ran since. The pool as it is on ClickHouse or under `as_of`."""
+    from server.memory.app.search.pg_validation import stale_flags
+
+    if search_input.as_of is not None:
+        return ranked
+    stale = await stale_flags(search_input.org, search_input.namespace, ranked)
+    if any(stale):
+        logger.info("memory.ask: %d row(s) the authority no longer serves dropped", sum(stale))
+    return [h for h, s in zip(ranked, stale, strict=True) if not s]

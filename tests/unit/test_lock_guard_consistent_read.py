@@ -30,6 +30,7 @@ from server.memory.app import stack as _stack_mod
 from server.memory.app import update as update_mod
 from server.memory.app import write as write_mod
 from server.memory.app.lock import handle_memory_lock
+from tests.unit.memory_store import one_holder
 from tests.unit.test_memory_lock import _CH, _ID, _row
 
 
@@ -51,6 +52,7 @@ def _lagging_replica(monkeypatch: pytest.MonkeyPatch) -> tuple[_CH, list[dict[st
 
     monkeypatch.setattr("server.memory.store.get_by_key", _read)
     monkeypatch.setattr("server.memory.store.get_by_id", _read)
+    monkeypatch.setattr("server.memory.store.namespaces_of_id", one_holder)
 
     async def _one_live_row(*_: Any, **__: Any) -> list[dict[str, Any]]:
         return [
@@ -162,7 +164,8 @@ def test_every_write_feeding_head_read_is_strong() -> None:
         memory.handle_memory_touch,
         update_mod.handle_memory_update,
         update_mod.handle_memory_update_by_id,
-        restore_mod.handle_memory_restore,
+        restore_mod._read_restorable,
+        restore_mod._status_before_retirement,
         _memory_lock._head,
         _memory_curation.handle_memory_redact,
         memory_apply.resolve,
@@ -198,6 +201,7 @@ async def test_a_write_right_after_unlock_sees_the_unlock(monkeypatch: pytest.Mo
 
     monkeypatch.setattr("server.memory.store.get_by_key", _read)
     monkeypatch.setattr("server.memory.store.get_by_id", _read)
+    monkeypatch.setattr("server.memory.store.namespaces_of_id", one_holder)
     out = await mem_handlers.handle_memory_delete(
         MemoryDeleteInput(**_ID, memory_key="deploy_window")
     )

@@ -174,18 +174,8 @@ async def run_pass(ch: _CHClient | None = None) -> OrphanReconcileResult:
 
         # One keyed FINAL read and one committed insert per 500 identities
         # (`reemit_embedding_rows_for_keys`), not one of each per identity.
-        keys: list[memory_repo.EmbeddingKey] = [
-            (
-                str(r["org"]),
-                str(r["namespace"]),
-                str(r["agent"]),
-                str(r["user_id"]),
-                str(r["session_id"]),
-                str(r["memory_key"]),
-            )
-            for r in rows
-        ]
-        by_ns: dict[tuple[str, str], list[memory_repo.EmbeddingKey]] = defaultdict(list)
+        keys = [memory_repo.identity_key(r) for r in rows]
+        by_ns: dict[tuple[str, str], list[memory_repo.IdentityKey]] = defaultdict(list)
         try:
             result.embeddings_healed += await memory_repo.reemit_embedding_rows_for_keys(
                 [(k, {"tombstoned_at": now, "version": version}) for k in keys], ch=ch

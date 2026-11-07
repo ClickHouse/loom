@@ -1078,7 +1078,7 @@ def test_the_code_link_judge_names_the_links_org(metered, monkeypatch, caplog) -
 def test_the_period_digest_names_the_periods_org(metered, monkeypatch, caplog) -> None:
     from server.embedding.fake import FakeNGramEmbedder
     from server.memory.app.period_digest import PeriodDigestConfig, run_period_digest
-    from tests.unit.test_period_digest import _digest, _FakeCH
+    from tests.unit.test_period_digest import _digests, _FakeCH
 
     async def link(**kw: Any) -> None:
         return None
@@ -1088,7 +1088,7 @@ def test_the_period_digest_names_the_periods_org(metered, monkeypatch, caplog) -
     res = asyncio.run(
         run_period_digest(
             cfg,
-            ch=_FakeCH([_digest(n, n) for n in range(1, 6)]),
+            ch=_FakeCH(_digests(1, 5)),
             llm=_MeteredLLM("Between 2023-07-01 and 2023-07-05, Caroline painted."),
             embedder=FakeNGramEmbedder(dim=3),
         )

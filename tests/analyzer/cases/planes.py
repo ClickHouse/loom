@@ -449,7 +449,7 @@ _MEMORY_ROW = {
 }
 _MEMORY_LOOKUPS = rows_by_substring(
     {
-        "SELECT org, namespace, created_at, memory_key": [_MEMORY_ROW],
+        "SELECT created_at, memory_key": [_MEMORY_ROW],
         "value AS value_text": [_MEMORY_ROW],
     }
 )
@@ -633,10 +633,10 @@ async def _ledgers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await C.allowlist_list(ORG, NS, ch=ch)
     await C.allowlist_remove(ORG, NS, "k1", "k2", "note", _DT, ch=ch)
     await C.list_conflicted(ORG, NS, before_version=5 if f else None, ch=ch, scope=WHOLE_NAMESPACE)
-    await C.lookup_keys_for_ids(ORG, [_UUID], ch=ch)
-    await C.lookup_target(ORG, _UUID, ch=ch)
-    await C.mark_active_by_ids(ORG, [_UUID], ch=ch)
-    await C.tombstone_ids(ORG, [_UUID], "note", _DT, ch=ch)
+    await C.lookup_keys_for_ids(ORG, [_UUID], ch=ch, namespace=NS)
+    await C.lookup_target(ORG, NS, _UUID, ch=ch)
+    await C.mark_active_by_ids(ORG, [_UUID], ch=ch, namespace=NS)
+    await C.tombstone_ids(ORG, [_UUID], "note", _DT, ch=ch, namespace=NS)
     await B.find_active_pattern(_UUID, org=ORG if f else None, ch=ch)
     await B.list_for_scope(ORG, NS, scope="namespace" if f else None, ch=ch)
     await B.tombstone_pattern(_UUID, _DT, ch=ch)
@@ -646,7 +646,31 @@ async def _ledgers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await R.delete_llm_response_cache_by_key(ORG, "k1", ch=ch)
     await R.delete_ask_precedents_by_key(ORG, "k1", ch=ch)
     await R.profile_keys_built_from(ORG, NS, "u1", _UUID, ch=ch)
-    await R.redact_versions(ORG, NS, "u1", _UUID, 1, when=_DT, reason_blob="r|admin", ch=ch)
+    key = (ORG, NS, AGENT, "u1", "s1", "k1")
+    await R.redact_versions(key, _UUID, 1, when=_DT, reason_blob="r|admin", head=None, ch=ch)
+    # Postgres's chunk purge (the heads' kept set) and the ClickHouse authority's (none).
+    for live, through, kept in ((True, 1, ["c" * 64]), (False, None, None)):
+        scrubs = await R.key_derivative_scrubs(
+            ORG,
+            NS,
+            AGENT,
+            "u1",
+            "s1",
+            "k1",
+            head_live=live,
+            through=through,
+            redacted_sha="a" * 64,
+            live_sha="b" * 64,
+            set_chunks_kept=kept,
+            ch=ch,
+        )
+        await R.run_scrubs(scrubs, apply=False, ch=ch)
+        for s in scrubs:  # the recorder counts no rows, so the purges are sent here
+            await ch.execute(s.update_sql(), params=s.params)
+    await R.set_chunk_count(ORG, NS, AGENT, "u1", "k1", ch=ch)
+    from server.memory.store import embeddings as E
+
+    await E.live_vectors(ORG, NS, [(AGENT, "u1", "s1", "k1")], model="m", ch=ch)
 
 
 _FAILED_BATCH = {
