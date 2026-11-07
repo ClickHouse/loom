@@ -172,6 +172,8 @@ describe("ReviewQueue", () => {
     vi.mocked(listConflicts).mockReset();
     vi.mocked(listAllowlist).mockReset();
     vi.mocked(listLearnings).mockReset();
+    vi.mocked(listProposals).mockReset();
+    vi.mocked(listProposals).mockResolvedValue({ proposals: [], total: 0 });
     vi.mocked(listAllowlist).mockResolvedValue({ rows: [] });
     vi.mocked(listLearnings).mockResolvedValue({ rows: [] });
     vi.mocked(listAutoResolved).mockReset();
@@ -274,6 +276,8 @@ describe("ReviewQueue", () => {
     seed("ns-b", "writer");
     // At once: the keyed panel starts empty, before any read or tab reset lands.
     expect(screen.queryByText("Tuesdays")).toBeNull();
+    // Then let the switch settle: the page is back on Conflicts.
+    await waitFor(() => expect(screen.queryByRole("tab", { name: /Proposals/, selected: true })).toBeNull(), WAIT);
   });
 
   it("reads proposals each time the tab opens", async () => {
