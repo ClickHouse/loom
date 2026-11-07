@@ -66,10 +66,10 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
 
 5. Paste the pull request's release notes section into the GitHub Release, above the generated notes.
 
-A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not move the `latest` image tag.
-Only the highest final version becomes the repository's Latest release and moves `:latest`, so a
-patch to an older line leaves both where they are: `releases/latest` serves the installer. The
-versions are read from the repository's tags, so delete a final tag that will not ship, or Latest
+A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release. Only the highest final version
+becomes the repository's Latest release (`releases/latest` serves the installer) and moves
+`:latest`: a prerelease or a patch to an older line leaves both where they are. The versions are
+read from the repository's tags, so delete a final tag that will not ship, or Latest
 stays below it.
 
 ## Rehearsing a release
@@ -195,7 +195,8 @@ move the version's tags onto other bytes.
 
 When only one of the two carries the version (a failed `docker-tag`), use "Re-run failed jobs" on
 the tag's run, which tags the same build. "Re-run all jobs" would start with a `preflight` that
-refuses the half-tagged version, and from then on "Re-run failed jobs" re-runs only that `preflight`.
+refuses the half-tagged version, and every "Re-run failed jobs" after it fails in that `preflight`
+again.
 To recover from there, tag the missing image by hand from that run's digests (from its
 `scanned-<artifact>-<arch>` artifacts), adding `-t ghcr.io/clickhouse/<image>:X.Y` for a final version
 and `-t ghcr.io/clickhouse/<image>:latest` when `python3 scripts/release/make_latest.py X.Y.Z` prints

@@ -44,11 +44,18 @@ IMAGES = "ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor"
 
 
 def _preflight(
-    tmp_path: Path, mode: str, *, private: str, writable: str, public: str, **extra: str
+    tmp_path: Path,
+    mode: str,
+    *,
+    private: str,
+    writable: str = "",
+    public: str = "",
+    curl: str = FAKE_CURL,
+    **extra: str,
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    (bin_dir / "curl").write_text(FAKE_CURL)
+    (bin_dir / "curl").write_text(curl)
     (bin_dir / "curl").chmod(0o755)
     env = {
         **os.environ,
@@ -109,15 +116,6 @@ def test_a_dry_run_reports_the_same_prerequisites_as_warnings(tmp_path: Path) ->
     assert "::error::" not in result.stdout
     assert result.stdout.count("::warning::") == 5
     assert "5 release prerequisite(s) missing" in result.stdout
-
-
-def test_a_registry_that_gives_no_token_counts_as_no_push(tmp_path: Path) -> None:
-    both = "clickhouse/loom clickhouse/loom-extractor"
-    result = _preflight(
-        tmp_path, "strict", private="false", writable=both, public=both, NO_TOKEN="1"
-    )
-    assert result.returncode == 1
-    assert "-X POST" not in (tmp_path / "calls").read_text()
 
 
 def test_a_package_never_pushed_warns_without_failing_the_release(tmp_path: Path) -> None:
@@ -405,8 +403,10 @@ def test_a_missing_push_token_is_named_apart_from_a_missing_grant(tmp_path: Path
     result = _preflight(
         tmp_path, "strict", private="false", writable=both, public=both, NO_TOKEN="1"
     )
+    assert result.returncode == 1
     assert result.stdout.count("gave this workflow no push token") == 2
     assert "Write role" not in result.stdout
+    assert "-X POST" not in (tmp_path / "calls").read_text()
 
 
 # preflight.sh against a registry that answers 503: an outage is never reported
@@ -422,26 +422,7 @@ esac
 
 
 def test_a_registry_outage_is_not_reported_as_a_missing_grant(tmp_path: Path) -> None:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "curl").write_text(OUTAGE_CURL)
-    (bin_dir / "curl").chmod(0o755)
-    env = {
-        **os.environ,
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "GITHUB_REPOSITORY": "ClickHouse/loom",
-        "GITHUB_ACTOR": "release-bot",
-        "GH_TOKEN": "token",
-        "REPOSITORY_PRIVATE": "false",
-        "IMAGES": IMAGES,
-        "GHCR": "https://registry.test",
-    }
-    result = subprocess.run(
-        ["bash", str(ROOT / "scripts/release/preflight.sh"), "strict"],
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    result = _preflight(tmp_path, "strict", private="false", curl=OUTAGE_CURL)
     assert result.returncode == 1
     assert result.stdout.count("(an outage), so its Write access is unknown") == 2
     assert result.stdout.count("(an outage), so its visibility is unknown") == 2
