@@ -503,9 +503,10 @@ def test_the_page_tells_a_second_submit_to_sign_in_once_the_first_is_done(
     monkeypatch.setattr(agent_claim, "account_change", claimed_first)
     r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
     assert r.status_code == 400 and "claimed a moment ago" in r.text
-    # Its read-back bound, a skew wait, a cutoff's margin and a clock's lead:
-    # 5 + 5 + 6 + 5 seconds past the moment it found the account claimed.
-    assert world["waited"] == [now + timedelta(seconds=21)]
+    # The release and a landed check, its read-back bound, a skew wait, a
+    # cutoff's margin and a clock's lead: 5 + 5 + 5 + 5 + 6 + 5 seconds past the
+    # moment it found the account claimed.
+    assert world["waited"] == [now + timedelta(seconds=31)]
     assert world["events"] == [] and _LEGACY not in world["cutoffs"]
 
 
@@ -632,6 +633,24 @@ def test_the_steps_after_the_write_outlast_the_account_lease(world, monkeypatch)
     r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
     assert r.status_code == 200 and "Claimed" in r.text
     assert len(cutoffs) == 2 and world["waited"] == cutoffs[1:]
+    assert [e for e, _ in world["events"]] == ["auth.agent_claimed"]
+
+
+def test_a_slow_audit_is_not_cut_short_by_the_lease(world, monkeypatch) -> None:
+    # The audit runs after the lease, so the lease's bound cannot drop it.
+    from server.auth import grant_claims
+
+    real_grants = agent_claim._other_grants
+
+    async def slow_grants(org: str, namespace: str) -> list[str]:
+        await asyncio.sleep(3.0)
+        return await real_grants(org, namespace)
+
+    monkeypatch.setattr(grant_claims, "CHANGE_S", 2.0)
+    monkeypatch.setattr(agent_claim, "_other_grants", slow_grants)
+    r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
+    assert r.status_code == 200 and "Claimed" in r.text
+    assert [e for e, _ in world["events"]] == ["auth.agent_claimed"]
 
 
 def test_a_cancelled_request_still_stores_the_last_cutoff(world, monkeypatch) -> None:

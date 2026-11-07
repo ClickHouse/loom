@@ -257,7 +257,6 @@ async def _replace_code(
             subject = str(row["owner_email"])
             await _write(row, subject, namespace, password_hash)
             written = True
-            await _audit(org, namespace)
     except BackendUnavailableError as e:
         # A write can land and still report a failure (a timeout after it was
         # applied): the row decides whether the claim is written.
@@ -266,15 +265,17 @@ async def _replace_code(
         log.warning(
             "agent claim of %s/%s: the backend failed after the write: %r", org, namespace, e
         )
-        if not written:
-            await _audit(org, namespace)
-    return "claimed", await _after_write(org, namespace, subject, password_hash)
+    cutoff = await _after_write(org, namespace, subject, password_hash)
+    # After the last cutoff, so the audit's time does not delay it.
+    await _audit(org, namespace)
+    return "claimed", cutoff
 
 
 async def _landed(org: str, namespace: str, password_hash: str) -> bool:
     try:
-        with own_write_reads():
-            row = await namespaces.fetch_row(org, namespace)
+        async with asyncio.timeout(_READ_BACK_S):
+            with own_write_reads():
+                row = await namespaces.fetch_row(org, namespace)
     except Exception as e:  # noqa: BLE001 — unread, the claim's own error answers
         log.warning("agent claim of %s/%s: reading the write failed: %r", org, namespace, e)
         return False
@@ -349,11 +350,12 @@ async def _after_write(org: str, namespace: str, subject: str, password_hash: st
 
 def _past_a_claim_landed_now() -> datetime:
     """A cutoff no earlier than the last one of a claim that released the account
-    by now: its read-back (`_READ_BACK_S`), its skew wait, its cutoff's own
-    margin (`CLOCK_SKEW_S` + 1), and `CLOCK_SKEW_S` more for its replica's clock
-    running ahead of this one's."""
+    by now: `_READ_BACK_S` for the release returning and once more for a check
+    that its write landed, its read-back (`_READ_BACK_S`), its skew wait, its
+    cutoff's own margin (`CLOCK_SKEW_S` + 1), and `CLOCK_SKEW_S` more for its
+    replica's clock running ahead of this one's."""
     skew = revocation.CLOCK_SKEW_S
-    return _now() + timedelta(seconds=_READ_BACK_S + skew + (skew + 1) + skew)
+    return _now() + timedelta(seconds=3 * _READ_BACK_S + skew + (skew + 1) + skew)
 
 
 def _now() -> datetime:

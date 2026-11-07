@@ -129,12 +129,11 @@ def registry_row(
     # the namespace as bench, so the namespace gc worker retires it by idleness.
     # Lazy: the auto-register module imports the operation registry, which imports this one.
     from server.auth.agents import TAG_PREFIX as MACHINE_TAG
+    from server.identity.app.namespace_autoregister import classify_kind
 
     # A workload trust's mark is the trust's to give, and an agent claim's mark the
     # claim's: dropped from the form, carried forward from the row. Only a trust's
     # mark binds the owner.
-    from server.identity.app.namespace_autoregister import classify_kind
-
     stored = [str(t) for t in (existing or {}).get("tags") or [] if str(t).startswith(MACHINE_TAG)]
     trust_made = [t for t in stored if t != CLAIMED_TAG]
     tags = [t for t in input.tags if not str(t).startswith(MACHINE_TAG)] + stored

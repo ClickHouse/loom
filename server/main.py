@@ -68,6 +68,10 @@ async def _shutdown_drains(lease: Any, supervisor: Any, emitter: Any) -> None:
     """The lifespan's shutdown drains, in order; it bounds them all together."""
     from server.workers import leader as _leader
 
+    # An agent claim's last cutoff, which ends what an older replica's sign-in
+    # with the code issued while the claim was landing: alongside the drains
+    # below, so it has the whole budget.
+    claims = asyncio.create_task(_agent_claim.drain())
     await _leader.shutdown(lease, supervisor)
     # The service-side writes still in flight land while what they use is
     # open: a write's after-write tasks use the shared HTTP pool and emit
@@ -80,15 +84,13 @@ async def _shutdown_drains(lease: Any, supervisor: Any, emitter: Any) -> None:
         # not a setting: one shutdown step
         await asyncio.wait_for(mcp_runs.drain_ledger_writes(), 5.0)
     await boot.drain_writes()
-    # An agent claim's last cutoff, which ends what an older replica's sign-in
-    # with the code issued while the claim was landing.
-    await _agent_claim.drain()
     # The judge emits a cost event and posts scores: it stops before the
     # emitter and the score queue drain, and both before the HTTP clients close.
     from server.observability import langfuse_scores, retrieval_judge
 
     await retrieval_judge.stop()
     await langfuse_scores.drain(timeout_s=5.0)
+    await claims
     await emitter.stop()
     _otel.shutdown()
     from server.clients import _http as _http_clients

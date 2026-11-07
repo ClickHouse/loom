@@ -335,16 +335,19 @@ sign-in limits and hashes the new password only once the code is proven. Holding
 from read to write, it cuts off every token the namespace's subject was issued before
 (`account_admin.end_tokens`, which also ends each OAuth and device session at its next
 refresh), replaces the code with the claimer's own password, adds the tag
-`machine:agent-signup:claimed` and audits `auth.agent_claimed`. Once it releases the account it
-reads the row back with sequential consistency (for at most 5 s), waits `CLOCK_SKEW_S` (5 s),
-and cuts off once more, for a sign-in with a plain-hash code on an older replica while the
-write was landing; no lease bound can stop these steps, and they run in a task of their own, so
-a client that disconnects does not stop them either; a shutdown waits for them for as long as
-one claim can run (`agent_claim.DRAIN_S`), within the shutdown's drain budget. A second submit
+`machine:agent-signup:claimed`. Once it releases the account it reads the row back with
+sequential consistency (for at most 5 s), waits `CLOCK_SKEW_S` (5 s), and cuts off once more,
+for a sign-in with a plain-hash code on an older replica while the write was landing, then
+audits `auth.agent_claimed`. An insert that reports a failure is read back (for at most 5 s),
+and when the row holds the new password the claim goes on as written; no lease bound can stop these steps, and they run in a task of their own, so
+a client that disconnects does not stop them either; a shutdown waits for them alongside its
+other drains, for as long as one claim can run (`agent_claim.DRAIN_S`) or what is left of the
+shutdown's drain budget. A second submit
 of the same form that proved the code too finds the account claimed once it holds it and waits to a bound past the
-first claim's last cutoff, counted from that moment: the read-back's 5 s, the skew wait, the
+first claim's last cutoff, counted from that moment: 5 s for the first claim's release to
+return and 5 s more for a check that its write landed, the read-back's 5 s, the skew wait, the
 cutoff's own margin (`CLOCK_SKEW_S` + 1) and `CLOCK_SKEW_S` for the first claim's replica clock
-running ahead, 21 s, then the usual wait for every replica's clock to pass it. Only then does
+running ahead, 31 s, then the usual wait for every replica's clock to pass it. Only then does
 it tell the person to sign in. A submit that finds the account busy past the lease's wait
 answers 503 with `Retry-After`, saying an earlier submit may still be claiming it. A failed
 read-back is logged and the wait and the cutoff still run; a failed second cutoff is logged,
