@@ -270,6 +270,20 @@ describe("MemoryInspector lifecycle actions", () => {
     await waitFor(() => expect(lc.lockMemory).toHaveBeenCalledWith(row, "coffee_pref", "no_delete", "legal hold"));
   });
 
+  it("closes an open edit when a read only lock lands, and says so", async () => {
+    await open("writer");
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(await screen.findByRole("button", { name: "Save new version" })).toBeInTheDocument();
+    vi.mocked(api.getMemory).mockResolvedValue({ ...LIVE, lock_mode: "read_only" });
+    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Lock…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Lock memory" });
+    await userEvent.type(within(dialog).getByLabelText("Reason"), "legal hold");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Lock" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull());
+    expect(api.setMemory).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith("Locked read only: the open edit was closed", "info");
+  });
+
   it("holds the reason dialog open while its call runs", async () => {
     let finish: (v: { locked: boolean }) => void = () => {};
     vi.mocked(lc.lockMemory).mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));

@@ -260,8 +260,8 @@ export function MemoryInspector({
 
   // Escape: cancels an active edit first; while a field has focus it is
   // left to the field; otherwise it closes the drawer. Radix only delivers
-  // this when the drawer is the topmost layer, so the Copy-to dialog's own
-  // Escape never reaches here.
+  // this when the drawer is the topmost layer, so a dialog over the drawer
+  // keeps its own Escape.
   const onEscapeKeyDown = (e: KeyboardEvent) => {
     if (editing) {
       e.preventDefault();
@@ -465,13 +465,15 @@ export function MemoryInspector({
   // Both lock modes refuse a delete; read_only also refuses a value or expiry change. No
   // lock gates tags (server/memory/domain/lock.py).
   const valueLocked = detail?.lock_mode === "read_only";
-  // A read_only lock that lands while an edit or a rename is open closes it: both would
-  // answer 423.
+  // A read_only lock that lands while an edit or a rename is open closes it, and says so:
+  // both would answer 423.
+  const formOpen = editing || renaming;
   useEffect(() => {
-    if (!valueLocked) return;
+    if (!valueLocked || !formOpen) return;
     setEditing(false);
     setRenaming(false);
-  }, [valueLocked]);
+    toast("Locked read only: the open edit was closed", "info");
+  }, [valueLocked, formOpen]);
   const deleteLocked = !!detail?.lock_mode;
   const linkCount = links ? links.in.length + links.out.length : 0;
   const verified = detail?.verification === "human" || detail?.verification === "process";
