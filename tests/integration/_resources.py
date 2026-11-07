@@ -6,7 +6,8 @@ row of every org it minted when the session ends, straight from ClickHouse
 across every MergeTree table with an `org` column, then counts again to prove
 nothing is left. Only ids of the minted shape are ever purged, so a shared
 dev stack keeps every other tenant's rows. `memory_rows` reads a tenant's
-memory rows for a check that an op wrote nothing.
+memory rows for a check that an op wrote nothing. `minted_identity` gives a test a
+fresh org and a writer token for it, in place of self-signup.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import os
 import re
 import secrets
 import time
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -37,9 +39,9 @@ def unique_org(label: str) -> str:
     return org
 
 
-def minted_identity(mint_test_token: Any, label: str) -> dict[str, str]:
-    """A fresh org (`unique_org`), a namespace named `label` and a token for them minted
-    with the server's own secret, in place of self-signup."""
+def minted_identity(mint_test_token: Callable[..., str], label: str) -> dict[str, str]:
+    """A fresh org (`unique_org`), a namespace named `label`, and a writer token for every
+    namespace of the org, minted with the server's own secret."""
     org = unique_org(label)
     subject = f"{label}@loom.test"
     token = mint_test_token(org=org, namespaces=["*"], subject=subject)
