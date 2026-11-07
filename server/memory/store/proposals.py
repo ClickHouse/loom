@@ -50,7 +50,7 @@ async def scan_proposals(
               AND memory_key IN (
                   SELECT memory_key FROM loom.memory FINAL WHERE {live_in_namespace} AND {is_wanted}
               )
-            ORDER BY {KEY_HEAD_ORDER}
+            ORDER BY memory_key, {KEY_HEAD_ORDER}
             LIMIT 1 BY memory_key
         )
         WHERE {is_wanted}

@@ -35,6 +35,11 @@ from server.memory.store.sql import (
 _LOCATE_COLUMNS = "memory_id, version, agent, user_id, session_id, memory_key"
 
 
+# The newest row of a key across identities, the one a namespace-wide key read answers
+# with; `memory_id` breaks a tie, since one write can stamp one version on several rows.
+KEY_HEAD_ORDER = "version DESC, created_at DESC, memory_id ASC"
+
+
 # The strong bulk read's fetch — the whole row by its exact (memory_id,
 # version), without FINAL, for a caller that writes from it.
 _BULK_FETCH_WHOLE_SQL = (
@@ -130,7 +135,7 @@ async def get_by_key(
     # most-recently-written row.
     if identity.agent == "*":
         identity_clause = ""
-        order_clause = "ORDER BY version DESC, created_at DESC"
+        order_clause = f"ORDER BY {KEY_HEAD_ORDER}"
     else:
         identity_clause = (
             "AND agent = {agent:String} AND user_id = {uid:String} AND session_id = {sid:String}"
@@ -523,11 +528,6 @@ async def _session_writers(
     return out
 
 
-# The newest row of a key across identities, the one a namespace-wide key read answers
-# with; `memory_id` breaks a tie, since one write can stamp one version on several rows.
-KEY_HEAD_ORDER = "memory_key ASC, version DESC, created_at DESC, memory_id ASC"
-
-
 async def get_many_by_keys(
     identity: Identity,
     memory_keys: list[str],
@@ -581,10 +581,9 @@ async def get_many_by_keys(
         session_clause = "AND session_id = {sid:String}"
         params["sid"] = identity.session_id
     # With any axis open, several identities may hold the same key: the
-    # newest row per key answers, the way `get_by_key`'s wildcard read orders
-    # (version DESC, created_at DESC) and takes one.
+    # newest row per key answers (KEY_HEAD_ORDER), as `get_by_key`'s wildcard read does.
     one_per_key = (
-        f"ORDER BY {KEY_HEAD_ORDER} LIMIT 1 BY memory_key"
+        f"ORDER BY memory_key ASC, {KEY_HEAD_ORDER} LIMIT 1 BY memory_key"
         if not (agent_clause and user_clause and session_clause)
         else ""
     )

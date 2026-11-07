@@ -482,3 +482,7 @@ async def test_the_listing_and_the_decision_break_a_version_tie_alike(
     ch = proposals_ops.get_client()
     head = await get_many_by_keys(ident, ["k"], scope=WHOLE_NAMESPACE, ch=ch, strong=True)
     assert [r.memory_id for r in out.proposals] == [str(r.memory_id) for r in head]
+    # memory_id breaks the tie: a's id sorts first, though b's row was inserted first.
+    assert [(r.agent, r.memory_id) for r in out.proposals] == [
+        ("a", "00000000-0000-0000-0000-000000000001")
+    ]
