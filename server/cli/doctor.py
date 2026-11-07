@@ -451,7 +451,8 @@ def _doctor_reader_probe(settings: Any) -> tuple[str, str]:
 @functools.cache  # `--json` builds the problem list twice; read once
 def _doctor_tier_failures() -> tuple[Any, ...] | None:
     """The failing code-index tiers as `/v1/health` reports them, read once from
-    ClickHouse; None when it cannot be read (`clickhouse_reachable` says why)."""
+    ClickHouse; None when they cannot be read (ClickHouse down or slow past 5 s, or the
+    registry unread): the doctor then says nothing of them."""
     import asyncio
 
     from server.code.app.index import repo_registry, tier_health
@@ -476,7 +477,7 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
             await client.disconnect()
 
     try:
-        # ClickHouse down: `clickhouse_reachable` says so, and the connect fails fast
+        # bounded: with ClickHouse down, `clickhouse_reachable` already says so
         return asyncio.run(asyncio.wait_for(read(), timeout=5))
     except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
         return None
@@ -494,6 +495,7 @@ def _doctor_problems() -> list[Any]:
         from server.observability.problems import HealthState, Problem, collect_problems
         from server.settings import settings
 
+        tiers = _doctor_tier_failures()  # first: it adopts the runtime overrides
         status, detail = _doctor_reader_probe(settings)
         problems = collect_problems(
             settings,
@@ -502,7 +504,7 @@ def _doctor_problems() -> list[Any]:
                 repo_sandbox_refusal=layout_refusal(),
                 ch_reader_ok={"ok": True, "failing": False}.get(status),
                 ch_reader_error=detail if status == "failing" else "",
-                code_tier_failures=_doctor_tier_failures(),
+                code_tier_failures=tiers,
             ),
         )
         if status == "not_probed" and detail:
