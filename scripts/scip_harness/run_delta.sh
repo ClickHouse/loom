@@ -52,18 +52,28 @@ fi
 
 # reconfigure: the compile database lists only the TUs of the tree it was
 # configured on; the existing cache keeps the compiler, and a failed configure
-# keeps the last database.
+# keeps the last database. The marker only makes the next run retry: it is
+# replaced, never written through, since the checkout can hold a link there.
 reconfigure() {
   if [[ -z "${CONFIGURED:-}" ]]; then
     echo ">> cmake reconfigure (compile_commands.json): $1"
     if cmake -B build -S . >"$WORK/cmake.log" 2>&1; then
       rm -f "$STALE"
     else
-      # the marker keeps CMake's last lines: why it failed, for the worker's log
-      tail -n 20 "$WORK/cmake.log" >"$STALE"
-      cat "$STALE" >&2
-      echo ">> warning: cmake reconfigure failed; indexing with the last compile_commands.json" >&2
+      rm -f "$STALE"
+      : >"$STALE"
+      tail -n 20 "$WORK/cmake.log" >"$WORK/cmake.tail"
+      echo ">> CMake exited non-zero; indexing with the last compile_commands.json" >&2
     fi
+  fi
+}
+
+# report_stale: a run that indexed with a stale compile database says so in its
+# closing lines, with CMake's last lines; the workers read them from the output.
+report_stale() {
+  if [[ -f "$WORK/cmake.tail" ]]; then
+    echo ">> stale compile database: cmake reconfigure failed"
+    sed 's/^/>> cmake: /' "$WORK/cmake.tail"
   fi
 }
 
@@ -107,6 +117,7 @@ else
   fi
   if [[ ! -s "$WORK/tus.txt" && ! -s "$WORK/deleted.txt" ]]; then
     echo ">> no C++ TUs changed — nothing to index"
+    report_stale
     exit 0
   fi
   echo ">> $(wc -l <"$WORK/tus.txt") TUs to index"
@@ -129,6 +140,7 @@ PYEOF
   )
   if ((N_COMPDB == 0)) && [[ ! -s "$WORK/deleted.txt" ]]; then
     echo ">> changed TUs not present in compile_commands.json — nothing to index"
+    report_stale
     exit 0
   fi
   echo ">> $N_COMPDB TUs matched in compdb"
@@ -161,3 +173,4 @@ else
   echo ">> converting + uploading…"
   convert_delta "${ARGS[@]}" --producer "scip_harness@$(hostname -s)"
 fi
+report_stale

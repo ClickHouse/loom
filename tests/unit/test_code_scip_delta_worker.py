@@ -126,33 +126,39 @@ async def test_fetch_does_not_recurse_submodules(monkeypatch, tmp_path):
     assert sub["token"] == "ghs_test" and sub["remote"] == "https://github.com/o/private"
 
 
-async def _stale_pass(monkeypatch, tmp_path, *, stale: bool) -> tuple[Any, AsyncMock]:
-    """One delta pass whose harness exits 0, with or without the stale marker."""
+_STALE_OUT = (
+    b">> stale compile database: cmake reconfigure failed\n"
+    b">> cmake: CMake Error: a package is missing\n"
+)
+
+
+async def _stale_pass(
+    monkeypatch, tmp_path, *, out: bytes, scip_commit: str = "b" * 40, marker: bool = False
+) -> tuple[Any, AsyncMock]:
+    """One delta pass whose harness exits 0 with `out`."""
     from server.code.app.index.compiler_tier import STALE_COMPDB_MARKER
     from server.code.app.index.sandbox import JobResult
     from server.code.workers import scip_delta as w
     from server.settings import settings
 
-    marker = tmp_path / "checkout" / STALE_COMPDB_MARKER
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / "bare.git").mkdir(exist_ok=True)
+    for name in ("checkout/build", "bare.git"):
+        (tmp_path / name).mkdir(parents=True, exist_ok=True)
     (tmp_path / "scip-clang").touch()
-    if stale:
-        marker.write_text("CMake Error: a package is missing\n")
+    if marker:
+        (tmp_path / "checkout" / STALE_COMPDB_MARKER).touch()
     else:
-        marker.unlink(missing_ok=True)
+        (tmp_path / "checkout" / STALE_COMPDB_MARKER).unlink(missing_ok=True)
     monkeypatch.setattr(settings, "code_scip_checkout_dir", str(tmp_path / "checkout"))
     monkeypatch.setattr(settings, "code_git_dir", str(tmp_path / "bare.git"))
     monkeypatch.setattr(settings, "code_scip_clang_path", str(tmp_path / "scip-clang"))
     monkeypatch.setattr(w, "git", AsyncMock())
     record = AsyncMock()
-    repo = _repo("a" * 40, "b" * 40)
     with (
-        patch("server.code.store.index.CodeRepo", return_value=repo),
+        patch("server.code.store.index.CodeRepo", return_value=_repo("a" * 40, scip_commit)),
         patch("server.code.domain.index.repos.configured_repos", return_value=[_Cfg()]),
         patch(
             "server.code.app.index.compiler_tier.run_job",
-            AsyncMock(return_value=JobResult(0, b"", b"")),
+            AsyncMock(return_value=JobResult(0, out, b"")),
         ),
         patch("server.code.app.index.tier_health.record", record),
     ):
@@ -162,19 +168,30 @@ async def _stale_pass(monkeypatch, tmp_path, *, stale: bool) -> tuple[Any, Async
 
 @pytest.mark.asyncio
 async def test_a_delta_on_a_stale_compile_database_fails_the_tier_record(monkeypatch, tmp_path):
-    """The harness exits 0 and leaves its marker, with CMake's last lines, when CMake
-    cannot reconfigure: the watermark moves, the pass is no error, and the clang record
-    reads failing with why; the next run whose configure succeeds clears it."""
-    res, record = await _stale_pass(monkeypatch, tmp_path, stale=True)
-    assert not res.errors
-    (_, org, ns, tier, err) = record.await_args.args
-    assert (ns, tier) == ("code-clickhouse", "clang")
-    assert "cmake reconfigure failed" in str(err) and "a package is missing" in str(err)
+    """A harness that exits 0 closing with the stale compile database lines: the
+    watermark moves, the pass is no error, and the clang record reads failing with
+    CMake's lines; a later run without them records ok."""
     from server.code.domain.index.tier_health import classify
 
-    assert classify(str(err)) == "cmake"
-    res, record = await _stale_pass(monkeypatch, tmp_path, stale=False)
+    res, record = await _stale_pass(monkeypatch, tmp_path, out=b">> 3 TUs to index\n" + _STALE_OUT)
+    assert not res.errors
+    (_, _, ns, tier, err) = record.await_args.args
+    assert (ns, tier) == ("code-clickhouse", "clang")
+    assert "a package is missing" in str(err) and classify(str(err)) == "cmake"
+    res, record = await _stale_pass(monkeypatch, tmp_path, out=b">> 3 TUs to index\n")
     assert not res.errors and record.await_args.args[3:] == ("clang",)
+
+
+@pytest.mark.asyncio
+async def test_a_current_pass_leaves_a_stale_record_while_the_marker_is_there(
+    monkeypatch, tmp_path
+):
+    """No new merge: the pass runs no harness, so it does not clear a record failing on
+    a stale compile database while the checkout still marks the failed configure."""
+    _, record = await _stale_pass(monkeypatch, tmp_path, out=b"", scip_commit="a" * 40, marker=True)
+    record.assert_not_awaited()
+    _, record = await _stale_pass(monkeypatch, tmp_path, out=b"", scip_commit="a" * 40)
+    assert record.await_args.args[3:] == ("clang",)
 
 
 @pytest.mark.asyncio

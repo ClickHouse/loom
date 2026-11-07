@@ -248,28 +248,37 @@ def harness_failure(returncode: int | None, tail: str) -> RuntimeError:
     return RuntimeError(f"harness exit {returncode}: {tail}")
 
 
-# run_delta.sh leaves this in the checkout, holding CMake's last lines, while its
-# CMake reconfigure fails and it indexes with the last compile database
+# run_delta.sh leaves this in the checkout while its CMake reconfigure fails, so its
+# next run retries. The checkout is the repository's, so a link can sit there: the
+# server only asks whether the path exists, never follows or reads it.
 STALE_COMPDB_MARKER = "build/.loom-reconfigure-failed"
+# The closing line of a C/C++ harness run that indexed with a stale compile database;
+# CMake's last lines follow it.
+STALE_COMPDB_LINE = ">> stale compile database: cmake reconfigure failed"
 
 
-async def stale_compdb(namespace: str, checkout: Path) -> tuple[str, str]:
-    """(reason, CMake's last lines) when the harness indexed `checkout` with a stale
-    compile database, else ("", "")."""
-    try:
-        tail = await asyncio.to_thread((checkout / STALE_COMPDB_MARKER).read_text, errors="replace")
-    except FileNotFoundError:
-        return "", ""
-    return f"{namespace}: cmake reconfigure failed; compile database stale", tail
+def stale_compdb(out: str) -> str:
+    """The closing lines of a harness run that indexed with a stale compile database,
+    without their `>> ` prefix, or ""."""
+    at = out.rfind(STALE_COMPDB_LINE)
+    if at < 0:
+        return ""
+    lines = out[at:].splitlines()
+    return "\n".join(line.removeprefix(">> ") for line in lines)[:4000]
 
 
-async def raise_if_stale_compdb(cfg: RepoConfig, checkout: Path) -> None:
-    """After a run whose harness indexed with a stale compile database, applied and
-    moved its watermark: `TierDegraded`, so the tier's record reads failing, with why
-    CMake failed, until a configure succeeds."""
-    reason, tail = await stale_compdb(cfg.namespace, checkout)
-    if reason:
-        raise TierDegraded(f"{reason}\n{tail}")
+def raise_if_stale_compdb(out: str) -> None:
+    """After a run that applied and moved its watermark: `TierDegraded` when its harness
+    indexed with a stale compile database, so the tier's record reads failing, with
+    why CMake failed, until a configure succeeds."""
+    if stale := stale_compdb(out):
+        raise TierDegraded(stale)
+
+
+def stale_compdb_pending(cfg: RepoConfig) -> bool:
+    """The entry's C/C++ checkout's last reconfigure failed (a link at the marker is
+    not followed). Sync: callers run it in a thread."""
+    return os.path.lexists(Path(checkout_for(cfg, "clang")) / STALE_COMPDB_MARKER)
 
 
 async def restart_full(

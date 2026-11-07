@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from server.code.app.index.compiler_tier import STALE_COMPDB_MARKER
+from server.code.app.index.compiler_tier import STALE_COMPDB_MARKER, stale_compdb
 
 _HARNESS = Path(__file__).resolve().parents[2] / "scripts" / "scip_harness"
 
@@ -253,13 +253,14 @@ class _CppWindow:
 
     def run(self, head: str, index_docs: list[str]) -> dict | None:
         _write_index(self.index, index_docs)
-        self.stderr = subprocess.run(
+        self.out = subprocess.run(
             ["bash", str(_HARNESS / "run_delta.sh"), str(self.repo), self.base, head, "-"],
             env=self.env,
             check=True,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-        ).stderr
+        ).stdout
         return json.loads(self.delta.read_text()) if self.delta.exists() else None
 
     @property
@@ -346,7 +347,8 @@ def test_a_failed_reconfigure_indexes_with_the_last_compile_database(tmp_path: P
     head = _commit(w.repo, "edit the build and a")
     delta = w.run(head, ["src/a.cpp"])
     assert w.cmake_runs == ["cmake -B build -S ."] and w.compdbs == [["a.cpp"]]
-    assert "cmake reconfigure failed" in w.stderr
+    assert stale_compdb(w.out).startswith("stale compile database")
+    assert "cmake: CMake Error: a package is missing" in stale_compdb(w.out)
     assert delta is not None and "src/a.cpp" in [f["path"] for f in delta["files"]]
 
 
@@ -360,13 +362,13 @@ def test_a_failed_reconfigure_is_retried_until_one_succeeds(tmp_path: Path) -> N
     w.base = _git(w.repo, "rev-parse", "HEAD")
     (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
     w.run(_commit(w.repo, "edit a"), ["src/a.cpp"])
-    assert len(w.cmake_runs) == 2 and "cmake reconfigure failed" in w.stderr
+    assert len(w.cmake_runs) == 2 and stale_compdb(w.out)
     assert (w.repo / STALE_COMPDB_MARKER).exists()
     del w.env["CMAKE_FAIL"]
     w.base = _git(w.repo, "rev-parse", "HEAD")
     (w.repo / "src" / "a.cpp").write_text("int a() { return 4; }\n")
     w.run(_commit(w.repo, "edit a again"), ["src/a.cpp"])
-    assert len(w.cmake_runs) == 3 and "cmake reconfigure failed" not in w.stderr
+    assert len(w.cmake_runs) == 3 and not stale_compdb(w.out)
     assert not (w.repo / STALE_COMPDB_MARKER).exists()
     w.base = _git(w.repo, "rev-parse", "HEAD")
     (w.repo / "src" / "a.cpp").write_text("int a() { return 5; }\n")
@@ -384,12 +386,30 @@ def test_a_full_index_whose_reconfigure_fails_indexes_the_last_compile_database(
         ["bash", str(_HARNESS / "run_delta.sh"), str(w.repo), "--full", "", "-"],
         env=w.env,
         check=True,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
     )
-    assert "cmake reconfigure failed" in proc.stderr
-    assert "a package is missing" in (w.repo / STALE_COMPDB_MARKER).read_text()
+    assert "cmake: CMake Error: a package is missing" in stale_compdb(proc.stdout)
+    assert (w.repo / STALE_COMPDB_MARKER).exists()
     assert w.compdbs == [["a.cpp", "b.cpp"]]
+
+
+def test_a_link_the_repository_puts_at_the_marker_is_replaced_not_written_through(
+    tmp_path: Path,
+) -> None:
+    """The checkout is the repository's: a link at the marker makes at most a retry,
+    and a failed reconfigure replaces it rather than writing to what it names."""
+    w = _CppWindow(tmp_path)
+    secret = tmp_path / "secret"
+    secret.write_text("token\n")
+    (w.repo / STALE_COMPDB_MARKER).symlink_to(secret)
+    w.env["CMAKE_FAIL"] = "1"
+    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
+    w.run(_commit(w.repo, "edit a"), ["src/a.cpp"])
+    assert len(w.cmake_runs) == 1 and "token" not in w.out
+    assert secret.read_text() == "token\n"
+    assert not (w.repo / STALE_COMPDB_MARKER).is_symlink()
 
 
 def test_a_first_configure_is_not_followed_by_a_reconfigure(tmp_path: Path) -> None:

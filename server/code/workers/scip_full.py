@@ -103,7 +103,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipFullResult)
         result.skipped.append(f"{cfg.namespace}: {missing}")
         return False
     result.started += 1
-    stats, _out = await full_index(
+    stats, out = await full_index(
         repo,
         cfg,
         checkout,
@@ -117,5 +117,5 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipFullResult)
     logger.info(
         "code_scip_full: %s at %s applied %s", cfg.namespace, target[:8], stats.model_dump()
     )
-    await raise_if_stale_compdb(cfg, checkout)
+    raise_if_stale_compdb(out)
     return True

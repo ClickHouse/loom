@@ -239,12 +239,13 @@ a tree. It runs the configure again on the existing cache before a full index an
 a delta whose window adds a `.cpp`, `.cc` or `.cxx` file or adds, changes or deletes a
 `CMakeLists.txt` or `.cmake` file, because the compile database lists only the
 translation units of the tree it was configured on. When that configure fails, the
-harness indexes with the last compile database, and the entry's `clang` tier (or
-`clang_full`, for a full index) reads failing with kind `cmake` and CMake's last
-lines. Every later run reconfigures, and the record clears on the first configure
-that succeeds; a translation unit added meanwhile is indexed by the next full index. A worker whose project prerequisites
-are absent records a skip in `workers.status`; the Tree-sitter tier remains available.
-TypeScript projects have their dependencies installed automatically in their checkout.
+harness indexes with the last compile database and closes its output with CMake's last
+lines, and the entry's `clang` tier (or `clang_full`, for a full index) reads failing
+with kind `cmake`. Every later run reconfigures, and the record clears on the first
+configure that succeeds; a translation unit added meanwhile is indexed by the next full
+index. A worker whose project prerequisites are absent records a skip in
+`workers.status`; the Tree-sitter tier remains available. TypeScript projects have
+their dependencies installed automatically in their checkout.
 
 A large C++ tree is the heavy case: a ClickHouse-sized checkout with its submodules
 and build tree is about 30 GB beside the mirror, and scip-clang holds a translation

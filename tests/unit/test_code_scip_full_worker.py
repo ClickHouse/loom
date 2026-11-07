@@ -49,13 +49,13 @@ def _repo(state: dict[tuple[str, str], str]) -> AsyncMock:
     return repo
 
 
-async def _full_pass(tmp_path, monkeypatch, state, cfgs) -> tuple[Any, AsyncMock]:
+async def _full_pass(tmp_path, monkeypatch, state, cfgs, out: str = "") -> tuple[Any, AsyncMock]:
     from server.settings import settings
 
     clang = tmp_path / "scip-clang"
     clang.touch()
     monkeypatch.setattr(settings, "code_scip_clang_path", str(clang))
-    run = AsyncMock(return_value=(ScipApplyStats(), ""))
+    run = AsyncMock(return_value=(ScipApplyStats(), out))
     monkeypatch.setattr(scip_full, "full_index", run)
     with (
         patch("server.code.store.index.CodeRepo", return_value=_repo(state)),
@@ -73,18 +73,21 @@ async def test_an_unseeded_entry_gets_its_first_index_and_a_checkout(tmp_path, m
     assert run.await_args.args[5] == "a" * 40
 
 
+_STALE_OUT = (
+    ">> applied\n>> stale compile database: cmake reconfigure failed\n"
+    ">> cmake: CMake Error: a package is missing\n"
+)
+
+
 @pytest.mark.asyncio
 async def test_a_full_run_on_a_stale_compile_database_fails_the_full_record(tmp_path, monkeypatch):
-    """The harness leaves its marker in the checkout when CMake cannot reconfigure."""
-    from server.code.app.index.compiler_tier import STALE_COMPDB_MARKER
-
+    """The harness's closing lines say it indexed with a stale compile database."""
     cfg = _cfg(tmp_path, "code-a")
-    marker = tmp_path / "checkout-code-a" / STALE_COMPDB_MARKER
-    marker.parent.mkdir(parents=True)
-    marker.write_text("CMake Error: a package is missing\n")
     record = AsyncMock()
     with patch("server.code.app.index.tier_health.record", record):
-        res, _ = await _full_pass(tmp_path, monkeypatch, {("code-a", "git_head"): "a" * 40}, [cfg])
+        res, _ = await _full_pass(
+            tmp_path, monkeypatch, {("code-a", "git_head"): "a" * 40}, [cfg], out=_STALE_OUT
+        )
     assert res.deltas_applied == 1 and not res.errors
     (_, _, ns, tier, err) = record.await_args.args
     assert (ns, tier) == ("code-a", "clang_full") and "a package is missing" in str(err)
@@ -97,17 +100,15 @@ async def test_a_manual_full_run_on_a_stale_compile_database_says_so(tmp_path, m
 
     from server.cli import code_scip
     from server.code.app.index import scip_full as app
-    from server.code.app.index.compiler_tier import STALE_COMPDB_MARKER
     from server.settings import settings
 
     cfg = _cfg(tmp_path, "code-a")
     checkout = tmp_path / "checkout-code-a"
-    (checkout / STALE_COMPDB_MARKER).parent.mkdir(parents=True)
-    (checkout / STALE_COMPDB_MARKER).touch()
+    checkout.mkdir()
     clang = tmp_path / "scip-clang"
     clang.touch()
     monkeypatch.setattr(settings, "code_scip_clang_path", str(clang))
-    monkeypatch.setattr(app, "full_index", AsyncMock(return_value=(ScipApplyStats(), "")))
+    monkeypatch.setattr(app, "full_index", AsyncMock(return_value=(ScipApplyStats(), _STALE_OUT)))
     args = argparse.Namespace(checkout=str(checkout), apply_delta="", jobs=0, keep_delta="")
     record = AsyncMock()
     with (
@@ -119,9 +120,9 @@ async def test_a_manual_full_run_on_a_stale_compile_database_says_so(tmp_path, m
     ):
         rc = await code_scip._scip_full_locked(args, "o", "code-a", cfg)
     assert rc == 0
-    assert "code-a: cmake reconfigure failed; compile database stale" in capsys.readouterr().err
+    assert "code-a: stale compile database: cmake reconfigure failed" in capsys.readouterr().err
     (_, _, _, tier, err) = record.await_args.args
-    assert tier == "clang_full" and "cmake reconfigure failed" in err
+    assert tier == "clang_full" and "a package is missing" in err
 
 
 @pytest.mark.asyncio
