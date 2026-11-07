@@ -2,15 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Table } from "@clickhouse/click-ui/Table";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { getOwnerReport, type OwnerReport } from "../../api";
+import { OWNER_READS, getOwnerReport, type OwnerReport } from "../../api";
 import { useIdentity } from "../../lib/state";
 import { humanizeError } from "../../lib/format";
 import { AgentBadge, NameBadge } from "../../components/AgentBadge";
 import { ListTime } from "../../components/ui/ListTime";
 import { Alert, SectionHeading } from "../../components/ui";
 
-/** One user's memory in this namespace (memory.owner_report): how many rows they own,
- *  which tokens and agents read them in the last 30 days, and how often they were used. */
+/** One user's memory in this namespace (memory.owner_report): how many rows they own and
+ *  which readers and agents read them in the last 30 days, the most frequent first. */
 export function OwnerReportSection() {
   const identity = useIdentity();
   const [userId, setUserId] = useState("");
@@ -20,12 +20,11 @@ export function OwnerReportSection() {
   // The read out, aborted by a newer one or by leaving the namespace.
   const reading = useRef<AbortController | null>(null);
   useEffect(() => {
-    reading.current?.abort();
     setReport(null);
     setError(null);
     setBusy(false);
+    return () => reading.current?.abort();
   }, [identity.org, identity.namespace]);
-  useEffect(() => () => reading.current?.abort(), []);
   const read = async () => {
     reading.current?.abort();
     const ctl = new AbortController();
@@ -64,7 +63,8 @@ export function OwnerReportSection() {
       {report && (
         <div className="mt-3 space-y-2">
           <p className="text-sm">
-            {report.user_id} owns {report.live_rows.toLocaleString()} memories here.
+            {report.user_id} owns {report.live_rows.toLocaleString()} memor{report.live_rows === 1 ? "y" : "ies"} here.
+            {report.reads.length >= OWNER_READS && ` The ${OWNER_READS} most frequent readers:`}
           </p>
           {report.reads.length === 0 ? (
             <p className="text-sm text-text-muted">Nothing read them in the last 30 days.</p>

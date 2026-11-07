@@ -69,8 +69,10 @@ describe("ErasuresPanel", () => {
     render(<ErasuresPanel />);
     await userEvent.click(await screen.findByRole("button", { name: "Erase data" }));
     const dialog = await screen.findByRole("dialog", { name: "Erase data" });
-    // A namespace admin is not an org admin: the namespace is the only scope.
+    // A namespace admin is not an org admin: the namespace is the only scope, which purges
+    // nothing.
     expect(within(dialog).queryByRole("radiogroup")).toBeNull();
+    expect(within(dialog).queryByRole("checkbox", { name: /Purge/ })).toBeNull();
     await userEvent.click(within(dialog).getByRole("button", { name: "Erase" }));
     await waitFor(() =>
       expect(api.requestErasure).toHaveBeenCalledWith(
@@ -83,6 +85,14 @@ describe("ErasuresPanel", () => {
     );
     await waitFor(() => expect(api.listErasures).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole("dialog", { name: "Erase data" })).toBeNull();
+  });
+
+  it("offers an admin by grant the erase of the namespace, not its export", async () => {
+    // Export is authorized for the org, where only a claim reaches; erase reads the grant.
+    signIn(["writer"], "admin");
+    render(<ErasuresPanel />);
+    expect(await screen.findByRole("button", { name: "Erase data" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Export data" })).toBeNull();
   });
 
   it("lets an org admin erase one user, and refuses a user id that names no one", async () => {
@@ -152,12 +162,15 @@ describe("ErasuresPanel", () => {
     expect(within(dialog).getByRole("button", { name: "Erase" })).toBeEnabled();
     await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
-    vi.mocked(api.requestErasure).mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+    vi.mocked(api.requestErasure).mockRejectedValueOnce(new ApiError({ status: 504, message: "Gateway Timeout" }));
     await userEvent.click(screen.getByRole("button", { name: "Erase data" }));
     dialog = await screen.findByRole("dialog", { name: "Erase data" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Erase" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Erase data" })).toBeNull());
-    expect(toast).toHaveBeenCalledWith("The erasure may still be running; its row shows here once it ends", "info");
+    expect(toast).toHaveBeenCalledWith(
+      "The erasure may still be running; it shows below as in progress until it ends",
+      "info",
+    );
   });
 
   it("says a running saga was not checked yet", async () => {

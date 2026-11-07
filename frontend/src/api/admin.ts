@@ -488,7 +488,7 @@ export interface ErasureStepResult {
 /** A saga's state: `server/erasure/api/erasure.py::ErasureStatus`. */
 export type ErasureStatusValue = "in_progress" | "completed" | "failed";
 
-/** Mirrors `server/erasure/api/erasure.py::ErasureRequestOutput`. */
+/** Mirrors `server/erasure/api/erasure.py::ErasureRequestOutput` (the parts shown). */
 export interface ErasureRequestResult {
   erasure_id: string;
   status: ErasureStatusValue;
@@ -509,7 +509,7 @@ export async function requestErasure(
   return post("/v1/erasure.request", { org, ...scope, requester, purge }, signal);
 }
 
-/** Mirrors `server/erasure/api/erasure.py::ErasureStatusOutput`. */
+/** Mirrors `server/erasure/api/erasure.py::ErasureStatusOutput` (the parts shown). */
 export interface ErasureStatus {
   found: boolean;
   erasure_id: string;
@@ -567,12 +567,19 @@ export interface OwnerReport {
 }
 
 /** POST /v1/memory.owner_report: one user's memory in this namespace and who read it. */
+/** The readers an owner report lists, the most frequent first. */
+export const OWNER_READS = 50;
+
 export async function getOwnerReport(
   id: Pick<Identity, "org" | "namespace">,
   userId: string,
   opts: RequestOpts = {},
 ): Promise<OwnerReport> {
-  return post("/v1/memory.owner_report", { org: id.org, namespace: id.namespace, user_id: userId }, opts.signal);
+  return post(
+    "/v1/memory.owner_report",
+    { org: id.org, namespace: id.namespace, user_id: userId, since_hours: 720, limit: OWNER_READS },
+    opts.signal,
+  );
 }
 
 /** Mirrors `server/memory/api/models_exposure.py::ExposureSummaryOutput`. */

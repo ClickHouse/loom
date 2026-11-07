@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "../../test/rtl";
+import { act, cleanup, render, screen, waitFor } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
@@ -46,5 +46,14 @@ describe("OwnerReportSection", () => {
     );
     expect(await screen.findByText("alice owns 42 memories here.")).toBeInTheDocument();
     expect(screen.getByText("sa:bot")).toBeInTheDocument();
+  });
+
+  it("drops the report when the namespace changes", async () => {
+    render(<OwnerReportSection />);
+    await userEvent.type(screen.getByLabelText("User id"), "alice");
+    await userEvent.click(screen.getByRole("button", { name: "Show" }));
+    expect(await screen.findByText("alice owns 42 memories here.")).toBeInTheDocument();
+    act(() => useStore.setState({ identity: { org: "acme", namespace: "other", agent: "loom-ui" } }));
+    expect(screen.queryByText(/alice owns/)).toBeNull();
   });
 });

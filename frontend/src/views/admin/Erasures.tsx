@@ -15,8 +15,7 @@ import {
   type ErasureStatus,
 } from "../../api";
 import { useIdentity, useStore } from "../../lib/state";
-import { hasOrgAdminClaim } from "../../lib/role";
-import { canCall } from "../../lib/canCall";
+import { hasAdminClaim, hasOrgAdminClaim } from "../../lib/role";
 import { useNamespaceRole } from "../../lib/namespaceRole";
 import { useAbortableEffect } from "../../lib/hooks";
 import { ApiError } from "../../lib/errors";
@@ -35,32 +34,33 @@ const ERASURE_STATE: Record<string, BadgeState> = { completed: "success", failed
 type ScopeKind = ErasureScope["scope_type"];
 
 // An erasure and an export each run whole inside their call: past the dashboard's usual
-// bound, so a long saga is not taken for a failed one.
-const LONG_CALL_MS = 15 * 60_000;
+// bound, up to the shipped proxy's 600 s read timeout.
+const LONG_CALL_MS = 10 * 60_000;
 
 /**
  * The erasure sagas of the org, and the controls to start one or export a scope's data.
  * erasure.list scopes the rows by caller (an org admin sees every one; anyone else the
- * namespace-scoped erasures of the namespaces they reach). Starting or exporting needs
- * admin on the namespace, or an org admin for a user across the org: the same rule the
- * erasure handlers apply.
+ * namespace-scoped erasures of the namespaces they reach). Each scope is offered by the
+ * rule its handler applies: erasing a namespace needs admin there (a grant counts),
+ * exporting one an admin claim (the op is authorized for the org, where only a claim
+ * reaches), and either for one user across the org an org admin claim.
  */
 export function ErasuresPanel() {
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
-  // erasure.export is ADMIN; erasure.request asks the same of a namespace scope beyond its
-  // WRITER floor, so one gate serves both.
-  const namespaceAdmin = canCall("erasure.export", useNamespaceRole(identity.namespace), whoami);
+  const role = useNamespaceRole(identity.namespace);
   const [rows, setRows] = useState<ErasureListRow[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
   const [dialog, setDialog] = useState<"request" | "export" | null>(null);
   const [details, setDetails] = useState<string | null>(null);
 
-  const scopes: ScopeKind[] = [
-    ...(namespaceAdmin ? (["namespace"] as const) : []),
-    ...(hasOrgAdminClaim(whoami) ? (["user_id"] as const) : []),
+  const orgWide: ScopeKind[] = hasOrgAdminClaim(whoami) ? ["user_id"] : [];
+  const eraseScopes: ScopeKind[] = [
+    ...(role === "admin" || hasAdminClaim(whoami) ? ["namespace" as const] : []),
+    ...orgWide,
   ];
+  const exportScopes: ScopeKind[] = [...(hasAdminClaim(whoami) ? ["namespace" as const] : []), ...orgWide];
 
   useAbortableEffect(
     (signal, live) => {
@@ -77,14 +77,18 @@ export function ErasuresPanel() {
     [identity.org, reload],
   );
 
-  const actions = scopes.length > 0 && (
+  const actions = (eraseScopes.length > 0 || exportScopes.length > 0) && (
     <div className="mb-4 flex flex-wrap justify-end gap-2">
-      <Button type="secondary" htmlType="button" onClick={() => setDialog("export")}>
-        Export data
-      </Button>
-      <Button type="danger" htmlType="button" onClick={() => setDialog("request")}>
-        Erase data
-      </Button>
+      {exportScopes.length > 0 && (
+        <Button type="secondary" htmlType="button" onClick={() => setDialog("export")}>
+          Export data
+        </Button>
+      )}
+      {eraseScopes.length > 0 && (
+        <Button type="danger" htmlType="button" onClick={() => setDialog("request")}>
+          Erase data
+        </Button>
+      )}
     </div>
   );
 
@@ -111,7 +115,7 @@ export function ErasuresPanel() {
       {dialog && (
         <ScopeDialog
           mode={dialog}
-          scopes={scopes}
+          scopes={dialog === "request" ? eraseScopes : exportScopes}
           onClose={(changed) => {
             setDialog(null);
             if (changed) setReload((n) => n + 1);
@@ -216,15 +220,18 @@ function ScopeDialog({
   const scope: ErasureScope = { scope_type: kind, scope_value: kind === "namespace" ? namespace : user };
   const ready = scope.scope_value !== "" && !userError && !busy;
   const target = kind === "namespace" ? `namespace ${namespace}` : `user ${user}`;
+  const erase = mode === "request";
+  // Only a user's erasure purges; a namespace's tombstones whatever is asked.
+  const purges = erase && kind === "user_id" && purge;
 
   const submit = async () => {
     if (!ready) return;
-    if (mode === "request") {
+    if (erase) {
       const ok = await confirmAction({
         title: `Erase everything for ${target}?`,
-        message: purge
+        message: purges
           ? "Every row is hard-deleted, in every table and external backend. Nothing can be restored."
-          : "Memories and documents are tombstoned and can be restored for 14 days; everything else, external backends included, is deleted.",
+          : "Memories can be restored for 14 days from Memories → Recently deleted; everything else, external backends included, is gone.",
         confirmLabel: "Erase",
         danger: true,
       });
@@ -234,8 +241,8 @@ function ScopeDialog({
     setError(null);
     const signal = AbortSignal.timeout(LONG_CALL_MS);
     try {
-      if (mode === "request") {
-        const r = await requestErasure(identity.org, scope, requester, purge, signal);
+      if (erase) {
+        const r = await requestErasure(identity.org, scope, requester, purges, signal);
         toast(
           r.status === "failed" ? `Erasure failed: ${r.failure_reason}` : `Erasure ${r.status}`,
           r.status === "failed" ? "error" : "ok",
@@ -251,9 +258,9 @@ function ScopeDialog({
       }
     } catch (e) {
       // No answer is not a refusal: the saga may still be running, and a second Erase
-      // would start another. Its row shows in the list once it ends.
-      if (erase && !(e instanceof ApiError)) {
-        toast("The erasure may still be running; its row shows here once it ends", "info");
+      // would start another. A gateway's 5xx carries no Loom code and is no answer too.
+      if (erase && !(e instanceof ApiError && (e.status < 500 || e.code))) {
+        toast("The erasure may still be running; it shows below as in progress until it ends", "info");
         onClose(true);
         return;
       }
@@ -262,7 +269,6 @@ function ScopeDialog({
     }
   };
 
-  const erase = mode === "request";
   return (
     <Modal
       open
@@ -305,7 +311,7 @@ function ScopeDialog({
               {...fieldError("erasure-user-id-error", userError)}
             />
           )}
-          {erase && (
+          {erase && kind === "user_id" && (
             <Checkbox
               label="Purge: hard-delete with no restore window"
               checked={purge}

@@ -180,10 +180,10 @@ export function Agents() {
                     ),
                   },
                   // `-` is no agent: memory.clear refuses it as a confirmation anyone can type.
-                  ...(canForget && r.agent !== "-"
+                  ...(canForget
                     ? [
                         {
-                          label: (
+                          label: r.agent !== "-" && (
                             <RowMenu
                               name={r.agent}
                               items={[

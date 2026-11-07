@@ -15,6 +15,7 @@ vi.mock("../../api", async (importOriginal) => {
     ...actual,
     listAuditLog: vi.fn(async () => ({ rows: [] })),
     listErasures: vi.fn(async () => ({ rows: [] })),
+    getExposureSummary: vi.fn(async () => ({ namespace_rows: 0, rows: [] })),
   };
 });
 
