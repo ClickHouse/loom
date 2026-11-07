@@ -45,11 +45,7 @@ from server.identity.api.models_namespace_catalog import (
     NamespaceAuditSummary,
 )
 from server.identity.app.namespace_summary import state_change_ops
-from server.identity.app.report_rules import (
-    RuleContract,
-    RuleLog,
-    attach_evidence,
-)
+from server.identity.app.report_rules import RuleContract, RuleLog, attach_evidence
 from server.memory.app.search import pg_validation
 from server.memory.domain.excerpt import EXCERPT_LIMIT
 from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES

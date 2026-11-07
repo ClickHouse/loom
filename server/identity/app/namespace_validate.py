@@ -42,11 +42,7 @@ from server.identity.api.models_namespace_catalog import (
     NamespaceValidateOutput,
     _NamespaceValidateFinding,
 )
-from server.identity.app.report_rules import (
-    RuleContract,
-    RuleLog,
-    attach_evidence,
-)
+from server.identity.app.report_rules import RuleContract, RuleLog, attach_evidence
 from server.memory.app.search import pg_validation
 
 log = logging.getLogger(__name__)
