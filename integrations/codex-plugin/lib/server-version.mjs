@@ -11,13 +11,13 @@ import { readFileSync } from "node:fs";
 // .codex-plugin/ (lib/ is synced into both plugins).
 const MANIFESTS = ["../.claude-plugin/plugin.json", "../.codex-plugin/plugin.json"];
 
-const SEMVER = /^v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 /** [major, minor, patch] of a SemVer string, or null. A prerelease or build
  *  suffix is dropped, so `1.2.0-rc.1` counts as 1.2.0: a release candidate
  *  of the minimum is not warned about. */
 export function parseVersion(text) {
-  const m = SEMVER.exec(String(text ?? "").trim());
+  const m = SEMVER.exec(String(text ?? ""));
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
@@ -51,7 +51,7 @@ export function serverVersionMessage(health, { serverUrl, manifest = pluginManif
   const version = health && typeof health.version === "string" ? health.version : "";
   if (!isOlder(version, manifest.minServerVersion)) return "";
   return (
-    `the Loom server at ${serverUrl} runs ${version.trim()}, older than ${manifest.minServerVersion}, ` +
+    `the Loom server at ${serverUrl} runs ${version}, older than ${manifest.minServerVersion}, ` +
     `the oldest this plugin (${manifest.version}) supports; upgrade the server.`
   );
 }

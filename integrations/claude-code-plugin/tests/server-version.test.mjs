@@ -16,7 +16,6 @@ const MANIFEST = { version: "2.0.0", minServerVersion: "1.2.0" };
 
 test("parseVersion reads a SemVer core and drops a prerelease or build suffix", () => {
   assert.deepEqual(parseVersion("1.2.3"), [1, 2, 3]);
-  assert.deepEqual(parseVersion("v1.2.3"), [1, 2, 3]);
   assert.deepEqual(parseVersion("1.2.0-rc.1"), [1, 2, 0]);
   assert.deepEqual(parseVersion("1.2.0+abc.5"), [1, 2, 0]);
   assert.deepEqual(parseVersion("10.20.30-beta+exp.sha.5114f85"), [10, 20, 30]);
