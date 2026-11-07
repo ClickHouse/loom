@@ -52,7 +52,7 @@ async def admit(
 
 # The wait's name in a report's `skipped` lines and, for audit and validate, coverage.
 PROJECTION = "projection"
-# Set inside `published_reads`.
+# True inside a report's `published_reads`: a report nested in it waits no second time.
 _published: ContextVar[bool] = ContextVar("pg_published_reads", default=False)
 
 

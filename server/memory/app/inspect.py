@@ -17,7 +17,8 @@ can feed the usage fold's `acted` credit. A section that cannot be read lands in
 the namespace committed (`pg_validation.published_reads`), so its counts, tags and
 categories show every committed write but a parked one, which is not waited for; as
 for a search, the wait may publish another writer's lapsed deliveries. A wait that
-runs out is reported as `projection` in `skipped`.
+runs out, or a Postgres that does not answer, is reported as `projection` in
+`skipped`.
 """
 
 from __future__ import annotations

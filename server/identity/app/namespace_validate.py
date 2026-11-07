@@ -11,8 +11,8 @@ no new storage. A check that fails to run is reported in `skipped` and the
 rest still return — the report closes a task, it must never fail one. Under
 Postgres the checks start once ClickHouse holds what the namespace committed
 (`pg_validation.published_reads`; as for a search, the wait may publish another
-writer's lapsed deliveries); a wait that runs out is reported as `projection` in
-`skipped` and `coverage`.
+writer's lapsed deliveries); a wait that runs out, or a Postgres that does not
+answer, is reported as `projection` in `skipped` and `coverage`.
 
 Severity is fixed per check, not per row:
 
