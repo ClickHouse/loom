@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Switch } from "@clickhouse/click-ui/Switch";
@@ -49,6 +49,11 @@ function ExtractionRules({ scope }: { scope: PolicyScope }) {
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
   const [busy, setBusy] = useState(false);
+  // The namespace a save was started for: an answer that lands after a switch is not this
+  // panel's any more.
+  const scopeKey = scope === "namespace" ? identity.namespace : "";
+  const current = useRef(scopeKey);
+  current.current = scopeKey;
 
   useAbortableEffect(
     (signal, live) => {
@@ -62,15 +67,17 @@ function ExtractionRules({ scope }: { scope: PolicyScope }) {
         })
         .catch((e) => live() && setError(e));
     },
-    [identity.org, scope === "namespace" ? identity.namespace : "", reload],
+    [identity.org, scopeKey, reload],
   );
 
   const save = async (clear: boolean) => {
+    const mine = scopeKey;
     setBusy(true);
     try {
       const p = clear
         ? await clearExtractionPolicy(identity, scope)
         : await setExtractionPolicy(identity, scope, draft.trim());
+      if (current.current !== mine) return;
       setPolicy(p);
       setDraft(p.policy);
       toast(clear ? "Rules removed" : "Rules saved", "ok");
@@ -107,7 +114,7 @@ function ExtractionRules({ scope }: { scope: PolicyScope }) {
         <div className="mt-3 space-y-3">
           <TextAreaField
             id={fieldId}
-            label="Rules"
+            label={scope === "org" ? "Rules for the org" : `Rules for ${identity.namespace}`}
             value={draft}
             onChange={setDraft}
             rows={4}
@@ -126,7 +133,12 @@ function ExtractionRules({ scope }: { scope: PolicyScope }) {
                 htmlType="button"
                 disabled={busy}
                 onClick={async () => {
-                  if (await confirmAction({ title: `Remove the ${scope}'s extraction rules?`, danger: true })) {
+                  const ok = await confirmAction({
+                    title: `Remove the ${scope}'s extraction rules?`,
+                    confirmLabel: "Remove",
+                    danger: true,
+                  });
+                  if (ok) {
                     void save(true);
                   }
                 }}
@@ -175,7 +187,7 @@ function ModelCallsPanel() {
       !(await confirmAction({
         title: `Stop every model call for ${identity.org}?`,
         message:
-          "No embedding, search ranking, extraction or answer runs for the org's content until calls are switched back on. Reads by key and deletes still work.",
+          "Until calls are switched back on, search and every write that embeds are refused, and no extraction or answer runs for the org's content. Reads by key and deletes still answer.",
         confirmLabel: "Switch off",
         danger: true,
       }))
@@ -213,6 +225,12 @@ function ModelCallsPanel() {
       )}
       {state && (
         <div className="mt-3 space-y-3">
+          <TextField
+            id="model-calls-reason"
+            label="Reason (sent with the switch)"
+            value={reason}
+            onChange={setReason}
+          />
           <div className="flex flex-wrap items-center gap-3">
             <Switch
               label="Model calls"
@@ -235,7 +253,6 @@ function ModelCallsPanel() {
               {state.reason && <>: {state.reason}</>}
             </p>
           )}
-          <TextField id="model-calls-reason" label="Reason for the next change" value={reason} onChange={setReason} />
         </div>
       )}
     </Panel>

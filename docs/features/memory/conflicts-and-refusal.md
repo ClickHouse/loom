@@ -336,8 +336,8 @@ bumps a one-row version watermark (`loom.blacklist_version`); replicas poll it e
 still accept a newly refused value.
 
 The dashboard's Guardrails page (`<server>/admin/guardrails`) manages patterns, and each
-pattern's **Delete matches** runs the sweep. Refusing is
-not erasing: to remove a person's data, use [erasure](./retention-and-erasure.md#erasure).
+pattern's **Delete matches** runs the sweep. Refusing is not erasing: to remove a person's
+data, use [erasure](./retention-and-erasure.md#erasure).
 
 ## Settings
 

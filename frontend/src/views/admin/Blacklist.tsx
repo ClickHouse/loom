@@ -7,6 +7,7 @@ import { sweepBlacklistPattern } from "../../api/guardrails";
 import { hasOrgAdminClaim } from "../../lib/role";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { OrgGuardrails } from "./OrgGuardrails";
+import { RowMenu } from "../../components/ui/RowMenu";
 import { useStore, useIdentity } from "../../lib/state";
 import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
@@ -175,6 +176,10 @@ export function PrivacyFilters({
     try {
       const s = await sweepBlacklistPattern(identity, r.pattern_id);
       if (s.error) throw new Error(s.error);
+      if (s.matched === 0) {
+        toast("No stored memory matches this pattern", "info");
+        return;
+      }
       const more = s.truncated ? "; more remain, sweep again" : "";
       toast(`Deleted ${s.tombstoned} of ${s.matched} matching memories${more}`, "ok");
     } catch (e) {
@@ -325,16 +330,17 @@ export function PrivacyFilters({
                   </div>
                 </div>
                 {canSweep(r) && (
-                  <Button
-                    type="danger"
-                    htmlType="button"
-                    aria-label={`Delete stored memories matching ${r.pattern}`}
-                    loading={sweeping === r.pattern_id}
-                    disabled={sweeping !== null}
-                    onClick={() => void sweep(r)}
-                  >
-                    Delete matches
-                  </Button>
+                  <RowMenu
+                    name={r.pattern}
+                    items={[
+                      {
+                        label: sweeping === r.pattern_id ? "Deleting matches…" : "Delete matches",
+                        danger: true,
+                        disabled: sweeping !== null,
+                        onSelect: () => void sweep(r),
+                      },
+                    ]}
+                  />
                 )}
                 {canRemove && (
                   <IconButton

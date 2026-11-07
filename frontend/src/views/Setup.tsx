@@ -263,7 +263,8 @@ function MemoryTab() {
   // Hidden below namespace ADMIN: the section reads webhook.list on mount.
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
-  const showWebhooks = canCall("webhook.list", useNamespaceRole(identity.namespace), whoami);
+  const role = useNamespaceRole(identity.namespace);
+  const showWebhooks = canCall("webhook.list", role, whoami);
   return (
     <div className="max-w-3xl space-y-8">
       <section aria-labelledby="settings-never-save">

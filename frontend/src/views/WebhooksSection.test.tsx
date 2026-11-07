@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api/webhooks";
@@ -26,7 +26,7 @@ vi.mock("../api/webhooks", async (importOriginal) => {
           status: "dead",
           attempts: 6,
           last_status: 500,
-          last_error: "HTTP 500",
+          last_error: "",
         },
       ],
     })),
@@ -99,8 +99,29 @@ describe("WebhooksSection", () => {
 
   it("removes a webhook after a confirmation", async () => {
     render(<WebhooksSection />);
-    await userEvent.click(await screen.findByRole("button", { name: `Remove webhook ${HOOK.url}` }));
+    await userEvent.click(await screen.findByRole("button", { name: `Actions for ${HOOK.url}` }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
     await waitFor(() => expect(api.removeWebhook).toHaveBeenCalledWith(expect.objectContaining(scope), "w1"));
+  });
+
+  it("drops the previous namespace's webhooks on a switch", async () => {
+    render(<WebhooksSection />);
+    expect(await screen.findByText(HOOK.url)).toBeInTheDocument();
+    vi.mocked(api.listWebhooks).mockImplementationOnce(() => new Promise(() => {}));
+    act(() => useStore.setState({ identity: { ...scope, namespace: "other", agent: "loom-ui" } }));
+    await waitFor(() => expect(screen.queryByText(HOOK.url)).toBeNull());
+    expect(screen.queryByRole("button", { name: `Actions for ${HOOK.url}` })).toBeNull();
+  });
+
+  it("shows a refused registration in the dialog", async () => {
+    vi.mocked(api.registerWebhook).mockRejectedValueOnce(new Error("secret_ref must start with the org's prefix"));
+    render(<WebhooksSection />);
+    await userEvent.click(await screen.findByRole("button", { name: "Add webhook" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add webhook" });
+    await userEvent.type(within(dialog).getByLabelText("URL"), "https://x.example.com/h");
+    await userEvent.type(within(dialog).getByLabelText("Secret variable"), "OTHER");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Add webhook" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("secret_ref must start");
   });
 
   it("shows a webhook's deliveries", async () => {
@@ -110,5 +131,8 @@ describe("WebhooksSection", () => {
     expect(await within(dialog).findByText("deploy_window")).toBeInTheDocument();
     expect(within(dialog).getByText("dead")).toBeInTheDocument();
     expect(within(dialog).getByText("6 tries")).toBeInTheDocument();
+    // The receiver's answer is why it died.
+    await userEvent.hover(within(dialog).getByText("dead"));
+    expect((await screen.findAllByText("HTTP 500")).length).toBeGreaterThan(0);
   });
 });

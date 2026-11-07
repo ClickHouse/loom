@@ -13,6 +13,7 @@ import {
   type Webhook,
   type WebhookDelivery,
   type WebhookEvent,
+  DELIVERY_LIMIT,
   webhookSecretPrefix,
 } from "../api/webhooks";
 import { useIdentity } from "../lib/state";
@@ -20,7 +21,7 @@ import { useAbortableEffect } from "../lib/hooks";
 import { humanizeError } from "../lib/format";
 import { confirmAction } from "../components/ConfirmDialog";
 import { toast } from "../components/Toast";
-import { IconButton } from "../components/IconButton";
+import { RowMenu } from "../components/ui/RowMenu";
 import { ListState } from "../components/ui/ListState";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, ListTime, Loading, Tip } from "../components/ui";
@@ -46,7 +47,7 @@ export function WebhooksSection() {
     (signal, live) => {
       setError(null);
       listWebhooks(identity, { signal })
-        .then((r) => live() && setLoaded({ scope: scopeKey, hooks: r.webhooks ?? [] }))
+        .then((r) => live() && setLoaded({ scope: scopeKey, hooks: r.webhooks }))
         .catch((e) => live() && setError(e));
     },
     [identity.org, identity.namespace, reload],
@@ -99,14 +100,7 @@ export function WebhooksSection() {
                 <Button type="empty" htmlType="button" onClick={() => setDeliveries(h)}>
                   Deliveries
                 </Button>
-                <IconButton
-                  icon="cross"
-                  type="danger"
-                  size="sm"
-                  label={`Remove webhook ${h.url}`}
-                  tooltip="Remove"
-                  onClick={() => void remove(h)}
-                />
+                <RowMenu name={h.url} items={[{ label: "Remove", danger: true, onSelect: () => void remove(h) }]} />
               </li>
             ))}
           </ul>
@@ -204,12 +198,19 @@ function AddWebhookDialog({ onClose }: { onClose: (added: boolean) => void }) {
 }
 
 const DELIVERY_STATE: Record<WebhookDelivery["status"], BadgeState> = {
-  pending: "warning",
+  pending: "neutral",
   delivered: "success",
   dead: "danger",
 };
 
-/** The webhook's events of the last three days and whether each arrived. */
+/** Why a delivery has not arrived: the receiver's HTTP status, or the transport error when
+ *  no status came back. */
+function deliveryFailure(d: WebhookDelivery): string {
+  if (d.last_status) return `HTTP ${d.last_status}`;
+  return d.last_error;
+}
+
+/** The webhook's newest events of the last three days and whether each arrived. */
 function DeliveriesDialog({ hook, onClose }: { hook: Webhook; onClose: () => void }) {
   const identity = useIdentity();
   const [rows, setRows] = useState<WebhookDelivery[] | null>(null);
@@ -219,7 +220,7 @@ function DeliveriesDialog({ hook, onClose }: { hook: Webhook; onClose: () => voi
     (signal, live) => {
       setError(null);
       listWebhookDeliveries(identity, hook.webhook_id, { signal })
-        .then((r) => live() && setRows(r.deliveries ?? []))
+        .then((r) => live() && setRows(r.deliveries))
         .catch((e) => live() && setError(e));
     },
     [hook.webhook_id, retry],
@@ -243,8 +244,8 @@ function DeliveriesDialog({ hook, onClose }: { hook: Webhook; onClose: () => voi
               {
                 label: (
                   <span className="inline-flex items-center gap-1.5">
-                    {d.last_error ? (
-                      <Tip content={d.last_error}>
+                    {deliveryFailure(d) ? (
+                      <Tip content={deliveryFailure(d)}>
                         <span>
                           <Badge text={d.status} state={DELIVERY_STATE[d.status]} size="sm" />
                         </span>
@@ -264,6 +265,9 @@ function DeliveriesDialog({ hook, onClose }: { hook: Webhook; onClose: () => voi
             ],
           }))}
         />
+      )}
+      {rows?.length === DELIVERY_LIMIT && (
+        <p className="mt-2 text-xs text-text-muted">The newest {DELIVERY_LIMIT} events are listed.</p>
       )}
       <ModalFooter>
         <Button type="secondary" htmlType="button" onClick={onClose}>

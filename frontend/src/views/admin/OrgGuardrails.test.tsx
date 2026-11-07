@@ -49,6 +49,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  useStore.setState({ whoami: null });
 });
 
 describe("OrgGuardrails", () => {
@@ -56,7 +57,7 @@ describe("OrgGuardrails", () => {
     vi.mocked(api.setExtractionPolicy).mockResolvedValue(policy("namespace", "No health data."));
     vi.mocked(api.clearExtractionPolicy).mockResolvedValue(policy("org", ""));
     render(<OrgGuardrails />);
-    const fields = await screen.findAllByLabelText("Rules");
+    const fields = await screen.findAllByLabelText(/^Rules for/);
     expect(fields[0]).toHaveValue("Never store card numbers.");
     await userEvent.type(fields[1], "No health data.");
     await userEvent.click(screen.getAllByRole("button", { name: "Save rules" })[1]);
@@ -87,7 +88,13 @@ describe("OrgGuardrails", () => {
     render(<OrgGuardrails />);
     expect(await screen.findByRole("switch", { name: "Model calls" })).toBeEnabled();
     expect(screen.queryByText(/only they can switch them on/)).toBeNull();
-    useStore.setState({ whoami: null });
+  });
+
+  it("says a failed read failed, with Retry", async () => {
+    vi.mocked(api.getOrgModelCalls).mockRejectedValueOnce(new Error("boom"));
+    render(<OrgGuardrails />);
+    await userEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("switch", { name: "Model calls" })).toBeInTheDocument();
   });
 
   it("holds the switch under a platform admin's lock", async () => {

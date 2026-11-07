@@ -68,6 +68,9 @@ export interface WebhookDelivery {
   last_error: string;
 }
 
+/** How many of a webhook's newest deliveries the dialog lists. */
+export const DELIVERY_LIMIT = 50;
+
 export async function listWebhookDeliveries(
   id: Scope,
   webhookId: string,
@@ -75,7 +78,7 @@ export async function listWebhookDeliveries(
 ): Promise<{ deliveries: WebhookDelivery[] }> {
   return post(
     "/v1/webhook.deliveries",
-    { org: id.org, namespace: id.namespace, webhook_id: webhookId, limit: 50 },
+    { org: id.org, namespace: id.namespace, webhook_id: webhookId, limit: DELIVERY_LIMIT },
     opts.signal,
   );
 }

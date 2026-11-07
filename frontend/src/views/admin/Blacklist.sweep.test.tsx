@@ -8,6 +8,7 @@ import * as guardrails from "../../api/guardrails";
 import type { BlacklistRow, MyNamespaceEntry, WhoAmI } from "../../api";
 import { useStore } from "../../lib/state";
 import { resetNamespaceRoleCache } from "../../lib/namespaceRole";
+import { confirmAction } from "../../components/ConfirmDialog";
 import { toast } from "../../components/Toast";
 import { Blacklist, PrivacyFilters } from "./Blacklist";
 
@@ -55,26 +56,43 @@ afterEach(() => {
   useStore.setState({ whoami: null, myNamespaces: null, identity: null });
 });
 
+/** Opens a pattern's row menu and picks Delete matches. */
+async function sweepOf(pattern: string) {
+  await userEvent.click(await screen.findByRole("button", { name: `Actions for ${pattern}` }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: "Delete matches" }));
+}
+
 describe("PrivacyFilters sweep", () => {
-  it("says when a sweep failed and when more matches remain", async () => {
+  it("says when a sweep failed, when nothing matched and when more matches remain", async () => {
     signIn(["writer"]);
     vi.mocked(guardrails.sweepBlacklistPattern)
       .mockResolvedValueOnce({ matched: 0, tombstoned: 0, truncated: false, error: "the pattern no longer compiles" })
-      .mockResolvedValueOnce({ matched: 9000, tombstoned: 5000, truncated: true, error: "" });
+      .mockResolvedValueOnce({ matched: 0, tombstoned: 0, truncated: false, error: "" })
+      .mockResolvedValueOnce({ matched: 5000, tombstoned: 5000, truncated: true, error: "" });
     render(<PrivacyFilters />);
-    const sweep = await screen.findByRole("button", { name: "Delete stored memories matching secret-p1" });
-    await userEvent.click(sweep);
+    await sweepOf("secret-p1");
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Sweep failed: the pattern no longer compiles", "error"));
-    await userEvent.click(sweep);
+    await sweepOf("secret-p1");
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("No stored memory matches this pattern", "info"));
+    await sweepOf("secret-p1");
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith("Deleted 5000 of 9000 matching memories; more remain, sweep again", "ok"),
+      expect(toast).toHaveBeenCalledWith("Deleted 5000 of 5000 matching memories; more remain, sweep again", "ok"),
     );
+  });
+
+  it("deletes nothing when the confirmation is declined", async () => {
+    signIn(["writer"]);
+    vi.mocked(confirmAction).mockResolvedValueOnce(false);
+    render(<PrivacyFilters />);
+    await sweepOf("secret-p1");
+    await waitFor(() => expect(confirmAction).toHaveBeenCalled());
+    expect(guardrails.sweepBlacklistPattern).not.toHaveBeenCalled();
   });
 
   it("shows the org's guardrails on the page to an org admin claim only", async () => {
     signIn(["writer"]);
     render(<Blacklist />);
-    await screen.findByRole("button", { name: "Delete stored memories matching secret-p1" });
+    await screen.findByRole("button", { name: "Actions for secret-p1" });
     expect(screen.queryByRole("heading", { name: "Model calls" })).toBeNull();
     cleanup();
 
@@ -83,12 +101,15 @@ describe("PrivacyFilters sweep", () => {
     expect(await screen.findByRole("heading", { name: "Model calls" })).toBeInTheDocument();
   });
 
-  it("offers a writer the sweep of a namespace pattern, not of an org one", async () => {
+  it("offers a writer the sweep of a namespace pattern, not of an org or global one", async () => {
+    vi.mocked(api.listBlacklist).mockResolvedValue({
+      rows: [row("p1", "namespace"), row("p2", "org"), row("p3", "global")],
+    });
     signIn(["writer"]);
     render(<PrivacyFilters />);
-    const sweep = await screen.findByRole("button", { name: "Delete stored memories matching secret-p1" });
-    expect(screen.queryByRole("button", { name: "Delete stored memories matching secret-p2" })).toBeNull();
-    await userEvent.click(sweep);
+    await sweepOf("secret-p1");
+    expect(screen.queryByRole("button", { name: "Actions for secret-p2" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Actions for secret-p3" })).toBeNull();
     await waitFor(() =>
       expect(guardrails.sweepBlacklistPattern).toHaveBeenCalledWith(
         expect.objectContaining({ namespace: "team" }),
@@ -97,11 +118,11 @@ describe("PrivacyFilters sweep", () => {
     );
   });
 
-  it("offers an org admin the sweep of an org pattern", async () => {
+  it("offers an org admin the sweep of an org and a global pattern", async () => {
+    vi.mocked(api.listBlacklist).mockResolvedValue({ rows: [row("p2", "org"), row("p3", "global")] });
     signIn(["org_admin"]);
     render(<PrivacyFilters />);
-    expect(
-      await screen.findByRole("button", { name: "Delete stored memories matching secret-p2" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Actions for secret-p2" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Actions for secret-p3" })).toBeInTheDocument();
   });
 });
