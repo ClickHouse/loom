@@ -50,8 +50,9 @@ def _git(root: Path, *args: str) -> None:
 def _commit(root: Path, message: str) -> None:
     _git(root, "add", ".")
     _git(
-        root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", message, "--allow-empty"
-    )
+        root, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+        "commit", "-qm", message, "--allow-empty",
+    )  # fmt: skip
 
 
 def _body(category: str, entry: str = "...", steps: str = "none") -> str:
@@ -134,7 +135,6 @@ def test_a_version_already_tagged_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="v98.0.0 is already tagged"):
         prepare.refuse_tagged("98.0.0", root)
     prepare.refuse_tagged("98.0.1", root)
-    prepare.validate("98.0.0", root)  # the notes alone may be made again
 
 
 @pytest.mark.parametrize(
@@ -330,6 +330,13 @@ def test_an_operator_steps_label_written_another_way_is_read(line: str) -> None:
     assert prepare.changelog(body) == ("New Feature", "x", "run the backfill")
 
 
+def test_the_templates_own_operator_steps_text_is_no_step() -> None:
+    placeholder = re.search(r"^- Operator steps:.*$", TEMPLATE, re.M)
+    assert placeholder
+    body = _body("New Feature", "x").replace("- Operator steps: none", placeholder.group(0))
+    assert prepare.changelog(body) == ("New Feature", "x", "")
+
+
 @pytest.mark.parametrize("item", ["- **Operator steps: none**", "- Operator steps:\n"])
 def test_a_bolded_none_or_an_empty_item_is_no_step(item: str) -> None:
     body = _body("New Feature", "x").replace("- Operator steps: none", item)
@@ -454,6 +461,59 @@ def test_the_merged_pull_requests_are_the_squash_merges_since_the_tag(tmp_path: 
     assert prepare.merged_pull_requests("v1.0.0", tmp_path) == [12, 13, 14]
 
 
+def _released(root: Path) -> Path:
+    """v1.0.0, then #12, #13 and #14, and a wire changelog that leaves a mark."""
+    root.mkdir()
+    _git(root, "init", "-q")
+    _commit(root, "before (#1)")
+    _git(root, "tag", "v1.0.0")
+    for n in (12, 13, 14):
+        _commit(root, f"Change {n} (#{n})")
+    wire = root / "scripts/codegen/wire_changelog.py"
+    wire.parent.mkdir(parents=True)
+    wire.write_text(
+        "import pathlib\npathlib.Path('wire-ran').touch()\n"
+        "print('## What changed for clients: a → b\\n\\nNothing.')\n"
+    )
+    return root
+
+
+def _gh_listing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, numbers: list[int]) -> Path:
+    """`gh` on PATH that lists `numbers`, newest first as gh does, and keeps its arguments."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    pulls = [
+        {"number": n, "title": f"T{n}", "body": _body("New Feature", f"Entry {n}.")}
+        for n in numbers
+    ]
+    (bin_dir / "listed.json").write_text(json.dumps(pulls))
+    gh = bin_dir / "gh"
+    gh.write_text(f'#!/bin/sh\necho "$@" > "{bin_dir}/args"\ncat "{bin_dir}/listed.json"\n')
+    gh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    return bin_dir
+
+
+def test_the_notes_read_the_merged_pull_requests_in_one_call_in_merge_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _released(tmp_path / "repo")
+    gh = _gh_listing(tmp_path, monkeypatch, [14, 13, 12])
+    text = prepare.release_notes("1.1.0", "v1.0.0", root)
+    assert "- Entry 12. (#12)\n- Entry 13. (#13)\n- Entry 14. (#14)\n" in text
+    assert "--search merged:>=" in (gh / "args").read_text()  # since the tag, not all of them
+
+
+def test_a_merged_pull_request_gh_does_not_list_stops_the_notes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _released(tmp_path / "repo")
+    _gh_listing(tmp_path, monkeypatch, [14, 12])
+    with pytest.raises(ValueError, match="did not return the merged pull requests #13$"):
+        prepare.release_notes("1.1.0", "v1.0.0", root)
+    assert not (root / "wire-ran").exists()
+
+
 def test_the_notes_are_written_before_the_bump(
     prepared: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -470,6 +530,10 @@ def test_notes_only_prints_and_writes_nothing(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    def tagged(version: str) -> None:
+        raise ValueError(f"v{version} is already tagged")
+
+    monkeypatch.setattr(prepare, "refuse_tagged", tagged)  # the notes may be made again
     monkeypatch.setattr(sys, "argv", ["prepare.py", "notes", "1.2.0"])
     prepare.main()
     assert prepared == [("notes", "1.2.0", "v1.1.0")]
@@ -481,13 +545,13 @@ def test_a_failure_making_the_notes_bumps_nothing(
     prepared: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def no_gh(version: str, previous: str) -> str:
-        raise subprocess.CalledProcessError(1, ["gh", "pr", "view"])
+        raise subprocess.CalledProcessError(1, ["gh", "pr", "list"])
 
     monkeypatch.setattr(prepare, "release_notes", no_gh)
     monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "1.2.0"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
-    assert str(exited.value) == "gh pr view failed"  # a plain line outside CI
+    assert str(exited.value) == "gh pr list failed"  # a plain line outside CI
     assert prepared == [] and not prepare.NOTES_FILE.exists()
 
 

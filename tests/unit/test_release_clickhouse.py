@@ -111,7 +111,7 @@ def test_a_stray_candidate_without_a_bundle_is_passed_over(resolve: Resolve) -> 
     tags = {"v1.2.0-rc.2": "ch:soaked", "v1.2.0-rc.3": "", "v1.2.0-rc.3-x": "ch:other"}
     result = resolve("1.2.0", tags)
     assert result.stdout == "ch:soaked\n"
-    assert "::notice::v1.2.0-rc.3 published no bundle" in result.stderr  # said in the log
+    assert "::notice::v1.2.0-rc.3 published no bundle: passed over" in result.stderr
 
 
 def test_a_dispatch_must_name_one_release(resolve: Resolve) -> None:
@@ -177,3 +177,4 @@ def test_a_refused_downgrade_stops_the_job(resolve: Resolve) -> None:
 def test_a_candidate_list_git_cannot_read_stops_the_job(resolve: Resolve, tmp_path: Path) -> None:
     result = resolve("1.2.0", {}, GIT_DIR=str(tmp_path / "no-repository"))
     assert result.returncode != 0 and result.stdout == ""
+    assert "not a git repository" in result.stderr

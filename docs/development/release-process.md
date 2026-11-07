@@ -43,8 +43,9 @@ since the highest final tag below the release:
 - each pull request's changelog entry under its category, in the template's order, or its title when
   the entry is empty; one whose description names no single category is listed under "Unclassified"
   for the author to place;
-- each "Operator steps" item but a bare "none", as written, under its pull request's number, from
-  every pull request, including one in a category that needs no entry; the author prunes the ones
+- each "Operator steps" item, as written, under its pull request's number, from every pull request,
+  including one in a category that needs no entry; an item that says there are none (`none`, `N/A`,
+  `No operator steps.`) or is the template's own text is left out, and the author prunes the rest
   that name no step;
 - the wire diff ([code generation](./code-generation.md#wire-changelog)).
 
@@ -93,12 +94,13 @@ the tag ships.
    gh workflow run release.yml --ref vX.Y.Z
    ```
 
-6. Paste the release notes made at the final tag's commit (`prepare.py notes X.Y.Z`, above) into the GitHub
-   Release, above the generated notes.
+6. Paste the release notes made at the final tag's commit (`prepare.py notes X.Y.Z`, above) into
+   the GitHub Release, above the generated notes.
 
 A release candidate is a `vX.Y.Z-rc.N` tag, and makes a GitHub pre-release; the release refuses any
-other prerelease tag. The first candidate goes on the release pull request's merge commit, whose files name `X.Y.Z`, so the candidate's server already reports `X.Y.Z`;
-a later one, after a fix, goes on a later commit of `main`. The final `vX.Y.Z` tag goes on the last
+other prerelease tag. The first candidate goes on the release pull request's merge commit, whose
+files name `X.Y.Z`, so the candidate's server already reports `X.Y.Z`; a later one, after a fix,
+goes on a later commit of `main`. The final `vX.Y.Z` tag goes on the last
 candidate's commit after the soak. The final's bundle keeps the ClickHouse release that candidate's
 bundle names (the newest candidate on that commit with a published bundle); its images are built
 again from the same commit, uncached, so an OS package may be newer than in the soaked image. A

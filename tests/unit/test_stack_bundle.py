@@ -196,11 +196,23 @@ def _run_step(tmp_path: Path, script: str, **env: str):
 
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
-    # A copy, not a link: the scripts find dev/ through their own `..`.
+    # A copy, not a link: through a link, the script's ../../dev would be the
+    # real dev/, not the stub written beside it.
     shutil.copytree(Path(__file__).parents[2] / "scripts" / "release", work / "scripts" / "release")
     for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "release"]):
         subprocess.run(
-            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=work, check=True
+            [
+                "git",
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            cwd=work,
+            check=True,
         )
     other, _ = _module().build(
         "1.2.0", tmp_path / "other", "clickhouse/clickhouse-server:26.9.18.11"

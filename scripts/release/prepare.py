@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The release pull request's changes: every version file, the chart, the notes.
+"""The release pull request's changes (every version file, the chart, the notes)
+and the version checks the release workflow runs.
 
 Run with the project's environment (the notes import the server's registry):
 
@@ -52,6 +53,7 @@ class Pin:
     path: str
     pattern: str
 
+    @functools.cached_property
     def regex(self) -> re.Pattern[str]:
         return re.compile(self.pattern, re.MULTILINE)
 
@@ -87,18 +89,21 @@ CHART_DIR = "deploy/helm/loom"
 
 
 def _match(pin: Pin, text: str) -> re.Match[str]:
-    found = list(pin.regex().finditer(text))
+    found = list(pin.regex.finditer(text))
     if len(found) != 1:
         raise ValueError(f"{pin.path}: {pin.pattern!r} matches {len(found)} times, not once")
     return found[0]
 
 
-def read(pin: Pin, root: Path = ROOT) -> str:
+def _text(path: str, root: Path) -> str:
     try:
-        text = (root / pin.path).read_text(encoding="utf-8")
+        return (root / path).read_text(encoding="utf-8")
     except FileNotFoundError:
-        raise ValueError(f"{pin.path}: missing") from None
-    return _match(pin, text).group("v")
+        raise ValueError(f"{path}: missing") from None
+
+
+def read(pin: Pin, root: Path = ROOT) -> str:
+    return _match(pin, _text(pin.path, root)).group("v")
 
 
 def parse(version: str) -> tuple[int, int, int]:
@@ -274,12 +279,7 @@ def bump(version: str, chart: str, root: Path = ROOT) -> None:
     is edited in memory first, so a pin not found writes nothing."""
     texts: dict[str, str] = {}
     for pin, value in [(CHART, chart), *((pin, version) for pin in PINS)]:
-        if pin.path not in texts:
-            try:
-                texts[pin.path] = (root / pin.path).read_text(encoding="utf-8")
-            except FileNotFoundError:
-                raise ValueError(f"{pin.path}: missing") from None
-        text = texts[pin.path]
+        text = texts.get(pin.path) or _text(pin.path, root)
         start, end = _match(pin, text).span("v")
         texts[pin.path] = text[:start] + value + text[end:]
     for path, text in texts.items():
@@ -327,9 +327,8 @@ def categories() -> tuple[str, ...]:
 _OPERATOR = re.compile(r"^[-*] +(?:\*\*)?operator steps\b[^:\n]*:(?:\*\*)?(.*)$", re.I | re.M)
 
 
-def _operator_steps(body: str) -> str:
-    """The operator-steps item as written, up to the section's next item; "" when
-    there is none or it says none."""
+def _operator_item(body: str) -> str:
+    """The operator-steps item as written, up to the section's next item."""
     section = _section(body, "Compatibility, rollout and rollback")
     match = _OPERATOR.search(section)
     if not match:
@@ -337,9 +336,17 @@ def _operator_steps(body: str) -> str:
     rest = section[match.end() :]
     next_item = re.search(r"^[-*] ", rest, re.M)
     # The lines under it keep their indent, so a list given alone stays nested.
-    text = match.group(1).strip() + rest[: next_item.start() if next_item else None].rstrip()
+    return match.group(1).strip() + rest[: next_item.start() if next_item else None].rstrip()
+
+
+def _operator_steps(body: str) -> str:
+    """The operator-steps item, or "" when it says there are none or is the
+    template's own text left in."""
+    text = _operator_item(body)
     bare = text.strip("`\"'* \n")
-    return text if bare and not _NO_STEP.fullmatch(bare) else ""
+    if not bare or _NO_STEP.fullmatch(bare) or text == _operator_item(_template()):
+        return ""
+    return text
 
 
 def changelog(body: str) -> tuple[str, str, str]:
@@ -416,17 +423,20 @@ def notes(version: str, previous: str, pulls: list[dict[str, Any]], wire: str) -
 
 def release_notes(version: str, previous: str, root: Path = ROOT) -> str:
     numbers = merged_pull_requests(previous, root)
+    tagged = _git(root, "log", "-1", "--format=%cs", previous)  # the tag's commit date
+    tagged.check_returncode()
     listed = subprocess.run(
-        ["gh", "pr", "list", "-R", REPOSITORY, "--state", "merged", "--limit", "5000",
+        ["gh", "pr", "list", "-R", REPOSITORY, "--state", "merged",
+         "--search", f"merged:>={tagged.stdout.strip()}", "--limit", "1000",
          "--json", "number,title,body"],
         check=True,
         stdout=subprocess.PIPE,  # its error reaches the terminal
         text=True,
     ).stdout  # fmt: skip
     by_number = {pull["number"]: pull for pull in json.loads(listed)}
-    missing = [n for n in numbers if n not in by_number]
+    missing = ", ".join(f"#{n}" for n in numbers if n not in by_number)
     if missing:
-        raise ValueError(f"gh pr list did not return merged pull requests {missing}")
+        raise ValueError(f"gh pr list did not return the merged pull requests {missing}")
     pulls = [by_number[n] for n in numbers]
     wire = subprocess.run(
         [sys.executable, "scripts/codegen/wire_changelog.py", previous, "HEAD"],
@@ -438,7 +448,7 @@ def release_notes(version: str, previous: str, root: Path = ROOT) -> str:
     return notes(version, previous, pulls, wire)
 
 
-def _run_check() -> None:
+def _check() -> None:
     errors = check()
     for error in errors:
         print(f"::error::{error}")
@@ -446,7 +456,7 @@ def _run_check() -> None:
         raise SystemExit(1)
 
 
-def _run_check_tag(tag_version: str) -> None:
+def _check_tag(tag_version: str) -> None:
     if not tag_on_head(tag_version):
         print(f"::notice::no candidate-order check: v{tag_version} is not on this commit")
         return
@@ -455,7 +465,7 @@ def _run_check_tag(tag_version: str) -> None:
         raise SystemExit(f"::error::{tag_error}")
 
 
-def _run_check_chart(tag_version: str) -> None:
+def _check_chart(tag_version: str) -> None:
     baseline = chart_baseline(tag_version)
     if not baseline:
         # Said in the log, so a skip never reads as a chart checked.
@@ -531,11 +541,11 @@ def main() -> None:
         elif args.command == "notes":
             _notes(args.version)
         elif args.command == "check":
-            _run_check()
+            _check()
         elif args.command == "check-chart":
-            _run_check_chart(args.tag_version)
+            _check_chart(args.tag_version)
         else:
-            _run_check_tag(args.tag_version)
+            _check_tag(args.tag_version)
     # A refusal raises ValueError and a failed git or gh call CalledProcessError;
     # either is one line, and in a check, which the release workflow runs, an
     # `::error::` annotation.

@@ -31,6 +31,11 @@ from typing import Any
 import dns.asyncresolver
 import pytest
 
+# A run from a git hook exports GIT_DIR: for the whole session, a test's git, and
+# a script's, stay in the repositories the test makes.
+for _name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+    os.environ.pop(_name, None)
+
 # The unit suite runs as CI does: no dotenv, no LOOM_* or provider keys from
 # the developer's shell. Set before `server.settings` builds its singleton.
 # LOOM_UPDATE_* are the snapshot tests' regenerate switches and LOOM_TEST_* other
@@ -145,14 +150,6 @@ def _load_repo_dotenv() -> None:
 def _seed_test_api_key() -> None:
     """Shadows the integration suite's fixture of the same name: no unit test
     runs with a minted wildcard-org `LOOM_API_KEY` in its environment."""
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _no_outer_git() -> None:
-    """A run from a git hook exports GIT_DIR: a test's git, and a script's,
-    stay in the repositories the test makes."""
-    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
-        os.environ.pop(name, None)
 
 
 @pytest.fixture

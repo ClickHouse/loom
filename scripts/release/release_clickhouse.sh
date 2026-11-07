@@ -57,7 +57,7 @@ if [ -z "$image" ] && [[ $version != *-* ]]; then
     image=$(published "${candidate#v}") || status=$?
     [ "$status" = 0 ] && break
     [ "$status" = 3 ] || exit "$status"
-    echo "::notice::$candidate published no bundle: the next candidate down names the release" >&2
+    echo "::notice::$candidate published no bundle: passed over" >&2
   done
 fi
 [ -n "$image" ] || image=$(bash "$here/../../dev/clickhouse_release.sh")
