@@ -93,9 +93,15 @@ _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),  # Slack
     _PRIVATE_KEY_BLOCK,
     # JWT. It starts where a run of its characters starts: from `\b`, every `eyJ` after a
-    # `-` inside one long run was a start that scanned to the run's end (quadratic).
+    # `-` inside one long run was a start that scanned to the run's end (quadratic). A
+    # header of at most 1,000 characters and the start of the payload are enough, so a
+    # long token is found from its first 1,017 characters (`SHAPE_SPAN`); the match runs
+    # on through the payload and signature, for the spans. A longer header needs all three
+    # parts.
     re.compile(
-        r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+        r"(?<![A-Za-z0-9_-])eyJ(?:[A-Za-z0-9_-]{10,1000}\.eyJ[A-Za-z0-9_-]{10,}"
+        r"(?:\.[A-Za-z0-9_-]*)?"
+        r"|[A-Za-z0-9_-]{1001,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})"
     ),
     re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),  # Google API key
     # `password=…`, `api_key: …`, `secret := …`, `access_token = …` followed by a token-shaped
@@ -791,9 +797,12 @@ def caller_level(requested: str | None) -> Sensitivity | None:
 
 
 # The longest text a shape is read over, so a window of a long value holds each shape
-# whole: an email is at most 64 + 1 + 253 + 1 + 24 = 343 characters, and a key, a JWT, a
-# private key block or a stated PIN is found from a prefix shorter than that (a stated PIN
-# with more whitespace between its words than this is not).
+# whole: an email is at most 64 + 1 + 253 + 1 + 24 = 343 characters, a JWT is found from
+# its first 1,017, and a key, a private key block, a card, an SSN, a phone number or an
+# IBAN from fewer. Three are not: a stated PIN with about 1,000 characters of whitespace
+# or qualifier words before its value, a `password=` assignment with about 1,000
+# characters of whitespace around its `=`, and a JWT whose header passes 1,000
+# characters. Across a window's edge, those read lower than the whole value.
 SHAPE_SPAN = 1024
 # Where a window ends and the next begins: after whitespace that no digit or dash touches,
 # so no digit run (a card, a phone number, an SSN) is split, and each edge reads as the
@@ -813,12 +822,11 @@ def _cut(text: str, at: int) -> int:
 
 
 def detection_windows(text: str, size: int) -> Iterator[str]:
-    """`text` in windows of at most `size` characters, each overlapping the next by at
-    least `SHAPE_SPAN`, so every shape up to that long lies whole in one window. The
-    largest level of the windows is the level of `text`, except a shape at a cut where no
-    whitespace was near, which may read where the whole would not."""
-    if size < 4 * SHAPE_SPAN:
-        raise ValueError(f"a window holds at least {4 * SHAPE_SPAN} characters")
+    """`text` in windows of at most `size` characters (at least `4 * SHAPE_SPAN`, so each
+    window moves past the last), each overlapping the next by at least `SHAPE_SPAN`, so
+    every shape found from a prefix that long lies whole in one window. The largest level
+    of the windows is the level of `text`, but for the shapes `SHAPE_SPAN` names, and a
+    shape at a cut where no whitespace was near, which may read where the whole would not."""
     start = 0
     while len(text) - start > size:
         end = _cut(text, start + size)

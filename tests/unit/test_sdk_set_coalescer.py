@@ -34,11 +34,21 @@ class _FakeTransport:
         # What a memory.set alone of a value raises.
         self.alone_errors: dict[str, BaseException] = {}
 
-    def _verdict(self, e: dict[str, Any]) -> str:
+    def _verdict(self, e: dict[str, Any], unchecked_keys: set[str]) -> str:
+        # As the server answers: after an unchecked entry, every later one of its key.
+        if e["memory_key"] in unchecked_keys:
+            return "blacklist_unchecked"
         rounds = self.value_rounds.get(str(e["value"]))
-        if rounds:
-            return rounds.pop(0)
-        return self.value_verdicts.get(str(e["value"]), self.row_verdicts.get(e["memory_key"], ""))
+        verdict = (
+            rounds.pop(0)
+            if rounds
+            else self.value_verdicts.get(
+                str(e["value"]), self.row_verdicts.get(e["memory_key"], "")
+            )
+        )
+        if verdict == "blacklist_unchecked":
+            unchecked_keys.add(e["memory_key"])
+        return verdict
 
     async def post(
         self, op_path: str, payload: dict[str, Any], idempotency_key=None, *, timeout_s=None
@@ -58,10 +68,11 @@ class _FakeTransport:
             if self.fail_bulk is not None:
                 raise self.fail_bulk
             written = []
+            unchecked_keys: set[str] = set()
             for i, e in enumerate(payload["entries"]):
                 if str(e["value"]) in self.dropped_values:
                     continue
-                verdict = self._verdict(e)
+                verdict = self._verdict(e, unchecked_keys)
                 unchanged = (
                     e["memory_key"] in self.bulk_extra.get("merged", [])
                     or str(e["value"]) in self.unchanged_values
@@ -168,42 +179,26 @@ def _alone_values(t: Any) -> list[str]:
     ]
 
 
-async def test_an_unchecked_set_a_later_set_of_its_key_overwrote_is_not_resent(
+async def test_an_unchecked_set_and_the_later_sets_of_its_key_go_out_again_in_order(
     agent: Agent,
 ) -> None:
-    # Resending the older value would land it after the newer one the batch wrote.
+    # The server answers the later set (a merge, say) unchecked too, so both go alone,
+    # the older first, and the key ends at the newer value.
     t: Any = agent.transport
-    t.value_verdicts = {"old": "blacklist_unchecked"}
+    t.value_verdicts = {"old": "blacklist_unchecked", "new": "merge"}
     *_, old, new = await _sets_of_one_key(agent, ["old", "new"])
-    assert t.paths().count("/v1/memory.bulk_set") == 1 and _alone_values(t) == []
-    assert old["noop"] is True and old["conflict_verdict"] == "clear"
-    assert new["noop"] is False
+    assert t.paths().count("/v1/memory.bulk_set") == 1
+    assert _alone_values(t) == ["old", "new"]
+    assert old["version"] == 7 and new["version"] == 7
 
 
-def _bulk_values(t: Any) -> list[list[str]]:
-    return [[e["value"] for e in p["entries"]] for path, p in t.calls if path.endswith("bulk_set")]
-
-
-async def test_unchecked_sets_of_one_key_go_out_again_in_order(agent: Agent) -> None:
-    # Both are sent again together, the older first, so the newer one is the key's value.
-    t: Any = agent.transport
-    t.value_rounds = {"old": ["blacklist_unchecked", ""], "new": ["blacklist_unchecked", ""]}
-    sets = [agent.memory.set("a", "a"), agent.memory.set("b", "b"), agent.memory.set("x", "x")]
-    sets += [agent.memory.set("k", "old"), agent.memory.set("k", "new")]
-    *_, old, new = await asyncio.gather(*sets)
-    assert _bulk_values(t) == [["x", "old", "new"], ["old", "new"]] and _alone_values(t) == []
-    assert old["noop"] is False and new["noop"] is False
-
-
-async def test_an_unchecked_set_is_resent_when_the_later_one_of_its_key_is_refused_alone(
+async def test_an_unchecked_set_is_written_when_the_later_one_of_its_key_is_refused_alone(
     agent: Agent,
 ) -> None:
-    # The first entry of a request unchecked is too long even first in one: each goes
-    # alone, older first; the newer is refused, so the older one is the key's value.
     from loom.errors import ValidationError
 
     t: Any = agent.transport
-    t.value_verdicts = {"old": "blacklist_unchecked", "new": "blacklist_unchecked"}
+    t.value_verdicts = {"old": "blacklist_unchecked"}
     refusal = ValidationError("value is too long to check against the blacklist regexes")
     t.alone_errors = {"new": refusal}
     *_, old, new = await _sets_of_one_key(agent, ["old", "new"])
@@ -211,36 +206,15 @@ async def test_an_unchecked_set_is_resent_when_the_later_one_of_its_key_is_refus
     assert old["version"] == 7 and new is refusal
 
 
-async def test_an_unchecked_set_whose_later_set_was_refused_is_resent(agent: Agent) -> None:
-    # The refused value never landed, so the key's last value is the unchecked one.
-    from loom.errors import ValidationError
-
+async def test_unchecked_sets_go_out_again_once_each(agent: Agent) -> None:
+    # One bulk request, then one set alone per unchecked entry, in order: linear.
     t: Any = agent.transport
-    t.value_verdicts = {"old": "blacklist_unchecked", "new": "blacklisted"}
-    *_, old, new = await _sets_of_one_key(agent, ["old", "new"])
-    assert _alone_values(t) == ["old"]
-    assert old["version"] == 7 and isinstance(new, ValidationError)
-
-
-async def test_unchecked_sets_go_out_again_as_smaller_batches(agent: Agent) -> None:
-    # Each round checks at least its first entry; only what is unchecked again goes on,
-    # and the last one left goes alone.
-    t: Any = agent.transport
-    t.value_rounds = {
-        "d": ["blacklist_unchecked", ""],
-        "e": ["blacklist_unchecked", "blacklist_unchecked", ""],
-        "f": ["blacklist_unchecked", "blacklist_unchecked", "blacklist_unchecked"],
-    }
-    results = await asyncio.gather(*[agent.memory.set(k, k) for k in "abcdef"])
-    assert _bulk_values(t) == [["c", "d", "e", "f"], ["d", "e", "f"], ["e", "f"]]
-    assert _alone_values_of(t, "f") == ["f"]
-    assert [r["version"] for r in results[2:]] == [100, 100, 100, 7]
-
-
-def _alone_values_of(t: Any, key: str) -> list[str]:
-    return [
-        p["value"] for path, p in t.calls if path == "/v1/memory.set" and p["memory_key"] == key
-    ]
+    t.value_verdicts = {v: "blacklist_unchecked" for v in "cdef"}
+    results = await asyncio.gather(*[agent.memory.set(k, k) for k in "abcdefg"])
+    assert t.paths().count("/v1/memory.bulk_set") == 1
+    sent_alone = [p["memory_key"] for path, p in t.calls if path == "/v1/memory.set"]
+    assert sent_alone == ["a", "b", "c", "d", "e", "f"]
+    assert [r["version"] for r in results[2:]] == [7, 7, 7, 7, 104]
 
 
 async def test_a_coalesced_set_against_a_pinned_row_raises_as_alone(agent: Agent) -> None:

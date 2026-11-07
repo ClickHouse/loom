@@ -13,6 +13,7 @@ from typing import Any
 from server.memory.domain.sensitivity import (
     HIGH,
     SCALAR_SEP,
+    SHAPE_SPAN,
     Sensitivity,
     caller_level,
     detect_sensitivity,
@@ -26,6 +27,7 @@ from server.memory.domain.sensitivity import (
 # characters hold the event loop for about 20 ms at most. Past it, in one request, a
 # value is read a window of this size at a time.
 ON_LOOP_CHARS = 16 * 1024
+assert ON_LOOP_CHARS >= 4 * SHAPE_SPAN  # a window moves past the one before it
 # Lines of a decoded value read between two turns, however short they are.
 _LINES_PER_TURN = 2_000
 
@@ -49,8 +51,9 @@ async def resolve_level(requested: str | None, text: str, *, read_before: int = 
 
 
 async def decoded_text(value: Any) -> str:
-    """`detector_text(value)`, with a turn between every `ON_LOOP_CHARS` characters or
-    `_LINES_PER_TURN` lines of a long value."""
+    """`detector_text(value)`. A long value's key walk takes a turn every
+    `ON_LOOP_CHARS` characters or `_LINES_PER_TURN` lines; parsing its JSON is one call
+    (about 10 ms for 8 MB)."""
     if isinstance(value, str) and len(value) <= ON_LOOP_CHARS:
         return detector_text(value)
     lines: list[str] = []

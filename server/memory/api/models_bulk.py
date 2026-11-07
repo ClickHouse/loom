@@ -361,7 +361,8 @@ class _BulkSetResult(BaseModel):
     # The per-row verdict memory.set returns, so a caller of
     # bulk_set can act on one entry without decoding the aggregate lists, plus
     # `blacklisted`, `blacklist_unchecked` (too long for this request's blacklist regexes:
-    # send it in a smaller one, or shorten it if it is too long alone), `pinned` or
+    # send it in a smaller one, or shorten it if it is too long alone; every later entry
+    # of its key is answered so too, to be sent again after it), `pinned` or
     # `locked` (refused, version 0; a restatement of a pinned or locked key's value is not).
     # Empty when the entry was not checked (non-searchable, past the cap).
     conflict_verdict: str = ""

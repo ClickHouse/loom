@@ -173,6 +173,9 @@ class _BulkWriteState:
     skipped_unchanged: int = 0
     # Keys of the entries the blacklist refused.
     skipped_blacklisted: list[str] = field(default_factory=list)
+    # Keys with an entry the blacklist could not check: every later entry of the key is
+    # answered so too, so a caller sending them again keeps their order.
+    unchecked_keys: set[str] = field(default_factory=set)
     retyped: list[str] = field(default_factory=list)
     skipped_pinned: list[str] = field(default_factory=list)
     skipped_locked: list[str] = field(default_factory=list)
@@ -268,6 +271,14 @@ def _note_restatement(state: _BulkWriteState, memory_id: str) -> None:
     """Reinforce `memory_id` once for a byte-identical restatement of its value."""
     if memory_id and memory_id not in state.restated_ids:
         state.restated_ids.append(memory_id)
+
+
+def _refuse_entry(state: _BulkWriteState, memory_key: str, verdict: str) -> None:
+    """Answer an entry the blacklist refused (`verdict` BLACKLISTED or UNCHECKED)."""
+    state.skipped_blacklisted.append(memory_key)
+    state.results.append(_BulkSetResult(memory_key=memory_key, version=0, conflict_verdict=verdict))
+    if verdict == UNCHECKED:
+        state.unchecked_keys.add(memory_key)
 
 
 def _bulk_skip_gate(
@@ -683,6 +694,11 @@ async def _bulk_build_rows(
     now_utc = state.now_utc
     read = 0  # characters the sensitivity detector read for the entries before this one
     for entry in input.entries:
+        if entry.memory_key in state.unchecked_keys:
+            # Written, merged or skipped, it would land before the earlier entry the
+            # caller sends again: it goes again with that one, after it.
+            _refuse_entry(state, entry.memory_key, UNCHECKED)
+            continue
         entry_sha = _content_sha256(entry.value)
         if _bulk_skip_gate(entry, entry_sha, state, identity_dupes):
             continue
@@ -725,11 +741,8 @@ async def _bulk_build_rows(
         bl_hit = await find_match(org=input.org, namespace=input.namespace, value=serialized_value)
         if bl_hit is not None:
             await note_hit(bl_hit.pattern_id)
-            state.skipped_blacklisted.append(entry.memory_key)
             verdict = BLACKLISTED if bl_hit.pattern_id else UNCHECKED
-            state.results.append(
-                _BulkSetResult(memory_key=entry.memory_key, version=0, conflict_verdict=verdict)
-            )
+            _refuse_entry(state, entry.memory_key, verdict)
             log.warning(
                 "bulk_set dropped entry key=%r verdict=%s pattern=%s scope=%s",
                 entry.memory_key,

@@ -243,3 +243,40 @@ async def test_an_entry_the_blacklist_could_not_check_says_so(
     out = await mem_extract.handle_memory_bulk_set(inp)
     verdicts = {r.memory_key: r.conflict_verdict for r in out.written}
     assert verdicts["a"] == "blacklist_unchecked" and verdicts["b"] == "blacklisted"
+
+
+@pytest.mark.asyncio
+async def test_every_later_entry_of_an_unchecked_key_is_unchecked_too(
+    wire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once an entry of a key is answered blacklist_unchecked, a later entry of the key
+    (here a restatement of the live value, which alone is skipped as unchanged) is too, so
+    a caller that sends them again in order leaves the key at its last value."""
+    from server.core.hashing import sha256_value
+    from server.memory.app import blacklist_guard as bl
+
+    same = sha256_value("user_deploy_day is Thursday")
+    wire(_StubCH([_live(content_sha256=same)]))
+
+    async def _find(*, org: str, namespace: str, value: str) -> Any:
+        if "Friday" in value:
+            return bl._over_budget(org, namespace, "namespace", len(value), 300, alone=False)
+        return None
+
+    monkeypatch.setattr("server.memory.app.blacklist_guard.find_match", _find)
+    entries = [
+        _BulkSetEntry(memory_key=k, memory_type="semantic", value=v)
+        for k, v in (
+            ("user_deploy_day", "user_deploy_day is Friday"),
+            ("other", "other is Monday"),
+            ("user_deploy_day", "user_deploy_day is Thursday"),
+        )
+    ]
+    inp = _input("user_deploy_day").model_copy(update={"entries": entries})
+    out = await mem_extract.handle_memory_bulk_set(inp)
+    assert [(r.memory_key, r.conflict_verdict) for r in out.written] == [
+        ("user_deploy_day", "blacklist_unchecked"),
+        ("other", out.written[1].conflict_verdict),
+        ("user_deploy_day", "blacklist_unchecked"),
+    ]
+    assert out.written[1].conflict_verdict != "blacklist_unchecked"

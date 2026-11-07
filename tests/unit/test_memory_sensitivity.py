@@ -1060,43 +1060,61 @@ def test_an_email_and_a_jwt_still_read_as_before() -> None:
     assert detect_sensitivity(f"Authorization: Bearer {jwt}") == "high"
 
 
-async def test_a_long_value_is_labelled_without_holding_the_event_loop() -> None:
-    # Detection holds the GIL, so a long value is read a window at a time with a turn for
-    # the loop between windows: a 10 ms ticker's longest wait stays a small share of what
-    # reading the value whole holds the loop for.
+async def _beside_another_task(work: Any, turns: list[int]) -> Any:
+    """Await `work` while another task adds one to `turns[0]` at each of its turns."""
     import asyncio
 
-    from server.memory.app.sensitivity_level import decoded_text, resolve_level
-    from server.settings import settings
-
-    value = json.dumps({"notes": ["the quick brown fox 123 jumps over a lazy dog. " * 40] * 4_000})
-    assert len(value) > 7_000_000
-    started = time.perf_counter()
-    whole = detect_sensitivity(detector_text(value))
-    whole_s = time.perf_counter() - started
-    gaps: list[float] = []
     done = asyncio.Event()
 
-    async def tick() -> None:
-        last = time.perf_counter()
+    async def other_task() -> None:
         while not done.is_set():
-            await asyncio.sleep(0.01)
-            now = time.perf_counter()
-            gaps.append(now - last)
-            last = now
+            turns[0] += 1
+            await asyncio.sleep(0)
 
-    ticker = asyncio.create_task(tick())
-    await asyncio.sleep(0.02)
-    old = settings.memory_sensitivity_autodetect
-    settings.memory_sensitivity_autodetect = True
+    task = asyncio.create_task(other_task())
+    await asyncio.sleep(0)
     try:
-        level = await resolve_level("", await decoded_text(value))
+        return await work
     finally:
-        settings.memory_sensitivity_autodetect = old
         done.set()
-        await ticker
-    assert level == whole
-    assert max(gaps) < whole_s / 10, (max(gaps), whole_s)
+        await task
+
+
+async def test_a_long_value_is_labelled_a_window_at_a_time_with_turns_between(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Detection holds the GIL, so a long value is read a window at a time on the loop:
+    # no read is longer than ON_LOOP_CHARS, and another task runs between two reads.
+    from server.memory.app import sensitivity_level
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", True)
+    turns = [0]
+    reads: list[tuple[int, int]] = []
+
+    def _detect(text: str) -> str:
+        reads.append((len(text), turns[0]))
+        return detect_sensitivity(text)
+
+    monkeypatch.setattr(sensitivity_level, "detect_sensitivity", _detect)
+    value = "the quick brown fox 123 jumps over a lazy dog. " * 4_000 + "SSN 123-45-6789"
+    level = await _beside_another_task(sensitivity_level.resolve_level("", value), turns)
+    assert level == "high"
+    limit = sensitivity_level.ON_LOOP_CHARS
+    assert len(reads) >= len(value) // limit
+    assert all(n <= limit for n, _ in reads)
+    seen = [t for _, t in reads]
+    assert seen == sorted(set(seen))  # the other task ran before each read
+
+
+async def test_a_long_value_is_decoded_with_turns_between_its_lines() -> None:
+    from server.memory.app.sensitivity_level import decoded_text
+
+    value = json.dumps({"rows": [{"pin": str(1000 + i), "note": "x" * 20} for i in range(5_000)]})
+    turns = [0]
+    text = await _beside_another_task(decoded_text(value), turns)
+    assert text == detector_text(value)
+    assert turns[0] >= 5
 
 
 _SHAPES = (
@@ -1109,8 +1127,10 @@ _SHAPES = (
     "SSN 123-45-6789",
     "GB82 WEST 1234 5698 7654 32",
     "PIN is 4471",
-    "-----BEGIN RSA PRIVATE KEY-----\nMIIEow",
+    "-----BEGIN RSA " + "PRIVATE KEY-----\nMIIEow",
     "password=hunter2xyz9",
+    # 3 KB with no whitespace: a window's edge falls inside it, where it is
+    "eyJhbGciOiJIUzI1NiJ9.eyJ" + "a" * 3_000 + ".c2lnbmF0dXJl",
 )
 
 
@@ -1143,17 +1163,31 @@ def test_a_value_read_in_windows_reads_as_the_whole_value() -> None:
     assert straddled > 100  # most shapes did cross an edge
 
 
-async def test_a_long_value_is_decoded_with_turns_between_its_lines(monkeypatch) -> None:
-    from server.memory.app import sensitivity_level
+_EDGE = "x " * 1_000  # 2,000 characters before and after the shape
 
-    turns = []
-    real_sleep = sensitivity_level.asyncio.sleep
 
-    async def counted(delay: float) -> None:
-        turns.append(delay)
-        await real_sleep(delay)
+@pytest.mark.parametrize(
+    ("text", "whole", "windowed"),
+    [
+        # found from its first characters, wherever the cut falls in it
+        (
+            _EDGE + "eyJhbGciOiJIUzI1NiJ9.eyJ" + "a" * 3_000 + ".c2lnbmF0dXJl " + _EDGE,
+            "high",
+            "high",
+        ),
+        # a whitespace-free run longer than the cut search: the cut falls where it is
+        ("q" * 6_000 + " john.doe@example.com " + _EDGE, "medium", "medium"),
+        # the shapes longer than SHAPE_SPAN: whitespace or a header past a window's edge
+        (_EDGE + "PIN is" + " " * 3_000 + "4471 " + _EDGE, "high", ""),
+        (_EDGE + "password" + " " * 3_000 + "= hunter2xyz9 " + _EDGE, "high", ""),
+        (_EDGE + "eyJ" + "h" * 5_000 + ".eyJ" + "p" * 20 + ".c2lnbmF0dXJl " + _EDGE, "high", ""),
+    ],
+    ids=["jwt-3kb", "no-whitespace-cut", "pin-gap", "assignment-gap", "jwt-long-header"],
+)
+def test_the_shapes_longer_than_a_window_overlap(text: str, whole: str, windowed: str) -> None:
+    from server.memory.domain.sensitivity import detection_windows, max_sensitivity
 
-    monkeypatch.setattr(sensitivity_level.asyncio, "sleep", counted)
-    value = json.dumps({"rows": [{"pin": str(1000 + i), "note": "x" * 20} for i in range(5_000)]})
-    assert await sensitivity_level.decoded_text(value) == detector_text(value)
-    assert len(turns) >= 5
+    windows = list(detection_windows(text, 4 * 1024))
+    assert len(windows) > 1
+    assert detect_sensitivity(text) == whole
+    assert max_sensitivity(detect_sensitivity(w) for w in windows) == windowed
