@@ -5,11 +5,22 @@
 // Batches flush to Loom as code.outcome rows (shunt_hit, and one shunt_pass
 // per pass reason), so tokens kept out and let in are a production series.
 
+import { createHash } from "node:crypto";
+
 import { PASS_REASONS, readSpan } from "./code-shunt.mjs";
 
 export const SHUNT_FLUSH_EVERY = 50;
 /** `source` of a hit row and of a pass line with no known pass reason. */
 export const SHUNT_CLIENT_SOURCE = "claude-code-shunt";
+
+/** The tmp-state kind every pending batch of one reporting scope shares: the
+ *  server, the token (hashed) and the repository's org/namespace, so a flush
+ *  posts only batches it would have posted itself. */
+export function batchKind({ serverUrl = "", token = "", org = "", namespace = "" } = {}) {
+  const tokenId = createHash("sha256").update(String(token)).digest("hex").slice(0, 16);
+  const scope = createHash("sha256").update(`${serverUrl}|${tokenId}|${org}/${namespace}`).digest("hex").slice(0, 12);
+  return `shunt-pending-${scope}`;
+}
 
 /** Tokens the model did not ingest because a hit denied the read: bytes/4
  *  (the same estimate bench/code_shunt_tokens.py uses). 0 when unknown

@@ -4,7 +4,6 @@
 // Code runs it, and a local server only where a call is expected.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -12,6 +11,7 @@ import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { cachePathFor } from "../lib/repo-scope.mjs";
+import { batchKind } from "../lib/shunt-ledger.mjs";
 import { sessionStatePath, tmpStatePath } from "../lib/tmp-state.mjs";
 
 // The hook's per-user decision log.
@@ -259,9 +259,10 @@ test("a chained Bash read is judged segment by segment; the first deny wins", as
   assert.match(p.log, /\tpass\tBash:sed\t.*targeted_span\tsrc\/a\.cpp\t1\t40/);
 });
 
-// The hook's pending batch for the seeded scope (o/code-x) and a session.
-const scopeKind = `shunt-pending-${crypto.createHash("sha1").update("o/code-x").digest("hex").slice(0, 12)}`;
-const pendingPath = (tmp, session = "e2e") => sessionStatePath(scopeKind, session, { ext: ".log", tmp });
+// The hook's pending batch for the seeded repository (o/code-x), the server at
+// `url`, runHook's token and a session.
+const pendingPath = (tmp, url, session = "e2e", namespace = "code-x") =>
+  sessionStatePath(batchKind({ serverUrl: url, token: "t", org: "o", namespace }), session, { ext: ".log", tmp });
 const reporting = { LOOM_SHUNT_REPORT: "on", LOOM_SHUNT_READ_CAP: "200" };
 const rangedRead = (dir) => ({
   ...readOf(dir, "src/a.cpp"),
@@ -282,8 +283,8 @@ test("a deny claims the pending batch, posts it as code.outcome and removes it",
     await settle();
     assert.ok(outcomes(seen).length >= 1);
     assert.equal(outcomes(seen)[0].body.action, "shunt_hit");
+    assert.equal(fs.existsSync(pendingPath(tmp, url)), false);
   });
-  assert.equal(fs.existsSync(pendingPath(tmp)), false);
   assert.deepEqual(
     fs.readdirSync(tmp).filter((n) => n.startsWith("loom-shunt-claim-")),
     [],
@@ -307,19 +308,20 @@ test("symlinks planted at the shunt's tmp files are not followed and cannot lock
 }, async () => {
   const { dir } = checkout({ "src/a.cpp": BIG });
   const tmp = seed(dir);
-  const planted = {
-    log: logPath(tmp),
-    pending: pendingPath(tmp),
-    cap: sessionStatePath("shunt-cap", "e2e", { tmp }),
-  };
+  const planted = {};
   const victims = {};
-  for (const [name, at] of Object.entries(planted)) {
-    victims[name] = path.join(tmp, `victim-${name}`);
-    // A pending batch someone else planted: it must never reach code.outcome.
-    fs.writeFileSync(victims[name], name === "pending" ? plantedBatch : "keep");
-    fs.symlinkSync(victims[name], at);
-  }
   await withServer({}, async (url, seen) => {
+    Object.assign(planted, {
+      log: logPath(tmp),
+      pending: pendingPath(tmp, url),
+      cap: sessionStatePath("shunt-cap", "e2e", { tmp }),
+    });
+    for (const [name, at] of Object.entries(planted)) {
+      victims[name] = path.join(tmp, `victim-${name}`);
+      // A pending batch someone else planted: it must never reach code.outcome.
+      fs.writeFileSync(victims[name], name === "pending" ? plantedBatch : "keep");
+      fs.symlinkSync(victims[name], at);
+    }
     assert.ok((await runHook(readOf(dir, "src/a.cpp"), { tmp, url, env: reporting })).deny);
     // The cap file cannot be kept, so the over-cap read passes instead of being denied.
     const ranged = await runHook(rangedRead(dir), { tmp, url, env: reporting });
@@ -338,8 +340,8 @@ test("a hard link planted at the pending batch is neither posted nor truncated",
   const tmp = seed(dir);
   const victim = path.join(tmp, "victim-log");
   fs.writeFileSync(victim, plantedBatch);
-  fs.linkSync(victim, pendingPath(tmp));
   await withServer({}, async (url, seen) => {
+    fs.linkSync(victim, pendingPath(tmp, url));
     for (let i = 0; i < 2; i++) assert.ok((await runHook(readOf(dir, "src/a.cpp"), { tmp, url, env: reporting })).deny);
     await settle();
     assert.equal(carriesPlanted(seen), false);
@@ -358,7 +360,7 @@ test("a flush also posts the batch another session left behind", async () => {
     assert.equal(a.deny, null, "a modified file passes; nothing is flushed yet");
     await settle();
     assert.equal(outcomes(seen).length, 0);
-    assert.ok(fs.existsSync(pendingPath(tmp, "A")));
+    assert.ok(fs.existsSync(pendingPath(tmp, url, "A")));
     const b = await runHook({ ...readOf(other, "src/a.cpp"), session_id: "B" }, { tmp, url, env: reporting });
     assert.ok(b.deny);
     await settle();
@@ -368,8 +370,23 @@ test("a flush also posts the batch another session left behind", async () => {
       ["modified"],
       "session A's pass is posted by session B's flush",
     );
+    assert.equal(fs.existsSync(pendingPath(tmp, url, "A")), false);
   });
-  assert.equal(fs.existsSync(pendingPath(tmp, "A")), false);
+});
+
+test("a flush leaves another reporting scope's batch alone", async () => {
+  const { dir } = checkout({ "src/a.cpp": BIG });
+  const tmp = seed(dir);
+  await withServer({}, async (url, seen) => {
+    // Another repository's batch, and one this repository's lines would go to under another server.
+    const others = [pendingPath(tmp, url, "X", "code-other"), pendingPath(tmp, "http://127.0.0.1:9", "Y")];
+    for (const f of others) fs.writeFileSync(f, plantedBatch, { mode: 0o600 });
+    assert.ok((await runHook(readOf(dir, "src/a.cpp"), { tmp, url, env: reporting })).deny);
+    await settle();
+    assert.ok(outcomes(seen).length >= 1, "this scope's own batch is posted");
+    assert.equal(carriesPlanted(seen), false);
+    for (const f of others) assert.equal(fs.readFileSync(f, "utf8"), plantedBatch);
+  });
 });
 
 const plantCap = (tmp, session = "e2e") => {

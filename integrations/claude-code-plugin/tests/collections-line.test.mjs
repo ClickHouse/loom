@@ -2,6 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MAX_NAMED, READ, listBody, renderCollectionsLine, toolsetAllows } from "../lib/collections-line.mjs";
 
+// The block's per-call id, removed so its text can be compared.
+const noIds = (t) => String(t).replace(/ id="[0-9a-f]{16}"/g, "");
+
 const col = (namespace, over = {}) => ({
   namespace,
   parent: "",
@@ -42,11 +45,11 @@ test("lists each collection as a JSON line inside the data block, with the calle
   assert.match(line, /their creators' words/);
   assert.match(line, /When asked to add a document/);
   assert.match(line, /"arguments": \{"namespace": "<name>"/);
-  const open = line.indexOf("<loom-recalled-data>");
-  const close = line.indexOf("</loom-recalled-data>");
-  const first = line.indexOf('{"collection"');
+  const open = noIds(line).indexOf("<loom-recalled-data>");
+  const close = noIds(line).indexOf("</loom-recalled-data>");
+  const first = noIds(line).indexOf('{"collection"');
   assert.ok(open >= 0 && open < first && first < close, line);
-  assert.ok(line.indexOf("knowledge.add") < open);
+  assert.ok(noIds(line).indexOf("knowledge.add") < open);
 });
 
 test("says nothing without a shared collection; the user's own is left out", () => {
@@ -68,7 +71,7 @@ test("names the ones the caller holds most on first, a few, and points at collec
     /There are more: loom_op with \{"op": "collection\.list"\} lists them a page at a time \(its limit and cursor arguments page through them\)\.$/,
   );
   assert.ok(
-    line.indexOf("There are more") > line.lastIndexOf("</loom-recalled-data>"),
+    noIds(line).indexOf("There are more") > noIds(line).lastIndexOf("</loom-recalled-data>"),
     "the pointer is the line's own",
   );
 });
@@ -96,7 +99,7 @@ test("a description cannot leave its entry, the block or its line", () => {
   assert.equal(entries(line).length, 1, "one entry, whatever the description says");
   assert.equal(entries(line)[0].collection, "col-a");
   assert.ok(!/["<>`‮]/.test(entries(line)[0].description), entries(line)[0].description);
-  assert.equal(line.split("</loom-recalled-data>").length, 2, "one closing tag: the block's own");
+  assert.equal(noIds(line).split("</loom-recalled-data>").length, 2, "one closing tag: the block's own");
 });
 
 test("cuts a long description on a whole character, and shows sixty whole", () => {

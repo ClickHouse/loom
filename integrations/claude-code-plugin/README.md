@@ -286,8 +286,10 @@ than its own clamp.
 
 **Production counters.** Every decision the hook makes for a bulk-read-shaped
 call inside an indexed repo — a _hit_ (denied) or a _pass_ (allowed) — is one
-line in `$TMPDIR/loom-shunt-log-<hash of the uid>.log` and in the session's unflushed batch file next to it
-(any hook that flushes also posts the batches earlier sessions left). The
+line in `$TMPDIR/loom-shunt-log-<hash of the uid>.log` and in the session's
+unflushed batch file next to it. A hook that flushes takes every batch of its
+server, token and repository: its own, those ended sessions left and those of
+sessions still running, each posted once. The
 batch is reported to loom as two `code.outcome` rows (`action=shunt_hit` with
 `tokens_saved` = bytes of the avoided file ÷ 4 — or of the avoided span, for a
 read-cap denial — and `action=shunt_pass`; `targets`

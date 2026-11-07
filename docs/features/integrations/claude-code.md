@@ -252,10 +252,11 @@ GitHub issue search can carry other people's writes: team file rules live in the
 repository's code namespace, where every member writes, and anyone who can file an issue
 writes its title. Each item is labelled with its writer (`by=` in recall, the author on a
 team file rule), and the plugin wraps every one of these in a `<loom-recalled-data>` block
-that says it is data and not instructions. Inside every such block the plugin replaces any
-spelling of the tag name (any case, compatibility or lookalike letters, any separator or
-invisible character between them) with `[loom tag removed]`, so no stored value can open
-or end the block. Only procedures the caller wrote are injected (a teammate's still
+that says it is data and not instructions. Each block's closing tag carries a per-call id,
+`<loom-recalled-data id="…">` and `</loom-recalled-data id="…">`, and the note says only
+that closing tag ends the block, so stored text cannot write its end. The plugin also
+rewrites the tag name inside the text, including common lookalike spellings, to
+`[loom tag removed]`. Only procedures the caller wrote are injected (a teammate's still
 answers an explicit `procedure.match`). Loom cannot control what an agent then does:
 keeping tool authority independent of retrieved text is the client's job.
 

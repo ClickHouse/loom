@@ -19,8 +19,8 @@
 // (lib/repo-scope.mjs); per-session denial budgets for the read-window cap,
 // symbol greps and tracker searches (sessionStatePath "shunt-cap"); the
 // user's decision log (tmpStatePath "shunt-log") and its unflushed copy, one
-// batch per session and repository (pendingPath), all through
-// lib/tmp-state.mjs's private-file helpers,
+// batch per reporting scope and session (PENDING_PATH, named by batchKind in
+// lib/shunt-ledger.mjs), all through lib/tmp-state.mjs's private-file helpers,
 // flushed as code.outcome rows (fire-and-forget, 300 ms) on a deny or every
 // SHUNT_FLUSH_EVERY lines (lib/shunt-ledger.mjs).
 import fs from "node:fs";
@@ -31,6 +31,8 @@ import {
   postBounded,
   postFireAndForget,
   readStdinJson,
+  resolveServerUrl,
+  resolveToken,
   redactSecrets,
   scheduleExit,
   commandText,
@@ -62,6 +64,7 @@ import {
 import { ghIssueSearchInCommand, parseBashBulkSegments } from "../lib/shell-command.mjs";
 import {
   aggregateShuntLog,
+  batchKind,
   estimateTokensRead,
   estimateTokensSaved,
   formatShuntLine,
@@ -94,20 +97,14 @@ const FLUSH_TIMEOUT_MS = 300;
 const UID = typeof process.getuid === "function" ? process.getuid() : "";
 // One decision log per user.
 const LOG_PATH = tmpStatePath("shunt-log", UID, { ext: ".log" });
-// The unflushed batch (set in main): one per repository scope and session, so a
-// name nobody can create ahead of the session, swept with the other state
-// files. A flush also claims the scope's batches other sessions left behind.
+// The unflushed batch, set in main: PENDING_KIND names the reporting scope
+// (server, token, repository) every batch of it shares, PENDING_PATH this
+// session's batch, a name nobody can create ahead of the session. Both are
+// swept with the other state files. A flush also claims the scope's other
+// batches: those ended or crashed sessions left, and those of sessions still
+// running.
+let PENDING_KIND = "";
 let PENDING_PATH = "";
-
-/** The kind every batch of `repo`'s scope shares, and this session's batch. */
-function pendingKind(repo) {
-  const scope = crypto
-    .createHash("sha1")
-    .update(`${repo.org || ""}/${repo.namespace || ""}`)
-    .digest("hex")
-    .slice(0, 12);
-  return `shunt-pending-${scope}`;
-}
 
 function countLines(abs) {
   try {
@@ -205,12 +202,12 @@ function logDecision({ decision, tool, tokensSaved, reason, passReason, path, st
   }
 }
 
-/** The batch files of `repo`'s scope this user owns: this session's and any
- *  another session left (its last lines, or a crash). Another user's file, a
- *  link or a hard link is left alone. */
-function scopeBatches(repo) {
+/** The batch files of this reporting scope that this user owns: this
+ *  session's and any other session's. Another user's file, a link or a hard
+ *  link is left alone. */
+function scopeBatches() {
   const dir = path.dirname(PENDING_PATH);
-  const prefix = `loom-${pendingKind(repo)}-`;
+  const prefix = `loom-${PENDING_KIND}-`;
   let names = [];
   try {
     names = fs.readdirSync(dir);
@@ -255,7 +252,7 @@ function claimBatch(file) {
  *  claimed before it is read, so it is posted at most once. */
 function flushPending(repo) {
   if (!REPORT_ON || !PENDING_PATH) return;
-  const text = scopeBatches(repo).map(claimBatch).join("");
+  const text = scopeBatches().map(claimBatch).join("");
   if (!text) return;
   const agg = aggregateShuntLog(text);
   const opts = { timeoutMs: FLUSH_TIMEOUT_MS };
@@ -409,10 +406,12 @@ async function settleTrackerSearch(repo, { search, sessionId, ctxBase }) {
           { timeoutMs: TRACKER_SEARCH_TIMEOUT_MS },
         ));
       const answer = target ? trackerAnswerText(res, { query: search.query, namespace: target.namespace }) : "";
-      if (answer && writeCapCounts(sessionId, spendCapBudget(counts, key))) {
-        verdict.deny = denyGhSearchWithAnswer({ ...ctxBase, namespace: target.namespace }, answer);
-      } else if (answer) {
-        verdict.reason = BUDGET_UNRECORDED.reason;
+      if (answer) {
+        if (writeCapCounts(sessionId, spendCapBudget(counts, key))) {
+          verdict.deny = denyGhSearchWithAnswer({ ...ctxBase, namespace: target.namespace }, answer);
+        } else {
+          verdict.reason = BUDGET_UNRECORDED.reason;
+        }
       }
     } catch {
       /* the search runs */
@@ -446,7 +445,13 @@ async function main() {
   // overdue mirror fetch turns the shunt off; `asOf` rides
   // the deny text as information.
   if (!repo.indexed) return;
-  PENDING_PATH = sessionStatePath(pendingKind(repo), sessionId, { ext: ".log" });
+  PENDING_KIND = batchKind({
+    serverUrl: resolveServerUrl(),
+    token: resolveToken(),
+    org: repo.org || "",
+    namespace: repo.namespace || "",
+  });
+  PENDING_PATH = sessionStatePath(PENDING_KIND, sessionId, { ext: ".log" });
   // The deny text names this checkout's org/namespace.
   const ctxBase = {
     prefixes: repo.prefixes,
