@@ -638,6 +638,14 @@ async def test_scip_full_records_the_full_run(
         ),
         ("fetch https://github.com/o/r.git: fatal: could not read Username", "(github.com/o/r)"),
         ("git@github.com: Permission denied (publickey).", "ssh key was refused"),
+        (
+            "fetch https://git.example.com:8443/o/r: could not read Username",
+            "(git.example.com/o/r)",
+        ),
+        (
+            "fetch ssh://git@git.example.com:2222/o/r.git: Permission denied (publickey).",
+            "(git.example.com/o/r)",
+        ),
     ],
 )
 def test_a_fix_names_what_the_error_names(text: str, fix: str) -> None:

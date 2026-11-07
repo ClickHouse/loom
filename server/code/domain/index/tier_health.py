@@ -152,10 +152,11 @@ def redact(text: str) -> str:
 
 # --- classification ----------------------------------------------------------------
 
-# First match wins: a missing credential also makes the submodule pin look missing
-# ("did not contain <sha>"), so the credential test comes before the pin test.
 # The Go harness's line for a module it skipped because it would not build.
 _MODULE_FAILED = re.compile(r"go mod download failed|scip-go failed", re.IGNORECASE)
+
+# First match wins: a missing credential also makes the submodule pin look missing
+# ("did not contain <sha>"), so the credential test comes before the pin test.
 _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # A Go module the harness skipped because it would not build: its line ends with the
     # module's own last log line, which can read as any other kind.
@@ -238,7 +239,7 @@ def classify(text: str) -> str:
     return "unknown"
 
 
-_HOST_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://(?:[^/\s@]+@)?([A-Za-z0-9.-]+)(/[^\s'\"]*)?")
+_HOST_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://(?:[^/\s@]+@)?([A-Za-z0-9.-]+)(?::\d+)?(/[^\s'\"]*)?")
 # git's scp-like ssh remote: git@host:org/repo.git
 _SCP_RE = re.compile(r"\b[\w.-]+@([A-Za-z0-9.-]+\.[A-Za-z]+):([^\s'\":][^\s'\"]*)")
 # git names a submodule relative to the checkout ("Failed to clone 'contrib/x'") and,
