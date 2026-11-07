@@ -160,6 +160,33 @@ def render_operations() -> str:
     return "\n".join(out)
 
 
+# --- settings -----------------------------------------------------------------
+
+
+@functools.cache
+def _loaded_defaults() -> Settings:
+    """Settings built from defaults alone with a real LLM provider (`openai`; any provider
+    but `fake` resolves the same), so load-time validators (the conflict resolver) resolve
+    as they run."""
+    from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
+
+    from server.settings import Settings
+
+    class _Defaults(Settings):
+        @classmethod
+        def settings_customise_sources(
+            cls,
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
+            return (init_settings,)
+
+    return _Defaults(llm_provider="openai")
+
+
 # --- status -------------------------------------------------------------------
 
 
@@ -187,44 +214,20 @@ def render_status_ops() -> str:
     )
 
 
-@functools.cache
-def _loaded_defaults() -> Settings:
-    """Settings built from defaults alone with a real LLM provider (`openai`; any provider
-    but `fake` resolves the same), so load-time validators (the conflict resolver) resolve
-    as they run."""
-    from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
-
-    from server.settings import Settings
-
-    class _Defaults(Settings):
-        @classmethod
-        def settings_customise_sources(
-            cls,
-            settings_cls: type[BaseSettings],
-            init_settings: PydanticBaseSettingsSource,
-            env_settings: PydanticBaseSettingsSource,
-            dotenv_settings: PydanticBaseSettingsSource,
-            file_secret_settings: PydanticBaseSettingsSource,
-        ) -> tuple[PydanticBaseSettingsSource, ...]:
-            return (init_settings,)
-
-    return _Defaults(llm_provider="openai")
-
-
 def render_status_switches() -> str:
     """Every boolean setting that loads false, with the first sentence of its description
     in the catalog."""
     from server.settings import Settings
     from server.settings._describe import descriptions
 
-    text = descriptions(Settings)
+    described = descriptions(Settings)
     loaded = _loaded_defaults()
     off = sorted(
         name
         for name, field in Settings.model_fields.items()
         if field.annotation is bool and getattr(loaded, name) is False
     )
-    rows = [f"| `LOOM_{n.upper()}` | {_cell(_first_sentence(text.get(n, '')))} |" for n in off]
+    rows = [f"| `LOOM_{n.upper()}` | {_cell(_first_sentence(described[n]))} |" for n in off]
     return "\n".join(
         [
             f"{len(off)} boolean settings load false.\n",

@@ -117,9 +117,9 @@ Turning on an LLM-backed worker (`profile_consolidation`, `reflection_distill`,
 `conversation_titler` and `conflict_resolver`) needs more than the flag:
 
 1. Configure a real LLM provider. With the fake provider the worker runs on
-   fake output, or, for `conflict_resolver` and `conversation_titler`, does not
-   run; `loom doctor`'s `llm_provider` line warns when the resolved
-   provider has no key. See [Deployment](../operations/deployment.md#providers).
+   fake output; `conversation_titler` skips its pass and `conflict_resolver`
+   judges nothing, leaving rows owed until a key is set. `loom doctor`'s
+   `llm_provider` line warns when the resolved provider has no key. See [Deployment](../operations/deployment.md#providers).
 2. Set the worker's flag on the one container that runs the workers.
 3. For per-namespace workers, opt the namespace in through
    `namespace.register` or the namespace's settings: `consolidation_enabled`
