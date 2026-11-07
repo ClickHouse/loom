@@ -351,12 +351,12 @@ _TEXT_BOX_AS_WORD_WRITES_IT = (
 )
 
 
-# The same box filled with a pattern: its VML copy's fill names the pattern's tile.
 # WordArt as Word writes it now: its text a shape's, read, and a VML copy drawing it
 # in the fallback.
 _WARPED_WORDART = _TEXT_BOX_AS_WORD_WRITES_IT.replace(
     f"<v:textbox>{_TEXT_BOX}</v:textbox>", '<v:textpath string="Sidebar"/>'
 )
+# The same box filled with a pattern: its VML copy's fill names the pattern's tile.
 _PATTERN_FILLED_BOX = _TEXT_BOX_AS_WORD_WRITES_IT.replace(
     "<v:textbox>",
     '<v:fill r:id="rId7" type="pattern" '
