@@ -490,3 +490,23 @@ tolerations:
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/* Every address but `networkPolicy.egressExcept`, as NetworkPolicy peers. */}}
+{{- define "loom.anywhereBut" -}}
+{{- $v4 := list }}{{- $v6 := list }}
+{{- range .Values.networkPolicy.egressExcept }}
+{{- if contains ":" . }}{{ $v6 = append $v6 . }}{{ else }}{{ $v4 = append $v4 . }}{{ end }}
+{{- end -}}
+- ipBlock:
+    cidr: 0.0.0.0/0
+    {{- with $v4 }}
+    except:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+- ipBlock:
+    cidr: ::/0
+    {{- with $v6 }}
+    except:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+{{- end }}

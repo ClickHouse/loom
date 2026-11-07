@@ -327,7 +327,12 @@ Loom runs them under bubblewrap, which needs unprivileged user namespaces. The d
 pod security does not allow them, so by default (`sandbox.required: false`) the compiler
 tiers of the repositories the operator lists in `LOOM_CODE_REPOS_JSON` run as plain
 processes in the pod, and a repository added from the dashboard is refused. List only
-repositories you trust. With `sandbox.required: true` a pod is not ready until the sandbox
+repositories you trust. Whatever `networkPolicy.enabled` says, the Loom pods never reach
+`networkPolicy.egressExcept` (the instance metadata service), so that code cannot take
+the node's IAM role: off, the chart renders an egress-only NetworkPolicy that allows
+everything else, and the cluster needs a policy engine for it to hold. Pods then get cloud
+credentials from IRSA or EKS Pod Identity only, never the node's role;
+`networkPolicy.egressExcept: []` drops the policy. With `sandbox.required: true` a pod is not ready until the sandbox
 works, so set it only once the nodes are prepared:
 
 1. Run Loom on nodes whose OS allows unprivileged user namespaces.
