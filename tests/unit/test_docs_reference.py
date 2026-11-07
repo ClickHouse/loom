@@ -106,6 +106,7 @@ def test_status_ops_lists_each_experimental_op_once_and_counts_the_rest() -> Non
         assert experimental == want, group
         assert stable == len(groups[group]) - len(want), group
     listed = [name for _, names in rows.values() for name in names]
+    assert sum(stable for stable, _ in rows.values()) + len(listed) == len(registry.ALL_OPERATIONS)
     assert sorted(listed) == sorted(
         op.name for op in registry.ALL_OPERATIONS if op.maturity == "experimental"
     )

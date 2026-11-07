@@ -1214,8 +1214,8 @@ class CodeSettings(BaseModel):
     # Files above this size are recorded (index_error) and not chunked.
     # 0 = no cap.
     code_ingest_max_file_bytes: int = 1_000_000
-    # Ingest denylist (code/app/index/denylist.py): the built-in
-    # generated/minified/vendored rules are off (they match 0.19% of rows);
+    # True applies the built-in generated/minified/vendored ingest rules
+    # (code/app/index/denylist.py; they match 0.19% of rows);
     # `exclude` globs (CSV here, a list per repo entry) and the repo-local
     # ignore file are always honoured.
     code_ingest_denylist_builtin: bool = False
@@ -4877,10 +4877,10 @@ class RuntimeSettings(BaseModel):
     # Seconds between re-reads of loom.runtime_overrides (the admin rate-limit,
     # latency-budget and live-setting overrides) in every process.
     runtime_overrides_refresh_seconds: float = 10.0
-    # The deployment's compose files set LOOM_DEPLOYMENT=1; every other process
-    # must set LOOM_INSTANCE_LABEL (e.g. `iso:<worktree>:<port>`,
-    # `ci:integration`). A process with neither refuses to start, so every
-    # ledger row is attributable.
+    # True marks this process as the deployment itself: its compose files set
+    # LOOM_DEPLOYMENT=1, and every other process sets LOOM_INSTANCE_LABEL instead
+    # (e.g. `iso:<worktree>:<port>`, `ci:integration`). A process with neither
+    # refuses to start, so every ledger row is attributable.
     deployment: bool = False
     # At most one `budget.violated` audit row per op per this many seconds
     # (the row carries `suppressed_since_last`). 0 = a row per violation.

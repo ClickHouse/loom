@@ -89,7 +89,7 @@ listed here.
 | `LOOM_CODE_EMBED_RECOVERY_ENABLED` | Embedding recovery for code_chunks/code_summaries stubs (dim=0). |
 | `LOOM_CODE_GRAPH_STATS_ENABLED` | Weekly graph statistics: PageRank, degrees, test_map rebuild. |
 | `LOOM_CODE_HOST_ISLANDS` | Shell inside CI/build files (Actions `run:`, GitLab `script:`, Dockerfile `RUN`, Makefile recipes, Jenkinsfile `sh`) is parsed for facets, script `includes` edges and SQL; jobs, targets and stages… |
-| `LOOM_CODE_INGEST_DENYLIST_BUILTIN` | Ingest denylist (code/app/index/denylist.py): the built-in generated/minified/vendored rules are off (they match 0.19% of rows); `exclude` globs (CSV here, a list per repo entry) and the repo-local… |
+| `LOOM_CODE_INGEST_DENYLIST_BUILTIN` | True applies the built-in generated/minified/vendored ingest rules (code/app/index/denylist.py; they match 0.19% of rows); `exclude` globs (CSV here, a list per repo entry) and the repo-local ignore… |
 | `LOOM_CODE_INGEST_ENABLED` | Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark. |
 | `LOOM_CODE_ORG_READABLE` | True lets every authenticated principal of the org read every configured code namespace (right for public or org-internal repos); false leaves reads to the namespace's own visibility and grants. |
 | `LOOM_CODE_PR_HISTORY_ENABLED` | Merged-PR history sync (GitHub REST, cursor-resumable). |
@@ -102,7 +102,7 @@ listed here.
 | `LOOM_CODE_SQL_COLUMN_LINEAGE` | Column-level SQL lineage: `<table>.<column>` symbols, `column_read` / `column_write` facets and statement → column edges, for `.sql` and Python SQL islands. |
 | `LOOM_CODE_SQL_STATEMENT_RECORDS` | SQL tests as statement records: one `statement` symbol per record, chunks packed by whole statements, facet rows in loom.code_test_facets. |
 | `LOOM_CODE_SUMMARY_ENABLED` | Weekly LLM file/module summary cards (inputs_hash-gated). |
-| `LOOM_DEPLOYMENT` | The deployment's compose files set LOOM_DEPLOYMENT=1; every other process must set LOOM_INSTANCE_LABEL (e.g. `iso:<worktree>:<port>`, `ci:integration`). |
+| `LOOM_DEPLOYMENT` | True marks this process as the deployment itself: its compose files set LOOM_DEPLOYMENT=1, and every other process sets LOOM_INSTANCE_LABEL instead (e.g. `iso:<worktree>:<port>`, `ci:integration`). |
 | `LOOM_EMBEDDING_SEND_DIMENSIONS` | Send the optional dimensions request parameter to a compatible endpoint. |
 | `LOOM_ENTITY_COMMUNITIES_ENABLED` | Label-propagation communities over the entity co-occurrence graph, per namespace, into loom.entity_communities (read by namespace.taxonomy and graph-mode expansion). |
 | `LOOM_INFERENCE_CUSTOMER_REQUIRED` | True (a cell serving several customers): refuse to start without inference_customer_header, so no model call goes out unattributed. |

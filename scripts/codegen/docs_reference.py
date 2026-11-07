@@ -470,7 +470,8 @@ def _setting_default(name: str | None) -> str:
 
     if name not in Settings.model_fields:
         return ""
-    # As it loads, so a switch a validator resolves (the conflict resolver) reads as it runs.
+    # The value it loads with, so a switch a validator resolves (the conflict resolver)
+    # shows as it runs.
     return str(getattr(_loaded_defaults(), name))
 
 

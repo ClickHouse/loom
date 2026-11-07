@@ -1014,7 +1014,7 @@
         "code_ingest_denylist_builtin": {
           "default": false,
           "type": "boolean",
-          "description": "Ingest denylist (code/app/index/denylist.py): the built-in generated/minified/vendored rules are off (they match 0.19% of rows); `exclude` globs (CSV here, a list per repo entry) and the repo-local ignore file are always honoured."
+          "description": "True applies the built-in generated/minified/vendored ingest rules (code/app/index/denylist.py; they match 0.19% of rows); `exclude` globs (CSV here, a list per repo entry) and the repo-local ignore file are always honoured."
         },
         "code_ingest_dependents_concurrency": {
           "default": 4,
@@ -2171,7 +2171,7 @@
         "deployment": {
           "default": false,
           "type": "boolean",
-          "description": "The deployment's compose files set LOOM_DEPLOYMENT=1; every other process must set LOOM_INSTANCE_LABEL (e.g. `iso:<worktree>:<port>`, `ci:integration`). A process with neither refuses to start, so every ledger row is attributable."
+          "description": "True marks this process as the deployment itself: its compose files set LOOM_DEPLOYMENT=1, and every other process sets LOOM_INSTANCE_LABEL instead (e.g. `iso:<worktree>:<port>`, `ci:integration`). A process with neither refuses to start, so every ledger row is attributable."
         },
         "document_blob_gc_enabled": {
           "default": true,
