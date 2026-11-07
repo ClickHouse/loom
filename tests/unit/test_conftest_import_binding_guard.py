@@ -68,6 +68,7 @@ def test_a_module_imported_before_the_test_is_not_checked(probe) -> None:
 # and scip_full holds scip_delta's apply_delta, which reads CodeRepo from scip_delta's
 # globals, so both are dropped.
 _INNER_CONFTEST = """
+import server.code.app.index  # noqa: F401 (the package is loaded before the tests)
 from tests.unit.conftest import _test_double_bound_at_import_dropped  # noqa: F401
 """
 _INNER_TESTS = """
@@ -81,16 +82,23 @@ def test_first_import_under_a_patch():
 
 
 def test_a_patch_on_the_module_itself(monkeypatch):
-    # Runs after the test above: the fixture dropped both modules, so these imports bind
-    # the real class, and the patch below is undone before the fixture looks.
+    # Runs after the test above: the fixture dropped both modules and the package's
+    # attribute for each, so `from package import` runs them again and they bind the
+    # real class. The patch below is undone before the fixture looks.
+    assert "server.code.app.index.scip_delta" not in sys.modules
     assert "server.code.app.index.scip_full" not in sys.modules
-    import server.code.app.index.scip_delta as sd
-    import server.code.app.index.scip_full as full
+    from server.code.app.index import scip_delta as sd
+    from server.code.app.index import scip_full as full
     import server.code.store.index as index
 
     assert sd.CodeRepo is index.CodeRepo
     assert full.apply_delta.__globals__["CodeRepo"] is index.CodeRepo
     monkeypatch.setattr(sd, "CodeRepo", lambda: None)
+
+
+def test_the_patched_module_is_kept():
+    # The monkeypatch above was undone before the fixture looked, so nothing was dropped.
+    assert "server.code.app.index.scip_delta" in sys.modules
 """
 
 
@@ -101,4 +109,4 @@ def test_a_module_imported_under_a_patch_is_imported_again_with_the_real_names(
     pytester.makeconftest(_INNER_CONFTEST)
     pytester.makepyfile(test_inner=_INNER_TESTS)
     result = pytester.runpytest_subprocess("-p", "no:randomly", "-p", "no:cacheprovider")
-    result.assert_outcomes(passed=2)
+    result.assert_outcomes(passed=3)

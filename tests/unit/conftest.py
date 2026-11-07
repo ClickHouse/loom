@@ -555,7 +555,7 @@ def _process_state_left_as_found(request: pytest.FixtureRequest) -> Iterator[Non
 
 def _is_test_double(obj: object) -> bool:
     """A mock, an instance of a class defined under tests/, or a function or class
-    a test file defined (a lambda included)."""
+    defined under tests/ (a lambda included)."""
     if type(obj).__module__.startswith(("tests.", "test_", "unittest.mock")):
         return True
     module = getattr(obj, "__module__", None)
