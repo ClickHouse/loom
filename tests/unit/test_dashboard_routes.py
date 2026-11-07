@@ -148,6 +148,33 @@ def test_page_paths_serve_the_dashboard(client, path: str) -> None:
     assert r.headers["cross-origin-opener-policy"] == "same-origin"
 
 
+_NAV = {"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
+
+
+@pytest.mark.parametrize(
+    ("headers", "own"),
+    [
+        ({**_NAV, "Sec-Fetch-Site": "same-origin"}, True),
+        ({**_NAV, "Sec-Fetch-Site": "cross-site"}, False),
+        ({**_NAV, "Sec-Fetch-Site": "same-site"}, False),
+        ({**_NAV, "Sec-Fetch-Site": "none"}, False),  # typed or bookmarked
+        # Sec-Fetch-Site wins over a Referer that claims this origin.
+        ({**_NAV, "Sec-Fetch-Site": "cross-site", "Referer": "http://localhost:7777/x"}, False),
+        # A browser that sends no Sec-Fetch-Site: the Referer's origin decides.
+        ({"Referer": "http://localhost:7777/settings"}, True),
+        ({"Referer": "https://evil.example/localhost:7777"}, False),
+        ({"Referer": "http://localhost:7777.evil.example/"}, False),
+        ({}, False),
+    ],
+)
+def test_the_page_says_whether_loom_itself_asked_for_it(client, headers, own: bool) -> None:
+    """The gate starts SSO on `?sign_in=sso` only for a load a Loom page asked for."""
+    r = client.get("/me?sign_in=sso", headers=headers, follow_redirects=False)
+    assert r.status_code == 200
+    flag = "true" if own else "false"
+    assert f"window.__LOOM_OWN_ORIGIN = {flag};" in r.text
+
+
 def test_the_sign_in_landing_never_follows_the_aggregator_redirect(client, monkeypatch) -> None:
     """A sign-in lands on `/me#token=…`; the browser would carry that fragment
     through a redirect, so `/me` serves the page whatever the root does."""

@@ -103,10 +103,12 @@ export function resumeSsoOnce(now: number = Date.now()): boolean {
  *  provider returns to the page they were on. */
 function SsoGate({ reason }: { reason?: GateReason }) {
   useEffect(() => {
-    // An explicit ask (`?sign_in=sso`, scrubbed here) takes a click on another page each time,
-    // so it cannot loop and needs no loop guard; after a sign-out it starts nothing, since the
-    // person chose to leave. The resume after an expired session is the guarded one.
-    const asked = takeSsoRequest() && !signedOut();
+    // An ask (`?sign_in=sso`, scrubbed here) counts only from a page of Loom's own origin (the
+    // session-ended card, the server's Start again link): another site could send the browser
+    // here to start a sign-in whose token is stored unasked. Each counted ask is a click on a
+    // Loom page, so it needs no loop guard; after a sign-out it starts nothing. The resume
+    // after an expired session is the guarded one.
+    const asked = takeSsoRequest() && window.__LOOM_OWN_ORIGIN === true && !signedOut();
     if (!asked && (reason !== "expired" || !resumeSsoOnce())) return;
     goToSso(rememberSignInStart());
   }, [reason]);

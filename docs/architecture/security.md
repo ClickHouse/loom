@@ -448,8 +448,13 @@ server seals the nonce into the sign-in's cookie and lands the token at
 nonce is the one the tab kept (used once, for ten minutes), or when it names the account
 already signed in, once the server accepts it; any other token, a planted sign-in's or a
 link's, waits for the person to confirm the account it names. The page's
-Cross-Origin-Opener-Policy ([response headers](#response-headers)) keeps a page that opened
-it from navigating it while it is away at the identity provider.
+Cross-Origin-Opener-Policy ([response headers](#response-headers)) keeps a page that
+opened it from navigating it while it is away at the identity provider. A page load at
+`/me?sign_in=sso`, which starts SSO without a click on the gate, is honoured only when a
+Loom page asked for it: the dashboard page tells the gate whether the load's
+`Sec-Fetch-Site` is `same-origin` (or, from a browser that sends none, whether its
+`Referer` has Loom's public origin), so another site cannot start a sign-in whose token
+the tab would store unasked.
 
 **A revocation that cannot be written is owed.** When ending a session cannot write
 `loom.revoked_tokens`, a `revocation_owed` row in `loom.oauth_state` stands in for it for

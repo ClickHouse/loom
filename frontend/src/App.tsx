@@ -19,6 +19,7 @@ import {
   signedOut,
   storedToken,
   type MyNamespaceEntry,
+  type WhoAmI,
 } from "./api";
 import {
   canReadNamespace,
@@ -318,6 +319,8 @@ export default function App() {
       let link: ReturnType<typeof takeLinkToken> = null;
       // The token boot asks whoami about; the catch reads it too.
       let sent: string | null = null;
+      // whoami's answer for a same-account link's token, which boot then does not ask again.
+      let linkAnswer: WhoAmI | null = null;
       try {
         // A login link (federation redirect) carries the token in the #token= fragment: taken
         // and scrubbed before anything can fail. The return to the page its sign-in started on
@@ -325,23 +328,20 @@ export default function App() {
         link = takeLinkToken();
         const started = takeSignInStarted(link?.nonce ?? null);
         if (link) {
-          // Only the sign-in this tab started, carrying its nonce back, is stored unasked. A
-          // token for the account already held is too, once the server accepts it: until then
-          // nothing is written, so a refused or unanswered one leaves the held token (and every
-          // other tab) as it was. Any other waits, in memory only, for the person to confirm
-          // the account it names; a cancelled one is dropped and boot goes on as before.
           const token = link.token;
-          // Behind a proxy or with auth off the page sends no token of its own: one from a
-          // link is dropped, unasked.
+          // A proxy or auth off: the page sends no token of its own, so a link's is dropped.
           if (token && (isProxyMode() || isAuthDisabled())) link = { ...link, token: null };
+          // The sign-in this tab started (its nonce came back) skips both checks below.
           else if (token && !started) {
             if (sameAccount(token, storedToken())) {
-              const accepted = await whoamiWhenReady(token).then(
-                (w) => w.authenticated,
-                () => false,
-              );
-              if (!accepted) link = { ...link, token: null };
+              // The account already held: stored only once whoami accepts it, nothing before.
+              linkAnswer = await whoamiWhenReady(token).catch(() => null);
+              if (!linkAnswer?.authenticated) {
+                link = { ...link, token: null };
+                linkAnswer = null;
+              }
             } else {
+              // Any other: held in memory until the person confirms it; Cancel drops it.
               const ok = await new Promise<boolean>((answer) => setLinkAsk({ token, answer }));
               setLinkAsk(null);
               if (!ok) link = { ...link, token: null };
@@ -397,7 +397,7 @@ export default function App() {
           : null;
 
         sent = storedToken();
-        const w = await whoamiWhenReady();
+        const w = linkAnswer ?? (await whoamiWhenReady());
         // Another tab stored someone's token while whoami answered for this one: that
         // token decides, on a fresh boot.
         if (storedToken() && storedToken() !== sent) {

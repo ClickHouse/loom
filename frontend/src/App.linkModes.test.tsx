@@ -1,6 +1,6 @@
 // Behind a proxy that adds Authorization, or with auth off, the page sends no token of its
 // own: a #token= link is scrubbed and dropped, with no confirmation and nothing stored.
-import { cleanup, render, screen } from "./test/rtl";
+import { cleanup, render, screen, waitFor } from "./test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mode } = vi.hoisted(() => ({ mode: { proxy: false, authOff: false } }));
@@ -44,7 +44,10 @@ describe("a link token where the page sends none", () => {
       const mallory = jwt({ sub: "mallory", org: "acme" });
       window.history.replaceState(null, "", `/settings#token=${mallory}`);
       render(<App />);
-      await new Promise((r) => setTimeout(r, 200));
+      // Boot is done: auth off settles an identity; behind a proxy whoami's refusal shows
+      // the proxy's page.
+      if (which === "authOff") await waitFor(() => expect(useStore.getState().identity).not.toBeNull());
+      else await screen.findByText(/Proxy auth failed/);
       expect(localStorage.getItem("loom_token_v1")).toBeNull();
       expect(window.location.href).not.toContain("token=");
       expect(screen.queryByText(/Sign in from a link/)).toBeNull();

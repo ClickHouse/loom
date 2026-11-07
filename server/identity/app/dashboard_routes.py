@@ -113,6 +113,24 @@ async def _not_a_page(request: Request) -> Response:
     return JSONResponse({"detail": "Not Found"}, status_code=404)
 
 
+def _from_own_origin(request: Request) -> bool:
+    """Whether this page load was asked for by a page of Loom's own origin: the browser's
+    `Sec-Fetch-Site`, else, from a browser that sends none, the `Referer`'s origin. A page
+    on another site can navigate here too, so what only Loom's own pages may ask for (the
+    gate starting SSO by itself on `?sign_in=sso`) is honoured only then."""
+    from urllib.parse import urlsplit
+
+    from server.auth.public_url import public_base_url
+
+    site = request.headers.get("sec-fetch-site")
+    if site is not None:
+        return site == "same-origin"
+    referer = urlsplit(request.headers.get("referer", ""))
+    if not referer.scheme or not referer.netloc:
+        return False
+    return f"{referer.scheme}://{referer.netloc}".lower() == public_base_url(request).lower()
+
+
 async def _page(request: Request) -> Response:
     """index.html with the boot snippet."""
     from starlette.responses import HTMLResponse, PlainTextResponse
@@ -148,6 +166,7 @@ async def _page(request: Request) -> Response:
         f"window.__LOOM_SELF_SIGNUP = {'true' if signup_open else 'false'};"
         f"window.__LOOM_SSO = {'true' if sso else 'false'};"
         f"window.__LOOM_DEFAULT_NAMESPACE = {_js_string(default_ns)};"
+        f"window.__LOOM_OWN_ORIGIN = {'true' if _from_own_origin(request) else 'false'};"
         f"</script>"
     )
 

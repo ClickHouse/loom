@@ -758,8 +758,9 @@ describe("login link", () => {
     window.history.replaceState(null, "", `/me#token=${again}`);
     render(<App />);
     await until(() => useStore.getState().whoami !== null);
-    // Asked about with its own header before anything was stored, then stored.
-    expect(seen[0]).toBe(0);
+    // Asked about once, with its own header before anything was stored; boot takes that
+    // answer instead of asking again.
+    expect(seen).toEqual([0]);
     expect(stored).toEqual([again]);
     expect(localStorage.getItem("loom_token_v1")).toBe(again);
     expect(screen.queryByText(/Sign in from a link/)).toBeNull();
