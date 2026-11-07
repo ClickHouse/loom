@@ -1365,9 +1365,9 @@ function ProvenanceSection({
 }
 
 const RECALLED_TIP =
-  "Times an agent read returned this memory (a search, a context pack or memory stack, an ask, a " +
-  "procedure match), across its copies you can read. The dashboard's own reads are not counted, " +
-  "and a read takes a few seconds to show.";
+  "Times an agent read recalled this memory (a search, a context pack or memory stack, an ask, a " +
+  "procedure match, a pre-edit file read), across its copies you can read. A read by key and the " +
+  "dashboard's own reads are not counted, and a read takes a few seconds to show.";
 const CREDIT_TIP =
   "Searches by readers that report outcomes. Search ranking reads these; " +
   "a context pack, an ask or an uncredited search adds none.";

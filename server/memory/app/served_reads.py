@@ -1,7 +1,7 @@
 """Served reads: which keys an agent read returned to the agent.
 
 `recall_count` holds only the recall credit (`recall_credit.py`), which a credited
-`memory.search` writes and the rank reads. Every agent read that returns memory, credited
+`memory.search` writes and the rank reads. Every agent read that recalls memory, credited
 or not, also writes one row per key it returned to `loom.memory_served_daily`, in the
 background (`store.served`). Nothing ranks on it; it answers "has an agent been shown
 this?" for the inspector and `memory.health`.
@@ -10,9 +10,11 @@ The row is written by the op, over what its answer carries, so a hit the op trim
 transcript row a context pack drops, an item past a section budget) is never counted. The
 op's handler is wrapped where the op is declared; a handler another op calls directly
 records nothing of its own. Not written: a `memory.search` sent with `auto_touch: false`
-or a `memory.ask` with `reinforce: false` (evaluation reads), a read by the dashboard or
-the assistant (a person inspecting), and a measurement read (a bench label, or the `*` /
-`-` agent with no named consumer behind it, as `recall_credit.is_measurement_read` says).
+or a `memory.ask` with `reinforce: false` (evaluation reads), a key lookup (`memory.get`,
+`memory.bulk_get`, `memory.list`: the agent names the key it reads), a read by the
+dashboard or the assistant (a person inspecting), and a measurement read (a bench label,
+or the `*` / `-` agent with no named consumer behind it, as
+`recall_credit.is_measurement_read` says).
 """
 
 from __future__ import annotations
@@ -65,13 +67,11 @@ def schedule_served(org: str, agent: str, keys: Iterable[tuple[str, str]]) -> No
 
 
 class _AgentRead(Protocol):
-    """The input of an agent read op: whose read it is."""
+    """The input of an agent read op: the org it reads. The agent comes from its `agent`
+    field when it has one (memory.for_file names none; the consumer says who read)."""
 
     @property
     def org(self) -> str: ...
-
-    @property
-    def agent(self) -> str: ...
 
 
 def records_served[I: _AgentRead, O](
@@ -86,7 +86,7 @@ def records_served[I: _AgentRead, O](
             try:
                 keys = keys_of(input, out)
                 if keys:
-                    schedule_served(input.org, input.agent or "", keys)
+                    schedule_served(input.org, str(getattr(input, "agent", "") or ""), keys)
             except Exception as e:  # noqa: BLE001 — a served row must not fail the read
                 log.warning("served keys of %s failed (non-fatal): %s", handler.__name__, e)
             return out
@@ -125,6 +125,12 @@ def procedure_keys(input: Any, out: Any) -> Keys:
 def pack_keys(input: Any, out: Any) -> Keys:
     """context.pack: the stored rows whose item lines its `rendered` answer still holds
     after every section and pack budget (`context_layout.served_rows`)."""
+    return list(out._served_rows)
+
+
+def for_file_keys(input: Any, out: Any) -> Keys:
+    """memory.for_file: the rows its `rendered` block prints (the pre-edit hook injects
+    it), not the ones a budget left out of it."""
     return list(out._served_rows)
 
 

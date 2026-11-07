@@ -494,7 +494,7 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
 
 
 async def _pack_decisions_from_hits(
-    st: _PackState, decision_hits: list[Any], actors: _KeyWriters, *, abstained: bool = False
+    st: _PackState, decision_hits: list[Any], actors: _KeyWriters, *, abstained: bool
 ) -> None:
     """Decision-typed hits leave the memories block and render as their
     own tagged section with the structured record (scenario, outcome,

@@ -153,8 +153,10 @@ def test_a_failing_key_read_never_fails_the_answer(written: list[dict[str, Any]]
 
 
 def test_the_agent_read_ops_record_served() -> None:
-    """The ops that return memory to an agent; decision.precedents, memory.apply and the
-    workers' searches call the handlers directly or not at all, and record none."""
+    """The ops that recall memory for an agent: a search, a pack or stack, an ask, a
+    procedure match, the pre-edit file read. A key lookup is the agent naming a key it
+    knows, and decision.precedents, memory.apply and the workers search for their own use;
+    none of them records."""
     from server.operations.registry import OPERATIONS_BY_NAME
 
     for name in (
@@ -164,9 +166,17 @@ def test_the_agent_read_ops_record_served() -> None:
         "procedure.match",
         "search.query",
         "memory.stack",
+        "memory.for_file",
     ):
         assert getattr(OPERATIONS_BY_NAME[name].handler, "__wrapped__", None) is not None, name
-    for name in ("decision.precedents", "memory.apply", "memory.get"):
+    # key lookups (the agent names the key it reads) and ops that search for their own use
+    for name in (
+        "memory.get",
+        "memory.bulk_get",
+        "memory.list",
+        "decision.precedents",
+        "memory.apply",
+    ):
         assert getattr(OPERATIONS_BY_NAME[name].handler, "__wrapped__", None) is None, name
 
 
@@ -272,3 +282,22 @@ def test_a_narrowed_reader_records_under_its_own_scope(
     out = SimpleNamespace(results=[_hit("a")])
     _run(_wrapped(served_reads.ask_keys, out), _search_input())
     assert [w["scope"] for w in written] == [own]
+
+
+def test_memory_for_file_records_the_rows_it_printed() -> None:
+    from server.memory.api.models_for_file import MemoryForFileInput, MemoryForFileOutput
+
+    out = MemoryForFileOutput(path="a.py", total=2, hits=[])
+    out._served_rows = [("n", "rule")]
+    inp = MemoryForFileInput(org="o", namespace="n", path="a.py")
+    assert served_reads.for_file_keys(inp, out) == [("n", "rule")]
+
+
+def test_an_op_whose_input_names_no_agent_records_under_the_consumer(
+    written: list[dict[str, Any]],
+) -> None:
+    """memory.for_file's input has no `agent`: its read is recorded with none, the
+    consumer saying who read."""
+    out = SimpleNamespace(_served_rows=[("n", "rule")])
+    _run(_wrapped(served_reads.for_file_keys, out), SimpleNamespace(org="o", namespace="n"))
+    assert [(w["ns_keys"], w["agent"]) for w in written] == [({"n": ["rule"]}, "")]

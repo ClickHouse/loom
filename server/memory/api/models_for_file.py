@@ -29,7 +29,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from server.memory.domain.code_change import CodeState
 from server.memory.domain.trust import VerificationState
@@ -119,3 +119,6 @@ class MemoryForFileOutput(BaseModel):
     # True when `token_budget` or the decision ceiling left rows out of `rendered`; `hits`
     # still lists them.
     truncated: bool = False
+    # The (namespace, memory_key) of each row `rendered` prints, which the op records as
+    # served to the agent. Private, never on the wire.
+    _served_rows: list[tuple[str, str]] = PrivateAttr(default_factory=list)

@@ -191,7 +191,7 @@ class MemoryHealthOutput(BaseModel):
     live: int
     # Live rows whose key carries a recall credit on any live row, or was returned by an agent
     # read (memory.search, search.query, context.pack, memory.stack, memory.ask,
-    # procedure.match) in the last `silent_after_days` days.
+    # procedure.match, memory.for_file) in the last `silent_after_days` days.
     recalled_ever: int
     # Live rows with at least one reported use.
     used_ever: int
