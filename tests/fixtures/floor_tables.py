@@ -9,8 +9,8 @@ import re
 
 
 def read_floors(text: str, heading: str, columns: int) -> dict[tuple[str, ...], float]:
-    """The key (every column but the last) to floor, from the first table under the
-    heading line `heading` and up to the next heading of any level. A row that is
+    """The key (every column but the last) to floor, from the table under the
+    heading line `heading`, up to the next heading of level 2 or deeper. A row that is
     not `columns` cells with a floor written as a decimal, or a repeated key, is a
     ValueError: a row skipped would go ungated while the page still lists it."""
     marker = f"\n{heading}\n"

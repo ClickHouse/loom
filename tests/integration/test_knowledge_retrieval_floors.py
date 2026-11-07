@@ -3,12 +3,13 @@ Markdown, SQL, TOML, CSV, HTML and PDF files is uploaded and ingested (the job a
 the reference extractor run in this process, as a knowledge_ingest worker pass
 runs one), then knowledge.search answers labelled queries in three slices:
 
-- exact identifiers: an error code, a table, a key path or a form number finds the
-  chunk that holds it first;
-- table questions: a row of a CSV table cut into several blocks is found by its
-  values, and an HTML table is told from another with the same columns;
+- exact identifiers: an error code, a table, a key path or a form number;
+- table questions: a row of a CSV table cut into several blocks, found by its
+  values in its own block, and a row of tables beside others with the same columns;
 - filtered recall: with `formats`, `block_types` or `tags` set, every hit is inside
-  the filter and the target is found among other documents the filter keeps.
+  the filter, among other documents the filter keeps.
+
+Every query's target must be the first hit.
 
 The floors are the "Retrieval floors" table of docs/architecture/document-extraction.md,
 read strictly (tests/fixtures/floor_tables.py). They are measured with the fake
@@ -37,9 +38,7 @@ from tests.integration._resources import unique_org
 pytestmark = pytest.mark.usefixtures("ch_target_required")
 
 DOC = Path(__file__).resolve().parents[2] / "docs" / "architecture" / "document-extraction.md"
-TOP_K = 5
-# The rank each slice is scored at: an identifier has one chunk that holds it.
-AT = {"exact identifiers": 1, "table questions": 3, "filtered recall": 3}
+TOP_K = 5  # the hits each query reads: the first is scored, all are filter-checked
 
 RUNBOOK = b"""# Runbook: replication errors
 
@@ -97,8 +96,8 @@ CREATE MATERIALIZED VIEW order_counts ENGINE = SummingMergeTree ORDER BY (custom
 AS SELECT customer, toDate(placed) AS day, count() AS n FROM sales_orders GROUP BY customer, day;
 """
 
-# 30 regions: the CSV extracts as two blocks of rows (20 a block), so a row is
-# found in its own block.
+# 30 regions: the CSV extracts as two blocks of rows (1-18 and 19-30), so a row
+# is found in its own block.
 REGION_ROWS = [(f"zone-{n:02d}", f"team-{chr(96 + n % 26 + 1)}{n}", n * 8) for n in range(1, 31)]
 REGIONS = (
     "region,owner,storage_limit_gb\n" + "".join(f"{r},{o},{g}\n" for r, o, g in REGION_ROWS)
@@ -144,6 +143,7 @@ CORPUS: list[tuple[str, bytes, list[str]]] = [
 NOTES = [
     ("kb://invoice-retention", "Retention: invoices are kept for seven years, then deleted."),
     ("kb://ticket-retention", "Retention: support tickets are kept for two years, then deleted."),
+    ("kb://log-retention", "Retention: audit logs are kept for one year, then deleted."),
 ]
 
 
@@ -305,13 +305,12 @@ def _measure(
     results: list[tuple[Query, list[dict[str, Any]]]],
 ) -> dict[tuple[str, str], tuple[float, list[str]]]:
     """Per (slice, metric): the share of its queries that pass, and the ones that
-    do not. `found at N`: a hit from the source that shows the expected text, in the
-    top N (AT, per slice); `kept in filter`: every hit inside the query's filters."""
+    do not. `found first`: the first hit is from the source and shows the expected
+    text; `kept in filter`: every hit inside the query's filters."""
     tally: dict[tuple[str, str], list[tuple[bool, str]]] = {}
     for q, hits in results:
-        at = AT[q.slice]
-        found = any(h["source_uri"] == q.source and q.holds in _text(h) for h in hits[:at])
-        tally.setdefault((q.slice, f"found at {at}"), []).append((found, q.text))
+        found = bool(hits) and hits[0]["source_uri"] == q.source and q.holds in _text(hits[0])
+        tally.setdefault((q.slice, "found first"), []).append((found, q.text))
         if q.filters:
             kept = all(_inside(h, q.filters) for h in hits)
             tally.setdefault((q.slice, "kept in filter"), []).append((kept, q.text))
@@ -325,12 +324,14 @@ def _measure(
 @pytest.mark.asyncio
 async def test_each_retrieval_slice_meets_its_floor(control_plane_url: str) -> None:
     from server.embedding.embedder import embedder_is_fake
+    from server.settings import settings
 
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=10) as c:
-        served = (await c.get("/v1/health")).json().get("fake_embedding")
-    # The server embeds the queries and this process the chunks: both on the fake one.
-    if not (served and embedder_is_fake()):
-        pytest.skip("the floors are measured with the fake n-gram embedder, here and in the server")
+        health = (await c.get("/v1/health")).json()
+    # The server embeds the queries and this process the chunks: the same fake model.
+    same = health.get("embedding_model") == settings.embedding_model
+    if not (health.get("fake_embedding") and embedder_is_fake() and same):
+        pytest.skip("the floors are measured with one fake n-gram embedder, here and in the server")
     org, ns = unique_org("retrieval-floors"), f"docs-{uuid.uuid4().hex[:6]}"
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
         for name, data, tags in CORPUS:
