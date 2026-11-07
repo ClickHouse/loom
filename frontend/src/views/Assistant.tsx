@@ -29,7 +29,7 @@ import { DocumentInspection } from "./assistant/DocumentInspection";
 import { Inspection } from "./assistant/Inspection";
 import { InventoryPopulations, InventoryScopeNote, InventorySections } from "./assistant/Inventory";
 import { ReviewChanges } from "./assistant/ReviewChanges";
-import { SUBJECT_OF } from "./assistant/subjects";
+import { SUBJECT_OF, SUBJECTS } from "./assistant/subjects";
 import { tokenReadScope } from "./assistant/tokenScope";
 import { useScopedRead } from "./assistant/useScopedRead";
 
@@ -40,19 +40,10 @@ import { useScopedRead } from "./assistant/useScopedRead";
  * read is deterministic (no model) and read-only; a draft is never applied here.
  */
 
-const SUBJECTS: Array<{ value: InspectSubject; label: string }> = [
-  { value: "user", label: "User" },
-  { value: "agent", label: "Agent" },
-  { value: "session", label: "Session" },
-];
-
-// The id field's label for each subject, and the Inspect button's reason while the field
-// is empty: `pick` when the overview suggests names, else `empty`. No session is suggested.
-const SUBJECT_COPY: Record<InspectSubject, { field: string; empty: string; pick?: string }> = {
-  user: { field: "User id", empty: "Type a user id.", pick: "Pick a user above or type an id." },
-  agent: { field: "Agent name", empty: "Type an agent name.", pick: "Pick an agent above or type its name." },
-  session: { field: "Session id", empty: "Type a session id." },
-};
+const SUBJECT_OPTIONS = (Object.keys(SUBJECTS) as InspectSubject[]).map((value) => ({
+  value,
+  label: SUBJECTS[value].label,
+}));
 
 export function Assistant() {
   const identity = useStore((s) => s.identity);
@@ -94,14 +85,14 @@ export function Assistant() {
   const memoryGate = gate("memory.inspect");
   const documentsGate = gate("knowledge.inspect");
   const tuneGate = gate("namespace.tune");
-  const copy = SUBJECT_COPY[subject];
+  const copy = SUBJECTS[subject];
   const suggestions = inventory.data?.populations.find((p) => SUBJECT_OF[p.population] === subject)?.top ?? [];
-  const emptyReason = suggestions.length > 0 && copy.pick ? copy.pick : copy.empty;
+  const emptyReason = (suggestions.length > 0 && copy.pick) || copy.empty;
   const inspectBlocked = memoryGate ?? (subjectId.trim() ? null : emptyReason);
 
   const org = identity?.org ?? "";
   const namespace = identity?.namespace ?? "";
-  const runInventory = inventory.run;
+  const { run: runInventory } = inventory;
   const readOverview = useCallback(
     () => runInventory((signal) => namespaceInventory({ org, namespace }, { signal })),
     [runInventory, org, namespace],
@@ -195,7 +186,7 @@ export function Assistant() {
         >
           <ButtonGroup
             aria-label="Whose memories"
-            options={SUBJECTS}
+            options={SUBJECT_OPTIONS}
             selected={subject}
             onClick={(v) => setSubject(v as InspectSubject)}
           />

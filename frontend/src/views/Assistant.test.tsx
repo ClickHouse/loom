@@ -846,10 +846,10 @@ const switchNamespace = () =>
     useStore.setState({ identity: { org: "dev", namespace: "other", agent: "loom-ui" } });
   });
 
-const pinned = (claims: object) => {
-  const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
-  localStorage.setItem("loom_token_v1", `${b64({ alg: "HS256" })}.${b64({ sub: "ada", ...claims })}.sig`);
-};
+// A signed-in token with these claims; the page reads its scope from them, unverified.
+const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
+const token = (claims: object) => `${b64({ alg: "HS256" })}.${b64({ sub: "ada", ...claims })}.sig`;
+const pinned = (claims: object) => localStorage.setItem("loom_token_v1", token(claims));
 
 const PINNED_INVENTORY: NamespaceInventory = {
   ...INVENTORY,
@@ -953,6 +953,17 @@ describe("Assistant: overview", () => {
     await screen.findByTestId("assistant-inspection");
     expect(screen.getByRole("heading", { level: 2, name: "Memories" })).toHaveFocus();
     expect(screen.getByLabelText("User id")).toHaveValue("ada");
+  });
+
+  it("moves the focus to the answer for a pick made while an earlier one is still read", async () => {
+    inspectMemories.mockImplementationOnce(() => new Promise<MemoryInspection>(() => {}));
+    render(<Assistant />);
+    await screen.findByTestId("assistant-populations");
+    await userEvent.click(screen.getByRole("button", { name: "ada 12 memories" }));
+    await userEvent.click(screen.getByRole("button", { name: "claude-code 40 memories" }));
+    expect(inspectMemories).toHaveBeenLastCalledWith(expect.anything(), "agent", "claude-code", expect.anything());
+    await screen.findByTestId("assistant-inspection");
+    expect(screen.getByRole("heading", { level: 2, name: "Memories" })).toHaveFocus();
   });
 
   it("inspects an agent picked in the overview", async () => {
@@ -1086,9 +1097,7 @@ describe("Assistant: overview", () => {
   });
 
   it("reads the overview again for a token signed in again with the namespace's scope", async () => {
-    const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
-    const token = (claims: object) => `${b64({ alg: "HS256" })}.${b64({ sub: "ada", ...claims })}.sig`;
-    localStorage.setItem("loom_token_v1", token({ read_user_id: "ada" }));
+    pinned({ read_user_id: "ada" });
     namespaceInventory.mockResolvedValueOnce(PINNED_INVENTORY);
     try {
       render(<Assistant />);
@@ -1112,12 +1121,14 @@ describe("Assistant: overview", () => {
     expect(screen.queryByTestId("inventory-scope")).toBeNull();
   });
 
-  it("reads again on Refresh, keeping the last answer on screen", async () => {
+  it("reads again on Refresh, keeping the last answer on screen, marked busy", async () => {
     render(<Assistant />);
     await screen.findByTestId("assistant-inventory");
+    namespaceInventory.mockImplementationOnce(() => new Promise<NamespaceInventory>(() => {}));
     await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    expect(screen.getByTestId("assistant-inventory")).toBeInTheDocument();
-    await waitFor(() => expect(namespaceInventory).toHaveBeenCalledTimes(2));
+    expect(namespaceInventory).toHaveBeenCalledTimes(2);
+    const overview = screen.getByTestId("assistant-inventory");
+    expect(overview.closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
   });
 
   it("says when the overview cannot be read", async () => {
@@ -1964,8 +1975,7 @@ describe("Assistant: documents", () => {
   });
 
   it("offers documents to a token pinned to one user, which the server answers in scope", async () => {
-    const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
-    localStorage.setItem("loom_token_v1", `${b64({ alg: "HS256" })}.${b64({ sub: "ada", read_user_id: "ada" })}.sig`);
+    pinned({ read_user_id: "ada" });
     try {
       render(<Assistant />);
       await pickDocuments();
@@ -1976,11 +1986,7 @@ describe("Assistant: documents", () => {
   });
 
   it("offers no documents to a token scoped own_session, which this page cannot complete", async () => {
-    const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
-    localStorage.setItem(
-      "loom_token_v1",
-      `${b64({ alg: "HS256" })}.${b64({ sub: "ada", read_scope: "own_session", read_user_id: "ada" })}.sig`,
-    );
+    pinned({ read_scope: "own_session", read_user_id: "ada" });
     try {
       render(<Assistant />);
       const inspect = screen.getByRole("button", { name: "Inspect documents" });

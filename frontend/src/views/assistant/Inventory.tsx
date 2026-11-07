@@ -110,7 +110,7 @@ export function InventoryPopulations({
             {p.top.length > 0 && (
               <ul className="mt-1.5 flex flex-wrap gap-1.5" aria-label={`${label.title}, most memories first`}>
                 {p.top.map((who) => (
-                  <li key={who.name} className="inline-flex items-center gap-1 text-xs text-text-muted tabular">
+                  <li key={who.name}>
                     {subject ? (
                       <PickButton
                         subject={subject}
@@ -120,10 +120,10 @@ export function InventoryPopulations({
                         onPick={() => onPick(subject, who.name)}
                       />
                     ) : (
-                      <>
+                      <span className="inline-flex items-center gap-1 text-xs text-text-muted tabular">
                         <NameBadge name={who.name} />
                         {fmtInt(who.rows)}
-                      </>
+                      </span>
                     )}
                   </li>
                 ))}
@@ -137,7 +137,7 @@ export function InventoryPopulations({
 }
 
 /** One user or agent to inspect. Its name is cut at the badges' width, with the whole id in
- *  the tip when cut: alone on an open pick, after the reason on a blocked one. */
+ *  the tip when cut: alone on an open pick, under the reason on a blocked one. */
 function PickButton({
   subject,
   name,
@@ -155,7 +155,7 @@ function PickButton({
   const shown = subject === "agent" ? displayAgent(name) : name;
   const cut = useClamped(nameEl, shown);
   return (
-    <Unavailable reason={blocked && (cut ? `${blocked} Id: ${name}.` : blocked)} tip={cut ? name : undefined}>
+    <Unavailable reason={blocked} tip={cut ? name : undefined}>
       {/* Click UI lays the label out as a flex row, so its text reads "ada12"; aria-label gives the spoken name. */}
       <Button
         type="secondary"

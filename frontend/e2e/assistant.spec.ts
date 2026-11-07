@@ -656,7 +656,10 @@ test("blocked picks with a long id fit the phone width", async ({ page }) => {
   await page.goto("/assistant");
   const pick = page.getByTestId("pick-user").first();
   await expect(pick).toHaveAttribute("aria-disabled", "true");
-  await expect(pick).toHaveAccessibleDescription(new RegExp(LONG_ID));
+  // The reason describes it; the tip adds the whole id under the reason.
+  await expect(pick).toHaveAccessibleDescription(/bound to one user or session/);
+  await pick.hover();
+  await expect(page.getByRole("tooltip")).toContainText(LONG_ID);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
   expect(await clipped(page)).toEqual([]);

@@ -51,7 +51,7 @@ describe("Unavailable", () => {
     expect(button).not.toHaveAttribute("aria-disabled");
   });
 
-  it("shows its tip while it has no reason, and the reason over the tip", async () => {
+  it("shows its tip alone without a reason, and under the reason with one", async () => {
     const { rerender } = render(
       <Unavailable tip="the whole id">
         <Button htmlType="button" label="Pick" />
@@ -68,6 +68,6 @@ describe("Unavailable", () => {
     );
     expect(button).toHaveAttribute("aria-disabled", "true");
     expect(button).toHaveAccessibleDescription("Read-only here");
-    expect(screen.getByRole("tooltip")).toHaveTextContent("Read-only here");
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Read-only herethe whole id");
   });
 });
