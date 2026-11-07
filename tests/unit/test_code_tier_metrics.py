@@ -1,8 +1,8 @@
 """Each tier the `code_tier_failing` health problem reports is a `loom.code.tier_failing`
-point (its failed passes in a row, by tier, error kind and its severity as the problem grades it) and a
-`loom.code.tier_lag_commits` point while its lag is known, from the process's snapshot;
-the chart's rule and the dashboard alert read those points, so their thresholds are the
-problem's settings."""
+point (its failed passes in a row, by tier, error kind and its severity as the problem
+grades it) and a `loom.code.tier_lag_commits` point while its lag is known, from the
+process's snapshot; the chart's rule and the dashboard alert read those points, so their
+thresholds are the problem's settings."""
 
 from __future__ import annotations
 
