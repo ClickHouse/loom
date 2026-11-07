@@ -4,7 +4,6 @@ cancel the user asked for on another writer's open job still cancels it."""
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -12,7 +11,7 @@ import pytest
 
 from server.erasure.store import steps_memory
 from server.knowledge.store import ingestions
-from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl, run
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 
@@ -30,40 +29,16 @@ OTHERS_OPEN, OTHERS_DONE, OWN_OPEN, AGENTS_OPEN = (
 ASKED = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S.123")
 
 
-class _LocalCH:
-    """A client over one clickhouse-local database kept in `path`."""
-
-    def __init__(self, path) -> None:
-        self.path = path
-        run([ddl(t) for t in _TABLES], "SELECT 1", path=path)
-
-    def write(self, table: str, rows: list[dict[str, Any]]) -> None:
-        run(
-            [
-                f"INSERT INTO loom.{table} ({', '.join(rows[0])})"
-                " SELECT * FROM format(JSONEachRow, {rows:String})"
-            ],
-            "SELECT 1",
-            {"rows": "\n".join(json.dumps(r) for r in rows)},
-            path=self.path,
-        )
-
-    async def query_one(self, sql, params=None):
-        rows = await self.query_all(sql, params)
-        return rows[0] if rows else None
+class _LocalCH(KeptCH):
+    """KeptCH whose mutations run to the end before execute returns."""
 
     async def query_all(self, sql, params=None):
         if "system.mutations" in sql:  # execute ran each mutation to the end
             return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
-        return run([], sql, params, path=self.path)
+        return await super().query_all(sql, params)
 
-    async def execute(self, sql, params=None):
-        run(
-            [sql.replace("mutations_sync = 0", "mutations_sync = 2")],
-            "SELECT 1",
-            params,
-            path=self.path,
-        )
+    async def execute(self, sql, params=None, *, settings=None):
+        await super().execute(sql.replace("mutations_sync = 0", "mutations_sync = 2"), params)
 
 
 def _job(job_id: str, user_id: str, state: str) -> dict[str, Any]:
@@ -94,16 +69,12 @@ def _cancel(job_id: str) -> dict[str, Any]:
 
 
 def test_a_cancel_on_another_writers_open_job_outlives_its_canceller(tmp_path) -> None:
-    ch = _LocalCH(tmp_path)
-    ch.write(
-        "knowledge_ingestions",
-        [_job(OTHERS_OPEN, "bob", "pending"), _job(OTHERS_DONE, "bob", "cancelled")]
-        + [_job(OWN_OPEN, "alice", "processing"), _job(AGENTS_OPEN, "-", "processing")],
-    )
-    ch.write(
-        "knowledge_ingest_cancels",
-        [_cancel(j) for j in (OTHERS_OPEN, OTHERS_DONE, OWN_OPEN, AGENTS_OPEN)],
-    )
+    ch = _LocalCH(tmp_path, *(ddl(t) for t in _TABLES))
+    jobs = [_job(OTHERS_OPEN, "bob", "pending"), _job(OTHERS_DONE, "bob", "cancelled")]
+    jobs += [_job(OWN_OPEN, "alice", "processing"), _job(AGENTS_OPEN, "-", "processing")]
+    cancels = [_cancel(j) for j in (OTHERS_OPEN, OTHERS_DONE, OWN_OPEN, AGENTS_OPEN)]
+    asyncio.run(ch.insert("loom.knowledge_ingestions", jobs))
+    asyncio.run(ch.insert("loom.knowledge_ingest_cancels", cancels))
 
     asyncio.run(steps_memory.delete_ingestions_by_user("o", "alice", ch=ch))
 
