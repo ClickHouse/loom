@@ -1,7 +1,7 @@
 """The identifier shapes read from a question, a code query or a stored excerpt match a
 run of capitals or digits ending in a word character in linear time. A repeated group whose
 body can continue the previous repetition, `(?:[A-Z][a-zA-Z0-9]+)+`, backtracks through
-every split of such a run instead: seconds at 25 to 40 characters, doubling per character."""
+every split of such a run instead: seconds at 25 to 40 characters, growing exponentially."""
 
 from __future__ import annotations
 
@@ -43,5 +43,6 @@ def test_the_shapes_still_match_what_they_named() -> None:
     assert "MergeTreeData" in _injectable_identifiers("does MergeTreeData retry")
     assert embedded_idents("getUser and FooBar and foo_bar") == {"getuser", "foobar", "foo_bar"}
     assert extract_anchors("why does MergeTreeData crash").components == ["MergeTreeData"]
+    assert extract_anchors("why does S3Queue leak").components == ["S3Queue"]
     assert _BARE_CAMEL.match("StorageMergeTree") and not _BARE_CAMEL.match("Storage")
     assert fake._CAMEL_RE.findall("call FooBar now") == ["FooBar"]
