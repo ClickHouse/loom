@@ -467,12 +467,15 @@ function RepositoriesHome({
   const bindSource = async (g: RepoGroup, tracker_namespaces: string[]) => {
     try {
       const out = await setCodeRepoSource(g.primary.org, g.primary.namespace, tracker_namespaces);
-      // the card's tracker lines say what each link means (and warn inline); the toast only confirms
+      // the card's tracker lines say what each link means; the toast confirms, with the
+      // server's warning (trackers that do not cover the repository, branches that read the
+      // links too) underneath
       toast(
         out.tracker_namespaces.length
           ? `${g.primary.repo} reads ${out.tracker_namespaces.join(" + ")}`
           : `${g.primary.repo} unlinked`,
         "ok",
+        out.warning ? { detail: out.warning } : {},
       );
       onChanged();
     } catch (e) {

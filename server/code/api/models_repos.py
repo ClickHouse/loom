@@ -311,7 +311,8 @@ class CodeRepoSetSourceOutput(BaseModel):
     # Linked trackers that do not list this repository (they read only the repositories
     # they name, so they answer nothing here), and the sentence that says so
     not_covering: list[str] = Field(default_factory=list)
-    # One clause per `not_covering` tracker naming the repositories it reads; '' when none.
+    # One clause per `not_covering` tracker naming the repositories it reads, and one naming
+    # the registered branches that read these links too; '' when neither.
     warning: str = ""
 
 

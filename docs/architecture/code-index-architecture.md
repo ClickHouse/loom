@@ -398,13 +398,13 @@ leaves the branch following nothing.
 
 `code.repo.remove` empties whichever of the two rows holds a value before the namespace's
 detached purge. Registering a namespace empties any row a removed one of the same name
-left and drops the name from its own replica's snapshot, so the new namespace follows
+left and drops the name from its own process's snapshot, so the new namespace follows
 neither. An emptied `qa_binding` reads as cleared until an admin of the tracker links it.
 A namespace that had no `qa_binding` row gets none, so the operator's map still reaches an
 operator entry configured under the same name. An operator entry configured under a
 removed name gets no such cleanup: until the purge runs, it reads the removed namespace's
 `qa_binding` row when there is one, the old links after a removal on build N-1 and none
-after one on N. Other replicas keep the rows they read for up to
+after one on N. Other processes keep the rows they read for up to
 `LOOM_CODE_REPOS_REFRESH_SECONDS`.
 
 ## Storage

@@ -105,8 +105,9 @@ _AFTER_WRITE = False
 async def refresh_overrides(*, force: bool = False) -> None:
     """Re-read the `OVERRIDE_KEY` and `BRANCH_OF_KEY` state rows when the snapshot is
     older than `code_repos_refresh_seconds` (or `force`, which callers pass right after
-    their own write, so it reads with sequential consistency); never raises — a directory
-    that cannot be read keeps the last snapshot."""
+    their own write, so it reads with sequential consistency, and reads once more when
+    `forget_links` discards the first read); never raises — a directory that cannot be
+    read keeps the last snapshot."""
     global _OVERRIDES, _BRANCH_OF, _OVERRIDES_AT, _AFTER_WRITE
     now = time.monotonic()
     if not force and now - _OVERRIDES_AT < float(settings.code_repos_refresh_seconds):
@@ -117,22 +118,24 @@ async def refresh_overrides(*, force: bool = False) -> None:
 
         if getattr(get_client(), "_client", "absent") is None:
             return
-        forgotten, after_write = _FORGOTTEN, force or _AFTER_WRITE
-        with own_write_reads() if after_write else contextlib.nullcontext():
-            rows = await code_index().state_values_for_keys([OVERRIDE_KEY, BRANCH_OF_KEY])
-        if forgotten != _FORGOTTEN:
-            _OVERRIDES_AT = -math.inf  # the next call reads again
+        for _attempt in range(2 if force else 1):
+            forgotten, after_write = _FORGOTTEN, force or _AFTER_WRITE
+            with own_write_reads() if after_write else contextlib.nullcontext():
+                rows = await code_index().state_values_for_keys([OVERRIDE_KEY, BRANCH_OF_KEY])
+            if forgotten != _FORGOTTEN:
+                _OVERRIDES_AT = -math.inf  # the next call reads again
+                continue
+            _OVERRIDES, _BRANCH_OF = rows[OVERRIDE_KEY], rows[BRANCH_OF_KEY]
+            _OVERRIDES_AT = now
+            if after_write:
+                _AFTER_WRITE = False
             return
-        _OVERRIDES, _BRANCH_OF = rows[OVERRIDE_KEY], rows[BRANCH_OF_KEY]
-        _OVERRIDES_AT = now
-        if after_write:
-            _AFTER_WRITE = False
     except Exception as e:  # noqa: BLE001 — keep the last snapshot
         log.warning("qa bindings: override refresh failed, keeping %d: %s", len(_OVERRIDES), e)
 
 
 def forget_links(org: str, code_namespace: str) -> None:
-    """Drop the org's namespace from this replica's snapshot, whose rows were just
+    """Drop the org's namespace from this process's snapshot, whose rows were just
     emptied, discard any refresh already reading, and make the next one read its own
     writes."""
     global _FORGOTTEN, _AFTER_WRITE
@@ -375,8 +378,8 @@ __all__ = [
     "OVERRIDE_KEY",
     "authorized_tracker_namespace",
     "authorized_tracker_namespaces",
-    "branches_following",
     "bindings",
+    "branches_following",
     "code_namespaces_linking",
     "encode_binding",
     "forget_links",

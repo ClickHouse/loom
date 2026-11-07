@@ -524,7 +524,7 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
 
 
 async def _empty_tracker_links(org: str, namespace: str, *, detail: str) -> None:
-    """Empty the link rows that hold a value and drop the name from this replica's
+    """Empty the link rows that hold a value and drop the name from this process's
     snapshot; an absent row stays absent, since an empty `qa_binding` reads as cleared."""
     from server.code.store.index import CodeRepo
     from server.tracker.app import binding

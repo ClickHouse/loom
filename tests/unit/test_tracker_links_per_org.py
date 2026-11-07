@@ -239,8 +239,8 @@ def test_a_discarded_refresh_leaves_the_next_call_to_read_again(monkeypatch) -> 
     ch = _CH()
     monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
     monkeypatch.setattr(reads_mod, "code_index", lambda: CodeRepo(ch))  # type: ignore[arg-type]
-    asyncio.run(binding.refresh_overrides(force=True))
-    asyncio.run(binding.refresh_overrides())  # not forced, and still reads
+    asyncio.run(binding.refresh_overrides())  # the snapshot is unread, so this reads
+    asyncio.run(binding.refresh_overrides())  # discarded above, so this reads again
     assert len(calls) == 2
 
 
@@ -363,6 +363,9 @@ def test_branches_following_names_only_the_branches_that_read_the_links(monkeypa
     """The same test `tracker_namespaces_for` makes: a registered branch of an operator
     repository with no `qa_binding` of its own."""
     monkeypatch.setattr(
+        settings, "tracker_code_namespace_bindings_json", '{"code-widgets": "tracker-widgets"}'
+    )
+    monkeypatch.setattr(
         settings,
         "code_repos_json",
         json.dumps([{"org": ORG_X, "namespace": CODE, "repo": "Acme/widgets"}]),
@@ -376,9 +379,9 @@ def test_branches_following_names_only_the_branches_that_read_the_links(monkeypa
     binding.reset_overrides_for_tests(own, branches=branches)
     assert binding.branches_following(ORG_X, CODE) == ["code-widgets-26-8"]
     assert [binding.tracker_namespaces_for(ORG_X, n) for n in names] == [
-        binding.tracker_namespaces_for(ORG_X, CODE),
+        ["tracker-widgets"],  # follows the root
         ["tracker-own"],
-        [],
+        [],  # its cleared row wins over the root
     ]
     assert binding.branches_following(ORG_Y, CODE) == []
     # a branch the operator later configures reads the map under its own name
@@ -395,3 +398,33 @@ def test_branches_following_names_only_the_branches_that_read_the_links(monkeypa
     assert binding.branches_following(ORG_X, CODE) == []
     monkeypatch.setattr(settings, "code_repos_json", "[]")  # the root left the config
     assert binding.branches_following(ORG_X, CODE) == []
+
+
+def test_a_forced_refresh_that_forget_links_discards_reads_once_more(monkeypatch) -> None:
+    """A caller that forces a refresh right after its own write reads the result at once,
+    so a concurrent `forget_links` does not leave it the old snapshot."""
+    import server.code.app.reads as reads_mod
+    import server.core.ch as ch_mod
+
+    calls: list[int] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            calls.append(1)
+            if len(calls) == 1:
+                binding.forget_links(ORG_Y, "code-other")  # another registration lands
+            return [
+                {
+                    "org": ORG_X,
+                    "namespace": CODE,
+                    "state_key": binding.OVERRIDE_KEY,
+                    "state_value": "tracker-new",
+                }
+            ]
+
+    ch = _CH()
+    monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
+    monkeypatch.setattr(reads_mod, "code_index", lambda: CodeRepo(ch))  # type: ignore[arg-type]
+    asyncio.run(binding.refresh_overrides(force=True))
+    assert len(calls) == 2
+    assert binding.override_for(ORG_X, CODE) == "tracker-new"
