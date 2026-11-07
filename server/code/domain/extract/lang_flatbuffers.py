@@ -77,18 +77,18 @@ _SCALARS: frozenset[str] = frozenset(
         "string",
     }
 )
+# Each optional part owns the blanks before it, so a blank run is read one way only.
 _BLOCK_RE = re.compile(
-    r"^\s*(table|struct|enum|union|rpc_service)\s+([A-Za-z_]\w*)\s*(?::\s*([A-Za-z_]\w*))?\s*(\([^)]*\))?\s*\{"
+    r"^\s*(table|struct|enum|union|rpc_service)\s+([A-Za-z_]\w*)"
+    r"(?:\s*:\s*([A-Za-z_]\w*))?(?:\s*(\([^)]*\)))?\s*\{"
 )
 _NAMESPACE_RE = re.compile(r"^\s*namespace\s+([A-Za-z_][\w.]*)\s*;")
 _INCLUDE_RE = re.compile(r'^\s*include\s+"([^"]+)"\s*;')
 _ROOT_RE = re.compile(r"^\s*root_type\s+([A-Za-z_][\w.]*)\s*;")
 _FILEID_RE = re.compile(r'^\s*file_identifier\s+"([^"]+)"\s*;')
 _FIELD_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*:\s*(\[?)([A-Za-z_][\w.]*)(?::\s*\d+)?\]?")
-# Each optional part owns the blanks before it, so a blank run is read one way only.
-_UNION_MEMBER_RE = re.compile(
-    r"^\s*([A-Za-z_][\w.]*)(?:\s*:\s*([A-Za-z_][\w.]*))?(?:\s*=\s*\d+)?\s*(?:,\s*)?$"
-)
+# One stripped member between commas; each optional part owns the blanks before it.
+_UNION_MEMBER_RE = re.compile(r"([A-Za-z_][\w.]*)(?:\s*:\s*([A-Za-z_][\w.]*))?(?:\s*=\s*\d+)?")
 _RPC_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*\(\s*([A-Za-z_][\w.]*)\s*\)\s*:\s*([A-Za-z_][\w.]*)")
 
 
@@ -244,7 +244,7 @@ def fbs_units(path: str, text: str) -> FbsUnits:
             for n, ln in enumerate(b.lines, start=1):
                 line = b.start_line if b.end_line == b.start_line else b.start_line + n
                 for member in ln.split(","):
-                    m = _UNION_MEMBER_RE.match(member.strip())
+                    m = _UNION_MEMBER_RE.fullmatch(member.strip())
                     if m:
                         typ = m.group(2) or m.group(1)
                         if _bare(typ) not in _SCALARS:

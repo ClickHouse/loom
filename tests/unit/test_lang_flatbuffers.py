@@ -106,11 +106,23 @@ def test_chunks_one_per_block_with_header() -> None:
 
 def test_a_union_member_with_a_long_blank_run_is_read_in_linear_time() -> None:
     """A member that cannot match (`ab`, blanks, `_`) is refused after one pass over the
-    blanks; with a `\\s*` on each side of every optional part it took seconds at 400."""
-    blanks = " " * 5_000
+    blanks, and an aliased member still names its type."""
+    blanks = " " * 300
     schema = f"union Body {{ Record, ab{blanks}_, Ack : Rec{blanks}=  2 , }}\n".encode()
     start = time.process_time()
     pf = parse_fbs("src/u.fbs", schema)
-    local, _external = fbs_local_edges(pf)
-    assert time.process_time() - start < 1.0
-    assert {e.to_qualified_name.split("::")[-1] for e in local} <= {"Record", "Rec"}
+    local, external = fbs_local_edges(pf)
+    assert time.process_time() - start < 0.5
+    assert local == []
+    assert sorted(name for _from, name, _line in external) == ["Rec", "Record"]
+
+
+def test_a_block_header_with_a_long_blank_run_is_read_in_linear_time() -> None:
+    """A header that never opens its block (`table A`, blanks, `x`) is refused after one
+    pass over the blanks; a header with a base type and attributes still opens one."""
+    blanks = " " * 2_000
+    schema = f"table A{blanks}x\nenum E : byte (bit_flags) {{ X = 1 }}\n".encode()
+    start = time.process_time()
+    pf = parse_fbs("src/b.fbs", schema)
+    assert time.process_time() - start < 0.5
+    assert [s.name for s in pf.symbols] == ["E"]
