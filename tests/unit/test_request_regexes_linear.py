@@ -328,8 +328,16 @@ def test_no_replacement_is_kept_for_a_request_past_the_cap() -> None:
                 + " forget that I prefer Neovim, I switched to VS Code. forget jazz99. forget blues.",
             }
         ],
+        # a replacement in its own sentence after the request past the cap
+        [{"role": "user", "content": f"forget jazz{i}."} for i in range(49)]
+        + [
+            {
+                "role": "user",
+                "content": "forget that I prefer Neovim. forget blues. I switched to VS Code.",
+            }
+        ],
     ],
-    ids=["unresolved requests", "one message"],
+    ids=["unresolved requests", "one message", "later sentence"],
 )
 def test_every_resolved_request_keeps_its_replacement(msgs: list[dict[str, str]]) -> None:
     assert any(

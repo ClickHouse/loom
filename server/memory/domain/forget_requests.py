@@ -356,10 +356,10 @@ def forget_sentences(
             if mt:
                 _request_clause(mt, seen)
                 if len(seen) > MAX_FORGET_REQUESTS:
-                    # past the requests forget_requests_from_messages reads, a
-                    # replacement is not kept for a request nobody resolves
+                    # past the requests forget_requests_from_messages reads: this
+                    # request keeps no replacement, the message's other sentences do
                     full = True
-                    break
+                    continue
                 rests.append(split_replacement(mt.group("what"))[1])
             elif not same_sentence:
                 others.append(raw)
@@ -459,7 +459,7 @@ def forget_targets(
         and (gk := str(g.get("key") or "").strip())
         and gk not in protected  # the replacement is not a target
     ]
-    candidates = _row_words([*(existing or []), *batch])
+    candidates: list[tuple[str, set[str]]] | None = None  # read on the first unlinked request
     for f in facts:
         if not is_forget_request(f):
             continue
@@ -485,5 +485,7 @@ def forget_targets(
             # the request names may be in this very batch, not yet written:
             # resolve against the batch's own facts too, and the write step
             # drops the ones named.
+            if candidates is None:
+                candidates = _row_words([*(existing or []), *batch])
             out.update(_targets_by_words(f, candidates))
     return out
