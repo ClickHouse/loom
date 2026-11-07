@@ -1075,6 +1075,22 @@ def test_an_older_candidate_run_after_its_final_is_not_told_to_delete_itself(
     git_repo.git(tmp_path, "checkout", "-q", "v1.2.0-rc.1")
     error = prepare.check_tag("1.2.0-rc.1", tmp_path)
     assert error == "v1.2.0-rc.1 is an older candidate of the released v1.2.0: nothing to run"
+    git_repo.git(tmp_path, "checkout", "-q", "v1.2.0")
+    assert prepare.check_tag("1.2.0", tmp_path) is None  # the final's runs still pass
+
+
+def test_every_stray_above_the_finals_candidate_is_told_to_go(tmp_path: Path) -> None:
+    """rc.3 and rc.4 pushed after the final on rc.2: rc.3 is not an older candidate."""
+    git_repo.git(tmp_path, "init", "-q")
+    _commit(tmp_path, "rc.2")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.2")
+    git_repo.git(tmp_path, "tag", "v1.2.0")
+    for n in (3, 4):
+        _commit(tmp_path, f"rc.{n}")
+        git_repo.git(tmp_path, "tag", f"v1.2.0-rc.{n}")
+    git_repo.git(tmp_path, "checkout", "-q", "v1.2.0-rc.3")
+    error = prepare.check_tag("1.2.0-rc.3", tmp_path)
+    assert error and ":refs/tags/v1.2.0-rc.3" in error  # the stray tag to delete
 
 
 def test_a_soaked_candidate_run_again_after_its_final_is_not_told_to_delete_itself(

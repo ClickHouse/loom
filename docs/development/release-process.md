@@ -111,8 +111,8 @@ candidate's commit after the soak. The final's bundle keeps the ClickHouse relea
 bundle names (the newest candidate on that commit with a published bundle); its images are built
 again from the same commit, uncached, so an OS package may be newer than in the soaked image. A
 candidate tag pushed after its final is refused; on another commit than the final's, it also fails
-the final's later runs until it is deleted. A run of an older candidate after its final, as for its
-SDKs, is refused with nothing to delete. The chart's `appVersion` names `X.Y.Z` too, so a soak on
+the final's later runs until it is deleted. A dispatch of an older candidate after its final (to
+publish its SDKs, say) is refused, and its tag stays. The chart's `appVersion` names `X.Y.Z` too, so a soak on
 Kubernetes sets `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`.
 
 Only the highest final version becomes the repository's Latest release (`releases/latest` serves the
