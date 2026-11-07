@@ -137,7 +137,7 @@ def _premise_key(value: str) -> str:
     return "user_" + "_".join(toks[:5]) if toks else ""
 
 
-# Each premise is compared with every one before it.
+# Each premise is compared with the batch's facts and every premise before it.
 MAX_PREMISES = 50  # not a setting: more than a window's assistant turns state as premises
 
 _PREMISE_PREFERENCE_VERBS = frozenset(

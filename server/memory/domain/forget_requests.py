@@ -150,9 +150,9 @@ def _words(texts: list[str]) -> set[str]:
     return set().union(*(_content_tokens(t) for t in texts))
 
 
-def _new_content(value: str, against: list[str]) -> set[str]:
-    """Content words of `value` that none of `against` holds."""
-    return _content_tokens(value) - _words(against) - _REPLACEMENT_META
+def _new_content(value: str, against: set[str]) -> set[str]:
+    """Content words of `value` that `against` does not hold."""
+    return _content_tokens(value) - against - _REPLACEMENT_META
 
 
 def replacement_facts(
@@ -191,7 +191,7 @@ def replacement_facts(
         src = {int(i) for i in (f.get("source_message_indices") or []) if str(i).isdigit()}
         if not is_forget_request(f) and src & msgs:
             base = [by_key[k] for k in (f.get("linked_keys") or []) if k in by_key]
-            if _new_content(str(f.get("value") or ""), base or clauses):
+            if _new_content(str(f.get("value") or ""), _words(base) if base else asked):
                 kept_msgs |= src & msgs
     out: list[dict[str, Any]] = []
     protected: set[str] = set()
@@ -204,7 +204,8 @@ def replacement_facts(
             # Novel against the rows it replaces when it links them — the
             # user's clause may carry the replacement's own words when the
             # sentence has no cut ("the 30s cap, retries now cap at 60s").
-            if src & msgs and _new_content(str(f.get("value") or ""), forgotten or clauses):
+            against = _words(forgotten) if forgotten else asked
+            if src & msgs and _new_content(str(f.get("value") or ""), against):
                 protected.add(str(f.get("key") or ""))
                 retire.update(
                     k
@@ -215,7 +216,7 @@ def replacement_facts(
             continue
         rest = set().union(*(rest_by_msg.get(i, set()) for i in src)) if src else set()
         value = str(f.get("value") or "")
-        novel = _new_content(value, forgotten + clauses) & rest
+        novel = _new_content(value, _words(forgotten) | asked) & rest
         if not rest or not novel:
             out.append(f)
             continue
@@ -263,7 +264,7 @@ def _said_corrections(
     for i, said in forget_sentences(messages, same_sentence=True).items():
         if i in kept_msgs or not said or not _FIRST_PERSON_RE.match(said):
             continue
-        if not _content_tokens(said) - known_words - _REPLACEMENT_META:
+        if not _new_content(said, known_words):
             continue
         key = f"user_said_{i}_" + "_".join(sorted(_content_tokens(said)))[:40].strip("_")
         out.append(
@@ -300,24 +301,26 @@ def forget_requests_from_messages(messages: list[dict[str, Any]]) -> list[dict[s
             if not sent or len(sent) > MAX_FORGET_SENTENCE_CHARS:
                 continue
             mt = _FORGET_MSG_RE.match(sent)
-            if not mt:
-                continue
-            what = split_replacement(mt.group("what"))[0].strip().rstrip(".!?,;: ").strip()
-            low = what.lower()
-            if not what or low.startswith("to ") or low.startswith("about to "):
-                continue
-            head = re.split(r"[,;:!.\s]+", low, maxsplit=1)[0]
-            if head in _FORGET_MSG_PRONOUNS:
-                continue
-            if not _content_tokens(what):
-                continue
-            if low in seen:
-                continue
-            seen.add(low)
-            out.append({"key": "", "value": what, "forget": True, "tags": ["forget"]})
-            if len(out) == MAX_FORGET_REQUESTS:
-                return out
+            what = _request_clause(mt, seen) if mt else ""
+            if what:
+                out.append({"key": "", "value": what, "forget": True, "tags": ["forget"]})
+                if len(out) == MAX_FORGET_REQUESTS:
+                    return out
     return out
+
+
+def _request_clause(mt: re.Match[str], seen: set[str]) -> str:
+    """The clause a forget match asks to drop, or "" when it names nothing new
+    to resolve (a pronoun, an action to do, no content word, one already seen)."""
+    what = split_replacement(mt.group("what"))[0].strip().rstrip(".!?,;: ").strip()
+    low = what.lower()
+    if not what or low.startswith("to ") or low.startswith("about to "):
+        return ""
+    head = re.split(r"[,;:!.\s]+", low, maxsplit=1)[0]
+    if head in _FORGET_MSG_PRONOUNS or not _content_tokens(what) or low in seen:
+        return ""
+    seen.add(low)
+    return what
 
 
 def forget_sentences(
@@ -329,8 +332,12 @@ def forget_sentences(
     A pronoun request ("forget that, I prefer coffee") counts here even though
     it names nothing to resolve: its message still carries the replacement."""
     out: dict[int, str] = {}
-    requests = 0
+    # counted as forget_requests_from_messages counts, so both stop at the same request
+    seen: set[str] = set()
+    full = False
     for i, m in enumerate(messages or []):
+        if full:
+            break
         if str(m.get("role") or "").lower() != "user":
             continue
         text = str(m.get("content") or "")
@@ -346,12 +353,13 @@ def forget_sentences(
                     others.append(raw)
                 continue
             mt = _FORGET_MSG_RE.match(sent)
-            if mt and requests == MAX_FORGET_REQUESTS:
-                # past the requests forget_requests_from_messages reads, a
-                # replacement is not kept for a request nobody resolves
-                return out
             if mt:
-                requests += 1
+                _request_clause(mt, seen)
+                if len(seen) > MAX_FORGET_REQUESTS:
+                    # past the requests forget_requests_from_messages reads, a
+                    # replacement is not kept for a request nobody resolves
+                    full = True
+                    break
                 rests.append(split_replacement(mt.group("what"))[1])
             elif not same_sentence:
                 others.append(raw)

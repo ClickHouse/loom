@@ -313,6 +313,31 @@ def test_no_replacement_is_kept_for_a_request_past_the_cap() -> None:
     assert cap - 1 in forget_requests.forget_sentences(msgs)
 
 
+@pytest.mark.parametrize(
+    "msgs",
+    [
+        # pronoun and repeated requests resolve nothing, so they do not count
+        [{"role": "user", "content": "forget it."}] * 60
+        + [{"role": "user", "content": "forget jazz0. forget jazz0."}]
+        + [{"role": "user", "content": "forget that I prefer Neovim, I switched to VS Code."}],
+        # the cap reached inside one message keeps that message's replacements
+        [
+            {
+                "role": "user",
+                "content": " ".join(f"forget jazz{i}." for i in range(48))
+                + " forget that I prefer Neovim, I switched to VS Code. forget jazz99. forget blues.",
+            }
+        ],
+    ],
+    ids=["unresolved requests", "one message"],
+)
+def test_every_resolved_request_keeps_its_replacement(msgs: list[dict[str, str]]) -> None:
+    assert any(
+        r["value"] == "I prefer Neovim" for r in forget_requests.forget_requests_from_messages(msgs)
+    )
+    assert "I switched to VS Code" in " ".join(forget_requests.forget_sentences(msgs).values())
+
+
 def test_a_window_states_at_most_a_bounded_number_of_premises() -> None:
     turns = [
         {
