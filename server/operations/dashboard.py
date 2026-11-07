@@ -7,8 +7,9 @@ dashboard is the people's surface: an op reaches it when a quoted
 `server.operations.reach`). An op a person needs (to administer, review,
 inspect, configure, or to delete with a confirmation) has a control there; an
 op only an agent or a client program calls is named in `NOT_IN_DASHBOARD` with
-the reason. The census's `--check` (`tests/unit/test_op_reach_census.py`) fails
-on an op with neither, and on an entry for an op the dashboard calls.
+the reason. The census's `--check` (`tests/unit/test_op_reach_census.py`, through
+`dashboard_violations`) fails on an op with neither, on an op in both, and on an
+entry for an op the dashboard calls or that no longer exists.
 
 `DASHBOARD_PENDING` holds the ops a person needs whose control is not built
 yet. `tests/unit/test_op_surfaces.py` pins it: an op leaves it when its control
