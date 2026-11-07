@@ -5156,7 +5156,7 @@
         "otel_environment": {
           "default": "dev",
           "type": "string",
-          "description": "The OTel resource `deployment.environment` stamped on every span, log and metric."
+          "description": "The OTel resource `deployment.environment.name` stamped on every span, log and metric."
         },
         "otel_excluded_urls": {
           "default": "/v1/health",

@@ -198,7 +198,7 @@ def _start_tracing(exporter_mode: str, endpoint: str) -> tuple[Any, Any, Any] | 
         {
             "service.name": settings.otel_service_name,
             "service.namespace": SERVICE_NAMESPACE,
-            "deployment.environment": settings.otel_environment,
+            "deployment.environment.name": settings.otel_environment,
             **_instance_attrs(),
         }
     )

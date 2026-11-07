@@ -226,7 +226,7 @@ def test_cache_hits_are_reported_as_cached_not_billed() -> None:
     `_embed_one_raw` is the only place the provider's `usage` block is read, and
     it does not run on a hit, so a hit would report zero tokens and
     `embedding_tokens` would undercount. The tokens are counted locally, but they
-    go on `cached_input_tokens` with a cost of 0: `report_embed` feeds
+    go on `loom.embed.cached_tokens` with a cost of 0: `report_embed` feeds
     `agent_events.embedding_tokens`, which `insights/app/cost.py` sums into a billing
     report, so counting a hit as billed would invent spend that never happened.
     """
@@ -236,7 +236,10 @@ def test_cache_hits_are_reported_as_cached_not_billed() -> None:
     )
     assert span.attrs["gen_ai.usage.input_tokens"] == 0
     assert span.attrs["gen_ai.usage.cost"] == 0.0
-    assert span.attrs["gen_ai.usage.cached_input_tokens"] == 400
+    assert span.attrs["loom.embed.cached_tokens"] == 400
+    # Not a provider cache read: under a `gen_ai.usage.*` cache key both tools
+    # would subtract it from the billed input.
+    assert not [k for k in span.attrs if k.startswith("gen_ai.usage.cache")]
     assert span.attrs["loom.embed.cost_saved_usd"] > 0.0
     assert span.attrs["loom.embed.cache_hits"] == 1
 
@@ -322,11 +325,11 @@ def test_search_llm_helpers_are_all_stage_labelled() -> None:
     )
 
 
-def test_cache_hit_is_not_a_generation() -> None:
-    """A cache hit made no provider call, so it is a SPAN, not a GENERATION.
+def test_cache_hit_is_not_an_embedding_observation() -> None:
+    """A cache hit made no provider call, so it is a SPAN, not an EMBEDDING.
 
-    Marking every embed a generation would put cache hits in Langfuse as
-    generations with 0 tokens and $0, as `traced(..., model=...)` would without
+    Marking every embed an embedding would put cache hits in Langfuse as
+    embedding calls with 0 tokens and $0, as `traced(..., model=...)` would without
     the same rule. Empty generations inflate the count and drag every
     per-generation average down by exactly the cache hit rate.
     """
@@ -340,7 +343,7 @@ def test_cache_hit_is_not_a_generation() -> None:
     genai._Embedding(span2, "text-embedding-3-small").record_usage(
         billed_tokens=400, cache_misses=1, called_provider=True
     )
-    assert span2.attrs["langfuse.observation.type"] == "generation"
+    assert span2.attrs["langfuse.observation.type"] == "embedding"
 
 
 def test_embedding_span_defers_observation_type() -> None:
@@ -423,3 +426,36 @@ def test_a_cancelled_provider_call_is_not_an_error_span(monkeypatch: pytest.Monk
         raise asyncio.CancelledError
     (span,) = exporter.get_finished_spans()
     assert span.status.status_code is StatusCode.UNSET
+
+
+def test_provider_spans_carry_the_genai_semantic_convention_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HyperDX's LLM view and Langfuse key on these: the provider under
+    `gen_ai.provider.name`, the operation as a convention value (`chat`,
+    `embeddings`), and the cascade leg apart from it under `loom.llm.stage`."""
+    exporter = _recording_tracer(monkeypatch)
+    with (
+        genai.llm_stage("hyde"),
+        genai.generation_span(provider="openai", model="gpt-4o-mini") as g,
+    ):
+        g.record_usage(1000, 50, priced=True, cached_input_tokens=600, cache_write_5m_tokens=100)
+    with (
+        genai.llm_stage("hyde"),
+        genai.embedding_span(provider="openai", model="text-embedding-3-small") as e,
+    ):
+        e.record_usage(billed_tokens=30, cache_misses=1)
+    chat, embed = exporter.get_finished_spans()
+    assert chat.name == "llm.hyde"
+    assert chat.attributes["gen_ai.provider.name"] == "openai"
+    assert chat.attributes["gen_ai.operation.name"] == "chat"
+    assert chat.attributes["loom.llm.stage"] == "hyde"
+    assert chat.attributes["langfuse.observation.type"] == "generation"
+    assert chat.attributes["gen_ai.usage.input_tokens"] == 1000
+    assert chat.attributes["gen_ai.usage.cache_read.input_tokens"] == 600
+    assert chat.attributes["gen_ai.usage.cache_creation.input_tokens"] == 100
+    assert embed.attributes["gen_ai.operation.name"] == "embeddings"
+    assert embed.attributes["langfuse.observation.type"] == "embedding"
+    for span in (chat, embed):
+        assert "gen_ai.system" not in span.attributes
+        assert "gen_ai.operation.kind" not in span.attributes

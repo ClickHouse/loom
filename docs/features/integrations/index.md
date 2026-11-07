@@ -125,7 +125,7 @@ the profile or the pins change: put the cache breakpoint there, and compare `sta
 to see whether the prefix moved. The Python SDK exposes `pack.stable_prefix` and
 `pack.volatile_suffix`.
 
-Loom's own model calls report `gen_ai.usage.cached_input_tokens` and
+Loom's own model calls report `gen_ai.usage.cache_read.input_tokens` and
 `loom.llm.prompt_cache_hit_ratio` on their spans.
 
 ## Related
