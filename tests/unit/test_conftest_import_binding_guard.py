@@ -12,7 +12,7 @@ import pytest
 
 from server.code.store.index import CodeRepo
 from server.core.ch import get_client
-from tests.unit.conftest import _REPO, _double_bound_at_import
+from tests.unit.conftest import _REPO, _double_bound_at_import, _source_modules_since
 
 pytest_plugins = ["pytester"]
 
@@ -71,6 +71,15 @@ def test_a_module_outside_the_source_files_is_not_checked(probe, where: str) -> 
     probe.__file__ = str(_REPO / where)
     before = _fake_first_import(probe, CodeRepo=MagicMock())
     assert not _double_bound_at_import(before)
+
+
+def test_a_tests_helper_is_dropped_but_not_checked(probe) -> None:
+    # A tests/ helper first imported with a poisoned module may bind a name from it, so it
+    # goes too; its own fakes never count as a leak.
+    probe.__file__ = str(_REPO / "tests" / "unit" / "_probe_helper.py")
+    before = _fake_first_import(probe)
+    assert _source_modules_since(before, tests=True) == [_PROBE]
+    assert _source_modules_since(before) == []
 
 
 def test_a_scripts_module_is_checked(probe) -> None:
