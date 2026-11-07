@@ -286,6 +286,7 @@ key: it has no grant on `system.row_policies` or on `loom.analysis_secrets`, and
 cannot run `EXPLAIN`. Every statement that carries the key runs with `log_queries = 0`,
 so the key is not in `system.query_log`. It is in ClickHouse's own access storage (on
 disk, or in Keeper when access is replicated), in a backup of the access entities, in
+the distributed DDL queue of a cluster that writes access `ON CLUSTER`, in
 `system.row_policies` and in the server log at `debug` level: all read only by whoever
 administers the ClickHouse host, who can read every row anyway.
 
@@ -296,55 +297,61 @@ verified first, the namespaces are checked as on any read, and the call is ledge
 
 ### Provisioning
 
-The analyst user, its settings profile, grants and policies will be written with SQL,
+The analyst user, its settings profiles, grants and policies will be written with SQL,
 never in a ClickHouse config file, which would put the key in the repository. A server
 whose ClickHouse user has access management (the bundled ClickHouse's `loom` user, a
 self-managed admin) writes them itself. Elsewhere an admin runs `loom ch-setup`, which
 writes them, or runs by hand the SQL that `loom ch-setup --print-analyst-sql` prints:
-that SQL carries the key and the password, is printed by the newest build's CLI, is
-outside the rules below because plain SQL takes no lease and checks no stamp, and is
-run, not kept. Either draws the secrets row first when there is none. The allowlist
-lives in code with the column comments that become the agent's catalog, so the grants,
-the policies and the catalog come from one definition. The rules a write keeps:
+that SQL opens with `SET log_queries = 0`, carries the key and the password, is printed
+by the newest build's CLI, is outside the rules below because plain SQL takes no lease
+and checks no version, and is run, not kept. Only these draw the secrets row when there
+is none, besides a server that can see no analyst user exists yet; a server that cannot
+tell answers `ANALYSIS_UNAVAILABLE` until `loom ch-setup` runs. The allowlist lives in
+code with the column comments that become the agent's catalog, so the grants, the
+policies and the catalog come from one definition. The rules a write keeps:
 
 - **One writer at a time.** A write holds the cluster lease `analysis.entities`
   (`server/core/leases.py`), waiting for it when another holds it, and reads what the
   entities hold once it has it. `loom secrets reseal` takes the same lease.
-- **Never over a newer build.** The settings profile carries the allowlist's version,
-  written last; a version names exactly one set of grants and policies (a unit test pins
-  it), so a change to either is a new version. The caps are deployment settings, the
-  same on every replica, written with the profile whenever the stored ones differ from
-  the build's. A build writes when there is no version or its own is newer, so during a
-  rolling upgrade a build N-1 never narrows N's grants or loosens N's policies. N-1
-  keeps answering on N's entities: its statements that name a column N dropped are
-  refused until the roll forward.
+- **Never over a newer build.** The analyst's main settings profile carries the stored
+  version, written last; a version names exactly one set of grants and policies (a unit
+  test pins it), so a change to either is a new version. A build writes when there is no
+  stored version or its own is newer, so during a rolling upgrade a build N-1 never
+  narrows N's grants or loosens N's policies. N-1 keeps answering on N's entities: its
+  statements that name a column N dropped are refused until the roll forward. The caps
+  are deployment settings, kept in a second profile of their own: a boot holding the
+  lease writes them when the stored ones differ from its settings, and nothing else
+  writes them, so they never touch the version.
 - **No granted table without its policy.** ClickHouse lets a user with no policy on a
   table read every row of it, so each policy is replaced in place before any grant is
-  given, grants the allowlist drops are revoked after, and a policy is never dropped: a
-  table that leaves the allowlist keeps one that reads nothing.
-- **The key never changes by itself.** The secrets row is drawn once and written with a
-  quorum insert on a replicated table. A replica that cannot read it, or finds it gone
-  while the analyst user exists, answers `ANALYSIS_UNAVAILABLE` and reports a
-  `loom doctor` problem. `loom ch-setup --new-analysis-key` replaces the key on purpose:
-  it stores the new key, then writes every policy under it (or prints them), and the
-  canary below is written last.
+  given, every grant outside the allowlist is revoked after, and a policy is never
+  dropped: a table that leaves the allowlist keeps one that reads nothing.
+- **The key never changes by itself.** The secrets row is drawn once, and every read of
+  it, the one under the lease included, runs with the read-your-writes setting Loom uses
+  across replicas (`own_write_reads` in `server/core/ch.py`). A replica reads the key
+  from the row before each statement. A row that does not open, or is gone while the
+  analyst user exists, answers `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem.
+  `loom ch-setup --new-analysis-key` is the recovery: it draws a new key, stores it, and
+  writes every policy under it, the canary's last; while it runs, which is when analysis
+  is already unavailable, an answer can come back empty.
 
 A replica probes the analyst user at boot and then a minute after each probe, in the
 background, as the analyst itself, so the probe needs no access management:
 
-- an unsigned read of each allowlisted table must fail for want of the scope settings,
-  which shows the table has a policy that checks them;
-- the analyst's own `SHOW GRANTS` must name nothing outside the allowlist;
-- a signed read of `loom.analysis_canary`, whose one row sits in a reserved scope and
-  whose policy is written last under the same key, must return that row, which shows the
-  policies accept the key the replica signs with;
-- a `system` table and a column outside the allowlist must be refused.
+- a signed read of `loom.analysis_canary`, whose one row sits in a reserved scope under
+  a policy with the same key, must return that row: the policies accept the key;
+- a signed read of each allowlisted table in that reserved scope must count no rows: no
+  extra policy widens what the analyst reads;
+- a `system` table must be refused;
+- when the stored version is this build's: an unsigned read of each allowlisted table
+  must fail for want of the scope settings (the table has a policy that reads them), and
+  the analyst's own `SHOW GRANTS` must name nothing but the allowlist and the canary. A
+  build older than the stored version skips these, since the entities are another
+  build's.
 
-Each probe re-reads the secrets row, and a replica moves to a new key only once the
-canary reads under it, so a key stored before its policies are written is never used
-against the old ones. A failed check answers `ANALYSIS_UNAVAILABLE` and is a
-`loom doctor` problem; a build whose version is the stamp's then writes the entities
-again under the lease.
+A failed check answers `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem. When a
+check failed with a definite answer, not a lost connection, and the stored version is
+this build's, the replica writes the entities again under the lease.
 
 ### What it can read
 
@@ -365,7 +372,7 @@ statement after an erasure cannot read what it removed.
 `insights.catalog` will return the allowlisted tables, their columns, types and
 comments, and the notes a correct query needs: which tables hold one live row per key
 and which one row per event. It is generated from the allowlist, so it never names a
-column the user cannot read.
+column the user cannot read, and it leaves out the probe's canary.
 
 ### Limits, fairness and the ledger
 
@@ -427,10 +434,12 @@ viewer token. Each case must be refused or return no canary:
   which the lease serialises, and a build N-1 beside N, which keeps answering on N's
   entities and never writes them;
 - a statement run while a write replaces the policies, which reads the right rows;
-- `loom ch-setup --new-analysis-key` with its SQL printed and not yet run, during which
-  replicas keep the old key and keep answering; a policy under another key, which the
-  canary catches; and a secrets row that does not open or is gone while the user is not,
-  which answers `ANALYSIS_UNAVAILABLE`;
+- an extra policy that widens what the analyst reads (`USING 1 TO loom_analyst`), which
+  the reserved-scope read catches; a build N-1 beside an N that added a column and took
+  a table off the allowlist, which keeps answering; and two replicas with different cap
+  settings, which write the caps at boot only;
+- a policy under another key, which the canary catches, and a secrets row that does not
+  open or is gone while the user is not, which answers `ANALYSIS_UNAVAILABLE`;
 - `loom.analysis_secrets` and `loom.analysis_canary` read directly, and neither the
   statement's text nor the key in `system.query_log`.
 
