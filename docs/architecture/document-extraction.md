@@ -572,6 +572,33 @@ read as read, but no floor measures its text yet), text inside smaller images, c
 `attrs.images_unread` and the artifact's warnings, never read), and a Markdown pipe table as a typed table (its rows
 stay one paragraph, as written).
 
+## Retrieval floors
+
+These floors gate `knowledge.search` over extracted documents, not what the reference extractor declares.
+`tests/integration/test_knowledge_retrieval_floors.py` ingests Markdown runbooks, SQL schemas, a TOML file, CSV tables,
+HTML tables and a PDF, with text writes beside them, and asks labelled queries in three slices; each query's target
+must be the first hit (**found first**):
+
+- **exact identifiers**: an error code, a table, a view, a key path and a form number.
+- **table questions**: a row in each block of a CSV table long enough to be cut into several, a row of another CSV with
+  the same columns, and a row of each of two HTML tables with the same columns.
+- **filtered recall**: `formats`, `block_types` and `tags` filters that each keep competing documents; every hit is
+  inside the filter (**kept in filter**).
+
+A hit counts when it comes from the expected source and shows the expected text in its passage or in the headings the
+passage sits under (an error code is often its section's heading). The floors are measured and checked with the fake
+n-gram embedder the integration tests run, the same model embedding the chunks and the queries, so the ranking does
+not vary between runs; with another embedder the test skips. A code such as `M-41` reaches neither the lexical leg (its
+parts are under the minimum term length) nor the exact-key leg, so on the fake embedder it is found through the vector
+leg over its section heading.
+
+| Slice             | Metric         | Floor |
+| ----------------- | -------------- | ----- |
+| exact identifiers | found first    | 1.00  |
+| table questions   | found first    | 1.00  |
+| filtered recall   | found first    | 1.00  |
+| filtered recall   | kept in filter | 1.00  |
+
 ## Structural chunks
 
 `chunk_artifact` cuts chunks from blocks instead of fixed windows over flattened text:
