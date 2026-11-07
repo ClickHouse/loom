@@ -202,11 +202,11 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
         "memory.apply": (
             "the Memories page's bulk actions call the per-row ops (memory.pin, memory.delete)"
         ),
-        "memory.search_trace": "Recall Lab explains each ranking with memory.search explain=true",
         "memory.cross_promote": (
             "the memory drawer's Copy to… (memory.copy_to) makes the same copy with its lineage "
             "link; this by-id form needs admin on both namespaces"
         ),
+        "memory.search_trace": "Recall Lab explains each ranking with memory.search explain=true",
         "memory.touch": (
             "an agent's keep-alive on memories it relies on; the memory drawer changes an "
             "expiry with memory.set, which audits the change"
