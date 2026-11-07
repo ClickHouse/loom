@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import random
 import re
+import signal
 import time
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -96,6 +97,10 @@ def _pytest_ids(s: str) -> object:
     return list(retrieval_calibration._PYTEST_ID_RE.finditer(s))
 
 
+def _test_identifiers(s: str) -> object:
+    return [list(p.finditer(s)) for p in retrieval_calibration._TEST_IDENTIFIER_PATTERNS]
+
+
 # (pattern, call as its caller makes it, text before the repeat, repeated unit)
 CASES: list[tuple[str, Callable[[str], object], str, str]] = [
     ("facets._FILE_PATH_RE", _finditer(facets, "_FILE_PATH_RE"), "", "@"),
@@ -149,6 +154,8 @@ CASES: list[tuple[str, Callable[[str], object], str, str]] = [
     ),
     ("identifiers._INJECT_FILELINE_RE", _finditer(identifiers, "_INJECT_FILELINE_RE"), "", "a/"),
     ("retrieval_calibration pytest ids", _pytest_ids, "", "a-"),
+    ("retrieval_calibration pytest params", _test_identifiers, "", "a.py::b["),
+    ("retrieval_calibration test_ params", _test_identifiers, "", "test_abc["),
     (
         "activity_facts._FAILED_ATTEMPT_RE",
         _search(activity_facts, "_FAILED_ATTEMPT_RE"),
@@ -195,6 +202,12 @@ CASES: list[tuple[str, Callable[[str], object], str, str]] = [
     ("transcripts._TAG", _cue, "", "<"),
     ("mentor_rules._TRACE_LINE_RES blanks", mentor_rules.looks_like_stack_trace, "x" * 80, "\n"),
     ("mentor_rules._TRACE_LINE_RES frame", mentor_rules.looks_like_stack_trace, "1. ", "a"),
+    (
+        "mentor_rules._TRACE_LINE_RES Python frame",
+        mentor_rules.looks_like_stack_trace,
+        "x" * 80 + "\n",
+        'File "a\n',
+    ),
     # Per-text work done once, not once per match.
     ("facets.extract_code_facets hex runs", facets.extract_code_facets, "", "deadbee "),
     ("prompts.amount_candidates", _amounts, "", "Ab 1 km "),
@@ -202,13 +215,29 @@ CASES: list[tuple[str, Callable[[str], object], str, str]] = [
 ]
 
 
+# Longer than any linear read takes on a loaded runner; an exponential
+# pattern would otherwise hang the job instead of failing the case.
+_CAP_S = 10.0
+
+
+def _timed_out(signum: int, frame: object) -> None:
+    raise TimeoutError(f"one read took over {_CAP_S}s")
+
+
 def _fastest_seconds(read: Callable[[str], object], text: str) -> float:
     """The fastest of three reads, so one stall on a busy runner does not count."""
     times = []
-    for _ in range(3):
-        started = time.perf_counter()
-        read(text)
-        times.append(time.perf_counter() - started)
+    previous = signal.signal(signal.SIGALRM, _timed_out)
+    try:
+        for _ in range(3):
+            signal.setitimer(signal.ITIMER_REAL, _CAP_S)
+            started = time.perf_counter()
+            read(text)
+            times.append(time.perf_counter() - started)
+            signal.setitimer(signal.ITIMER_REAL, 0)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
     return min(times)
 
 
@@ -284,6 +313,23 @@ _ORIGINAL = {
         r"\b(?=[A-Za-z0-9_-]{6,}\b)(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]+\b"
     ),
     "_PATHLIKE_RE": re.compile(r"`[^`]*`|\S*[/\\]\S*|\S+[._-]\S*[._-]\S*|\S+\.\w{1,5}\b"),
+    "_TERM": re.compile(r"[A-Za-z_][A-Za-z0-9_$-]*(?:\.[A-Za-z0-9_$-]+)+|[A-Za-z_][A-Za-z0-9_$]*"),
+    "_SEGMENT_SPLIT_RE": re.compile(r"(\s+[—–]\s+|\s+-\s+(?=\S)|(?<=[?!])\s+|:\s+(?=\S))"),
+    # the number words are long, so the original is the rewrite without its guard
+    "_NUM_RE": re.compile(ask_threshold._NUM_RE.pattern.replace(r"?(?<!\s)\s*", r"?\s*", 1)),
+    "_PART_SPLIT_RE": re.compile(
+        r"\s*(?:\?|\.)\s*(?:Additionally|Also|In addition|And)[,:]?\s+|;\s+", re.I
+    ),
+    "_AMOUNT_RE": re.compile(
+        r"(?:\$|€|£)\s?(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s?(?:dollars?|usd|followers?|"
+        r"miles|km|kg|lbs?|hours?|hrs|minutes?|mins|steps|calories|points|views|subscribers)\b",
+        re.IGNORECASE,
+    ),
+    "_FAILED_ATTEMPT_RE": re.compile(
+        r"\b(?:attempt|call|request|sequence|registration)\b[^.;]*?"
+        r"\b(?:refused|could\s+not|couldn't|failed|was\s+rejected)\b",
+        re.IGNORECASE,
+    ),
 }
 
 
@@ -327,8 +373,50 @@ def _names(p: re.Pattern[str], s: str, group: int) -> list[tuple[tuple[int, int]
             lambda p, s: p.sub(" ", s),
             ["a", "/", ".", "_", "-", " ", "`", "\\", "é", "!", "x.py", "`cmd`"],
         ),
+        (
+            "_TERM",
+            exact_keys._TERM,
+            lambda p, s: [t.rstrip("-") for t in p.findall(s)],
+            lambda p, s: [(dotted or word).rstrip("-") for dotted, word in p.findall(s)],
+            ["a", "Z", "_", "$", "-", ".", "9", " ", "é", "x.y"],
+        ),
+        (
+            "_SEGMENT_SPLIT_RE",
+            defect_answer._SEGMENT_SPLIT_RE,
+            lambda p, s: p.split(s),
+            lambda p, s: p.split(s),
+            [" ", "\t", "—", "–", "-", "?", "!", ":", "a", "b "],
+        ),
+        (
+            "_NUM_RE",
+            ask_threshold._NUM_RE,
+            lambda p, s: [m.group("num", "tens") for m in p.finditer(s)],
+            lambda p, s: [m.group("num", "tens") for m in p.finditer(s)],
+            [" ", "about", "~", "12", "3.5", "twenty", "-", "one", "a", "x"],
+        ),
+        (
+            "_PART_SPLIT_RE",
+            ask_threshold._PART_SPLIT_RE,
+            lambda p, s: p.split(s),
+            lambda p, s: p.split(s),
+            [" ", "?", ".", ";", "Also", "And", ",", "x", "In addition", ":"],
+        ),
+        (
+            "_AMOUNT_RE",
+            prompts._AMOUNT_RE,
+            lambda p, s: [m.groups() for m in p.finditer(s)],
+            lambda p, s: [m.groups() for m in p.finditer(s)],
+            ["$", "1", ",", ".5", " ", "km", "usd", "x", "€", "9"],
+        ),
+        (
+            "_FAILED_ATTEMPT_RE",
+            activity_facts._FAILED_ATTEMPT_RE,
+            lambda p, s: bool(p.search(s)),
+            lambda p, s: bool(p.search(s)),
+            ["call ", "request ", "failed", ".", ";", " ", "x", "could not", "refused"],
+        ),
     ],
-    ids=["TRACE_SYMBOL_RE", "_TRACE_LINE_RE", "_MIXED_RE", "_PATHLIKE_RE"],
+    ids=list(_ORIGINAL),
 )
 def test_a_rewrite_reads_what_the_original_read(
     name: str,

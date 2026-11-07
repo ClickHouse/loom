@@ -69,11 +69,10 @@ FIX_BLAME_CONCURRENCY = 4
 
 
 def checkable_frames(frames: list[str]) -> list[str]:
-    """The frames tracker.duplicate_check accepts: a longer line would fail
-    the whole check, so it is dropped, as loom_search's tracker leg does."""
-    from server.tracker.api.models import MAX_FRAME_CHARS
+    """The first 60 frames tracker.duplicate_check accepts."""
+    from server.tracker.api.models import checkable_frames
 
-    return [f for f in frames if len(f) <= MAX_FRAME_CHARS][:60]
+    return checkable_frames(frames)[:60]
 
 
 def _start_dupcheck_fix(input: Any, org: str, ns: str, frames: list[str]) -> Any:

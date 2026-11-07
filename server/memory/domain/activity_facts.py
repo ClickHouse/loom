@@ -171,8 +171,9 @@ _TOOL_NOUN = (
 _TOOL_SUBJECT_RE = re.compile(
     r"^\W*+(?:the\s+|both\s+|all\s+\w+\s+|each\s+)?(?:[\w-]+\s+){0,3}" + _TOOL_NOUN +
     # "the raw response for loom_memory_set", "the memories returned by loom"
-    # "about <topic>" up to the verb: a topic ending in a non-space, or blanks
-    # only — each blank is read once, not once per way to split a run of them
+    # "about <topic>" up to the verb: a topic ending in a non-space, or one
+    # blank of three or more, so "about   returned" still reads as a topic;
+    # each blank is read once, not once per way to split a run of them
     r"(?:\s+(?:for|of|from|returned\s+by|by)\s+\S+(?:\s+about(?:\s[^,.;]*?[^\s,.;]|\s\s(?=\s)))?)?\s+"
     r"(?:returned|found|shows?|showed|stored|saved|added|made|swapped|rated|ranked|came\s+back|"
     r"answered|refused|failed|matched|ran|succeeded|worked|includes?|contains?|lists?|reads|says)\b"

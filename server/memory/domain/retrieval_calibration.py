@@ -142,12 +142,13 @@ _IDENTIFIER_HANDLE_PATTERN = re.compile(r"@\s*([A-Za-z0-9][A-Za-z0-9_-]{1,})")
 # extraction — a token only answers if it EXACTLY equals a stored test_name and
 # matches exactly one record — so the patterns can be liberal.
 # pytest path::name with optional [param] — must carry ".py::" to be test-specific;
-# group 1, read from a path's first word only, so a long path costs one pass
-_PYTEST_ID_RE = re.compile(r"(?<![\w./-])[./-]*+\b([\w./-]+\.py::[\w./-]+(?:\[[^\]\s]+\])?)")
+# group 1, read from a path's first word only, so a long path costs one pass;
+# a [param] holds no `[`, so an unclosed one is not rescanned from each id
+_PYTEST_ID_RE = re.compile(r"(?<![\w./-])[./-]*+\b([\w./-]+\.py::[\w./-]+(?:\[[^\]\s\[]+\])?)")
 _TEST_IDENTIFIER_PATTERNS: tuple[re.Pattern[str], ...] = (
     _PYTEST_ID_RE,
     # test_-prefixed name with optional [param]
-    re.compile(r"\btest_[A-Za-z0-9_]{3,}(?:\[[^\]\s]+\])?"),
+    re.compile(r"\btest_[A-Za-z0-9_]{3,}(?:\[[^\]\s\[]+\])?"),
     # numbered SQL test, e.g. 05047_distributed_plan_finished_stages_drain
     re.compile(r"\b\d{4,6}_[a-z][a-z0-9_]{5,}\b"),
     # gtest Suite.Case (both parts capitalized), e.g. Executor.RemoveTasks

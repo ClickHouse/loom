@@ -2070,7 +2070,7 @@ TOOL_DESCRIPTIONS["tracker.duplicate_check"] = (
     "name)), `relation`, "
     "`relation_recorded` (the tracker graph's edge to `issue_number` — a recorded "
     "related_to is never promoted to duplicate), `evidence` lines, `why` "
-    "(incl. `fix_path`: a fix PR touched the draft's paths) and `features`; "
+    "(`fix_path`: a fix PR touched the draft's paths) and `features`; "
     "`epistemic` is calibrated; uncalibrated when no fit is stored (then "
     "`related` at most, confidence null; a restricted namespace borrows the "
     "org's standard fit — `fit.borrowed_from`); degraded when a leg failed after "
@@ -2079,9 +2079,9 @@ TOOL_DESCRIPTIONS["tracker.duplicate_check"] = (
     "verdict is read once more by a small model; one it labels the same defect is "
     "served as a duplicate (`judge` block); it never demotes and never overrides a "
     "recorded related_to. "
-    "Give `paths`: PRs that touched them, open ones included, and the issues "
-    "they fix become candidates too (`fix #N (open) touches …`). "
-    "`answer`: reported? fixed by "
+    "Give `paths`: PRs touching them (open too) and the issues they fix "
+    "become candidates (`fix #N (open) touches …`) — how a symptom "
+    "draft reaches its root-cause report. `answer`: reported? fixed by "
     "which PR, in which release (rows' `links`, `fixed_in`); `related_prs` on none."
 )
 

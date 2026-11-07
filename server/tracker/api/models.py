@@ -8,6 +8,7 @@ cannot answer says `tracker_unavailable` rather than answering empty."""
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -24,6 +25,12 @@ from server.operations.base import MCP_HIDDEN
 # characters, and each line is parsed with regexes on the request path.
 MAX_FRAME_CHARS = 4000  # not a setting: the wire contract's bound
 _FrameLine = Annotated[str, Field(max_length=MAX_FRAME_CHARS)]
+
+
+def checkable_frames(frames: Iterable[str]) -> list[str]:
+    """The frames a duplicate check accepts: a longer line would fail the
+    whole check, so a caller that found it in free text drops it."""
+    return [f for f in frames if len(f) <= MAX_FRAME_CHARS]
 
 
 class _TrackerIdentity(BaseModel):
