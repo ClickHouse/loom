@@ -13,7 +13,7 @@ import { AgentBadge } from "../../components/AgentBadge";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { RowMenu } from "../../components/ui/RowMenu";
-import { Tip } from "../../components/ui";
+import { Unavailable } from "../../components/ui/Unavailable";
 import { TableSkeleton } from "../../components/Skeleton";
 
 const HEADERS = [
@@ -23,6 +23,8 @@ const HEADERS = [
   { label: "Written", width: "110px" },
   { label: <span className="sr-only">Decision</span>, width: "150px" },
 ];
+
+const SHARED_KEY = "More than one proposal holds this key, and a decision names only the key, so it cannot pick one.";
 
 /** Facts on trial (written with `proposed=true`) and how the runs that relied on each
  *  went: accept one to serve it by default, reject it to retire it. */
@@ -72,9 +74,13 @@ export function ProposalsPanel({
     setBusy(true);
     try {
       const r = await decideProposals(scope, [key], decision);
-      if (r.decided > 0) toast(decision === "accept" ? "Accepted" : "Rejected", "ok");
-      // Not a proposal any more: decided by the policy or by someone else first.
-      else toast(`Not decided: ${r.results[0]?.reason || "it is no longer a proposal"}`, "info");
+      const result = r.results[0];
+      if (r.decided === 0)
+        // Not a proposal any more: decided by the policy or by someone else first.
+        toast(`Not decided: ${result?.reason || "it is no longer a proposal"}`, "info");
+      else if (result?.status === "conflicted")
+        toast("Accepted; it contradicts another fact, so it waits in Conflicts", "ok");
+      else toast(decision === "accept" ? "Accepted" : "Rejected", "ok");
     } catch (e) {
       toast(`Decision failed: ${humanizeError(e)}`, "error");
     } finally {
@@ -87,8 +93,9 @@ export function ProposalsPanel({
   };
   const held = busy || reading;
   // memory.proposal_decide names a proposal by key and decides the newest row of it, so a
-  // key two agents proposed cannot be decided here for one of them.
-  const shared = new Set((rows ?? []).map((p) => p.memory_key).filter((k, i, all) => all.indexOf(k) !== i));
+  // key more than one proposal holds cannot be decided for one of them.
+  const perKey = new Map<string, number>();
+  for (const p of rows ?? []) perKey.set(p.memory_key, (perKey.get(p.memory_key) ?? 0) + 1);
 
   // One wrapper in every state, so the focus a decision gives it survives an empty answer.
   return (
@@ -137,14 +144,9 @@ export function ProposalsPanel({
                 },
                 { label: <ListTime time={p.created_at} quiet /> },
                 {
-                  label:
-                    canDecide &&
-                    (shared.has(p.memory_key) ? (
-                      <Tip content="Two agents proposed this key, and a decision names only the key.">
-                        <span className="text-xs text-text-muted">Decide over the API</span>
-                      </Tip>
-                    ) : (
-                      <span className="inline-flex items-center gap-2">
+                  label: canDecide && (
+                    <span className="inline-flex items-center gap-2">
+                      <Unavailable reason={(perKey.get(p.memory_key) ?? 0) > 1 ? SHARED_KEY : null}>
                         <Button
                           type="secondary"
                           htmlType="button"
@@ -154,6 +156,8 @@ export function ProposalsPanel({
                         >
                           Accept
                         </Button>
+                      </Unavailable>
+                      {(perKey.get(p.memory_key) ?? 0) === 1 && (
                         <RowMenu
                           name={p.memory_key}
                           items={[
@@ -165,8 +169,9 @@ export function ProposalsPanel({
                             },
                           ]}
                         />
-                      </span>
-                    )),
+                      )}
+                    </span>
+                  ),
                 },
               ],
             }))}

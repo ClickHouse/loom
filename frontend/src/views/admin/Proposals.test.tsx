@@ -68,7 +68,7 @@ describe("ProposalsPanel", () => {
   it("says a decision did not happen, and reads the list again", async () => {
     vi.mocked(api.decideProposals).mockResolvedValueOnce({
       decided: 0,
-      results: [{ memory_key: "deploy_window", decided: false, reason: "already accepted" }],
+      results: [{ memory_key: "deploy_window", decided: false, status: "active", reason: "already accepted" }],
     });
     vi.mocked(api.listProposals).mockResolvedValue({ proposals: [], total: 0 });
     render(<ProposalsPanel initial={{ rows: [P], total: 1 }} onSeedUsed={() => {}} />);
@@ -83,12 +83,28 @@ describe("ProposalsPanel", () => {
     const lone = { ...P, memory_id: "m3", memory_key: "standup_time" };
     render(<ProposalsPanel initial={{ rows: [P, other, lone], total: 140 }} onSeedUsed={() => {}} />);
     expect(screen.getAllByText("deploy_window")).toHaveLength(2);
-    // A decision names only the key, so neither of the two is offered one.
-    expect(screen.queryByRole("button", { name: "Accept deploy_window" })).toBeNull();
-    expect(screen.getAllByText("Decide over the API")).toHaveLength(2);
+    // A decision names only the key, so neither of the two can take one; each says why.
+    for (const accept of screen.getAllByRole("button", { name: "Accept deploy_window" })) {
+      expect(accept).toHaveAttribute("aria-disabled", "true");
+      expect(accept).toHaveAccessibleDescription(/More than one proposal holds this key/);
+    }
+    expect(screen.queryByRole("button", { name: "Actions for deploy_window" })).toBeNull();
     expect(screen.getByRole("button", { name: "Accept standup_time" })).toBeInTheDocument();
     expect(screen.getByText("sensitive")).toBeInTheDocument();
     expect(screen.getByText("The newest 3 proposals are listed; decide some to see the rest.")).toBeInTheDocument();
+  });
+
+  it("says an accepted fact that contradicts another waits in Conflicts", async () => {
+    vi.mocked(api.decideProposals).mockResolvedValueOnce({
+      decided: 1,
+      results: [{ memory_key: "deploy_window", decided: true, status: "conflicted", reason: "" }],
+    });
+    vi.mocked(api.listProposals).mockResolvedValue({ proposals: [], total: 0 });
+    render(<ProposalsPanel initial={{ rows: [P], total: 1 }} onSeedUsed={() => {}} />);
+    await userEvent.click(screen.getByRole("button", { name: "Accept deploy_window" }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith("Accepted; it contradicts another fact, so it waits in Conflicts", "ok"),
+    );
   });
 
   it("holds every row until the list is read again after a decision", async () => {

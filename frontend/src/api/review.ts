@@ -80,8 +80,9 @@ export async function repairOrphanDuplicates(
   return post("/v1/memory.resolve_orphan_duplicates", { org: id.org, namespace: id.namespace, dry_run: dryRun });
 }
 
-/** How many of the agent's newest eligible memories `memory.consolidate` reads (its default). */
+/** How many of the agent's newest eligible memories a merge reads, and how old one must be. */
 export const CONSOLIDATE_READ = 200;
+export const CONSOLIDATE_MIN_AGE_SECONDS = 3600;
 
 /** POST /v1/memory.consolidate: one model call per cluster of near-duplicate memories of
  *  one agent (those of no user), merged into one each. */
@@ -100,7 +101,13 @@ export async function consolidateMemories(
   // not reported as failed while it goes on.
   return post(
     "/v1/memory.consolidate",
-    { org: id.org, namespace: id.namespace, agent },
+    {
+      org: id.org,
+      namespace: id.namespace,
+      agent,
+      limit: CONSOLIDATE_READ,
+      min_age_seconds: CONSOLIDATE_MIN_AGE_SECONDS,
+    },
     AbortSignal.timeout(LONG_CALL_MS),
   );
 }
@@ -181,7 +188,7 @@ export async function decideProposals(
   id: Scope,
   keys: string[],
   decision: "accept" | "reject",
-): Promise<{ decided: number; results: { memory_key: string; decided: boolean; reason: string }[] }> {
+): Promise<{ decided: number; results: { memory_key: string; decided: boolean; status: string; reason: string }[] }> {
   return post("/v1/memory.proposal_decide", { org: id.org, namespace: id.namespace, memory_keys: keys, decision });
 }
 

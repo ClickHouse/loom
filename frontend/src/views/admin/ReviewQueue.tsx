@@ -112,13 +112,23 @@ export function ReviewQueue() {
   const hasProposals = probedProposals?.scope === scopeKey && probedProposals.rows.length > 0;
   const tabbed = hasLearnings || hasExceptions || hasAuto || hasProposals || hasDuplicates;
   // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
-  // they revealed) must not outlive it, or a namespace with neither sub-tab strands the
+  // they revealed) must not outlive it, or a namespace without that sub-tab strands the
   // viewer on a hidden panel.
   const [tab, setTab] = useState("conflicts");
-  // A tab whose access went (a role read again) hands the page back to Conflicts.
+  // A tab that is no longer offered (its probe found nothing, or its access went) hands the
+  // page back to Conflicts.
+  const shown: Record<string, boolean> = {
+    conflicts: true,
+    learnings: hasLearnings,
+    auto: hasAuto,
+    exceptions: hasExceptions,
+    proposals: hasProposals,
+    duplicates: hasDuplicates,
+  };
+  const tabShown = shown[tab] ?? false;
   useEffect(() => {
-    if ((tab === "duplicates" && !hasDuplicates) || (tab === "proposals" && !hasProposals)) setTab("conflicts");
-  }, [tab, hasDuplicates, hasProposals]);
+    if (!tabShown) setTab("conflicts");
+  }, [tabShown]);
   // A probe seeds its panel's first view once: a panel opened again (the tabs unmount an
   // inactive one) reads afresh, so a learning promoted or an exception removed since does
   // not come back from the probe.
@@ -168,8 +178,6 @@ export function ReviewQueue() {
     (_signal, live) => {
       setProbedAuto(null);
       if (!autoReadable) {
-        // The Auto-resolved tab goes with the access: leave it for Conflicts.
-        setTab((t) => (t === "auto" ? "conflicts" : t));
         setAutoOpened(false);
         return;
       }
@@ -541,7 +549,8 @@ function ConflictsPanel() {
           placeholder="Optional — recorded in the audit trail"
           rows={3}
         />
-        <RevisionHint key={current.memory_id} memoryId={current.memory_id} />
+        {/* conflicts.propose_revision reads no high row, so a sensitive conflict gets none. */}
+        {current.sensitivity !== "high" && <RevisionHint key={current.memory_id} memoryId={current.memory_id} />}
         <div className="mt-4 flex items-center justify-end gap-2 flex-wrap">
           <Button
             type="empty"
@@ -637,6 +646,7 @@ function RevisionHint({ memoryId }: { memoryId: string }) {
       <div ref={region} role="status" tabIndex={-1} className="outline-none">
         {hint === "gone" && "This conflict is no longer open."}
         {Array.isArray(hint) && hint.length === 0 && "No suggestion for this conflict."}
+        {Array.isArray(hint) && hint.length > 0 && <p className="text-text-muted">In the reasons, the target is A.</p>}
         {Array.isArray(hint) &&
           hint.map((s) => (
             <p key={s.decision}>

@@ -206,6 +206,42 @@ describe("ReviewQueue", () => {
     expect(await screen.findByRole("tab", { name: /Duplicates/ }, WAIT)).toBeInTheDocument();
   });
 
+  it("hands the page back to Conflicts when the open Duplicates tab loses its access", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    seed("ns-a", "admin");
+    const user = userEvent.setup();
+    render(<ReviewQueue />);
+    await user.click(await screen.findByRole("tab", { name: /Duplicates/ }, WAIT));
+    expect(screen.getByRole("tab", { name: /Duplicates/ })).toHaveAttribute("aria-selected", "true");
+    act(() => {
+      useStore.setState({ myNamespaces: [member("ns-a", "writer"), member("ns-b", "writer")] });
+    });
+    resetNamespaceRoleCache();
+    await waitFor(() => expect(screen.queryByRole("tab", { name: /Duplicates/ })).toBeNull(), WAIT);
+    // No sub-tab is left, so the page is the conflict queue alone.
+    expect(screen.getByText("value of city")).toBeVisible();
+  });
+
+  it("offers no suggestion on a sensitive conflict, and says a settled one is no longer open", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({
+      rows: [{ ...conflict("vault"), sensitivity: "high" }],
+      next_before_version: null,
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("Sensitive: read it by key in Memories", {}, WAIT);
+    expect(screen.queryByRole("button", { name: "Suggest a decision" })).toBeNull();
+    cleanup();
+
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    vi.mocked(proposeRevision).mockResolvedValue({ found: false, suggestions: [] });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of city", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: "Suggest a decision" }));
+    expect(await screen.findByText("This conflict is no longer open.")).toBeInTheDocument();
+  });
+
   it("reads proposals afresh when the tab opens again, so a decided one does not come back", async () => {
     const P = {
       memory_key: "deploy_window",

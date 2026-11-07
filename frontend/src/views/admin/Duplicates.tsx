@@ -303,22 +303,24 @@ function DocumentCluster({
             Every listed copy has the kept document's address: nothing to retire.
           </p>
         )}
-        <ul className="mt-2 space-y-2">
-          {copies.map((d) => (
-            <li key={d.doc_id} className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-xs min-w-0 flex-1 truncate">{d.title || d.source_uri}</span>
-              <Button
-                type="danger"
-                htmlType="button"
-                disabled={busy}
-                aria-label={`Retire copy: ${d.source_uri}`}
-                onClick={() => void retire(d.source_uri)}
-              >
-                Retire copy
-              </Button>
-            </li>
-          ))}
-        </ul>
+        {copies.length > 0 && (
+          <ul className="mt-2 space-y-2">
+            {copies.map((d) => (
+              <li key={d.doc_id} className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-xs min-w-0 flex-1 truncate">{d.title || d.source_uri}</span>
+                <Button
+                  type="danger"
+                  htmlType="button"
+                  disabled={busy}
+                  aria-label={`Retire copy: ${d.source_uri}`}
+                  onClick={() => void retire(d.source_uri)}
+                >
+                  Retire copy
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
       </Panel>
     </li>
   );
@@ -411,7 +413,7 @@ function Repairs({ scope, onDone }: { scope: Scope; onDone: () => void }) {
       }),
       async () => {
         const r = await consolidateMemories(scope, agent);
-        if (r.clusters_found === 0) return `No near-duplicates among the ${r.examined} memories of ${agent} read.`;
+        if (r.clusters_found === 0) return `Read ${r.examined} of ${agent}'s memories: no near-duplicates.`;
         const kept = r.clusters_failed;
         const why = r.clusters_refused_lossy ? ` (${r.clusters_refused_lossy} because the merge lost a detail)` : "";
         const failed = kept ? `; ${kept} left as ${kept === 1 ? "it was" : "they were"}${why}` : "";
