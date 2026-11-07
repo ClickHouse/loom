@@ -226,7 +226,8 @@ class _RefusedFact(BaseModel):
     # The key of an extracted fact the write refused.
     memory_key: str
     # Why: blacklisted | blacklist_unchecked (too long to check in this request's
-    # budget; retry in a smaller one) | pinned | locked | rejected (close to a pinned row).
+    # budget; retry in a smaller one, or shorten it) | pinned | locked | rejected
+    # (close to a pinned row).
     verdict: str
 
 
@@ -337,7 +338,8 @@ class MemorySetFromMessagesOutput(BaseModel):
 BLACKLISTED = "blacklisted"
 # The verdict of an entry the blacklist could not check: the request's values are too long
 # for the regexes that apply (memory.set answers 422 BLACKLISTED with an empty
-# pattern_id); the same entry in a smaller request is checked.
+# pattern_id); the same entry in a smaller request is checked, unless the value alone
+# is past the budget (its message then says to shorten it).
 UNCHECKED = "blacklist_unchecked"
 # The verdict of an entry skipped on a pinned key (memory.set answers 409 PINNED_CONFLICT).
 PINNED = "pinned"
@@ -359,8 +361,8 @@ class _BulkSetResult(BaseModel):
     # The per-row verdict memory.set returns, so a caller of
     # bulk_set can act on one entry without decoding the aggregate lists, plus
     # `blacklisted`, `blacklist_unchecked` (too long for this request's blacklist regexes:
-    # send it in a smaller one), `pinned` or `locked` (refused, version 0; a restatement of a
-    # pinned or locked key's value is not).
+    # send it in a smaller one, or shorten it if it is too long alone), `pinned` or
+    # `locked` (refused, version 0; a restatement of a pinned or locked key's value is not).
     # Empty when the entry was not checked (non-searchable, past the cap).
     conflict_verdict: str = ""
     peers: list[MemorySetPeer] = Field(default_factory=list)
@@ -391,7 +393,7 @@ class MemoryBulkSetOutput(BaseModel):
     skipped_locked: list[str] = Field(default_factory=list)
     # Keys whose entry the blacklist refused or could not check in the request's budget:
     # not written (result version=0), where memory.set would answer 422 BLACKLISTED. The
-    # result's conflict_verdict tells them apart: blacklist_unchecked may be retried.
+    # result's conflict_verdict tells them apart: blacklist_unchecked may be retried smaller.
     skipped_blacklisted: list[str] = Field(default_factory=list)
     # Conflict verdicts, the same four memory.set produces:
     # canonical restatement of an existing row → not inserted, existing row

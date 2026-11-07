@@ -728,6 +728,75 @@ def test_a_value_too_long_to_check_is_refused_saying_so(monkeypatch) -> None:
         detail = ei.value.detail
         assert detail["code"] == "BLACKLISTED" and "too long" in detail["message"]
         assert detail.get("pattern_id", "") == ""
+        # the value alone is past the budget: a smaller request would not check it
+        assert "shorten the value" in detail["message"]
+        # the instruction count sums other principals' patterns
+        assert ("RE2 instructions" in detail["message"]) is not narrowed
+
+
+def test_an_entry_that_fits_alone_is_told_to_go_in_a_smaller_request(monkeypatch) -> None:
+    import server.memory.app.blacklist_guard as bl
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "REGEX_WORK_BUDGET", 90_000)
+    pattern = _pattern("r", "namespace", r"\bssn\b", "regex")
+    monkeypatch.setattr(bl, "_cache", [pattern])
+    size = bl.REGEX_WORK_BUDGET // pattern.compiled.programsize * 3 // 5  # each fits alone
+
+    async def two() -> Any:
+        bl.begin_request_budget()
+        await bl.find_match(org=ORG, namespace=NS, value="x" * size)
+        return await bl.find_match(org=ORG, namespace=NS, value="x" * size)
+
+    hit = asyncio.run(two())
+    assert hit is not None and hit.pattern_id == ""
+    assert "send less in one request" in hit.reason
+
+
+def test_one_org_holds_at_most_its_share_of_the_matcher_threads(monkeypatch) -> None:
+    """A busy org's searches wait their turn, so another org's write finds a thread."""
+    import threading
+
+    import server.memory.app.blacklist_guard as bl
+
+    release = threading.Event()
+    running: dict[str, int] = {"a": 0, "b": 0}
+    most = {"a": 0}
+    lock = threading.Lock()
+
+    def _blocking(patterns: Any, value: str, data: Any) -> Any:
+        org = value[0]
+        with lock:
+            running[org] += 1
+            most["a"] = max(most["a"], running["a"])
+        if org == "a":
+            release.wait(10)
+        with lock:
+            running[org] -= 1
+        return None
+
+    def _applies(p: Any, org: str, namespace: str) -> bool:
+        return True
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "_first_match", _blocking)
+    monkeypatch.setattr(bl, "_applies_to", _applies)
+    monkeypatch.setattr(bl, "_cache", [_pattern("r", "namespace", "x+", "regex")])
+
+    async def scene() -> None:
+        busy = [
+            asyncio.create_task(bl.find_match(org="org-a", namespace=NS, value="a" * 10))
+            for _ in range(6)
+        ]
+        await asyncio.sleep(0.2)
+        # org-b's search finishes while org-a's hold their share
+        await asyncio.wait_for(bl.find_match(org="org-b", namespace=NS, value="b"), 5)
+        release.set()
+        await asyncio.gather(*busy)
+
+    asyncio.run(scene())
+    assert most["a"] == bl.MATCHERS_PER_ORG
+    assert bl._org_slots == {}  # an idle org keeps no entry
 
 
 def test_a_blacklist_regex_keeps_no_captures_and_a_small_memory() -> None:

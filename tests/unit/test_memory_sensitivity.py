@@ -748,8 +748,8 @@ def _read_long_runs(n: int) -> None:
     assert detect_sensitivity("PIN for" + " " * n + "x") == ""
     assert detect_sensitivity("PIN for the" + " " * n + "door") == ""
     assert detect_sensitivity("GB82WEST12345698765432 " * (n // 10)) == "medium"
-    # a run of local-part or token characters with no `@` / `.` is scanned once, not once
-    # per word boundary inside it (the email and JWT shapes)
+    # a run of local-part or token characters with no `@` / `.` is scanned at most 64
+    # characters from each word boundary, not to its end (the email and JWT shapes)
     assert detect_sensitivity("a-" * (n // 2)) == ""
     assert detect_sensitivity("a@" + "b." * (n // 2)) == ""
     assert detect_sensitivity("eyJ-" * (n // 4)) == ""

@@ -145,15 +145,7 @@ class _SetCoalescer:
         batch: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]],
     ) -> None:
         if len(batch) == 1:
-            entry, fut = batch[0]
-            try:
-                res = await self._transport.post("/v1/memory.set", {**identity, **entry})
-            except BaseException as e:  # noqa: BLE001 — hand the caller its own failure
-                if not fut.done():
-                    fut.set_exception(e)
-                return
-            if not fut.done():
-                fut.set_result(res)
+            await self._set_alone(identity, *batch[0])
             return
         payload: dict[str, Any] = dict(identity)
         payload["entries"] = [entry for entry, _ in batch]
@@ -169,6 +161,7 @@ class _SetCoalescer:
         rows_by_key: dict[str, list[dict[str, Any]]] = {}
         for written_row in res.get("written") or []:
             rows_by_key.setdefault(str(written_row.get("memory_key")), []).append(written_row)
+        unchecked: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]] = []
         for entry, fut in batch:
             rows = rows_by_key.get(str(entry["memory_key"])) or []
             if fut.done():
@@ -186,12 +179,32 @@ class _SetCoalescer:
             # close to a pinned row) raises what the same set alone would have. The row
             # says so, not the key's list, since a restatement of the same key in the
             # batch is not refused.
+            if row["conflict_verdict"] == "blacklist_unchecked":
+                # The batch's values together were too long to check against the
+                # blacklist regexes; this one is checked, as a set alone would be.
+                unchecked.append((entry, fut))
+                continue
             refusal = _COALESCED_REFUSALS.get(row["conflict_verdict"])
             if refusal is not None:
                 status, detail = _refusal_detail(row, *refusal)
                 fut.set_exception(from_response({"detail": detail}, status))
                 continue
             fut.set_result(row)
+        for entry, fut in unchecked:
+            await self._set_alone(identity, entry, fut)
+
+    async def _set_alone(
+        self, identity: dict[str, str], entry: dict[str, Any], fut: asyncio.Future[dict[str, Any]]
+    ) -> None:
+        """Send one entry as a memory.set and hand its caller the answer."""
+        try:
+            res = await self._transport.post("/v1/memory.set", {**identity, **entry})
+        except BaseException as e:  # noqa: BLE001 — hand the caller its own failure
+            if not fut.done():
+                fut.set_exception(e)
+            return
+        if not fut.done():
+            fut.set_result(res)
 
     async def flush(self) -> None:
         """Send every gathered set now and wait for the writes to land."""

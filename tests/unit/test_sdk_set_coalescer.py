@@ -128,6 +128,17 @@ async def test_a_coalesced_set_of_a_blacklisted_value_raises_as_alone(agent: Age
     assert refused.status == 422
 
 
+async def test_a_coalesced_set_the_blacklist_could_not_check_is_sent_alone(agent: Agent) -> None:
+    # The batch's values together were past the blacklist's budget: that entry goes out
+    # as a memory.set of its own and its caller gets that answer, never a silent no-op.
+    t: Any = agent.transport
+    t.row_verdicts = {"d": "blacklist_unchecked"}
+    results = await asyncio.gather(*[agent.memory.set(k, {"v": k}) for k in "abcde"])
+    assert t.paths()[-1] == "/v1/memory.set" and t.calls[-1][1]["memory_key"] == "d"
+    alone = results["abcde".index("d")]
+    assert alone["version"] == 7 and "coalesced" not in alone
+
+
 async def test_a_coalesced_set_against_a_pinned_row_raises_as_alone(agent: Agent) -> None:
     # Alone, memory.set answers 409 PINNED_CONFLICT; coalesced, the same error is raised.
     from loom.errors import PreconditionFailed

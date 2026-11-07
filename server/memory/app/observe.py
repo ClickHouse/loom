@@ -249,6 +249,8 @@ async def _step_content(input: ObserveRecordInput, kind: str) -> tuple[str, list
         org=input.org, namespace=input.namespace, value=narrative
     )
     if hit is not None:
+        # A match: the narrative is at most 2000 characters, so it is never past the
+        # request's regex budget (8 KB x 3,000 instructions a scope, three scopes).
         await blacklist_guard.note_hit(hit.pattern_id)
         return step_only, [], BLACKLISTED_REASON
     return narrative, _extract_paths(input.tool_input, input.file_paths, narrative), ""

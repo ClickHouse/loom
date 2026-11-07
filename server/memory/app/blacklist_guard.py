@@ -11,9 +11,11 @@ scope first, so a namespace pattern beats an org pattern beats a global one.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import threading
 import time
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -49,6 +51,10 @@ REGEX_WORK_BUDGET = 250_000_000  # not a setting: what keeps one write from hold
 # Regex matching runs on its own few threads (RE2 releases the GIL), so a long value
 # under many patterns waits for these, never the event loop or the shared pool.
 _MATCHERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="loom-blacklist")
+# Searches one org may run on them at once: the rest of its requests wait their turn
+# here, so another org's write finds a free thread (a running search cannot be stopped).
+MATCHERS_PER_ORG = 2  # not a setting: half of _MATCHERS, so one org never holds them all
+_org_slots: dict[str, asyncio.Semaphore] = {}
 # Bytes x instructions this request's regexes scanned, a bulk write's entries together;
 # bound by the transports for each op. A worker binds none: there the budget is per value.
 _request_work: ContextVar[list[int] | None] = ContextVar("blacklist_regex_work", default=None)
@@ -242,17 +248,34 @@ async def find_match(
     program = sum(p.compiled.programsize for p in regexes)
     spent_box = _request_work.get()  # bound per request by the transports
     spent = (spent_box[0] if spent_box is not None else 0) + len(data) * program
+    alone = len(data) * program > REGEX_WORK_BUDGET  # no smaller request checks it either
     if spent > REGEX_WORK_BUDGET:
         # A substring pattern costs nothing to check: one that matches still names itself.
         hit = next((p for p in applicable if p.compiled is None and p.pattern in value), None)
         if hit is not None:
             return hit
         widest = max(regexes, key=lambda p: _SCOPE_PRECEDENCE.get(p.scope, 0)).scope
-        return _over_budget(org, namespace, widest, len(data), program)
+        return _over_budget(org, namespace, widest, len(data), program, alone=alone)
     if spent_box is not None:
         spent_box[0] = spent
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_MATCHERS, _first_match, applicable, value, data)
+    async with _org_slot(org):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_MATCHERS, _first_match, applicable, value, data)
+
+
+@contextlib.asynccontextmanager
+async def _org_slot(org: str) -> AsyncIterator[None]:
+    """One of `org`'s MATCHERS_PER_ORG turns on the matcher threads; an org with
+    nothing running or waiting holds no entry."""
+    slots = _org_slots.get(org)
+    if slots is None:
+        slots = _org_slots[org] = asyncio.Semaphore(MATCHERS_PER_ORG)
+    try:
+        async with slots:
+            yield
+    finally:
+        if _org_slots.get(org) is slots and slots._value == MATCHERS_PER_ORG:
+            del _org_slots[org]
 
 
 def _first_match(
@@ -270,9 +293,17 @@ def _first_match(
     )
 
 
-def _over_budget(org: str, namespace: str, scope: str, size: int, program: int) -> BlacklistPattern:
+def _over_budget(
+    org: str, namespace: str, scope: str, size: int, program: int, *, alone: bool = False
+) -> BlacklistPattern:
     """The refusal of a value too long for the regexes its scopes hold to check;
-    `scope` is the widest that holds one."""
+    `scope` is the widest that holds one, and `alone` says the value by itself is past
+    the budget, so no smaller request checks it."""
+    advice = (
+        "shorten the value, or remove regex patterns"
+        if alone
+        else "send less in one request, or remove regex patterns"
+    )
     return BlacklistPattern(
         pattern_id="",
         org=org,
@@ -281,11 +312,16 @@ def _over_budget(org: str, namespace: str, scope: str, size: int, program: int) 
         pattern_type="regex",
         scope=scope,
         reason=(
-            f"this request's values are too long to check against the blacklist regexes "
-            f"that apply ({size} bytes here, {program} RE2 instructions); send less in one "
-            "request, or remove regex patterns"
+            "this request's values are too long to check against the blacklist regexes "
+            f"that apply ({size} bytes here, {program} RE2 instructions); {advice}"
         ),
     )
+
+
+def _without_program(reason: str) -> str:
+    """An over-budget reason without its byte and instruction counts."""
+    head, _, rest = reason.partition(" (")
+    return head + rest[rest.find(");") + 1 :] if ");" in rest else reason
 
 
 # Refusals per pattern since its last hit-count write, and when that was.
@@ -353,9 +389,10 @@ async def enforce_on_insert(
     from server.identity.app.request_scope import request_narrowed
 
     if not hit.pattern_id:  # no stored pattern matched: the value is too long to check
+        # The instruction count sums other principals' patterns: not for a narrowed token.
         detail = {
             "code": "BLACKLISTED",
-            "message": hit.reason,
+            "message": _without_program(hit.reason) if request_narrowed() else hit.reason,
             "scope": hit.scope,
             "pattern_id": "",
         }

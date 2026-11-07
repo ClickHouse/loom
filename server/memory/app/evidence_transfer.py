@@ -295,7 +295,8 @@ async def _refused(
                 out.unchecked += 1
             await note_hit(hit.pattern_id)
             log.warning(
-                "import_evidence dropped blacklisted %s session=%r pattern=%s scope=%s",
+                "import_evidence dropped %s %s session=%r pattern=%s scope=%s",
+                "blacklisted" if hit.pattern_id else "unchecked",
                 kind,
                 session_id,
                 hit.pattern_id,
