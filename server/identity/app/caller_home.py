@@ -1,7 +1,7 @@
 """Where a call that names no namespace lands for a caller: its home.
 
 The MCP transport fills it into unaddressed calls (`server/transport/mcp_identity.py`)
-and the Setup page shows it for the token it mints (`me_setup.py`), so both ask this
+and the token mint names it for the token it makes (`me_service_accounts.py`), so both ask this
 module and cannot disagree. The inputs are the token's claims, the home subject's saved
 dashboard pick and live grants (`caller_defaults`), and the namespace kinds. Every
 candidate is checked against what the gate would admit for this token, worked out once
@@ -117,8 +117,9 @@ async def default_and_readable(auth: Any, org: str) -> tuple[str, list[str]]:
     so the default is that name, unless the token claims one. Any other mode
     takes the first memory namespace the gate lets the token WRITE, else the
     first it lets it READ, else "" (its calls must name a namespace), looking
-    at the home subject's saved switcher pick, then the token's claims, then
-    the home's grants, ranked (`_pick_default`).
+    at the namespace a delegated `*` token was made to save to, the home
+    subject's saved switcher pick, then the token's claims, then the home's
+    grants, ranked (`_pick_default`).
 
     Fails closed: a cached grant map ClickHouse cannot read reaches the
     transport as BackendUnavailableError (a retryable 503); any other failure
@@ -149,7 +150,8 @@ async def _pick_default(
     auth: Any, org: str, home: str, claimed: list[str], admits: Admits, extra: list[str]
 ) -> str:
     """The first memory namespace `admits` lets the token WRITE, else the
-    first it may READ, else "". In order: the home's saved switcher pick, the
+    first it may READ, else "". In order: the namespace a delegated `*` token
+    was made to save to (`_minted_home`), the home's saved switcher pick, the
     token's claims (the home's own first), the home's grants ranked by role
     tier then recency (its own first), then `extra`. Every step asks the
     same `admits`, so no step can pick what another would refuse."""
@@ -158,7 +160,7 @@ async def _pick_default(
     ch = get_client()
     kinds = await _kinds_or_empty(org)
     saved = await caller_defaults.saved_default(org, home, ch=ch)
-    early = [saved, *_owner_first(claimed, home)]
+    early = [_minted_home(auth), saved, *_owner_first(claimed, home)]
     early = [ns for ns in dict.fromkeys(early) if ns and is_memory_home(kinds, ns)]
     pick = await _first_admitted(early, admits, Role.WRITER)
     if pick:
@@ -169,6 +171,18 @@ async def _pick_default(
     return await _first_admitted(late, admits, Role.WRITER) or await _first_admitted(
         early + late, admits, Role.VIEWER
     )
+
+
+def _minted_home(auth: Any) -> str:
+    """Where a delegated `*` token was made to save: the namespace its claim
+    names before `*` (as `service_accounts.create` mints a token with a home,
+    and `admin/token.mint` when asked for that order). "" for any other token:
+    a bare `*` follows its owner's saved pick, and a list token keeps the order
+    below. Rolling upgrades: docs/architecture/rolling-upgrades.md, rule 35."""
+    if auth is None or not auth.creator:  # auth off, or not a delegated token
+        return ""
+    namespaces = auth.namespaces
+    return namespaces[0] if "*" in namespaces and namespaces[0] != "*" else ""
 
 
 async def _first_admitted(names: list[str], admits: Admits, role: Role) -> str:

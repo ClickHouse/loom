@@ -153,7 +153,8 @@ async def delegate(
     highest the parent and the creator allow. `"*"` (flat only) asks for
     whatever the creator holds live. `scoped` mints an `ns_roles` token;
     otherwise a flat token whose one role is the lowest role allowed on any
-    requested namespace. The caller lists the child where its owner can revoke
+    requested namespace, a role-less name beside `*` counting at the parent's
+    ceiling (`_flat_role`). The caller lists the child where its owner can revoke
     it (`loom.service_accounts`). Raises 403 AUTH_INSUFFICIENT naming what was
     refused."""
     child_org = _child_org(parent, org)
@@ -180,7 +181,7 @@ async def delegate(
         flat: list[str] = []
     else:
         ns_roles = None
-        flat = [min(roles.values()).name.lower()]
+        flat = [_flat_role(parent, child_org, requested, roles).name.lower()]
     return Delegated(
         org=child_org,
         namespaces=list(roles),
@@ -196,6 +197,29 @@ async def delegate(
         creator=creator,
         is_service_account=is_service_account,
     )
+
+
+def _flat_role(
+    parent: AuthInfo, org: str, requested: dict[str, str | None], roles: dict[str, Role]
+) -> Role:
+    """The lowest role allowed on any named namespace; beside `*`, a role-less name
+    counts at the parent's ceiling, since the creator's live grants cap each call
+    (docs/guides/tokens-and-grants.md, Delegated tokens)."""
+    if "*" not in requested:
+        return min(roles.values())
+
+    def counted(ns: str) -> Role:
+        # A namespace `*` expanded into carries the role asked for on `*`.
+        if requested.get(ns, requested["*"]) is not None:
+            return roles[ns]
+        ceiling = ceiling_role(parent, org, ns)
+        assert ceiling is not None  # `_allowed_roles` dropped every namespace without one
+        return ceiling
+
+    flat = min(counted(ns) for ns in roles)
+    # A role asked for on `*` also caps the names beside it that asked for none.
+    star = delegable_role(requested["*"])
+    return flat if star is None else min(flat, star)
 
 
 def _child_org(parent: AuthInfo, org: str) -> str:
@@ -365,7 +389,7 @@ async def creator_best_grant(org: str, creator: str) -> Role | None:
 
 async def _creator_account(org: str, creator: str) -> _Account:
     """Cached for the revocation refresh interval; a failed read is not cached."""
-    from server.auth.aliases import subject_aliases
+    from server.auth.aliases import lowered, subject_aliases
     from server.core.ch import get_client
 
     key = (org, creator)
@@ -391,7 +415,7 @@ async def _creator_account(org: str, creator: str) -> _Account:
                 WHERE org = {{org:String}} AND lower(subject) IN {{subs:Array(String)}}
             ) AS g
             """,
-            params={"org": org, "subs": [s.lower() for s in subjects]},
+            params={"org": org, "subs": lowered(subjects)},
         )
     except Exception as e:  # noqa: BLE001 — an unreadable account counts as disabled (closed)
         log.warning("account lookup failed for %s/%s: %s", org, creator, e)

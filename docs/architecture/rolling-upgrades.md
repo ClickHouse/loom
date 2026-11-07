@@ -385,6 +385,29 @@ schema. These rules keep that safe. The operator procedure is in
     step on N, so a step resumed across builds submits its mutation again; the
     statements are idempotent. No gate holds the rollout, and the mixed-version gate
     does not check this rule.
+35. **One token mint** (`service_accounts.create`, `caller_home._minted_home`).
+    - _Where a token saves._ N sends a delegated token's unaddressed calls to the
+      namespace its claim names before `*` when it may write there; N-1 sends them to the
+      owner's saved pick, as for a bare `*` token. A token of that shape (one from
+      `service_accounts.create` with a namespace before `*`, or an `admin/token.mint`
+      token whose `namespaces` start with one) writes to either namespace while both
+      builds serve, depending on the replica; both are namespaces it may write, and the
+      split ends with the rollout. After a rollback such a token follows the pick for
+      the rest of its life.
+    - _Mints refused by the other build, before anything is saved._ N-1 refuses `*` in a
+      list, `namespaces: "*"` or none at all (`create_token()`, `loom token create`
+      without `--namespace`) and a mint without a name (the dashboard's form with its
+      Name left empty, `loom token create` without `--name`). N has no
+      `/v1/me/setup/mcp_config`, which N-1's dashboard calls. A retry once the rollout
+      ends works.
+    - _A mint N-1 accepts._ A named list mint is saved by N-1, which answers without
+      `saves_to`, `mcp_url`, `reads_everything`, `roles` and `clients`; N's dashboard
+      fills those from the page (its own `/mcp`, the claim) and shows the token. A list
+      token N-1 mints gets no bound tracker record.
+    - _The list._ N-1 matches a token's maker by the exact subject, so a person signed in
+      under another spelling of theirs neither sees nor revokes there a token made under
+      the first, and N-1's dashboard lists a `*` token N minted by the names in its claim
+      (it reads every namespace all the same).
 
 ## What checks them
 

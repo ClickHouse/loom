@@ -1,6 +1,6 @@
 """The base URL the server hands to clients, and which hosts count as local.
 
-The Setup page's config block, the `claude mcp add` line, a bot's
+The client setups a new token comes with, the `claude mcp add` line, a bot's
 `claim_url` and the OAuth metadata all carry the server's own address.
 `LOOM_PUBLIC_BASE_URL` is that address whenever it is set; a non-loopback
 bind refuses to start without it. Otherwise (a loopback bind) the request's

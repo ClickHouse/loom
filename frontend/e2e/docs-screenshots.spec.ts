@@ -475,7 +475,7 @@ const SERVICE_ACCOUNTS = [
   {
     name: "claude-code-laptop",
     sa_subject: "sa:claude-code-laptop-4f2a",
-    namespaces: [NS],
+    namespaces: [NS, "*"],
     roles: ["writer"],
     ttl_days: 90,
     created_by: SUBJECT,
@@ -484,8 +484,6 @@ const SERVICE_ACCOUNTS = [
     revoked_at: null,
     revoked_by: "",
     last_used_at: ago(0.2),
-    kind: "mcp",
-    client: "claude-code",
     ns_roles: {},
   },
   {
@@ -500,27 +498,24 @@ const SERVICE_ACCOUNTS = [
     revoked_at: null,
     revoked_by: "",
     last_used_at: ago(1.1),
-    kind: "service_account",
-    client: "",
     ns_roles: { [NS_SUPPORT]: "writer" },
   },
 ];
 
-const MCP_CONFIG = {
-  client: "claude-code",
-  config_path: { darwin: "~/.claude.json", linux: "~/.claude.json", win32: "%USERPROFILE%\\.claude.json" },
-  config_key: "mcpServers",
-  config: {},
+const CREATED_TOKEN = {
   token: "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJkZXZAYWNtZS5leGFtcGxlIn0.demo",
-  subject: SUBJECT,
+  name: "token-2026-01-01-2b7e01",
+  sa_subject: "sa:token-2026-01-01-2b7e01-9f3a1c",
   org: ORG,
-  namespace: NS,
-  namespace_scope: "single",
-  read_scope: "inherited_grants",
+  namespaces: [NS, "*"],
+  ns_roles: {},
+  roles: ["writer"],
+  reads_everything: true,
+  saves_to: NS,
+  created_at: "2026-01-01T00:00:00",
+  expires_at: null,
   restricted_namespaces: [],
   mcp_url: "https://loom.acme.example/mcp",
-  persisted: true,
-  sa_subject: "sa:claude-code-2b7e",
 };
 
 const debugCalls: string[] = [];
@@ -620,8 +615,8 @@ async function installDemoApi(page: Page): Promise<void> {
         return json({ rows: [] });
       case "/v1/me/service_accounts":
         return json({ rows: SERVICE_ACCOUNTS });
-      case "/v1/me/setup/mcp_config":
-        return json(MCP_CONFIG);
+      case "/v1/me/service_accounts.create":
+        return json(CREATED_TOKEN);
       case "/v1/tracker.source.list":
         return json({ sources: TRACKER_SOURCES, self_service: true });
       case "/v1/code.repos":
@@ -734,10 +729,12 @@ test.describe("docs screenshots", () => {
     await installDemoApi(page);
     await page.goto("/settings");
     await page.getByRole("button", { name: "New token" }).click();
-    await page.getByRole("button", { name: "Generate token" }).click();
+    await expect(page.getByRole("radio", { name: "Everything you belong to" })).toBeChecked();
+    await capture(page, "dashboard-new-token");
+    await page.getByRole("button", { name: "Create token" }).click();
     const dialog = page.getByRole("dialog");
-    await expect(dialog.getByText("Token generated")).toBeVisible();
-    await pickOption(dialog, "MCP client", "claude-code");
+    await expect(dialog.getByText("Token created")).toBeVisible();
+    await pickOption(dialog, "Connect", "claude-code");
     await expect(dialog.getByTestId("claude-code-recommended")).toBeVisible();
     await capture(page, "dashboard-connect");
   });

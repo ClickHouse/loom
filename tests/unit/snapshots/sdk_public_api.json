@@ -121,26 +121,20 @@
     "account": {
       "class": "AccountClient",
       "methods": {
-        "create_service_account": [
-          "name",
+        "create_token": [
           "namespaces",
+          "name",
           "role",
           "ttl_days"
         ],
-        "mcp_config": [
-          "client",
-          "namespace",
-          "restricted_namespaces",
-          "ttl_days"
-        ],
-        "revoke_service_account": [
+        "revoke_token": [
           "name"
         ],
-        "service_accounts": [],
         "set_default_namespace": [
           "namespace"
         ],
-        "sharing_summary": []
+        "sharing_summary": [],
+        "tokens": []
       }
     },
     "audit": {

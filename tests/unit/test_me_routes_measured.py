@@ -25,7 +25,7 @@ def test_operation_names_follow_the_path() -> None:
         http_transport.me_operation_name("/v1/me/service_accounts.create")
         == "me.service_accounts.create"
     )
-    assert http_transport.me_operation_name("/v1/me/setup/mcp_config") == "me.setup.mcp_config"
+    assert http_transport.me_operation_name("/v1/me/a/b_c") == "me.a.b_c"
     assert http_transport.me_operation_name("/v1/me/") == "me"
 
 

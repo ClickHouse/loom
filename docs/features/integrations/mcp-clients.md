@@ -51,7 +51,7 @@ A client that only reads can use a `viewer` token; see
 | ---------------- | ------------------------------------------------------------------------------------------- | ----------------- | -------------------------------------------------- |
 | `claude-desktop` | `~/.config/Claude/claude_desktop_config.json`                                               | `mcpServers`      | `npx mcp-remote` bridge                            |
 | `cursor`         | `~/.cursor/mcp.json`                                                                        | `mcpServers`      | `url` + `headers`                                  |
-| `vscode`         | `~/.config/Code/User/mcp.json` (a separate file, so `settings.json` is left alone)          | `servers`         | `url` + `headers`                                  |
+| `vscode`         | `~/.config/Code/User/mcp.json` (a separate file, so `settings.json` is left alone)          | `servers`         | `url` + `headers` + `type: "http"`                 |
 | `cline`          | `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` | `mcpServers`      | `npx mcp-remote` bridge                            |
 | `windsurf`       | `~/.codeium/windsurf/mcp_config.json`                                                       | `mcpServers`      | `url` + `headers`                                  |
 | `zed`            | `~/.config/zed/mcp.json` (a sibling of `settings.json`)                                     | `context_servers` | `npx mcp-remote` bridge                            |

@@ -62,7 +62,7 @@ export interface LoomClientOptions extends Omit<TransportOptions, "baseUrl"> {
 // biome-ignore lint/suspicious/noUnsafeDeclarationMerging: the constructor defines every group property the interface declares.
 export class LoomClient {
   readonly transport: Transport;
-  /** Your own tokens: `loom.account.createServiceAccount(...)`, outside the op registry. */
+  /** Your own tokens: `loom.account.createToken(...)`, outside the op registry. */
   readonly account: AccountClient;
   private caps: { promise: Promise<Capabilities>; at: number } | undefined;
 

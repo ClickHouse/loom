@@ -107,8 +107,8 @@ def test_account_and_admin_clients_reach_the_routes_outside_the_registry(wire) -
     async def go() -> None:
         agent = Agent("acme", "support", "t", base_url="http://loom.test", api_key="k")
         try:
-            await agent.account.create_service_account("ci", ["support"], role="viewer")
-            await agent.account.mcp_config("my-client", namespace="support")
+            await agent.account.create_token(["support"], name="ci", role="viewer")
+            await agent.account.create_token()
             await agent.account.set_default_namespace("support")
             await agent.deployment.workers_status()
             await agent.deployment.reset_models("7")
@@ -125,13 +125,9 @@ def test_account_and_admin_clients_reach_the_routes_outside_the_registry(wire) -
         (
             "POST",
             "/v1/me/service_accounts.create",
-            {"name": "ci", "namespaces": ["support"], "ttl_days": 90, "role": "viewer"},
+            {"namespaces": ["support"], "ttl_days": 90, "name": "ci", "role": "viewer"},
         ),
-        (
-            "POST",
-            "/v1/me/setup/mcp_config",
-            {"client": "my-client", "persist": True, "namespace": "support"},
-        ),
+        ("POST", "/v1/me/service_accounts.create", {"namespaces": "*", "ttl_days": 90}),
         ("POST", "/v1/me/set-default-namespace", {"namespace": "support"}),
         ("GET", "/v1/admin/workers.status", None),
         ("POST", "/v1/admin/models/reset", {"expected_version": "7"}),
@@ -272,8 +268,10 @@ def test_token_list_and_revoke(wire) -> None:
     ]
 
 
-def test_token_create_needs_a_namespace_and_an_ns_role_pair(wire, capsys) -> None:
-    assert cli.main(["token", "create", "--name", "ci"]) == 2
+def test_token_create_reads_everything_by_default_and_needs_an_ns_role_pair(wire) -> None:
+    assert cli.main(["token", "create"]) == 0
+    assert wire.seen[0][2] == {"namespaces": "*", "ttl_days": None}
+    wire.seen.clear()
     with pytest.raises(SystemExit):
         cli.main(["token", "create", "--name", "ci", "--namespace-role", "support"])
     assert wire.seen == []  # the role itself is the server's to check

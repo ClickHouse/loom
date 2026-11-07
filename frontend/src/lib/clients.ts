@@ -1,7 +1,7 @@
-// Single source of truth for the MCP-client list — the picker labels and the
-// config-block formatter. The first-run wizard and the setup view both import
-// from here, so adding a client is one edit. The server mirrors the list in
-// server/identity/app/me_setup.py (MCP_SETUP_CLIENT_LABELS).
+// The MCP-client list — the picker labels and the config-block formatter. The
+// first-run wizard and the token dialog import from here;
+// server/identity/app/token_clients.py builds the same setups, held together by
+// clientSetups.fixture.json.
 
 export type ClientId = "claude-desktop" | "claude-code" | "codex" | "cursor" | "vscode" | "cline" | "windsurf" | "zed";
 
@@ -27,7 +27,7 @@ export function isClientId(v: string | null): v is ClientId {
 }
 
 // Clients that speak MCP only over stdio — need the npx mcp-remote shim to
-// bridge to a remote HTTP MCP server. Mirrors server/cli/install.py _mcp_entry.
+// bridge to a remote HTTP MCP server. Mirrors server/identity/app/token_clients.py.
 const STDIO_VIA_NPX: ReadonlySet<ClientId> = new Set(["claude-desktop", "zed", "cline"]);
 
 // Coding agents mount the `coding` toolset: 19 tools, where the deployment default `core`
@@ -79,9 +79,9 @@ interface FormattedMcpConfig {
   envLines?: string;
 }
 
-/** Build an MCP config block for a client — same shape as the server's
- *  /v1/me/setup/mcp_config endpoint, duplicated client-side so the post-mint
- *  dialog can switch the preview between clients without re-minting.
+/** Build an MCP config block for a client. Built here as well as by the server's
+ *  mint, because an answer from the previous build has no `clients`;
+ *  `clientSetups.fixture.json` keeps the two alike.
  *  For Claude Code the block is the project-scoped `.mcp.json` form and
  *  `command` is the `claude mcp add` one-liner (user scope) — the two places
  *  Claude Code actually reads. For Codex the block is `[mcp_servers.loom]`,
@@ -136,7 +136,7 @@ export function formatMcpConfig(args: { client: ClientId; token: string; mcpUrl:
   return out;
 }
 
-/** What the Setup dialog shows in its config box: the client's own file text
+/** What the token dialog shows in its config box: the client's own file text
  *  when the file is not JSON, else the JSON block. */
 export function configPreviewText(cfg: FormattedMcpConfig): string {
   return cfg.fileText ?? JSON.stringify(cfg.block, null, 2);

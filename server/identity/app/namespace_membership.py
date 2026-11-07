@@ -8,6 +8,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from server.auth.aliases import lowered
 from server.auth.grant_claims import admins_change, grant_change
 from server.core.ch import get_client
 from server.core.grant_sql import LIVE_GRANT
@@ -388,7 +389,7 @@ _MEMBERSHIP_SQL = """
             g.pending_since AS pending_since,
             g.granted_at AS joined_at,
             toString(ifNull(n.visibility, 'private')) AS visibility,
-            ifNull(n.kind, 'memory') AS kind,
+            ifNull(n.kind, '') AS kind,
             ifNull(n.description, '') AS description,
             if(g.granted_by != g.subject AND
                (v.last_seen_at IS NULL OR v.last_seen_at < g.granted_at),
@@ -397,25 +398,40 @@ _MEMBERSHIP_SQL = """
         LEFT JOIN (SELECT * FROM loom.namespaces FINAL) AS n
             ON n.org = g.org AND n.namespace = g.namespace
         LEFT JOIN (
-            -- a visit under any of the person's spellings clears `is_new`
+            -- a visit under any of the person's spellings clears `is_new`; visits are
+            -- written as signed in, so the exact spellings find them and keep the key prune
             SELECT org, namespace, max(last_seen_at) AS last_seen_at
             FROM loom.namespace_visits FINAL
-            WHERE org = {org:String} AND subject IN {subs:Array(String)}
+            WHERE org = {org:String} AND subject IN {visitors:Array(String)}
             GROUP BY org, namespace
         ) AS v
             ON v.org = g.org AND v.namespace = g.namespace
-        WHERE g.org = {org:String} AND g.subject IN {subs:Array(String)}
+        WHERE g.org = {org:String} AND lower(g.subject) IN {subs:Array(String)}
           AND g.revoked_at IS NULL
           AND ifNull(n.active, true) = true
         ORDER BY g.granted_at DESC
+        -- A grant on a namespace with no directory row (a repository listed only in
+        -- LOOM_CODE_REPOS_JSON) is a member's too: with the default, the join's empty
+        -- side reads `active = false` and the row would be dropped.
+        SETTINGS join_use_nulls = 1
 """
+
+
+def _kind(configured: dict[str, str], namespace: str, kind: object) -> str:
+    """A namespace's kind: its directory row's, else a configured repository's (`code`,
+    from `configured_kinds`), else `memory`, the directory's own default."""
+    return str(kind) if kind else configured.get(namespace, "memory")
 
 
 async def _membership_rows(ch: Any, org: str, subjects: list[str]) -> list[dict[str, Any]]:
     """Active grant rows (joined with the directory + visits) for any of
     `subjects` — one person's aliases, or a token's creator's."""
+    subs = lowered(subjects)
     rows: list[dict[str, Any]] = list(
-        await ch.query_all(_MEMBERSHIP_SQL, params={"org": org, "subs": subjects})
+        await ch.query_all(
+            _MEMBERSHIP_SQL,
+            params={"org": org, "subs": subs, "visitors": list(dict.fromkeys(subjects))},
+        )
     )
     return rows
 
@@ -438,7 +454,7 @@ def _one_per_namespace(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def _inherited_rows(ch: Any, org: str, caller: str, skip: set[str]) -> list[dict[str, Any]]:
-    """A client token (`sa:` subject minted from the Setup page) reads every namespace its
+    """A client token (`sa:` subject minted by `service_accounts.create`) reads every namespace its
     creator holds a live grant on when its row says it inherits (`server/auth/service_accounts`,
     the gate's rule), so `namespace.list_mine` must list those too, or
     the doctor and any client asking "what can I read" would see only the token's own rows.
@@ -452,7 +468,11 @@ async def _inherited_rows(ch: Any, org: str, caller: str, skip: set[str]) -> lis
         return []
     try:
         from server.auth.aliases import subject_aliases
-        from server.identity.app.namespace_classification import restricted_set
+        from server.identity.app.namespace_classification import (
+            RESTRICTED,
+            config_classification,
+            restricted_set,
+        )
 
         subjects = await subject_aliases(org, creator, ch=ch)
         rows = await _membership_rows(ch, org, subjects)
@@ -469,8 +489,10 @@ async def _inherited_rows(ch: Any, org: str, caller: str, skip: set[str]) -> lis
         out: list[dict[str, Any]] = []
         for r in rows:
             ns = str(r.get("namespace") or "")
-            active = (r.get("status") or "active") == "active"
-            if not ns or ns in skip or ns in restricted or not active:
+            if not ns or ns in skip or (r.get("status") or "active") != "active":
+                continue
+            # Restricted by the directory, or by its own entry in the repository config.
+            if ns in restricted or config_classification(org, ns) == RESTRICTED:
                 continue
             skip.add(ns)
             out.append(r)
@@ -492,6 +514,7 @@ async def handle_namespace_list_mine(
     load, so the personal namespace lazily-creates on first visit.
     """
     from server.auth.aliases import subject_aliases
+    from server.identity.app.namespace_kinds import configured_kinds
 
     ch = get_client()
     caller = _registry.resolve_subject(input.subject)
@@ -509,6 +532,7 @@ async def handle_namespace_list_mine(
     # the server serves.
     subjects = await subject_aliases(input.org, caller, ch=ch)
     grant_rows = _one_per_namespace(await _membership_rows(ch, input.org, subjects))
+    configured = configured_kinds(input.org)
     seen = {r["namespace"] for r in grant_rows}
     # Only resolve admins for rows with a pending_role.
     needs_admins = {r["namespace"] for r in grant_rows if r.get("pending_role")}
@@ -525,7 +549,7 @@ async def handle_namespace_list_mine(
             pending_since=r.get("pending_since"),
             pending_admins=admins_by_ns.get(r["namespace"], []),
             visibility=r.get("visibility") or "private",
-            kind=r.get("kind") or "memory",
+            kind=_kind(configured, r["namespace"], r.get("kind")),
             description=r.get("description") or "",
             joined_at=r["joined_at"],
             is_new=bool(r.get("is_new")),
@@ -553,7 +577,7 @@ async def handle_namespace_list_mine(
                     namespace=ns,
                     role="jwt",
                     visibility=m.get("visibility") or "private",  # type: ignore[arg-type]
-                    kind=m.get("kind") or "memory",
+                    kind=_kind(configured, ns, m.get("kind")),
                     description=m.get("description") or "",
                 )
             )
@@ -567,7 +591,7 @@ async def handle_namespace_list_mine(
                 role=r["role"],
                 status="active",
                 visibility=r.get("visibility") or "private",
-                kind=r.get("kind") or "memory",
+                kind=_kind(configured, r["namespace"], r.get("kind")),
                 description=r.get("description") or "",
                 joined_at=r.get("joined_at"),
                 is_new=False,

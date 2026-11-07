@@ -177,37 +177,36 @@ test.describe("open overlays", () => {
     expect(await violations(page)).toEqual([]);
   });
 
-  test("the token dialog returns focus to Generate token", async ({ page }) => {
+  test("the token dialog returns focus to Create token", async ({ page }) => {
     await open(page, "/settings");
     // A slow mint: Click UI disables the loading button, which drops its focus first.
-    await page.route("**/v1/me/setup/mcp_config", async (route) => {
+    await page.route("**/v1/me/service_accounts.create", async (route) => {
       await new Promise((r) => setTimeout(r, 300));
       await route.fulfill({
         json: {
-          client: "claude-code",
-          config_path: { darwin: "~/.claude.json", linux: "~/.claude.json", win32: "%USERPROFILE%\\.claude.json" },
-          config_key: "mcpServers",
-          config: {},
           token: "eyJhbGciOiJFUzI1NiJ9.e30.sig",
-          subject: "dev",
+          name: "token-2026-01-01-abcdef",
+          sa_subject: "sa:token-2026-01-01-abcdef-123456",
           org: "dev",
-          namespace: "dev",
-          namespace_scope: "single",
-          read_scope: "inherited_grants",
+          namespaces: ["dev", "*"],
+          ns_roles: {},
+          roles: ["writer"],
+          reads_everything: true,
+          saves_to: "dev",
+          created_at: "2026-01-01T00:00:00",
+          expires_at: null,
           restricted_namespaces: [],
           mcp_url: "http://127.0.0.1/mcp",
-          persisted: true,
-          sa_subject: "sa:claude-code-test",
         },
       });
     });
-    const generate = page.getByRole("button", { name: "Generate token" });
-    await generate.focus();
+    const create = page.getByRole("button", { name: "Create token" });
+    await create.focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("dialog", { name: "Token generated" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Token created" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toBeHidden();
-    await expect(generate).toBeFocused();
+    await expect(create).toBeFocused();
   });
 
   test("a button that loads in place keeps focus through its loading state", async ({ page }) => {
@@ -406,7 +405,7 @@ test.describe("open overlays", () => {
 
   test("an open Select list", async ({ page }) => {
     await open(page, "/settings");
-    await page.getByRole("button", { name: /Home namespace/ }).click();
+    await page.getByRole("button", { name: /Saves memories to/ }).click();
     await expect(page.locator("[cui-select-item]").first()).toBeVisible();
     expect(await violations(page)).toEqual([]);
   });

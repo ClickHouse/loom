@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import Request
 
+from server.auth.aliases import lowered
 from server.core.grant_sql import LIVE_GRANT
 from server.operations.base import grant_rank
 from server.settings import settings
@@ -24,18 +25,18 @@ async def caller_admin_of(org: str, namespace: str, subject: str) -> bool:
     """True if `subject` holds an active admin grant on `(org, namespace)`."""
     from server.core.ch import get_client
 
-    subs = await subject_aliases_of(org, subject)
+    subs = await lowered_aliases(org, subject)
     row = await get_client().query_one(
         """
         SELECT 1 AS x FROM loom.namespace_grants FINAL
         WHERE org = {org:String}
           AND namespace = {ns:String}
-          AND subject IN {subs:Array(String)}
+          AND lower(subject) IN {subs:Array(String)}
           AND role = 'admin'
           AND {live}
         LIMIT 1
         """.replace("{live}", LIVE_GRANT),
-        params={"org": org, "ns": namespace, "sub": subject, "subs": subs},
+        params={"org": org, "ns": namespace, "subs": subs},
     )
     return row is not None
 
@@ -60,19 +61,19 @@ async def caller_role_on(org: str, namespace: str, subject: str) -> str | None:
     from server.core.ch import get_client
     from server.core.grant_sql import GRANT_RANK_SQL
 
-    subs = await subject_aliases_of(org, subject)
+    subs = await lowered_aliases(org, subject)
     row = await get_client().query_one(
         """
         SELECT role
         FROM loom.namespace_grants FINAL
         WHERE org = {org:String}
           AND namespace = {ns:String}
-          AND subject IN {subs:Array(String)}
+          AND lower(subject) IN {subs:Array(String)}
           AND {live}
         ORDER BY {rank} DESC
         LIMIT 1
         """.replace("{live}", LIVE_GRANT).replace("{rank}", GRANT_RANK_SQL),
-        params={"org": org, "ns": namespace, "sub": subject, "subs": subs},
+        params={"org": org, "ns": namespace, "subs": subs},
     )
     if row is None:
         return None
@@ -123,6 +124,16 @@ async def subject_aliases_of(org: str, subject: str) -> list[str]:
     return await subject_aliases(org, subject) if org and subject else [subject]
 
 
+async def made_by_caller(org: str, subject: str, created_by: str) -> bool:
+    """Whether `created_by` is the caller under any spelling of theirs."""
+    return created_by.lower() in await lowered_aliases(org, subject)
+
+
+async def lowered_aliases(org: str, subject: str) -> list[str]:
+    """The caller's spellings in lower case, matched the way the gate matches a grant."""
+    return lowered(await subject_aliases_of(org, subject))
+
+
 def caller_identity(request: Request, *, prefer_bearer_in_dev: bool = False) -> tuple[str, str]:
     """(subject, org) for a caller-API caller, tolerant of dev mode.
 
@@ -159,6 +170,8 @@ __all__ = [
     "caller_admin_of",
     "caller_identity",
     "caller_role_on",
+    "lowered_aliases",
+    "made_by_caller",
     "parse_ns_roles",
     "remember_caller",
     "require_authed_caller",

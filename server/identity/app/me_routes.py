@@ -1,8 +1,7 @@
 """The caller API: `/v1/me/*`, the JSON endpoints about the authenticated
 caller that the dashboard calls. Per-user state and the sharing summary here,
-MCP-client setup in `me_setup.py`, service-account self-mint in
-`me_service_accounts.py`. `attach` mounts all of it; the dashboard page itself
-is `dashboard_routes.py`.
+the caller's own tokens in `me_service_accounts.py`. `attach` mounts all of it;
+the dashboard page itself is `dashboard_routes.py`.
 
 These endpoints authenticate through `me_callers`, not the operation
 registry's role gate.
@@ -16,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
-from server.identity.app import me_callers, me_service_accounts, me_setup
+from server.identity.app import me_callers, me_service_accounts
 from server.settings import settings
 
 me_router = APIRouter()
@@ -163,7 +162,7 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
     # Auth-off keeps a self-minted bearer's subject so per-subject role lookups
     # stay accurate on multi-member namespaces.
     subject, org = me_callers.caller_identity(request, prefer_bearer_in_dev=True)
-    subs = await me_callers.subject_aliases_of(org, subject)
+    subs = await me_callers.lowered_aliases(org, subject)
 
     ch = get_client()
     # auth_off only when we have no identifiable caller. With a verified
@@ -182,7 +181,7 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
         grant_subq = """
             SELECT namespace FROM loom.namespace_grants FINAL
             WHERE org = {org:String}
-              AND subject IN {subs:Array(String)}
+              AND lower(subject) IN {subs:Array(String)}
               AND {live}
         """.replace("{live}", LIVE_GRANT)
 
@@ -207,7 +206,7 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
         GROUP BY agent, namespace
         ORDER BY writes + recalls DESC
         """,
-        params={"org": org, "sub": subject, "subs": subs, "wops": write_ops, "rops": recall_ops},
+        params={"org": org, "subs": subs, "wops": write_ops, "rops": recall_ops},
     )
     agents_payload, agent_namespaces_payload = _fold_sharing_agent_rows(agent_rows)
 
@@ -228,14 +227,14 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
         SELECT namespace, role, granted_at
         FROM loom.namespace_grants FINAL
         WHERE org = {org:String}
-          AND subject IN {subs:Array(String)}
+          AND lower(subject) IN {subs:Array(String)}
           AND {live}
         ORDER BY granted_at DESC
         """.replace("{live}", LIVE_GRANT)
     )
     my_grants = await ch.query_all(
         my_grants_sql,
-        params={"org": org, "sub": subject, "subs": subs},
+        params={"org": org, "subs": subs},
     )
     my_ns_set = [r["namespace"] for r in my_grants]
 
@@ -335,7 +334,6 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
 def attach(app: Any) -> None:
     """Mount the caller API on the FastAPI app."""
     app.include_router(me_router)
-    app.include_router(me_setup.router)
     app.include_router(me_service_accounts.router)
 
 

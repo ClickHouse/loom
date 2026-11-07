@@ -37,8 +37,8 @@ loom init --agent ci-reviewer --server-url https://<loom> --no-files | head -n 1
 With `--json` the sign-up result is printed as JSON without the token; with
 `--json --no-files` the token rides inside that JSON, the only place it lands.
 
-**Without self-signup**, an operator mints the token, or a person creates a service account
-in the dashboard:
+**Without self-signup**, an operator mints the token, or a person creates one under
+**Settings → Tokens** that reads only the bot's namespaces:
 
 ```bash
 loom mint-token --subject ci-reviewer --org <org> --namespaces agent-ci --roles writer \

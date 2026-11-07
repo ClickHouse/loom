@@ -3,14 +3,14 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
-import { listServiceAccounts } from "../api";
+import { listTokens } from "../api";
 import { Setup } from "./Setup";
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
-    listServiceAccounts: vi.fn(async () => []),
+    listTokens: vi.fn(async () => []),
     listMine: vi.fn(async () => []),
     countMemories: vi.fn(async () => 0),
     listCodeRepos: vi.fn(async () => []),
@@ -65,7 +65,7 @@ describe("Settings", () => {
 // A token's created and used times are the list's one time format, quiet in the row.
 describe("Settings tokens", () => {
   it("draws a token's created and last-used times with ListTime", async () => {
-    vi.mocked(listServiceAccounts).mockResolvedValueOnce([
+    vi.mocked(listTokens).mockResolvedValueOnce([
       {
         name: "ci-bot",
         sa_subject: "sa:ci-bot",
@@ -78,7 +78,6 @@ describe("Settings tokens", () => {
         revoked_at: null,
         revoked_by: "",
         last_used_at: "2025-03-05 09:00:00",
-        kind: "service_account",
       },
     ]);
     seed("team");

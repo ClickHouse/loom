@@ -887,7 +887,7 @@ def attach(app: FastAPI) -> None:
 
 def me_operation_name(path: str) -> str:
     """`/v1/me/service_accounts.create` → `me.service_accounts.create`,
-    `/v1/me/setup/mcp_config` → `me.setup.mcp_config`."""
+    `/v1/me/set-default-namespace` → `me.set-default-namespace`."""
     tail = path[len("/v1/me/") :].strip("/").replace("/", ".")
     return f"me.{tail}" if tail else "me"
 

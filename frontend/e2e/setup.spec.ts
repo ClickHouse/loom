@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { installApi } from "./fixtures";
+import { installApi, type CodeRepoFixture } from "./fixtures";
 
 const SHOTS = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../e2e-screenshots");
 async function shot(page: Page, name: string): Promise<void> {
@@ -14,9 +14,9 @@ async function shot(page: Page, name: string): Promise<void> {
 
 const TOKENS = [
   {
-    name: "Claude Code",
-    sa_subject: "sa:mcp-1",
-    namespaces: ["personal-e2e"],
+    name: "laptop",
+    sa_subject: "sa:laptop-1",
+    namespaces: ["personal-e2e", "*"],
     roles: ["writer"],
     ttl_days: 90,
     created_by: "e2e",
@@ -25,8 +25,6 @@ const TOKENS = [
     revoked_at: null,
     revoked_by: "",
     last_used_at: new Date(Date.now() - 3600e3).toISOString(),
-    kind: "mcp",
-    client: "claude-code",
   },
   {
     name: "cron-cleanup",
@@ -40,8 +38,6 @@ const TOKENS = [
     revoked_at: null,
     revoked_by: "",
     last_used_at: null,
-    kind: "service_account",
-    client: "",
   },
 ];
 
@@ -97,7 +93,7 @@ test("an empty personal namespace lands on the getting-started checklist", async
   await expect(page.getByRole("tab", { name: "Tokens" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("tab", { name: "Memory" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "System" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /Generate token/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Create token/ })).toBeVisible();
 
   // The search step opens the header palette with its hint typed in.
   await region.getByRole("button", { name: "Search your memories" }).click();
@@ -127,21 +123,21 @@ test.describe("settings tabs", () => {
     await page.goto("/settings");
     await expect(page.getByRole("tab", { name: "Tokens" })).toHaveAttribute("aria-selected", "true");
     // The list first; the form folded behind New token.
-    await expect(page.getByText("Claude Code", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("laptop", { exact: true })).toBeVisible();
     await expect(page.getByText("cron-cleanup")).toBeVisible();
     await expect(page.getByRole("button", { name: "New token" })).toBeVisible();
-    await expect(page.getByRole("button", { name: /Generate token/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Create token/ })).toHaveCount(0);
     // Nothing of the other tabs was read.
     await page.waitForTimeout(300);
     expect(blacklistReads).toBe(0);
     await shot(page, "19-settings-tokens-folded");
     await page.getByRole("button", { name: "New token" }).click();
-    await expect(page.getByRole("button", { name: /Generate token/ })).toBeVisible();
-    await page.getByRole("button", { name: "For a bot that sees only these" }).click();
-    await expect(page.getByText("Python example for this token")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Create token/ })).toBeVisible();
+    await page.getByRole("radio", { name: "Only these namespaces" }).click();
+    await expect(page.getByRole("checkbox", { name: "Read bench" })).toBeVisible();
     await shot(page, "20-settings-tokens-form-open");
     await page.getByRole("button", { name: "Cancel" }).click();
-    await expect(page.getByRole("button", { name: /Generate token/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Create token/ })).toHaveCount(0);
 
     await page.getByRole("tab", { name: "Memory" }).click();
     await expect(page).toHaveURL(/tab=memory/);
@@ -203,4 +199,89 @@ test.describe("settings tabs", () => {
       await shot(page, "24-settings-phone-memory");
     });
   });
+});
+
+// One mint for a CI token over two team namespaces and a restricted repository: the
+// repository is picked by its name and branch, beside the ticked namespaces, never typed.
+test("a restricted repository is picked by repository and branch in the token form", async ({ page }) => {
+  const member = (namespace: string, role: string, kind: string) => ({
+    namespace,
+    role,
+    status: "active",
+    visibility: "private",
+    kind,
+    description: "",
+    joined_at: "2026-09-16T00:00:00Z",
+    is_new: false,
+  });
+  const branch = (namespace: string, name: string) =>
+    ({
+      org: "dev",
+      namespace,
+      repo: "acme/private",
+      branch: name,
+      git_head: "a1b2c3d",
+      clone_head: "a1b2c3d",
+      fast_tier_lag: 0,
+      scip_lag: 0,
+      scip_py_lag: 0,
+      indexed_at: "2026-09-16T00:00:00Z",
+      last_refresh_at: "2026-09-16T00:00:00Z",
+      counts: {},
+      join_policy: "approval",
+      my_status: "member",
+      my_role: "viewer",
+      source: "config",
+      searchable: true,
+      classification: "restricted",
+    }) as CodeRepoFixture;
+  await installApi(page, {
+    mine: [
+      member("team-private", "admin", "memory"),
+      member("team-public", "viewer", "memory"),
+      member("code-acme-private", "viewer", "code"),
+      member("code-acme-private-26-8", "viewer", "code"),
+    ],
+    codeRepos: [branch("code-acme-private", "master"), branch("code-acme-private-26-8", "26.8")],
+    savedNamespace: "team-private",
+  });
+  const minted: Record<string, unknown>[] = [];
+  await page.route("**/v1/me/service_accounts.create", async (route) => {
+    minted.push(route.request().postDataJSON());
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        token: "eyJhbGciOiJFUzI1NiJ9.e30.sig",
+        name: "ci",
+        sa_subject: "sa:ci-1",
+        org: "dev",
+        namespaces: ["team-private", "team-public", "code-acme-private"],
+        ns_roles: { "team-private": "admin", "team-public": "viewer", "code-acme-private": "viewer" },
+        reads_everything: false,
+        saves_to: "team-private",
+        created_at: "2026-09-16T00:00:00",
+        expires_at: null,
+        restricted_namespaces: ["code-acme-private"],
+        mcp_url: "http://127.0.0.1/mcp",
+      }),
+    });
+  });
+  await page.goto("/settings");
+  await page.getByRole("radio", { name: "Only these namespaces" }).click();
+  const repo = page.getByRole("checkbox", { name: "Read every branch of acme/private" });
+  await expect(repo).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Read acme/private branch 26.8" })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Read code-acme-private" })).toHaveCount(0);
+  await page.getByRole("checkbox", { name: "Read team-public" }).click();
+  await page.getByRole("checkbox", { name: "Read acme/private branch master" }).click();
+  await shot(page, "21-settings-token-with-a-restricted-repository");
+  await page.getByRole("button", { name: /Create token/ }).click();
+  await expect(page.getByRole("dialog", { name: "Token created" })).toBeVisible();
+  expect(minted).toHaveLength(1);
+  expect(minted[0].namespaces).toEqual([
+    { namespace: "team-private", role: "admin" },
+    { namespace: "team-public", role: "viewer" },
+    { namespace: "code-acme-private", role: "viewer" },
+  ]);
 });

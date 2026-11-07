@@ -201,13 +201,13 @@ def test_install_codex_dry_run_runs_nothing_and_capture_writes_loom_config(
     )
 
 
-def test_setup_endpoint_client_table_names_codex() -> None:
-    from server.identity.app.me_setup import MCP_SETUP_CLIENT_LABELS
+def test_the_token_mint_client_table_names_codex() -> None:
+    from server.identity.app.token_clients import MCP_CLIENTS
 
-    assert MCP_SETUP_CLIENT_LABELS["codex"] == "Codex"
-    # the dashboard's picker mirrors this table
+    assert "codex" in MCP_CLIENTS
+    # the dashboard's picker mirrors this list
     ts = (ROOT / "frontend" / "src" / "lib" / "clients.ts").read_text()
-    for cid in MCP_SETUP_CLIENT_LABELS:
+    for cid in MCP_CLIENTS:
         assert f'"{cid}"' in ts, f"frontend client list lacks {cid}"
 
 

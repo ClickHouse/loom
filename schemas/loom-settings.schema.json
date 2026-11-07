@@ -5454,7 +5454,7 @@
         "public_base_url": {
           "default": "",
           "type": "string",
-          "description": "The address the server hands to clients — the Setup page's config block, `claude mcp add`, a bot's claim_url, OAuth metadata. Empty = the request's own Host and scheme, which only a loopback bind may rely on: a non-loopback bind_host refuses to start without it."
+          "description": "The address the server hands to clients — the client setups a new token comes with, `claude mcp add`, a bot's claim_url, OAuth metadata. Empty = the request's own Host and scheme, which only a loopback bind may rely on: a non-loopback bind_host refuses to start without it."
         },
         "ratelimit_actor_fraction": {
           "default": 1.0,

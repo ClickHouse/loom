@@ -6,9 +6,8 @@ import type { ScopeRepo, TokenReadScope } from "../lib/tokenScope";
 import { ExternalLink } from "./ui/ExternalLink";
 import { TipTarget } from "./ui/TipTarget";
 
-/** "What this token will read and write", shown under the namespace pick
- * before the token is minted. The pick is one namespace; the token reads many, and a page
- *  that shows one namespace reads as one namespace. This lists them. */
+/** What a token that reads everything you belong to will read, listed before it is
+ *  made, with a checkbox for each restricted repository it reads only when added. */
 export function TokenReadScopePanel({
   scope,
   docsHref,
@@ -17,30 +16,22 @@ export function TokenReadScopePanel({
 }: {
   scope: TokenReadScope;
   docsHref?: string;
-  /** Restricted repositories the person chose to add. The token then names them and gets
-   *  a direct read grant of its own, revoked with the token. Absent = read-only panel. */
-  included?: ReadonlySet<string>;
-  onToggleRepo?: (repo: ScopeRepo) => void;
+  /** Restricted repositories added to the token. Each gets a read grant of the token's
+   *  own, revoked with it. */
+  included: ReadonlySet<string>;
+  onToggleRepo: (repo: ScopeRepo) => void;
 }) {
-  const addable = !!onToggleRepo;
-  const includedRepos = scope.excludedRestricted.filter((r) => included?.has(r.repo));
-  const stillExcluded = scope.excludedRestricted.filter((r) => !included?.has(r.repo));
-  const repoCount = scope.repositories.length;
+  const includedRepos = scope.excludedRestricted.filter((r) => included.has(r.repo));
+  const repoCount = scope.repositories.length + includedRepos.length;
   const nsCount = scope.namespaces.length;
   return (
-    // biome-ignore lint/a11y/useSemanticElements: a read-only summary, not form controls, so a named group and not a fieldset
+    // biome-ignore lint/a11y/useSemanticElements: a summary with one optional checkbox list, named as a group
     <div
       className="rounded-sm border border-border bg-surface-2 px-3 py-2.5 text-xs space-y-2"
       data-testid="token-read-scope"
       role="group"
-      aria-label="What this token can read and write"
+      aria-label="What this token can read"
     >
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="font-medium text-text shrink-0">Writes to</span>
-        <Name>{scope.home || "—"}</Name>
-        <span className="text-text-muted">memories, captured sessions and working notes land here.</span>
-      </div>
-
       <div className="space-y-1">
         <div className="text-text font-medium">
           Reads {nsCount} namespace{nsCount === 1 ? "" : "s"}
@@ -52,7 +43,7 @@ export function TokenReadScopePanel({
           ) : null}
           <span className="font-normal text-text-muted">
             {" "}
-            — everything you belong to, including what you join later.
+            today, and any you join later. A restricted namespace is read only by a token that lists it.
           </span>
         </div>
         <div className="flex flex-wrap gap-1">
@@ -68,7 +59,7 @@ export function TokenReadScopePanel({
           {includedRepos.map((r) => (
             <Name
               key={r.repo}
-              detail={`${branchNamespaces(r)} — restricted; the token gets its own read grant`}
+              detail={`${branchNamespaces(r)} — restricted, added to this token`}
               data-testid="token-read-scope-included"
               locked
             >
@@ -81,7 +72,7 @@ export function TokenReadScopePanel({
 
       {scope.pending.length > 0 && (
         <div className="text-text-muted">
-          Awaiting approval: {scope.pending.join(", ")}. Readable the moment an admin approves — no new token.
+          Awaiting approval: {scope.pending.join(", ")}. Readable once approved, with no new token.
         </div>
       )}
 
@@ -89,65 +80,35 @@ export function TokenReadScopePanel({
         <div className="flex items-start gap-1.5 text-text-muted" data-testid="token-read-scope-restricted">
           <Icon name="lock" size="xs" aria-hidden="true" className="mt-0.5" />
           <div className="space-y-1">
-            {addable ? (
-              <>
-                <div>
-                  <span className="text-text font-medium">Restricted repositories</span> are not read through
-                  membership. Tick one to add it: the token names it and gets a read grant of its own, revoked with the
-                  token, and with your access to the repository. A restricted tracker record bound to the repository
-                  comes with it when you hold a grant there.
-                </div>
-                <div className="flex flex-wrap gap-x-3 gap-y-1">
-                  {scope.excludedRestricted.map((r) => (
-                    <Checkbox
-                      key={r.repo}
-                      checked={!!included?.has(r.repo)}
-                      onCheckedChange={() => onToggleRepo?.(r)}
-                      aria-label={`Add ${r.repo} to this token`}
-                      label={
-                        <span className="inline-flex items-center gap-1.5">
-                          <Name detail={branchNamespaces(r)}>{r.repo}</Name>
-                          {r.branches.length > 1 ? (
-                            <span className="text-text-muted">{r.branches.length} branches</span>
-                          ) : null}
-                        </span>
-                      }
-                    />
-                  ))}
-                </div>
-                {docsHref ? (
-                  <div>
-                    <ExternalLink href={docsHref} size="sm">
-                      How restricted access works
-                    </ExternalLink>
-                    .
-                  </div>
-                ) : null}
-              </>
-            ) : (
-              <div>
-                <span className="text-text font-medium">Not included: </span>
-                {stillExcluded.map((r) => (
-                  <Name key={r.repo} detail={branchNamespaces(r)} className="mr-1">
-                    {r.repo}
-                  </Name>
-                ))}
-                <span>
-                  {stillExcluded.length === 1 ? "is a restricted repository" : "are restricted repositories"}. A
-                  restricted repository is read only by a token minted by name for a subject with a direct grant; tokens
-                  minted here run under their own subject, so they never read one.
-                  {docsHref ? (
-                    <>
-                      {" "}
-                      <ExternalLink href={docsHref} size="sm">
-                        How to get one
-                      </ExternalLink>
-                      .
-                    </>
-                  ) : null}
-                </span>
-              </div>
-            )}
+            <div>
+              <span className="text-text font-medium">Restricted repositories</span> are read only if you add them here.
+              {docsHref ? (
+                <>
+                  {" "}
+                  <ExternalLink href={docsHref} size="sm">
+                    How restricted access works
+                  </ExternalLink>
+                </>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {scope.excludedRestricted.map((r) => (
+                <Checkbox
+                  key={r.repo}
+                  checked={included.has(r.repo)}
+                  onCheckedChange={() => onToggleRepo(r)}
+                  aria-label={`Also read ${r.repo}`}
+                  label={
+                    <span className="inline-flex items-center gap-1.5">
+                      <Name detail={branchNamespaces(r)}>{r.repo}</Name>
+                      {r.branches.length > 1 ? (
+                        <span className="text-text-muted">{r.branches.length} branches</span>
+                      ) : null}
+                    </span>
+                  }
+                />
+              ))}
+            </div>
           </div>
         </div>
       )}

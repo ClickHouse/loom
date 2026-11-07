@@ -190,13 +190,13 @@ them) and the ones the cap left out in `namespaces_skipped`.
 
 The caller's own namespaces depend on the token:
 
-| Token                                              | Namespaces `all_mine` adds                                                                     |
-| -------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Flat (most tokens; `loom mint-token`, self-signup) | The namespaces the token names, plus every namespace the subject holds a grant on              |
-| Scoped (`ns_roles`; the dashboard's Tokens tab)    | Exactly the namespaces the token lists, in that order; grants added later do not join          |
-| Delegated with `*` (the dashboard's Setup tab)     | The creator's live grants, so a namespace the person joins later is searched too               |
-| Delegated naming namespaces                        | The ones it names where the creator still holds a grant                                        |
-| None, auth off (`single-user`)                     | The namespaces the single user holds a grant on: the default one and every one they registered |
+| Token                                                       | Namespaces `all_mine` adds                                                                     |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Flat (most tokens; `loom mint-token`, self-signup)          | The namespaces the token names, plus every namespace the subject holds a grant on              |
+| Scoped (`ns_roles`; a token for _Only these namespaces_)    | Exactly the namespaces the token lists, in that order; grants added later do not join          |
+| Delegated with `*` (a token for _Everything you belong to_) | The creator's live grants, so a namespace the person joins later is searched too               |
+| Delegated naming namespaces                                 | The ones it names where the creator still holds a grant                                        |
+| None, auth off (`single-user`)                              | The namespaces the single user holds a grant on: the default one and every one they registered |
 
 Then the list is narrowed:
 

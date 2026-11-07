@@ -718,7 +718,7 @@ jobs:
           tests/integration/test_cross_principal_leakage.py
           tests/integration/test_read_scope_isolation.py
           tests/integration/test_extraction_status_mine.py
-          tests/integration/test_me_setup_mcp_config.py
+          tests/integration/test_token_mint.py
           tests/integration/test_onboard_tenant.py
           tests/integration/test_session_briefs.py
           tests/integration/test_blacklist.py
@@ -880,7 +880,7 @@ jobs:
           tests/integration/test_cross_principal_leakage.py
           tests/integration/test_read_scope_isolation.py
           tests/integration/test_session_briefs.py
-          tests/integration/test_me_setup_mcp_config.py
+          tests/integration/test_token_mint.py
           tests/integration/test_mcp_session_run_scope.py
           tests/integration/test_onboard_tenant.py
           tests/integration/test_blacklist.py

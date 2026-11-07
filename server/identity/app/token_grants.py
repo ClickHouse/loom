@@ -1,15 +1,16 @@
 """Direct grants that belong to a token, not a person.
 
 A restricted namespace is readable only by a token that names it AND whose own
-subject holds a direct grant. A token minted from the Setup page runs under a
-generated ``sa:`` subject: it can name the namespace but holds no grant of its
-own, so without one every read of the restricted repository it was minted for
-would be refused. This module writes that grant at mint, capped,
-``granted_by`` the person who minted the token; revokes it with the token;
-and, when the person's own grant on the namespace is revoked, revokes the
-grants of every token they minted there — access follows the person, at the
-moment it is taken away, without a read-time rule that would refuse
-operator-minted service accounts (which have no creator row at all).
+subject holds a direct grant. A token from the token mint
+(``me_service_accounts.create``) runs under a generated ``sa:`` subject: it can
+name the namespace but holds no grant of its own, so without one every read of
+the restricted repository it was minted for would be refused. This module
+writes that grant at mint, capped, ``granted_by`` the person who minted the
+token; revokes it with the token; and, when the person's own grant on the
+namespace is revoked, revokes the grants of every token they minted there —
+access follows the person, at the moment it is taken away, without a read-time
+rule that would refuse operator-minted service accounts (which have no creator
+row at all).
 
 Standard namespaces are never touched here: they read through the ordinary
 rules and creator-grant inheritance (``server/auth/context.py``).
@@ -19,12 +20,20 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from fastapi import HTTPException
+
+from server.auth.aliases import lowered
 from server.core.datetimes import naive_utc_now_seconds
+from server.identity.app import me_callers, namespace_classification
 from server.identity.store import grants as grants_repo
 from server.operations.base import grant_rank
+
+if TYPE_CHECKING:
+    from server.auth.delegation import Delegated
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +71,29 @@ def revoked_grant_row(org: str, subject: str, row: dict[str, Any], now: datetime
         "revoked_at": now,
         "version": time.time_ns(),
     }
+
+
+async def restricted_roles(
+    org: str, subject: str, delegated: Delegated, requested: Mapping[str, str | None]
+) -> dict[str, str]:
+    """The token's own grant on each restricted namespace it names: its role there,
+    capped at the minting token's own subject's grant. Where that subject holds none, a
+    named one is refused (403); one a delegated parent's list brought in gets no grant."""
+    out: dict[str, str] = {}
+    for ns in delegated.namespaces:
+        if ns == "*" or not await namespace_classification.is_restricted(org, ns):
+            continue
+        held = await me_callers.caller_role_on(org, ns, subject)
+        if held is None:
+            if ns not in requested:
+                continue
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "AUTH_INSUFFICIENT", "message": f"cannot delegate access on {ns}"},
+            )
+        token_role = (delegated.ns_roles or {}).get(ns) or delegated.roles[0]
+        out[ns] = min(held, token_role, key=grant_rank)
+    return out
 
 
 async def grant_restricted_to_token(
@@ -195,10 +227,11 @@ async def cascade_revoke_to_created_tokens(
     sa_rows = await ch.query_all(
         """
         SELECT DISTINCT sa_subject FROM loom.service_accounts FINAL
-        WHERE org = {org:String} AND created_by IN {subs:Array(String)}
+        WHERE org = {org:String} AND lower(created_by) IN {subs:Array(String)}
           AND revoked_at IS NULL
         """,
-        params={"org": org, "subs": creators},
+        # Any case, as the token list matches its maker.
+        params={"org": org, "subs": lowered(creators)},
     )
     touched = 0
     for r in sa_rows:

@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 import server.auth.authz as authz
 import server.identity.app.namespace_classification as nc
 from server.auth.jwt import mint_token
-from server.identity.app import token_grants
+from server.identity.app import me_callers, token_grants
 from server.memory.domain.trust import actor_for
 from server.operations.base import Role
 from server.settings import settings
@@ -58,6 +58,12 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         return grants.get((org, ns, subject))
 
     monkeypatch.setattr(authz, "grant_role_for", _grant)
+
+    async def _role_on(org, ns, subject):
+        role = grants.get((org, ns, subject))
+        return role.name.lower() if role else None
+
+    monkeypatch.setattr(me_callers, "caller_role_on", _role_on)
     saved: list = []
 
     class _CH:
@@ -73,7 +79,10 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
             assert table == "loom.service_accounts"
             saved.extend(rows)
 
+    restricted: dict = {}
+
     async def _grant_restricted(org, sa_subject, creator, ns_roles):
+        restricted.update(ns_roles)
         return []
 
     monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
@@ -84,6 +93,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     c.grants = grants  # type: ignore[attr-defined]
     c.audit_rows = rows  # type: ignore[attr-defined]
     c.saved = saved  # type: ignore[attr-defined]
+    c.restricted = restricted  # type: ignore[attr-defined]
     yield c
     nc.reset()
 
@@ -134,6 +144,17 @@ def test_a_mint_onto_a_restricted_namespace_writes_the_access_audit_row(
     assert [(kw["namespace"], kw["subject"]["op"]) for kw in rows] == [(PRIV, "admin.token.mint")]
     assert rows[0]["subject"]["granted_to"] == r.json()["subject"]
     assert rows[0]["actor"] == actor_for("ops@x", is_service_account=False)
+
+
+def test_a_restricted_namespace_beside_star_is_granted_at_the_callers_own_role(client) -> None:
+    # An org admin who only views PRIV: the default writer is refused there, and a
+    # viewer token's own grant on it is viewer.
+    client.grants[(ORG, PRIV, "ops@x")] = Role.VIEWER
+    named = ["clickgap-public", "*", PRIV]
+    assert _mint(client, _bearer(["org_admin"]), named).status_code == 403
+    r = _mint(client, _bearer(["org_admin"]), named, roles=["viewer"])
+    assert r.status_code == 200, r.text
+    assert client.restricted == {PRIV: "viewer"}
 
 
 def test_other_org_is_refused_and_a_platform_admin_mints_only_in_its_own(client) -> None:
@@ -366,7 +387,7 @@ def test_a_mint_without_a_name_says_which_field_to_send(client) -> None:
     assert r.status_code == 422, r.text
     assert r.json()["detail"] == {
         "code": "VALIDATION_FAILED",
-        "message": "name required, 1-64 chars",
+        "message": "name must be 1-64 chars",
     }
     assert client.saved == []
 

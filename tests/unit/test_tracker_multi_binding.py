@@ -410,7 +410,7 @@ async def test_set_source_writes_the_ordered_list(wired, monkeypatch) -> None:
 async def test_a_token_naming_the_repository_brings_every_restricted_linked_tracker(
     wired, monkeypatch
 ) -> None:
-    import server.identity.app.me_setup as me
+    import server.identity.app.me_service_accounts as me
     from server.identity.app import me_callers
 
     async def _restricted(org, ns):
@@ -421,7 +421,13 @@ async def test_a_token_naming_the_repository_brings_every_restricted_linked_trac
 
     monkeypatch.setattr("server.identity.app.namespace_classification.is_restricted", _restricted)
     monkeypatch.setattr(me_callers, "caller_role_on", _role)
-    assert await me._with_bound_tracker(ORG, "alice", [CODE]) == [CODE, PRIV]
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+
+    parent = AuthInfo(
+        subject="alice", org=ORG, namespaces=("*",), roles=(Role.WRITER,), is_service_account=False
+    )
+    assert await me._bound_trackers(ORG, "alice", parent, [CODE]) == [PRIV]
 
 
 @pytest.mark.asyncio

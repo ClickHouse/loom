@@ -201,7 +201,7 @@ async def test_the_rows_a_revoke_took_reach_their_tokens_whatever_a_read_sees(
         ORG, "team-z", "bob@x", unheld=True, taken=("Mallory",), ch=fake
     )
     _, sa_params = next(x for x in fake.sql if "service_accounts" in x[0])
-    assert sa_params["subs"] == ["Mallory", "bob@x", "mallory"]
+    assert sa_params["subs"] == ["mallory", "bob@x"]  # matched against lower(created_by)
 
 
 @pytest.mark.asyncio
@@ -252,21 +252,6 @@ async def test_grants_revoke_handler_calls_the_cascade(monkeypatch: pytest.Monke
     assert out.revoked is True
     assert calls == [(ORG, "code-private", "alice@x")]
     assert inserted and inserted[0]["revoked_at"] is not None
-
-
-def test_two_mints_in_one_minute_get_distinct_token_names() -> None:
-    """service_accounts is keyed on (org, name); a per-minute name would let
-    the second mint replace the first's row."""
-    from datetime import datetime
-
-    from server.identity.app.me_setup import _mcp_token_name
-
-    a = _mcp_token_name("Claude Desktop", datetime(2026, 9, 18, 14, 41, 12), "33c8e3")
-    b = _mcp_token_name("Claude Desktop", datetime(2026, 9, 18, 14, 41, 49), "27d1f2")
-    assert a != b
-    assert a == "Claude Desktop · 2026-09-18 14:41:12 · 33c8e3"
-    # same second, different subject: still distinct
-    assert _mcp_token_name("Claude Desktop", datetime(2026, 9, 18, 14, 41, 49), "aaaaaa") != b
 
 
 @pytest.mark.asyncio

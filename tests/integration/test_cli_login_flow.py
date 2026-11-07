@@ -513,8 +513,8 @@ def test_service_accounts_and_account_views_need_no_dashboard(
     async def through_the_sdk() -> list[dict[str, Any]]:
         agent = Agent(org, ns, "account-e2e", base_url=base)
         try:
-            await agent.account.create_service_account("sdk-bot", [ns])
-            return await agent.account.service_accounts()
+            await agent.account.create_token([ns], name="sdk-bot")
+            return await agent.account.tokens()
         finally:
             await agent.close()
 

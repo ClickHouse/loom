@@ -48,6 +48,12 @@ _CACHE_MAX = 10_000
 _GENERATION: dict[str, int] = {}
 
 
+def lowered(subjects: Iterable[str]) -> list[str]:
+    """`subjects` in lower case, in order and once each: a stored subject matches a
+    person's spelling in any case."""
+    return list(dict.fromkeys(s.lower() for s in subjects))
+
+
 async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -> list[str]:
     """`subject` first, then the other spelling(s) the directory ties to it;
     the subject alone when the read fails or nothing is tied to it."""

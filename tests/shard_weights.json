@@ -1087,7 +1087,6 @@
   "tests/unit/test_me_pending_grant_mints_nothing.py": 0.03,
   "tests/unit/test_me_routes_measured.py": 10.98,
   "tests/unit/test_me_routes_single_user_gate.py": 0.07,
-  "tests/unit/test_me_setup_scoped_token.py": 0.26,
   "tests/unit/test_me_sharing_summary.py": 0.03,
   "tests/unit/test_measured_posture.py": 0.27,
   "tests/unit/test_membench.py": 0.16,

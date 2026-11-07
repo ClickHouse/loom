@@ -590,7 +590,7 @@ def test_oauth_metadata_and_challenge_ignore_forwarded_host(
 
 
 @pytest.mark.usefixtures("auth_off")
-def test_the_mcp_config_url_ignores_forwarded_host(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_minted_tokens_mcp_url_ignores_forwarded_host(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.main import app
 
     class _CH:
@@ -602,12 +602,11 @@ def test_the_mcp_config_url_ignores_forwarded_host(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
     client = TestClient(app, base_url="http://localhost:7777")
-    body = {"client": "claude-code"}
-    r = client.post("/v1/me/setup/mcp_config", json=body, headers=SPOOF)
+    r = client.post("/v1/me/service_accounts.create", json={}, headers=SPOOF)
     assert r.status_code == 200, r.text
     assert "http://localhost:7777/mcp" in r.text and "evil.example" not in r.text
     monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
-    r = client.post("/v1/me/setup/mcp_config", json=body, headers=SPOOF)
+    r = client.post("/v1/me/service_accounts.create", json={}, headers=SPOOF)
     assert "https://loom.example/mcp" in r.text and "evil.example" not in r.text
 
 

@@ -9,9 +9,10 @@ flags, the restricted kill switch, an unreadable directory, a saved pick, an
 active or disabled creator and the owner of the person's personal namespace:
 the default an unaddressed call lands in is the first candidate
 `authz.check_authorized` lets the token WRITE, else the first it may READ,
-else "" when it may read none of them. The candidates, in order: the saved
-pick and the claims (the home's own first), then the home's live grants
-ranked and the fallback (the personal namespace, or a delegated token's
+else "" when it may read none of them. The candidates, in order: a delegated
+token's claim named before `*` (where it was made to save), the saved pick and
+the claims (the home's own first), then the home's live grants ranked and the
+fallback (the personal namespace, or a delegated token's
 reach). With no default, the readable list is exactly the named claims the
 gate lets it read. Both sides run against the same fakes."""
 
@@ -268,7 +269,7 @@ def _owner_first(names: list[str], subject: str) -> list[str]:
 
 def _candidates(token: AuthInfo) -> tuple[list[str], list[str]]:
     """The names a default may come from, in order, as two passes: (the
-    saved pick and the claims, the ranked grants and the fallback)."""
+    minted home, the saved pick and the claims, the ranked grants and the fallback)."""
     from server.identity.app.caller_home import is_memory_home
 
     home = token.creator or token.subject
@@ -283,7 +284,9 @@ def _candidates(token: AuthInfo) -> tuple[list[str], list[str]]:
     else:
         fallback = [_provisioned(token) or derive_personal_slug(token.subject)]
     saved = WORLD.saved if home == PERSON else ""
-    early = [saved, *_owner_first(named, home)]
+    star_home = "*" in token.namespaces and token.namespaces[0] != "*"
+    minted = named[0] if token.creator and star_home else ""
+    early = [minted, saved, *_owner_first(named, home)]
     late = _owner_first(ranked, home) + fallback
 
     def _memory(names: list[str]) -> list[str]:

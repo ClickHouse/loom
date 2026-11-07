@@ -273,7 +273,7 @@ def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
     from starlette.requests import Request
 
     from server.auth import routes
-    from server.identity.app import me_callers, me_setup
+    from server.identity.app import me_callers
     from server.insights.app import admin_routes
     from server.knowledge.app import download_routes
     from server.observability import metrics
@@ -289,7 +289,6 @@ def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
         me_callers._authed,
         watch_routes._bearer_auth,
         lambda r: admin_routes._verified_admin(r, Role.ADMIN),
-        lambda r: me_setup._setup_parent(r, {}),
         lambda r: asyncio.run(download_routes.knowledge_download(r, "o", "n", "s")),
     )
     for refuse in refusals:

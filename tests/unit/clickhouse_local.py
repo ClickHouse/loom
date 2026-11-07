@@ -92,6 +92,10 @@ class LocalCH:
     async def query_all(self, sql: str, params: dict[str, Any] | None = None, **_: Any) -> Any:
         return run(self.setup, sql, params)
 
+    async def query_one(self, sql: str, params: dict[str, Any] | None = None, **_: Any) -> Any:
+        rows = run(self.setup, sql, params)
+        return rows[0] if rows else None
+
 
 _CREATED = re.compile(r"\bCREATE TABLE (?:IF NOT EXISTS )?([\w.]+)")
 # Side tables a write path inserts into and no KeptCH test reads back.

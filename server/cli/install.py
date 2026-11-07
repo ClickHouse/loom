@@ -12,78 +12,23 @@ from typing import Any
 
 from server.cli._client import DEFAULT_BASE_URL, agent_mode, default_base_url, resolve_token
 from server.cli._paths import write_private
+from server.identity.app.token_clients import CONFIG_PATHS, config_key, mcp_entry
 
 # ============================================================
 # `loom install` — wire Loom into a local AI client's config
 # ============================================================
 
-# Per-client config file locations (string templates; pathlib doesn't expand
-# `~` until called). Adding a client is a one-row change.
-_INSTALL_CLIENTS: dict[str, dict[str, str]] = {
-    "claude-desktop": {
-        "darwin": "~/Library/Application Support/Claude/claude_desktop_config.json",
-        "linux": "~/.config/Claude/claude_desktop_config.json",
-        "win32": "%APPDATA%\\Claude\\claude_desktop_config.json",
-        "section": "mcpServers",
-    },
-    "claude-code": {
-        # Claude Code never reads ~/.claude/mcp.json. Its MCP
-        # servers live in ~/.claude.json (user scope, written by `claude mcp
-        # add`) or a project-local .mcp.json — so _install_one routes this
-        # client to _install_claude_code_mcp instead of writing a file. The
-        # path below is the detection probe only (~/.claude exists once Claude
-        # Code has run); it is the same file the capture writer edits.
-        "darwin": "~/.claude/settings.json",
-        "linux": "~/.claude/settings.json",
-        "win32": "%USERPROFILE%\\.claude\\settings.json",
-        "section": "mcpServers",
-    },
-    "codex": {
-        # Codex keeps MCP servers in ~/.codex/config.toml under [mcp_servers.<name>] and
-        # owns that file through `codex mcp add`; _install_one routes this client to
-        # _install_codex_mcp. The path is the detection probe (~/.codex exists once Codex
-        # has run) and the file the printed TOML block belongs in.
-        "darwin": "~/.codex/config.toml",
-        "linux": "~/.codex/config.toml",
-        "win32": "%USERPROFILE%\\.codex\\config.toml",
-        "section": "mcp_servers",
-    },
-    "cursor": {
-        "darwin": "~/.cursor/mcp.json",
-        "linux": "~/.cursor/mcp.json",
-        "win32": "%USERPROFILE%\\.cursor\\mcp.json",
-        "section": "mcpServers",
-    },
-    "vscode": {
-        # Separate mcp.json (not settings.json) to avoid clobbering a
-        # hand-curated settings.json.
-        "darwin": "~/Library/Application Support/Code/User/mcp.json",
-        "linux": "~/.config/Code/User/mcp.json",
-        "win32": "%APPDATA%\\Code\\User\\mcp.json",
-        "section": "servers",
-    },
-    "cline": {
-        # VS Code extension — config lives in the extension's settings dir.
-        "darwin": "~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",  # noqa: E501
-        "linux": "~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",  # noqa: E501
-        "win32": "%APPDATA%\\Code\\User\\globalStorage\\saoudrizwan.claude-dev\\settings\\cline_mcp_settings.json",  # noqa: E501
-        "section": "mcpServers",
-    },
-    "windsurf": {
-        "darwin": "~/.codeium/windsurf/mcp_config.json",
-        "linux": "~/.codeium/windsurf/mcp_config.json",
-        "win32": "%USERPROFILE%\\.codeium\\windsurf\\mcp_config.json",
-        "section": "mcpServers",
-    },
-    "zed": {
-        # Sibling mcp.json (not settings.json) to avoid clobbering hand-tuned
-        # settings; Zed picks it up via the extension manifest.
-        "darwin": "~/.config/zed/mcp.json",
-        "linux": "~/.config/zed/mcp.json",
-        "win32": "%APPDATA%\\Zed\\mcp.json",
-        "section": "context_servers",
-    },
+# Claude Code keeps its MCP servers in ~/.claude.json through `claude mcp add`
+# (_install_claude_code_mcp), so for it the path is only a probe: ~/.claude exists once
+# it has run.
+_CLAUDE_CODE_PROBE = {
+    "darwin": "~/.claude/settings.json",
+    "linux": "~/.claude/settings.json",
+    "win32": "%USERPROFILE%\\.claude\\settings.json",
 }
+# Per-client config file: the token mint's table, so its `clients` and `loom install`
+# name the same files.
+_INSTALL_CLIENTS: dict[str, dict[str, str]] = {**CONFIG_PATHS, "claude-code": _CLAUDE_CODE_PROBE}
 
 
 def _resolve_install_path(client: str) -> Path:
@@ -112,25 +57,6 @@ def _detect_installed_clients() -> list[str]:
         except Exception:  # noqa: BLE001 — detection must never crash install
             continue
     return found
-
-
-def _mcp_entry(client: str, mcp_url: str, token: str) -> dict[str, Any]:
-    """The MCP-server config block for one client. Stdio-only clients need the
-    `mcp-remote` npx shim to bridge to a remote HTTP server; the rest take the
-    URL + headers form directly."""
-    if client in {"claude-desktop", "zed", "cline"}:
-        return {
-            "command": "npx",
-            "args": [
-                "-y",
-                "mcp-remote",
-                mcp_url,
-                "--allow-http",
-                "--header",
-                f"Authorization: Bearer {token}",
-            ],
-        }
-    return {"url": mcp_url, "headers": {"Authorization": f"Bearer {token}"}}
 
 
 def _toolset_arg(value: str) -> str:
@@ -441,11 +367,10 @@ def _install_one(
         return _install_codex_mcp(
             token=token, server_url=server_url, name=name, dry_run=dry_run, toolset=toolset
         )
-    spec = _INSTALL_CLIENTS[client]
-    section = spec["section"]
+    section = config_key(client)
     cfg_path = _resolve_install_path(client)
     mcp_url = _install_mcp_url(server_url, toolset)
-    entry = _mcp_entry(client, mcp_url, token)
+    entry = mcp_entry(client, mcp_url, token)
 
     existing: dict[str, Any] = {}
     if cfg_path.exists():

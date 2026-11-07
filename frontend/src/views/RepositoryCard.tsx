@@ -857,10 +857,10 @@ export const RepositoryCard = memo(function RepositoryCard({
           <div id={bodyId} className="mt-3 space-y-3">
             {outOfScope && <p className="text-xs text-text-muted">{OUT_OF_SCOPE_MAINTAINER}</p>}
             {card.restricted && (
-              // Membership reads it; a client token reads it only when added at mint
-              // (Settings → For my own tools).
+              // Membership reads it; a token reads it only when added at mint
+              // (Settings → Tokens).
               <p className="text-xs text-text-muted" data-testid="repo-client-tokens-note">
-                Your client tokens read it only when added in Settings.
+                A token reads it only if you add it when you create the token in Settings.
               </p>
             )}
             {card.code && <BranchTable facet={card.code} busy={anyBusy} actions={code} />}

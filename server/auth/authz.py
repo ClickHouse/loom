@@ -520,13 +520,13 @@ async def grant_role_for(org: str, namespace: str, subject: str) -> Role | None:
     """Granted role for (org, namespace, subject), or None. The subject matches
     whatever its case, as the cached grant maps match it (`grant_cache`).
     Pending grants are excluded: an unapproved writer-request must not elevate."""
-    from server.auth.aliases import subject_aliases
+    from server.auth.aliases import lowered, subject_aliases
     from server.core.ch import get_client
 
     try:
         # The person's login handle and their verified email are one principal —
         # a grant under either spelling, in any case, counts; the highest wins
-        subjects = [s.lower() for s in await subject_aliases(org, subject)]
+        subjects = lowered(await subject_aliases(org, subject))
         row = await get_client().query_one(
             """
             SELECT role FROM loom.namespace_grants FINAL

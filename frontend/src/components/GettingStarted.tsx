@@ -4,7 +4,7 @@ import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { ProgressBar } from "@clickhouse/click-ui/ProgressBar";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
-import type { Identity, MyNamespaceEntry, ServiceAccountEntry } from "../api";
+import type { Identity, MyNamespaceEntry, TokenEntry } from "../api";
 import { useStore } from "../lib/state";
 import { paletteShortcut } from "../lib/platform";
 import { CLIENTS, formatMcpConfig, type ClientId } from "../lib/clients";
@@ -69,7 +69,7 @@ export interface GettingStartedProps {
   /** Namespace-wide memory count from the one `memory.list` read Setup makes. */
   memoryTotal: number | null;
   /** The tokens list the Connect section already fetched. */
-  tokens: ServiceAccountEntry[] | null;
+  tokens: TokenEntry[] | null;
   /** The most recent MCP token minted on this page, for the connect line. */
   lastMint: { token: string; mcpUrl: string } | null;
   /** Scroll to and focus the token form. */
