@@ -7,7 +7,7 @@ import { TextField } from "@clickhouse/click-ui/TextField";
 import { ExternalLink } from "../components/ui/ExternalLink";
 import { Panel } from "../components/ui/Panel";
 import { TabTrigger } from "../components/ui/TabTrigger";
-import { selfSignup, setToken, signedOut, loginWithPassword } from "../api";
+import { selfSignup, setToken, loginWithPassword } from "../api";
 import { SIGN_IN_FROM, markSignInStarted, type TokenClaims } from "../lib/boot";
 import { goToSso } from "../lib/navigation";
 import { errorRequestId, humanizeError } from "../lib/format";
@@ -97,10 +97,9 @@ function SsoGate({ reason, ssoAsked }: { reason?: GateReason; ssoAsked: boolean 
   useEffect(() => {
     if (started.current) return;
     // A counted ask (`takeSsoAsk` in `lib/boot.ts`) follows a click on a Loom page, so it needs
-    // no loop guard; after a sign-out it starts nothing. The resume after an expired session
-    // is the guarded one.
-    const asked = ssoAsked && !signedOut();
-    if (!asked && (reason !== "expired" || !resumeSsoOnce())) return;
+    // no loop guard. The resume after an expired session is the guarded one (boot gives no
+    // "expired" reason after a sign-out).
+    if (!ssoAsked && (reason !== "expired" || !resumeSsoOnce())) return;
     started.current = true;
     goToSso(rememberSignInStart());
   }, [reason, ssoAsked]);

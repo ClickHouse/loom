@@ -220,9 +220,9 @@ export default function App() {
   const helpOpen = useStore((s) => s.helpOpen);
   const inspectedProfileLabel = useStore((s) => s.inspectedProfileLabel);
   const setHelpOpen = useStore((s) => s.openHelp);
-  // A link token boot holds, unstored, until the person says whose account to sign in as.
   // A Loom page's ask to start SSO (`?sign_in=sso`), taken from the address at boot.
   const [ssoAsked, setSsoAsked] = useState(false);
+  // A link token boot holds, unstored, until the person says whose account to sign in as.
   const [linkAsk, setLinkAsk] = useState<{ token: string; answer: (ok: boolean) => void } | null>(null);
 
   // Global keyboard bindings — disabled while focus is in an input.

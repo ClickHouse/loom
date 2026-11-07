@@ -7,6 +7,6 @@ interface Window {
   __LOOM_SELF_SIGNUP?: boolean;
   __LOOM_SSO?: boolean;
   __LOOM_DEFAULT_NAMESPACE?: string;
-  /** Whether a page of Loom's own origin asked for this page load (`Sec-Fetch-Site`). */
+  /** Whether a page of Loom's own origin asked for this load (`Sec-Fetch-Site`, else the `Referer`). */
   __LOOM_OWN_ORIGIN?: boolean;
 }

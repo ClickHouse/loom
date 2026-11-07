@@ -239,14 +239,12 @@ describe("TokenGate", () => {
       expect(goToSso).toHaveBeenCalledWith(nonce);
     });
 
-    it("after a sign-out the session-expired card's ask starts no sign-in", () => {
+    it("starts on a counted ask after a sign-out too: the ask is a click on a Loom page", () => {
       window.__LOOM_SSO = true;
       localStorage.setItem("loom_signed_out_v1", "1");
       try {
         render(<TokenGate onLogin={() => undefined} reason={null} ssoAsked />);
-        expect(goToSso).not.toHaveBeenCalled();
-        expect(sessionStorage.getItem(SIGN_IN_PENDING)).toBeNull();
-        expect(screen.getByRole("link", { name: "Sign in with SSO" })).toBeInTheDocument();
+        expect(goToSso).toHaveBeenCalledTimes(1);
       } finally {
         localStorage.removeItem("loom_signed_out_v1");
       }

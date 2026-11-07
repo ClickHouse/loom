@@ -701,6 +701,24 @@ describe("login link", () => {
     }
   });
 
+  it("a signed-out boot of /me?sign_in=sso another site sent starts nothing and shows the button", async () => {
+    window.__LOOM_SSO = true;
+    window.__LOOM_OWN_ORIGIN = false;
+    vi.mocked(goToSso).mockClear();
+    try {
+      window.history.replaceState(null, "", "/me?sign_in=sso");
+      render(<App />);
+      await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 10_000 });
+      await settle();
+      expect(goToSso).not.toHaveBeenCalled();
+      expect(sessionStorage.getItem("loom_sign_in_pending_v1")).toBeNull();
+      expect(window.location.search).toBe("");
+    } finally {
+      delete window.__LOOM_SSO;
+      delete window.__LOOM_OWN_ORIGIN;
+    }
+  });
+
   it("a fresh mark trusts no token that does not bring its nonce back", async () => {
     // Another page sends this tab a token while it is away at the identity provider.
     for (const landing of [`/me#token=${mallory}`, `/me?n=someone-elses-nonce-xyz#token=${mallory}`]) {
