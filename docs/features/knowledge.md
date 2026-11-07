@@ -603,7 +603,7 @@ meeting word ending the title, as in `2026-03-04 Meeting notes`; or a meeting wo
 its title and a date as the top heading of each meeting. A document with no title is
 named by its first heading. A title that names a design document, a plan, a release, a
 migration or an incident is never notes, as in `Calendar sync design 2026-01-15` or
-`Release notes 2026-03-04`. In notes, a section that records no decision is noise, its
+`Release notes 2026-03-04`, unless it names a recording (below). In notes, a section that records no decision is noise, its
 bookkeeping (attendees, an agenda, action items) included. Notes a meeting tool writes
 from a recording, titled with the meeting's date and clock time and a transcript or
 notes-by mark (`Planner sync - 2026/03/04 10:00 CET - Notes by ...`), keep their

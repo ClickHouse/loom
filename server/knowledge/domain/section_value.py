@@ -24,7 +24,8 @@ A document is notes by its title, in one of three shapes:
   notes page).
 Without a date the same words name a topic as often ("Standup reminder bot", "Order
 sync 24/7"), and a title holding a design-document, release or incident word
-("Calendar sync design 2026-01-15", "Release notes 2026-03-04") is never notes. A
+("Calendar sync design 2026-01-15", "Release notes 2026-03-04") is never notes, unless
+it names a recording (below). A
 document with no title is named by its first heading. Lines inside a fenced code block
 are code, never questions.
 
@@ -63,7 +64,11 @@ _DECISION = re.compile(
     r"going with|going ahead with|proceeding with|went with|chosen|ruled out|resolved:|"
     r"conclusion:|outcome:|opted (?:for|to)|concluded|not supporting|"
     r"defaults? to|"
-    rf"(?:we|i)(?:'re| are|'m| am|'ll| will| won't| will not)(?: not)? {_CHOICE_VERB}|"
+    rf"we(?:'re| are|'ll| will| won't| will not)(?: not)? {_CHOICE_VERB}|"
+    # In the first person only a plan to change something: "I'll remove the old flag",
+    # not "I'll move on to the next slide".
+    r"\bi(?:'m| am|'ll| will)(?: going to)? (?:enable|disable|lower|raise|remove|deprecate|"
+    r"disallow|roll out)|"
     r"the plan is to|"
     rf"(?:we|the team)(?:'ve| have| had)? {_CHOSE}|"
     r"(?:was|were|is|are) (?:picked|selected)|"
@@ -132,15 +137,17 @@ _RECORDED_MARK = re.compile(r"\b(?:transcript|notes by)\b", re.IGNORECASE)
 # template's own sections; not a topic that names one ("Transcript search latency").
 _TRANSCRIPT_HEADING = re.compile(
     r"^\W*\d{1,2}:\d{2}(?::\d{2})?\W*$|^\W*transcript\W*$|^\W*transcription ended\b"
-    r"|\btranscript\W*$"
+    r"|\s\\?[-\u2013\u2014|:]\s*transcript\W*$"
     r"|^\W*(?:suggested\s+)?(?:next\s+steps|action\s+items|attendees)\b",
     re.IGNORECASE,
 )
-# The template's text: the invite header ("Invited ...", "Mar 4, 2026 <attendees>"), the
-# transcript's preamble, the footer that asks for a rating or a review.
+# The template's text: the invite header, the meeting's date alone or before the attendees
+# as links ("Invited [Ana](...)", "Mar 4, 2026 [Ana](...)"), the transcript's preamble,
+# the footer that asks for a rating or a review of the notes. "Invited the vendor to
+# demo" is a topic's text.
 _TEMPLATE_TEXT = re.compile(
-    rf"^\W*(?:invited\b|{_MONTH}\s+\d{{1,2}},\s+\d{{4}}\b|this editable transcript\b|"
-    r"please\W+rate\b|you should review\b)",
+    rf"^\W*(?:invited\s+\[|{_MONTH}\s+\d{{1,2}},\s+\d{{4}}(?:\s+\[|\W*$)|"
+    r"this editable transcript\b|please\W+rate\b|you should review(?:\s+\S+){1,2}\s+notes\b)",
     re.IGNORECASE,
 )
 _DESIGN_TITLE = re.compile(
