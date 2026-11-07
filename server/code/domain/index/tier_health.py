@@ -158,9 +158,6 @@ _MODULE_FAILED = re.compile(r"go mod download failed|scip-go failed", re.IGNOREC
 # First match wins: a missing credential also makes the submodule pin look missing
 # ("did not contain <sha>"), so the credential test comes before the pin test.
 _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    # the C/C++ harness's CMake reconfigure failed: CMake's own last lines come before
-    # its line, and can read as any other kind
-    ("cmake", re.compile(r"^>> cmake reconfigure failed$", re.MULTILINE)),
     # A Go module the harness skipped because it would not build: its line ends with the
     # module's own last log line, which can read as any other kind.
     ("module", _MODULE_FAILED),
@@ -168,6 +165,9 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("submodule_url", re.compile(r"transport 'file' not allowed", re.IGNORECASE)),
     # A full disk also cuts a transfer short ("the remote end hung up"): before network.
     ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
+    # the C/C++ harness's CMake reconfigure failed: CMake's own last lines come before
+    # its line, and can read as any later kind
+    ("cmake", re.compile(r"^>> cmake reconfigure failed$", re.MULTILINE)),
     (
         "credential",
         re.compile(

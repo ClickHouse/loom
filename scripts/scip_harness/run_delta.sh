@@ -50,9 +50,7 @@ fi
 
 # reconfigure: the compile database lists only the TUs of the tree it was
 # configured on, so a file added since then has no entry and is never indexed.
-# CMake reruns on the existing cache, which keeps its compiler and options. A
-# configure that fails fails the run, as the first configure does: the window
-# is retried, with the TUs it adds, once the build configures again.
+# CMake reruns on the existing cache, which keeps its compiler and options.
 reconfigure() {
   if [[ -z "$CONFIGURED" ]]; then
     echo ">> cmake reconfigure (compile_commands.json): $1"
