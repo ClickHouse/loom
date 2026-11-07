@@ -427,6 +427,7 @@ jobs:
           refused "$token" "${extractor[@]}" --set env.LOOM_DOCUMENT_EXTRACTOR_TOKEN=x
           refused "$token" "${extractor[@]}" --set "extraEnv[0].name=LOOM_DOCUMENT_EXTRACTOR_TOKEN"
           refused "$token" "${extractor[@]}" --set settingsFile.document_extractor_token=x
+          refused "networkPolicy.guardMetadata must be true or false" --set-string networkPolicy.guardMetadata=false
       - name: install PyYAML for the render gates
         run: python3 -m pip install --quiet --user pyyaml==6.0.3
       # What the extractor's pods can be reached by and reach, read off the render.

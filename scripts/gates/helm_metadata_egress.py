@@ -125,6 +125,7 @@ def main() -> None:
         ("defaults", sets(*EVERYTHING)),
         ("kind overlay", (*kind, *sets(*EVERYTHING))),
         ("eks overlay", (*eks, *sets(*EVERYTHING))),
+        ("eks overlay, policy off", (*eks, *sets("networkPolicy.enabled=false", *EVERYTHING))),
         ("policy on", sets("networkPolicy.enabled=true", *EVERYTHING)),
     ):
         check_metadata_denied(render(*args), what)
