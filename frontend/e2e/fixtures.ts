@@ -1761,7 +1761,8 @@ export async function warmUp(browser: Browser, testInfo: TestInfo): Promise<void
   try {
     await installApi(page);
     await page.goto("/memories", { waitUntil: "load" });
-    await page.locator("main h1, main h2").first().waitFor();
+    // The view's own heading: the loading screen's sr-only <h1> would return before the view fetches.
+    await page.locator("main").getByRole("heading", { name: "Memories" }).first().waitFor();
   } finally {
     await page.close();
   }
