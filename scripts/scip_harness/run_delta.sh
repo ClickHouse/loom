@@ -53,9 +53,13 @@ if [[ ! -f build/compile_commands.json || ! -f build/CMakeCache.txt ]] || cached
   # ClickHouse's CMake refuses GCC ("Compiler GNU is not supported"), and a
   # fresh checkout has no cache to remember the compiler — pin clang
   # explicitly.
-  # no clang on PATH leaves these empty: CMake then fails with its own message
   CC_BIN=${CC:-$(command -v clang-21 || command -v clang-18 || command -v clang || true)}
   CXX_BIN=${CXX:-$(command -v clang++-21 || command -v clang++-18 || command -v clang++ || true)}
+  if [[ -z "$CC_BIN" || -z "$CXX_BIN" ]]; then
+    echo "no clang on PATH ($PATH)"
+    echo ">> cmake configure failed" >&2
+    exit 1
+  fi
   echo ">> cmake configure (compile_commands.json) with $CXX_BIN…"
   # CMake refuses to switch compilers on an existing cache ("You have changed
   # variables that require your cache to be deleted"), so start clean.
