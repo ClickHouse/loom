@@ -448,8 +448,8 @@ def test_a_second_cutoff_that_stores_then_fails_is_waited_past(world, monkeypatc
 
 
 def test_a_second_submit_answers_after_the_first_claims_last_cutoff(world) -> None:
-    # Both submits proved the code before either wrote; the second gets the
-    # account once the first's last cutoff is stored, and waits it out, so the
+    # Both submits proved the code before either wrote; the second finds the
+    # account claimed and waits to a bound past the first's last cutoff, so the
     # sign-in its answer asks for is not ended by that cutoff.
     stored_hash = _row(world, _LEGACY)["password_hash"]
 
@@ -465,17 +465,20 @@ def test_a_second_submit_answers_after_the_first_claims_last_cutoff(world) -> No
 
     (first, c1), (second, c2) = asyncio.run(both())
     assert (first, second) == ("claimed", "taken")
-    assert c2 >= c1 and int(c2.timestamp()) == world["cutoffs"][_LEGACY]
-    # A sign-in once the answer came is issued at or after the cutoff it waited
-    # out, which the subject's stored cutoff does not end; one before it would be.
+    assert c2 > c1 and int(c2.timestamp()) > world["cutoffs"][_LEGACY]
+    # A sign-in once the answer came is issued at or after the bound it waited
+    # out, which the first claim's stored cutoff does not end.
     assert not revocation.is_revoked(_LEGACY, issued_at=int(c2.timestamp()))
-    assert revocation.is_revoked(_LEGACY, issued_at=int(c2.timestamp()) - 1)
 
 
 def test_the_page_tells_a_second_submit_to_sign_in_once_the_first_is_done(
     world, monkeypatch
 ) -> None:
     from contextlib import asynccontextmanager
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    monkeypatch.setattr(agent_claim, "_now", lambda: now)
 
     real_change = agent_claim.account_change
 
@@ -490,15 +493,56 @@ def test_the_page_tells_a_second_submit_to_sign_in_once_the_first_is_done(
             "tags": [*row["tags"], claim_codes.CLAIMED_TAG],
         }
         await world["ch"].insert("loom.namespaces", [claimed])
-        world["cutoffs"][_LEGACY] = 4_000_000_000
         async with real_change(org, namespace):
             yield
 
     monkeypatch.setattr(agent_claim, "account_change", claimed_first)
     r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
     assert r.status_code == 400 and "claimed a moment ago" in r.text
-    assert [int(c.timestamp()) for c in world["waited"]] == [4_000_000_000]
-    assert world["events"] == []
+    # Its read-back bound, a skew wait, a cutoff's margin and a clock's lead:
+    # 5 + 5 + 6 + 5 seconds past the moment it found the account claimed.
+    assert world["waited"] == [now + timedelta(seconds=21)]
+    assert world["events"] == [] and _LEGACY not in world["cutoffs"]
+
+
+def test_a_busy_account_answers_a_page_to_wait_and_retry(world, monkeypatch) -> None:
+    from contextlib import asynccontextmanager
+
+    from server.core.errors import GrantBusyError
+
+    @asynccontextmanager
+    async def busy(org: str, namespace: str) -> Any:
+        raise GrantBusyError("another change to the account is running")
+        yield
+
+    monkeypatch.setattr(agent_claim, "account_change", busy)
+    r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
+    assert r.status_code == 503 and r.headers["Retry-After"] == "60"
+    assert r.headers["content-type"].startswith("text/html")
+    assert "An earlier submit may still be claiming" in r.text
+
+
+def test_the_steps_after_the_write_outlast_the_account_lease(world, monkeypatch) -> None:
+    # The read-back, the skew wait and the second cutoff run after the lease is
+    # released, so its 20 s bound cannot cut them short.
+    from server.auth import grant_claims
+    from server.identity.app import account_admin
+
+    real_end, cutoffs = account_admin.end_tokens, []
+
+    async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
+        cutoffs.append(await real_end(subject, by=by, reason=reason))
+        return cutoffs[-1]
+
+    async def slow_skew_wait() -> None:
+        await asyncio.sleep(3.0)  # past the lease's bound below
+
+    monkeypatch.setattr(grant_claims, "CHANGE_S", 2.0)
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+    monkeypatch.setattr(agent_claim, "_skew_wait", slow_skew_wait)
+    r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
+    assert r.status_code == 200 and "Claimed" in r.text
+    assert len(cutoffs) == 2 and world["waited"] == cutoffs[1:]
 
 
 def test_a_cancelled_request_still_stores_the_last_cutoff(world, monkeypatch) -> None:

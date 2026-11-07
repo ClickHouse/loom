@@ -2,7 +2,8 @@
 
 No password sign-in takes an unclaimed agent's code (`server.auth.claim_codes`).
 This page checks the code and, while it holds the account, replaces it with a
-password the person chooses and marks the account claimed: the code works once,
+password the person chooses and marks the account claimed (then cuts off again,
+outside the lease): the code works once,
 and from then on the person signs in as the namespace (its admin) with their own
 password. Every token the namespace's subject held before is cut off: an account
 made before the code was stored prefixed could be signed in to with it, by
@@ -14,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -27,6 +28,7 @@ from server.auth.grant_claims import account_change
 from server.auth.login import LoginThrottled, throttled, verify_as_unknown
 from server.auth.passwords import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, hash_password_off_loop
 from server.core.ch import get_client, own_write_reads
+from server.core.errors import BackendUnavailableError, GrantBusyError
 from server.identity.app import account_admin
 from server.identity.store import namespaces
 from server.observability import audit
@@ -114,8 +116,18 @@ async def agent_claim(request: Request) -> Response:
     org, code_hash = proven
     # Hashed only once the code is proven, so a guess costs one hash.
     password_hash = await hash_password_off_loop(password)
-    outcome, cutoff = await claim_shielded(org, namespace, code_hash, password_hash)
-    if outcome == "refused":
+    try:
+        outcome, cutoff = await claim_shielded(org, namespace, code_hash, password_hash)
+    except (GrantBusyError, BackendUnavailableError):
+        page = _form(
+            namespace,
+            "An earlier submit may still be claiming this namespace: wait a minute and sign "
+            "in with the password you chose; if that fails, submit again.",
+            503,
+        )
+        page.headers["Retry-After"] = "60"
+        return page
+    if outcome == "refused" or cutoff is None:
         return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
     # The person signs in next: past the cutoff on every replica's clock, so the
     # token they get is not one it ends.
@@ -148,63 +160,60 @@ async def _proven(namespace: str, code: str) -> tuple[str, str] | None:
 # A claim's write and the cutoffs after it, kept here while they run so a
 # cancelled request does not drop them.
 _running: set[asyncio.Task[Any]] = set()
+# The longest the read-back after a claim's write may take.
+_READ_BACK_S = 5.0
+
+
+def _done(task: asyncio.Task[Any]) -> None:
+    _running.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        log.warning("agent claim: the claim's task failed: %r", task.exception())
 
 
 async def claim_shielded(
     org: str, namespace: str, code_hash: str, password_hash: str
-) -> tuple[str, datetime]:
+) -> tuple[str, datetime | None]:
     """`_replace_code` in a task of its own: a client that disconnects cancels
     the request, never the write's cutoffs."""
     task = asyncio.create_task(_replace_code(org, namespace, code_hash, password_hash))
     _running.add(task)
-    task.add_done_callback(_running.discard)
+    task.add_done_callback(_done)
     return await asyncio.shield(task)
 
 
 async def _replace_code(
     org: str, namespace: str, code_hash: str, password_hash: str
-) -> tuple[str, datetime]:
+) -> tuple[str, datetime | None]:
     """("claimed", the cutoff the claimer waits out) when this call replaced the
-    code with `password_hash`; ("taken", the subject's stored cutoff) when a claim
-    landed first, as an earlier submit of the same form does; ("refused", now)
-    when the row changed otherwise (a release)."""
-    # Held from the read to the last cutoff, as a release or a password link
-    # holds the account: a second claim waits for the first's last cutoff.
-    written: list[bool] = []
+    code with `password_hash`; ("taken", a cutoff past the first claim's last)
+    when a claim landed first, as an earlier submit of the same form does;
+    ("refused", None) when the row changed otherwise (a release)."""
+    subject = ""
+    # Held from the read to the write, as a release or a password link holds the
+    # account; the cutoffs after the write need no lease and run after it.
     try:
         async with account_change(org, namespace):
             with own_write_reads():
                 row = await namespaces.fetch_row(org, namespace)
             if row is None or not row["active"]:
-                return "refused", revocation.from_now_on()
+                return "refused", None
             if row["password_hash"] != code_hash:
                 if CLAIMED_TAG not in (row.get("tags") or []):
-                    return "refused", revocation.from_now_on()
-                return "taken", await _stored_cutoff(str(row["owner_email"]))
-            return "claimed", await _write_claim(row, org, namespace, password_hash, written)
-    except Exception as e:  # once written, the claim stands whatever follows
-        if not written:
+                    return "refused", None
+                return "taken", _past_a_claim_landed_now()
+            subject = await _write(row, org, namespace, password_hash)
+            await _audit(org, namespace)
+    except BackendUnavailableError as e:
+        if not subject:
             raise
-        # The claim is written; the lease's own bound ran out after it.
-        log.warning("agent claim of %s/%s: finishing the claim failed: %r", org, namespace, e)
-        return "claimed", revocation.from_now_on()
+        # The claim is written; only the lease's own bound ran out after it.
+        log.warning("agent claim of %s/%s: the lease ended after the write: %r", org, namespace, e)
+    return "claimed", await _after_write(org, namespace, subject, password_hash)
 
 
-async def _stored_cutoff(subject: str) -> datetime:
-    """The subject's latest stored cutoff, or now when none can be read."""
-    try:
-        stored = (await revocation.cutoffs([subject])).get(subject)
-    except Exception as e:  # noqa: BLE001 — waiting from now is the safe answer
-        log.warning("agent claim: reading %s's cutoff failed: %r", subject, e)
-        stored = None
-    return datetime.fromtimestamp(stored, UTC) if stored else revocation.from_now_on()
-
-
-async def _write_claim(
-    row: dict[str, Any], org: str, namespace: str, password_hash: str, written: list[bool]
-) -> datetime:
-    """Under the account's lease: cut off, write the claim (then mark `written`),
-    audit it, read it back, wait out the clock skew and cut off again."""
+async def _write(row: dict[str, Any], org: str, namespace: str, password_hash: str) -> str:
+    """Cut off the subject's tokens, then replace the code with the claimer's
+    password and mark the account claimed; the subject."""
     # Before the write, so a write that fails leaves the code to retry with,
     # never a spent code and live tokens. A subject cutoff also ends every
     # OAuth and device session the code started (`oauth.issue_tokens`).
@@ -223,18 +232,28 @@ async def _write_claim(
             }
         ],
     )
-    written.append(True)
-    # The claim stands from here: audited before anything after it can fail.
-    await audit.emit(
-        "auth.agent_claimed", org=org, namespace=namespace, actor=namespace, subject={}
-    )
-    # Again once the write reads back: a replica of the build before signs in with
-    # a plain-hash code, reading without sequential consistency, until its
-    # ClickHouse replica has the write, and the first cutoff predates it.
-    # The claim is written, so nothing below answers an error.
+    return subject
+
+
+async def _audit(org: str, namespace: str) -> None:
     try:
-        with own_write_reads():
-            landed = await namespaces.fetch_row(org, namespace)
+        await audit.emit(
+            "auth.agent_claimed", org=org, namespace=namespace, actor=namespace, subject={}
+        )
+    except Exception as e:  # noqa: BLE001 — the claim is written; its cutoffs must still run
+        log.warning("agent claim of %s/%s: the audit row failed: %r", org, namespace, e)
+
+
+async def _after_write(org: str, namespace: str, subject: str, password_hash: str) -> datetime:
+    """Read the write back, wait out the clock skew and cut off again; the cutoff
+    the claimer waits out. The claim stands whatever fails here."""
+    # A replica of the build before signs in with a plain-hash code, reading
+    # without sequential consistency, until its ClickHouse replica has the
+    # write, and the first cutoff predates that.
+    try:
+        async with asyncio.timeout(_READ_BACK_S):
+            with own_write_reads():
+                landed = await namespaces.fetch_row(org, namespace)
         if (landed or {}).get("password_hash") != password_hash:
             log.warning("agent claim of %s/%s: the write does not read back yet", org, namespace)
     except Exception as e:  # noqa: BLE001 — the read only times the cutoff below, which still runs
@@ -252,6 +271,19 @@ async def _write_claim(
         # Later than any cutoff the failed call could have stored, so the claimer's
         # next sign-in is not ended by it either.
         return revocation.from_now_on()
+
+
+def _past_a_claim_landed_now() -> datetime:
+    """A cutoff no earlier than the last one of a claim that released the account
+    by now: its read-back (`_READ_BACK_S`), its skew wait, its cutoff's own
+    margin (`CLOCK_SKEW_S` + 1), and `CLOCK_SKEW_S` more for its replica's clock
+    running ahead of this one's."""
+    skew = revocation.CLOCK_SKEW_S
+    return _now() + timedelta(seconds=_READ_BACK_S + skew + (skew + 1) + skew)
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
 
 
 async def _skew_wait() -> None:
