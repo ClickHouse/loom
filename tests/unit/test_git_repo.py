@@ -26,6 +26,7 @@ def test_a_commit_and_a_tag_need_no_key_and_run_no_hook(tmp_path: Path) -> None:
     assert git_repo.git(tmp_path, "cat-file", "-t", "v1.0.0").strip() == "commit"
 
 
-def test_a_failure_says_what_git_said(tmp_path: Path) -> None:
+def test_a_failure_says_what_git_said(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))  # no outer checkout
     with pytest.raises(RuntimeError, match="^git tag v1 failed: fatal: "):
         git_repo.git(tmp_path, "tag", "v1")  # not a repository

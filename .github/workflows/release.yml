@@ -116,15 +116,14 @@ jobs:
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
           echo "Releasing v$VERSION (prerelease: $PRERELEASE, dry run: $DRY_RUN)"
       # Every version file names the tag's final, the candidate order holds, and the
-      # chart's own version moved (release-process.md); `previous` is the tag the
-      # generated release notes start from (github-release's previous_tag).
+      # chart's own version moved (release-process.md); check-tag skips off the tag's
+      # commit in a dry run. `previous` is the tag the generated release notes start
+      # from (github-release's previous_tag).
       - name: Version files, the candidate order and the chart
         id: checks
         env:
           VERSION: ${{ steps.parse.outputs.version }}
           DRY_RUN: ${{ inputs.dry_run == true }}
-        # A dry run of a branch is off the tag's commit: check-tag skips there, and a tag
-        # run refuses; check-chart skips when vX.Y.Z is tagged on another commit.
         run: |
           dry_run=()
           [ "$DRY_RUN" != true ] || dry_run=(--dry-run)

@@ -42,7 +42,7 @@ echo "$1" >> "$STUB_PUBLISHED/refuse.log"
 }
 
 
-Git = Callable[..., None]
+Git = Callable[..., str]
 Resolve = Callable[..., subprocess.CompletedProcess[str]]
 
 

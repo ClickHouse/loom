@@ -217,12 +217,7 @@ def test_a_chart_already_raised_since_the_previous_release_keeps_its_version(
 
 
 def test_every_release_raises_the_chart_above_the_previous_releases(tmp_path: Path) -> None:
-    chart = tmp_path / "deploy/helm/loom/Chart.yaml"
-    chart.parent.mkdir(parents=True)
-    chart.write_text('version: 0.1.0\nappVersion: "1.0.0"\n')
-    git_repo.git(tmp_path, "init", "-q")
-    _commit(tmp_path, "chart")
-    git_repo.git(tmp_path, "tag", "v1.0.0")
+    chart = _chart_repo(tmp_path, 'version: 0.1.0\nappVersion: "1.0.0"\n', "v1.0.0")
     chart.write_text('version: 0.1.0\nappVersion: "1.1.0"\n')
     _commit(tmp_path, "appVersion")
     error = prepare.check_chart("v1.0.0", tmp_path)
@@ -458,6 +453,18 @@ def test_the_merged_pull_requests_are_the_squash_merges_since_the_tag(tmp_path: 
     (tmp_path / "server/__init__.py").write_text('__version__ = "1.1.0"\n')
     _commit(tmp_path, "Release 1.1.0 (#15)")  # the release pull request itself
     assert list(prepare.squash_merges("v1.0.0", tmp_path)) == [12, 13, 14]
+
+
+def _chart_repo(root: Path, chart_text: str, tag: str) -> Path:
+    """A repository whose one commit, tagged `tag`, has `chart_text` as its Chart.yaml;
+    returns the chart's path."""
+    chart = root / "deploy/helm/loom/Chart.yaml"
+    chart.parent.mkdir(parents=True)
+    chart.write_text(chart_text)
+    git_repo.git(root, "init", "-q")
+    _commit(root, "chart")
+    git_repo.git(root, "tag", tag)
+    return chart
 
 
 def _released(root: Path, merges: tuple[int, ...] = (12, 13, 14)) -> Path:
@@ -778,6 +785,24 @@ def test_a_tag_run_off_its_tag_is_refused(monkeypatch: pytest.MonkeyPatch) -> No
         prepare.main()
 
 
+def test_a_dry_run_on_the_tag_still_checks_the_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prepare, "tag_on_head", lambda version: True)
+    monkeypatch.setattr(prepare, "check_tag", lambda version: "out of order")
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "check-tag", "--dry-run", "1.2.0"])
+    with pytest.raises(SystemExit, match="^::error::out of order$"):
+        prepare.main()
+
+
+@pytest.mark.parametrize("command", ["check", "check-tag", "check-chart", "previous"])
+def test_a_tag_check_takes_only_a_final_or_a_candidate(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], command: str
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["prepare.py", command, "1.2.0-beta.1"])
+    with pytest.raises(SystemExit):
+        prepare.main()
+    assert "'1.2.0-beta.1' is not X.Y.Z or X.Y.Z-rc.N" in capsys.readouterr().err
+
+
 def test_a_tag_out_of_candidate_order_is_an_error_line(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(prepare, "tag_on_head", lambda tag_version: True)
     monkeypatch.setattr(prepare, "check_tag", lambda tag_version: "out of order")
@@ -805,12 +830,7 @@ def test_a_chart_without_its_version_names_the_file_once(
 def test_a_chart_version_that_is_not_x_y_z_is_an_error_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    chart = tmp_path / "deploy/helm/loom/Chart.yaml"
-    chart.parent.mkdir(parents=True)
-    chart.write_text('version: 0.1.0\nappVersion: "1.1.0"\n')
-    git_repo.git(tmp_path, "init", "-q")
-    _commit(tmp_path, "chart")
-    git_repo.git(tmp_path, "tag", "v1.1.0")
+    chart = _chart_repo(tmp_path, 'version: 0.1.0\nappVersion: "1.1.0"\n', "v1.1.0")
     chart.write_text('version: "0.2.0"\nappVersion: "1.2.0"\n')  # quoted
     _commit(tmp_path, "quoted chart version")
     monkeypatch.setattr(prepare, "chart_baseline", lambda version: "v1.1.0")
@@ -1013,12 +1033,7 @@ def test_the_only_prerelease_the_release_takes_is_a_candidate(
 def test_a_chart_unreadable_at_a_tag_names_the_tag(
     tmp_path: Path, chart_text: str, error: str
 ) -> None:
-    chart = tmp_path / "deploy/helm/loom/Chart.yaml"
-    chart.parent.mkdir(parents=True)
-    chart.write_text(chart_text)
-    git_repo.git(tmp_path, "init", "-q")
-    _commit(tmp_path, "chart")
-    git_repo.git(tmp_path, "tag", "v1.0.0")
+    _chart_repo(tmp_path, chart_text, "v1.0.0")
     with pytest.raises(ValueError, match=error):
         prepare.released_chart("v1.0.0", tmp_path)
 
@@ -1040,3 +1055,4 @@ def test_a_soaked_candidate_run_again_after_its_final_is_not_told_to_delete_itse
     error = prepare.check_tag("1.2.0-rc.3", tmp_path)
     assert error and "v1.2.0 is already tagged" in error
     assert ":refs/tags/v1.2.0-rc.3" in error  # the stray tag to delete
+    assert error.endswith("when v1.2.0's run published nothing, delete v1.2.0 instead")

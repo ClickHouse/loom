@@ -97,8 +97,8 @@ def require_final(version: str) -> None:
 
 
 class PinError(ValueError):
-    """A version file that cannot be read: its path, and why apart, so a check's
-    annotation names the file once."""
+    """A version file that cannot be read. The path and the reason are kept apart
+    so an `::error file=` annotation names the file once."""
 
     def __init__(self, path: str, reason: str) -> None:
         super().__init__(f"{path}: {reason}")
@@ -239,7 +239,8 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
     if candidates and _sha(root, candidates[-1]) != _sha(root, "HEAD"):
         return (
             f"v{final} is not on {candidates[-1]}'s commit: delete {candidates[-1]} if it is"
-            f" a stray; if v{final}'s run published nothing, tag the final on its commit"
+            f" a stray; if v{final}'s run published nothing, tag v{final} on"
+            f" {candidates[-1]}'s commit"
         )
     return None
 
@@ -533,6 +534,13 @@ def _bump(args: argparse.Namespace) -> None:
     print(f"Bumped to {version}; the release notes are in {NOTES_FILE}")
 
 
+def _tag_version(text: str) -> str:
+    """An argparse type: a release tag's version, final or candidate."""
+    if not (FINAL.fullmatch(text) or CANDIDATE.fullmatch(text)):
+        raise argparse.ArgumentTypeError(f"{text!r} is not X.Y.Z or X.Y.Z-rc.N")
+    return text
+
+
 def _one_line(e: Exception) -> str:
     if isinstance(e, FileNotFoundError):
         return f"{e.filename}: not found"
@@ -551,14 +559,14 @@ def main() -> None:
     notes_cmd = commands.add_parser("notes", help="only print the release notes")
     notes_cmd.add_argument("version", help="the release, X.Y.Z")
     notes_cmd.set_defaults(run=_notes)
-    tag_version = "the tag's version, X.Y.Z or X.Y.Z-rc.N"
+    tag_version = {"type": _tag_version, "help": "the tag's version, X.Y.Z or X.Y.Z-rc.N"}
     check_cmd = commands.add_parser("check", help="every file names the tag's final version")
-    check_cmd.add_argument("tag_version", help=tag_version)
+    check_cmd.add_argument("tag_version", **tag_version)
     check_cmd.set_defaults(run=_check)
     tag_cmd = commands.add_parser(
         "check-tag", help="a candidate before its final, the final on its last candidate's commit"
     )
-    tag_cmd.add_argument("tag_version", help=tag_version)
+    tag_cmd.add_argument("tag_version", **tag_version)
     tag_cmd.add_argument(
         "--dry-run", action="store_true", help="skip, with a notice, when the tag is not HEAD"
     )
@@ -566,12 +574,12 @@ def main() -> None:
     chart_cmd = commands.add_parser(
         "check-chart", help="the chart's version is above the previous release's"
     )
-    chart_cmd.add_argument("tag_version", help=tag_version)
+    chart_cmd.add_argument("tag_version", **tag_version)
     chart_cmd.set_defaults(run=_check_chart)
     previous_cmd = commands.add_parser(
         "previous", help="the highest final release tag below the tag's version"
     )
-    previous_cmd.add_argument("tag_version", help=tag_version)
+    previous_cmd.add_argument("tag_version", **tag_version)
     previous_cmd.set_defaults(run=_previous)
     args = parser.parse_args()
     # A refusal, a failed git or gh call, or a missing gh, git or file is one line;
