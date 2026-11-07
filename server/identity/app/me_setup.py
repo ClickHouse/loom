@@ -305,6 +305,8 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
       }
     """
     parent = _setup_parent(request, payload)
+    # auth off: `parent` is the dev stand-in, no caller, so no audit row
+    caller = parent if settings.auth_actually_required() else None
     subject, org = parent.subject, parent.org
 
     client = str(payload.get("client") or "")
@@ -349,7 +351,7 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         restricted_names=restricted_names,
     )
     await note_restricted_grants(
-        parent if settings.auth_actually_required() else None,  # auth off: no caller, no row
+        caller,
         op="me.setup.mcp_config",
         org=org,
         namespaces=granted,

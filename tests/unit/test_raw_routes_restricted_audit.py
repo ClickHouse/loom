@@ -7,7 +7,7 @@ are not registry ops, so the transport gate
 itself and must write the `namespace.restricted_access` row the gate writes
 for an admitted op. The contract test holds every raw route to it: a route
 module that names one of the namespace checks in `_ADMISSION` calls
-`note_restricted_access`. It reads names per module, so a route that admits
+`note_restricted_access` or `note_restricted_grants`. It reads names per module, so a route that admits
 through a check under another name, or through a module-level helper of
 another file, needs its name added there.
 """
@@ -353,6 +353,7 @@ async def test_a_refused_inbox_watch_writes_no_audit_row(
 class _Delegated:
     """What `delegate` hands a mint: a token naming the restricted namespace."""
 
+    org = ORG
     namespaces = (NS,)
     ns_roles = {NS: "viewer"}
 
@@ -478,6 +479,30 @@ async def test_the_mcp_primer_profile_read_writes_the_audit_row(
     )
 
 
+@pytest.mark.asyncio
+async def test_the_setup_mint_audits_what_it_granted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_save_mcp_token` answers the namespaces the grant write granted, which the
+    route audits, not the ones the caller asked for."""
+    from server.identity.app import me_callers, me_setup, token_grants
+
+    async def _nothing(*_a: Any, **_k: Any) -> None:
+        return None
+
+    async def _role(*_a: Any) -> str:
+        return "viewer"
+
+    async def _granted(org: str, sa_subject: str, creator: str, ns_roles: Any) -> list[str]:
+        return [NS]  # "other" is no longer restricted by the time of the write
+
+    monkeypatch.setattr(me_setup, "save_token", _nothing)
+    monkeypatch.setattr(me_callers, "caller_role_on", _role)
+    monkeypatch.setattr(token_grants, "grant_restricted_to_token", _granted)
+    *_, granted = await me_setup._save_mcp_token(
+        subject="alice", client="cursor", delegated=_Delegated(), restricted_names=[NS, "other"]
+    )  # type: ignore[arg-type]
+    assert granted == [NS]
+
+
 # The checks that admit a caller to a namespace outside the op transport.
 _ADMISSION = {
     "check_authorized",
@@ -493,7 +518,8 @@ _ADMISSION = {
 }
 _AUDIT = {"note_restricted_access", "note_restricted_grants"}
 # The op transports admit through `gates.authorize`, which writes the row
-# (tests/unit/test_admission_parity.py).
+# (tests/unit/test_admission_parity.py). The MCP primer's profile read is the one
+# read there outside the gate; its own test above holds it to the row.
 _OP_TRANSPORTS = {"server.transport.http", "server.transport.mcp"}
 
 

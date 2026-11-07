@@ -310,8 +310,9 @@ async def me_service_accounts_create(
     and an ordered `namespaces` claim (the read priority). Returns the JWT
     exactly once.
     """
+    caller: AuthInfo | None = None  # auth off: no caller, so no audit row
     if settings.auth_actually_required():
-        parent = me_callers.require_authed_info(request)
+        parent = caller = me_callers.require_authed_info(request)
     else:
         parent = dev_parent(request, payload)
     subject, org = parent.subject, parent.org
@@ -346,7 +347,7 @@ async def me_service_accounts_create(
         org, sa_subject, subject, ns_roles
     )
     await note_restricted_grants(
-        parent if settings.auth_actually_required() else None,  # auth off: no caller, no row
+        caller,
         op="me.service_accounts.create",
         org=org,
         namespaces=restricted_granted,
