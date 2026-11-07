@@ -81,7 +81,7 @@ class FailingTier:
     org: str
     namespace: str
     health: tier_health.TierHealth
-    lag_commits: int = -1
+    lag_commits: int
 
 
 # The failing tiers of every entry, as this process last read them: the health probe
@@ -181,7 +181,8 @@ def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | No
                     "since": f.health.failing_since,
                     "failed_passes": f.health.failed_passes,
                     "lag_commits": f.lag_commits,
-                    "fix": f.health.fix,
+                    # the kind's fix without the repository it names: the problem is public
+                    "fix": tier_health.fix_for(f.health.kind, ""),
                     "severity": level,
                 }
             )

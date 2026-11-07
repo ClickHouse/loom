@@ -39,9 +39,7 @@ def test_a_failing_code_tier_is_a_doctor_problem(monkeypatch: pytest.MonkeyPatch
     lines = doctor._problem_checks(doctor._doctor_problems())
     name, grade, detail = next(line for line in lines if line[0] == "problem:code_tier_failing")
     assert grade == doctor.WARN
-    assert (
-        "o/code-x clang (credential, 4 failed passes" in detail and "Fix: Set the token." in detail
-    )
+    assert "clang (credential, 4 failed passes" in detail and "Fix: Set the token." in detail
 
 
 def test_doctor_reports_jwt_secret_status(

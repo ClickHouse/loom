@@ -30,11 +30,13 @@ const TIER_NAME: Record<string, string> = {
 const KIND_WORD: Record<string, string> = {
   credential: "no credential",
   pin_missing: "pinned commit gone",
+  submodule_url: "relative submodule URL",
   egress: "egress refused",
   network: "host unreachable",
   timeout: "timed out",
   disk: "disk full",
   harness: "indexer failed",
+  module: "module failed to build",
   unknown: "error",
 };
 
@@ -51,7 +53,7 @@ export function failingTiers(rows: TierHealth[] | undefined): TierHealth[] {
   return (rows ?? []).filter((t) => t.state === "failing");
 }
 
-/** "failing for 12 passes, 413 commits behind (no credential)" — without the since time,
+/** "12 failed passes, 413 commits behind (no credential)" — without the since time,
  *  which the caller renders as a time element. */
 export function failureSummary(t: TierHealth): string {
   const passes = `${t.failed_passes} failed pass${t.failed_passes === 1 ? "" : "es"}`;

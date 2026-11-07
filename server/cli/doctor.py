@@ -454,6 +454,12 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
 
     from server.code.app.index import repo_registry, tier_health
     from server.core.ch import get_client
+    from server.settings import settings
+
+    if not settings.code_intel_enabled or not settings.ch_host:
+        return None  # nothing runs a tier, or no ClickHouse to read
+    if not _doctor_ch_reachable(settings, settings.ch_host)[0]:
+        return None  # `clickhouse_reachable` says why
 
     async def read() -> tuple[Any, ...] | None:
         client = get_client()

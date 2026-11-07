@@ -820,32 +820,35 @@ _TIER_FAILURES_NAMED = 5
 
 def _code_tier_problems(st: HealthState) -> list[Problem]:
     """One `code_tier_failing` problem for every code-index tier that keeps failing:
-    which entry and tier, the error kind, since when, how far behind, and each
-    distinct fix. Its severity is the worst row's."""
+    each tier with its error kind, failed passes, since when and how far behind, and
+    the fix of each kind. It names no entry or repository, because `/v1/health` answers
+    anyone and an entry may be restricted; `code.repos` and the repository page name
+    them to whoever may read them. Its severity is the worst row's."""
     rows = st.code_tier_failures or ()
     if not rows:
         return []
 
     def named(r: Mapping[str, Any]) -> str:
-        lag, passes = int(r.get("lag_commits", -1)), int(r["failed_passes"])
+        lag, passes = int(r["lag_commits"]), int(r["failed_passes"])
         behind = f", {lag} commit{'' if lag == 1 else 's'} behind" if lag >= 0 else ""
         return (
-            f"{r['org']}/{r['namespace']} {r['tier']} ({r['kind']}, "
-            f"{passes} failed pass{'' if passes == 1 else 'es'} since {r['since']}{behind})"
+            f"{r['tier']} ({r['kind']}, {passes} failed pass{'' if passes == 1 else 'es'} "
+            f"since {r['since']}{behind})"
         )
 
     shown = [named(r) for r in rows[:_TIER_FAILURES_NAMED]]
     more = len(rows) - len(shown)
-    tail = f" and {more} more (code.repos lists each)" if more > 0 else ""
+    tail = f" and {more} more" if more > 0 else ""
     noun, it = ("tier is", "it answers") if len(rows) == 1 else ("tiers are", "they answer")
-    fixes = list(dict.fromkeys(str(r["fix"]) for r in rows if r.get("fix")))
+    fixes = list(dict.fromkeys(str(r["fix"]) for r in rows))
     return [
         Problem(
             "code_tier_failing",
-            "error" if any(r.get("severity") == "error" for r in rows) else "warn",
+            "error" if any(r["severity"] == "error" for r in rows) else "warn",
             f"{len(rows)} code-index {noun} failing, so what {it} trails the "
-            f"branch: {'; '.join(shown)}{tail}.",
-            " ".join(fixes) or "See the tier's error in code.repos.",
+            f"branch: {'; '.join(shown)}{tail}. code.repos and the repository page name "
+            "each entry.",
+            " ".join(fixes),
             source="workers",
         )
     ]

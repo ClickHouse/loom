@@ -157,7 +157,7 @@ def _problem(rows: tuple[dict[str, Any], ...] | None) -> list[Any]:
     ]
 
 
-def test_the_problem_names_the_entry_tier_kind_since_lag_and_fix() -> None:
+def test_the_problem_names_the_tier_kind_since_lag_and_fix_but_no_entry() -> None:
     row = {
         "org": "o",
         "namespace": "code-a",
@@ -171,11 +171,16 @@ def test_the_problem_names_the_entry_tier_kind_since_lag_and_fix() -> None:
     }
     (p,) = _problem((row,))
     assert p.severity == "error" and p.source == "workers"
-    assert (
-        "o/code-a clang (credential, 12 failed passes since 2026-01-01T12:00:00+00:00" in p.message
-    )
-    assert "413 commits behind" in p.message
+    assert "clang (credential, 12 failed passes since 2026-01-01T12:00:00+00:00" in p.message
+    assert "413 commits behind" in p.message and "code-a" not in p.message
     assert p.fix == row["fix"]
+
+
+def test_a_problem_row_carries_the_kinds_fix_without_the_repository() -> None:
+    recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413),)
+    (row,) = recorder.problem_rows(T0 + timedelta(hours=3)) or ()
+    assert row["fix"] == tier_health.fix_for("credential", "")
+    assert "private" not in row["fix"] and "github.com" not in row["fix"]
 
 
 def test_many_failing_tiers_are_one_problem_with_each_fix_once() -> None:
@@ -223,6 +228,9 @@ def test_the_doctor_reads_the_failing_tiers_once_and_none_when_clickhouse_is_dow
 
     client = _Client(fail=down)
     calls: list[str] = []
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "ch_host", "localhost")
+    monkeypatch.setattr(doctor, "_doctor_ch_reachable", lambda *_: (True, "ok"))
 
     async def registry(**_: Any) -> list[Any]:
         calls.append("registry")
@@ -281,3 +289,20 @@ async def test_with_code_intelligence_off_no_record_is_a_problem(
     recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413),)
     await recorder.refresh_failing()
     assert recorder.problem_rows() == ()
+
+
+@pytest.mark.parametrize("why", ["intel_off", "unreachable"])
+def test_the_doctor_skips_the_tier_read_when_nothing_could_answer(
+    why: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.cli import doctor
+
+    monkeypatch.setattr(settings, "code_intel_enabled", why != "intel_off")
+    monkeypatch.setattr(settings, "ch_host", "localhost")
+    monkeypatch.setattr(doctor, "_doctor_ch_reachable", lambda *_: (False, "refused"))
+
+    def never() -> Any:
+        raise AssertionError("no client is made")
+
+    monkeypatch.setattr("server.core.ch.get_client", never)
+    assert doctor._doctor_tier_failures() is None
