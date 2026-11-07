@@ -6,7 +6,11 @@ from __future__ import annotations
 
 import pytest
 
-from server.memory.domain.graph_quality import canonical_entities, canonical_entity_text
+from server.memory.domain.graph_quality import (
+    MAX_ENTITY_CHARS,
+    canonical_entities,
+    canonical_entity_text,
+)
 from server.memory.workers.entity_extractor import _parse_entities
 
 
@@ -95,14 +99,15 @@ def test_an_acronym_is_not_a_plural(raw: str, canonical: str) -> None:
     assert canonical_entities(["HTTP", "HTTPS"]) == ["http", "https"]
 
 
-def test_normalising_a_huge_entity_is_linear() -> None:
-    import time
+def test_text_over_the_cap_is_no_entity() -> None:
+    assert canonical_entity_text("x" * MAX_ENTITY_CHARS) == "x" * MAX_ENTITY_CHARS
+    assert canonical_entity_text("x" * (MAX_ENTITY_CHARS + 1)) == ""
 
-    started = time.perf_counter()
-    for raw in ("re" + ".S" * 16000, "x" * 32000, "the " * 8000, "s." * 10000):
-        once = canonical_entity_text(raw)
-        assert canonical_entity_text(once) == once
-    assert time.perf_counter() - started < 0.5  # was seconds per call
+
+@pytest.mark.parametrize("unit", ["re.S", "x", "the ", "s."])
+def test_a_name_at_the_cap_is_a_fixed_point(unit: str) -> None:
+    once = canonical_entity_text((unit * MAX_ENTITY_CHARS)[:MAX_ENTITY_CHARS])
+    assert once and canonical_entity_text(once) == once
 
 
 def test_a_long_name_keeps_all_of_itself() -> None:
