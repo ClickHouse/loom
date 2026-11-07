@@ -1729,20 +1729,17 @@ def _extract_answers(monkeypatch: pytest.MonkeyPatch, answer: Any, *, slow_s: fl
     reference = extractors.transport
     assert reference is not None
 
-    async def handle(request: httpx.Request) -> httpx.Response:
-        response = await reference.handle_async_request(request)
-        if not request.url.path.endswith("/v1/extract"):
-            return response
-        await response.aread()
-        if slow_s:
-            await asyncio.sleep(slow_s)
-        return answer(response)
-
     class Answering(httpx.AsyncBaseTransport):
         # Not httpx.MockTransport: that reads each response, and the client
         # reads an extractor's answer as a raw stream.
         async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-            return await handle(request)
+            response = await reference.handle_async_request(request)
+            if not request.url.path.endswith("/v1/extract"):
+                return response
+            await response.aread()
+            if slow_s:
+                await asyncio.sleep(slow_s)
+            return answer(response)
 
     monkeypatch.setattr(extractors, "transport", Answering())
 
@@ -1822,6 +1819,13 @@ def _fault(name: str, w: World, monkeypatch: pytest.MonkeyPatch, settings_overri
         monkeypatch.setattr(blobs, "read", bucket_fails)
     elif name == "bucket refuses the artifact's write":
         monkeypatch.setattr(blobs, "put", bucket_refuses_put)
+    elif name == "document row refused after the chunks":
+        from server.knowledge.store import documents as documents_repo
+
+        async def refused(*a: Any, **k: Any) -> None:
+            raise ValueError("the document row is refused")
+
+        monkeypatch.setattr(documents_repo, "insert_one", refused)
     elif name == "embedder down":
         w.fail_embed = BackendUnavailableError("provider down", operation="embed")
     elif name == "embedder past its deadline":
@@ -1849,6 +1853,7 @@ FAULTS = [
     ("embedder down", "retries_exhausted"),
     ("embedder past its deadline", "retries_exhausted"),
     ("embedder defect", "internal"),
+    ("document row refused after the chunks", "internal"),
 ]
 
 

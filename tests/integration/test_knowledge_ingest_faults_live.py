@@ -106,11 +106,11 @@ def _inject(fault: str, monkeypatch: pytest.MonkeyPatch) -> None:
             raise httpx.ConnectError("unreachable", request=request)
 
         monkeypatch.setattr(extractors, "transport", httpx.MockTransport(unreachable))
-    elif fault == "artifact out of contract":
+    elif fault == "block under a missing parent":
         reference = extractors.transport
         assert reference is not None
 
-        class OutOfContract(httpx.AsyncBaseTransport):
+        class MissingParent(httpx.AsyncBaseTransport):
             async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
                 response = await reference.handle_async_request(request)
                 if not request.url.path.endswith("/v1/extract"):
@@ -122,7 +122,7 @@ def _inject(fault: str, monkeypatch: pytest.MonkeyPatch) -> None:
                 body = httpx.ByteStream(json.dumps(artifact).encode())
                 return httpx.Response(200, stream=body)
 
-        monkeypatch.setattr(extractors, "transport", OutOfContract())
+        monkeypatch.setattr(extractors, "transport", MissingParent())
     elif fault == "bucket fails the original's read":
 
         async def bucket_fails(*a: Any, **k: Any) -> bytes:
@@ -148,7 +148,7 @@ def _inject(fault: str, monkeypatch: pytest.MonkeyPatch) -> None:
 
 FAULTS = [
     ("extractor down", "retries_exhausted"),
-    ("artifact out of contract", "invalid_artifact"),
+    ("block under a missing parent", "invalid_artifact"),
     ("bucket fails the original's read", "retries_exhausted"),
     ("embedder down", "retries_exhausted"),
     ("document row refused after the chunks", "internal"),

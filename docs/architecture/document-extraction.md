@@ -540,9 +540,9 @@ fails it `retries_exhausted`. The cases are
 | Embedder defect (any other error)                                                               | `failed` `internal`                        |
 
 An original gone from the store fails `original_gone`, and a publish that stops after its chunks retires them (both in
-the same file). `tests/integration/test_knowledge_ingest_faults_live.py` runs the extractor down, an artifact out of
-contract, the object store's read failing, the embedder down and the document row refused after the chunks against a
-server and its ClickHouse, reading the earlier revision back through `knowledge.get` and `knowledge.search`.
+the same file). `tests/integration/test_knowledge_ingest_faults_live.py` runs the extractor down, a block under a
+missing parent, the object store's read failing, the embedder down and the document row refused after the chunks
+against a server and its ClickHouse, reading the earlier revision back through `knowledge.get` and `knowledge.search`.
 
 ## Datasets
 
