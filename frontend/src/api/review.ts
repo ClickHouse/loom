@@ -82,6 +82,7 @@ export async function repairOrphanDuplicates(
 
 /** How many of the agent's newest eligible memories a merge reads, and how old one must be. */
 export const CONSOLIDATE_READ = 200;
+// The Merge confirmation says "the last hour": change both together.
 export const CONSOLIDATE_MIN_AGE_SECONDS = 3600;
 
 /** POST /v1/memory.consolidate: one model call per cluster of near-duplicate memories of

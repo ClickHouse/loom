@@ -24,7 +24,8 @@ const HEADERS = [
   { label: <span className="sr-only">Decision</span>, width: "150px" },
 ];
 
-const SHARED_KEY = "More than one proposal holds this key, and a decision names only the key, so it cannot pick one.";
+const SHARED_KEY =
+  "More than one proposal holds this key; a decision names only the key, so it cannot choose between them.";
 
 /** Facts on trial (written with `proposed=true`) and how the runs that relied on each
  *  went: accept one to serve it by default, reject it to retire it. */
@@ -78,7 +79,7 @@ export function ProposalsPanel({
       if (r.decided === 0)
         // Not a proposal any more: decided by the policy or by someone else first.
         toast(`Not decided: ${result?.reason || "it is no longer a proposal"}`, "info");
-      else if (result?.status === "conflicted")
+      else if (result.status === "conflicted")
         toast("Accepted; it contradicts another fact, so it waits in Conflicts", "ok");
       else toast(decision === "accept" ? "Accepted" : "Rejected", "ok");
     } catch (e) {
@@ -146,7 +147,7 @@ export function ProposalsPanel({
                 {
                   label: canDecide && (
                     <span className="inline-flex items-center gap-2">
-                      <Unavailable reason={(perKey.get(p.memory_key) ?? 0) > 1 ? SHARED_KEY : null}>
+                      <Unavailable reason={perKey.get(p.memory_key)! > 1 ? SHARED_KEY : null}>
                         <Button
                           type="secondary"
                           htmlType="button"
@@ -157,7 +158,7 @@ export function ProposalsPanel({
                           Accept
                         </Button>
                       </Unavailable>
-                      {(perKey.get(p.memory_key) ?? 0) === 1 && (
+                      {perKey.get(p.memory_key) === 1 && (
                         <RowMenu
                           name={p.memory_key}
                           items={[

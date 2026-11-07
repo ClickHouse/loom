@@ -222,7 +222,7 @@ describe("ReviewQueue", () => {
     expect(screen.getByText("value of city")).toBeVisible();
   });
 
-  it("offers no suggestion on a sensitive conflict, and says a settled one is no longer open", async () => {
+  it("offers no suggestion on a sensitive conflict", async () => {
     vi.mocked(listConflicts).mockResolvedValue({
       rows: [{ ...conflict("vault"), sensitivity: "high" }],
       next_before_version: null,
@@ -231,8 +231,9 @@ describe("ReviewQueue", () => {
     render(<ReviewQueue />);
     await screen.findByText("Sensitive: read it by key in Memories", {}, WAIT);
     expect(screen.queryByRole("button", { name: "Suggest a decision" })).toBeNull();
-    cleanup();
+  });
 
+  it("says a conflict settled meanwhile is no longer open", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
     vi.mocked(proposeRevision).mockResolvedValue({ found: false, suggestions: [] });
     seed("ns-a");

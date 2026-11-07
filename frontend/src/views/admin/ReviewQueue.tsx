@@ -75,6 +75,8 @@ import { PageContainer } from "../../layout/PageContainer";
 // Radix's tab panel attributes, cleared while Conflicts is the only panel.
 const LONE_PANEL = { role: undefined, "aria-labelledby": undefined, tabIndex: undefined };
 
+type QueueTab = "conflicts" | "learnings" | "auto" | "exceptions" | "proposals" | "duplicates";
+
 export function ReviewQueue() {
   const identity = useIdentity();
   // Probe whether the two niche sub-tabs (Learnings, Exceptions) have
@@ -111,13 +113,10 @@ export function ReviewQueue() {
   } | null>(null);
   const hasProposals = probedProposals?.scope === scopeKey && probedProposals.rows.length > 0;
   const tabbed = hasLearnings || hasExceptions || hasAuto || hasProposals || hasDuplicates;
-  // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
-  // they revealed) must not outlive it, or a namespace without that sub-tab strands the
-  // viewer on a hidden panel.
-  const [tab, setTab] = useState("conflicts");
+  const [tab, setTab] = useState<QueueTab>("conflicts");
   // A tab that is no longer offered (its probe found nothing, or its access went) hands the
   // page back to Conflicts.
-  const shown: Record<string, boolean> = {
+  const offered: Record<QueueTab, boolean> = {
     conflicts: true,
     learnings: hasLearnings,
     auto: hasAuto,
@@ -125,10 +124,10 @@ export function ReviewQueue() {
     proposals: hasProposals,
     duplicates: hasDuplicates,
   };
-  const tabShown = shown[tab] ?? false;
+  const tabOffered = offered[tab];
   useEffect(() => {
-    if (!tabShown) setTab("conflicts");
-  }, [tabShown]);
+    if (!tabOffered) setTab("conflicts");
+  }, [tabOffered]);
   // A probe seeds its panel's first view once: a panel opened again (the tabs unmount an
   // inactive one) reads afresh, so a learning promoted or an exception removed since does
   // not come back from the probe.
@@ -138,6 +137,8 @@ export function ReviewQueue() {
       setProbedLearnings(null);
       setProbedExceptions(null);
       setSeedsUsed({ learnings: false, exceptions: false, proposals: false });
+      // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
+      // they revealed) must not outlive it.
       setTab("conflicts");
       setAutoOpened(false);
       listLearnings({ org: identity.org, namespace: identity.namespace }, "pending", LEARNINGS_READ, { signal })
@@ -205,7 +206,7 @@ export function ReviewQueue() {
       <Tabs
         value={tab}
         onValueChange={(t) => {
-          setTab(t);
+          setTab(t as QueueTab);
           if (t === "auto") setAutoOpened(true);
         }}
       >
@@ -646,7 +647,7 @@ function RevisionHint({ memoryId }: { memoryId: string }) {
       <div ref={region} role="status" tabIndex={-1} className="outline-none">
         {hint === "gone" && "This conflict is no longer open."}
         {Array.isArray(hint) && hint.length === 0 && "No suggestion for this conflict."}
-        {Array.isArray(hint) && hint.length > 0 && <p className="text-text-muted">In the reasons, the target is A.</p>}
+        {Array.isArray(hint) && hint.length > 0 && <p className="text-text-muted">“Target” in a reason means A.</p>}
         {Array.isArray(hint) &&
           hint.map((s) => (
             <p key={s.decision}>
