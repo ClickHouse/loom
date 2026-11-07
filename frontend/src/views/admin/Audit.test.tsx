@@ -173,6 +173,26 @@ describe("Audit failure", () => {
   });
 });
 
+describe("Audit exposure tab", () => {
+  afterEach(() => useStore.setState({ whoami: null, myNamespaces: null }));
+  const signIn = (role: "admin" | "writer") =>
+    useStore.setState({
+      whoami: { authenticated: true, subject: "alice", org: "dev", roles: ["writer"] },
+      myNamespaces: [{ namespace: "ns1", role, status: "active" } as never],
+    });
+
+  it("is a tab for the namespace's admin only", async () => {
+    signIn("writer");
+    render(<Audit />);
+    await screen.findByRole("tab", { name: /Erasures/ });
+    expect(screen.queryByRole("tab", { name: /Exposure/ })).toBeNull();
+    cleanup();
+    signIn("admin");
+    render(<Audit />);
+    expect(await screen.findByRole("tab", { name: /Exposure/ })).toBeInTheDocument();
+  });
+});
+
 describe("Audit table", () => {
   it("draws the first read as the table's header over a skeleton, marked busy", async () => {
     vi.mocked(api.listAuditLog).mockReturnValueOnce(new Promise(() => {}));

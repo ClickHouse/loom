@@ -473,6 +473,120 @@ export async function listErasures(
   return post("/v1/erasure.list", body, opts.signal);
 }
 
+/** What an erasure or an export covers: one namespace, or one user across the org. */
+export interface ErasureScope {
+  scope_type: "namespace" | "user_id";
+  scope_value: string;
+}
+
+export interface ErasureStepResult {
+  step: string;
+  rows_affected: number;
+  notes: string;
+}
+
+/** Mirrors `server/erasure/api/erasure.py::ErasureRequestOutput`. */
+export interface ErasureRequestResult {
+  erasure_id: string;
+  status: ErasureListRow["status"];
+  steps: ErasureStepResult[];
+  residue_count: number;
+  failure_reason: string;
+}
+
+/** POST /v1/erasure.request: runs the delete saga and answers when it ends. `purge`
+ *  hard-deletes instead of tombstoning, with no restore window. */
+export async function requestErasure(
+  org: string,
+  scope: ErasureScope,
+  requester: string,
+  purge: boolean,
+): Promise<ErasureRequestResult> {
+  return post("/v1/erasure.request", { org, ...scope, requester, purge });
+}
+
+/** Mirrors `server/erasure/api/erasure.py::ErasureStatusOutput`. */
+export interface ErasureStatus {
+  found: boolean;
+  erasure_id: string;
+  scope_type: string | null;
+  scope_value: string | null;
+  requester: string | null;
+  status: ErasureListRow["status"] | null;
+  current_step: number | null;
+  requested_at: string | null;
+  completed_at: string | null;
+  failure_reason: string | null;
+  residue_count: number;
+  residue: Record<string, number>;
+  verified_at: string | null;
+}
+
+export async function getErasureStatus(erasureId: string, opts: RequestOpts = {}): Promise<ErasureStatus> {
+  return post("/v1/erasure.status", { erasure_id: erasureId }, opts.signal);
+}
+
+/** Mirrors `server/memory/api/models_crud.py::MemoryClearOutput`. */
+export interface MemoryClearResult {
+  total: number;
+  locked_skipped: number;
+}
+
+/** POST /v1/memory.clear: tombstones every memory one agent holds in the namespace
+ *  (restorable for 14 days). The agent is sent again as the server's `confirm_subject`. */
+export async function clearAgentMemories(
+  id: Pick<Identity, "org" | "namespace">,
+  agent: string,
+): Promise<MemoryClearResult> {
+  return post("/v1/memory.clear", { org: id.org, namespace: id.namespace, agent, confirm_subject: agent });
+}
+
+/** One (token, agent) that read the namespace: `server/memory/api/models_exposure.py`. */
+export interface ExposureRow {
+  actor: string;
+  agent: string;
+  distinct_keys: number;
+  calls: number;
+  /** distinct_keys / the namespace's live memories. */
+  fraction: number;
+  first_hour: string;
+  last_hour: string;
+}
+
+/** Mirrors `server/memory/api/models_exposure.py::MemoryOwnerReportOutput` (the parts shown). */
+export interface OwnerReport {
+  user_id: string;
+  live_rows: number;
+  reads: { namespace: string; agent: string; actor: string; calls: number; distinct_keys: number; last_read: string }[];
+}
+
+/** POST /v1/memory.owner_report: one user's memory in this namespace and who read it. */
+export async function getOwnerReport(id: Pick<Identity, "org" | "namespace">, userId: string): Promise<OwnerReport> {
+  return post("/v1/memory.owner_report", { org: id.org, namespace: id.namespace, user_id: userId });
+}
+
+/** POST /v1/memory.exposure_summary: how many distinct memories each token read. */
+export async function getExposureSummary(
+  id: Pick<Identity, "org" | "namespace">,
+  sinceHours: number,
+  opts: RequestOpts = {},
+): Promise<{ namespace_rows: number; rows: ExposureRow[] }> {
+  return post(
+    "/v1/memory.exposure_summary",
+    { org: id.org, namespace: id.namespace, since_hours: sinceHours, limit: 200 },
+    opts.signal,
+  );
+}
+
+/** POST /v1/erasure.export: everything Loom holds for the scope, as one JSON object. */
+export async function exportErasureScope(
+  org: string,
+  scope: ErasureScope,
+  requester: string,
+): Promise<Record<string, unknown>> {
+  return post("/v1/erasure.export", { org, ...scope, requester });
+}
+
 // ===== Extraction Quality =====
 
 export interface ExtractionQualityRow {

@@ -1,14 +1,17 @@
 import { memo, startTransition, useDeferredValue, useEffect, useMemo, useRef, useState, type Ref } from "react";
-import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
-import { autoResolveReasonText, listAuditLog, listErasures, type AuditEntry, type ErasureListRow } from "../../api";
+import { autoResolveReasonText, listAuditLog, type AuditEntry } from "../../api";
+import { ErasuresPanel } from "./Erasures";
+import { ExposurePanel } from "./Exposure";
 import { useStore, useIdentity } from "../../lib/state";
 import { hasOrgAdminClaim } from "../../lib/role";
+import { canCall } from "../../lib/canCall";
+import { useNamespaceRole } from "../../lib/namespaceRole";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
@@ -21,7 +24,7 @@ import { useAbortableEffect } from "../../lib/hooks";
 import { isRecord } from "../../lib/guards";
 import { PageContainer } from "../../layout/PageContainer";
 import { PHONE_QUERY, useMedia } from "../../lib/useMedia";
-import { PageHeader, TabTrigger, TipTarget } from "../../components/ui";
+import { PageHeader, TabTrigger } from "../../components/ui";
 
 // Events recorded by the control plane that don't represent a user
 // or agent action — operator observability that pollutes the user-
@@ -187,9 +190,9 @@ const ACTIVITY_FIELDS = ["ts", "event_type", "actor", "subject"];
 
 const FIRST_SCREEN_ROWS = 12;
 
-type ActivityTab = "events" | "erasures";
+type ActivityTab = "events" | "erasures" | "exposure";
 // One name per tab, for its trigger and the document title.
-const ACTIVITY_TABS: Record<ActivityTab, string> = { events: "Events", erasures: "Erasures" };
+const ACTIVITY_TABS: Record<ActivityTab, string> = { events: "Events", erasures: "Erasures", exposure: "Exposure" };
 
 export function Audit() {
   const identity = useIdentity();
@@ -217,6 +220,8 @@ export function Audit() {
   // namespace=undefined → handler self-scopes via resolve_org_scope, which
   // widens to the whole org only at ORG_ADMIN.
   const isPlatformAdmin = hasOrgAdminClaim(whoami);
+  // The tab reads on open, so only a role known to reach the op shows it.
+  const showExposure = canCall("memory.exposure_summary", useNamespaceRole(identity.namespace), whoami);
   const scope = isPlatformAdmin ? { org: identity.org } : { org: identity.org, namespace: identity.namespace };
   // The window the first page read; older pages keep to it.
   const since = useRef("");
@@ -378,6 +383,11 @@ export function Audit() {
           <TabTrigger value="erasures" icon="trash">
             {ACTIVITY_TABS.erasures}
           </TabTrigger>
+          {showExposure && (
+            <TabTrigger value="exposure" icon="eye">
+              {ACTIVITY_TABS.exposure}
+            </TabTrigger>
+          )}
         </Tabs.TriggersList>
         <Tabs.Content value="events">
           <ListToolbar
@@ -437,106 +447,17 @@ export function Audit() {
           )}
         </Tabs.Content>
         <Tabs.Content value="erasures">
-          <ErasuresPanel org={identity.org} />
+          <ErasuresPanel />
         </Tabs.Content>
+        {showExposure && (
+          <Tabs.Content value="exposure">
+            <ExposurePanel />
+          </Tabs.Content>
+        )}
       </Tabs>
     </PageContainer>
   );
 }
-
-/**
- * ErasuresPanel — compliance audit roll-up: every right-to-erasure
- * request issued in this org, with status, requester, scope, and
- * step-completed progress. Visibility scoped by erasure.list itself
- * (platform_admin sees all; everyone else sees namespace-scoped
- * erasures on their accessible namespaces).
- */
-function ErasuresPanel({ org }: { org: string }) {
-  const [rows, setRows] = useState<ErasureListRow[] | null>(null);
-  const [error, setError] = useState<unknown>(null);
-  const [reload, setReload] = useState(0);
-
-  useAbortableEffect(
-    (signal, live) => {
-      setError(null);
-      setRows(null);
-      listErasures({ org }, { limit: 100, signal })
-        .then((r) => {
-          if (live()) setRows(r.rows || []);
-        })
-        .catch((e) => {
-          if (live()) setError(e);
-        });
-    },
-    [org, reload],
-  );
-
-  if (error) {
-    return <ListState kind="error" things="erasures" error={error} onRetry={() => setReload((n) => n + 1)} />;
-  }
-  if (rows !== null && rows.length === 0) {
-    return (
-      <ListState
-        kind="empty"
-        icon="trash"
-        title="No erasures yet"
-        description="When anyone issues an erasure.request (right-to-be-forgotten or operator-driven cleanup), it lands here with status + provenance. Tombstoned individual memories are recoverable from Memories → Recently deleted; this surface is the org-wide saga history."
-      />
-    );
-  }
-
-  // The first read is the table's header over a skeleton.
-  return (
-    <Table
-      aria-label="Erasures"
-      aria-busy={rows === null || undefined}
-      noDataMessage={rows === null ? <TableSkeleton label="Loading erasures" /> : undefined}
-      size="sm"
-      headers={[
-        { label: "Scope" },
-        { label: "Requester" },
-        { label: "Status" },
-        { label: "Steps", width: "80px" },
-        { label: "Requested", width: "120px" },
-        { label: "Completed", width: "120px" },
-      ]}
-      rows={(rows ?? []).map((r) => ({
-        id: r.erasure_id,
-        title: r.failure_reason || r.erasure_id,
-        items: [
-          {
-            label: (
-              <span className="font-mono text-xs">
-                <span className="text-text-muted">{r.scope_type}=</span>
-                {r.scope_value}
-              </span>
-            ),
-          },
-          { label: <span className="font-mono text-xs">{r.requester}</span> },
-          {
-            label: (
-              <span className="inline-flex items-center gap-2">
-                <Badge text={r.status} state={ERASURE_STATE[r.status] ?? "neutral"} size="sm" />
-                {r.reversals_count > 0 && (
-                  <TipTarget
-                    tip={`${r.reversals_count} memor${r.reversals_count === 1 ? "y" : "ies"} restored via memory.restore — the "completed" status overstates what's actually erased.`}
-                  >
-                    <Badge text={`${r.reversals_count} reversed`} state="warning" size="sm" />
-                  </TipTarget>
-                )}
-              </span>
-            ),
-          },
-          { label: <span className="tabular">{r.steps_completed_count}</span> },
-          { label: <ListTime time={r.requested_at} quiet /> },
-          { label: r.completed_at ? <ListTime time={r.completed_at} quiet /> : "—" },
-        ],
-      }))}
-    />
-  );
-}
-
-const ERASURE_STATE: Record<string, BadgeState> = { completed: "success", failed: "danger" };
 
 const EVENT_HEADERS = [{ label: "Event" }, { label: "By", width: "220px" }, { label: "When", width: "120px" }];
 
