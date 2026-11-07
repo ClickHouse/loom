@@ -16,7 +16,6 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -28,25 +27,6 @@ pytestmark = pytest.mark.usefixtures("ch_target_required")
 
 FIRST = b"-- Raw events are kept for 30 days.\nCREATE TABLE marmot_events (id UInt64) ENGINE = MergeTree ORDER BY id;\n"
 SECOND = b"-- Raw events are kept for 90 days.\nCREATE TABLE quokka_events (id UInt64) ENGINE = MergeTree ORDER BY id;\n"
-
-
-@pytest.fixture
-def reference_extractor(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """The reference extractor in this process, as the job's only service."""
-    from loom_extractor import service
-    from server.knowledge.app import extractors
-    from server.settings import settings
-
-    token = "t" * 24
-    app = service.create_app(service.Config(token=token))
-    monkeypatch.setattr(extractors, "transport", httpx.ASGITransport(app=app))
-    monkeypatch.setattr(settings, "document_extractor_url", "http://extractor:8790")
-    monkeypatch.setattr(settings, "document_extractors_json", "{}")
-    monkeypatch.setattr(settings, "document_extractor_token", token)
-    monkeypatch.setattr(settings, "document_extractor_tokens_json", "{}")
-    extractors._declared.clear()
-    yield
-    extractors._declared.clear()
 
 
 async def _op(c: httpx.AsyncClient, op: str, **body: Any) -> dict[str, Any]:

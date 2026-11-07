@@ -155,6 +155,26 @@ def require_fake_llm(control_plane_url: str) -> None:
 
 
 @pytest.fixture
+def reference_extractor(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """The reference extractor in this process, as the only service of a
+    knowledge_ingest job the test runs in this process."""
+    from loom_extractor import service
+    from server.knowledge.app import extractors
+    from server.settings import settings
+
+    token = "t" * 24
+    app = service.create_app(service.Config(token=token))
+    monkeypatch.setattr(extractors, "transport", httpx.ASGITransport(app=app))
+    monkeypatch.setattr(settings, "document_extractor_url", "http://extractor:8790")
+    monkeypatch.setattr(settings, "document_extractors_json", "{}")
+    monkeypatch.setattr(settings, "document_extractor_token", token)
+    monkeypatch.setattr(settings, "document_extractor_tokens_json", "{}")
+    extractors._declared.clear()
+    yield
+    extractors._declared.clear()
+
+
+@pytest.fixture
 def ch_client() -> Iterator[Any]:
     """Sync client on the configured store. Synchronous inserts, and no block
     deduplication: two identical event rows are two events."""

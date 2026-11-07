@@ -3,7 +3,7 @@ Markdown, SQL, TOML, CSV, HTML and PDF files is uploaded and ingested (the job a
 the reference extractor run in this process, as a knowledge_ingest worker pass
 runs one), then knowledge.search answers labelled queries in three slices:
 
-- exact identifiers: an error code, a table, a key path or a form number;
+- exact identifiers: an error code, a table, a view, a key path or a form number;
 - table questions: a row of a CSV table cut into several blocks, found by its
   values in its own block, and a row of tables beside others with the same columns;
 - filtered recall: with `formats`, `block_types` or `tags` set, every hit is inside
@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -216,25 +215,6 @@ QUERIES = [
     ),
     Query("filtered recall", "Scale plan", "repo://pricing.html", "Scale", {"tags": ["billing"]}),
 ]
-
-
-@pytest.fixture
-def reference_extractor(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """The reference extractor in this process, as the job's only service."""
-    from loom_extractor import service
-    from server.knowledge.app import extractors
-    from server.settings import settings
-
-    token = "t" * 24
-    app = service.create_app(service.Config(token=token))
-    monkeypatch.setattr(extractors, "transport", httpx.ASGITransport(app=app))
-    monkeypatch.setattr(settings, "document_extractor_url", "http://extractor:8790")
-    monkeypatch.setattr(settings, "document_extractors_json", "{}")
-    monkeypatch.setattr(settings, "document_extractor_token", token)
-    monkeypatch.setattr(settings, "document_extractor_tokens_json", "{}")
-    extractors._declared.clear()
-    yield
-    extractors._declared.clear()
 
 
 async def _op(c: httpx.AsyncClient, op: str, **body: Any) -> dict[str, Any]:
