@@ -20,13 +20,16 @@ arrive at their rate whether or not earlier ones have answered (open loop),
 so a slow server meets the same load, and a rejected call is not retried. It
 reports, per op, the calls, p50 / p95 / p99 latency of the successful ones,
 errors by status and the rejected ones (429 and 503); per ingest, the time from
-knowledge.ingest to the job's end; and the queue depth over the run. It exits 1
-when a measured p95 or p99 is past its declared level, or a small-document
-ingest did not end ready, and 2 when the server cannot run the load (no ingest
-worker or no extractor, which knowledge.inspect reports).
+its job's creation to its end (the server's timestamps); and the queue depth over
+the run. It exits 1 when a measure is past its declared level or has calls that
+failed (not counting rejections), or a small-document ingest did not end ready.
+It exits 2 when the server cannot run the load: knowledge.inspect reports the
+ingest worker off or no extractor in this server's settings, or no process takes
+a canary document's job within CANARY_S.
 
-The server needs its ingest worker on (`LOOM_BACKGROUND_WORKERS` not `off`) and an
-extractor (`LOOM_DOCUMENT_EXTRACTOR_URL`). Everything is written into a fresh
+The deployment needs a process running the ingest worker (a server started with
+`LOOM_BACKGROUND_WORKERS=on`, or a deployment, `LOOM_DEPLOYMENT=1`, under `auto`)
+and an extractor (`LOOM_DOCUMENT_EXTRACTOR_URL`). Everything is written into a fresh
 `bench-…` namespace of `--org` and left there. Nothing calls a model provider:
 run the server on the fake embedder to spend nothing.
 
@@ -49,6 +52,7 @@ import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +71,7 @@ INGEST_SMALL = "ingest small document"
 REJECTED = (429, 503)
 OPEN = ("pending", "processing")
 POLL_S = 1.0  # between knowledge.ingest_status reads of one job: they share its budget
+CANARY_S = 60.0  # a deployment that takes no job in this long runs no worker
 INGEST_WAIT_S = 600  # past it a job counts as still open: the run reports it, not hangs
 
 
@@ -127,12 +132,17 @@ class Tally:
 
 def verdict(report: dict[str, dict[str, Any]], levels: dict[str, tuple[float, float]]) -> list[str]:
     """The measures past their declared level, each with its numbers. A measure the
-    run made no successful call of is past: nothing was measured."""
+    run made no successful call of is past (nothing was measured), and so is one
+    with any error that is not a rejection: fast answers to the calls that worked
+    say nothing of the ones that failed."""
     past = []
     for measure, (p95, p99) in levels.items():
         got = report.get(measure)
+        failed = {c: n for c, n in (got or {}).get("errors", {}).items() if int(c) not in REJECTED}
         if not got or not got["ok"]:
             past.append(f"{measure}: nothing measured")
+        elif failed:
+            past.append(f"{measure}: {sum(failed.values())} calls failed {failed}")
         elif got["p95_ms"] > p95 or got["p99_ms"] > p99:
             past.append(
                 f"{measure}: p95 {got['p95_ms']} ms (level {p95:g}), p99 {got['p99_ms']} ms"
@@ -157,29 +167,40 @@ class Run:
         self.c, self.org, self.ns, self.deadline = c, org, ns, deadline
         self.tallies, self.small_states = tallies, small_states
         self.ingests: dict[str, dict[str, Any]] = {}  # large and CSV: their outcome
-        self.depth: list[int] = []
+        self.depth: list[tuple[int, int]] = []  # (sample slot, open jobs)
         self.dataset: dict[str, str] | None = None
 
     def live(self) -> bool:
         return time.monotonic() < self.deadline
 
     async def op(self, name: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """The call's status (0 when no answer came) and its JSON body, read only for a
+        2xx: a proxy's error page is a failed call, tallied like any other."""
         t0 = time.perf_counter()
         try:
             r = await self.c.post(
                 f"/v1/{name}", json={"org": self.org, "namespace": self.ns, **body}
             )
-            status, out = r.status_code, (r.json() if r.content else {})
+            status = r.status_code
         except httpx.HTTPError:
-            status, out = 0, {}
+            r, status = None, 0
         if name in self.tallies:
             self.tallies[name].add((time.perf_counter() - t0) * 1000, status)
-        return status, out
+        if r is None or not 200 <= status < 300:
+            return status, {}
+        try:
+            out = r.json()
+        except ValueError:
+            return 0, {}
+        return status, out if isinstance(out, dict) else {}
 
-    async def ingest(self, data: bytes, filename: str, uri: str) -> tuple[str, float]:
+    async def ingest(
+        self, data: bytes, filename: str, uri: str, wait_s: float = INGEST_WAIT_S
+    ) -> tuple[str, float]:
         """Upload and ingest `data`, then wait for its job to end: its state and the
-        seconds from knowledge.ingest to that end ("" when it never got a job, "still
-        open" past INGEST_WAIT_S)."""
+        seconds from the job's creation to its end, by the server's own timestamps, so
+        the 1 s poll adds nothing ("not queued" when the upload or the ingest failed,
+        "still open" past `wait_s`)."""
         t0 = time.perf_counter()
         try:
             up = await self.c.post(
@@ -197,27 +218,26 @@ class Run:
             status = 0
         self.tallies["knowledge.upload"].add((time.perf_counter() - t0) * 1000, status)
         if status != 201:
-            return "", 0.0
+            return "not queued", 0.0
         status, job = await self.op(
             "knowledge.ingest", {"upload_id": up.json()["upload_id"], "source_uri": uri}
         )
         if status != 200:
-            return "", 0.0
-        queued = time.perf_counter()
-        while time.perf_counter() - queued < INGEST_WAIT_S:
+            return "not queued", 0.0
+        polled = time.perf_counter()
+        while time.perf_counter() - polled < wait_s:
             await asyncio.sleep(POLL_S)
             _, st = await self.op("knowledge.ingest_status", {"ingestion_id": job["ingestion_id"]})
             if st.get("state") and st["state"] not in OPEN:
-                return str(st["state"]), time.perf_counter() - queued
-        return "still open", time.perf_counter() - queued
+                return str(st["state"]), _job_seconds(st)
+        return "still open", time.perf_counter() - polled
 
     async def small_ingest(self, n: int) -> None:
         text = f"# Note {n}\n\nReplica {n % 7} handled request batch {n} in order.\n"
         state, seconds = await self.ingest(text.encode(), f"note-{n}.md", f"repo://notes/{n}.md")
-        if state:
-            self.small_states[state] += 1
-            if state == "ready":
-                self.tallies[INGEST_SMALL].add(seconds * 1000, 200)
+        self.small_states[state] += 1
+        if state == "ready":
+            self.tallies[INGEST_SMALL].add(seconds * 1000, 200)
 
     async def one_ingest(self, label: str, data: bytes, filename: str, uri: str) -> None:
         state, seconds = await self.ingest(data, filename, uri)
@@ -265,12 +285,35 @@ class Run:
             await asyncio.sleep(max(0.0, start + n / rate - time.monotonic()))
         await asyncio.gather(*running)
 
-    async def sampler(self, every: float) -> None:
+    async def sampler(self, every: float, start: float) -> None:
+        """The namespace's open jobs every `every` seconds, as (second of the run,
+        depth); a read that failed is no sample, not an empty queue."""
         while self.live():
-            _, got = await self.op("knowledge.inspect", {})
+            status, got = await self.op("knowledge.inspect", {})
             totals = got.get("ingestions") or {}
-            self.depth.append(int(totals.get("pending") or 0) + int(totals.get("processing") or 0))
+            if status == 200 and totals.get("pending") is not None:
+                at = int((time.monotonic() - start) // every)
+                self.depth.append((at, int(totals["pending"]) + int(totals.get("processing") or 0)))
             await asyncio.sleep(every)
+
+
+def _job_seconds(status: dict[str, Any]) -> float:
+    """A finished job's time from its creation to its last update, by the server's
+    clock (`knowledge.ingest_status` `created_at` / `updated_at`)."""
+    created, updated = (
+        datetime.fromisoformat(str(status[k])) for k in ("created_at", "updated_at")
+    )
+    return (updated - created).total_seconds()
+
+
+def combined_depth(series: list[list[tuple[int, int]]]) -> dict[int, int]:
+    """The open jobs across tenants per sample slot: each tenant's last reading in
+    the slot, summed over the tenants that read one there."""
+    by_slot: dict[int, dict[int, int]] = {}
+    for tenant, samples in enumerate(series):
+        for slot, depth in samples:
+            by_slot.setdefault(slot, {})[tenant] = depth
+    return {slot: sum(d.values()) for slot, d in sorted(by_slot.items())}
 
 
 def _pdf(pages: int) -> bytes:
@@ -288,6 +331,10 @@ def _csv(rows: int) -> bytes:
     return ("order_id,region,amount\n" + body).encode()
 
 
+def _fresh_tallies() -> dict[str, Tally]:
+    return {m: Tally() for m in (*OPS, INGEST_SMALL)}
+
+
 async def main(args: argparse.Namespace) -> int:
     levels = service_levels(DOC.read_text())
     ns = args.namespace or f"bench-{uuid.uuid4().hex[:8]}"
@@ -295,7 +342,7 @@ async def main(args: argparse.Namespace) -> int:
     # tenant alone, so more tenants load the server harder within them.
     orgs = [args.org] if args.tenants == 1 else [f"{args.org}-{k}" for k in range(args.tenants)]
     headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}
-    tallies = {m: Tally() for m in (*OPS, INGEST_SMALL)}
+    tallies = _fresh_tallies()
     small_states: Counter[str] = Counter()
     async with httpx.AsyncClient(base_url=args.base_url, timeout=120, headers=headers) as c:
         probe = await c.post("/v1/knowledge.inspect", json={"org": orgs[0], "namespace": ns})
@@ -304,7 +351,18 @@ async def main(args: argparse.Namespace) -> int:
             print(f"the server cannot run the load: knowledge.inspect said {probe.status_code}"
                   f" {totals or probe.text[:300]}", file=sys.stderr)  # fmt: skip
             return 2
-        deadline = time.monotonic() + args.duration
+        # knowledge.inspect reads this server's settings, not whether any process runs
+        # the worker: a canary job, outside the run's tallies, shows one takes jobs.
+        canary = Run(c, orgs[0], ns, time.monotonic(), _fresh_tallies(), Counter())
+        state, _ = await canary.ingest(
+            b"# Canary\n\nReady.\n", "canary.md", "repo://canary.md", CANARY_S
+        )
+        if state in ("not queued", "still open"):
+            print(f"the canary ingest was {state} after {CANARY_S:g} s: is a worker running?",
+                  file=sys.stderr)  # fmt: skip
+            return 2
+        start = time.monotonic()
+        deadline = start + args.duration
         runs = [Run(c, org, ns, deadline, tallies, small_states) for org in orgs]
         tasks = [
             # One large PDF for the whole run; each tenant its own CSV to query.
@@ -313,7 +371,7 @@ async def main(args: argparse.Namespace) -> int:
         for run in runs:
             tasks += [
                 run.one_ingest("csv", _csv(args.csv_rows), "orders.csv", "repo://orders.csv"),
-                run.sampler(args.sample_seconds),
+                run.sampler(args.sample_seconds, start),
                 run.paced(args.ingest_rate, run.small_ingest),
                 run.paced(args.search_rate, run.search),
                 run.paced(args.query_rate, run.query),
@@ -323,8 +381,7 @@ async def main(args: argparse.Namespace) -> int:
     past = verdict(report, levels)
     if small_states.keys() - {"ready"}:
         past.append(f"{INGEST_SMALL}: ended {dict(small_states)}")
-    # The open jobs across tenants, sample by sample (each samples its own namespace).
-    depth = [sum(d) for d in zip(*(r.depth for r in runs), strict=False)]
+    depth = combined_depth([r.depth for r in runs])
     out = {
         "namespace": ns,
         "tenants": orgs,
@@ -337,7 +394,11 @@ async def main(args: argparse.Namespace) -> int:
         "measures": report,
         "small_ingests": dict(small_states),
         "ingests": {f"{r.org} {k}": v for r in runs for k, v in r.ingests.items()},
-        "queue_depth": {"max": max(depth, default=0), "samples": depth},
+        "queue_depth": {
+            "max": max(depth.values(), default=0),
+            "every_s": args.sample_seconds,
+            "by_sample": list(depth.values()),
+        },
         "levels": {m: {"p95_ms": a, "p99_ms": b} for m, (a, b) in levels.items()},
         "past_level": past,
     }

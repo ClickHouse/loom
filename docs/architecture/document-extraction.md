@@ -698,10 +698,11 @@ load in several orgs at once, since a namespace's rate limits (`server/core/rate
 reports p50, p95 and p99 per op, errors and rejected calls (429, 503), and exits non-zero when a measure is past its
 level.
 
-Ingest throughput is bounded per replica: the worker runs one job per pass and waits
-`LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` between passes, so a replica finishes fewer than one job per interval, and a
-job queued behind a large file waits for it. Small documents arriving faster than that queue up, and the ingest level is
-met only below it.
+Ingest throughput is bounded for the whole deployment: one process runs the ingest worker (the supervisor that holds
+the workers' lease under `LOOM_BACKGROUND_WORKERS=auto`), it runs one job per pass, and it waits
+`LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` between passes even after one that did work. The deployment therefore finishes
+fewer than one job per interval however many replicas serve, and a job queued behind a large file waits for it. Small
+documents arriving faster than that queue up, and the ingest level is met only below it.
 
 ## Datasets
 
