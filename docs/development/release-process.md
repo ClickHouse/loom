@@ -85,8 +85,9 @@ It runs at the version `server/__init__.py` names. Its images go to run artifact
 without the provenance and SBOM attestations that only a registry keeps, and `docker-smoke` loads them
 from there. The `preflight` job reports each missing [prerequisite](#before-the-first-release) as a
 warning instead of failing. What only a published release exercises, a dry run does not: `docker-tag`
-(joining each image's two digests, the Latest decision, `:latest`), the GitHub Release, and the
-registry publishes.
+(joining each image's two digests, the Latest decision, `:latest`), the GitHub Release, the
+registry publishes, and the published-images check (`scripts/release/published_images.sh`) with the
+skipped-build path it selects.
 
 ## Before the first release
 
@@ -177,10 +178,10 @@ the package's visibility to public in its settings, then re-run the failed jobs.
 The server and extractor images are published before the GitHub Release, so an installer
 shown on the release page never points at a missing image.
 
-**On manual dispatch** (`workflow_dispatch` on a tag ref), the same jobs run, except the image
-builds when the images are already published (below) (`build`
+**On manual dispatch** (`workflow_dispatch` on a tag ref), the same jobs run (`build`
 also runs the TypeScript SDK's `npm run check`: lint, types, version, README examples,
-tests), and then three publish jobs:
+tests), building no image when the images are already published (below), and then three publish
+jobs:
 
 | Job            | Publishes                                                        | How                                                                                                                                                                                                                                   |
 | -------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

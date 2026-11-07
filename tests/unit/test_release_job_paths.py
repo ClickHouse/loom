@@ -65,11 +65,16 @@ def run(*, event: str, dry_run: bool | None, published: bool, fail: set[str] = f
     }
     plain = {"inputs.dry_run": dry_run, "github.event_name": event}
 
-    def lookup(job: str, field: str) -> str:
-        return result[job] if field == "result" else outputs.get((job, field), "")
-
-    context = {"N": lookup, "C": plain.__getitem__}
     for name in JOBS:  # the file lists each job after the ones it needs
+        direct = set(_needs(JOBS[name]))
+
+        # needs.X.* is defined for a direct need only; anything else reads as ''.
+        def lookup(job: str, field: str, direct: set[str] = direct) -> str:
+            if job not in direct:
+                return ""
+            return result[job] if field == "result" else outputs.get((job, field), "")
+
+        context = {"N": lookup, "C": plain.__getitem__}
         condition = JOBS[name].get("if", "")
         implicit = not STATUS.search(str(condition))
         ready = all(result[up] == "success" for up in _upstream(name)) if implicit else True
@@ -112,6 +117,22 @@ def test_a_dry_run_builds_and_smokes_and_publishes_nothing() -> None:
 def test_a_failure_before_the_release_publishes_nothing(failed: str) -> None:
     ran = run(event="workflow_dispatch", dry_run=False, published=False, fail={failed})
     assert not ran & ({"github-release"} | REGISTRIES)
+
+
+def test_a_tag_push_whose_images_are_published_builds_and_tags_none() -> None:
+    """A re-run of every job, or the tag pushed again at the same commit."""
+    ran = run(event="push", dry_run=None, published=True)
+    assert ran == BUILD | {"docker-smoke", "github-release"}
+
+
+def test_a_failed_smoke_on_the_published_tag_publishes_nothing() -> None:
+    ran = run(event="workflow_dispatch", dry_run=False, published=True, fail={"docker-smoke"})
+    assert not ran & ({"github-release"} | REGISTRIES)
+
+
+def test_a_dry_run_whose_build_fails_smokes_nothing() -> None:
+    ran = run(event="workflow_dispatch", dry_run=True, published=False, fail={"docker"})
+    assert "docker-smoke" not in ran
 
 
 def test_a_failed_release_step_publishes_no_registry() -> None:
