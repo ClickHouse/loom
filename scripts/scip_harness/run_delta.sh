@@ -33,9 +33,14 @@ cmake_configure() {
   if ! cmake "$@" >"$WORK/cmake.log" 2>&1; then
     tail -n 20 "$WORK/cmake.log"
     grep -m1 -A2 "CMake Error" "$WORK/cmake.log" || true
-    echo ">> cmake configure failed" >&2
-    exit 1
+    configure_failed
   fi
+}
+
+# configure_failed: the line the tier-health record classifies as `cmake`, then exit.
+configure_failed() {
+  echo ">> cmake configure failed" >&2
+  exit 1
 }
 
 # cache_unusable: the cache was made in another directory (CMake refuses it), or
@@ -64,8 +69,7 @@ if [[ ! -f build/compile_commands.json || ! -f build/CMakeCache.txt ]] || cache_
   CXX_BIN=${CXX:-$(command -v clang++-21 || command -v clang++-18 || command -v clang++ || true)}
   if [[ -z "$CC_BIN" || -z "$CXX_BIN" ]]; then
     echo "no clang on PATH ($PATH)"
-    echo ">> cmake configure failed" >&2
-    exit 1
+    configure_failed
   fi
   echo ">> cmake configure (compile_commands.json) with $CXX_BIN…"
   # CMake refuses to switch compilers on an existing cache ("You have changed

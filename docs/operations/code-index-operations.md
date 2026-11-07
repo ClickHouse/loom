@@ -239,16 +239,16 @@ remains available. TypeScript projects have their dependencies installed
 automatically in their checkout.
 
 The C/C++ harness runs the repository's CMake configure (compile database only, no
-build) on the first run in a tree, or when its build tree has no `CMakeCache.txt` or one
-made in another directory or naming a compiler the host no longer has. It runs the
-configure again on the existing cache before a full index and for a delta whose window
-adds a `.cpp`, `.cc` or `.cxx` file or adds, changes or deletes a `CMakeLists.txt` or
-`.cmake` file, because the compile database lists only the translation units of the tree
-it was configured on. A reconfigure that fails fails the run with CMake's last lines,
-and the entry's `clang` record (`clang_full` for a full index) reads failing with kind
-`cmake` (`disk` when the disk is full). A failed delta moves no watermark, so its
-window, with the translation units it adds, is retried every pass; a full index is
-retried 6 hours later, as any failed full run is.
+build) on the first run in a tree, or when its `CMakeCache.txt` is missing, was made in
+another directory, or names a compiler the host no longer has. It runs the configure
+again on the existing cache before a full index and for a delta whose window adds a
+`.cpp`, `.cc` or `.cxx` file or adds, changes or deletes a `CMakeLists.txt` or `.cmake`
+file, because the compile database lists only the translation units of the tree it was
+configured on. A reconfigure that fails fails the run with CMake's last lines, and the
+entry's `clang` record (`clang_full` for a full index) reads failing with kind `cmake`
+(`disk` when the disk is full). A failed delta moves no watermark, so its window, with
+the translation units it adds, is retried every pass; a full index is retried 6 hours
+later, as any failed full run is.
 
 A large C++ tree is the heavy case: a ClickHouse-sized checkout with its submodules
 and build tree is about 30 GB beside the mirror, and scip-clang holds a translation
