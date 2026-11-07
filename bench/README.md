@@ -116,9 +116,8 @@ built from it is right.
   nDCG@10 and all-gold recall per query kind (shared section layouts, error
   codes, paraphrases, old and current policy versions, multi-document
   questions), and the top-hit similarity on answerable and unanswerable
-  queries; `--param KEY=VALUE` sets one ranking knob of the search (mode,
-  lexical weight, spans, section collapse, reranker); filters, scope and depth
-  are refused.
+  queries; `--param KEY=VALUE` sets one ranking knob of the search
+  (`SEARCH_FIELDS` in the harness); filters, scope and depth are refused.
 - **`beir_knowledge.py`** — BEIR passage retrieval through `knowledge.search`:
   nDCG@10, recall@10/100 and MRR@10 against the dataset's graded judgements;
   `--fetch` pulls one small dataset (checked against its published MD5) into
