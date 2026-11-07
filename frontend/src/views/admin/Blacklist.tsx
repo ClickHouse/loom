@@ -62,8 +62,8 @@ export interface PrivacyFilterStarter {
 
 /** `compact` (the Settings → Memory tab): one add row, a divided list, one muted line
  *  when empty — no framed form, no icon block. The default shape is the Guardrails admin
- *  page's. Its list is read once per mount while add and sweep use the current namespace,
- *  so a caller keys it by org and namespace. */
+ *  page's. Its list does not reread on a namespace switch, while add and sweep use the
+ *  current namespace, so a caller keys it by org and namespace. */
 export function PrivacyFilters({
   compact = false,
   starters = [],
