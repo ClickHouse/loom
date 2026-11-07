@@ -10,7 +10,7 @@ before any read. Unset = every tracker read answers unavailable.
 
 Each credential has one async clickhouse_connect client (`readonly = 2`,
 `max_execution_time` = `LOOM_TRACKER_LIVE_TIMEOUT_S`, two connections) and its own
-breaker (CLOSED / OPEN / HALF_OPEN, the langfuse tracer's shape), so a slow
+breaker (CLOSED / OPEN / HALF_OPEN, the Langfuse score breaker's shape), so a slow
 or absent service costs a request one bounded read and then nothing for the
 cooldown — the caller answers `tracker_unavailable`, not a 500.
 """
