@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import contextlib
 import math
+import signal
 import sys
 import time
 from pathlib import Path
@@ -124,7 +125,10 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
         return 2
 
     if getattr(args, "apply_delta", ""):
-        return await _scip_apply_only(args, repo, org, ns, git_head)
+        rc = await _scip_apply_only(args, repo, org, ns, git_head)
+        if rc == 0:  # the full run's index is applied
+            await tier_health.record(repo, org, ns, "clang_full")
+        return rc
 
     def _paths() -> tuple[Path, Path, Path, list[str]]:
         # Absolute, as every path the sandbox mounts must be: bwrap runs the job
@@ -134,7 +138,7 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
             checkout = Path(args.checkout)
             missing = [str(p) for p in (checkout, bare) if not p.exists()]
         else:
-            checkout, bare, why = resolve_checkout(cfg, "clang")
+            checkout, bare, why = resolve_checkout(cfg, scip_full.PRODUCER)
             missing = [why] if why else []
         scip_clang = resolve_binary(settings.code_scip_clang_path)
         if not scip_clang.exists():
@@ -234,17 +238,20 @@ async def _record_tier(org: str, ns: str, tier: str, rc: int, tail: bytes) -> No
     """`entry-lock --tier`: the command's exit as the tier's health record, its error
     the end of the command's output."""
     from server.code.app.index import tier_health
+    from server.code.app.index.compiler_tier import BASE_UNKNOWN_EXIT
     from server.code.store.index import CodeRepo
 
+    if rc == BASE_UNKNOWN_EXIT:
+        return  # the window's base is gone: the next run indexes in full, as in run_tier
     error = None
-    if rc < 0:  # the caller's time limit (or a kill) stopped it
-        error = f"exit {rc}: stopped by signal {-rc}"
+    if rc == -signal.SIGTERM:  # what a caller's time limit (`timeout`) sends
+        error = f"harness exit {rc}: stopped by signal {-rc}"
     elif rc != 0:
         # The kept tail may start inside a line, a token's prefix cut off: redaction
         # matches whole tokens, so that first partial line goes.
         lines = tail.decode("utf-8", "replace").split("\n")
         text = "\n".join(lines[1:] if len(tail) >= _TAIL_BYTES else lines).strip()
-        error = f"exit {rc}: {text}" if text else f"exit {rc}"
+        error = f"harness exit {rc}: {text}" if text else f"harness exit {rc}"
     await tier_health.record(CodeRepo(), org, ns, tier, error)
 
 
@@ -254,9 +261,10 @@ _TAIL_BYTES = 4096
 
 async def _relay(proc: asyncio.subprocess.Process, tail: bytearray) -> int:
     """Copy the command's output to this process's stdout, keeping its end in `tail`,
-    until it exits; any other exit (a cancellation) kills its process group."""
-    import os
-    import signal
+    until the output closes and the command exits (a descendant that keeps the output
+    open keeps this waiting, as `communicate` does); any other exit (a cancellation)
+    kills its process group."""
+    from server.code.app.index.gitrepo import kill_and_reap
 
     try:
         assert proc.stdout is not None
@@ -267,12 +275,7 @@ async def _relay(proc: asyncio.subprocess.Process, tail: bytearray) -> int:
             del tail[:-_TAIL_BYTES]
         return await proc.wait()
     except BaseException:
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(proc.pid, signal.SIGKILL)
-        if proc.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-            await proc.wait()
+        await kill_and_reap(proc, group=True)
         raise
 
 
@@ -284,7 +287,6 @@ async def _run_while_held(
     timeout) sends the group SIGTERM, then SIGKILL after _ENTRY_STOP_GRACE_S. With
     `tail` its output (stdout and stderr) is relayed and its end kept there."""
     import os
-    import signal
 
     from server.code.app.index.gitrepo import communicate_or_kill
 

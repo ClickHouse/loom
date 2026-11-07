@@ -104,10 +104,11 @@ class CodeCompilerTier(BaseModel):
 
 
 class CodeTierHealth(BaseModel):
-    """One tier's last recorded outcome on the entry. A tier with no record has not
-    failed since records began. `state` is `failing` from the first failed pass until
-    the next pass that succeeds; `kind` classifies the error and `fix` is the one
-    action that clears it."""
+    """One tier's last recorded outcome on the entry.
+
+    A tier with no record has not failed since records began. `state` is `failing` from
+    the first failed pass until the next pass that succeeds; `kind` classifies the error
+    and `fix` is the one action that clears it."""
 
     # fetch | ingest | clang | typescript | go | python | clang_full (the weekly C++ full run)
     tier: str
@@ -155,7 +156,8 @@ class CodeIndexStatusOutput(BaseModel):
     # Every compiler tier with a watermark or configured for the entry, the primary first.
     compiler_tiers: list[CodeCompilerTier] = Field(default_factory=list)
     # The last recorded outcome of each tier that has one (fetch, ingest, the compiler
-    # tiers): a failing tier names its error kind, since when, and the fix.
+    # tiers and the weekly C++ full run): a failing tier names its error kind, since
+    # when, and the fix.
     tier_health: list[CodeTierHealth] = Field(default_factory=list)
     # The PR-history poller's cursor: the newest `updated_at` (ISO-8601) of the merged PRs it
     # fetched; '' before its first pass.

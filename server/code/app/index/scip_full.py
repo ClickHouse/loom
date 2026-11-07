@@ -35,7 +35,6 @@ WATERMARK = "scip_commit"
 # failed), and of the last one applied.
 FULL_AT = "scip_full_at"
 FULL_DONE_AT = "scip_full_done_at"
-# The producer a full run indexes; its health record is `clang_full`.
 PRODUCER = "clang"
 
 

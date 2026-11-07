@@ -6481,7 +6481,7 @@ class CodeCompilerTier(TypedDict, total=False):
 
 
 class CodeTierHealth(TypedDict, total=False):
-    "One tier's last recorded outcome on the entry. A tier with no record has not"
+    "One tier's last recorded outcome on the entry."
 
     tier: Required[str]
     state: NotRequired[str]

@@ -5,9 +5,12 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.code.domain.index.repos import RepoConfig
 
 _PR_NUMBER_RE = re.compile(r"#(\d+)")
 
@@ -68,6 +71,9 @@ class CodeIngestResult:
     # `walk`), so the next pass starts each phase at the entry this one
     # starved; `resume` shows them all, first cut first.
     cuts: dict[str, str] = field(default_factory=dict)
+    # Every namespace a cut stopped this pass before it was served in full: its parser
+    # tier is not known healthy from this pass.
+    cut_namespaces: set[str] = field(default_factory=set)
     budget_s: float = 0.0
     elapsed_s: float = 0.0
     # Per-file resolution reads the rounds answered from memory / sent on.
@@ -78,19 +84,20 @@ class CodeIngestResult:
     # overwritten by a later success of the same tier.
     tier_outcomes: dict[tuple[str, str, str], str] = field(default_factory=dict)
 
-    def tier_ok(self, cfg: Any, tier: str) -> None:
+    def tier_ok(self, cfg: RepoConfig, tier: str) -> None:
         self.tier_outcomes.setdefault((cfg.org, cfg.namespace, tier), "")
 
-    def tier_failed(self, cfg: Any, tier: str, error: str) -> None:
+    def tier_failed(self, cfg: RepoConfig, tier: str, error: str) -> None:
         key = (cfg.org, cfg.namespace, tier)
         if not self.tier_outcomes.get(key):
-            self.tier_outcomes[key] = error or "failed"
+            self.tier_outcomes[key] = error
 
     def cut(self, where: str) -> None:
         """The budget stopped the pass before `where` started. `where` is
         `<namespace>:<leg>[@detail]`; the first cut per phase is kept and
         `resume` lists them, first cut first."""
         self.partial = True
+        self.cut_namespaces.add(where.partition(":")[0])
         phase = cut_phase(where)
         if phase and phase not in self.cuts:
             self.cuts[phase] = where

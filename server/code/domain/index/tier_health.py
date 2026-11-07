@@ -152,7 +152,9 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(
             r"could not read (?:username|password)|authentication failed|terminal prompts disabled"
             r"|invalid username or password|permission denied \(publickey\)"
-            r"|repository not found|returned error: 40[134]\b|support for password authentication",
+            r"|repository not found|support for password authentication"
+            # git's own wording; a download step's 404 in a harness log is not a credential
+            r"|unable to access '[^']*': the requested url returned error: 40[134]\b",
             re.IGNORECASE,
         ),
     ),

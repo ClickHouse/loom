@@ -28,7 +28,11 @@ SUBMODULE_NO_TOKEN = (
     "fatal: Fetched in submodule path 'contrib/amber', but it did not contain "
     "2d70290e18f53e91cd093db820370d4ba571b366. Direct fetching of that commit failed.\n"
 )
+NO_TOKEN_SHORT = (
+    "fatal: could not read Username for 'https://github.com': terminal prompts disabled"
+)
 T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).to_json()
 
 
 @pytest.mark.parametrize(
@@ -54,6 +58,7 @@ T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
         ("write error: No space left on device", "disk"),
         ("RuntimeError: harness exit 2: cmake: error in CMakeLists.txt", "harness"),
         ("ValueError: something else", "unknown"),
+        ("harness exit 1: curl: (22) The requested URL returned error: 404", "harness"),
     ],
 )
 def test_an_error_is_classified_into_its_kind(text: str, kind: str) -> None:
@@ -232,7 +237,7 @@ async def test_entry_lock_with_a_tier_relays_the_output_and_records_the_exit(
         await code_scip._record_tier("o", "ns", "python", rc, bytes(tail))
         health = tier_health.parse("python", repo.state["tier_health:python"])
         assert health is not None and health.kind == "network"
-        assert health.error.startswith("exit 1:")
+        assert health.error.startswith("harness exit 1:")
         await code_scip._record_tier("o", "ns", "python", 0, b"")
     assert not tier_health.parse("python", repo.state["tier_health:python"]).failing
 
@@ -382,7 +387,7 @@ async def test_a_fetch_records_its_outcome(monkeypatch: pytest.MonkeyPatch, tmp_
 
 
 @pytest.mark.asyncio
-async def test_a_failing_leg_records_the_ingest_tier(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_failing_leg_records_the_ingest_tier() -> None:
     from server.code.app.index import ingest_pass
     from server.code.app.index.pass_budget import CodeIngestResult, PassBudget
 
@@ -442,6 +447,117 @@ def test_as_of_counts_a_compiler_tiers_lag_from_the_published_status() -> None:
     assert row["lag_commits"] == 413
 
 
-NO_TOKEN_SHORT = (
-    "fatal: could not read Username for 'https://github.com': terminal prompts disabled"
-)
+def test_a_remote_url_credential_is_redacted_from_a_fetch_error() -> None:
+    health = tier_health.failed(
+        None, "fetch", "fetch https://bot:s3cretvalue@git.example.com/o/r.git: refused", T0
+    )
+    assert "s3cretvalue" not in health.error
+    assert "https://***@git.example.com/o/r.git" in health.error
+
+
+@pytest.mark.asyncio
+async def test_entry_lock_records_nothing_for_a_vanished_base() -> None:
+    from server.cli import code_scip
+    from server.code.app.index.compiler_tier import BASE_UNKNOWN_EXIT
+
+    repo = _StateRepo()
+    with patch("server.code.store.index.CodeRepo", return_value=repo):
+        await code_scip._record_tier("o", "ns", "python", BASE_UNKNOWN_EXIT, b"base unknown")
+    assert repo.writes == []
+
+
+@pytest.mark.asyncio
+async def test_an_entry_the_budget_cut_is_not_recorded_healthy() -> None:
+    from server.code.app.index import ingest_pass
+    from server.code.app.index.pass_budget import CodeIngestResult, PassBudget
+
+    served = type("Plan", (), {"cfg": _Cfg()})()
+    cut_cfg = type("Cut", (_Cfg,), {"namespace": "code-y", "label": "o/code-y"})()
+    cut = type("Plan", (), {"cfg": cut_cfg})()
+    result = CodeIngestResult()
+    spent = PassBudget(started=time.monotonic() - 10, stop_after=time.monotonic() - 1)
+
+    async def never(*_: Any) -> None:
+        raise AssertionError("a cut leg runs nothing")
+
+    await ingest_pass._run_leg(result, spent, [served, cut], "walk", never)
+    assert result.cut_namespaces == {"code-x", "code-y"}
+    assert result.resume == "code-x:walk"  # the next pass starts at the first
+
+
+@pytest.mark.asyncio
+async def test_a_failed_commit_records_the_ingest_tier(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.code.app.index import pass_stream
+    from server.code.app.index.pass_budget import CodeIngestResult
+
+    async def boom(*_: Any, **__: Any) -> int:
+        raise RuntimeError("parser crashed")
+
+    async def nothing(*_: Any, **__: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(pass_stream, "_ingest_commit", boom)
+    monkeypatch.setattr(pass_stream, "_slice_done", nothing)
+    result = CodeIngestResult()
+    stream = pass_stream.CommitStream(_Cfg(), _StateRepo(), "b" * 40, "a" * 40, ["c" * 40], result)
+    stream._ctx = {}
+    assert await stream.step(None) is False
+    error = result.tier_outcomes[("o", "code-x", "ingest")]
+    assert error == f"commit {'c' * 12}: RuntimeError: parser crashed"
+
+
+class _FullArgs:
+    checkout = ""
+    apply_delta = ""
+    keep_delta = ""
+    jobs = 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["harness", "error", "lease_lost", "ok"])
+async def test_scip_full_records_the_full_run(
+    outcome: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from server.cli import code_scip
+    from server.code.app.index import compiler_tier, scip_full
+    from server.code.app.index.entry_lock import EntryLockLost
+
+    for d in ("checkout", "repo.git"):
+        (tmp_path / d).mkdir()
+    clang = tmp_path / "scip-clang"
+    clang.write_text("")
+    monkeypatch.setattr(compiler_tier, "resolve_binary", lambda _p: clang)
+    monkeypatch.setattr(
+        compiler_tier,
+        "resolve_checkout",
+        lambda _c, _p: (tmp_path / "checkout", tmp_path / "repo.git", None),
+    )
+    monkeypatch.setattr(compiler_tier, "unsandboxed_skip", lambda *_a, **_k: "")
+    raised = {
+        "harness": scip_full.FullIndexFailed(1, "cmake failed"),
+        "error": RuntimeError("git submodule failed: Could not resolve host: h"),
+        "lease_lost": EntryLockLost("entry lease lost"),
+    }.get(outcome)
+
+    async def full_index(*_: Any, **__: Any) -> Any:
+        if raised is not None:
+            raise raised
+        return type("Stats", (), {"model_dump": lambda self: {}})(), ""
+
+    monkeypatch.setattr(scip_full, "full_index", full_index)
+    repo = _StateRepo({"git_head": "b" * 40, "tier_health:clang_full": FAILING_FULL})
+    with patch("server.code.store.index.CodeRepo", return_value=repo):
+        if outcome in ("error", "lease_lost"):
+            with pytest.raises(type(raised)):
+                await code_scip._scip_full_locked(_FullArgs(), "o", "ns", _Cfg())
+        else:
+            await code_scip._scip_full_locked(_FullArgs(), "o", "ns", _Cfg())
+    health = tier_health.parse("clang_full", repo.state["tier_health:clang_full"])
+    assert health is not None
+    if outcome == "lease_lost":
+        assert repo.state["tier_health:clang_full"] == FAILING_FULL  # no write
+    elif outcome == "ok":
+        assert not health.failing
+    else:
+        assert health.failed_passes == 2
+        assert health.kind == {"harness": "harness", "error": "network"}[outcome]

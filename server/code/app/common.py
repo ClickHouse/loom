@@ -254,7 +254,7 @@ async def index_as_of(repo: CodeRepo, org: str, ns: str) -> dict[str, Any]:
         if unfetched:  # the lag above is against a stale mirror
             block["stale_reason"] = "mirror_not_fetched"
             block["fetched_at"] = fetched.isoformat() if isinstance(fetched, datetime) else ""
-        if failing := failing_tiers(state, cfg):
+        if failing := failing_tiers(state, cfg, ingest_lag=lag):
             # A failing tier stops moving: what it answers may trail the head, and why.
             block["failing_tiers"] = failing
         _AS_OF_CACHE.put((org, ns), block)
@@ -263,10 +263,13 @@ async def index_as_of(repo: CodeRepo, org: str, ns: str) -> dict[str, Any]:
         return {}
 
 
-def failing_tiers(state: IndexState, cfg: RepoConfig | None) -> list[dict[str, Any]]:
+def failing_tiers(
+    state: IndexState, cfg: RepoConfig | None, *, ingest_lag: int = -1
+) -> list[dict[str, Any]]:
     """The entry's failing tiers from their health records: tier, kind, failing_since, the
     failed passes in a row, the fix, and for a tier with a watermark how many commits
-    that watermark trails the fetched tip by (the published count; -1 unknown)."""
+    that watermark trails the fetched tip by: `ingest_lag` (the block's own count) for the
+    parser tier, the published count for a compiler tier; -1 unknown."""
     from server.code.app.index_status import published_clone_head, published_lags
     from server.code.domain.index import tier_health
 
@@ -282,7 +285,9 @@ def failing_tiers(state: IndexState, cfg: RepoConfig | None) -> list[dict[str, A
             "failed_passes": health.failed_passes,
             "fix": health.fix,
         }
-        if key := tier_health.WATERMARK_FOR_TIER.get(tier):
+        if tier == "ingest":
+            row["lag_commits"] = ingest_lag
+        elif key := tier_health.WATERMARK_FOR_TIER.get(tier):
             mark = str((state.get(key) or {}).get("value") or "")
             row["lag_commits"] = published_lags(state, {key: mark}, tip)[key] if mark else -1
         out.append(row)

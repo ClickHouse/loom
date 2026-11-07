@@ -205,7 +205,8 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
     for plan in plans:
         pass_context.set_namespace(plan.cfg.namespace)
         await _post_steps(plan, result)
-        result.tier_ok(plan.cfg, "ingest")
+        if plan.cfg.namespace not in result.cut_namespaces:  # served in full this pass
+            result.tier_ok(plan.cfg, "ingest")
     result.elapsed_s = round(budget.elapsed(), 1)
     if result.partial:
         pass_context.set_cursor(result.resume)
@@ -222,7 +223,8 @@ async def _run_leg(
     an entry's failure is recorded, never fatal."""
     for i, plan in enumerate(plans):
         if budget.exhausted():
-            result.cut(f"{plan.cfg.namespace}:{leg}")
+            for unserved in plans[i:]:
+                result.cut(f"{unserved.cfg.namespace}:{leg}")
             logger.warning(
                 "code_ingest: pass budget (%.0f s) reached before the %s of %d entr%s: %s — "
                 "the next pass continues there",
