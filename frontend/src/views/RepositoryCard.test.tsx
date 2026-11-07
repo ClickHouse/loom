@@ -730,6 +730,26 @@ describe("RepositoryCard — the tracker links", () => {
     cleanup();
   });
 
+  it("marks a tracker the caller does not administer, and says a new link needs its admin", async () => {
+    const a = mountAdmin("tracker-helpdesk");
+    await userEvent.click(within(line()).getByRole("button", { name: "Link another tracker" }));
+    expect(screen.getByText("A new link needs an admin of the tracker.")).toBeInTheDocument();
+    const select = screen.getByRole("button", { name: "Tracker" });
+    expect(select).toHaveTextContent("qa · public — needs its admin");
+    const refused =
+      "You are not an admin of qa · public: Loom refuses the link unless your token administers the whole org.";
+    expect(screen.getByText(refused)).toBeInTheDocument();
+    await userEvent.click(select);
+    expect(screen.getByText("qa · private — needs its admin")).toBeInTheDocument();
+    await userEvent.click(screen.getByText("kj"));
+    expect(screen.queryByText(refused)).toBeNull();
+    expect(screen.getByText("A new link needs an admin of the tracker.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Link" }));
+    expect(a.code.onSetSource).toHaveBeenCalledWith(expect.anything(), ["tracker-helpdesk", "tracker-kj"]);
+    expect(await axeViolations(document.body)).toEqual([]);
+    cleanup();
+  });
+
   it("several links: the primary is marked and said; Make primary reorders, Unlink removes", async () => {
     const a = mountAdmin(["tracker-clickhouse", "tracker-helpdesk"]);
     const items = within(screen.getByRole("list", { name: "Linked trackers" })).getAllByRole("listitem");

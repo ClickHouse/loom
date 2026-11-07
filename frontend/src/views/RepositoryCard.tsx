@@ -1074,7 +1074,7 @@ function TrackerLinkRow({
                   <Select.Group heading={`Trackers listing ${card.repo}`}>
                     {covering.map((r) => (
                       <Select.Item key={r.namespace} value={r.namespace}>
-                        {r.label}
+                        {trackerChoice(r)}
                       </Select.Item>
                     ))}
                   </Select.Group>
@@ -1083,7 +1083,7 @@ function TrackerLinkRow({
                   <Select.Group heading={`Other trackers — they answer nothing for ${card.repo}`}>
                     {others.map((r) => (
                       <Select.Item key={r.namespace} value={r.namespace}>
-                        {r.label}
+                        {trackerChoice(r)}
                       </Select.Item>
                     ))}
                   </Select.Group>
@@ -1105,6 +1105,12 @@ function TrackerLinkRow({
               Link
             </Button>
           </div>
+          <p className="text-xs text-text-muted">A new link needs an admin of the tracker.</p>
+          {picked && !picked.admin && (
+            <p className="text-xs text-warn">
+              You are not an admin of {picked.label}: Loom refuses the link unless your token administers the whole org.
+            </p>
+          )}
           {picked && !picked.covers && (
             <p className="text-xs text-warn">
               {picked.label} lists {picked.repos.join(", ") || "no repository"}, not {card.repo}: it would answer
@@ -1120,6 +1126,12 @@ function TrackerLinkRow({
       )}
     </div>
   );
+}
+
+/** A tracker in the Link picker; one the caller does not administer is marked, not hidden,
+ *  since an org-wide admin may still link it. */
+function trackerChoice(r: BindableRecord): string {
+  return r.admin ? r.label : `${r.label} — needs its admin`;
 }
 
 /** One linked tracker: what agents get from it, and its verbs. */

@@ -321,6 +321,8 @@ export interface BindableRecord {
   covers: boolean;
   /** The repositories the tracker lists (for the "answers nothing" sentence). */
   repos: string[];
+  /** The caller administers the tracker: a new link needs that, or an org-wide admin token. */
+  admin: boolean;
 }
 
 /** The tracker namespaces a repository may be bound to, from the one
@@ -339,6 +341,7 @@ export function bindableRecords(sources: readonly TrackerSource[], repo: string)
         restricted: ns.classification === "restricted",
         covers: ns.repos.includes(repo),
         repos: [...ns.repos],
+        admin: ns.member_role === "admin",
       });
     }
   }

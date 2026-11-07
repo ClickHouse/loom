@@ -12,7 +12,10 @@ Out of this pattern: names that resolve to a namespace indirectly (`code.repos`'
 `repo` / `repos`, filtered by readability), `namespace_scope` (the `all_mine`
 fan-out, which `server/auth/fanout.py` filters through the gate), a
 collection's `parent` (`collection.create` / `move`, checked for WRITER by
-`server/identity/app/collections.py`), and fields of nested models.
+`server/identity/app/collections.py`), `scope_value` (`erasure.request` /
+`erasure.export`, whose target `scope_type` decides; checked for an org-wide or
+namespace ADMIN by `server.erasure.app.handlers.handle_erasure_request` and
+`handle_erasure_export`), and fields of nested models.
 """
 
 from __future__ import annotations
