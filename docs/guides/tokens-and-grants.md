@@ -406,9 +406,11 @@ exists. If the classification cannot be read, access is denied.
 - Each request admitted to the restricted namespace it names writes a
   `namespace.restricted_access` audit row before the answer
   (`LOOM_RESTRICTED_AUDIT_INLINE=false` writes it beside the request instead,
-  which a killed process can lose). A token mint writes one for each restricted
-  namespace it grants the new token, with the minter as actor. Code search
-  traces keep only the query digest.
+  which a killed process can lose). A [delegated](#delegated-tokens) mint
+  (`POST /v1/admin/token.mint`, `POST /v1/me/service_accounts.create`, the Setup
+  page) writes one for each restricted namespace whose direct grant it writes for
+  the new token, with the minter as actor and the token's subject as `granted_to`.
+  Code search traces keep only the query digest.
 - A restricted namespace cannot be made public; its directory row changes only for a caller
   who passes the four checks at `admin`.
 - `POST /v1/admin/token.mint`, like every [delegated](#delegated-tokens) mint, names a

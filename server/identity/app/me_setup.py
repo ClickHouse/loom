@@ -355,6 +355,7 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         op="me.setup.mcp_config",
         org=org,
         namespaces=granted,
+        granted_to=sa_subject,
     )
     reads_everywhere = "*" in delegated.namespaces
     # The page names where this token's unaddressed MCP calls land: the MCP

@@ -899,7 +899,9 @@ async def admin_token_mint(
     flat_role = (delegated.roles or ["viewer"])[0]
     roles_on = delegated.ns_roles or dict.fromkeys(delegated.namespaces, flat_role)
     granted = await token_grants.grant_restricted_to_token(input.org, sa_subject, creator, roles_on)
-    await note_restricted_grants(info, op="admin.token.mint", org=input.org, namespaces=granted)
+    await note_restricted_grants(
+        info, op="admin.token.mint", org=input.org, namespaces=granted, granted_to=sa_subject
+    )
     if info is not None:
         await _audit_mint(info, input, delegated, sa_subject, jti)
     # Retired: the token's subject is its own, and it is always a service account.

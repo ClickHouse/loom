@@ -351,6 +351,7 @@ async def me_service_accounts_create(
         op="me.service_accounts.create",
         org=org,
         namespaces=restricted_granted,
+        granted_to=sa_subject,
     )
 
     return {

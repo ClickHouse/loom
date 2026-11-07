@@ -455,6 +455,7 @@ async def test_a_setup_mint_onto_a_restricted_namespace_writes_the_audit_row(
         )
     assert r.status_code == 200, r.text
     _assert_one_row(audit_rows, "me.setup.mcp_config")
+    assert audit_rows[0][1]["subject"]["granted_to"] == "sa:cursor-x"
 
 
 @pytest.mark.asyncio
@@ -478,10 +479,11 @@ async def test_the_mcp_primer_profile_read_writes_the_audit_row(
     )
     await mcp_primer._loom_primer_text(alice, defaults={"org": ORG, "namespace": NS})
     ((event, kw),) = audit_rows
-    assert (event, kw["namespace"], kw["subject"]["op"]) == (
+    assert (event, kw["namespace"], kw["subject"]["op"], kw["subject"]["transport"]) == (
         "namespace.restricted_access",
         NS,
         "mcp.primer",
+        "mcp",
     )
 
 

@@ -69,7 +69,13 @@ async def drain(timeout_s: float = 5.0) -> int:
 
 
 async def note_restricted_access(
-    auth: Any, *, op: str, org: str | None, namespace: str | None, transport: str
+    auth: Any,
+    *,
+    op: str,
+    org: str | None,
+    namespace: str | None,
+    transport: str,
+    granted_to: str = "",
 ) -> bool:
     """One audit row for a request the gate admitted to a restricted
     namespace. Returns True when the row was written (or, with
@@ -105,6 +111,8 @@ async def note_restricted_access(
                 "transport": transport,
                 "token_id": str(getattr(auth, "token_id", "") or ""),
                 "roles": [r.name.lower() for r in getattr(auth, "roles", ())],
+                # a mint: the token subject the namespace was granted to
+                **({"granted_to": granted_to} if granted_to else {}),
             },
         )
         if settings.restricted_audit_inline:
@@ -117,12 +125,16 @@ async def note_restricted_access(
         return False
 
 
-async def note_restricted_grants(auth: Any, *, op: str, org: str, namespaces: list[str]) -> None:
-    """The row of each restricted namespace a token mint granted, written
-    together so the inline inserts share one batch."""
+async def note_restricted_grants(
+    auth: Any, *, op: str, org: str, namespaces: list[str], granted_to: str
+) -> None:
+    """The row of each restricted namespace a token mint granted `granted_to`,
+    written together so the inline inserts share one batch."""
     await asyncio.gather(
         *(
-            note_restricted_access(auth, op=op, org=org, namespace=ns, transport="http")
+            note_restricted_access(
+                auth, op=op, org=org, namespace=ns, transport="http", granted_to=granted_to
+            )
             for ns in namespaces
         )
     )
