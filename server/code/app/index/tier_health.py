@@ -5,6 +5,10 @@ success over a record that is already ok writes nothing, so a healthy entry cost
 state read per tier per pass (two for a current Go entry, which reads its record
 first). A tier the entry no longer runs drops its record (`forget`), so a failure it
 left does not read as failing for ever. Recording never fails the pass it describes.
+
+It also keeps this process's snapshot of the failing tiers (`refresh_failing`, on the
+code_repos refresh timer), which the `code_tier_failing` health problem reads
+(`problem_rows`) without a ClickHouse read in the health probe.
 """
 
 from __future__ import annotations
@@ -165,8 +169,8 @@ def reset_for_tests() -> None:
 
 def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | None:
     """The failing tiers past the warn threshold, as the `code_tier_failing` health
-    problem reads them (plain rows: the problem collector imports no code plane), worst
-    first. None until this process first read the records."""
+    problem reads them (plain rows: the problem collector imports no code plane), errors
+    first, then by entry. None until this process first read the records."""
     from server.settings import settings
 
     snap = _FAILING

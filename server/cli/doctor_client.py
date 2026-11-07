@@ -101,17 +101,11 @@ def server_check(base_url: str, source: str, get_json: GetJson) -> tuple[Check, 
             ),
             {},
         )
-    from server.observability.problems import NOT_DEPLOYMENT_FAULTS
-
     problems = body.get("problems") if isinstance(body, dict) else None
-    # an error about the data the server holds (a repository's failing tier) is not one
-    # of the server's: it never degrades `status`
     errors = [
         p.get("code")
         for p in problems or []
-        if isinstance(p, dict)
-        and p.get("severity") == "error"
-        and p.get("code") not in NOT_DEPLOYMENT_FAULTS
+        if isinstance(p, dict) and p.get("severity") == "error"
     ]
     build = str(body.get("build_commit") or "?")[:9] if isinstance(body, dict) else "?"
     health = (
@@ -119,7 +113,10 @@ def server_check(base_url: str, source: str, get_json: GetJson) -> tuple[Check, 
         if isinstance(body, dict)
         else str(status)
     )
-    if status >= 500 or errors:
+    # the server's own `status` says whether it is degraded: an error about the data it
+    # holds (a repository's failing code-index tier) does not degrade it
+    degraded = isinstance(body, dict) and body.get("status") == "degraded"
+    if status >= 500 or degraded:
         return (
             (
                 name,
