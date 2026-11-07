@@ -43,19 +43,19 @@ number, a boolean, a date or time, a Literal or an Enum stay as sent; a field wh
 marks a credential (`audit.is_credential` in `server/observability/audit.py`) is hashed
 whatever its suffix. A field holding one nested model follows the same rule, and a list of
 models is hashed whole. The principals and the `_by` fields kept as sent are personal data
-that an erasure does not remove from `loom.audit_log`. Every other value (a memory value, a
-decision's reasoning, a reason, a record's fields, the rows of a restored snapshot) is
+that an erasure does not remove from `loom.audit_log`. Every other value (a memory value,
+a decision's reasoning, a reason, a record's fields, the rows of a restored snapshot) is
 stored as `{"sha256", "chars"}`, its SHA-256 and length (the hash a memory's
 `content_sha256` would carry, so a moved value's matches it), since erasure does not reach
 `loom.audit_log`. Three rows a handler writes itself store text in that shape under the
 field's name: `memory.cross_promote`'s and `memory.copy_to`'s `rationale`,
-`memory.proposal_accept`'s and `memory.proposal_reject`'s `reason` (a decision the
-owner's policy makes records the policy's mode and thresholds instead), and
+`memory.proposal_accept`'s and `memory.proposal_reject`'s `reason` (a decision the owner's
+policy makes records the policy's mode and thresholds instead), and
 `triple.follows_row_supersession`'s `closed`, whose actor is the writing principal or
 `process:loom`. A hash of a short value can be recovered by guessing; the rule keeps long
-text out of the trail, not every word. An op whose input carries a credential (a tracker source's password, a
-repository's access token) declares an `audit_subject` that leaves it out. Grant
-`loom.audit_log` like the data it describes.
+text out of the trail, not every word. An op whose input carries a credential (a tracker
+source's password, a repository's access token) declares an `audit_subject` that leaves it
+out. Grant `loom.audit_log` like the data it describes.
 
 ## The row
 
