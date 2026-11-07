@@ -324,8 +324,8 @@ class LangfuseBackend:
             if total_pages is None:
                 raise ErasureBackendError(
                     f"langfuse trace lookup {params} returned {len(rows)} rows "
-                    f"with no meta.totalPages — cannot tell whether more exist, "
-                    f"so erasure must not report success"
+                    f"with no meta.totalPages — cannot tell whether more exist; "
+                    f"refusing to return a truncated set"
                 )
             if len(ids) > self._MAX_TRACES:
                 raise ErasureBackendError(
@@ -340,9 +340,8 @@ class LangfuseBackend:
     async def get_retried(
         self, c: httpx.AsyncClient, path: str, query: dict[str, Any]
     ) -> httpx.Response:
-        """One GET to Langfuse, retried on a
-        timeout, a 429 or a 5xx. Anything else is returned to the caller's status
-        check unchanged."""
+        """One GET to Langfuse, retried on a timeout, a 429 or a 5xx. Anything
+        else is returned unchanged for the caller's status check."""
         last: Exception | None = None
         for attempt in range(self._PAGE_ATTEMPTS):
             try:
