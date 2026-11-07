@@ -37,7 +37,7 @@ from server.memory.api.models_temporal import (
     MemoryOutcomeRunOutput,
 )
 from server.memory.domain.lock import refuses_retirement
-from server.memory.store import categories
+from server.memory.store import MemoryRow, categories
 from server.memory.store.lifecycle import reject_by_identity
 
 log = logging.getLogger(__name__)
@@ -151,17 +151,17 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
                     params={"org": input.org, "ns": input.namespace, "mid": memory_id},
                 )
                 if idr:
-                    # A lock that lands on the named row after the read above leaves it
-                    # too: then the named row was not quarantined, whatever its copies were.
-                    left: set[str] = set()
+                    # Quarantined only if the named row itself was rejected; a lock or a
+                    # delete since the read above leaves it.
+                    rejected: set[str] = set()
 
-                    def leave_locked(r: Any) -> bool:
+                    def leave_locked(r: MemoryRow) -> bool:
                         if refuses_retirement(r):
-                            left.add(str(r.memory_id))
                             return True
+                        rejected.add(str(r.memory_id))
                         return False
 
-                    written = await reject_by_identity(
+                    await reject_by_identity(
                         input.org,
                         input.namespace,
                         str(idr["agent"]),
@@ -171,7 +171,7 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
                         skip=leave_locked,
                         ch=ch,
                     )
-                    quarantined = written > 0 and memory_id not in left
+                    quarantined = memory_id in rejected
 
     usage = await ch.query_one(
         """

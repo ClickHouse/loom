@@ -191,6 +191,18 @@ async def test_a_lock_taken_after_the_outcome_read_still_holds(monkeypatch):
     assert [(r["session_id"], r["status"]) for r in rows] == [("s2", "rejected")]
 
 
+async def test_a_memory_deleted_after_the_outcome_read_is_not_quarantined(monkeypatch):
+    # Gone by the time the reject reads the identity's rows; its copy is rejected.
+    ch = _wire_quarantine(
+        monkeypatch, {"mid-s2": _session_row("s2")}, outcome_reads={"mid-s1": _session_row("s1")}
+    )
+
+    out = await ops.handle_memory_outcome(_negative())
+    assert out.quarantined is False
+    (rows,) = [rows for t, rows in ch.inserts if t == "loom.memory"]
+    assert [r["session_id"] for r in rows] == ["s2"]
+
+
 async def test_negative_below_threshold_does_not_quarantine(monkeypatch):
     from server.settings import settings
 
