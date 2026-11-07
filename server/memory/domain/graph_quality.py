@@ -466,8 +466,8 @@ def canonical_entity(raw: str) -> CanonicalEntity:
 
     Collapses first-person forms (i / me / user / ...) to "user" to match the
     read side (graph seeds and query triples use `canonical_entity_text`); the original
-    surface form is preserved in `aliases` for provenance and recall. A "commit:" or
-    "error:" name's last segment is never singularised. Text longer than
+    surface form is preserved in `aliases` for provenance and recall. A name that starts
+    with "commit:" or "error:" and a non-blank is never singularised. Text longer than
     `MAX_ENTITY_CHARS`, as written or once normalised, is no entity: its text is empty."""
 
     original = str(raw or "").strip()
@@ -481,8 +481,8 @@ def canonical_entity(raw: str) -> CanonicalEntity:
 def canonical_entity_text(raw: str) -> str:
     """The one entity normalizer for writes and reads: strips articles,
     possessives and punctuation and folds first-person forms to "user", so a
-    query seed and the stored node land on identical text; a "commit:" or "error:"
-    name is never singularised. Idempotent."""
+    query seed and the stored node land on identical text; a name that starts with
+    "commit:" or "error:" and a non-blank is never singularised. Idempotent."""
     return canonical_entity(raw).text
 
 
@@ -797,16 +797,15 @@ def facet_triples(
     """The facet triples Loom mints for one entry, about its actor (the agent).
     Files and concepts become code nodes, so facts.traverse answers "what touches
     this file"; topics hang off `about`, so a topic never passes for a library. An item too
-    long to be a name (`MAX_ENTITY_CHARS`) mints no node."""
+    long to be a name (`MAX_ENTITY_CHARS`), or with no canonical form (only punctuation),
+    mints no node, as in `edge_nodes`."""
     subject = canonical_entity_text(agent or "user") or "user"
     for path in names_only(files):
-        yield (
-            subject,
-            code_facet_relation("file", fact_verbs),
-            canonical_entity_text(path) or path.lower(),
-        )
+        if node := canonical_entity_text(path):
+            yield subject, code_facet_relation("file", fact_verbs), node
     for concept in names_only(concepts):
-        node = canonical_entity_text(concept) or concept.lower()
-        yield subject, code_facet_relation(classify_code_concept(concept), fact_verbs), node
+        if node := canonical_entity_text(concept):
+            yield subject, code_facet_relation(classify_code_concept(concept), fact_verbs), node
     for topic in names_only(topics):
-        yield subject, "about", canonical_entity_text(topic) or topic.lower()
+        if node := canonical_entity_text(topic):
+            yield subject, "about", node

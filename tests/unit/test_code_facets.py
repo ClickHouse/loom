@@ -511,3 +511,9 @@ def test_a_wrapped_or_spaced_code_facet_name_is_the_bare_names_node() -> None:
         ):
             assert canonical_entity_text(written) == node, written
     assert canonical_entity("error:a \t b").entity_id == "error:a_b"
+
+
+def test_a_facet_of_only_punctuation_mints_no_node() -> None:
+    from server.memory.domain.graph_quality import facet_triples
+
+    assert list(facet_triples("a", [], ["``"], ["``", "."], ["``"])) == []

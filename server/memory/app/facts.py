@@ -459,7 +459,8 @@ async def _handle_facts_traverse_uncached(input: FactsTraverseInput) -> FactsTra
     # possessives stripped, head noun singularised, first person -> "user"), exactly as
     # facts.path does: a bare lower() would make "Alice's" and "The user" miss the rows
     # written for "alice" and "user", and memory.ask's expansion step passes seeds in the
-    # question's own words. A "commit:" or "error:" name is never singularised.
+    # question's own words. A name that starts with "commit:" or "error:" and a
+    # non-blank is never singularised.
     raw = input.seed_entity.strip().lower()
     seed = canonical_entity_text(input.seed_entity) or raw
     params: dict[str, Any] = {
