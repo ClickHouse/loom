@@ -44,7 +44,7 @@ _STORED_ID_RE = re.compile(r'\{"id": "([^"]+)", "statement"')
 _SECTION_RE = re.compile(
     r"^\[section: (?P<name>[^\]]*)\]\n\n(?P<body>.*?)(?=\n\n\[section: |\Z)", re.M | re.S
 )
-_CAMEL_RE = re.compile(r"\b[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+\b")
+_CAMEL_RE = re.compile(r"\b[A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*\b")
 
 
 def _decisions_from_sections(user: str) -> dict[str, object]:

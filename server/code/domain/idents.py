@@ -11,8 +11,8 @@ import re
 EMBEDDED_IDENT_RE = re.compile(
     r"\b(?:"
     r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_~][A-Za-z0-9_]*)+"  # Foo::bar
-    r"|[A-Z][a-z0-9]+(?:[A-Z][a-zA-Z0-9]*)+"  # PascalCase, 2+ humps
-    r"|[a-z][a-z0-9]*(?:[A-Z][a-zA-Z0-9]*)+"  # camelCase
+    r"|[A-Z][a-z0-9]+[A-Z][a-zA-Z0-9]*"  # PascalCase, 2+ humps
+    r"|[a-z][a-z0-9]*[A-Z][a-zA-Z0-9]*"  # camelCase
     r"|[a-z][a-z0-9]*(?:_[a-z0-9]+)+"  # snake_case
     r")\b"
 )
