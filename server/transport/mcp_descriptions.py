@@ -2070,7 +2070,7 @@ TOOL_DESCRIPTIONS["tracker.duplicate_check"] = (
     "name)), `relation`, "
     "`relation_recorded` (the tracker graph's edge to `issue_number` — a recorded "
     "related_to is never promoted to duplicate), `evidence` lines, `why` "
-    "(`fix_path`: a fix PR touched the draft's paths) and `features`; "
+    "(e.g. `fix_path`: a fix PR touched the paths) and `features`; "
     "`epistemic` is calibrated; uncalibrated when no fit is stored (then "
     "`related` at most, confidence null; a restricted namespace borrows the "
     "org's standard fit — `fit.borrowed_from`); degraded when a leg failed after "
