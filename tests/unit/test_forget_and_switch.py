@@ -429,9 +429,13 @@ async def test_a_correction_past_the_forget_cap_keeps_its_replacement(monkeypatc
                 "source_message_indices": [0],
             },
             {"key": "user_editor", "value": "User uses Emacs.", "source_message_indices": [0]},
+            # restates only the older request's words: no replacement, so it goes
+            {"key": "user_vim_forget", "forget": True, "source_message_indices": [0]},
+            {"key": "user_vim", "value": "use Vim", "source_message_indices": [0]},
         ],
         fetched,
     )
+    assert "user_vim" not in written
     assert written.get("user_editor") == "User uses Emacs."
     assert "user_editor" in deleted
     # the per-request candidate reads stop at the cap, on the latest requests
