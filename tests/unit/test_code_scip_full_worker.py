@@ -88,6 +88,33 @@ async def test_a_full_run_on_a_stale_compile_database_is_a_skip_on_the_pass(tmp_
 
 
 @pytest.mark.asyncio
+async def test_a_manual_full_run_on_a_stale_compile_database_says_so(tmp_path, monkeypatch, capsys):
+    """`loom code scip-full` prints the stale database, as the workers' skip does."""
+    import argparse
+
+    from server.cli import code_scip
+    from server.code.app.index import scip_full as app
+    from server.code.app.index.compiler_tier import STALE_COMPDB_MARKER
+    from server.settings import settings
+
+    cfg = _cfg(tmp_path, "code-a")
+    checkout = tmp_path / "checkout-code-a"
+    (checkout / STALE_COMPDB_MARKER).parent.mkdir(parents=True)
+    (checkout / STALE_COMPDB_MARKER).touch()
+    clang = tmp_path / "scip-clang"
+    clang.touch()
+    monkeypatch.setattr(settings, "code_scip_clang_path", str(clang))
+    monkeypatch.setattr(app, "full_index", AsyncMock(return_value=(ScipApplyStats(), "")))
+    args = argparse.Namespace(checkout=str(checkout), apply_delta="", jobs=0, keep_delta="")
+    with patch(
+        "server.code.store.index.CodeRepo", return_value=_repo({("code-a", "git_head"): "a" * 40})
+    ):
+        rc = await code_scip._scip_full_locked(args, "o", "code-a", cfg)
+    assert rc == 0
+    assert "code-a: cmake reconfigure failed; compile database stale" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
 async def test_one_entry_per_pass(tmp_path, monkeypatch):
     state = {("code-a", "git_head"): "a" * 40, ("code-b", "git_head"): "b" * 40}
     cfgs = [_cfg(tmp_path, "code-a"), _cfg(tmp_path, "code-b")]

@@ -109,6 +109,7 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
     from server.code.app.index import scip_full
     from server.code.app.index.compiler_tier import (
         SANDBOX_REQUIRED_SKIP,
+        STALE_COMPDB_MARKER,
         resolve_binary,
         resolve_checkout,
         unsandboxed_skip,
@@ -174,7 +175,10 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
         print(f"delta kept at {args.keep_delta}")
     print(f"applied: {stats.model_dump()}")
     print(f"{scip_full.WATERMARK} -> {git_head[:12]}")
-    _note(head=git_head[:12], harness_exit=0, **stats.model_dump())
+    stale = await asyncio.to_thread((checkout / STALE_COMPDB_MARKER).exists)
+    if stale:
+        print(f"{ns}: cmake reconfigure failed; compile database stale", file=sys.stderr)
+    _note(head=git_head[:12], harness_exit=0, stale_compdb=stale, **stats.model_dump())
     return 0
 
 

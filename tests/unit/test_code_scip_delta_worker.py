@@ -157,7 +157,7 @@ async def test_a_delta_on_a_stale_compile_database_is_a_skip_on_the_pass(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_the_stale_compile_database_skip_comes_before_the_passs_other_skips(tmp_path):
+async def test_the_stale_compile_database_skip_comes_before_other_skips_on_the_pass(tmp_path):
     from server.code.app.index.compiler_tier import (
         STALE_COMPDB_MARKER,
         note_stale_compdb,
