@@ -224,7 +224,7 @@ export function loadRecallKey(file = recallKeyPath()) {
     try {
       text = readKeyText(file, file);
     } catch (e) {
-      if (!e || e.code !== "ENOENT") return null; // a link, a hard link elsewhere, or not ours
+      if (!e || e.code !== "ENOENT") return null; // a link, a hard link elsewhere, not ours, or unreadable
       const made = createRecallKey(file);
       if (made) return made;
       continue; // another hook linked its key first: read that one
