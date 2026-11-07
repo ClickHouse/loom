@@ -137,8 +137,9 @@ therefore not a credential that reads anything in Loom. One row of
 user's email, a random password, its agents API key, the agent's id and the version and
 model of the definition last written, the two secrets sealed
 (`server/core/secrets_at_rest.py`) like every stored credential, so
-`loom secrets reseal` (which takes `analysis.entities`, then `assistant.service`) covers
-them when the signing secret is replaced and the deployment carries no second secret.
+`loom secrets reseal` (which takes [`analysis.entities`](#provisioning), then
+`assistant.service`) covers them when the signing secret is replaced and the deployment
+carries no second secret.
 
 Setting the service up is one step that a boot runs holding the cluster lease
 `assistant.service` (`server/core/leases.py`), so two boots never run it at once; the
@@ -155,14 +156,12 @@ before the next, and signs in once, at the first step that needs LibreChat:
 4. A stored definition older than this build's, or of the same version with another
    model: write it and store its version and model on the row.
 
-A boot that stopped halfway leaves the row at a step the next one finishes. A row whose
-sealed values open with neither secret answers `ASSISTANT_UNAVAILABLE` and is a
-`loom doctor` problem, with the fix below. Signing in is needed only for these steps, so
-answers run on the stored key whatever the sign-in does; a sign-in that fails
-(LibreChat's database restored from another deployment, say) is a `loom doctor` problem
-whose fix is to empty LibreChat's database and drop the row, which the next boot
-recreates. Until the row has its key and agent id, the assistant answers
-`ASSISTANT_UNAVAILABLE`.
+A boot that stopped halfway leaves the row at a step the next one finishes. Answers run
+on the stored key whatever a sign-in does. A row whose sealed values open with neither
+secret, and a sign-in that fails (LibreChat's database restored from another deployment,
+say), are `loom doctor` problems with one fix: empty LibreChat's database and drop the
+row, which the next boot recreates. Until the row has its key and agent id, the
+assistant answers `ASSISTANT_UNAVAILABLE`.
 
 **Conversations live with the caller.** LibreChat's agents API (the OpenAI-compatible
 `/api/agents/v1/chat/completions`) saves no messages: it runs the agent over the
@@ -280,16 +279,15 @@ user, Loom's own included, reading the tables as before, whatever the server's
 The key and the analyst's password are random and kept in one row of
 `loom.analysis_secrets`, sealed with `server/core/secrets_at_rest.py` in the shape
 `loom secrets reseal` rewrites (`SEALED` in `server/cli/secrets.py`). The first write
-draws them under the lease below and every replica reads the same row, with
-`select_sequential_consistency` on a replicated table so a row just written is seen. A
-signing-secret rotation only reseals them, so the policies never change key; when the
-key cannot be read, [provisioning](#provisioning) says what happens. The analyst user
-cannot read the key: it has no grant on `system.row_policies` or on
-`loom.analysis_secrets`, and it cannot run `EXPLAIN`. Loom writes the policies with
-`log_queries = 0`, so the key is not in `system.query_log`. It is in ClickHouse's own
-access storage (on disk, or in Keeper when access is replicated), in a backup of the
-access entities, in `system.row_policies` and in the server log at `debug` level: all
-read only by whoever administers the ClickHouse host, who can read every row anyway.
+draws them under the lease below and every replica reads the same row. A signing-secret
+rotation only reseals them, so the policies never change key; when the key cannot be
+read, [provisioning](#provisioning) says what happens. The analyst user cannot read the
+key: it has no grant on `system.row_policies` or on `loom.analysis_secrets`, and it
+cannot run `EXPLAIN`. Every statement that carries the key runs with `log_queries = 0`,
+so the key is not in `system.query_log`. It is in ClickHouse's own access storage (on
+disk, or in Keeper when access is replicated), in a backup of the access entities, in
+`system.row_policies` and in the server log at `debug` level: all read only by whoever
+administers the ClickHouse host, who can read every row anyway.
 
 **Why not ClickHouse credentials in LibreChat.** A ClickHouse login in the agent would
 read every org, skip the request ledger and the exposure records, and keep no link to
@@ -301,39 +299,50 @@ verified first, the namespaces are checked as on any read, and the call is ledge
 The analyst user, its settings profile, grants and policies will be written with SQL,
 never in a ClickHouse config file, which would put the key in the repository. A server
 whose ClickHouse user has access management (the bundled ClickHouse's `loom` user, a
-self-managed admin) writes them itself; elsewhere an admin runs `loom ch-setup`, or the
-SQL `loom ch-setup --print-analyst-sql` prints, which carries the key and the password.
-The allowlist lives in code with the column comments that become the agent's catalog, so
-the grants, the policies and the catalog come from one definition. The rules a write
-keeps:
+self-managed admin) writes them itself. Elsewhere an admin runs `loom ch-setup`, which
+writes them, or runs by hand the SQL that `loom ch-setup --print-analyst-sql` prints:
+that SQL carries the key and the password, is printed by the newest build's CLI, is
+outside the rules below because plain SQL takes no lease and checks no stamp, and is
+run, not kept. Either draws the secrets row first when there is none. The allowlist
+lives in code with the column comments that become the agent's catalog, so the grants,
+the policies and the catalog come from one definition. The rules a write keeps:
 
 - **One writer at a time.** A write holds the cluster lease `analysis.entities`
   (`server/core/leases.py`), waiting for it when another holds it, and reads what the
   entities hold once it has it. `loom secrets reseal` takes the same lease.
-- **Never over a newer build.** The settings profile carries a stamp, the allowlist's
-  version and a digest of the entities, written last. A build writes when there is no
-  stamp, when its version is newer, or when the version is its own and the digest
-  differs, never otherwise, so during a rolling upgrade a build N-1 never narrows N's
-  grants or loosens N's policies, and each build's catalog names only the columns the
-  grants in place allow.
+- **Never over a newer build.** The settings profile carries the allowlist's version,
+  written last; a version names exactly one set of entities (a unit test pins it), so a
+  change to a grant, a policy or a cap is a new version. A build writes when there is no
+  version or its own is newer, so during a rolling upgrade a build N-1 never narrows N's
+  grants or loosens N's policies. N-1 keeps answering on N's entities: its statements
+  that name a column N dropped are refused until the roll forward.
 - **No granted table without its policy.** ClickHouse lets a user with no policy on a
   table read every row of it, so each policy is replaced in place before any grant is
   given, grants the allowlist drops are revoked after, and a policy is never dropped: a
   table that leaves the allowlist keeps one that reads nothing.
-- **The key never changes by itself.** The secrets row is drawn once; a boot that cannot
-  read it, or finds it gone while the analyst user exists (or cannot tell, without
-  access management), answers `ANALYSIS_UNAVAILABLE` and reports a `loom doctor`
-  problem. `loom ch-setup --new-analysis-key` draws a new key and writes every policy
-  under it, alone or with `--print-analyst-sql`.
+- **The key never changes by itself.** The secrets row is drawn once and written with a
+  quorum insert on a replicated table. A replica that cannot read it, or finds it gone
+  while the analyst user exists, answers `ANALYSIS_UNAVAILABLE` and reports a
+  `loom doctor` problem. `loom ch-setup --new-analysis-key` replaces the key on purpose:
+  it stores the new key, then writes every policy under it (or prints them), and the
+  canary below is written last.
 
 A replica probes the analyst user at boot and then a minute after each probe, in the
-background: a signed statement must run, a `system` table and a column outside the
-allowlist must be refused, and, where Loom's user can read the access entities, every
-policy and grant must be what the stamp's build writes under the stored key (compared
-after ClickHouse formats both). A build whose version is the stamp's writes a difference
-again under the lease; any other failure answers `ANALYSIS_UNAVAILABLE` and is a
-`loom doctor` problem. A policy under another key reads no rows rather than failing,
-which is why the probe compares the policies instead of reading through them.
+background, as the analyst itself, so the probe needs no access management:
+
+- an unsigned read of each allowlisted table must fail for want of the scope settings,
+  which shows the table has a policy that checks them;
+- the analyst's own `SHOW GRANTS` must name nothing outside the allowlist;
+- a signed read of `loom.analysis_canary`, whose one row sits in a reserved scope and
+  whose policy is written last under the same key, must return that row, which shows the
+  policies accept the key the replica signs with;
+- a `system` table and a column outside the allowlist must be refused.
+
+Each probe re-reads the secrets row, and a replica moves to a new key only once the
+canary reads under it, so a key stored before its policies are written is never used
+against the old ones. A failed check answers `ANALYSIS_UNAVAILABLE` and is a
+`loom doctor` problem; a build whose version is the stamp's then writes the entities
+again under the lease.
 
 ### What it can read
 
@@ -408,17 +417,20 @@ viewer token. Each case must be refused or return no canary:
 - both orgs' statements running at once;
 - `SETTINGS` that set a scope value to a number, an array or a malformed string: no
   answer quotes the policy or its key;
-- a table granted to the analyst with no policy of its own, which the probe reports and
-  no write leaves; a table taken off the allowlist, which reads nothing whether or not
-  its grant is still there; two boots writing at once (a build N-1 beside N with a table
-  taken off the allowlist), which the lease serialises; and a build N-1 probing beside N
-  after N changed a policy, which leaves N's policy alone;
+- an extra grant (`GRANT SELECT ON loom.* TO loom_analyst`) and a table with its policy
+  dropped, each of which the probe turns into `ANALYSIS_UNAVAILABLE` at once, with and
+  without access management for Loom's user; a table taken off the allowlist, which
+  reads nothing whether or not its grant is still there;
+- two boots writing at once (a build N-1 beside N with a table taken off the allowlist),
+  which the lease serialises, and a build N-1 beside N, which keeps answering on N's
+  entities and never writes them;
 - a statement run while a write replaces the policies, which reads the right rows;
-- a policy written under another key, which the probe finds and writes again, and a
-  secrets row that does not open or is gone while the user is not, which answers
-  `ANALYSIS_UNAVAILABLE`;
-- `loom.analysis_secrets`, and neither the statement's text nor the key in
-  `system.query_log`.
+- `loom ch-setup --new-analysis-key` with its SQL printed and not yet run, during which
+  replicas keep the old key and keep answering; a policy under another key, which the
+  canary catches; and a secrets row that does not open or is gone while the user is not,
+  which answers `ANALYSIS_UNAVAILABLE`;
+- `loom.analysis_secrets` and `loom.analysis_canary` read directly, and neither the
+  statement's text nor the key in `system.query_log`.
 
 The same file will show that a revoked token stops new calls and that an erased memory
 is gone from the next statement. A unit test pins the generated grants and policies to
@@ -493,6 +505,7 @@ searches LibreChat's logs for the service user's password as it does for a token
 | ------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
 | `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                           | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
+| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                            | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
 | `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                 | as every ledger row                                   |
 | LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot  | kept; no memory content                               |
 | LibreChat `transactions`                    | token counts per answer and its message id, no content                                 | kept, a few hundred bytes per answer                  |
@@ -547,10 +560,10 @@ token never reads more than the caller's own.
 `assistant.ask`, `insights.query` and `insights.catalog` will be new ops and
 `/v1/assistant/chat/completions` a new route: a build that does not know them answers
 `UNKNOWN_OP` or 404, so a client points at them once every replica serves them. The
-analyst user, its grants and policies, `loom.analysis_secrets` and
-`loom.assistant_service` live in ClickHouse and are shared by every replica; the agent
-definition is written as [the agent definition](#the-agent-definition) says, never by an
-older build.
+analyst user, its grants and policies, `loom.analysis_secrets`, `loom.analysis_canary`
+and `loom.assistant_service` live in ClickHouse and are shared by every replica; the
+agent definition is written as [the agent definition](#the-agent-definition) says, never
+by an older build.
 
 ## Build order
 
