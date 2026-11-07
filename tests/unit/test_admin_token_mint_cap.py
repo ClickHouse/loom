@@ -17,6 +17,7 @@ import server.auth.authz as authz
 import server.identity.app.namespace_classification as nc
 from server.auth.jwt import mint_token
 from server.identity.app import token_grants
+from server.memory.domain.trust import actor_for
 from server.operations.base import Role
 from server.settings import settings
 
@@ -131,7 +132,8 @@ def test_a_mint_onto_a_restricted_namespace_writes_the_access_audit_row(
     assert r.status_code == 200, r.text
     rows = [kw for e, kw in client.audit_rows if e == "namespace.restricted_access"]
     assert [(kw["namespace"], kw["subject"]["op"]) for kw in rows] == [(PRIV, "admin.token.mint")]
-    assert rows[0]["subject"]["granted_to"].startswith("sa:")
+    assert rows[0]["subject"]["granted_to"] == r.json()["subject"]
+    assert rows[0]["actor"] == actor_for("ops@x", is_service_account=False)
 
 
 def test_other_org_is_refused_and_a_platform_admin_mints_only_in_its_own(client) -> None:

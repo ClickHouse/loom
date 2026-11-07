@@ -287,9 +287,8 @@ async def _loom_primer_text(
             from server.memory.api.models_profile import ProfileRenderInput
             from server.memory.app.profile import handle_profile_render
 
-            # read outside the op gate, so it leaves the row the gate would; the
-            # classification read fills the snapshot the row is decided on (a
-            # single-user default reaches here with no gate check)
+            # outside the op gate: read the classification (a single-user default
+            # had no gate check) so the row below is decided on it
             await is_restricted(defaults["org"], defaults["namespace"])
             await note_restricted_access(
                 auth,
@@ -315,8 +314,7 @@ async def _loom_primer_text(
                     f"{_fenced(rendered_out.rendered)}\n\n"
                     "Don't re-fetch — it's been delivered."
                 )
-        except Exception:  # noqa: BLE001 — primer ships without the profile on render failure
-            # Best-effort — primer ships without the profile on render failure.
+        except Exception:  # noqa: BLE001 — the primer ships without the profile when the classification or the render fails
             pass
 
     return (

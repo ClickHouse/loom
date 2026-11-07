@@ -9,7 +9,8 @@ the text, and the third gains one row per request — the same shape as
 `memory.sensitive_read`, per request rather than per row.
 
 Every check here is `is_restricted_cached`: synchronous, no I/O, answered
-from the snapshot the gate populated a moment earlier in the same request.
+from the snapshot the caller's own authorization (or classification read)
+filled a moment earlier in the same request.
 """
 
 from __future__ import annotations
@@ -77,11 +78,11 @@ async def note_restricted_access(
     transport: str,
     granted_to: str = "",
 ) -> bool:
-    """One audit row for a request the gate admitted to a restricted
-    namespace. Returns True when the row was written (or, with
-    `restricted_audit_inline` off, scheduled). Never raises.
+    """One audit row for a request admitted to a restricted namespace (by the
+    op gate, or by a raw route's own check). Returns True when the row was
+    written (or, with `restricted_audit_inline` off, scheduled). Never raises.
 
-    By default the row is written and waited for before the handler runs, so a
+    By default the row is written and waited for before the answer, so a
     process killed after answering never loses it; the read pays that insert's
     round trip, up to `ch_batched_insert_wait_max_ms` of batching, and the part
     write. `restricted_audit_inline=false` writes it beside the request instead

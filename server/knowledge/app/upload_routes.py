@@ -106,6 +106,15 @@ async def knowledge_upload(
     name = filename.strip().replace("\\", "/").rsplit("/", 1)[-1]
     if not name:
         raise _refuse(400, "VALIDATION_FAILED", "filename is required")
+    from server.core.document_formats import format_of
+
+    # Named from the file name and media type, never by reading the bytes: the
+    # server parses no original. One whose content is another format is refused
+    # by the extractor at ingest (`format_mismatch`).
+    try:
+        fmt = format_of(name, content_type)
+    except ValueError as e:
+        raise _refuse(415, "UNSUPPORTED_FILE", str(e)) from e
     try:
         if auth is not None:
             auth = effective_auth(auth, request.headers.get("X-Loom-On-Behalf-Of") or "")
@@ -121,14 +130,19 @@ async def knowledge_upload(
     )
     _admit(auth, org, namespace)
     with tenant_slots.hold(_bucket_org(auth, org)):
-        return await _store(request, org, namespace, name, content_type, sha256)
+        return await _store(request, org, namespace, name, fmt, content_type, sha256)
 
 
 async def _store(
-    request: Request, org: str, namespace: str, name: str, content_type: str, sha256: str
+    request: Request,
+    org: str,
+    namespace: str,
+    name: str,
+    fmt: str,
+    content_type: str,
+    sha256: str,
 ) -> JSONResponse:
     """Read, check and store the file; answers the upload."""
-    from server.core.document_formats import format_of
     from server.knowledge.app.writes import authorship_of
     from server.knowledge.store import blobs, ingestions
 
@@ -138,14 +152,6 @@ async def _store(
     digest = hashlib.sha256(data).hexdigest()
     if sha256 and sha256.lower() != digest:
         raise _refuse(422, "CHECKSUM_MISMATCH", "the bytes do not hash to the sha256 sent")
-    # Named from the file name and media type, never by reading the bytes: the
-    # server parses no original. One whose content is another format is refused
-    # by the extractor at ingest (`format_mismatch`).
-    try:
-        fmt = format_of(name, content_type)
-    except ValueError as e:
-        raise _refuse(415, "UNSUPPORTED_FILE", str(e)) from e
-
     author = authorship_of(agent="", session_id="", source_class=None)
     await blobs.put(org, namespace, data, uploader=author["user_id"])
     row = ingestions.upload_row(

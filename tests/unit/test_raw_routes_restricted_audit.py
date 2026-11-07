@@ -29,6 +29,7 @@ from httpx import ASGITransport, AsyncClient
 import server.identity.app.namespace_classification as nc
 from server.auth.jwt import AuthInfo
 from server.identity.app import token_grants
+from server.memory.domain.trust import actor_for
 from server.operations.base import Role
 
 ORG, NS, PLAIN = "acme", "vault", "plain"
@@ -79,6 +80,7 @@ def _assert_one_row(rows: list[tuple[str, dict[str, Any]]], op: str, namespace: 
     assert event == "namespace.restricted_access"
     assert (kw["org"], kw["namespace"]) == (ORG, namespace)
     assert kw["subject"]["op"] == op and kw["subject"]["transport"] == "http"
+    assert kw["actor"] == actor_for("alice", is_service_account=False)  # the caller
 
 
 def _client(module: Any) -> AsyncClient:
@@ -305,7 +307,7 @@ async def test_a_standard_namespace_writes_no_audit_row(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("refusal", "filename", "status"),
-    [("unauthorized", "a.md", 403), ("no filename", "/", 400)],
+    [("unauthorized", "a.md", 403), ("no filename", "/", 400), ("legacy Office", "a.doc", 415)],
 )
 async def test_a_refused_upload_writes_no_audit_row(
     monkeypatch: pytest.MonkeyPatch,
@@ -431,6 +433,7 @@ async def test_a_service_account_mint_onto_a_restricted_namespace_writes_the_aud
         )
     assert r.status_code == 200, r.text
     _assert_one_row(audit_rows, "me.service_accounts.create")
+    assert audit_rows[0][1]["subject"]["granted_to"] == r.json()["sa_subject"]
 
 
 @pytest.mark.asyncio
@@ -472,7 +475,7 @@ async def test_a_setup_mint_onto_a_restricted_namespace_writes_the_audit_row(
         )
     assert r.status_code == 200, r.text
     _assert_one_row(audit_rows, "me.setup.mcp_config")
-    assert audit_rows[0][1]["subject"]["granted_to"].startswith("sa:cursor-")
+    assert audit_rows[0][1]["subject"]["granted_to"] == r.json()["sa_subject"]
 
 
 @pytest.mark.asyncio
@@ -536,6 +539,60 @@ async def test_a_mint_from_a_cold_snapshot_writes_the_audit_row(
         )
     assert r.status_code == 200, r.text
     _assert_one_row(audit_rows, "me.service_accounts.create")
+    assert audit_rows[0][1]["subject"]["granted_to"] == r.json()["sa_subject"]
+
+
+@pytest.mark.asyncio
+async def test_the_mcp_primer_leaves_the_profile_out_when_the_classification_fails(
+    monkeypatch: pytest.MonkeyPatch, audit_rows: list[Any]
+) -> None:
+    from server.auth.directory import ClassificationUnavailable
+    from server.memory.app import profile
+    from server.transport import mcp_primer
+
+    rendered: list[Any] = []
+
+    async def _render(input: Any) -> Any:
+        rendered.append(input)
+        raise AssertionError("rendered without a classification")
+
+    async def _unreadable(org: str, namespace: str) -> bool:
+        raise ClassificationUnavailable("down")
+
+    monkeypatch.setattr(profile, "handle_profile_render", _render)
+    monkeypatch.setattr(nc, "is_restricted", _unreadable)
+    alice = AuthInfo(
+        subject="alice", org=ORG, namespaces=(NS,), roles=(Role.VIEWER,), is_service_account=False
+    )
+    text = await mcp_primer._loom_primer_text(alice, defaults={"org": ORG, "namespace": NS})
+    assert rendered == [] and audit_rows == []
+    assert "always-loaded context" not in text
+
+
+@pytest.mark.asyncio
+async def test_the_mcp_primer_profile_read_of_a_standard_namespace_writes_no_row(
+    monkeypatch: pytest.MonkeyPatch, audit_rows: list[Any]
+) -> None:
+    from server.memory.app import profile
+    from server.transport import mcp_primer
+
+    class _Rendered:
+        section_count = 0
+        rendered = ""
+
+    async def _render(_input: Any) -> _Rendered:
+        return _Rendered()
+
+    monkeypatch.setattr(profile, "handle_profile_render", _render)
+    alice = AuthInfo(
+        subject="alice",
+        org=ORG,
+        namespaces=(PLAIN,),
+        roles=(Role.VIEWER,),
+        is_service_account=False,
+    )
+    await mcp_primer._loom_primer_text(alice, defaults={"org": ORG, "namespace": PLAIN})
+    assert audit_rows == []
 
 
 # The checks that admit a caller to a namespace outside the op transport.
