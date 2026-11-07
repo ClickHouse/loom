@@ -224,13 +224,13 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
       reset();
       onOpenChange(false);
     } catch (e) {
-      setError(humanizeError(e));
+      // The follow is stopped and the job may still run: say so, as a lost follow does.
+      toast(`Stop failed (${humanizeError(e)}); ${goesOn(sourceUri.trim(), !!replaceMode)}`, "error");
+      reset();
+      onOpenChange(false);
     } finally {
       setStopping(false);
     }
-  };
-  const holdWhileBusy = (e: Event) => {
-    if (held) e.preventDefault();
   };
   const readable = readableFormats(formats);
 
@@ -241,8 +241,6 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
       title={replaceMode ? "Replace content" : "Add document"}
       description={replaceMode?.sourceUri}
       className="w-full max-w-[640px]"
-      onEscapeKeyDown={holdWhileBusy}
-      onPointerDownOutside={holdWhileBusy}
     >
       <form
         onSubmit={(e) => {

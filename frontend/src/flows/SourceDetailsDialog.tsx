@@ -30,7 +30,8 @@ export function SourceDetailsDialog({
     },
     [org, namespace, name],
   );
-  const note = detail?.sync.status === "ok";
+  // An ok turn's error says why it stopped early: a note, not an error.
+  const okTurn = detail?.sync.status === "ok";
   return (
     <Modal open onOpenChange={(v) => !v && onClose()} title={name} className="w-full max-w-[640px]">
       {!!error && <Alert role="alert" state="danger" text={humanizeError(error)} />}
@@ -56,7 +57,7 @@ export function SourceDetailsDialog({
             </MetaRow>
             {/* A failed turn's error, or why an ok turn stopped early. */}
             {detail.sync.error && (
-              <MetaRow label={note ? "Note" : "Error"} tone={note ? undefined : "danger"}>
+              <MetaRow label={okTurn ? "Note" : "Error"} tone={okTurn ? undefined : "danger"}>
                 {detail.sync.error}
               </MetaRow>
             )}

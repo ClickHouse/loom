@@ -53,4 +53,14 @@ describe("SourceDetailsDialog", () => {
     expect(screen.getByText("3 files too large")).toBeInTheDocument();
     expect(screen.queryByText("Error")).toBeNull();
   });
+
+  it("shows a synced source's last turn time beside its badge", async () => {
+    vi.mocked(api.inspectKnowledgeSource).mockResolvedValueOnce({
+      ...DETAIL,
+      sync: { ...DETAIL.sync, status: "ok", error: "", last_synced_at: "2000-01-01 00:00:00" },
+    });
+    render(<SourceDetailsDialog org="acme" namespace="code-x" name="design-docs" onClose={() => {}} />);
+    const badge = await screen.findByText(/· Synced/);
+    expect(badge.textContent).toContain("2000");
+  });
 });
