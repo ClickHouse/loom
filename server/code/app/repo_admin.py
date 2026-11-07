@@ -435,7 +435,7 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
     # a call that fails between the two leaves the repository registered to retry.
     ch = get_client()
     async with sources_lease(input.org, input.namespace):
-        # Before any deactivation, so a refused removal keeps the links.
+        # First, so a failed clear stops the removal while it can be retried.
         await _empty_tracker_links(input.org, input.namespace, detail="repository removed")
         sources_off = await deactivate_namespace_sources(input.org, input.namespace)
         registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)

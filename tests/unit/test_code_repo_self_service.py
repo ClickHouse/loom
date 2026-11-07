@@ -521,10 +521,11 @@ async def test_a_branch_of_a_cleared_operator_source_copies_no_qa_binding(plane,
 async def test_a_failed_link_write_leaves_the_branch_registered(plane, links, monkeypatch) -> None:
     import server.code.store.index as code_repo_mod
 
-    await admin.handle_code_repo_add(
-        CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main", join_policy="open")
+    # a branch of the operator root with links of its own, then a branch of that branch
+    await admin.handle_code_repo_add_branch(
+        CodeRepoAddBranchInput(org=ORG, namespace="code-clickhouse", branch="26.8")
     )
-    plane.stored[(ORG, "code-widgets", links.OVERRIDE_KEY)] = "tracker-w"
+    plane.stored[(ORG, "code-clickhouse-26-8", links.OVERRIDE_KEY)] = "tracker-w"
     real = code_repo_mod.CodeRepo.set_state
 
     async def _boom(self, org, ns, key, value, detail=""):
@@ -534,10 +535,11 @@ async def test_a_failed_link_write_leaves_the_branch_registered(plane, links, mo
 
     monkeypatch.setattr(code_repo_mod.CodeRepo, "set_state", _boom)
     out = await admin.handle_code_repo_add_branch(
-        CodeRepoAddBranchInput(org=ORG, namespace="code-widgets", branch="release/1.2")
+        CodeRepoAddBranchInput(org=ORG, namespace="code-clickhouse-26-8", branch="26.9")
     )
-    assert out.namespace == "code-widgets-release-1-2"
-    assert _link_rows(plane) == []  # the link write failed, so no qa_branch_of after it
+    assert out.namespace == "code-clickhouse-26-9"
+    # the copy failed, so no qa_branch_of after it: the branch does not follow the root
+    assert [r for r in _link_rows(plane) if r[1] == "code-clickhouse-26-9"] == []
 
 
 @pytest.mark.asyncio

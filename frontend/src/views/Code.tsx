@@ -31,7 +31,7 @@ import { IconButton } from "../components/IconButton";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { RowSkeleton, Skeleton, SkeletonCard } from "../components/Skeleton";
-import { type ToastKind, toast } from "../components/Toast";
+import { type ToastKind, type ToastOpts, toast } from "../components/Toast";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
@@ -358,11 +358,11 @@ function useJoinActions(onChanged: () => void) {
 export function linkedToast(
   repo: string,
   out: { tracker_namespaces: string[]; warning: string },
-): [string, ToastKind, { durationMs?: number }] {
+): [string, ToastKind, ToastOpts] {
   const done = out.tracker_namespaces.length
     ? `${repo} reads ${out.tracker_namespaces.join(" + ")}`
     : `${repo} unlinked`;
-  return out.warning ? [`${done}. ${out.warning}`, "info", { durationMs: 15000 }] : [done, "ok", {}];
+  return out.warning ? [`${done}: ${out.warning}`, "info", { durationMs: 15000 }] : [done, "ok", {}];
 }
 
 /** How `/v1/health` reports a deployment without the repository-job sandbox, where adding
