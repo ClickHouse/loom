@@ -381,8 +381,22 @@ async def test_set_source_writes_the_ordered_list(wired, monkeypatch) -> None:
                 CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[QA, DESK])
             )
         # a tracker only the operator map links is stored by this call: it needs its admin
+        from server.code.domain.index.repos import RepoConfig
+
         b.reset_overrides_for_tests({})
         monkeypatch.setattr(b, "bindings", lambda: {CODE: DESK})
+        entry = RepoConfig(
+            org=ORG,
+            namespace=CODE,
+            repo="Acme/widgets",
+            git_dir="",
+            git_remote="",
+            git_branch="main",
+            path_prefixes=(),
+            github_token="",
+        )  # an operator entry (source "config"), so the map's link is in force
+        monkeypatch.setattr("server.code.domain.index.repos.configured_repos", lambda: [entry])
+        assert b.tracker_namespaces_for(ORG, CODE) == [DESK]
         with pytest.raises(AuthInsufficientError, match="needs an admin"):
             await adm.handle_code_repo_set_source(
                 CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[DESK])
@@ -470,7 +484,7 @@ async def test_set_source_reads_its_own_stored_links_fail_closed(monkeypatch) ->
         "server.code.domain.index.repos.repo_for_namespace",
         lambda org, ns: SimpleNamespace(repo="Acme/widgets"),
     )
-    b.reset_overrides_for_tests({CODE: QA})  # the deployment-wide snapshot names it
+    b.reset_overrides_for_tests({("other-org", CODE): QA})  # another org's snapshot row names it
     try:
         with pytest.raises(ConnectionError):
             await adm.handle_code_repo_set_source(
