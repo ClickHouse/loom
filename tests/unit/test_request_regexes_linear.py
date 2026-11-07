@@ -18,6 +18,9 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from server.code.app import citations as citations_app
+from server.code.app import symbol_context
+from server.code.app.common import repo_relative
 from server.code.app.index import sql_names
 from server.code.domain import facets
 from server.code.domain.index import citations, query_trim
@@ -260,12 +263,32 @@ def test_a_long_run_is_read_in_linear_time(
     assert _fastest_seconds(read, long) < 8 * _fastest_seconds(read, short) + _FLOOR_S
 
 
+@pytest.mark.parametrize(
+    "read",
+    [files.normalize_file_ref, citations.extract, repo_relative, symbol_context.normalize_path],
+    ids=["files", "citations", "repo_relative", "symbol_context"],
+)
+def test_a_long_run_of_dot_slashes_is_stepped_past(read: Callable[[str], object]) -> None:
+    # a slice per `./` copies the rest of the path each time; from n to 8n
+    # that grows about 64 times, a single pass about 8
+    short = "./" * 12_000 + "x.py"
+    long = "./" * 96_000 + "x.py"  # under the 200 KB citations cap
+    assert _fastest_seconds(read, long) < 24 * _fastest_seconds(read, short) + _FLOOR_S
+
+
 def test_an_asset_name_longer_than_a_file_name_is_not_hashed() -> None:
     stem = "a" * (255 - len("-0123abcd.js"))
     assert frontend_assets.is_hashed_asset(f"assets/{stem}-0123abcd.js")
     assert not frontend_assets.is_hashed_asset(f"assets/{stem}x-0123abcd.js")
     # the directory does not count toward the name
     assert frontend_assets.is_hashed_asset("x" * 1000 + "/index-0123abcd.js")
+
+
+def test_a_deeply_qualified_name_is_retried_under_its_last_qualifiers_only() -> None:
+    assert citations_app._shorter("A::B::C") == ["B::C", "C"]
+    deep = citations_app._shorter("::".join(["a"] * 60_000))
+    assert len(deep) == citations_app.MAX_QUALIFIER_RETRIES
+    assert deep[-1] == "a"
 
 
 def test_a_forget_sentence_past_the_cap_is_not_read() -> None:
@@ -278,6 +301,15 @@ def test_a_forget_sentence_past_the_cap_is_not_read() -> None:
         0: "I switched to VS Code"
     }
     assert forget_requests.forget_sentences([{"role": "user", "content": over}]) == {}
+
+    # a request too long to read is still not a sentence the message says besides it
+    long_request = (
+        "forget my old address on Elm Street" + " x" * forget_requests.MAX_FORGET_SENTENCE_CHARS
+    )
+    message = f"forget that I like jazz. {long_request}. I live on Oak Road now."
+    assert forget_requests.forget_sentences([{"role": "user", "content": message}]) == {
+        0: "I live on Oak Road now."
+    }
 
 
 @pytest.mark.parametrize(

@@ -18,6 +18,7 @@ from server.code.app.spans import (
 from server.code.app.ttl_cache import TtlCache
 from server.core.background import create_deferred_task
 from server.core.errors import PreconditionFailedError
+from server.core.relative_paths import without_dot_slashes
 from server.observability.consumer import current_consumer
 from server.settings import settings
 
@@ -31,11 +32,7 @@ def repo_relative(path: str) -> str:
     `.github/workflows/ci.yml` KEPT. `str.lstrip("./")` would strip characters, not a
     prefix, and eat the dot of every dot-directory path."""
     p = path.strip().replace("\\", "/")
-    # step past every `./` before one slice: a slice per prefix copies the rest each time
-    i = 0
-    while p.startswith("./", i):
-        i += 2
-    p = p[i:]
+    p = without_dot_slashes(p)
     return p.lstrip("/")
 
 

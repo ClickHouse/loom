@@ -330,8 +330,13 @@ def forget_sentences(
         for raw in sents:
             sent = raw.strip("\"'“”‘’")
             # the length forget_requests_from_messages reads: the match is
-            # quadratic in a blank run inside the sentence
-            mt = _FORGET_MSG_RE.match(sent) if len(sent) <= MAX_FORGET_SENTENCE_CHARS else None
+            # quadratic in a blank run inside the sentence. A longer sentence
+            # that opens like a request is no other sentence of the message.
+            if len(sent) > MAX_FORGET_SENTENCE_CHARS:
+                if not same_sentence and not _FORGET_MSG_RE.match(sent[:MAX_FORGET_SENTENCE_CHARS]):
+                    others.append(raw)
+                continue
+            mt = _FORGET_MSG_RE.match(sent)
             if mt:
                 rests.append(split_replacement(mt.group("what"))[1])
             elif not same_sentence:

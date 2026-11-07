@@ -25,6 +25,8 @@ import logging
 import posixpath
 from typing import Any
 
+from server.core.relative_paths import without_dot_slashes
+
 logger = logging.getLogger("loom.code_symbol_context")
 
 PICKED_BY = ("same_file", "same_dir", "co_change", "path_distance")
@@ -34,11 +36,7 @@ MAX_NEAR_PATHS = 50
 
 def normalize_path(p: str) -> str:
     p = str(p or "").strip()
-    # step past every `./` before one slice: a slice per prefix copies the rest each time
-    i = 0
-    while p.startswith("./", i):
-        i += 2
-    p = p[i:]
+    p = without_dot_slashes(p)
     return p.lstrip("/")
 
 

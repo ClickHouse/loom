@@ -15,6 +15,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from server.code.domain.facets import extract_code_facets
+from server.core.relative_paths import without_dot_slashes
 
 MAX_FILES = 32
 MAX_FILE_CHARS = 1024
@@ -46,11 +47,7 @@ def normalize_file_ref(raw: Any) -> str:
     """One stored file reference: trimmed, forward slashes, no leading `./`,
     at most MAX_FILE_CHARS. '' for a value that is no reference."""
     s = str(raw or "").strip().replace("\\", "/")
-    # step past every `./` before one slice: a slice per prefix copies the rest each time
-    i = 0
-    while s.startswith("./", i):
-        i += 2
-    return s[i : i + MAX_FILE_CHARS].strip()
+    return without_dot_slashes(s)[:MAX_FILE_CHARS].strip()
 
 
 def normalize_files(values: Iterable[Any], cap: int = MAX_FILES) -> list[str]:

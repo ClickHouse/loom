@@ -27,6 +27,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.core.relative_paths import without_dot_slashes
+
 MAX_CITATIONS = 500
 MAX_TEXT_CHARS = 200_000
 
@@ -257,12 +259,8 @@ class Extraction:
 
 
 def normalise_path(path: str) -> str:
-    p = path.strip()
-    # each prefix is stepped past, not sliced off: a slice copies the rest of the path
-    i = 0
-    while p.startswith("./", i):
-        i += 2
-    p = p[i:].lstrip("/")
+    p = without_dot_slashes(path.strip()).lstrip("/")
+    # each diff prefix is stepped past, not sliced off: a slice copies the rest of the path
     i, slashes = 0, p.count("/")
     while p.startswith(("a/", "b/"), i) and slashes > 1 and not p.startswith(("a/b", "b/a"), i):
         # unified-diff prefixes; a real `a/` top-level directory is rare
