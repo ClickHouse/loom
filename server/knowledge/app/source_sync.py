@@ -18,7 +18,9 @@ A turn lists the source's files: every file on its first turn, when asked
 (`full`) and once `knowledge_source_sync_full_interval_seconds` have passed
 since the last full listing; otherwise those changed after the stored stamp. A
 file whose stored copy has the listed revision is skipped without a fetch, unless
-it is a native document whose stored text still holds its pictures' bytes. A
+a full listing finds a native document whose stored text still holds its
+pictures' bytes and that the sync state has not recorded as checked at this
+revision. A
 changed file is fetched, turned into Markdown and written with
 `knowledge.upsert` as `worker:knowledge-source-sync`, `imported`, tagged
 `source:<name>`. A native document is exported as Markdown, a presentation

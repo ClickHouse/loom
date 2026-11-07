@@ -538,7 +538,14 @@ def test_unchanged_flagged_copies_do_not_hold_a_full_listing_at_the_pass_bound(
     # Once a file is listed at another revision, its record goes.
     world.files[0] = _file("doc1", DOCS, "2026-03-01T00:00:00.000Z")
     asyncio.run(source_sync.run_sync(full=True))
-    assert "doc1" not in _detail(world)["pictures_checked"]
+    assert _detail(world)["pictures_checked"] == {"doc2": REV1}
+    # A file an incremental turn does not list keeps its record; a full listing without
+    # it drops the record.
+    world.files = [f for f in world.files if f["id"] != "doc2"]
+    asyncio.run(source_sync.run_sync())
+    assert _detail(world)["pictures_checked"] == {"doc2": REV1}
+    asyncio.run(source_sync.run_sync(full=True))
+    assert "doc2" not in _detail(world)["pictures_checked"]
 
 
 def test_a_document_stored_without_pictures_bytes_is_not_fetched_again(world: _World) -> None:
