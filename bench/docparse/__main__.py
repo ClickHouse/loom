@@ -194,6 +194,9 @@ def main(argv: list[str] | None = None) -> int:
         if bad := [p for p in args.parses if "=" not in p]:
             ap.error(f"a parse is NAME=PARSES.jsonl, not {bad[0]}")
         systems = [(p.split("=", 1)[0], Path(p.split("=", 1)[1])) for p in args.parses]
+        names = [name for name, _ in systems]
+        if shared := sorted({n for n in names if names.count(n) > 1}):
+            ap.error(f"two parses share a name: {', '.join(shared)}")
         score(args.corpus, systems, args.split, args.json)
     else:
         from bench.docparse.corpus import build
