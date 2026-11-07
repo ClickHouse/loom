@@ -370,9 +370,8 @@ NetworkPolicy whose one rule allows every pod and every address but those (none 
   say) cuts the pods off every address in it but other pods, and an entry that is not a
   CIDR fails the upgrade.
 - A metadata proxy that redirects 169.254.169.254 to another address is reached at
-  that address, which the engine may check instead. One that serves only the pod's own
-  identity (GKE's metadata server without Dataplane V2) needs nothing; add the address of
-  one that passes node credentials through to `egressExcept`.
+  that address, which the engine may check instead: add the address of one that passes
+  node credentials through to `egressExcept`.
 - A service in the cluster that fetches URLs for its callers (a forward proxy, a
   ClickHouse whose `url()` reaches any host, such as the test-only dev ClickHouse) reaches
   `egressExcept` for them: deny those addresses in its own policy.
