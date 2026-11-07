@@ -67,7 +67,8 @@ _UNDECIDED = re.compile(
     r"not (?:yet )?(?:decided|concluded|agreed)|"
     r"to be decided|(?:haven't|hasn't|have not|has not)(?: yet)?(?: been)? decided|"
     r"decision (?:pending|needed|deferred)|needs? a decision|"
-    r"decisions?\W+(?:tbd|tbc|none|pending|open|deferred)\b)",
+    # "Decision: open" is a placeholder; "Decision: open the replica to reads" is a decision.
+    r"decisions?\W+(?:tbd|tbc|none|pending|open|deferred)(?: yet)?(?=\W*$|\W*[.;,(]))",
     re.IGNORECASE,
 )
 # The title shapes of meeting notes and status reports (the module docstring).
@@ -118,8 +119,8 @@ _DECISIONS_HEADING = re.compile(
     r"^\W*(?:slide\s+\d+\s*:\s*)?(?:decisions?|decided|agreed|outcomes?)\b", re.IGNORECASE
 )
 
-# A label with nothing after it ("Outcome:").
-_LABEL = re.compile(r"^\W*\w+\W*$")
+# The label words a line of notes opens with ("Outcome:").
+_LABEL = re.compile(r"\b(?:outcome|conclusion|resolved|decisions?)\s*:", re.IGNORECASE)
 # Where one sentence of a line ends and the next begins.
 _SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
 # A list marker, a table pipe or a quote mark opening a line, dropped before the
@@ -182,10 +183,10 @@ def _decides(line: str, notes: bool) -> bool:
 
 def _records(sentence: str, notes: bool) -> bool:
     kept = _UNDECIDED.sub("", sentence) if notes else sentence
-    # "Outcome: no decision" without its phrase is a bare label; a bare "Outcome:" line
-    # heads the decision on the next line.
-    if kept != sentence and _LABEL.match(kept):
-        return False
+    # "Outcome: no decision yet" leaves its label behind, which records nothing; a bare
+    # "Outcome:" line heads the decision on the next line, and stays one.
+    if kept != sentence:
+        kept = _LABEL.sub("", kept)
     return bool(_DECISION.search(kept))
 
 
