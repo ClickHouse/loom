@@ -48,7 +48,7 @@ _CHOSE = (
     r"replaced|rejected|accepted)"
 )
 # A recorded decision: content wherever it is written. A phrase saying none was reached
-# (`_UNDECIDED`) is not one, in meeting notes.
+# (`_UNDECIDED`) is not one, in meeting notes and in a heading of any document.
 _DECISION = re.compile(
     r"\b(?:decided|decision|agreed|agreement|consensus|settled on|approved|signed off|"
     r"going with|going ahead with|proceeding with|went with|chosen|ruled out|resolved:|"
@@ -61,7 +61,7 @@ _DECISION = re.compile(
     rf"let's {_CHOICE_VERB})",
     re.IGNORECASE,
 )
-# A line of meeting notes that says the discussion reached no decision.
+# Wording that says a discussion reached no decision.
 _NO_DECISION = (
     r"(?:no (?:conclusion|decision|consensus|agreement)|undecided|"
     r"not (?:yet )?(?:decided|concluded|agreed)|"
@@ -72,11 +72,14 @@ _NO_DECISION = (
 _LABEL_END = r"(?: yet)?(?=\W*$|\s*[.;,(\u2013\u2014]|\s+-+(?:\s|$))"
 _UNDECIDED = re.compile(
     # A label whose whole value says none was reached: "Outcome: no decision yet",
-    # "Decision: open". "Decision: open the replica to reads", "Decision: open-source the
-    # parser" and "Decision: no consensus on Kafka, so we stay on Redis" keep the label.
-    rf"\b(?:outcome|conclusion|resolved|decisions?)\s*:?\s*"
-    rf"(?:{_NO_DECISION}|none|pending|open){_LABEL_END}|"
-    r"\bdecisions?\W+(?:tbd|tbc|deferred)\b|"
+    # "Decision: open", "Decision: deferred to next sync". "Decision: open the replica to
+    # reads", "Decision: deferred the rewrite", "Decision: open-source the parser" and
+    # "Decision: no consensus on Kafka, so we stay on Redis" keep the label, and so does
+    # "Decision: no consensus on Kafka": content when unsure.
+    rf"\b(?:outcome|conclusion|resolved|decisions?)\s*(?::\s*)?"
+    rf"(?:{_NO_DECISION}|none|pending|open|deferred(?: (?:to|until) [^.;,]{{0,40}}?)?)"
+    rf"{_LABEL_END}|"
+    r"\bdecisions?\W+(?:tbd|tbc)\b|"
     rf"\b{_NO_DECISION}",
     re.IGNORECASE,
 )

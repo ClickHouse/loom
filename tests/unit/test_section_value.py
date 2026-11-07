@@ -180,6 +180,13 @@ def test_bookkeeping_and_discussion_without_a_decision_are_noise(
             "Decision: no consensus on Kafka, so we stay on Redis.",
         ),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: pending-write queue goes first."),
+        # A label over a topic keeps the label: content when unsure.
+        ("Storage sync 2026-03-04", ("Cache",), "Decision: no consensus on Kafka."),
+        (
+            "Storage sync 2026-03-04",
+            ("Cache",),
+            "Decision: deferred the cache rewrite until after the freeze",
+        ),
         (
             "Storage sync 2026-03-04",
             ("Cache",),
@@ -674,4 +681,6 @@ def test_a_long_line_is_judged_in_linear_time() -> None:
     started = time.perf_counter()
     is_noise("Disk set", ("X",), "option " * 20_000)
     is_noise("Storage sync 2026-03-04", ("X",), "outcome: decision: " * 20_000)
+    is_noise("Storage sync 2026-03-04", ("X",), "Decision" + " " * 20_000 + "x")
+    is_noise("Storage sync 2026-03-04", ("X",), "Decision: deferred to " + "x " * 20_000)
     assert time.perf_counter() - started < 5.0
