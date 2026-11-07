@@ -344,24 +344,21 @@ export default function App() {
           // The sign-in this tab started (its nonce came back) skips the checks below.
           else if (token && !started) {
             // Asked about with its own header first; nothing is stored, nor any tab told, before.
-            linkAnswer = await whoamiWhenReady(token).catch(() => null);
-            const answer = linkAnswer;
+            const answer = await whoamiWhenReady(token).catch(() => null);
             // Refused, expired or unanswered: dropped without asking.
             if (!answer?.authenticated) {
               linkRefused = answer?.authenticated === false;
               link = { ...link, token: null };
             }
             // Another account than the one held: the person confirms the one the server named.
+            // Boot asks whoami again: the person may read the question longer than it lives.
             else if (!sameAccount(answer, storedToken())) {
               const ok = await new Promise<boolean>((resolve) =>
                 setLinkAsk({ subject: answer.subject ?? null, org: answer.org ?? null, answer: resolve }),
               );
               setLinkAsk(null);
               if (!ok) link = { ...link, token: null };
-              // The person may have read the question for longer than the token lives.
-              linkAnswer = null;
-            }
-            if (!link.token) linkAnswer = null;
+            } else linkAnswer = answer;
           }
           if (link.token) setToken(link.token);
           try {

@@ -880,6 +880,32 @@ describe("login link", () => {
     expect(localStorage.getItem("loom_token_v1")).toBe(again);
   });
 
+  it("asks about a link's token again after a 503 though another tab clears the stored token meanwhile", async () => {
+    localStorage.setItem("loom_token_v1", alice);
+    stored = [];
+    const link = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], iat: 6 });
+    let asked = 0;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (!String(input).includes("/v1/whoami")) return json(GENERIC);
+      const bearer = new Headers(init?.headers).get("Authorization");
+      if (bearer === `Bearer ${link}` && ++asked === 1) {
+        localStorage.removeItem("loom_token_v1"); // another tab signs out while this one waits
+        return new Response(JSON.stringify({ error: "unavailable" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
+    });
+    window.history.replaceState(null, "", `/me#token=${link}`);
+    render(<App />);
+    // Nothing is held now, so the account the server named is asked about, not refused.
+    await screen.findByRole("button", { name: "Sign in as alice" }, { timeout: 10_000 });
+    expect(asked).toBe(2);
+    expect(useStore.getState().gateReason).toBeNull();
+    expect(stored).toEqual([]);
+  });
+
   it("stores a same-account link's token without asking, once whoami accepts it", async () => {
     localStorage.setItem("loom_token_v1", alice);
     stored = [];
