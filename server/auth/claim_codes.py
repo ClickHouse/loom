@@ -6,10 +6,9 @@ prefix holds a plain argon2id hash of its code; it is told apart by its shape
 (`UNCLAIMED_SQL`). Only sign-up writes that shape. No settings write changes
 the owner, the email or the password, and the one operator step that writes an
 email on a password account (`account_admin.link_account`) refuses an
-unclaimed one (`is_unclaimed`).
-Until the claim, no sign-in takes the code; the claim page
-(`server.identity.app.agent_claim`) takes it once and writes the claimer's own
-password with `CLAIMED_TAG`.
+unclaimed one (`is_unclaimed`). Until the claim, no sign-in takes the code;
+the claim page (`server.identity.app.agent_claim`) takes it once and writes the
+claimer's own password with `CLAIMED_TAG`.
 """
 
 from __future__ import annotations

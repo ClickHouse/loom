@@ -96,8 +96,8 @@ def connect_lines(out: dict[str, Any], *, base_url: str, token_path: str, config
         "--bearer-token-env-var LOOM_API_KEY",
         "",
         "  Hand the namespace to a person (the code works once; keep it out of logs):",
-        f"    open {claim_url}, enter name {ns!r}, code {out['claim_code']} and a password",
-        "    — they sign in as its admin from then on; this agent's token keeps working.",
+        f"    open {claim_url} and enter name {ns!r} and code {out['claim_code']} where it asks",
+        "    — they become its admin; this agent's token keeps working.",
     ]
     if out.get("expires_at"):
         lines.append(

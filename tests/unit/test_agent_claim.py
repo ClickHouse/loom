@@ -522,6 +522,18 @@ def test_a_busy_account_answers_a_page_to_wait_and_retry(world, monkeypatch) -> 
     assert "An earlier submit may still be claiming" in r.text
 
 
+def test_a_backend_failure_during_the_code_check_answers_the_page(world, monkeypatch) -> None:
+    from server.core.errors import BackendUnavailableError
+
+    async def unavailable(namespace: str, code: str) -> Any:
+        raise BackendUnavailableError("ClickHouse is unreachable")
+
+    monkeypatch.setattr(agent_claim, "_proven", unavailable)
+    r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
+    assert r.status_code == 503 and r.headers["Retry-After"] == "60"
+    assert r.headers["content-type"].startswith("text/html")
+
+
 def test_the_steps_after_the_write_outlast_the_account_lease(world, monkeypatch) -> None:
     # The read-back, the skew wait and the second cutoff run after the lease is
     # released, so its 20 s bound cannot cut them short.
@@ -576,6 +588,39 @@ def test_a_cancelled_request_still_stores_the_last_cutoff(world, monkeypatch) ->
             await handler
         release.set()
         await asyncio.gather(*agent_claim._running)
+
+    asyncio.run(run())
+    assert len(cutoffs) == 2
+    assert passwords.verify_password(_row(world, _LEGACY)["password_hash"], "p")
+
+
+def test_a_shutdown_drain_waits_for_a_claims_last_cutoff(world, monkeypatch) -> None:
+    from server.identity.app import account_admin
+
+    real_end, cutoffs = account_admin.end_tokens, []
+
+    async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
+        cutoffs.append(await real_end(subject, by=by, reason=reason))
+        return cutoffs[-1]
+
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+    stored_hash = _row(world, _LEGACY)["password_hash"]
+
+    async def run() -> None:
+        entered = asyncio.Event()
+
+        async def skew_wait() -> None:
+            entered.set()
+            await asyncio.sleep(0.5)
+
+        monkeypatch.setattr(agent_claim, "_skew_wait", skew_wait)
+        handler = asyncio.create_task(
+            agent_claim.claim_shielded("dev", _LEGACY, stored_hash, passwords.hash_password("p"))
+        )
+        await entered.wait()
+        handler.cancel()
+        await agent_claim.drain(timeout_s=30.0)
+        assert not agent_claim._running
 
     asyncio.run(run())
     assert len(cutoffs) == 2

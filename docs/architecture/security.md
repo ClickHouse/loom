@@ -339,7 +339,7 @@ refresh), replaces the code with the claimer's own password, adds the tag
 reads the row back with sequential consistency (for at most 5 s), waits `CLOCK_SKEW_S` (5 s),
 and cuts off once more, for a sign-in with a plain-hash code on an older replica while the
 write was landing; no lease bound can stop these steps, and they run in a task of their own, so
-a client that disconnects does not stop them either. A second submit of the same form that
+a client that disconnects does not stop them either, and a shutdown waits for them. A second submit of the same form that
 proved the code too finds the account claimed once it holds it and waits to a bound past the
 first claim's last cutoff, counted from that moment: the read-back's 5 s, the skew wait, the
 cutoff's own margin (`CLOCK_SKEW_S` + 1) and `CLOCK_SKEW_S` for the first claim's replica clock
@@ -356,7 +356,11 @@ replica's clock is past the later cutoff, so the claimer's next sign-in is not e
 second claim finds no code and is refused, so whoever kept a copy of the code cannot sign in as
 the namespace afterwards, nor keep a session it started with the code. An account claimed by
 signing in with its code before the claim page existed is unclaimed by this rule: its owner
-claims it again with the same code, and the first claim wins.
+claims it again with the same code, and the first claim wins, so on upgrade an operator has the
+owners of such accounts claim them at once. An agent account linked to an SSO email before this
+rule names an email, so it is not unclaimed and the claim page refuses it, while its password is
+still the code; under SSO no password sign-in is served, and an operator who turns SSO off
+first releases such an account with `loom claim-release`.
 
 During a rolling upgrade a replica of the build before still signs in with a plain-hash code,
 and its sign-in reads `loom.namespaces` without sequential consistency. After the wait, the

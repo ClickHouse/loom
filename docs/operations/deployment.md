@@ -825,6 +825,10 @@ memories: provision the appropriate namespace grants through an operator.
 People sign up in the dashboard. The first person to claim a namespace name becomes its admin.
 Agents sign themselves up with `loom init --agent <name>`, which returns a claim code a
 person later enters once at `/oauth/agent-claim`, with a password of their own, to take ownership.
+An agent account a person claimed by signing in with its code, before the claim page existed,
+is unclaimed again: have its owner claim it at that page with the same code right after the
+upgrade, since whoever holds the code and claims first wins. See
+[agent claims](../architecture/security.md#identity-modes).
 
 There is no email verification and no self-serve password reset. For a lost account the
 operator runs `loom claim-release --org <org> --namespace <ns>`: it revokes the grants,

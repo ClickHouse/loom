@@ -2,12 +2,12 @@
 
 No password sign-in takes an unclaimed agent's code (`server.auth.claim_codes`).
 This page checks the code and, while it holds the account, replaces it with a
-password the person chooses and marks the account claimed (then cuts off again,
-outside the lease): the code works once,
-and from then on the person signs in as the namespace (its admin) with their own
-password. Every token the namespace's subject held before is cut off: an account
-made before the code was stored prefixed could be signed in to with it, by
-whoever held it. The agent's own token is a separate subject and keeps working.
+password the person chooses and marks the account claimed; it cuts off again
+after it releases the account. The code works once, and from then on the person
+signs in as the namespace (its admin) with their own password. Every token the
+namespace's subject held before is cut off: an account made before the code was
+stored prefixed could be signed in to with it, by whoever held it. The agent's
+own token is a separate subject and keeps working.
 """
 
 from __future__ import annotations
@@ -111,6 +111,8 @@ async def agent_claim(request: Request) -> Response:
         page = _form(namespace, e.message, 429)
         page.headers["Retry-After"] = str(e.retry_after_s)
         return page
+    except BackendUnavailableError:
+        return _retry_later(namespace, "The code could not be checked: submit again in a minute.")
     if proven is None:
         return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
     org, code_hash = proven
@@ -119,15 +121,12 @@ async def agent_claim(request: Request) -> Response:
     try:
         outcome, cutoff = await claim_shielded(org, namespace, code_hash, password_hash)
     except (GrantBusyError, BackendUnavailableError):
-        page = _form(
+        return _retry_later(
             namespace,
             "An earlier submit may still be claiming this namespace: wait a minute and sign "
             "in with the password you chose; if that fails, submit again.",
-            503,
         )
-        page.headers["Retry-After"] = "60"
-        return page
-    if outcome == "refused" or cutoff is None:
+    if cutoff is None:
         return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
     # The person signs in next: past the cutoff on every replica's clock, so the
     # token they get is not one it ends.
@@ -135,14 +134,21 @@ async def agent_claim(request: Request) -> Response:
     if outcome == "taken":
         return _form(
             namespace,
-            "This namespace was claimed a moment ago, perhaps by an earlier submit of this "
-            "form: sign in with the namespace name and the password you chose.",
+            "This namespace was claimed a moment ago. If that was an earlier submit of this "
+            "form, sign in with the namespace name and the password you chose; otherwise ask "
+            "your Loom operator.",
             400,
         )
     return oauth.html_page(
         _TITLE,
         f"<h2>Claimed</h2><p>Sign in as <b>{html.escape(namespace)}</b> with your password.</p>",
     )
+
+
+def _retry_later(namespace: str, error: str) -> Response:
+    page = _form(namespace, error, 503)
+    page.headers["Retry-After"] = "60"
+    return page
 
 
 async def _proven(namespace: str, code: str) -> tuple[str, str] | None:
@@ -170,6 +176,12 @@ def _done(task: asyncio.Task[Any]) -> None:
         log.warning("agent claim: the claim's task failed: %r", task.exception())
 
 
+async def drain(timeout_s: float) -> None:
+    """Wait for the claims still running, so a shutdown does not drop a cutoff."""
+    if _running:
+        await asyncio.wait(set(_running), timeout=timeout_s)
+
+
 async def claim_shielded(
     org: str, namespace: str, code_hash: str, password_hash: str
 ) -> tuple[str, datetime | None]:
@@ -187,7 +199,8 @@ async def _replace_code(
     """("claimed", the cutoff the claimer waits out) when this call replaced the
     code with `password_hash`; ("taken", a cutoff past the first claim's last)
     when a claim landed first, as an earlier submit of the same form does;
-    ("refused", None) when the row changed otherwise (a release)."""
+    ("refused", None), the only outcome without a cutoff, when the row changed
+    otherwise (a release)."""
     subject = ""
     # Held from the read to the write, as a release or a password link holds the
     # account; the cutoffs after the write need no lease and run after it.
