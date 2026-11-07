@@ -427,11 +427,11 @@ jobs:
           refused "$token" "${extractor[@]}" --set env.LOOM_DOCUMENT_EXTRACTOR_TOKEN=x
           refused "$token" "${extractor[@]}" --set "extraEnv[0].name=LOOM_DOCUMENT_EXTRACTOR_TOKEN"
           refused "$token" "${extractor[@]}" --set settingsFile.document_extractor_token=x
+      - name: install PyYAML for the render gates
+        run: python3 -m pip install --quiet --user pyyaml==6.0.3
       # What the extractor's pods can be reached by and reach, read off the render.
       - name: extractor isolation
-        run: |
-          python3 -m pip install --quiet --user pyyaml==6.0.3
-          python3 scripts/gates/helm_extractor_isolation.py
+        run: python3 scripts/gates/helm_extractor_isolation.py
       # No Loom pod reaches the instance metadata service, with the policy on or off.
       - name: metadata egress
         run: python3 scripts/gates/helm_metadata_egress.py
