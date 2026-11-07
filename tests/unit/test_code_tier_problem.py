@@ -409,3 +409,26 @@ async def test_before_the_registry_is_read_the_snapshot_stays_unread(
     monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
     await recorder.refresh_failing()
     assert recorder.problem_rows() is None  # unknown, not healthy
+
+
+def test_the_deployments_own_errors_list_before_a_failing_tier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "jwt_secret", "")
+    row = {
+        "org": "o",
+        "namespace": "code-a",
+        "tier": "clang",
+        "kind": "credential",
+        "since": "s",
+        "failed_passes": 4,
+        "lag_commits": 413,
+        "fix": "f",
+        "severity": "error",
+    }
+    errors = [
+        p.code
+        for p in collect_problems(settings, HealthState(code_tier_failures=(row,)))
+        if p.severity == "error"
+    ]
+    assert errors.index("jwt_secret_empty") < errors.index("code_tier_failing")

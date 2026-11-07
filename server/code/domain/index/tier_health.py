@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 
 from server.code.domain.index.compiler_tiers import TIERS as COMPILER_TIER_SPECS
 from server.code.domain.index.state import IndexState
-from server.core.datetimes import parse_iso_dt
+from server.core.datetimes import parse_iso_dt, to_naive_utc
 
 STATE_PREFIX = "tier_health:"
 # The compiler tiers by producer; `clang_full` is the weekly C++ full re-index, kept apart
@@ -339,7 +339,7 @@ def severity(
     if not health.failing:
         return ""
     since = parse_iso_dt(health.failing_since)  # drops the +00:00 `_iso` writes: naive UTC
-    at = now.astimezone(UTC).replace(tzinfo=None)
+    at = to_naive_utc(now)
     hours = (at - since).total_seconds() / 3600 if since else 0.0
     if health.failed_passes < warn_passes and hours < warn_hours:
         return ""

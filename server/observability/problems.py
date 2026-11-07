@@ -854,6 +854,12 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
     ]
 
 
+# Problems about the data a deployment holds, not the deployment: they are listed, and
+# never make `status` degraded (a repository's failing code-index tier would otherwise
+# fail `loom up`, `helm test` and every health gate over a missing token).
+NOT_DEPLOYMENT_FAULTS = frozenset({"code_tier_failing"})
+
+
 def collect_problems(settings: Any, state: HealthState | None = None) -> list[Problem]:
     """Every known problem for this process, worst-first. Pure: reads
     `settings`, `state` and `state.env` only."""
@@ -875,13 +881,11 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _participant_problems(st)
         + _code_tier_problems(st)
     )
-    return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))
-
-
-# Problems about the data a deployment holds, not the deployment: they are listed, and
-# never make `status` degraded (a repository's failing code-index tier would otherwise
-# fail `loom up`, `helm test` and every health gate over a missing token).
-NOT_DEPLOYMENT_FAULTS = frozenset({"code_tier_failing"})
+    # within a severity, the deployment's own problems first
+    return sorted(
+        problems,
+        key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code in NOT_DEPLOYMENT_FAULTS, p.code),
+    )
 
 
 def derive_status(ch_ok: bool, problems: list[Problem]) -> str:
