@@ -65,10 +65,11 @@ A new shared helper earns its place when several independent files need the same
 A test whose prerequisite is absent skips at setup with a reason that says how to supply it. It never errors during collection.
 
 - A missing env var: `os.environ.get(...) or pytest.skip("set X to …")`.
-- A service that is configured but unhealthy: the `control_plane_url` fixture probes `/v1/health` and skips with the URL and the error.
 - A quality assertion that only holds on a real embedder: `require_real_embedder`.
 
 A skip is not a pass. When CI provides the prerequisite, the test must run there.
+
+A prerequisite that is configured but broken is not absent: a set `LOOM_BASE_URL` that does not answer 200 on `/v1/health` fails `control_plane_url` with the URL and the error.
 
 ## Integration isolation
 

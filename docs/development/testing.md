@@ -52,9 +52,10 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
 - `tests/conftest.py` loads the repository's `.env` into the test process (filling only
   missing variables), so the tests and the server pick the same providers: rows written
   under one embedder are invisible to reads under another.
-- The session mints one wildcard-org writer token into `LOOM_API_KEY` unless you exported
-  one, and the `mint_test_token` fixture mints a token for a test's own org. Both sign with
-  the test process's `LOOM_JWT_SECRET`, which must match the server's.
+- Each test gets a wildcard-org writer token in `LOOM_API_KEY` unless you exported one
+  (the `agent` fixture uses it), and the `mint_test_token` fixture mints a token for a
+  test's own org. Both sign with the test process's `LOOM_JWT_SECRET`, which must match
+  the server's.
 - Run the server with `LOOM_BACKGROUND_WORKERS=off`: tests that exercise a worker call its
   `run_pass` in-process against their own namespace, and a live supervisor's workers have
   no namespace filter and would drain those tests' rows. A worker whose pass takes one item
@@ -110,9 +111,9 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
 
 A test whose environment is missing skips with a reason; it never fails for a missing
 variable. Use `os.environ.get(...) or pytest.skip(...)`, never `os.environ[...]`. The
-shared fixtures follow the rule: `control_plane_url` skips without `LOOM_BASE_URL`, and
-skips with the URL and the error when a set `LOOM_BASE_URL` does not answer 200 on
-`/v1/health`.
+shared fixtures follow the rule: `control_plane_url` skips without `LOOM_BASE_URL`. A
+set `LOOM_BASE_URL` that does not answer 200 on `/v1/health` is a broken server, not a
+missing one, and fails the test with the URL and the error.
 `require_real_embedder` skips a search-quality test on a server running the fake embedder.
 The analyzer suite (`migrated_ch`) skips, with the address and the fix in the reason, when
 no ClickHouse answers at `LOOM_CH_*` or the target is behind on migrations, and fails

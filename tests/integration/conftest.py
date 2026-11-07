@@ -35,6 +35,7 @@ from typing import Any
 
 import httpx
 import pytest
+import pytest_asyncio
 
 from tests.integration._redact import redact
 from tests.integration._resources import (
@@ -115,6 +116,33 @@ def require_real_llm(control_plane_url: str) -> None:
     with httpx.Client(base_url=control_plane_url, timeout=5.0) as c:
         if c.get("/v1/health").json().get("fake_llm"):
             pytest.skip("needs a real LLM provider (the server runs the fake LLM)")
+
+
+@pytest.fixture
+def require_real_embedder(control_plane_url: str) -> None:
+    """Skip unless the server under test runs a real embedder (its /v1/health says so):
+    ranking thresholds cannot hold on the fake one."""
+    with httpx.Client(base_url=control_plane_url, timeout=5.0) as c:
+        health = c.get("/v1/health").json()
+    if health.get("fake_embedding"):
+        pytest.skip("search-quality test needs a real embedder (server is on the fake embedder)")
+
+
+@pytest_asyncio.fixture
+async def agent(control_plane_url: str):
+    """A Loom Agent in a unique namespace of `test-org`, authenticated with the
+    `LOOM_API_KEY` the root conftest seeds for every test (or the caller's own)."""
+    from loom import Agent
+
+    ns = f"test-{os.urandom(4).hex()}"
+    async with Agent(
+        org="test-org",
+        namespace=ns,
+        agent="test-agent",
+        base_url=control_plane_url,
+        api_key=os.environ["LOOM_API_KEY"],
+    ) as a:
+        yield a
 
 
 @pytest.fixture
