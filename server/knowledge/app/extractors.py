@@ -32,6 +32,7 @@ from server.knowledge.domain.extract import (
     InvalidArtifact,
     format_of,
     parse_artifact,
+    refuse_past_source,
 )
 from server.settings import settings
 
@@ -368,6 +369,8 @@ async def extract(
         raise ExtractionFailed("resource_limit", str(e)) from e
     try:
         # Off the event loop: decoding and checking up to the artifact bound takes a while.
-        return await asyncio.to_thread(parse_artifact, body, fmt=fmt, max_bytes=cap)
+        artifact = await asyncio.to_thread(parse_artifact, body, fmt=fmt, max_bytes=cap)
+        refuse_past_source(artifact, len(data))
     except InvalidArtifact as e:
         raise ExtractionFailed("invalid_artifact", str(e)) from e
+    return artifact

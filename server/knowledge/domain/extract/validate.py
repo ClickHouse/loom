@@ -338,3 +338,15 @@ def parse_artifact(data: bytes, *, fmt: str, max_bytes: int) -> Artifact:
         attrs=_obj(d, "attrs", "artifact"),
         tables=tables,
     )
+
+
+def refuse_past_source(artifact: Artifact, size: int) -> None:
+    """InvalidArtifact when a block or table's line or character range ends past
+    a source of `size` bytes. The size bounds both whatever the encoding: each
+    character takes at least one byte, and each line but the last ends in one.
+    Pages and rows are not bounded: the server does not read the original."""
+    located = [("blocks", i, b.locator) for i, b in enumerate(artifact.blocks)]
+    located += [("tables", i, t.locator) for i, t in enumerate(artifact.tables)]
+    for kind, i, loc in located:
+        if loc.char_end > size or loc.line_end > size + 1:
+            raise _fail(f"{kind}[{i}].locator", f"ends past the {size}-byte source")
