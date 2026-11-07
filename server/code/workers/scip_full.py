@@ -117,5 +117,5 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipFullResult)
     logger.info(
         "code_scip_full: %s at %s applied %s", cfg.namespace, target[:8], stats.model_dump()
     )
-    raise_if_stale_compdb(out)
+    await raise_if_stale_compdb(checkout, out)
     return True

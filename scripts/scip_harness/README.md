@@ -10,8 +10,8 @@ applies complete batches idempotently.
 Run it per merge or nightly. The C/C++ harness configures CMake (compile
 database only) when `build/compile_commands.json` is missing, and reconfigures
 on the existing `build/` cache before a full index, for a window that adds a
-translation unit or edits a `CMakeLists.txt` or `.cmake` file, and after a
-reconfigure that failed. A compile database supplied from a CI build needs its
+translation unit or edits a `CMakeLists.txt` or `.cmake` file, and while a
+reconfigure's run is not applied yet. A compile database supplied from a CI build needs its
 CMake cache beside it.
 
 ## Contract

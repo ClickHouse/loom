@@ -184,6 +184,18 @@ async def test_a_delta_on_a_stale_compile_database_fails_the_tier_record(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_an_applied_run_removes_the_marker_unless_it_was_stale(monkeypatch, tmp_path):
+    """The marker holds what a reconfigure owes until its run is applied."""
+    from server.code.app.index.compiler_tier import STALE_COMPDB_MARKER
+
+    marker = tmp_path / "checkout" / STALE_COMPDB_MARKER
+    await _stale_pass(monkeypatch, tmp_path, out=_STALE_OUT, marker=True)
+    assert marker.exists()
+    await _stale_pass(monkeypatch, tmp_path, out=b">> 3 TUs to index\n", marker=True)
+    assert not marker.exists()
+
+
+@pytest.mark.asyncio
 async def test_a_current_pass_leaves_a_stale_record_while_the_marker_is_there(
     monkeypatch, tmp_path
 ):

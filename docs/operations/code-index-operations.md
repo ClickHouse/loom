@@ -241,10 +241,12 @@ a delta whose window adds a `.cpp`, `.cc` or `.cxx` file or adds, changes or del
 translation units of the tree it was configured on. When that configure fails, the
 harness indexes with the last compile database and closes its output with CMake's last
 lines, and the entry's `clang` tier (or `clang_full`, for a full index) reads failing
-with kind `cmake`. Every later run reconfigures. A delta whose reconfigure succeeds
-also indexes the translation units the new compile database lists and the old one did
-not, and clears the `clang` record; `clang_full` clears on the next full index
-(weekly, or `loom code scip-full`). A worker whose project prerequisites are absent records a skip in
+with kind `cmake`. A reconfigure leaves `build/.loom-reconfigure-pending` in the
+checkout until a worker applies its run, so every later run reconfigures until one
+configures and is applied. A delta whose reconfigure succeeds also indexes the
+translation units the new compile database lists and the old one did not, and clears
+the `clang` record; `clang_full` clears on the next full index (weekly, or
+`loom code scip-full`). A worker whose project prerequisites are absent records a skip in
 `workers.status`; the Tree-sitter tier remains available. TypeScript projects have
 their dependencies installed automatically in their checkout.
 
@@ -255,10 +257,10 @@ memory the workers process has. The full index of such a tree takes about an hou
 
 - **C/C++ delta cap.** The worker indexes changed translation units, including those
   that include a changed header, up to `LOOM_CODE_SCIP_DELTA_MAX_TUS` (200); above the
-  cap it indexes only the changed `.cpp` files. A delta that reconfigures CMake runs the
-  configure inside the same `LOOM_CODE_SCIP_DELTA_TIMEOUT_SECONDS` (3600) as the index;
-  a timed-out delta leaves `scip_commit` where it was, so the next pass retries a larger
-  window.
+  cap it indexes only the changed `.cpp` files and the units a reconfigure lists anew. A
+  delta that reconfigures CMake runs the configure inside the same
+  `LOOM_CODE_SCIP_DELTA_TIMEOUT_SECONDS` (3600) as the index; a timed-out delta leaves
+  `scip_commit` where it was, so the next pass retries a larger window.
 - **C/C++ full index.** `code_scip_full` re-indexes one entry per pass: an entry whose
   `scip_commit` is not seeded yet (the delta skips it with "watermarks not seeded"), and
   every entry once its last applied full run is `LOOM_CODE_SCIP_FULL_EVERY_HOURS` (168)

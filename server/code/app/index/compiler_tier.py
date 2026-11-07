@@ -13,6 +13,7 @@ conversion run in subprocesses; the tiers consume the JSON delta.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import subprocess
@@ -248,10 +249,10 @@ def harness_failure(returncode: int | None, tail: str) -> RuntimeError:
     return RuntimeError(f"harness exit {returncode}: {tail}")
 
 
-# run_delta.sh leaves this in the checkout while its CMake reconfigure fails, so its
-# next run retries. The checkout is the repository's, so a link can sit there: the
-# server only asks whether the path exists, never follows or reads it.
-STALE_COMPDB_MARKER = "build/.loom-reconfigure-failed"
+# run_delta.sh leaves this in the checkout from a reconfigure until a worker applies
+# the run, so a run that fails or is killed retries. The checkout is the
+# repository's, so a link can sit there: the server never reads or follows it.
+STALE_COMPDB_MARKER = "build/.loom-reconfigure-pending"
 # The closing line of a C/C++ harness run that indexed with a stale compile database;
 # CMake's last lines follow it.
 STALE_COMPDB_LINE = ">> stale compile database: cmake reconfigure failed"
@@ -267,17 +268,29 @@ def stale_compdb(out: str) -> str:
     return "\n".join(line.removeprefix(">> ") for line in lines)[:4000]
 
 
-def raise_if_stale_compdb(out: str) -> None:
-    """After a run that applied and moved its watermark: `TierDegraded` when its harness
-    indexed with a stale compile database, so the tier's record reads failing, with
-    why CMake failed, until a configure succeeds."""
-    if stale := stale_compdb(out):
+def settle_compdb(checkout: Path, out: str) -> str:
+    """After a harness run applied and its watermark moved: its stale compile database
+    lines, or "" once the marker is removed, since what its reconfigure owed is
+    indexed. `os.unlink` removes a link, never what it names. Sync: run it in a
+    thread."""
+    stale = stale_compdb(out)
+    if not stale:
+        with contextlib.suppress(FileNotFoundError, IsADirectoryError):
+            os.unlink(checkout / STALE_COMPDB_MARKER)
+    return stale
+
+
+async def raise_if_stale_compdb(checkout: Path, out: str) -> None:
+    """`TierDegraded` after an applied run that indexed with a stale compile database,
+    so the tier's record reads failing, with why CMake failed, until a configure
+    succeeds."""
+    if stale := await asyncio.to_thread(settle_compdb, checkout, out):
         raise TierDegraded(stale)
 
 
 def stale_compdb_pending(cfg: RepoConfig) -> bool:
-    """The entry's C/C++ checkout's last reconfigure failed (a link at the marker is
-    not followed). Sync: callers run it in a thread."""
+    """The entry's C/C++ checkout holds a reconfigure not applied yet (a link at the
+    marker is not followed). Sync: callers run it in a thread."""
     return os.path.lexists(Path(checkout_for(cfg, "clang")) / STALE_COMPDB_MARKER)
 
 

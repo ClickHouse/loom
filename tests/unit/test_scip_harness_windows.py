@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from server.code.app.index.compiler_tier import STALE_COMPDB_MARKER, stale_compdb
+from server.code.app.index.compiler_tier import STALE_COMPDB_MARKER, settle_compdb, stale_compdb
 
 _HARNESS = Path(__file__).resolve().parents[2] / "scripts" / "scip_harness"
 
@@ -370,9 +370,40 @@ def test_a_translation_unit_added_while_cmake_failed_is_indexed_once_it_configur
     assert delta is not None and "src/c.cpp" in [f["path"] for f in delta["files"]]
 
 
+def test_a_run_left_unapplied_after_its_configure_still_owes_its_units(tmp_path: Path) -> None:
+    """The window whose configure succeeds lists c.cpp anew; its run is not applied (the
+    apply failed or the lease was lost), so the same window again still indexes c.cpp."""
+    w = _CppWindow(tmp_path)
+    w.env["CMAKE_FAIL"] = "1"
+    (w.repo / "src" / "c.cpp").write_text("int c() { return 3; }\n")
+    w.run(_commit(w.repo, "add c"), [])
+    del w.env["CMAKE_FAIL"]
+    w.base = _git(w.repo, "rev-parse", "HEAD")
+    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
+    head = _commit(w.repo, "edit a")
+    w.run(head, ["src/a.cpp", "src/c.cpp"])
+    w.run(head, ["src/a.cpp", "src/c.cpp"])
+    assert w.compdbs == [["a.cpp", "c.cpp"], ["a.cpp", "c.cpp"]]
+
+
+def test_the_cap_keeps_the_units_a_reconfigure_owes(tmp_path: Path) -> None:
+    w = _CppWindow(tmp_path)
+    w.env["CMAKE_FAIL"] = "1"
+    for name in ("c", "d"):
+        (w.repo / "src" / f"{name}.cpp").write_text(f"int {name}() {{ return 3; }}\n")
+    w.run(_commit(w.repo, "add c and d"), [])
+    del w.env["CMAKE_FAIL"]
+    w.env["MAX_TUS"] = "1"
+    w.base = _git(w.repo, "rev-parse", "HEAD")
+    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
+    w.run(_commit(w.repo, "edit a"), [])
+    assert w.compdbs == [["a.cpp", "c.cpp", "d.cpp"]]
+
+
 def test_a_failed_reconfigure_is_retried_until_one_succeeds(tmp_path: Path) -> None:
     """After a failed reconfigure, a window that only edits a translation unit
-    reconfigures again (and warns again), until a configure succeeds."""
+    reconfigures again (and warns again), until a configure succeeds and the worker,
+    having applied that run, removes the marker."""
     w = _CppWindow(tmp_path)
     w.env["CMAKE_FAIL"] = "1"
     (w.repo / "CMakeLists.txt").write_text("project(y)\n")
@@ -387,6 +418,8 @@ def test_a_failed_reconfigure_is_retried_until_one_succeeds(tmp_path: Path) -> N
     (w.repo / "src" / "a.cpp").write_text("int a() { return 4; }\n")
     w.run(_commit(w.repo, "edit a again"), ["src/a.cpp"])
     assert len(w.cmake_runs) == 3 and not stale_compdb(w.out)
+    assert (w.repo / STALE_COMPDB_MARKER).exists()  # until the worker applies the run
+    settle_compdb(w.repo, w.out)
     assert not (w.repo / STALE_COMPDB_MARKER).exists()
     w.base = _git(w.repo, "rev-parse", "HEAD")
     (w.repo / "src" / "a.cpp").write_text("int a() { return 5; }\n")

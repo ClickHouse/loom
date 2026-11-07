@@ -27,8 +27,9 @@ cd "$CHECKOUT"
 HEAD_SHA=${HEAD_SHA:-$(git rev-parse HEAD)}
 
 # 1. compile_commands.json — cmake configure only (no build). $STALE marks a
-# compile database whose reconfigure failed, until one succeeds.
-STALE=build/.loom-reconfigure-failed
+# reconfigure whose run is not applied yet; it lists the TUs that run owes the
+# index. The worker removes it once a run that configured is applied.
+STALE=build/.loom-reconfigure-pending
 if [[ ! -f build/compile_commands.json ]]; then
   # ClickHouse's CMake refuses GCC ("Compiler GNU is not supported"), and a
   # fresh checkout has no cache to remember the compiler — pin clang
@@ -52,40 +53,54 @@ fi
 
 # reconfigure: the compile database lists only the TUs of the tree it was
 # configured on; the existing cache keeps the compiler, and a failed configure
-# keeps the last database. The marker only makes the next run retry: it is
-# replaced, never written through, since the checkout can hold a link there.
+# keeps the last database. A delta also indexes the TUs the new database lists
+# and the old did not (added while a configure failed, or pulled in by a build
+# edit), and those a run left unapplied. The marker is replaced, never written
+# through, since the checkout can hold a link there.
 reconfigure() {
   if [[ -z "${CONFIGURED:-}" ]]; then
     echo ">> cmake reconfigure (compile_commands.json): $1"
-    # a delta also indexes the TUs the new database lists and the old did not (added
-    # while a configure failed, or pulled in by a build edit); a full index reads all
+    : >"$WORK/owed.txt"
+    if [[ -f "$STALE" ]]; then
+      cat "$STALE" >"$WORK/owed.txt"
+    fi
     if [[ "$BASE" != "--full" ]]; then
       compdb_files "$WORK/listed.before.txt"
     fi
+    # pending before CMake runs, so a run killed mid-configure still retries
     rm -f "$STALE"
+    cp "$WORK/owed.txt" "$STALE"
     if cmake -B build -S . >"$WORK/cmake.log" 2>&1; then
       if [[ "$BASE" != "--full" ]]; then
         compdb_files "$WORK/listed.after.txt"
         LC_ALL=C comm -13 "$WORK/listed.before.txt" "$WORK/listed.after.txt" \
-          >"$WORK/newly_listed.txt"
+          >>"$WORK/owed.txt"
       fi
     else
-      : >"$STALE"
       tail -n 20 "$WORK/cmake.log" >"$WORK/cmake.tail"
       echo ">> CMake exited non-zero; indexing with the last compile_commands.json" >&2
     fi
+    sort -u "$WORK/owed.txt" -o "$WORK/owed.txt"
+    rm -f "$STALE"
+    cp "$WORK/owed.txt" "$STALE"
   fi
 }
 
 # compdb_files <out>: the repository's source files compile_commands.json lists,
-# relative to the checkout, sorted.
+# relative to the checkout (real paths on both sides), sorted.
 compdb_files() {
-  "$PYTHON" - build/compile_commands.json "$PWD/" >"$1" <<'PYEOF'
-import json, sys
-root = sys.argv[2]
+  "$PYTHON" - build/compile_commands.json "$PWD" >"$1" <<'PYEOF'
+import json, os, sys
+root = os.path.realpath(sys.argv[2])
 with open(sys.argv[1]) as fh:
-    files = {e["file"][len(root):] for e in json.load(fh) if e["file"].startswith(root)}
-sys.stdout.write("".join(f + "\n" for f in sorted(files) if f.startswith(("src/", "base/", "programs/"))))
+    entries = json.load(fh)
+files = set()
+for e in entries:
+    path = os.path.join(e.get("directory", ""), e["file"])
+    rel = os.path.relpath(os.path.realpath(path), root)
+    if rel.startswith(("src/", "base/", "programs/")):
+        files.add(rel)
+sys.stdout.write("".join(f + "\n" for f in sorted(files)))
 PYEOF
 }
 
@@ -128,15 +143,17 @@ else
     base_hdr=$(basename "$hdr")
     git_paths grep -l -F -e "$base_hdr" -- 'src/*.cpp' 'programs/*.cpp' 'base/*.cpp' || true
   done | sort -u >>"$WORK/tus.txt"
-  if [[ -f "$WORK/newly_listed.txt" ]]; then
-    cat "$WORK/newly_listed.txt" >>"$WORK/tus.txt"
+  if [[ -f "$WORK/owed.txt" ]]; then
+    cat "$WORK/owed.txt" >>"$WORK/tus.txt"
   fi
   sort -u "$WORK/tus.txt" -o "$WORK/tus.txt"
 
   N_TUS=$(wc -l <"$WORK/tus.txt")
   if ((N_TUS > MAX_TUS)); then
     echo ">> $N_TUS TUs exceed cap $MAX_TUS — degrading to changed .cpp only" >&2
-    { grep -E '\.(cpp|cc|cxx)$' "$WORK/changed.txt" || true; } | sort -u >"$WORK/tus.txt"
+    # the TUs a reconfigure owes stay: nothing else would index them before a --full
+    { grep -E '\.(cpp|cc|cxx)$' "$WORK/changed.txt" || true; cat "$WORK/owed.txt" 2>/dev/null || true; } \
+      | sort -u >"$WORK/tus.txt"
     echo ">> skipped header-driven TUs are healed by the next --full run" >&2
   fi
   if [[ ! -s "$WORK/tus.txt" && ! -s "$WORK/deleted.txt" ]]; then

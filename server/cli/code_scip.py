@@ -160,7 +160,7 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
     from server.code.app.index.compiler_tier import (
         SANDBOX_REQUIRED_SKIP,
         TierDegraded,
-        stale_compdb,
+        settle_compdb,
         unsandboxed_skip,
     )
     from server.code.app.index.entry_lock import EntryLockLost
@@ -211,7 +211,7 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
     except Exception as e:
         await tier_health.record(repo, org, ns, "clang_full", e)
         raise
-    stale = stale_compdb(out)
+    stale = await asyncio.to_thread(settle_compdb, checkout, out)
     # a stale compile database fails the record, as the worker's run does
     await tier_health.record(repo, org, ns, "clang_full", TierDegraded(stale) if stale else None)
     _write_tail(out)

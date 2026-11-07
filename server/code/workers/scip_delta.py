@@ -163,7 +163,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
             logger.info("code_scip_delta: %s no C++ changes in window", cfg.namespace)
             check_held()
             await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
-            raise_if_stale_compdb(out)
+            await raise_if_stale_compdb(checkout, out)
             return
 
         from server.code.app.index.scip_delta import ScipDelta, apply_delta
@@ -182,4 +182,4 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
         target[:8],
         stats.model_dump(),
     )
-    raise_if_stale_compdb(out)
+    await raise_if_stale_compdb(checkout, out)
