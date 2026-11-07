@@ -257,8 +257,6 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
     "acme EMPLOYS alice" (alice is object).
     """
 
-    from server.memory.domain.graph_quality import canonical_entity_text
-
     ch = get_client()
     spellings = _stored_spellings(input.entity)
     validity_predicate = ""
@@ -324,7 +322,7 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
         key=lambda x: -x.co_occur,
     )[: input.top_k]
 
-    return FactsRelatedOutput(entity=canonical_entity_text(input.entity), related=related)
+    return FactsRelatedOutput(entity=spellings[0] if spellings else "", related=related)
 
 
 async def _after_own_projections(org: str, ns: str) -> tuple[datetime | None, datetime]:
@@ -461,8 +459,7 @@ async def _handle_facts_traverse_uncached(input: FactsTraverseInput) -> FactsTra
     # possessives stripped, head noun singularised, first person -> "user"), exactly as
     # facts.path does: a bare lower() would make "Alice's" and "The user" miss the rows
     # written for "alice" and "user", and memory.ask's expansion step passes seeds in the
-    # question's own words. A name that starts with "commit:" or "error:" and a
-    # non-blank is never singularised.
+    # question's own words.
     raw = input.seed_entity.strip().lower()
     seed = canonical_entity_text(input.seed_entity) or raw
     params: dict[str, Any] = {
@@ -590,12 +587,13 @@ def _hub_lookup(ch: Any, org: str, namespace: str, hub_degree: int, hub_share: f
 
 
 def _stored_spellings(raw: str) -> list[str]:
-    """The spellings a stored node can have for `raw`: its canonical form, which every
-    writer stores, and `raw` lowered, a spelling stored rows of a "commit:" or "error:"
-    concept facet can hold (for any other name it matches what a lowered-only read did)."""
+    """The spellings a stored node can have for `raw`, canonical first: its canonical form,
+    which every writer stores, and `raw` lowered, a spelling stored rows of a "commit:" or
+    "error:" concept facet can hold. None for a name with no canonical form."""
     from server.memory.domain.graph_quality import canonical_entity_text
 
-    return list(dict.fromkeys(v for v in (canonical_entity_text(raw), raw.strip().lower()) if v))
+    node = canonical_entity_text(raw)
+    return list(dict.fromkeys((node, raw.strip().lower()))) if node else []
 
 
 def _seed_variants(seed: str, raw: str) -> list[str]:

@@ -466,8 +466,7 @@ def canonical_entity(raw: str) -> CanonicalEntity:
 
     Collapses first-person forms (i / me / user / ...) to "user" to match the
     read side (graph seeds and query triples use `canonical_entity_text`); the original
-    surface form is preserved in `aliases` for provenance and recall. A name that starts
-    with "commit:" or "error:" and a non-blank is never singularised. Text longer than
+    surface form is preserved in `aliases` for provenance and recall. Text longer than
     `MAX_ENTITY_CHARS`, as written or once normalised, is no entity: its text is empty."""
 
     original = str(raw or "").strip()

@@ -1069,8 +1069,9 @@ async def test_a_name_with_no_canonical_form_matches_nothing(
 
     ch = StubCH()
     monkeypatch.setattr(facts_handlers, "get_client", lambda: ch)
-    out = await facts_handlers.handle_facts_related(
-        FactsRelatedInput(org="o", namespace="n", entity=" ")
-    )
-    assert out.entity == "" and out.related == []
-    assert ch.query_all_calls[0][1]["ent"] == []
+    for blank in (" ", "``"):
+        out = await facts_handlers.handle_facts_related(
+            FactsRelatedInput(org="o", namespace="n", entity=blank)
+        )
+        assert out.entity == "" and out.related == []
+        assert ch.query_all_calls[-1][1]["ent"] == []
