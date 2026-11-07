@@ -167,8 +167,12 @@ _LONG_DATE = rf"{_MONTH}\s+\d{{1,2}},\s+\d{{4}}"
 _TEMPLATE_TEXT = re.compile(
     rf"^[^\w\[]*(?:invited|attachments|meeting\s+records|{_LONG_DATE})\s+{_LINK_RUN}$|"
     rf"^\W*{_LONG_DATE}\W*$|"
-    r"^\W*(?:this editable transcript\b|please\W+rate\b[^.]{0,60}\bsurvey\b|"
-    r"you should review\s+\S+'s\s+notes(?:\W*$|\s+(?:to make sure|for accuracy)\b))",
+    # The footer ends at its survey link or its last word: "Please rate ... in the user
+    # survey before launch" and "... notes to make sure the p99 numbers hold" are topics.
+    r"^\W*(?:this editable transcript\b|"
+    r"please\W+rate\b[^.]{0,60}\bsurvey\b(?:\W*$|\]\([^)]*\)\W*$)|"
+    r"you should review\s+\S+'s\s+notes(?:\s+(?:for accuracy|to make sure "
+    r"(?:they(?:'re| are)|it(?:'s| is)) accurate))?\W*$)",
     re.IGNORECASE,
 )
 # A line of links alone, the attendees the header goes on with; a line with no word in it
