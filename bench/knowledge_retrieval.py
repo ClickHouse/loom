@@ -180,7 +180,7 @@ def parse_params(pairs: list[str]) -> dict:
                 f"--param {key} is refused: the harness fixes depth, scope and filters"
             )
         if key not in SEARCH_FIELDS:
-            raise SystemExit(f"--param {key} is refused: not a knowledge.search field")
+            raise SystemExit(f"--param {key} is refused: not a ranking knob an arm may set")
         try:
             out[key] = json.loads(raw)
         except json.JSONDecodeError:

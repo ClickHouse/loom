@@ -28,11 +28,12 @@ A search over a namespace that does not hold exactly this corpus, embedded with
 the server's current model, fails the run, and so does one that finds nothing.
 `--param KEY=VALUE` sets one ranking knob of `knowledge.search`, as
 `knowledge_retrieval.py` does, except `collapse_sections`, which the harness
-fixes; filters, scope and depth are refused. An arm that names no reranker runs with
-`rerank="none"`, whatever the deployment default. A run records the server's
-embedding model and build and the corpus, queries and judgements it scored, and
-refuses a fake embedder; a hybrid or lexical arm whose lexical leg never fired,
-and an arm whose reranker did not run as it says (`check_reranked`), fail.
+fixes; filters, scope and depth are refused. An arm that names no reranker runs
+with `rerank="none"`, whatever the deployment default. A run records the
+server's embedding model and build and the corpus, queries and judgements it
+scored, and refuses a fake embedder; a hybrid or lexical arm whose lexical leg
+never fired, and an arm whose reranker did not run as it says
+(`check_reranked`), fail.
 
 A search returns at most 100 hits, which are chunks: recall@100 is over the
 documents they hold (`depth` in the report: 100 when every passage is one chunk,
