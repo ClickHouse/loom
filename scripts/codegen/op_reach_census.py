@@ -66,11 +66,9 @@ _SDK_CALL = re.compile(r"\.([a-z_]+)\.([a-z_]+)\(")
 # A dashboard call site: the path as a string literal (`post("/v1/<op>", …)`), outside
 # a comment. A bare op name there is an audit label, not a call.
 _DASHBOARD_CALL = re.compile(r"""["'`]/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b""")
-# What a comment scan keeps (group 1: an escaped character, as in a regex literal's
-# `\/`; a `'` or `"` string, ending at its line; a template literal, which may span
-# lines) and what it drops (`//` and `/* */` comments). A lone `'` (JSX text's
-# "can't") is code; one paired with a `'` in a comment later on its line reads the
-# rest of that comment as code.
+# Keeps escapes, strings (a `'` or `"` string ends at its line) and template literals;
+# drops `//` and `/* */`. A JSX apostrophe paired with a `'` later in a comment on its
+# line keeps the rest of that comment.
 _TS_KEEP_OR_COMMENT = re.compile(
     r"""(\\.|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)|//[^\n]*|/\*.*?\*/""",
     re.DOTALL,

@@ -167,7 +167,7 @@ _INSTEAD: dict[str, str] = {
     "ui.vitals": "the dashboard posts its own paint timings; nothing to call",
     "code.outcome": "the plugin's hooks report what was done with a code answer; nothing to call",
     "code.coverage.watch": (
-        "a bot's watch on its own inbox; for what the index covers now call "
+        "a bot's watch on its own inbox; for the commit the index has reached, call "
         "code.index_status (loom_op)"
     ),
     "code.coverage.unwatch": "a bot's watch on its own inbox; nothing to call",
@@ -197,7 +197,7 @@ def hidden_refusal(name: str) -> dict[str, Any] | None:
         return None
     default = _NEEDS_THE_USER if "dashboard" in op.reach else _NEEDS_AN_OPERATOR
     return {
-        "error": f"{name} exists but agents cannot call it over MCP",
+        "error": f"{name} exists but is not callable on this MCP connection",
         "code": "OP_NOT_ON_MCP",
         "instead": _INSTEAD.get(name, default),
     }

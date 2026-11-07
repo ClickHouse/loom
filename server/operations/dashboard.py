@@ -9,8 +9,9 @@ inspect, configure, or to delete with a confirmation) has a control there; an op
 only an agent or a client program calls, or one the dashboard serves through
 another op, is named in `NOT_IN_DASHBOARD` with the reason. The census's
 `--check` (`tests/unit/test_op_reach_census.py`, through `dashboard_violations`)
-fails on an op with neither, on an op in both, and on an entry for an op the
-dashboard calls or that no longer exists.
+fails on an op with neither, on an op in both `NOT_IN_DASHBOARD` and
+`DASHBOARD_PENDING`, and on an entry for an op the dashboard calls or that no
+longer exists.
 
 `DASHBOARD_PENDING` holds the ops a person needs whose control is not built
 yet. It only shrinks (`tests/unit/test_op_surfaces.py` holds its ceiling): an op
