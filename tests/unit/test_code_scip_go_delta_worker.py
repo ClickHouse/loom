@@ -330,3 +330,23 @@ async def test_a_pass_that_builds_nothing_keeps_a_module_failure_and_clears_any_
         await w.run_pass()
     still = tier_health.parse("go", state["tier_health:go"]).failing
     assert still is ("go mod download failed" in error)
+
+
+@pytest.mark.asyncio
+async def test_a_harness_that_failed_outright_is_a_harness_failure_not_a_module(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from server.code.domain.index import tier_health
+
+    async def failed(*_: Any, **__: Any) -> tuple[int, str]:
+        return 123, "skip a: go mod download failed: 404\ndone b\nconvert_delta: panic: boom\n"
+
+    monkeypatch.setattr(w, "_harness_env", lambda *_: {})
+    monkeypatch.setattr(w, "_make_cache_dirs", lambda *_: [])
+    monkeypatch.setattr(w, "_bin_dirs", lambda: [])
+    monkeypatch.setattr(w, "run_harness", failed)
+    with pytest.raises(RuntimeError) as err:
+        await w._run_harness(tmp_path, "a" * 40, "b" * 40, tmp_path, [], _Cfg())
+    text = f"RuntimeError: {err.value}"
+    assert "go mod download failed" not in text
+    assert tier_health.classify(text) == "harness"

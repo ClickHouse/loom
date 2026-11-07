@@ -59,6 +59,7 @@ from server.code.app.index.gitrepo import (
     nul_fields,
 )
 from server.code.app.index.sandbox import tool_mounts
+from server.code.domain.index.tier_health import module_failures, without_module_failures
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -241,11 +242,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
     with tempfile.TemporaryDirectory(prefix="scip_go_delta_") as tmp:
         out_dir = Path(tmp)
         log = await _run_harness(checkout, scip_commit or "--full", target, out_dir, modules, cfg)
-        failed = [
-            line[5:]
-            for line in log.splitlines()
-            if line.startswith("skip ") and "go files)" not in line and "no Go change" not in line
-        ]
+        failed = module_failures(log)
         result.modules_skipped.extend(f"{cfg.namespace}: {line}" for line in failed)
         from server.code.app.index.scip_delta import ScipDelta, apply_delta
 
@@ -356,7 +353,8 @@ async def _run_harness(
         network=True,
     )
     if returncode != 0:
-        raise harness_failure(returncode, text[-2000:])
+        # failed outright: a module it skipped earlier is not the cause
+        raise harness_failure(returncode, without_module_failures(text)[-2000:])
     return text
 
 

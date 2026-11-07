@@ -249,8 +249,7 @@ async def _entry_locked(args: argparse.Namespace) -> int:
             rc = await _run_while_held(
                 command, env={HOLDER_ENV: current_holder()}, tail=tail, stopped=stopped
             )
-            if tier:
-                assert tail is not None  # kept whenever a tier is recorded
+            if tail is not None:  # kept when a tier is recorded
                 await _record_tier(org, ns, tier, rc, bytes(tail), stopped=stopped.is_set())
             return rc
     except EntryLockHeld:
@@ -276,7 +275,7 @@ async def _record_tier(
     build: the module lines in the kept tail fail the record as the worker's do."""
     from server.code.app.index import tier_health
     from server.code.app.index.compiler_tier import BASE_UNKNOWN_EXIT
-    from server.code.domain.index.tier_health import module_failures
+    from server.code.domain.index.tier_health import module_failures, without_module_failures
     from server.code.store.index import CodeRepo
 
     if rc == BASE_UNKNOWN_EXIT:
@@ -288,8 +287,7 @@ async def _record_tier(
         text = tail.decode("utf-8", "replace").strip()
         modules = module_failures(text)
         if rc != 0:
-            # a run that failed outright: an earlier module line is not its cause
-            text = "\n".join(line for line in text.splitlines() if line[5:] not in modules)
+            text = without_module_failures(text)
             error = f"harness exit {rc}: {text}" if text else f"harness exit {rc}"
         elif modules:
             error = "; ".join(modules)

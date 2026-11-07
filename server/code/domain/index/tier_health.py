@@ -220,6 +220,16 @@ def module_failures(text: str) -> list[str]:
     ]
 
 
+def without_module_failures(text: str) -> str:
+    """`text` without the module lines: for a run that failed outright, an earlier
+    module the harness skipped is not the cause."""
+    return "\n".join(
+        line
+        for line in text.splitlines()
+        if not (line.startswith("skip ") and _MODULE_FAILED.search(line))
+    )
+
+
 def classify(text: str) -> str:
     """The kind of a tier failure from its error output."""
     for kind, pattern in _KINDS:
