@@ -175,8 +175,9 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    (`scripts/release/release_clickhouse.sh`), the first of: the one this version's published bundle
    already names, so rerunning the installer for a version never moves ClickHouse (a release without
    a bundle resolves anew, as `github-release` never replaces one, so nobody can have installed it);
-   a dispatch's `clickhouse_image`, which for a final replaces its candidate's; for a final, the one
-   the newest candidate on the same commit with a published bundle was soaked with; the release
+   a dispatch's `clickhouse_image`, which for a final is used in place of any release its
+   candidates on the same commit published; for a final, the one the newest candidate on the same
+   commit with a published bundle was soaked with; the release
    `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`). It migrates a
    fresh server of that release and runs `make schema-check` before `build` may pin it, and refuses
    a ClickHouse downgrade (see step 8), so such a run stops before it builds and pushes images
