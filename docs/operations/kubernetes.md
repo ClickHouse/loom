@@ -387,7 +387,8 @@ hold. The policy's effects:
   `guardMetadata: false` and allow them in your own policy.
 
 A `helm upgrade --reuse-values` from a chart with a shorter `egressExcept` keeps that
-list: set `networkPolicy.egressExcept` again, or upgrade with `--reset-then-reuse-values`.
+list: set `networkPolicy.egressExcept` again, or upgrade with `--reset-then-reuse-values`
+(Helm 3.14 or later).
 
 ## Separate workers
 
