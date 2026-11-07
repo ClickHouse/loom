@@ -621,7 +621,7 @@ async def _pack_memories(st: _PackState) -> None:
             cite = f"memory:{ns}/{h.memory_key}"
             if resource:
                 cite = f"{cite}#{resource}"
-            row_of[cite] = (ns, str(h.memory_key))
+            row_of[cite] = _hit_ns_key(input, h)  # a chunk's parent
             group = resource or f"{source}:{ns}"
             evidence.append(
                 EvidenceItem(

@@ -44,7 +44,7 @@ def _run(handler: Any, input: Any, consumer: str = "codex") -> Any:
 
 
 def _hit(key: str, ns: str = "n") -> SimpleNamespace:
-    return SimpleNamespace(memory_key=key, namespace=ns)
+    return SimpleNamespace(memory_key=key, namespace=ns, parent_memory_key="")
 
 
 def _wrapped(keys_of: Any, out: Any) -> Any:
@@ -191,7 +191,7 @@ def test_an_evaluation_ask_records_nothing() -> None:
 # ---------------------------------------------------------------- the real wire models
 
 
-def _real_hit(key: str, ns: str = "") -> Any:
+def _real_hit(key: str, ns: str = "", parent: str = "") -> Any:
     from server.memory.api.models_search import _MemorySearchHit
 
     return _MemorySearchHit(
@@ -201,6 +201,7 @@ def _real_hit(key: str, ns: str = "") -> Any:
         distance=0.1,
         similarity=0.9,
         namespace=ns,
+        parent_memory_key=parent,
     )
 
 
@@ -213,10 +214,16 @@ def test_each_extractor_reads_its_ops_real_models() -> None:
     from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput
 
     search_in = MemorySearchInput(org="o", namespace="n", query="q")
+    # a chunk hit records its parent fact, the stored row
+    chunk = _real_hit("chunk:s1:3", parent="long_fact")
     search_out = MemorySearchOutput(
-        results=[_real_hit("a"), _real_hit("b", "m")], embedding_model="e"
+        results=[_real_hit("a"), _real_hit("b", "m"), chunk], embedding_model="e"
     )
-    assert served_reads.search_keys(search_in, search_out) == [("n", "a"), ("m", "b")]
+    assert served_reads.search_keys(search_in, search_out) == [
+        ("n", "a"),
+        ("m", "b"),
+        ("n", "long_fact"),
+    ]
 
     ask_in = MemoryAskInput(org="o", namespace="n", query="q")
     ask_out = MemoryAskOutput(answer="", results=[_real_hit("a")])
@@ -258,7 +265,11 @@ def test_each_extractor_reads_its_ops_real_models() -> None:
 
     query_in = SearchInput(org="o", namespace="n", query="q")
     query_out = SearchOutput.model_validate({"memory": search_out.model_dump(mode="json")})
-    assert served_reads.search_query_keys(query_in, query_out) == [("n", "a"), ("m", "b")]
+    assert served_reads.search_query_keys(query_in, query_out) == [
+        ("n", "a"),
+        ("m", "b"),
+        ("n", "long_fact"),
+    ]
 
 
 def test_a_narrowed_reader_records_under_its_own_scope(

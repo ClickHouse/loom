@@ -120,8 +120,8 @@ class ContextBlock(BaseModel):
 
 
 class ContextPackOutput(BaseModel):
-    # The (namespace, memory_key) of each stored row the kept blocks cite, which the op
-    # records as served to the agent. Private, never on the wire.
+    # The (namespace, memory_key) of each stored row whose item line the rendered pack
+    # still holds, which the op records as served to the agent. Private, never on the wire.
     _served_rows: list[tuple[str, str]] = PrivateAttr(default_factory=list)
 
     # The pack as one text: each non-empty section in a `<name>` tag, in block order,

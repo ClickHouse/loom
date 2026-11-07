@@ -78,3 +78,38 @@ def test_a_stack_section_cut_to_its_budget_records_the_rows_it_kept(
     # every recorded row's line is in what the agent got; the profile line is no row
     assert all(f"[pinned/{k} by=" in shown for k in kept)
     assert f"[pinned/p{len(kept)} by=" not in shown
+
+
+def test_a_chunk_the_pack_serves_records_its_parent_fact(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_all_but_the_stack(monkeypatch, [])
+
+    async def _search(*a: Any, **k: Any) -> Any:
+        hit = NS(
+            namespace="ns",
+            memory_key="chunk:s1:3",
+            parent_memory_key="long_fact",
+            content_excerpt="a part of a long value",
+            source="chunk",
+            source_resource_id="",
+            rank_score=0.9,
+            temporal_anchor="",
+            valid_at="",
+            memory_type="semantic",
+        )
+        return NS(
+            results=[hit],
+            abstain=False,
+            abstain_reason="",
+            retrieval_confidence=0.9,
+            retrieval_risk="low",
+            route_agreement=1.0,
+        )
+
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
+    out = asyncio.run(
+        handle_context_pack(
+            ContextPackInput(org="o", namespace="ns", agent="a", query="q", token_budget=2000)
+        )
+    )
+    assert "a part of a long value" in out.sections["memories"]
+    assert out._served_rows == [("ns", "long_fact")]

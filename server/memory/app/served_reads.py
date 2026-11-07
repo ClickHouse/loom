@@ -88,7 +88,9 @@ def records_served[I, O](
 
 
 def _hit_keys(hits: Iterable[Any], namespace: str) -> Keys:
-    return [(str(h.namespace or namespace), str(h.memory_key)) for h in hits]
+    """The stored row each hit came from: a chunk hit (`chunk:<session>:<n>`) is its
+    parent fact's."""
+    return [(str(h.namespace or namespace), str(h.parent_memory_key or h.memory_key)) for h in hits]
 
 
 def search_keys(input: Any, out: Any) -> Keys:
@@ -132,7 +134,10 @@ def search_query_keys(input: Any, out: Any) -> Keys:
     """search.query: the memory section's hits it kept."""
     memory = out.memory or {}
     return [
-        (str(h.get("namespace") or input.namespace), str(h["memory_key"]))
+        (
+            str(h.get("namespace") or input.namespace),
+            str(h.get("parent_memory_key") or h["memory_key"]),
+        )
         for h in memory.get("results") or []
         if isinstance(h, dict) and h.get("memory_key")
     ]
