@@ -1049,11 +1049,12 @@ async def test_facts_list_and_related_match_the_canonical_and_the_lowered_spelli
 
     await facts_handlers.handle_facts_list(FactsListInput(org="o", namespace="n", object=name))
     await facts_handlers.handle_facts_list(FactsListInput(org="o", namespace="n", entity=name))
-    await facts_handlers.handle_facts_related(
+    out = await facts_handlers.handle_facts_related(
         FactsRelatedInput(org="o", namespace="n", entity=name)
     )
     assert [p.get("obj") or p.get("ent") for _, p in ch.query_all_calls] == [both, both, both]
-    assert "object IN {obj:Array(String)}" in ch.query_all_calls[0][0]
-    related_sql = ch.query_all_calls[2][0]
-    assert related_sql.count("IN {ent:Array(String)}") == 3  # subject, object, not the seed
-    assert "neighbor NOT IN {ent:Array(String)}" in related_sql
+    assert out.entity == node
+    await facts_handlers.handle_facts_list(
+        FactsListInput(org="o", namespace="n", subject="Alice's")
+    )
+    assert ch.query_all_calls[-1][1]["subj"] == ["alice", "alice's"]

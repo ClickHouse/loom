@@ -798,7 +798,7 @@ def facet_triples(
     Files and concepts become code nodes, so facts.traverse answers "what touches
     this file"; topics hang off `about`, so a topic never passes for a library. An item too
     long to be a name (`MAX_ENTITY_CHARS`), or with no canonical form (only punctuation),
-    mints no node, as in `edge_nodes`."""
+    mints no node."""
     subject = canonical_entity_text(agent or "user") or "user"
     for path in files:
         if node := canonical_entity_text(path):

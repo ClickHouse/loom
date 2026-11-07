@@ -36,10 +36,10 @@ Subject-relation-object triples from the entity graph, filtered by subject / obj
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `subject` | `str \| None` | `None` | subject/object/relation AND together; unfiltered returns top triples by co_occur. subject, object and entity match a node as the write path stores it (canonicalised) or as given, lowered. |
-| `object` | `str \| None` | `None` | Only triples with this object; ignored when `entity` is set. |
+| `subject` | `str \| None` | `None` | Only triples with this subject, canonicalised like a write (or as given, lowered); subject/object/relation AND together, and unfiltered returns top triples by co_occur. |
+| `object` | `str \| None` | `None` | Only triples with this object, canonicalised like a write (or as given, lowered); ignored when `entity` is set. |
 | `relation` | `str \| None` | `None` | Only triples with this relation, normalised the way writes store it (`works_at` -> `work_at`). |
-| `entity` | `str \| None` | `None` | subject OR object match. |
+| `entity` | `str \| None` | `None` | Triples with this subject or object, canonicalised like a write (or as given, lowered). |
 | `limit` | `int` | `50` | At most this many triples; the server caps it at 500. |
 | `sort_by` | `Literal['co_occur', 'recency']` | `'co_occur'` | `co_occur` ranks by observation count, then recency; `recency` by `last_seen` first. |
 | `include_sources` | `bool` | `False` | Fan out each triple to source memory_keys — extra CH round-trip, off by default. |
@@ -98,7 +98,7 @@ Return the entities that co-occur with `input.entity` via any relation, ranked b
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `entity` | `str` | echoed |
+| `entity` | `str` | The node matched: `entity` canonicalised like a write, or "" when it has no canonical form. |
 | `related` | `list[_RelatedEntity]` | Neighbours of `entity` over any relation, by summed `co_occur` descending. |
 
 ## `facts.traverse`
