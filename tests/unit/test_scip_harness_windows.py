@@ -193,6 +193,18 @@ while [[ $# -gt 0 ]]; do
 done
 """
 
+# the stub cmake logs its call and lists every src/*.cpp of the tree in the compile
+# database, as a configure over a glob does
+_FAKE_CMAKE = """#!/usr/bin/env bash
+echo "cmake $*" >>"$CMAKE_CALLS"
+"$PYTHON" - <<'PYEOF'
+import json, pathlib
+root = pathlib.Path.cwd()
+compdb = [{"directory": str(root), "file": str(p), "command": "c++"} for p in sorted(root.glob("src/*.cpp"))]
+(root / "build" / "compile_commands.json").write_text(json.dumps(compdb))
+PYEOF
+"""
+
 
 class _CppWindow:
     """run_delta.sh over a checkout with a compile_commands.json already configured:
@@ -217,7 +229,10 @@ class _CppWindow:
         bin_dir.mkdir()
         (bin_dir / "scip-clang").write_text(_FAKE_SCIP_CLANG)
         (bin_dir / "scip-clang").chmod(0o755)
+        (bin_dir / "cmake").write_text(_FAKE_CMAKE)
+        (bin_dir / "cmake").chmod(0o755)
         self.calls = tmp_path / "calls"
+        self.cmake_calls = tmp_path / "cmake_calls"
         self.index = tmp_path / "fake.scip"
         self.delta = tmp_path / "delta.json"
         self.env = {
@@ -228,6 +243,8 @@ class _CppWindow:
             "PYTHON": sys.executable,
             "SCIP_CLANG": str(bin_dir / "scip-clang"),
             "JOBS": "1",
+            "CMAKE_CALLS": str(self.cmake_calls),
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
         }
 
     def run(self, head: str, index_docs: list[str]) -> dict | None:
@@ -240,6 +257,10 @@ class _CppWindow:
             text=True,
         )
         return json.loads(self.delta.read_text()) if self.delta.exists() else None
+
+    @property
+    def cmake_runs(self) -> list[str]:
+        return self.cmake_calls.read_text().splitlines() if self.cmake_calls.exists() else []
 
     @property
     def compdbs(self) -> list[list[str]]:
@@ -261,6 +282,56 @@ def test_a_changed_header_indexes_the_translation_units_that_include_it(tmp_path
     assert delta is not None and [f["path"] for f in delta["files"]] == ["src/b.cpp", "src/h.h"]
 
 
+def test_a_window_that_only_edits_a_translation_unit_keeps_the_compile_database(
+    tmp_path: Path,
+) -> None:
+    w = _CppWindow(tmp_path)
+    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
+    head = _commit(w.repo, "edit a")
+    w.run(head, ["src/a.cpp"])
+    assert w.cmake_runs == [] and w.compdbs == [["a.cpp"]]
+
+
+def test_a_translation_unit_added_after_the_configure_is_indexed(tmp_path: Path) -> None:
+    """The compile database was configured before src/c.cpp existed: the window that
+    adds it reconfigures on the existing cache, so c.cpp is indexed, not dropped."""
+    w = _CppWindow(tmp_path)
+    (w.repo / "src" / "c.cpp").write_text("int c() { return 3; }\n")
+    head = _commit(w.repo, "add c")
+    delta = w.run(head, ["src/c.cpp"])
+    assert w.cmake_runs == ["cmake -B build -S ."]
+    assert w.compdbs == [["c.cpp"]]
+    assert delta is not None and [f["path"] for f in delta["files"]] == ["src/c.cpp"]
+
+
+@pytest.mark.parametrize(
+    "build_file", ["CMakeLists.txt", "src/CMakeLists.txt", "cmake/flags.cmake"]
+)
+def test_a_window_that_edits_the_build_reconfigures(tmp_path: Path, build_file: str) -> None:
+    w = _CppWindow(tmp_path)
+    (w.repo / build_file).parent.mkdir(parents=True, exist_ok=True)
+    (w.repo / build_file).write_text("project(x)\n")
+    head = _commit(w.repo, "edit the build")
+    w.run(head, [])
+    assert w.cmake_runs == ["cmake -B build -S ."]
+
+
+def test_a_full_index_reconfigures_before_it_reads_the_compile_database(tmp_path: Path) -> None:
+    w = _CppWindow(tmp_path)
+    (w.repo / "src" / "c.cpp").write_text("int c() { return 3; }\n")
+    _commit(w.repo, "add c")
+    _write_index(w.index, ["src/a.cpp", "src/b.cpp", "src/c.cpp"])
+    subprocess.run(
+        ["bash", str(_HARNESS / "run_delta.sh"), str(w.repo), "--full", "", "-"],
+        env=w.env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert w.cmake_runs == ["cmake -B build -S ."]
+    assert w.compdbs == [["a.cpp", "b.cpp", "c.cpp"]]
+
+
 def test_a_cpp_delete_only_window_tombstones_without_indexing(tmp_path: Path) -> None:
     w = _CppWindow(tmp_path)
     _git(w.repo, "rm", "-q", "src/a.cpp")
@@ -275,8 +346,9 @@ def test_a_cpp_rename_tombstones_the_old_path(tmp_path: Path) -> None:
     w = _CppWindow(tmp_path)
     _git(w.repo, "mv", "src/b.cpp", "src/c.cpp")
     head = _commit(w.repo, "rename b to c")
-    # the configured compile_commands.json still names b.cpp, not c.cpp
-    delta = w.run(head, [])
+    # the rename adds c.cpp, so the window reconfigures and indexes it
+    delta = w.run(head, ["src/c.cpp"])
+    assert w.cmake_runs == ["cmake -B build -S ."] and w.compdbs == [["c.cpp"]]
     assert delta is not None and delta["deleted_files"] == ["src/b.cpp"]
 
 

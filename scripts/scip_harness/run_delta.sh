@@ -44,10 +44,23 @@ if [[ ! -f build/compile_commands.json ]]; then
     -DCOMPILER_CACHE=disabled -DENABLE_RUST=0 >/dev/null
   # ^ the two gates a fresh checkout hits: cmake/ccache.cmake errors without ccache/sccache, and
   #   corrosion wants a Rust toolchain the indexer host does not have.
+  CONFIGURED=1
 fi
+
+# reconfigure: the compile database lists the translation units of the tree it
+# was configured on, so a file added since then has no entry and is never
+# indexed. Re-running CMake on the existing cache keeps its compiler and options.
+reconfigure() {
+  if [[ -z "${CONFIGURED:-}" ]]; then
+    echo ">> cmake reconfigure (compile_commands.json): $1"
+    cmake -B build -S . >/dev/null
+    CONFIGURED=1
+  fi
+}
 
 # 2. changed TU set: changed .cpp plus TUs including changed headers.
 if [[ "$BASE" == "--full" ]]; then
+  reconfigure "full index"
   echo ">> full-index mode: whole compile_commands.json"
   cp build/compile_commands.json "$WORK/compdb.json"
   git_paths ls-files 'src/*' 'base/*' 'programs/*' >"$WORK/changed.txt"
@@ -55,6 +68,14 @@ if [[ "$BASE" == "--full" ]]; then
 else
   require_base "$BASE"
   window_files "$WORK" "$BASE" "$HEAD_SHA"
+  # a window that adds a translation unit or edits the build changes what the
+  # compile database must list
+  git_paths diff --name-only --no-renames --diff-filter=A --end-of-options "$BASE" "$HEAD_SHA" \
+    >"$WORK/added.txt"
+  if grep -E '\.(cpp|cc|cxx)$' "$WORK/added.txt" >/dev/null \
+    || grep -E '(^|/)CMakeLists\.txt$|\.cmake$' "$WORK/changed.txt" "$WORK/deleted.txt" >/dev/null; then
+    reconfigure "the window adds a translation unit or edits the build"
+  fi
 
   grep -E '\.(cpp|cc|cxx)$' "$WORK/changed.txt" >"$WORK/tus.txt" || true
   # headers: every TU that includes them (text search on the checkout)
