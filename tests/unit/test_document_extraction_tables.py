@@ -1389,7 +1389,7 @@ def test_merges_after_a_later_part_of_the_sheet_still_count_a_cut(
     assert [f.unit for f in a.coverage.failed] == ["S merges"]
 
 
-def test_a_quoted_comma_past_the_quote_sample_leaves_the_semicolon_delimiter() -> None:
+def test_commas_in_a_late_quoted_row_leave_the_semicolon_delimiter() -> None:
     head = "id;name;city\n" + "".join(f"{i};n{i};c{i}\n" for i in range(600))  # about 8 KB
     a = extract((head + '700;"a, b";"c, d"\n').encode(), "late.csv")
     rows = a.tables[0].rows

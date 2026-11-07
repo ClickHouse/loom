@@ -103,8 +103,7 @@ def _whole_lines(text: str, chars: int) -> str:
 
 
 class _Sniffer(csv.Sniffer):
-    """csv.Sniffer with its quote guess, quadratic on an unclosed quote, limited to the
-    first `_QUOTE_SNIFF_CHARS`."""
+    """csv.Sniffer whose quote guess reads only the first `_QUOTE_SNIFF_CHARS`."""
 
     def _guess_quote_and_delimiter(
         self, data: str, delimiters: str | None
