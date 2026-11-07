@@ -243,7 +243,31 @@ describe("ReviewQueue", () => {
     expect(await screen.findByText("This conflict is no longer open.")).toBeInTheDocument();
   });
 
-  it("reads proposals afresh when the tab opens again, so a decided one does not come back", async () => {
+  it("shows no proposal of the namespace left after a switch", async () => {
+    const P = {
+      memory_key: "deploy_window",
+      memory_id: "m1",
+      agent: "a",
+      value_preview: "Tuesdays",
+      sensitivity: "" as const,
+      created_at: "2000-01-01 00:00:00",
+      graded_passes: 1,
+      graded_fails: 0,
+      ready: "" as const,
+    };
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    vi.mocked(listProposals).mockResolvedValueOnce({ proposals: [P], total: 1 });
+    seed("ns-a", "writer");
+    const user = userEvent.setup();
+    render(<ReviewQueue />);
+    await user.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    expect(await screen.findByText("Tuesdays")).toBeInTheDocument();
+    vi.mocked(listProposals).mockImplementation(() => new Promise(() => {}));
+    seed("ns-b", "writer");
+    await waitFor(() => expect(screen.queryByText("Tuesdays")).toBeNull());
+  });
+
+  it("reads proposals each time the tab opens", async () => {
     const P = {
       memory_key: "deploy_window",
       memory_id: "m1",

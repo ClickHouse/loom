@@ -66,7 +66,7 @@ describe("ProposalsPanel", () => {
 
   it("offers a viewer the proposals and no decision", async () => {
     signIn("viewer");
-    await show([P], 1);
+    await show([P]);
     expect(screen.getByText("Deploys run on Tuesdays")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Accept deploy_window" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Actions for deploy_window" })).toBeNull();
@@ -78,7 +78,7 @@ describe("ProposalsPanel", () => {
       results: [{ memory_key: "deploy_window", decided: false, status: "active", reason: "already accepted" }],
     });
     vi.mocked(api.listProposals).mockResolvedValue({ proposals: [], total: 0 });
-    await show([P], 1);
+    await show([P]);
     await userEvent.click(screen.getByRole("button", { name: "Actions for deploy_window" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Reject" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Not decided: already accepted", "info"));
@@ -107,7 +107,7 @@ describe("ProposalsPanel", () => {
       results: [{ memory_key: "deploy_window", decided: true, status: "conflicted", reason: "" }],
     });
     vi.mocked(api.listProposals).mockResolvedValue({ proposals: [], total: 0 });
-    await show([P], 1);
+    await show([P]);
     await userEvent.click(screen.getByRole("button", { name: "Accept deploy_window" }));
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith("Accepted; it contradicts another fact, so it waits in Conflicts", "ok"),
@@ -117,7 +117,7 @@ describe("ProposalsPanel", () => {
   it("holds every row until the list is read again after a decision", async () => {
     let answer: (v: { proposals: MemoryProposal[]; total: number }) => void = () => {};
     const lone = { ...P, memory_id: "m3", memory_key: "standup_time" };
-    await show([P, lone], 2);
+    await show([P, lone]);
     vi.mocked(api.listProposals).mockImplementationOnce(() => new Promise((r) => (answer = r)));
     await userEvent.click(screen.getByRole("button", { name: "Accept deploy_window" }));
     await waitFor(() => expect(api.listProposals).toHaveBeenCalledTimes(2));

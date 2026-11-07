@@ -186,10 +186,11 @@ export function ReviewQueue() {
       </PageHeader>
       <p className="text-sm text-text-muted mb-5 max-w-2xl">
         Memory disputes needing a human decision — your agent flip-flopped on a fact, or the extractor wants to promote
-        one. Most users never see anything here; that's a feature.
+        one. Most of the time nothing waits here; that's a feature.
       </p>
       {/* Conflicts mounts (and reads) once, at once; the sub-tabs join it when a probe finds
-          rows. Until then the lone panel is the page itself, not a tab panel without tabs. */}
+          rows or the role reaches them. Until then the lone panel is the page itself, not a
+          tab panel without tabs. */}
       <Tabs
         value={tab}
         onValueChange={(t) => {
@@ -258,7 +259,8 @@ export function ReviewQueue() {
         )}
         {hasProposals && (
           <Tabs.Content value="proposals">
-            <ProposalsPanel />
+            {/* Keyed by namespace: another namespace's proposals are a new panel. */}
+            <ProposalsPanel key={scopeKey} />
           </Tabs.Content>
         )}
         {hasDuplicates && (
