@@ -334,6 +334,18 @@ does not add them: state them again once it is established. A key that already h
 `proposal_policy.mode` to `auto` (`min_passes`, `max_fails`, `reject_after_fails`). See
 [runs](../runs.md).
 
+### An agent proposes, a person approves
+
+For a fact an agent should not make live on its own: the agent writes it with
+`memory.set(proposed=true)`, the runs that rely on it are its trial (`run.grade`), and a
+writer accepts or rejects it on the dashboard's **Review queue**, **Proposals** tab
+([dashboard](../dashboard.md)), or with `memory.proposal_decide` from a script or another
+agent. A decision takes the key's newest proposal. Knowledge has review steps of its own: a
+learning reaches the namespace's knowledge only when a person promotes it
+([learnings review queue](./procedures-and-learnings.md#learnings-review-queue)), and a
+table extracted from a file is served only once a writer approves it
+([datasets](../knowledge.md#datasets)).
+
 ## Typed records
 
 Records are rows with exact fields, for data that has identity (a ticket, a customer).
