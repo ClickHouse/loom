@@ -175,12 +175,13 @@ test("a lower LOOM_HOOK_TIMEOUT_MS bounds the health call SessionStart waits for
   }
 });
 
-test("the Codex copy reads its own manifest", () => {
-  const codexLib = new URL("../../codex-plugin/lib/server-version.mjs", import.meta.url);
+test("the Codex copy reads its own manifest", async () => {
+  // The Codex copy itself, from its own location (its default base).
+  const codex = await import(new URL("../../codex-plugin/lib/server-version.mjs", import.meta.url).href);
   const manifest = JSON.parse(
     fs.readFileSync(new URL("../../codex-plugin/.codex-plugin/plugin.json", import.meta.url), "utf8"),
   );
-  assert.deepEqual(pluginManifest(codexLib), {
+  assert.deepEqual(codex.pluginManifest(), {
     version: manifest.version,
     minServerVersion: manifest.minServerVersion,
   });
