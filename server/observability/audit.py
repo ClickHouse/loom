@@ -271,10 +271,10 @@ def _shape(model: type[BaseModel], dumped: dict[str, Any]) -> dict[str, Any]:
 
 
 def input_subject(input_obj: BaseModel) -> dict[str, Any]:
-    """The audit subject of a validated op input that declares no `audit_subject`:
-    numbers, booleans, Literal or Enum values and the naming fields that are not named as
-    a credential verbatim, a nested model shaped by the same rule, and every other value
-    (a free-form dict included) as its SHA-256 and length."""
+    """The audit subject of a validated op input that declares no `audit_subject`. Kept as
+    sent: empty values, numbers, booleans, Literal or Enum values, and naming fields not
+    named as a credential. A nested model is shaped by the same rule; every other value (a
+    free-form dict included) becomes its SHA-256 and length."""
     return _shape(type(input_obj), input_obj.model_dump(mode="json"))
 
 
