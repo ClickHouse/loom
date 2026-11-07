@@ -304,9 +304,9 @@ The analyst user, its settings profiles, grants and policies will be written wit
 never in a ClickHouse config file, which would put the key in the repository. A server
 whose ClickHouse user has access management (the bundled ClickHouse's `loom` user, a
 self-managed admin) writes them itself, and draws the secrets row when there is none and
-it sees no analyst user, in the order [the version rule](#provisioning) gives, so a
-first install cut short is a row without a user, which the next boot finishes with the
-stored key. Elsewhere an admin uses one of two commands:
+it sees no analyst user, in the order the version rule below gives, so a first install
+cut short is a row without a user, which the next boot finishes with the stored key.
+Elsewhere an admin uses one of two commands:
 
 - `loom ch-setup`, run as a user with access management, writes the entities under the
   rules below (it holds the lease and writes unless the stored version is newer than its
@@ -323,8 +323,9 @@ stored key. Elsewhere an admin uses one of two commands:
   recovers it after a lost row and rotates a healthy key alike. It is outside the lease
   and the version rule, so it is printed by the newest build's CLI, and it is run, not
   kept.
-- From the printed delete on, replicas have no key and answer `ANALYSIS_UNAVAILABLE`, so
-  a printed rotation run only in part is never an empty answer.
+
+From the printed delete on, replicas have no key and answer `ANALYSIS_UNAVAILABLE`, so a
+printed rotation run only in part is never an empty answer.
 
 The allowlist lives in code with the column comments that become the agent's catalog, so
 the grants, the policies and the catalog come from one definition. The rules a write
@@ -335,18 +336,19 @@ keeps:
   entities hold once it has it. `loom secrets reseal` takes the same lease.
 - **Never over a newer build.** The analyst's main settings profile carries the stored
   version, the last of the entities: a rotation stores its new secrets row after it, and
-  a first draw, made while no analyst user exists, stores the row before it creates the
-  user; a version names exactly one set of grants and policies (a unit test pins it), so
-  a change to either is a new version. A build writes when there is no stored version or
-  its own is newer, and at its own version only to repair (below) or as `loom ch-setup`,
-  so during a rolling upgrade a build N-1 never narrows N's grants or loosens N's
-  policies. N-1 keeps answering on N's entities: its statements that name a column N
-  dropped are refused until the roll forward. The caps are deployment settings, kept in
-  a second profile of their own: a write holding the lease (a boot, `loom ch-setup`)
-  writes them when the stored ones differ from its settings, the printed SQL always
-  writes them, and nothing else does, so they never touch the version. They are read at
-  boot, not live, and `loom doctor` reports a caps profile that differs from the
-  server's settings.
+  a first draw by a boot or `loom ch-setup`, made while no analyst user exists, stores
+  the row before it creates the user (the printed SQL, outside these rules, inserts it
+  last); a version names exactly one set of grants and policies (a unit test pins it),
+  so a change to either is a new version. A build writes when there is no stored version
+  or its own is newer, and at its own version only to repair (below) or as
+  `loom ch-setup`, so during a rolling upgrade a build N-1 never narrows N's grants or
+  loosens N's policies. N-1 keeps answering on N's entities: its statements that name a
+  column N dropped are refused until the roll forward. The caps are deployment settings,
+  kept in a second profile of their own: a write holding the lease (a boot,
+  `loom ch-setup`) writes them when the stored ones differ from its settings, the
+  printed SQL always writes them, and nothing else does, so they never touch the
+  version. They are read at boot, not live, and `loom doctor` reports a caps profile
+  that differs from the server's settings.
 - **No granted table without its policy.** By default ClickHouse lets a user with no
   policy on a table read every row of it, so each policy is replaced in place before any
   grant is given, every grant outside the allowlist and the canary is revoked after, and
@@ -495,14 +497,14 @@ viewer token. Each case must be refused or return no canary:
   replicas with different cap settings, which write the caps at boot only;
 - a canary under another key, which the probe catches, and a secrets row that does not
   open or is gone while the user is not, which answers `ANALYSIS_UNAVAILABLE`;
-- `--rotate-analysis-key` after a lost row and with `--live` on a healthy one, and the
-  printed SQL run in full on a first install, over a lost row and over a healthy row on
-  a server whose Loom user cannot list users, each followed by a statement that answers
-  with the right rows; `--rotate-analysis-key` refused when the CLI's secrets are not
-  the deployment's, and plain `loom ch-setup` refused over a lost row;
-- cut short at every step, the rotation, the printed SQL and a first draw between
-  creating the user and writing the version, each of which leaves `ANALYSIS_UNAVAILABLE`
-  or a state the next run finishes with the stored key, never an empty answer;
+- `--rotate-analysis-key` after a lost row and with `--live` on a healthy one, and, on a
+  server whose Loom user cannot list users, the printed SQL run in full on a first
+  install, over a lost row and over a healthy row, each followed by a statement that
+  answers with the right rows; `--rotate-analysis-key` refused when the CLI's secrets
+  are not the deployment's, and plain `loom ch-setup` refused over a lost row;
+- cut short at every step, the rotation, the printed SQL and a first draw from storing
+  the row to writing the version, each of which leaves `ANALYSIS_UNAVAILABLE` or a state
+  the next run finishes with the stored key, never an empty answer;
 - `loom.analysis_secrets` and `loom.analysis_canary` read directly, and neither the
   statement's text nor the key in `system.query_log`.
 
