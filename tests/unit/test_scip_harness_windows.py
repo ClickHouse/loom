@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from server.code.app.index.compiler_tier import STALE_COMPDB_MARKER
+
 _HARNESS = Path(__file__).resolve().parents[2] / "scripts" / "scip_harness"
 
 # the stub indexer logs its call and writes the index the test built
@@ -359,11 +361,13 @@ def test_a_failed_reconfigure_is_retried_until_one_succeeds(tmp_path: Path) -> N
     (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
     w.run(_commit(w.repo, "edit a"), ["src/a.cpp"])
     assert len(w.cmake_runs) == 2 and "cmake reconfigure failed" in w.stderr
+    assert (w.repo / STALE_COMPDB_MARKER).exists()
     del w.env["CMAKE_FAIL"]
     w.base = _git(w.repo, "rev-parse", "HEAD")
     (w.repo / "src" / "a.cpp").write_text("int a() { return 4; }\n")
     w.run(_commit(w.repo, "edit a again"), ["src/a.cpp"])
     assert len(w.cmake_runs) == 3 and "cmake reconfigure failed" not in w.stderr
+    assert not (w.repo / STALE_COMPDB_MARKER).exists()
     w.base = _git(w.repo, "rev-parse", "HEAD")
     (w.repo / "src" / "a.cpp").write_text("int a() { return 5; }\n")
     w.run(_commit(w.repo, "edit a once more"), ["src/a.cpp"])

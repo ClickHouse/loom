@@ -154,7 +154,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
         if returncode != 0:
             # base unknown clears scip_commit: code_scip_full re-indexes the entry
             raise harness_failure(returncode, out[-2000:])
-        note_stale_compdb("code_scip_delta", cfg, out, result.skipped)
+        await note_stale_compdb("code_scip_delta", cfg, checkout, result.skipped)
 
         if not await asyncio.to_thread(delta_path.exists):
             # harness legitimately exits 0 with no delta when no C++ TU changed

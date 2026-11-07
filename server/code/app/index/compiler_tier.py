@@ -12,6 +12,7 @@ conversion run in subprocesses; the tiers consume the JSON delta.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import subprocess
@@ -225,19 +226,22 @@ def harness_failure(returncode: int | None, tail: str) -> RuntimeError:
     return RuntimeError(f"harness exit {returncode}: {tail}")
 
 
-# run_delta.sh prints this when CMake cannot reconfigure and it indexes with the
-# last compile database
-STALE_COMPDB_WARNING = "cmake reconfigure failed"
+# run_delta.sh leaves this in the checkout while its CMake reconfigure fails and it
+# indexes with the last compile database
+STALE_COMPDB_MARKER = "build/.loom-reconfigure-failed"
 
 
-def note_stale_compdb(worker: str, cfg: RepoConfig, out: str, skipped: list[str]) -> None:
+async def note_stale_compdb(
+    worker: str, cfg: RepoConfig, checkout: Path, skipped: list[str]
+) -> None:
     """A harness run that indexed with a stale compile database succeeds, but a
     translation unit added since the last configure is missing from it: record a
-    skip, so the pass's outcome in workers.status names the entry."""
-    if STALE_COMPDB_WARNING in out:
+    skip, first, so the pass's outcome in workers.status names the entry within the
+    skips it keeps."""
+    if await asyncio.to_thread((checkout / STALE_COMPDB_MARKER).exists):
         reason = f"{cfg.namespace}: cmake reconfigure failed; compile database stale"
         logger.warning("%s: %s", worker, reason)
-        skipped.append(reason)
+        skipped.insert(0, reason)
 
 
 async def restart_full(

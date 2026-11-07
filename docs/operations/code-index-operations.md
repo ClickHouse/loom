@@ -241,7 +241,8 @@ a delta whose window adds a `.cpp`, `.cc` or `.cxx` file or adds, changes or del
 translation units of the tree it was configured on. When that configure fails, the
 harness indexes with the last compile database, and the pass records the skip
 `cmake reconfigure failed; compile database stale` for the entry. Every later run
-reconfigures and records the skip again until a configure succeeds. A worker whose
+reconfigures and records the skip again until a configure succeeds; a translation unit
+added meanwhile is indexed by the next full index. A worker whose
 project prerequisites are absent records a skip in `workers.status`; the Tree-sitter
 tier remains available. TypeScript projects have their dependencies installed
 automatically in their checkout.
