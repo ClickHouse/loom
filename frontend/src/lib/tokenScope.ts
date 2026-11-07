@@ -77,14 +77,13 @@ const WRITES = new Set(["writer", "admin"]);
 export function describeTokenScope(
   t: TokenClaim,
   {
-    writesAnywhere = true,
     yours = true,
     writable,
     label = (n) => n,
   }: {
-    writesAnywhere?: boolean;
     yours?: boolean;
-    writable?: (ns: string) => boolean;
+    /** The memory namespaces the viewer may write; unknown when absent. */
+    writable?: readonly string[];
     /** A namespace in words, e.g. a repository's as "repo · branch". */
     label?: (ns: string) => string;
   } = {},
@@ -100,10 +99,10 @@ export function describeTokenScope(
     // It writes through its owner's grants and its own one role: either one short of
     // writer, and it only reads.
     const tokenWrites = (t.roles || []).some((r) => WRITES.has(r));
-    if (!tokenWrites || (yours && !writesAnywhere)) return `${reads} · read-only`;
+    if (!tokenWrites || (yours && writable?.length === 0)) return `${reads} · read-only`;
     const pick = yours ? "the namespace you pick in Loom" : "the namespace its owner picks in Loom";
     // Its home counts only while its owner may write there; else it follows the pick.
-    const saves = home && (!yours || !writable || writable(home)) ? home : pick;
+    const saves = home && (!yours || !writable || writable.includes(home)) ? home : pick;
     return `${reads} · saves to ${saves}`;
   }
   const roles = t.ns_roles && Object.keys(t.ns_roles).length > 0 ? t.ns_roles : null;

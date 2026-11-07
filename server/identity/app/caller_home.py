@@ -76,12 +76,19 @@ def is_memory_home(kinds: dict[str, str], namespace: str) -> bool:
 
 
 async def _kinds_or_empty(org: str) -> dict[str, str]:
-    try:
-        from server.identity.app.namespace_kinds import kind_map
+    from server.code.domain.index.repos import configured_repos
+    from server.identity.app.namespace_kinds import kind_map
 
-        return dict(await kind_map(org))
+    try:
+        kinds = dict(await kind_map(org))
     except Exception:  # noqa: BLE001 — fail-open: unknown kinds count as memory
-        return {}
+        kinds = {}
+    # A repository listed only in LOOM_CODE_REPOS_JSON has no directory row; it is code
+    # all the same (as `namespace.list_mine` types it), never a home.
+    for repo in configured_repos():
+        if repo.org == org:
+            kinds.setdefault(repo.namespace, "code")
+    return kinds
 
 
 def caller_org(auth: Any) -> str | None:

@@ -190,6 +190,7 @@ test.describe("open overlays", () => {
           org: "dev",
           namespaces: ["dev", "*"],
           ns_roles: {},
+          roles: ["writer"],
           reads_everything: true,
           saves_to: "dev",
           created_at: "2026-01-01T00:00:00",

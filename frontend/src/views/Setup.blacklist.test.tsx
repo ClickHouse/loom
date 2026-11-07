@@ -30,6 +30,7 @@ vi.mock("../api", async (importOriginal) => {
       org: "dev",
       namespaces: ["reporter-public", "*"],
       ns_roles: {},
+      roles: ["writer"],
       reads_everything: true,
       saves_to: "reporter-public",
       created_at: "2026-01-01T00:00:00",

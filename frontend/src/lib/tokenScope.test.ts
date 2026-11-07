@@ -75,7 +75,7 @@ describe("describeTokenScope", () => {
     );
   });
   it("a `*` token of someone who writes nowhere is read-only", () => {
-    expect(describeTokenScope({ namespaces: ["*"], roles: ["writer"] }, { writesAnywhere: false })).toBe(
+    expect(describeTokenScope({ namespaces: ["*"], roles: ["writer"] }, { writable: [] })).toBe(
       "reads everything you belong to · read-only",
     );
   });
@@ -85,15 +85,15 @@ describe("describeTokenScope", () => {
     );
   });
   it("a home you can no longer write gives way to your pick", () => {
-    const writable = (ns: string) => ns !== "team-x";
+    const writable = ["me"];
     expect(describeTokenScope({ namespaces: ["team-x", "*"], roles: ["writer"] }, { writable })).toBe(
       "reads everything you belong to · saves to the namespace you pick in Loom",
     );
   });
   it("another person's `*` token reads as theirs, with no read-only judgement of yours", () => {
-    expect(
-      describeTokenScope({ namespaces: ["team-x", "*"], roles: ["writer"] }, { writesAnywhere: false, yours: false }),
-    ).toBe("reads everything its owner belongs to · saves to team-x");
+    expect(describeTokenScope({ namespaces: ["team-x", "*"], roles: ["writer"] }, { writable: [], yours: false })).toBe(
+      "reads everything its owner belongs to · saves to team-x",
+    );
     expect(describeTokenScope({ namespaces: ["*"], roles: ["writer"] }, { yours: false })).toBe(
       "reads everything its owner belongs to · saves to the namespace its owner picks in Loom",
     );

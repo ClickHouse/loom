@@ -144,3 +144,21 @@ def test_a_namespace_without_a_directory_row_is_code_when_a_repository_entry_nam
     assert membership._kind("acme", "code-acme-private", "") == "code"
     assert membership._kind("acme", "team-private", "") == "memory"
     assert membership._kind("acme", "code-acme-private", "qa") == "qa"
+
+
+@pytest.mark.asyncio
+async def test_a_repository_listed_only_in_the_config_is_never_where_a_token_saves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.identity.app import caller_home, namespace_kinds
+
+    entry = {"org": "acme", "namespace": "code-acme-private", "repo": "acme/private"}
+    monkeypatch.setattr(settings, "code_repos_json", json.dumps([entry]))
+
+    async def _no_directory(org: str) -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr(namespace_kinds, "kind_map", _no_directory)
+    kinds = await caller_home._kinds_or_empty("acme")
+    assert not caller_home.is_memory_home(kinds, "code-acme-private")
+    assert caller_home.is_memory_home(kinds, "team-private")

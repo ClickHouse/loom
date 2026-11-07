@@ -509,6 +509,7 @@ const CREATED_TOKEN = {
   org: ORG,
   namespaces: [NS, "*"],
   ns_roles: {},
+  roles: ["writer"],
   reads_everything: true,
   saves_to: NS,
   created_at: "2026-01-01T00:00:00",

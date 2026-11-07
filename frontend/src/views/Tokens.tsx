@@ -930,9 +930,8 @@ function TokenList({ tokens, onRevoke }: { tokens: TokenEntry[] | null; onRevoke
                   </div>
                   <div className="text-xs text-text-muted tabular">
                     {describeTokenScope(s, {
-                      writesAnywhere: writable.length > 0,
                       yours: s.yours ?? (!me || s.created_by === me),
-                      writable: (ns) => writable.includes(ns),
+                      writable,
                       label,
                     })}{" "}
                     · created <ListTime time={s.created_at} quiet />
