@@ -1,7 +1,15 @@
 import { act, cleanup, render, screen, waitFor, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import type { AllowlistRow, AutoResolvedRow, ConflictRow, LearningEntry, MyNamespaceEntry, WhoAmI } from "../../api";
+import type {
+  AllowlistRow,
+  AutoResolvedRow,
+  ConflictRow,
+  LearningEntry,
+  MemoryProposal,
+  MyNamespaceEntry,
+  WhoAmI,
+} from "../../api";
 import { resetNamespaceRoleCache } from "../../lib/namespaceRole";
 import { useStore } from "../../lib/state";
 import { invalidateShared } from "../../lib/sharedReads";
@@ -77,6 +85,17 @@ const conflict = (key: string): ConflictRow => ({
   content_sha256: "",
 });
 
+const proposal: MemoryProposal = {
+  memory_key: "deploy_window",
+  memory_id: "m1",
+  agent: "a",
+  value_preview: "Tuesdays",
+  sensitivity: "",
+  created_at: "2000-01-01 00:00:00",
+  graded_passes: 1,
+  graded_fails: 0,
+  ready: "",
+};
 const learning = (key: string): LearningEntry => ({
   candidate_id: `c-${key}`,
   memory_key: key,
@@ -244,44 +263,23 @@ describe("ReviewQueue", () => {
   });
 
   it("shows no proposal of the namespace left after a switch", async () => {
-    const P = {
-      memory_key: "deploy_window",
-      memory_id: "m1",
-      agent: "a",
-      value_preview: "Tuesdays",
-      sensitivity: "" as const,
-      created_at: "2000-01-01 00:00:00",
-      graded_passes: 1,
-      graded_fails: 0,
-      ready: "" as const,
-    };
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
-    vi.mocked(listProposals).mockResolvedValueOnce({ proposals: [P], total: 1 });
+    vi.mocked(listProposals).mockResolvedValueOnce({ proposals: [proposal], total: 1 });
     seed("ns-a", "writer");
     const user = userEvent.setup();
     render(<ReviewQueue />);
     await user.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
     expect(await screen.findByText("Tuesdays")).toBeInTheDocument();
-    vi.mocked(listProposals).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(listProposals).mockImplementationOnce(() => new Promise(() => {}));
     seed("ns-b", "writer");
-    await waitFor(() => expect(screen.queryByText("Tuesdays")).toBeNull());
+    // At once: the keyed panel starts empty, before any read or tab reset lands.
+    expect(screen.queryByText("Tuesdays")).toBeNull();
   });
 
   it("reads proposals each time the tab opens", async () => {
-    const P = {
-      memory_key: "deploy_window",
-      memory_id: "m1",
-      agent: "a",
-      value_preview: "Tuesdays",
-      sensitivity: "" as const,
-      created_at: "2000-01-01 00:00:00",
-      graded_passes: 1,
-      graded_fails: 0,
-      ready: "" as const,
-    };
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
     vi.mocked(listProposals).mockClear();
-    vi.mocked(listProposals).mockResolvedValueOnce({ proposals: [P], total: 1 });
+    vi.mocked(listProposals).mockResolvedValueOnce({ proposals: [proposal], total: 1 });
     seed("ns-a", "writer");
     const user = userEvent.setup();
     render(<ReviewQueue />);

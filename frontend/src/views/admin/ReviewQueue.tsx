@@ -53,14 +53,7 @@ import { useRowNav } from "../../lib/useRowNav";
 import { PageContainer } from "../../layout/PageContainer";
 
 /**
- * Review queue — single operator surface for "memory decisions needing
- * a human."
- *
- * One page for Conflicts and Learnings: both are "operator looks at a list and
- * approves/rejects." Same gesture, same audience, same cadence. Two empty-ish peer tabs
- * forced the operator into the same workflow twice; one tabbed page does it once.
- *
- * Sub-tabs:
+ * Review queue — the memory decisions waiting for a person, one sub-tab each:
  *   - Conflicts:   pairs of memories that disagree on a value
  *   - Learnings:   facts the extractor proposed for promotion
  *   - Auto-resolved: memories Loom retired on its own (`memory.auto_supersede`), each
@@ -185,8 +178,8 @@ export function ReviewQueue() {
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
       <p className="text-sm text-text-muted mb-5 max-w-2xl">
-        Memory disputes needing a human decision — your agent flip-flopped on a fact, or the extractor wants to promote
-        one. Most of the time nothing waits here; that's a feature.
+        Memory decisions waiting for a person: facts that disagree, learnings and proposals to accept or reject, and
+        duplicates to settle. Most of the time nothing waits here; that's a feature.
       </p>
       {/* Conflicts mounts (and reads) once, at once; the sub-tabs join it when a probe finds
           rows or the role reaches them. Until then the lone panel is the page itself, not a
