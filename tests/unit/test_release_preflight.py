@@ -117,7 +117,6 @@ def test_a_registry_that_gives_no_token_counts_as_no_push(tmp_path: Path) -> Non
         tmp_path, "strict", private="false", writable=both, public=both, NO_TOKEN="1"
     )
     assert result.returncode == 1
-    assert result.stdout.count("cannot push (HTTP 000)") == 2
     assert "-X POST" not in (tmp_path / "calls").read_text()
 
 
@@ -216,13 +215,7 @@ def test_a_dry_run_smokes_its_own_images_and_a_release_the_published_ones() -> N
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     smoke = jobs["docker-smoke"]
     assert smoke["needs"] == ["version", "preflight", "clickhouse", "docker", "docker-tag"]
-    assert smoke["if"] == (
-        "${{ !cancelled() && needs.clickhouse.result == 'success' && ( "
-        "(needs.docker.result == 'success' && needs.docker-tag.result == 'success') || "
-        "(inputs.dry_run && needs.docker.result == 'success' && "
-        "needs.docker-tag.result == 'skipped') || "
-        "needs.preflight.outputs.images_published == 'true') }}"
-    )
+    # Which jobs run on each path: tests/unit/test_release_job_paths.py.
     loads = [s for s in smoke["steps"] if s.get("if") == "${{ inputs.dry_run }}"]
     assert loads[0]["with"]["pattern"] == "scanned-*-${{ matrix.arch }}"
     assert "docker load" in loads[1]["run"]
@@ -329,7 +322,6 @@ def _published(tmp_path: Path, **env: str) -> subprocess.CompletedProcess[str]:
     ("published", "never", "answer"),
     [
         ("clickhouse/loom:1.2.0 clickhouse/loom-extractor:1.2.0", "", "true"),
-        ("clickhouse/loom:1.2.0", "", "false"),  # one image out: build both again
         ("clickhouse/loom:1.1.0 clickhouse/loom-extractor:1.1.0", "", "false"),
         ("", "clickhouse/loom-extractor", "false"),  # a package never pushed
     ],
@@ -356,6 +348,14 @@ def test_published_images_refuses_images_built_from_another_commit(tmp_path: Pat
     assert "manifests/sha256:platform" in calls and "sha256:att" not in calls
 
 
+def test_one_image_out_without_the_other_fails_with_the_recovery(tmp_path: Path) -> None:
+    """A docker-tag that stopped halfway: a new build would move the published tags."""
+    result = _published(tmp_path, PUBLISHED="clickhouse/loom:1.2.0")
+    assert result.returncode == 1 and result.stdout == ""
+    assert "only ghcr.io/clickhouse/loom carries 1.2.0" in result.stderr
+    assert "re-run the failed jobs of the tag's run" in result.stderr
+
+
 def test_published_images_fails_on_an_outage_instead_of_rebuilding(tmp_path: Path) -> None:
     result = _published(tmp_path, DOWN="1")
     assert result.returncode == 1 and result.stdout == ""
@@ -375,12 +375,6 @@ def test_a_run_on_a_published_tag_builds_and_tags_no_image() -> None:
     assert step["env"]["REVISION"] == "${{ github.sha }}"
     assert jobs["docker"]["if"] == "${{ needs.preflight.outputs.images_published != 'true' }}"
     assert "needs.preflight.outputs.images_published != 'true'" in jobs["docker-tag"]["if"]
-    release = jobs["github-release"]
-    assert release["if"] == (
-        "${{ !cancelled() && !inputs.dry_run && needs.verify.result == 'success' && "
-        "needs.docker-smoke.result == 'success' && (needs.docker-tag.result == 'success' || "
-        "needs.preflight.outputs.images_published == 'true') }}"
-    )
 
 
 @pytest.mark.parametrize("name", ["pypi", "npm", "mcp-registry"])
@@ -391,3 +385,12 @@ def test_the_registries_publish_after_a_release_that_skipped_its_image_jobs(name
     condition = job["if"]
     assert condition.startswith("${{ !cancelled() && needs.github-release.result == 'success' && ")
     assert "github.event_name == 'workflow_dispatch' && !inputs.dry_run" in condition
+
+
+def test_a_missing_push_token_is_named_apart_from_a_missing_grant(tmp_path: Path) -> None:
+    both = "clickhouse/loom clickhouse/loom-extractor"
+    result = _preflight(
+        tmp_path, "strict", private="false", writable=both, public=both, NO_TOKEN="1"
+    )
+    assert result.stdout.count("gave this workflow no push token") == 2
+    assert "Write role" not in result.stdout

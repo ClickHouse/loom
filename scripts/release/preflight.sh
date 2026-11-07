@@ -43,7 +43,9 @@ for image in $IMAGES; do
     status=$(awk 'toupper($1) ~ /^HTTP/ { code = $2 } END { print code + 0 }' <<<"$headers")
     location=$(awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); print $2 }' <<<"$headers")
   fi
-  if [ "$status" = 202 ]; then
+  if [ -z "$token" ]; then
+    say "$image: ghcr.io gave this workflow no push token (bad credentials or an outage), so its Write access is unknown"
+  elif [ "$status" = 202 ]; then
     case $location in /*) location=$GHCR$location ;; esac
     [ -z "$location" ] || curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $token" "$location" || true
     echo "$image: this workflow can push"

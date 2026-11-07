@@ -110,7 +110,7 @@ jobs:
       # The server reports its version from server/__init__.py (= pyproject.toml);
       # a tag that disagrees would ship an image that names another release.
       # The mcp-registry job publishes server.json as committed, so it must agree too.
-      - name: Server version names this tag
+      - name: The server's version names the release
         env:
           VERSION: ${{ steps.parse.outputs.version }}
         run: |

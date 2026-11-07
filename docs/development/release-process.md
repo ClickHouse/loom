@@ -114,7 +114,8 @@ the package's visibility to public in its settings, then re-run the failed jobs.
 **On a tag push (`v*`)**:
 
 1. `version` takes the version from the tag (`vX.Y.Z` → `X.Y.Z`) and refuses a ref that
-   is not a `v*` tag or not SemVer; it fails unless `server/__init__.py` reads
+   is not a `v*` tag (unless the run is a [dry run](#rehearsing-a-release)) or not SemVer; it
+   fails unless `server/__init__.py` reads
    `__version__ = "X.Y.Z"` and `server.json` carries the same version;
 2. `preflight` fails the run on a missing [prerequisite](#before-the-first-release);
 3. `clickhouse` names the ClickHouse release the Compose bundle runs: the release
@@ -163,7 +164,8 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    for one tag at a time, so two tags released together cannot both pass the check against
    the same older bundle. Only one more such job waits: a third tag's publish cancels the
    waiting one, which must then be re-run by hand (Re-run failed jobs). A refusal here
-   comes after `docker-tag` pushed the tag's image tags (and `:latest` when it is the highest final version). A
+   comes after `docker-tag` pushed the tag's image tags (and `:latest` when it is the highest
+   final version). A
    re-run keeps the run's inputs and fails again, so dispatch the tag instead, which also
    publishes the SDKs and the MCP Registry listing:
    `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=<the newer release the error names>`
@@ -175,7 +177,8 @@ the package's visibility to public in its settings, then re-run the failed jobs.
 The server and extractor images are published before the GitHub Release, so an installer
 shown on the release page never points at a missing image.
 
-**On manual dispatch** (`workflow_dispatch` on a tag ref), the same jobs run (`build`
+**On manual dispatch** (`workflow_dispatch` on a tag ref), the same jobs run, except the image
+builds when the images are already published (below) (`build`
 also runs the TypeScript SDK's `npm run check`: lint, types, version, README examples,
 tests), and then three publish jobs:
 

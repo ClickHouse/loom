@@ -33,11 +33,9 @@ def is_latest(version: str, tags: list[str]) -> bool:
 
 def list_tags(repository: str) -> list[str]:
     """The repository's v* tags; gh's error reaches the log on a failure."""
-    out = subprocess.run(
-        ["gh", "api", f"repos/{repository}/git/matching-refs/tags/v", "--paginate",
-         "--jq", '.[].ref | ltrimstr("refs/tags/")'],
-        check=True, stdout=subprocess.PIPE, text=True,
-    ).stdout  # fmt: skip
+    listing = ["gh", "api", f"repos/{repository}/git/matching-refs/tags/v", "--paginate"]
+    jq = ["--jq", '.[].ref | ltrimstr("refs/tags/")']
+    out = subprocess.run([*listing, *jq], check=True, stdout=subprocess.PIPE, text=True).stdout
     return out.split()
 
 
