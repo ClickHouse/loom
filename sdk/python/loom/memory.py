@@ -102,6 +102,9 @@ class _SetCoalescer:
         self._transport = transport
         self._windows: dict[tuple[str, ...], _CoalesceWindow] = {}
         self._inflight: set[asyncio.Task[None]] = set()
+        # The last flush of each identity: the next one, and a set alone, start after it,
+        # so a set sent again cannot land after a newer set of its key.
+        self._tails: dict[tuple[str, ...], asyncio.Task[None]] = {}
 
     def _key(self, identity: dict[str, str]) -> tuple[str, ...]:
         return tuple(str(identity.get(k, SENTINEL)) for k in _IDENTITY_KEYS)
@@ -118,6 +121,9 @@ class _SetCoalescer:
             self._windows[key] = window
         window.count += 1
         if window.count < COALESCE_MIN_BURST:
+            tail = self._tails.get(key)
+            if tail is not None:
+                await asyncio.wait([tail])
             direct: dict[str, Any] = await self._transport.post("/v1/memory.set", payload)
             return direct
         fut: asyncio.Future[dict[str, Any]] = loop.create_future()
@@ -138,9 +144,33 @@ class _SetCoalescer:
         if not window.pending:
             return
         batch, window.pending = window.pending, []
-        task = asyncio.get_running_loop().create_task(self._flush(window.identity, batch))
+        task = asyncio.get_running_loop().create_task(
+            self._flush_after(self._tails.get(key), window.identity, batch)
+        )
+        self._tails[key] = task
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
+        task.add_done_callback(lambda done: self._forget_tail(key, done))
+
+    def _forget_tail(self, key: tuple[str, ...], task: asyncio.Task[None]) -> None:
+        if self._tails.get(key) is task:
+            del self._tails[key]
+
+    async def _flush_after(
+        self,
+        before: asyncio.Task[None] | None,
+        identity: dict[str, str],
+        batch: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]],
+    ) -> None:
+        """`_flush(identity, batch)` once the identity's flush `before` is done."""
+        try:
+            if before is not None:
+                await asyncio.wait([before])
+            await self._flush(identity, batch)
+        except asyncio.CancelledError:
+            for _, fut in batch:
+                fut.cancel()  # a caller still waiting is told, not left waiting
+            raise
 
     async def _flush(
         self,
@@ -153,20 +183,21 @@ class _SetCoalescer:
         # unchecked too, so a key's entries stay in order and it ends at its last value.
         # One unchecked at the front of a request is too long even first in one: it goes
         # alone, and gets what a set alone answers.
+        # A request that checked nothing leaves no room: the rest go one at a time.
+        sizes = {id(fut): _value_bytes(entry) for entry, fut in batch}
         pending = batch
         room: int | None = None  # the value bytes the last request checked
         while len(pending) > 1:
-            size = len(pending) if room is None else _entries_within(pending, room)
+            size = len(pending) if room is None else _entries_within(pending, sizes, room)
             if size == 1:
                 await self._set_alone(identity, *pending[0])
                 pending = pending[1:]
                 continue
             sent, pending = pending[:size], pending[size:]
-            unchecked, checked = await self._bulk_round(identity, sent)
+            unchecked, room = await self._bulk_round(identity, sent, sizes)
             if unchecked and unchecked[0][1] is sent[0][1]:
                 await self._set_alone(identity, *unchecked[0])
                 unchecked = unchecked[1:]
-            room = checked or room
             pending = unchecked + pending
         for entry, fut in pending:
             await self._set_alone(identity, entry, fut)
@@ -175,18 +206,21 @@ class _SetCoalescer:
         self,
         identity: dict[str, str],
         batch: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]],
+        sizes: dict[int, int],
     ) -> tuple[list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]], int]:
         """Send `batch` as one memory.bulk_set and answer each entry from its row. Returns
-        the entries the blacklist could not check, in order, and the value bytes of the
-        ones it did."""
+        the entries the blacklist could not check, in order, and the value bytes (from
+        `sizes`, by future) of the ones it did check."""
         payload: dict[str, Any] = dict(identity)
         payload["entries"] = [entry for entry, _ in batch]
         try:
             res = await self._transport.post("/v1/memory.bulk_set", payload)
-        except BaseException as e:  # noqa: BLE001
+        except BaseException as e:  # every caller in the batch gets the failure
             for _, fut in batch:
                 if not fut.done():
                     fut.set_exception(e)
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return [], 0
         # Results are matched by key, in order, not by position: an older server leaves
         # a blacklisted entry out of `written`, which would shift every later result.
@@ -208,7 +242,11 @@ class _SetCoalescer:
             if row["conflict_verdict"] == "blacklist_unchecked":
                 unchecked.append((entry, fut))
                 continue
-            checked += _value_bytes(entry)
+            # The blacklist read this entry's value: it was written, matched a pattern, or
+            # reached the conflict check. A skipped restatement or a pinned or locked key
+            # never got that far.
+            if row["version"] or row["conflict_verdict"] not in _NOT_CHECKED_VERDICTS:
+                checked += sizes[id(fut)]
             if fut.done():
                 continue
             # A refused entry (a pinned or read_only key, a blacklisted value, a write
@@ -229,9 +267,11 @@ class _SetCoalescer:
         """Send one entry as a memory.set and hand its caller the answer."""
         try:
             res = await self._transport.post("/v1/memory.set", {**identity, **entry})
-        except BaseException as e:  # noqa: BLE001 — hand the caller its own failure
+        except BaseException as e:  # the caller gets its own failure
             if not fut.done():
                 fut.set_exception(e)
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return
         if not fut.done():
             fut.set_result(res)
@@ -245,17 +285,24 @@ class _SetCoalescer:
 
 
 def _value_bytes(entry: dict[str, Any]) -> int:
-    """The bytes of an entry's value as the server checks it: JSON, in UTF-8."""
-    return len(json.dumps(entry.get("value")).encode("utf-8", "replace"))
+    """The bytes of an entry's value as the server checks it: its JSON, which is ASCII."""
+    return len(json.dumps(entry.get("value")))
+
+
+# Verdicts of a row the server answered before the blacklist read its value: unchanged
+# (a restatement, an identity duplicate), a pinned or locked key, an unchecked one.
+_NOT_CHECKED_VERDICTS = frozenset({"clear", "pinned", "locked", "blacklist_unchecked"})
 
 
 def _entries_within(
-    pending: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]], room: int
+    pending: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]],
+    sizes: dict[int, int],
+    room: int,
 ) -> int:
     """How many entries from the front of `pending` fit in `room` value bytes, at least one."""
     total = 0
-    for n, (entry, _) in enumerate(pending):
-        total += _value_bytes(entry)
+    for n, (_, fut) in enumerate(pending):
+        total += sizes[id(fut)]
         if total > room:
             return max(n, 1)
     return len(pending)

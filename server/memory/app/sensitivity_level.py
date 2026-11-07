@@ -32,13 +32,18 @@ _LINES_PER_TURN = 2_000
 
 
 async def resolve_level(requested: str | None, text: str, *, read_before: int = 0) -> Sensitivity:
-    """`resolve_sensitivity(requested, text)`, read in windows of `ON_LOOP_CHARS` with a
-    turn between them once `read_before` (the characters this request's earlier values
-    read) plus `text` pass `ON_LOOP_CHARS`."""
+    """`resolve_sensitivity(requested, text)`. Once `read_before` (the characters this
+    request's earlier values read) plus `text` pass `ON_LOOP_CHARS`, a turn for the loop
+    comes first, and a `text` longer than that is read in windows of it with a turn
+    between them."""
     level = caller_level(requested)
     if level is not None:
         return level
     if read_before + len(text) <= ON_LOOP_CHARS:
+        return detect_sensitivity(text)
+    if len(text) <= ON_LOOP_CHARS:
+        # Read whole after a turn, so its label does not depend on where it is in a request.
+        await asyncio.sleep(0)
         return detect_sensitivity(text)
     found: Sensitivity = ""
     for window in detection_windows(text, ON_LOOP_CHARS):

@@ -961,3 +961,38 @@ def test_each_op_the_transports_begin_starts_one_regex_budget(monkeypatch) -> No
     first, second = asyncio.run(_op())
     assert first is None and second is not None and second.pattern_id == ""
     assert asyncio.run(_op())[0] is None  # the next op starts at zero
+
+
+@pytest.mark.parametrize("over_budget", [False, True])
+def test_a_long_substring_scan_runs_on_the_matcher_threads(monkeypatch, over_budget: bool) -> None:
+    """A substring scan holds the GIL for the length of one `in`: a long one runs on the
+    matcher threads, where the event loop gets its turn between patterns, and a short
+    one stays on the loop. Past the regex budget, the substring check still names a hit."""
+    import threading
+
+    import server.memory.app.blacklist_guard as bl
+
+    ran_on: list[str] = []
+    first_match = bl._first_match
+
+    def _recording(*args: Any) -> Any:
+        ran_on.append(threading.current_thread().name)
+        return first_match(*args)
+
+    _fresh_slots(monkeypatch)
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "_first_match", _recording)
+    cache = [_pattern(f"s{i}", "namespace", f"<needle{i}>", "substring") for i in range(20)]
+    if over_budget:
+        cache.append(_pattern("r", "namespace", r"\bssn\b", "regex"))
+        monkeypatch.setattr(bl, "REGEX_WORK_BUDGET", 1_000)
+    monkeypatch.setattr(bl, "_cache", cache)
+    value = "x" * (bl.SUBSTRINGS_ON_LOOP_BYTES // 20 + 10) + "<needle19>"
+    hit = asyncio.run(bl.find_match(org=ORG, namespace=NS, value=value))
+    assert hit is not None and hit.pattern_id == "s19"
+    assert ran_on and all(name.startswith("loom-blacklist") for name in ran_on)
+    if not over_budget:  # with a regex applicable, a short value goes to the threads anyway
+        ran_on.clear()
+        short = asyncio.run(bl.find_match(org=ORG, namespace=NS, value="<needle3>"))
+        assert short is not None and short.pattern_id == "s3"
+        assert ran_on == [threading.main_thread().name]

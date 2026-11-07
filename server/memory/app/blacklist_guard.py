@@ -62,6 +62,10 @@ _thread_slots = asyncio.Semaphore(MATCHER_THREADS)
 # times the longest search (the work budget, about a second), so a write waits out the
 # searches ahead of it but never queues without end.
 MATCHER_WAIT_S = 5.0  # not a setting: follows from the work budget's second
+# Bytes x substring patterns a check scans on the event loop. A substring scan holds the
+# GIL for one `in`, so past this it runs on the matcher threads, where the loop gets its
+# turn between patterns.
+SUBSTRINGS_ON_LOOP_BYTES = 1 << 20
 # Bytes x instructions this request's regexes scanned, a bulk write's entries together;
 # bound by the transports for each op. A worker binds none: there the budget is per value.
 _request_work: ContextVar[list[int] | None] = ContextVar("blacklist_regex_work", default=None)
@@ -250,7 +254,7 @@ async def find_match(
     applicable = [p for p in _cache if _applies_to(p, org, namespace)]
     regexes = [p for p in applicable if p.compiled is not None]
     if not regexes:
-        return _first_match(applicable, value, value)
+        return await _substring_match(org, applicable, value)
     # RE2 reads UTF-8 (a lone surrogate, an unpaired JSON escape, reads as `?`) and its
     # cost is per byte.
     data = value.encode("utf-8", "replace")
@@ -259,8 +263,9 @@ async def find_match(
     spent = (spent_box[0] if spent_box is not None else 0) + len(data) * program
     alone = len(data) * program > REGEX_WORK_BUDGET  # no smaller request checks it either
     if spent > REGEX_WORK_BUDGET:
-        # A substring pattern costs nothing to check: one that matches still names itself.
-        hit = next((p for p in applicable if p.compiled is None and p.pattern in value), None)
+        # A substring pattern costs no regex work: one that matches still names itself.
+        substrings = [p for p in applicable if p.compiled is None]
+        hit = await _substring_match(org, substrings, value)
         if hit is not None:
             return hit
         widest = max(regexes, key=lambda p: _SCOPE_PRECEDENCE.get(p.scope, 0)).scope
@@ -270,8 +275,18 @@ async def find_match(
     return await _search(org, applicable, value, data)
 
 
+async def _substring_match(
+    org: str, substrings: list[BlacklistPattern], value: str
+) -> BlacklistPattern | None:
+    """The first of `substrings` in `value`: on the event loop when the scan is short,
+    else on the matcher threads."""
+    if len(value) * len(substrings) <= SUBSTRINGS_ON_LOOP_BYTES:
+        return _first_match(substrings, value, value)
+    return await _search(org, substrings, value, value)
+
+
 async def _search(
-    org: str, applicable: list[BlacklistPattern], value: str, data: bytes
+    org: str, applicable: list[BlacklistPattern], value: str, data: str | bytes
 ) -> BlacklistPattern | None:
     """`_first_match` on a matcher thread, after one of `org`'s MATCHERS_PER_ORG turns
     and a free thread; 503 OVERLOADED (the write refused) past `MATCHER_WAIT_S`."""

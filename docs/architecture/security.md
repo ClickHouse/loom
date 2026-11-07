@@ -671,18 +671,20 @@ limiter error admits the call and is counted. Sizing and the shared backend are 
 `namespace` scope (`server/memory/app/blacklist_guard.py`). A regex runs on RE2, in time
 linear in the value; its length, its compiled program and a scope's total program are
 capped, one request's regex work (bytes times instructions) is bounded, and it runs on the
-blacklist's own four threads per process, so no pattern stalls the event loop. One org
-holds at most two of those threads at once, so one busy org leaves half the threads to the
-others; a write that waits past 5 seconds for one is refused with 503 `OVERLOADED` (fail
-closed). A value past the work budget is refused as `BLACKLISTED` with an empty
-`pattern_id`, and so is every later entry of its key in the same bulk write: a smaller
-request checks it, and a value past the budget alone must be shortened. The Python SDK
-sends the coalesced sets refused this way again, in order, in batches the size of what the
-last request checked. Matching writes get 422 `BLACKLISTED` on `memory.set` and the other
-write paths before anything is stored; `sweep=true` tombstones existing matches. Replicas
-invalidate their pattern caches from a one-row version watermark in
-`loom.blacklist_version`, checked every `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS` (2
-s).
+blacklist's own four threads per process, so no regex stalls the event loop. A substring
+check scans on the loop while the value's length times the substring patterns that apply
+stays within 1 MiB, and on those threads past it, where the loop gets its turn between
+patterns (one scan of 32 MB takes about 10 ms). One org holds at most two of those threads
+at once, so one busy org leaves half the threads to the others; a write that waits past 5
+seconds for one is refused with 503 `OVERLOADED` (fail closed). A value past the work
+budget is refused as `BLACKLISTED` with an empty `pattern_id`, and so is every later entry
+of its key in the same bulk write: a smaller request checks it, and a value past the
+budget alone must be shortened. The Python SDK sends the coalesced sets refused this way
+again, in order, in batches the size of what the last request checked. Matching writes get
+422 `BLACKLISTED` on `memory.set` and the other write paths before anything is stored;
+`sweep=true` tombstones existing matches. Replicas invalidate their pattern caches from a
+one-row version watermark in `loom.blacklist_version`, checked every
+`LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS` (2 s).
 
 ## Prompt safety
 

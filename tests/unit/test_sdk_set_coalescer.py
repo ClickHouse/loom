@@ -32,6 +32,8 @@ class _FakeTransport:
         self.refused = {"blacklisted", "blacklist_unchecked"}
         # Value bytes one bulk_set checks against the blacklist; past it, unchecked.
         self.budget_bytes: int | None = None
+        # Seconds a bulk_set takes to answer.
+        self.bulk_delay = 0.0
         # What a memory.set alone of a value raises.
         self.alone_errors: dict[str, BaseException] = {}
 
@@ -67,6 +69,7 @@ class _FakeTransport:
                 "memory_key": payload["memory_key"],
             }
         if op_path == "/v1/memory.bulk_set":
+            await asyncio.sleep(self.bulk_delay)
             if self.fail_bulk is not None:
                 raise self.fail_bulk
             written = []
@@ -476,3 +479,63 @@ def test_agent_and_datapack_default_to_coalescing() -> None:
     assert Agent(org="o", namespace="n", agent="a", api_key="x").coalesce_sets is True
     assert Datapack("o", "n", api_key="x").agent("a").coalesce_sets is True
     assert Datapack("o", "n", api_key="x", coalesce_sets=False).agent("a").coalesce_sets is False
+
+
+async def test_unchecked_sets_a_request_checked_none_of_go_one_at_a_time(agent: Agent) -> None:
+    # Every value is past the budget alone: the request checks nothing, so the rest go as
+    # sets alone, one request each, never the whole remainder again per round.
+    t: Any = agent.transport
+    t.budget_bytes = 100
+    await asyncio.gather(*[agent.memory.set(f"k{i}", "v" * 2_000) for i in range(12)])
+    assert t.paths().count("/v1/memory.bulk_set") == 1
+    assert t.paths().count("/v1/memory.set") == 12
+
+
+async def test_a_restatement_the_blacklist_never_read_leaves_no_room(agent: Agent) -> None:
+    # Only the bytes the blacklist read size the next batch: a long restatement the server
+    # skipped before its check does not, so each unchecked entry goes alone.
+    t: Any = agent.transport
+    restated = "r" * 40_000
+    t.unchanged_values = {restated}
+    unchecked = [f"u{i}" * 4 for i in range(3)]
+    t.value_verdicts = {v: "blacklist_unchecked" for v in unchecked}
+    sets = [agent.memory.set("a", "a"), agent.memory.set("b", "b"), agent.memory.set("w", "w")]
+    sets += [agent.memory.set("r", restated)]
+    sets += [agent.memory.set(f"k{i}", v) for i, v in enumerate(unchecked)]
+    await asyncio.gather(*sets)
+    assert t.paths().count("/v1/memory.bulk_set") == 1
+    assert _alone_values_of_keys(t, ["k0", "k1", "k2"]) == unchecked
+
+
+def _alone_values_of_keys(t: Any, keys: list[str]) -> list[str]:
+    return [
+        p["value"] for path, p in t.calls if path == "/v1/memory.set" and p["memory_key"] in keys
+    ]
+
+
+async def test_a_set_sent_again_lands_before_a_newer_windows_set_of_its_key(
+    agent: Agent,
+) -> None:
+    # The first window's unchecked set goes out again while the next window's first set
+    # of the same key is ready: that one waits for the flush, so the key ends at it.
+    t: Any = agent.transport
+    t.value_verdicts = {"old": "blacklist_unchecked"}
+    t.bulk_delay = 0.3
+    first = [agent.memory.set("a", "a"), agent.memory.set("b", "b")]
+    first += [agent.memory.set("k", "old"), agent.memory.set("x", "x")]
+    window = asyncio.gather(*first)
+    await asyncio.sleep(loom.memory.COALESCE_WINDOW_S + 0.05)
+    await asyncio.gather(window, agent.memory.set("k", "new"))
+    assert _alone_values(t) == ["old", "new"]
+
+
+async def test_a_cancelled_flush_tells_its_callers_and_stays_cancelled(agent: Agent) -> None:
+    t: Any = agent.transport
+    t.bulk_delay = 5.0
+    sets = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
+    await asyncio.sleep(loom.memory.COALESCE_WINDOW_S + 0.05)
+    (flush,) = agent.memory._coalescer._inflight  # type: ignore[union-attr]
+    flush.cancel()
+    results = await asyncio.gather(*sets, return_exceptions=True)
+    assert all(isinstance(r, asyncio.CancelledError) for r in results[2:])
+    assert flush.cancelled()

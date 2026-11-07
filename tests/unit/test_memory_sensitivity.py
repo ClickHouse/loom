@@ -1216,3 +1216,17 @@ def test_a_jwt_reads_whole_with_its_signature_and_in_a_window_from_its_start() -
     assert detect_window_sensitivity(two_parts) == "high"
     with pytest.raises(ValueError):
         next(detection_windows("x" * 10_000, 1024))
+
+
+@pytest.mark.parametrize("read_before", [0, 20_000])
+async def test_a_short_value_reads_the_same_wherever_it_is_in_a_bulk_write(
+    monkeypatch: pytest.MonkeyPatch, read_before: int
+) -> None:
+    # Only a value longer than a window is read in windows: a short one past 16 KiB of
+    # earlier entries reads as a whole value does.
+    from server.memory.app.sensitivity_level import resolve_level
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", True)
+    two_parts = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0"
+    assert await resolve_level("", two_parts, read_before=read_before) == ""
