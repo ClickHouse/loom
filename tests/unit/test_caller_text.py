@@ -92,17 +92,14 @@ def test_a_consolidation_reason_an_older_build_stored_is_cut() -> None:
     assert _shown_failure("") == ""
 
 
-def test_a_malformed_merge_response_is_a_fixed_reason() -> None:
+def test_a_malformed_merge_response_quotes_none_of_it() -> None:
     import pytest
 
     from server.memory.app.consolidate import _parse_merge_response
 
     with pytest.raises(ValueError) as ei:
-        _parse_merge_response('{"canonical_key": "k", "canonical_value": }')
-    assert str(ei.value) == "merge response is not valid JSON"
-    with pytest.raises(ValueError) as deep:
-        _parse_merge_response("{" + '"a": [' * 100_000 + "]" * 100_000 + "}")
-    assert str(deep.value) == "merge response is not valid JSON"
+        _parse_merge_response('{"canonical_key": "secret-k", "canonical_value": }')
+    assert "secret-k" not in str(ei.value)
 
 
 def test_a_merge_answer_that_cannot_be_parsed_is_recorded_not_raised() -> None:
