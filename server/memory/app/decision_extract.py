@@ -1571,7 +1571,7 @@ async def _audit(op_name: str, inp: Any) -> None:
     """The audit row the transport writes after a successful call of an op declaring
     `audit` with no `audit_subject` (decision.record, memory.delete_version), written here
     since an in-process call has no transport: the op's name, the writer actor
-    (`process:cli:decisions`) and the input. Best effort, as there."""
+    (`process:cli:decisions`) and the input with its text hashed. Best effort, as there."""
     from server.memory.app.provenance import writer_actor
     from server.observability import audit
 
@@ -1580,7 +1580,7 @@ async def _audit(op_name: str, inp: Any) -> None:
         org=inp.org,
         namespace=inp.namespace,
         actor=writer_actor("-"),
-        subject=inp.model_dump(mode="json"),
+        subject=audit.input_subject(inp),
     )
 
 

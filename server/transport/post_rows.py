@@ -15,6 +15,8 @@ import logging
 from collections.abc import Awaitable
 from typing import TYPE_CHECKING, Any
 
+from server.observability import audit
+
 if TYPE_CHECKING:
     from server.core.idempotency import Scope
     from server.operations.base import Operation
@@ -39,11 +41,12 @@ async def gather_best_effort(
 
 def _audit_subject(op: Operation, input_obj: Any, response_body: Any) -> dict[str, Any]:
     """The audit row's subject: the op's `audit_subject`, else the validated
-    input; {} when either fails (the row is still written)."""
+    input with its text values hashed (`audit.input_subject`); {} when either
+    fails (the row is still written)."""
     try:
         if op.audit_subject:
             return op.audit_subject(input_obj, response_body)
-        subject = input_obj.model_dump(mode="json")
+        subject = audit.input_subject(input_obj)
     except Exception:  # noqa: BLE001 — a subject that cannot be built still gets an audit row
         return {}
     return subject if isinstance(subject, dict) else {}

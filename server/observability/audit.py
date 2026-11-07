@@ -12,7 +12,9 @@ import hashlib
 import json
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from enum import Enum
+from types import UnionType
+from typing import Any, Literal, Union, get_args, get_origin
 
 from server.core.ch import get_client
 from server.core.ch_writes import batched_insert_settings
@@ -145,6 +147,50 @@ async def emit_many(
         await get_client().insert("loom.audit_log", rows, settings=batched_insert_settings())
     except Exception as e:  # fail open: an audit write never fails the op it records
         log.exception("audit.emit_many failed for event_type=%s: %s", event_type, e)
+
+
+# Input fields whose text an audit subject keeps: identity, ids, keys and URIs, which
+# name what a call acted on. Every other text field (a value, a reason, a payload) is
+# kept as its SHA-256 and length, so `loom.audit_log` never holds content erasure must reach.
+_NAMING_FIELDS = frozenset(
+    {"org", "namespace", "agent", "user_id", "session_id", "run_id", "thread_id", "subject"}
+)
+_NAMING_SUFFIXES = ("_id", "_ids", "_key", "_keys", "_uri", "_uris", "_namespace", "_org", "_agent")
+
+
+def _is_vocabulary(annotation: Any) -> bool:
+    """True for a Literal or Enum annotation (optionally inside Optional/Union)."""
+    if get_origin(annotation) is Literal:
+        return True
+    if isinstance(annotation, type) and issubclass(annotation, Enum):
+        return True
+    if get_origin(annotation) in (Union, UnionType):
+        return all(a is type(None) or _is_vocabulary(a) for a in get_args(annotation))
+    return False
+
+
+def _digest(value: Any) -> dict[str, Any]:
+    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
+    return {"sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "chars": len(text)}
+
+
+def input_subject(input_obj: Any) -> dict[str, Any]:
+    """The audit subject of a validated op input that declares no `audit_subject`:
+    numbers, booleans, a Literal or Enum value and the naming fields verbatim, every
+    other value as its SHA-256 and length."""
+    subject: dict[str, Any] = {}
+    fields = getattr(type(input_obj), "model_fields", {})
+    for name, value in input_obj.model_dump(mode="json").items():
+        field = fields.get(name)
+        keep = (
+            value in (None, "", [], {})
+            or isinstance(value, bool | int | float)
+            or name in _NAMING_FIELDS
+            or name.endswith(_NAMING_SUFFIXES)
+            or (field is not None and _is_vocabulary(field.annotation))
+        )
+        subject[name] = value if keep else _digest(value)
+    return subject
 
 
 def _audit_row(
