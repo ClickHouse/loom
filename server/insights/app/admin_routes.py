@@ -746,7 +746,10 @@ async def admin_prompts_evaluate(input: PromptsEvaluateInput) -> PromptsEvaluate
         log.exception("prompt eval: Langfuse read failed for %s", tag)
         raise HTTPException(
             status_code=502,
-            detail={"code": "BACKEND_UNAVAILABLE", "message": f"Langfuse read failed: {e}"},
+            detail={
+                "code": "BACKEND_UNAVAILABLE",
+                "message": f"Langfuse read failed: {type(e).__name__}: {e}",
+            },
         ) from e
     if not trace_ids:
         return PromptsEvaluateOutput.model_validate(

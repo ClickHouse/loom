@@ -144,6 +144,9 @@ async def test_a_failed_langfuse_read_answers_502_not_a_verdict(
         await admin_routes.admin_prompts_evaluate(_input())
     assert ei.value.status_code == 502
     assert ei.value.detail["code"] == "BACKEND_UNAVAILABLE"
+    # The cause is named even when the exception's own text is empty (a timeout's is).
+    cause = ei.value.detail["message"].removeprefix("Langfuse read failed: ").split(":")[0]
+    assert cause in {"HTTPStatusError", "ErasureBackendError"}
 
 
 @pytest.mark.asyncio
