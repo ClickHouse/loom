@@ -350,7 +350,8 @@ class TrackerSimilarInput(_TrackerIdentity):
     # An existing item whose own text is the query; only older items are candidates.
     # 0 = none.
     issue_number: int = Field(default=0, ge=0)
-    # qualified frames or raw trace lines; normalised the way code.trace parses
+    # qualified frames or raw trace lines, each at most 4,000 characters;
+    # normalised the way code.trace parses
     frames: list[_FrameLine] = Field(default_factory=list, max_length=60)
     # issue | pr | incident (incidents only through a restricted tracker namespace)
     kinds: list[str] = Field(default_factory=lambda: ["issue", "pr"], max_length=3)
@@ -436,7 +437,8 @@ class TrackerDuplicateCheckInput(_TrackerIdentity):
     title: str = Field(default="", max_length=500)
     # The draft's body text.
     body: str = Field(default="", max_length=20000)
-    # qualified frames or raw trace lines; normalised the way code.trace parses
+    # qualified frames or raw trace lines, each at most 4,000 characters;
+    # normalised the way code.trace parses
     frames: list[_FrameLine] = Field(default_factory=list, max_length=60)
     # The draft's component; boosts candidates with the same component.
     component: str = Field(default="", max_length=120)
@@ -448,7 +450,7 @@ class TrackerDuplicateCheckInput(_TrackerIdentity):
     # the finding's code-path evidence: repository paths a fix PR of a candidate
     # may have touched (`fix_path`), and symbols matched like frames
     paths: list[str] = Field(default_factory=list, max_length=40)
-    # Code symbols from the finding, matched like stack frames.
+    # Code symbols from the finding, each at most 4,000 characters, matched like stack frames.
     symbols: list[_FrameLine] = Field(default_factory=list, max_length=40)
     # the issue already filed for this draft (its own text is the query when
     # title and body are empty; it is excluded; its recorded relations are read)

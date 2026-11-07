@@ -103,12 +103,12 @@ Does this draft already exist?
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `title` | `str` | `''` | The draft's title, as a reporter would file it. |
 | `body` | `str` | `''` | The draft's body text. |
-| `frames` | `list[str]` | *(computed)* | qualified frames or raw trace lines; normalised the way code.trace parses |
+| `frames` | `list[str]` | *(computed)* | qualified frames or raw trace lines, each at most 4,000 characters; normalised the way code.trace parses |
 | `component` | `str` | `''` | The draft's component; boosts candidates with the same component. |
 | `version` | `str` | `''` | The version the draft is about (`X.Y`, a longer one is cut to its minor); boosts candidates affecting it. |
 | `mentions` | `list[int]` | *(computed)* | issue / PR numbers the draft refers to, beside the ones its text names |
 | `paths` | `list[str]` | *(computed)* | the finding's code-path evidence: repository paths a fix PR of a candidate may have touched (`fix_path`), and symbols matched like frames |
-| `symbols` | `list[str]` | *(computed)* | Code symbols from the finding, matched like stack frames. |
+| `symbols` | `list[str]` | *(computed)* | Code symbols from the finding, each at most 4,000 characters, matched like stack frames. |
 | `issue_number` | `int` | `0` | the issue already filed for this draft (its own text is the query when title and body are empty; it is excluded; its recorded relations are read) |
 | `top_k` | `int` | `10` | At most this many items; the server caps it at 50. |
 | `as_of` | `str` | `''` | ISO 8601: only items created before it are candidates (replays); '' = now |
@@ -240,7 +240,7 @@ The reports that already say it: duplicate and related issues / PRs for a pasted
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `text` | `str` | `''` | A pasted report to search for; may be empty when `issue_number` or `frames` is given. |
 | `issue_number` | `int` | `0` | An existing item whose own text is the query; only older items are candidates. 0 = none. |
-| `frames` | `list[str]` | *(computed)* | qualified frames or raw trace lines; normalised the way code.trace parses |
+| `frames` | `list[str]` | *(computed)* | qualified frames or raw trace lines, each at most 4,000 characters; normalised the way code.trace parses |
 | `kinds` | `list[str]` | *(computed)* | issue \| pr \| incident (incidents only through a restricted tracker namespace) |
 | `top_k` | `int` | `10` | At most this many items; the server caps it at 50. |
 | `legs` | `list[str]` | *(computed)* | the legs to run — lexical, fields, frames, mentions, vector; the default is all (the bench arms one at a time; `fields` are the equality boosts on the lexical leg and run only with it; `mentions` are the items the text names by number) |

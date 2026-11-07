@@ -373,8 +373,9 @@ def report_text(text: str) -> str:
     for opener, closer in _BOT_MARKERS:
         out = _without_blocks(out, opener, closer)
     # no comment opens after the last `-->`, so an unclosed one is not rescanned
-    cut = out.rfind("-->") + 3
-    out = _COMMENT_RE.sub(" ", out[:cut]) + out[cut:]
+    end = out.rfind("-->")
+    if end >= 0:
+        out = _COMMENT_RE.sub(" ", out[: end + 3]) + out[end + 3 :]
     for rx in (*_BOT_BLOCK_RES, *_bot_signature_res(settings.code_bot_authors)):
         out = rx.sub(" ", out)
     return out
