@@ -224,7 +224,8 @@ describe("MemoryInspector rename with redirect", () => {
     );
     await screen.findByText("black");
     await act(async () => finish({ ...MOVED, redirected: false }));
-    // The drawer stays on morning_routine and does not follow the rename.
+    // The drawer still shows morning_routine, and followMoved did not run: the store still
+    // holds the key seed() opened.
     expect(screen.getByText("black")).toBeInTheDocument();
     expect(useStore.getState().inspectedMemoryKey).toBe("coffee_pref");
     expect(toast).toHaveBeenCalledWith("Renamed coffee_pref to prefs/coffee — the old key was deleted", "ok");
@@ -234,7 +235,9 @@ describe("MemoryInspector rename with redirect", () => {
     seed("writer");
     let finish: (r: MemoryMoveResult) => void = () => {};
     vi.mocked(moveMemory).mockImplementationOnce(() => new Promise((r) => (finish = r)));
-    await open();
+    const onClose = vi.fn();
+    render(<MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={onClose} onChanged={() => {}} />);
+    await screen.findByText("oat milk, no sugar");
     await openRename();
     const form = screen.getByTestId("rename-form");
     const input = within(form).getByLabelText("New key");
@@ -245,8 +248,12 @@ describe("MemoryInspector rename with redirect", () => {
     await userEvent.click(screen.getByRole("button", { name: "Edit" }));
     vi.mocked(getMemory).mockResolvedValue({ found: false } as never);
     await act(async () => finish({ ...MOVED, redirected: false }));
-    // The key was deleted: the drawer reads it again and shows it gone, editor and all.
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull());
+    // The key was deleted: the drawer reads it again and shows it gone, with no form left
+    // open behind it, so one Escape closes the drawer.
+    expect(await screen.findByText(/not found/i)).toBeInTheDocument();
+    expect(toast).toHaveBeenCalledWith("Renamed coffee_pref to prefs/coffee — the old key was deleted", "ok");
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalled();
   });
 
   it("unticking the redirect sends keep_redirect false and follows the new key", async () => {

@@ -591,7 +591,13 @@ export function MemoryInspector({
     if (!showing()) return;
     try {
       const row = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
-      if (showing()) setDetail(row);
+      if (!showing()) return;
+      setDetail(row);
+      // A row the write took away leaves no form open behind "not found".
+      if (!row.found) {
+        setEditing(false);
+        setRenaming(false);
+      }
     } catch (e) {
       if (showing()) toast(`Couldn't read the memory again: ${humanizeError(e)}`, "error");
     }
@@ -768,11 +774,10 @@ export function MemoryInspector({
   // one the old key is tombstoned and the drawer follows the new key.
   const onRenamed = async (r: MemoryMoveResult) => {
     const left = r.redirected ? "the old key redirects to it" : "the old key was deleted";
-    // A move that answers after the drawer moved, or after another Edit or Rename, leaves
-    // the drawer as it is and says where the key went.
+    // A move that answers after the drawer moved, or after another Edit or Rename, only
+    // reports and reads the row again.
     if (!showing() || formSession.current !== renameSession) {
       toast(`Renamed ${memoryKey} to ${r.to_key} — ${left}`, "ok");
-      // Still on this key: read it again, so a deleted key shows as gone.
       await reread();
       return;
     }
