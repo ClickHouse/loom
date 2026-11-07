@@ -225,11 +225,15 @@ def path_overlap(draft_paths: list[str], fix_files: list[str]) -> list[str]:
     `src/Parsers/ParserSelectQuery.cpp`)."""
     out: list[str] = []
     files = [str(f).strip("/") for f in fix_files if str(f).strip()]
+    tails = ["/" + f for f in files]
     for raw in draft_paths:
         p = str(raw).strip().strip("/")
         if not p:
             continue
-        if any(f == p or f.endswith("/" + p) or p.endswith("/" + f) for f in files):
+        tail = "/" + p
+        if any(
+            f == p or f.endswith(tail) or p.endswith(t) for f, t in zip(files, tails, strict=True)
+        ):
             out.append(p)
     return out
 

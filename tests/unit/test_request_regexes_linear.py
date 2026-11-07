@@ -355,6 +355,7 @@ def test_a_forget_sentence_past_the_cap_is_not_read() -> None:
         (TrackerSimilarInput, "frames"),
         (TrackerDuplicateCheckInput, "frames"),
         (TrackerDuplicateCheckInput, "symbols"),
+        (TrackerDuplicateCheckInput, "paths"),
     ],
 )
 def test_a_frame_line_is_bounded(model: type[Any], field: str) -> None:

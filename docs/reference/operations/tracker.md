@@ -107,7 +107,7 @@ Does this draft already exist?
 | `component` | `str` | `''` | The draft's component; boosts candidates with the same component. |
 | `version` | `str` | `''` | The version the draft is about (`X.Y`, a longer one is cut to its minor); boosts candidates affecting it. |
 | `mentions` | `list[int]` | *(computed)* | issue / PR numbers the draft refers to, beside the ones its text names |
-| `paths` | `list[str]` | *(computed)* | the finding's code-path evidence: repository paths a fix PR of a candidate may have touched (`fix_path`), and symbols matched like frames |
+| `paths` | `list[str]` | *(computed)* | the finding's code-path evidence: repository paths a fix PR of a candidate may have touched (`fix_path`), each at most 4,000 characters |
 | `symbols` | `list[str]` | *(computed)* | Code symbols from the finding, each at most 4,000 characters, matched like stack frames. |
 | `issue_number` | `int` | `0` | the issue already filed for this draft (its own text is the query when title and body are empty; it is excluded; its recorded relations are read) |
 | `top_k` | `int` | `10` | At most this many items; the server caps it at 50. |

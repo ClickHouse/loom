@@ -21,15 +21,15 @@ from pydantic import (
 
 from server.operations.base import MCP_HIDDEN
 
-# One frame or trace line: a deep template frame runs to a few thousand
-# characters, and each line is parsed with regexes on the request path.
+# One frame, trace line or path: a deep template frame runs to a few thousand
+# characters, and each is parsed or compared on the request path.
 MAX_FRAME_CHARS = 4000  # not a setting: the wire contract's bound
 _FrameLine = Annotated[str, Field(max_length=MAX_FRAME_CHARS)]
 
 
 def checkable_frames(frames: Iterable[str]) -> list[str]:
-    """The frames a duplicate check accepts: a longer line would fail the
-    whole check, so a caller that found it in free text drops it."""
+    """The frames or paths a duplicate check accepts: a longer one would fail
+    the whole check, so a caller that did not validate it drops it."""
     return [f for f in frames if len(f) <= MAX_FRAME_CHARS]
 
 
@@ -448,8 +448,8 @@ class TrackerDuplicateCheckInput(_TrackerIdentity):
     # issue / PR numbers the draft refers to, beside the ones its text names
     mentions: list[int] = Field(default_factory=list, max_length=10)
     # the finding's code-path evidence: repository paths a fix PR of a candidate
-    # may have touched (`fix_path`), and symbols matched like frames
-    paths: list[str] = Field(default_factory=list, max_length=40)
+    # may have touched (`fix_path`), each at most 4,000 characters
+    paths: list[_FrameLine] = Field(default_factory=list, max_length=40)
     # Code symbols from the finding, each at most 4,000 characters, matched like stack frames.
     symbols: list[_FrameLine] = Field(default_factory=list, max_length=40)
     # the issue already filed for this draft (its own text is the query when
