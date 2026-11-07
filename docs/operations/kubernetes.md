@@ -430,9 +430,9 @@ own ([exporting usage to a data warehouse](./analytics-export.md)).
 
 `alerts.prometheusRule.enabled: true` adds a PrometheusRule (the Prometheus Operator's
 CRD, which the chart does not install) for a deployment that exports Loom's metrics over
-OTLP into Prometheus: `LoomCodeTierFailing` once a code-index tier has failed
-`alerts.prometheusRule.failingPasses` passes in a row, and `LoomCodeTierFailingFarBehind`
-once a failing tier is `alerts.prometheusRule.errorLagCommits` commits behind
+OTLP into Prometheus: `LoomCodeTierFailing` for a code-index tier the `code_tier_failing`
+health problem reports, and `LoomCodeTierFailingFarBehind` when that problem is an
+error. Their thresholds are the `LOOM_CODE_TIER_FAILING_*` settings
 ([when a tier fails](./code-index-operations.md#when-a-tier-fails)).
 `alerts.prometheusRule.labels` adds the labels your Prometheus selects rules by.
 

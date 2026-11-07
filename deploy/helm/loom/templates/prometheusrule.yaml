@@ -1,8 +1,9 @@
 {{- if .Values.alerts.prometheusRule.enabled }}
 # Alerts on the failing code-index tiers, for a deployment that exports Loom's
 # metrics over OTLP into Prometheus (the Prometheus Operator's PrometheusRule).
-# One rule per condition of the `code_tier_failing` health problem; the fix is in
-# /v1/health and code.repos.
+# The gauge reports exactly the tiers the `code_tier_failing` health problem reports,
+# with its severity, so its thresholds are the LOOM_CODE_TIER_FAILING_* settings; the
+# fix is in /v1/health and code.repos.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -17,7 +18,7 @@ spec:
     - name: loom-code-tiers
       rules:
         - alert: LoomCodeTierFailing
-          expr: max by (loom_org, loom_namespace, tier, kind) (loom_code_tier_failing) >= {{ int .Values.alerts.prometheusRule.failingPasses }}
+          expr: max by (loom_org, loom_namespace, tier, kind) (loom_code_tier_failing) > 0
           for: 15m
           labels:
             severity: warning
@@ -25,11 +26,11 @@ spec:
             summary: {{ "{{ $labels.loom_org }}/{{ $labels.loom_namespace }}: the {{ $labels.tier }} code-index tier is failing ({{ $labels.kind }})" | quote }}
             description: {{ "The tier has failed {{ $value }} passes in a row, so what it answers trails the branch. The fix is in /v1/health (code_tier_failing) and in code.repos tier_health." | quote }}
         - alert: LoomCodeTierFailingFarBehind
-          expr: max by (loom_org, loom_namespace, tier) (loom_code_tier_lag_commits) >= {{ int .Values.alerts.prometheusRule.errorLagCommits }}
+          expr: max by (loom_org, loom_namespace, tier, kind) (loom_code_tier_failing{severity="error"}) > 0
           for: 15m
           labels:
             severity: critical
           annotations:
-            summary: {{ "{{ $labels.loom_org }}/{{ $labels.loom_namespace }}: the failing {{ $labels.tier }} tier is at least {{ $value }} commits behind" | quote }}
-            description: {{ "A failing tier reports its lag; at this distance compiler-grade answers are far from the branch. The fix is in /v1/health (code_tier_failing) and in code.repos tier_health." | quote }}
+            summary: {{ "{{ $labels.loom_org }}/{{ $labels.loom_namespace }}: the failing {{ $labels.tier }} tier is far behind ({{ $labels.kind }})" | quote }}
+            description: {{ "The tier is failing and at least LOOM_CODE_TIER_FAILING_ERROR_LAG_COMMITS behind, so compiler-grade answers are far from the branch (loom_code_tier_lag_commits has the count). The fix is in /v1/health (code_tier_failing) and in code.repos tier_health." | quote }}
 {{- end }}

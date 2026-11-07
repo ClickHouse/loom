@@ -789,22 +789,19 @@ def health_problem_series(problems: list[dict[str, Any]]) -> list[tuple[int, dic
 def code_tier_series(
     rows: Sequence[Mapping[str, Any]],
 ) -> tuple[list[tuple[int, dict[str, str]]], list[tuple[int, dict[str, str]]]]:
-    """(failing, lag) points, one per failing entry and tier: the failed passes in a
-    row, labelled with the error kind, and the commits the tier trails the fetched tip
-    by (no point when unknown). The namespace label is clamped like every other."""
+    """(failing, lag) points, one per entry and tier the `code_tier_failing` problem
+    reports: its failed passes in a row, labelled with the error kind and the problem's
+    severity, and the commits it trails the fetched tip by (no point when unknown).
+    Labelled raw, as the other code-plane gauges are: the entries come from the config."""
     failing: list[tuple[int, dict[str, str]]] = []
     lag: list[tuple[int, dict[str, str]]] = []
     for r in rows:
-        attrs = {
-            "loom.org": str(r.get("org", ""))[:64],
-            "loom.namespace": _clamp_ns(str(r.get("namespace", ""))),
-            "tier": str(r.get("tier", ""))[:32],
-        }
+        attrs = {"loom.org": r["org"], "loom.namespace": r["namespace"], "tier": r["tier"]}
         failing.append(
-            (int(r.get("failed_passes", 0)), {**attrs, "kind": str(r.get("kind", ""))[:32]})
+            (r["failed_passes"], {**attrs, "kind": r["kind"], "severity": r["severity"]})
         )
-        if int(r.get("lag_commits", -1)) >= 0:
-            lag.append((int(r["lag_commits"]), attrs))
+        if (behind := r["lag_commits"]) >= 0:
+            lag.append((behind, attrs))
     return failing, lag
 
 
@@ -829,9 +826,10 @@ def _register_code_tier_gauges(meter: Any) -> None:
         name="loom.code.tier_failing",
         callbacks=[_points(0)],
         description=(
-            "Failed passes in a row of a code-index tier that is failing, per namespace, "
-            "`tier` (fetch, ingest, clang, typescript, go, python, clang_full) and error "
-            "`kind`; a tier stops reporting on its next successful pass"
+            "Failed passes in a row of a code-index tier the `code_tier_failing` health "
+            "problem reports, per namespace, `tier` (fetch, ingest, clang, typescript, go, "
+            "python, clang_full), error `kind` and the problem's `severity` (warn, error); a "
+            "tier reports from the problem's warn threshold until its next successful pass"
         ),
         # an annotation unit: an OTLP-to-Prometheus export names it loom_code_tier_failing
         unit="{pass}",
@@ -840,9 +838,9 @@ def _register_code_tier_gauges(meter: Any) -> None:
         name="loom.code.tier_lag_commits",
         callbacks=[_points(1)],
         description=(
-            "Commits a failing code-index tier trails the fetched branch tip by, as the "
-            "entry's last published status counted it (a lower bound), per namespace and "
-            "`tier`; reported while the tier fails and its lag is known"
+            "Commits a code-index tier the `code_tier_failing` problem reports trails the "
+            "fetched branch tip by, as the entry's last published status counted it (a lower "
+            "bound), per namespace and `tier`; reported while its lag is known"
         ),
         unit="{commit}",
     )

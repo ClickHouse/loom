@@ -1,24 +1,30 @@
-"""Each failing code-index tier is a `loom.code.tier_failing` point (its failed passes in
-a row, by tier and error kind) and a `loom.code.tier_lag_commits` point while its lag is
-known, from the process's snapshot; the chart's alert rule reads those names with the
-settings' default thresholds."""
+"""Each tier the `code_tier_failing` health problem reports is a `loom.code.tier_failing`
+point (its failed passes in a row, by tier, error kind and the problem's severity) and a
+`loom.code.tier_lag_commits` point while its lag is known, from the process's snapshot;
+the chart's rule and the dashboard alert read those points, so their thresholds are the
+problem's settings."""
 
 from __future__ import annotations
 
-import re
-from datetime import UTC, datetime
+import json
+from datetime import timedelta
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from server.code.app.index import tier_health as recorder
 from server.code.domain.index import tier_health
+from server.core.datetimes import utc_now
+from server.observability import metrics_gauges
 from server.observability.metrics_gauges import code_tier_series
-from server.settings import Settings
+from server.observability.state_inputs import state_inputs
+from server.settings import settings
 
 ROOT = Path(__file__).resolve().parents[2]
-T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
 
-def _row(**over: object) -> dict[str, object]:
+def _row(**over: object) -> dict[str, Any]:
     return {
         "org": "o",
         "namespace": "code-a",
@@ -26,52 +32,91 @@ def _row(**over: object) -> dict[str, object]:
         "kind": "credential",
         "failed_passes": 12,
         "lag_commits": 413,
+        "severity": "error",
         **over,
     }
 
 
-def test_a_failing_tier_is_one_point_each_and_an_unknown_lag_none() -> None:
+def test_a_reported_tier_is_one_point_each_and_an_unknown_lag_none() -> None:
     failing, lag = code_tier_series(
-        [_row(), _row(namespace="code-b", tier="fetch", lag_commits=-1)]
+        [_row(), _row(namespace="code-b", tier="fetch", lag_commits=-1, severity="warn")]
     )
+    attrs = {"loom.org": "o", "loom.namespace": "code-a", "tier": "clang"}
     assert failing == [
-        (12, {"loom.org": "o", "loom.namespace": "code-a", "tier": "clang", "kind": "credential"}),
-        (12, {"loom.org": "o", "loom.namespace": "code-b", "tier": "fetch", "kind": "credential"}),
+        (12, {**attrs, "kind": "credential", "severity": "error"}),
+        (
+            12,
+            {
+                "loom.org": "o",
+                "loom.namespace": "code-b",
+                "tier": "fetch",
+                "kind": "credential",
+                "severity": "warn",
+            },
+        ),
     ]
-    assert lag == [(413, {"loom.org": "o", "loom.namespace": "code-a", "tier": "clang"})]
+    assert lag == [(413, attrs)]
 
 
-def test_the_namespace_label_is_clamped() -> None:
-    (point,), _ = code_tier_series([_row(namespace="n" * 300)])
-    assert point[1]["loom.namespace"] == "n" * 64
+@pytest.fixture
+def _snapshot() -> Any:
+    yield
+    recorder.reset_for_tests()
 
 
-def test_the_rows_are_the_snapshots_failing_tiers(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    health = tier_health.failed(None, "go", "fatal: Could not resolve host: h", T0)
-    monkeypatch.setattr(recorder, "_FAILING", (recorder.FailingTier("o", "code-a", health, 7),))
-    assert recorder.metric_rows() == (
-        {
-            "org": "o",
-            "namespace": "code-a",
-            "tier": "go",
-            "kind": "network",
-            "failed_passes": 1,
-            "lag_commits": 7,
-        },
+def _failing(passes: int, hours_ago: float) -> tier_health.TierHealth:
+    since = utc_now() - timedelta(hours=hours_ago)
+    health = None
+    for _ in range(passes):
+        health = tier_health.failed(health, "clang", "fatal: could not read Username", since)
+    assert health is not None
+    return health
+
+
+def test_the_wired_rows_are_the_tiers_the_problem_reports(
+    _snapshot: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "code_tier_failing_warn_passes", 3)
+    monkeypatch.setattr(settings, "code_tier_failing_warn_hours", 3.0)
+    monkeypatch.setattr(settings, "code_tier_failing_error_lag_commits", 100)
+    recorder._FAILING = (
+        recorder.FailingTier("o", "code-new", _failing(1, 0.5), 413),  # transient: none
+        recorder.FailingTier("o", "code-slow", _failing(1, 4), 5),  # 4 hours: warn
+        recorder.FailingTier("o", "code-far", _failing(3, 2), 413),  # error
     )
-    monkeypatch.setattr(recorder, "_FAILING", None)
-    assert recorder.metric_rows() == ()
+    failing, _ = code_tier_series(state_inputs().failing_code_tiers())
+    assert sorted((a["loom.namespace"], a["severity"]) for _, a in failing) == [
+        ("code-far", "error"),
+        ("code-slow", "warn"),
+    ]
+    recorder.reset_for_tests()
+    assert list(state_inputs().failing_code_tiers()) == []  # not read yet
 
 
-def test_the_chart_rule_reads_the_gauges_with_the_settings_defaults() -> None:
+class _Meter:
+    def __init__(self) -> None:
+        self.units: dict[str, str] = {}
+
+    def create_observable_gauge(
+        self, *, name: str, callbacks: Any, description: str = "", unit: str = ""
+    ) -> None:
+        self.units[name] = unit
+
+
+def test_the_gauges_register_with_the_names_the_alerts_read() -> None:
+    meter = _Meter()
+    metrics_gauges._register_code_tier_gauges(meter)
+    # annotation units: an OTLP-to-Prometheus export adds no unit suffix to the names
+    assert meter.units == {
+        "loom.code.tier_failing": "{pass}",
+        "loom.code.tier_lag_commits": "{commit}",
+    }
     rule = (ROOT / "deploy/helm/loom/templates/prometheusrule.yaml").read_text()
-    values = (ROOT / "deploy/helm/loom/values.yaml").read_text()
-    gauges = (ROOT / "server/observability/metrics_gauges.py").read_text()
-    for name in ("loom.code.tier_failing", "loom.code.tier_lag_commits"):
-        assert f'name="{name}"' in gauges
-        assert name.replace(".", "_") in rule
-    fields = Settings.model_fields
-    passes = re.search(r"failingPasses: (\d+)", values)
-    lag = re.search(r"errorLagCommits: (\d+)", values)
-    assert passes and int(passes.group(1)) == fields["code_tier_failing_warn_passes"].default
-    assert lag and int(lag.group(1)) == fields["code_tier_failing_error_lag_commits"].default
+    assert "loom_code_tier_failing)" in rule and 'loom_code_tier_failing{severity="error"}' in rule
+
+
+def test_the_dashboard_alert_fires_on_any_reported_tier() -> None:
+    spec = json.loads((ROOT / "deploy/dashboards/code_plane.json").read_text())
+    tile = next(t for t in spec["tiles"] if t["id"] == "tier_failing")
+    assert "MetricName = 'loom.code.tier_failing'" in tile["sql"]
+    assert tile["alert"]["condition"] == "max(Value) > 0 for 15m"

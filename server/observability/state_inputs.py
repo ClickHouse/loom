@@ -11,7 +11,7 @@ list and the config-error count are callables, read at every probe.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 
@@ -49,9 +49,9 @@ class StateInputs:
     # the config was first read
     repos_config_errors: Callable[[], int | None]
     compiler_tiers: tuple[CompilerTier, ...]
-    # the code-index tiers failing on this process's last read of their records: one
-    # mapping per entry and tier (org, namespace, tier, kind, failed_passes, lag_commits)
-    failing_code_tiers: Callable[[], Sequence[Mapping[str, Any]]] = field(default=lambda: ())
+    # the code-index tiers the `code_tier_failing` health problem reports: one mapping
+    # per entry and tier (org, namespace, tier, kind, failed_passes, lag_commits, severity)
+    failing_code_tiers: Callable[[], Sequence[Mapping[str, Any]]]
 
 
 _inputs: StateInputs | None = None

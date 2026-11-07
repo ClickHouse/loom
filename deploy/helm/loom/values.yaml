@@ -138,15 +138,12 @@ podDisruptionBudget:
 
 # Alert rules for the Prometheus Operator (a PrometheusRule), for a deployment that
 # exports Loom's metrics over OTLP into Prometheus. Off by default: the chart
-# installs no CRD. `failingPasses` and `errorLagCommits` mirror
-# LOOM_CODE_TIER_FAILING_WARN_PASSES and LOOM_CODE_TIER_FAILING_ERROR_LAG_COMMITS.
+# installs no CRD. The thresholds are the LOOM_CODE_TIER_FAILING_* settings.
 alerts:
   prometheusRule:
     enabled: false
     # Extra labels the Prometheus instance selects rules by (e.g. release: prometheus).
     labels: {}
-    failingPasses: 3
-    errorLagCommits: 100
 
 autoscaling:
   # Rate-limit shares resize by themselves as pods come and go.
