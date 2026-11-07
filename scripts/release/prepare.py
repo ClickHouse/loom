@@ -219,6 +219,7 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
                 f"v{final} is already tagged: a candidate for it would publish after it;"
                 f" delete this tag (git push origin :refs/tags/v{tag_version}), or, when"
                 f" v{final}'s run published nothing, delete v{final} instead"
+                f" (git push origin :refs/tags/v{final})"
             )
         return None
     tags = _git(root, "tag", "--list", f"v{final}-rc.*")
@@ -229,8 +230,9 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
     )
     if candidates and _sha(root, candidates[-1]) != _sha(root, "HEAD"):
         return (
-            f"v{final} is not on {candidates[-1]}'s commit: delete {candidates[-1]} if it is"
-            f" a stray; if v{final}'s run published nothing, delete v{final}"
+            f"v{final} is not on {candidates[-1]}'s commit: delete {candidates[-1]}"
+            f" (git push origin :refs/tags/{candidates[-1]}) if it is a stray;"
+            f" if v{final}'s run published nothing, delete v{final}"
             f" (git push origin :refs/tags/v{final}) and tag it on {candidates[-1]}'s commit"
         )
     return None
@@ -528,7 +530,7 @@ def _final_version(text: str) -> str:
     """An argparse type: a version the files can take. A candidate is a tag on
     the release commit, whose files name the final."""
     if CANDIDATE.fullmatch(text):
-        raise argparse.ArgumentTypeError(f"{text} is not a final X.Y.Z: a candidate is a tag")
+        raise argparse.ArgumentTypeError(f"{text!r} is not a final X.Y.Z: a candidate is a tag")
     if not FINAL.fullmatch(text):
         raise argparse.ArgumentTypeError(f"{text!r} is not X.Y.Z")
     return text

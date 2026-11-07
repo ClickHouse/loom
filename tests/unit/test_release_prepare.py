@@ -139,13 +139,13 @@ def test_a_version_already_tagged_is_refused(tmp_path: Path) -> None:
     ("version", "error"),
     [
         # A release candidate is a tag on the release commit, whose files name the final.
-        ("1.9.0-rc.1", "1.9.0-rc.1 is not a final X.Y.Z: a candidate is a tag"),
+        ("1.9.0-rc.1", "'1.9.0-rc.1' is not a final X.Y.Z: a candidate is a tag"),
         ("1.9.0-beta.1", "'1.9.0-beta.1' is not X.Y.Z"),
         ("1.9", "'1.9' is not X.Y.Z"),
         ("v1.9.0", "'v1.9.0' is not X.Y.Z"),
     ],
 )
-def test_a_bump_takes_a_final_version_only(
+def test_bump_and_notes_take_a_final_version_only(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], version: str, error: str
 ) -> None:
     for command in ("bump", "notes"):
@@ -601,21 +601,6 @@ def test_a_chart_that_cannot_be_read_at_the_previous_release_says_so(
     assert prepared == []
 
 
-def test_a_refused_version_stops_before_any_gh_call(monkeypatch: pytest.MonkeyPatch) -> None:
-    def no_call(*args: object) -> str:
-        raise AssertionError("release_notes ran")
-
-    def no_fetch(*args: object) -> subprocess.CompletedProcess[str]:
-        raise AssertionError("fetched the tags")
-
-    monkeypatch.setattr(prepare, "release_notes", no_call)
-    monkeypatch.setattr(prepare, "_git", no_fetch)  # a non-final version needs no tags
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "9.9.9-rc.1"])
-    with pytest.raises(SystemExit) as exited:
-        prepare.main()
-    assert exited.value.code == 2
-
-
 def test_a_version_tagged_on_the_remote_is_refused_after_the_fetch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -718,6 +703,7 @@ def test_a_candidate_comes_before_its_final_and_the_final_goes_where_it_was_soak
     error = prepare.check_tag("1.2.0", tmp_path)
     assert error and "v1.2.0 is not on v1.2.0-rc.1's commit" in error
     assert ":refs/tags/v1.2.0) and tag it on v1.2.0-rc.1's commit" in error
+    assert "delete v1.2.0-rc.1 (git push origin :refs/tags/v1.2.0-rc.1) if it is a stray" in error
     git_repo.git(tmp_path, "tag", "v1.2.0-rc.2")  # the fix soaked as rc.2: its commit is HEAD
     assert prepare.check_tag("1.2.0", tmp_path) is None
     git_repo.git(tmp_path, "tag", "v1.2.0-rc.3")
@@ -1065,4 +1051,6 @@ def test_a_soaked_candidate_run_again_after_its_final_is_not_told_to_delete_itse
     error = prepare.check_tag("1.2.0-rc.3", tmp_path)
     assert error and "v1.2.0 is already tagged" in error
     assert ":refs/tags/v1.2.0-rc.3" in error  # the stray tag to delete
-    assert error.endswith("when v1.2.0's run published nothing, delete v1.2.0 instead")
+    assert error.endswith(
+        "when v1.2.0's run published nothing, delete v1.2.0 instead (git push origin :refs/tags/v1.2.0)"
+    )
