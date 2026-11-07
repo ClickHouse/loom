@@ -53,7 +53,9 @@ need `writer`; the tools can read with `viewer`. See
 
 Codex plugins have no install options, so the URL is fixed in the plugin's `.mcp.json`
 (`http://localhost:7777` as shipped) and in `plugin-defaults.json` for the hooks. A
-deployment that publishes its own marketplace sets both.
+deployment that publishes its own marketplace sets both and keeps its name `loom`
+(`.agents/plugins/marketplace.json`): the skills and the header helper read only that
+marketplace's copy.
 
 For another server on one machine, override the entry in `~/.codex/config.toml` (the
 override replaces the plugin's entry whole, helper included), and put the same URL in
@@ -87,7 +89,7 @@ such an override with `bearer_token_env_var` and `?toolset=coding`, and writes `
 | MCP entry   | the plugin's `.mcp.json`; a `[mcp_servers.loom]` in `~/.codex/config.toml` overrides it whole                            |
 | Bearer      | `LOOM_API_KEY` → `~/.loom/config.json` `token` → `~/.loom/token`                                                         |
 | Hook config | `~/.loom/config.json` `{url, token, namespace?, org?}`; `LOOM_BASE_URL` overrides; with no `url`, `plugin-defaults.json` |
-| Plugin      | `~/.codex/plugins/cache/<marketplace>/loom/<version>/`                                                                   |
+| Plugin      | `~/.codex/plugins/cache/loom/loom/<version>/`                                                                            |
 
 ## What differs from Claude Code
 
