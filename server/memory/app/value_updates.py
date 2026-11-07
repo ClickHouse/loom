@@ -49,6 +49,7 @@ from server.memory.store.conflict_candidates import vector_param, vector_params
 log = logging.getLogger(__name__)
 
 # Alphanumeric tokens that contain at least one letter ("5k" counts, "2023" does not).
+# a token is read from its first character only
 _WORD_RE = re.compile(r"(?<![a-z0-9])[a-z0-9]*[a-z][a-z0-9']*")
 _STOP = frozenset(
     "the a an and or of to in on at for with from by is are was were be been being "

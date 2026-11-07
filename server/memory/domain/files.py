@@ -21,7 +21,8 @@ MAX_FILES = 32
 MAX_FILE_CHARS = 1024
 
 # A URL's path segments look like repo paths (`github.com/o/r/blob/x.py`);
-# they are removed before detection, never attached.
+# they are removed before detection, never attached. A scheme is at most 32
+# characters, so a long word is not rescanned from each letter.
 _URL_RE = re.compile(r"(?:[a-z][a-z0-9+.-]{0,31}://|www\.)\S+", re.IGNORECASE)
 # Library names that read as a bare `<name>.js` file in prose.
 _LIBRARY_NAMES = frozenset(

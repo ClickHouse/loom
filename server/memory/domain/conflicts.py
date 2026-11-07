@@ -114,6 +114,7 @@ _CONTENT_STOP = frozenset(
 )
 
 
+# a blank run is read from its first blank only
 _PARENTHETICAL_RE = re.compile(r"(?<!\s)\s*\([^()]*\)")
 
 

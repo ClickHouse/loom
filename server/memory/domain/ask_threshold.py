@@ -70,6 +70,7 @@ _UNIT_DAYS = {
     "year": 365,
     "years": 365,
 }
+# a blank run is read from its first blank only
 _NUM_RE = re.compile(
     r"(?:~|about|around|roughly|approximately|nearly|almost|just|whole|over|under)?(?<!\s)\s*"
     r"\b(?P<num>\d+(?:[.,]\d+)?|" + "|".join(sorted(_WORDS, key=len, reverse=True)) + r")\b"

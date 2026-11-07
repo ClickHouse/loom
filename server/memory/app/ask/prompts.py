@@ -184,6 +184,7 @@ _SPAN_TOTAL_NOTE = (
     "dates say so and give the partial sum with that caveat."
 )
 
+# an amount is read from the first character of its digit run only
 _AMOUNT_RE = re.compile(
     r"(?:\$|€|£)\s?(\d[\d,]*(?:\.\d+)?)|(?<![\d,]),*(\d[\d,]*(?:\.\d+)?)\s?(?:dollars?|usd|followers?|"
     r"miles|km|kg|lbs?|hours?|hrs|minutes?|mins|steps|calories|points|views|subscribers)\b",
