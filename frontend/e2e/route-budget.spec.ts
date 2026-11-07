@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { installApi, warmUp } from "./fixtures";
 
 // Every route has a budget. One parametrized test over every dashboard route in ROUTES with
-// the default fixtures at 4x CPU: the page paints (a heading in <main>), its largest
+// the default fixtures at 4x CPU: the page paints (a heading in the shell's <main>), its largest
 // contentful paint and its long tasks stay under budget, and its reads stay one per
 // question. The budgets are set for CI's slower runners — they catch a doubling, not a
 // drift (the drift shows in the ui.vitals rows).
@@ -72,7 +72,8 @@ for (const [name, path] of ROUTES) {
     const cdp = await page.context().newCDPSession(page);
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
     await page.goto(path, { waitUntil: "domcontentloaded" });
-    await expect(page.locator("main").locator("h1, h2").first()).toBeVisible();
+    // The shell's own <main id="main">: the boot screens' sr-only <h1> sits in a bare <main>.
+    await expect(page.locator("#main").locator("h1, h2").first()).toBeVisible();
     await page.waitForTimeout(1500);
     const { lcp, lt } = await page.evaluate(() => ({
       lcp: window.__lcp,
