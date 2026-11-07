@@ -173,7 +173,7 @@ flowchart TD
   ([where originals are stored](../knowledge.md#where-originals-are-stored)).
 - **Ingest cancels.** A user erasure deletes the user's ingestion rows, cancels among them.
   A cancel the user asked for on another writer's job that is still pending or processing
-  is kept first as a row with no identity (`user_id`, `agent` and `session_id` `'-'`,
+  is kept first as a row with no identity (`agent`, `user_id` and `session_id` `'-'`,
   `actor` empty), so that job stays cancelled.
 - **Org-wide caches.** `loom.idempotency` (replayed responses) and `loom.embedding_cache`
   (query vectors, never their text) carry the org but no namespace or end user, so an
