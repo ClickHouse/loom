@@ -51,8 +51,8 @@ def rank_role(rank: int) -> Role | None:
 HandlerFn = Callable[[Any], Awaitable[BaseModel]]
 
 # Maturity of an operation on the wire, set by hand from the 30-day reach census.
-# ``stable`` ops are listed under MCP ``all`` unless hidden; op_reach_census.py
-# --check fails a stable op with no reach path.
+# ``stable`` ops are listed under MCP ``all`` unless hidden;
+# ``op_reach_census.py --check`` fails a stable op with no reach path.
 Maturity = Literal["stable", "experimental"]
 MATURITIES: tuple[Maturity, ...] = get_args(Maturity)
 

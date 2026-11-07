@@ -168,14 +168,15 @@ def render_status_ops() -> str:
     experimental op linked to its field reference."""
     groups = _op_groups()
     rows: list[str] = []
+    experimental_total = 0
     for group, ops in groups.items():
         experimental = [op for op in ops if op.maturity == "experimental"]
+        experimental_total += len(experimental)
         links = ", ".join(
             f"[`{op.name}`](operations/{group}.md#{_op_anchor(op.name)})" for op in experimental
         )
         rows.append(f"| `{group}` | {len(ops) - len(experimental)} | {links} |")
     total = sum(len(ops) for ops in groups.values())
-    experimental_total = sum(op.maturity == "experimental" for ops in groups.values() for op in ops)
     return "\n".join(
         [
             f"{total} operations, {experimental_total} of them experimental.\n",
