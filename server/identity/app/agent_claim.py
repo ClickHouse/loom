@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -30,7 +31,7 @@ from server.auth.passwords import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, hash
 from server.core.ch import get_client, own_write_reads
 from server.core.errors import BackendUnavailableError, GrantBusyError
 from server.identity.app import account_admin
-from server.identity.store import namespaces
+from server.identity.store import grants, namespaces
 from server.observability import audit
 from server.settings import settings
 
@@ -55,7 +56,7 @@ def _form(namespace: str, error: str = "", status_code: int = 200) -> Response:
         f"""<h2>{_TITLE}</h2>
 <p>Enter the code the agent printed and choose your password. The code works
 once; afterwards you sign in with the namespace name and this password.
-Claiming takes about 20 seconds: submit once and wait for the answer.</p>{message}
+Claiming takes up to 30 seconds: submit once and wait for the answer.</p>{message}
 <form method="post" action="/oauth/agent-claim">
 <input name="namespace" placeholder="agent-…" value="{html.escape(namespace)}" required>
 <input name="code" placeholder="claim code" autocomplete="off" required>
@@ -100,6 +101,9 @@ async def agent_claim(request: Request) -> Response:
         )
     if password != f.get("repeat", ""):
         return _form(namespace, "The two passwords differ.", 400)
+    if password == code:
+        # Whoever kept the code would sign in with it.
+        return _form(namespace, "Choose a password other than the code.", 400)
     try:
         # A code is a secret like a password: guesses count against the name
         # and the address under the sign-in limits, which hold a check slot only
@@ -141,7 +145,38 @@ async def agent_claim(request: Request) -> Response:
         )
     return oauth.html_page(
         _TITLE,
-        f"<h2>Claimed</h2><p>Sign in as <b>{html.escape(namespace)}</b> with your password.</p>",
+        f"<h2>Claimed</h2><p>Sign in as <b>{html.escape(namespace)}</b> with your password.</p>"
+        + await _grants_notice(org, namespace),
+    )
+
+
+async def _grants_notice(org: str, namespace: str) -> str:
+    # The claim ends no grant: one made before it, by whoever held the code,
+    # is the claimer's to review.
+    try:
+        others = await _other_grants(org, namespace)
+    except Exception as e:  # noqa: BLE001 — the claim is done; the page still answers
+        log.warning("agent claim of %s/%s: listing its grants failed: %r", org, namespace, e)
+        return "<p>Review who holds grants on it in the dashboard.</p>"
+    if not others:
+        return ""
+    names = ", ".join(f"<b>{html.escape(s)}</b>" for s in others)
+    return f"<p>These subjects also hold grants on it; review them in the dashboard: {names}.</p>"
+
+
+async def _other_grants(org: str, namespace: str) -> list[str]:
+    """The subjects with an active grant on the namespace, besides its own
+    subject and the agent's token (`sa:<namespace>-<6 hex>`, from sign-up)."""
+    agent = re.compile(re.escape(f"sa:{namespace}-") + "[0-9a-f]{6}")
+    rows = await grants.list_active(org, namespace)
+    return sorted(
+        {
+            str(r["subject"])
+            for r in rows
+            if r["status"] == "active"
+            and str(r["subject"]) != namespace
+            and not agent.fullmatch(str(r["subject"]))
+        }
     )
 
 
@@ -201,7 +236,7 @@ async def _replace_code(
     when a claim landed first, as an earlier submit of the same form does;
     ("refused", None), the only outcome without a cutoff, when the row changed
     otherwise (a release)."""
-    subject = ""
+    subject, written = "", False
     # Held from the read to the write, as a release or a password link holds the
     # account; the cutoffs after the write need no lease and run after it.
     try:
@@ -214,23 +249,39 @@ async def _replace_code(
                 if CLAIMED_TAG not in (row.get("tags") or []):
                     return "refused", None
                 return "taken", _past_a_claim_landed_now()
-            subject = await _write(row, org, namespace, password_hash)
+            subject = str(row["owner_email"])
+            await _write(row, subject, namespace, password_hash)
+            written = True
             await _audit(org, namespace)
     except BackendUnavailableError as e:
-        if not subject:
+        # A write can land and still report a failure (a timeout after it was
+        # applied): the row decides whether the claim is written.
+        if not written and not (subject and await _landed(org, namespace, password_hash)):
             raise
-        # The claim is written; only the lease's own bound ran out after it.
-        log.warning("agent claim of %s/%s: the lease ended after the write: %r", org, namespace, e)
+        log.warning(
+            "agent claim of %s/%s: the backend failed after the write: %r", org, namespace, e
+        )
+        if not written:
+            await _audit(org, namespace)
     return "claimed", await _after_write(org, namespace, subject, password_hash)
 
 
-async def _write(row: dict[str, Any], org: str, namespace: str, password_hash: str) -> str:
+async def _landed(org: str, namespace: str, password_hash: str) -> bool:
+    try:
+        with own_write_reads():
+            row = await namespaces.fetch_row(org, namespace)
+    except Exception as e:  # noqa: BLE001 — unread, the claim's own error answers
+        log.warning("agent claim of %s/%s: reading the write failed: %r", org, namespace, e)
+        return False
+    return (row or {}).get("password_hash") == password_hash
+
+
+async def _write(row: dict[str, Any], subject: str, namespace: str, password_hash: str) -> None:
     """Cut off the subject's tokens, then replace the code with the claimer's
-    password and mark the account claimed; the subject."""
+    password and mark the account claimed."""
     # Before the write, so a write that fails leaves the code to retry with,
     # never a spent code and live tokens. A subject cutoff also ends every
     # OAuth and device session the code started (`oauth.issue_tokens`).
-    subject = str(row["owner_email"])
     await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     # Insert-as-replace carrying every other column forward.
@@ -245,13 +296,18 @@ async def _write(row: dict[str, Any], org: str, namespace: str, password_hash: s
             }
         ],
     )
-    return subject
 
 
 async def _audit(org: str, namespace: str) -> None:
+    # The grants others hold, which the claim leaves for the claimer to review.
     try:
+        others = await _other_grants(org, namespace)
         await audit.emit(
-            "auth.agent_claimed", org=org, namespace=namespace, actor=namespace, subject={}
+            "auth.agent_claimed",
+            org=org,
+            namespace=namespace,
+            actor=namespace,
+            subject={"other_grants": others},
         )
     except Exception as e:  # noqa: BLE001 — the claim is written; its cutoffs must still run
         log.warning("agent claim of %s/%s: the audit row failed: %r", org, namespace, e)

@@ -331,7 +331,6 @@ def _claimable_namespace(name: str) -> str:
 # ============================================================
 
 AGENT_NAMESPACE_PREFIX = "agent-"
-AGENT_TAG = "agent"  # on the agent's namespace, for people to read; no check reads it
 # An agent's own token row (`loom.service_accounts`) is named this plus the
 # agent's name; a person's token cannot take such a name.
 AGENT_NAME_PREFIX = "agent · "
@@ -537,7 +536,7 @@ async def _provision_agent(
         contact_email="",
         password_hash=await hash_claim_code_off_loop(claim_code),
         description=input.purpose.strip() or "Created via agent self-signup; unclaimed.",
-        tags=[AGENT_TAG],
+        tags=["agent"],
     )
     await ch.insert(
         "loom.namespace_grants",

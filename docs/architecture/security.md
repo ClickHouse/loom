@@ -354,13 +354,16 @@ claim's tag does not bind the namespace's owner as a trust's tag does; the build
 it, which keeps a claimed namespace's owner as the claim left it. The page answers once every
 replica's clock is past the later cutoff, so the claimer's next sign-in is not ended by it. A
 second claim finds no code and is refused, so whoever kept a copy of the code cannot sign in as
-the namespace afterwards, nor keep a session it started with the code. An account claimed by
-signing in with its code before the claim page existed is unclaimed by this rule: its owner
-claims it again with the same code, and the first claim wins, so on upgrade an operator has the
-owners of such accounts claim them at once. An agent account linked to an SSO email before this
-rule names an email, so it is not unclaimed and the claim page refuses it, while its password is
-still the code; under SSO no password sign-in is served, and an operator who turns SSO off
-first releases such an account with `loom claim-release`.
+the namespace afterwards, nor keep a session it started with the code. The claim ends no
+grant: one that a session with the code gave another subject stays, so the claim page lists
+the subjects other than the namespace's own and the agent's token that hold a grant on it, the
+`auth.agent_claimed` audit row records them (`other_grants`), and the claimer reviews them.
+The new password may not be the code. An agent account whose password is a plain hash of its
+code and that has no claim tag is unclaimed, even when a person has signed in with that code:
+whoever holds the code and claims first wins, so its owner claims it at once. An agent account
+with a plain-hash code and an email (one linked to an SSO email) is not unclaimed, and the claim
+page refuses it, while its password is still the code; under SSO no password sign-in is served,
+and an operator who turns SSO off first releases such an account with `loom claim-release`.
 
 During a rolling upgrade a replica of the build before still signs in with a plain-hash code,
 and its sign-in reads `loom.namespaces` without sequential consistency. After the wait, the

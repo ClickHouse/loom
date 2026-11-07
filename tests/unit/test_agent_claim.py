@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 import server.auth.self_signup as ss
 from server.auth import agents, claim_codes, device, login, oauth, passwords, revocation
 from server.identity.app import agent_claim
-from server.identity.store import namespaces
+from server.identity.store import grants, namespaces
 from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
@@ -72,6 +72,7 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
     for module in (ss, agent_claim, login):
         monkeypatch.setattr(module, "get_client", lambda: ch)
     monkeypatch.setattr(namespaces, "_default_client", lambda: ch)
+    monkeypatch.setattr(grants, "_default_client", lambda: ch)
     out = asyncio.run(ss.agent_signup(ss.AgentSignupInput(name="nightly triage"), _Req()))
     legacy_code = "legacy-claim-code"
     ch.create(
@@ -210,7 +211,7 @@ def test_the_code_claims_once_and_the_claimer_signs_in_with_their_password(world
     c = _app()
     page = c.get("/oauth/agent-claim", params={"namespace": _NS})
     assert page.status_code == 200 and 'name="code"' in page.text and _NS in page.text
-    assert "about 20 seconds" in page.text
+    assert "up to 30 seconds" in page.text
 
     r = _claim(c, world["code"], "correct horse")
     assert r.status_code == 200 and _NS in r.text
@@ -223,6 +224,8 @@ def test_the_code_claims_once_and_the_claimer_signs_in_with_their_password(world
     assert row["tags"] == ["agent", claim_codes.CLAIMED_TAG]
     [(event, kw)] = world["events"]
     assert (event, kw["namespace"], kw["actor"]) == ("auth.agent_claimed", _NS, _NS)
+    # The agent's own grant is not another holder's.
+    assert kw["subject"] == {"other_grants": []} and "hold grants" not in r.text
 
     # The code is spent: neither a second claim nor a sign-in takes it.
     assert _claim(c, world["code"], "attacker pass").status_code == 400
@@ -520,6 +523,58 @@ def test_a_busy_account_answers_a_page_to_wait_and_retry(world, monkeypatch) -> 
     assert r.status_code == 503 and r.headers["Retry-After"] == "60"
     assert r.headers["content-type"].startswith("text/html")
     assert "An earlier submit may still be claiming" in r.text
+
+
+def test_the_code_is_refused_as_the_new_password(world) -> None:
+    r = _claim(_app(), world["code"], world["code"])
+    assert r.status_code == 400 and "other than the code" in r.text
+    assert world["hashed"] == []
+    assert _claim(_app(), world["code"], "correct horse").status_code == 200
+
+
+def test_the_claim_names_the_grants_others_hold(world) -> None:
+    from datetime import UTC, datetime
+
+    grant = {
+        "org": "dev",
+        "namespace": _LEGACY,
+        "subject": "kept@acme.com",
+        "role": "admin",
+        "granted_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
+        "granted_by": _LEGACY,
+        "revoked_at": None,
+        "version": 1,
+    }
+    asyncio.run(world["ch"].insert("loom.namespace_grants", [grant]))
+    r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
+    assert r.status_code == 200 and "kept@acme.com" in r.text
+    [(_, kw)] = world["events"]
+    assert kw["subject"] == {"other_grants": ["kept@acme.com"]}
+
+
+def test_a_write_that_lands_but_reports_a_failure_still_claims(world, monkeypatch) -> None:
+    from server.core.errors import BackendUnavailableError
+    from server.identity.app import account_admin
+
+    real_end, cutoffs = account_admin.end_tokens, []
+
+    async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
+        cutoffs.append(await real_end(subject, by=by, reason=reason))
+        return cutoffs[-1]
+
+    ch, real_insert = world["ch"], world["ch"].insert
+
+    async def insert(table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
+        await real_insert(table, rows, settings)
+        if table == "loom.namespaces":
+            raise BackendUnavailableError("the insert timed out after it landed")
+
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+    monkeypatch.setattr(ch, "insert", insert)
+    r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
+    assert r.status_code == 200 and "Claimed" in r.text
+    assert [e for e, _ in world["events"]] == ["auth.agent_claimed"]
+    assert len(cutoffs) == 2 and world["waited"] == cutoffs[1:]
 
 
 def test_a_backend_failure_during_the_code_check_answers_the_page(world, monkeypatch) -> None:
