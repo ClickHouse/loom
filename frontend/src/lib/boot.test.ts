@@ -10,6 +10,7 @@ import {
   sameAccount,
   takeLinkToken,
   takeSignInStarted,
+  takeSsoAsk,
 } from "./boot";
 import type { MyNamespaceEntry } from "../api";
 import { VIEW_LOADERS } from "../views/registry";
@@ -220,5 +221,28 @@ describe("a sign-in this tab started", () => {
     expect(sameAccount(jwt({ sub: "alice", org: "other" }), alice)).toBe(false);
     expect(sameAccount(alice, null)).toBe(false);
     expect(sameAccount("garbage", "garbage")).toBe(false);
+  });
+});
+
+describe("the session-ended card's ask", () => {
+  afterEach(() => {
+    delete window.__LOOM_OWN_ORIGIN;
+    history.replaceState(null, "", "/");
+  });
+
+  it("counts only when a Loom page sent the browser here, and is scrubbed either way", () => {
+    for (const own of [true, false, undefined]) {
+      window.__LOOM_OWN_ORIGIN = own;
+      history.replaceState(null, "", "/me?sign_in=sso&tab=a#x");
+      expect(takeSsoAsk(), String(own)).toBe(own === true);
+      expect(window.location.pathname + window.location.search + window.location.hash).toBe("/me?tab=a#x");
+    }
+  });
+
+  it("is no ask without ?sign_in=sso, and leaves the address alone", () => {
+    window.__LOOM_OWN_ORIGIN = true;
+    history.replaceState(null, "", "/me?sign_in=other");
+    expect(takeSsoAsk()).toBe(false);
+    expect(window.location.search).toBe("?sign_in=other");
   });
 });

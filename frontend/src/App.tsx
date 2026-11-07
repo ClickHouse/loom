@@ -36,6 +36,7 @@ import {
   sameAccount,
   takeLinkToken,
   takeSignInStarted,
+  takeSsoAsk,
 } from "./lib/boot";
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
@@ -220,6 +221,8 @@ export default function App() {
   const inspectedProfileLabel = useStore((s) => s.inspectedProfileLabel);
   const setHelpOpen = useStore((s) => s.openHelp);
   // A link token boot holds, unstored, until the person says whose account to sign in as.
+  // A Loom page's ask to start SSO (`?sign_in=sso`), taken from the address at boot.
+  const [ssoAsked, setSsoAsked] = useState(false);
   const [linkAsk, setLinkAsk] = useState<{ token: string; answer: (ok: boolean) => void } | null>(null);
 
   // Global keyboard bindings — disabled while focus is in an input.
@@ -327,6 +330,7 @@ export default function App() {
         // is a chunk of its own, and boot goes on without it.
         link = takeLinkToken();
         const started = takeSignInStarted(link?.nonce ?? null);
+        if (takeSsoAsk()) setSsoAsked(true);
         if (link) {
           const token = link.token;
           // A proxy or auth off: the page sends no token of its own, so a link's is dropped.
@@ -580,7 +584,7 @@ export default function App() {
     return (
       <>
         <Suspense fallback={null}>
-          <TokenGate onLogin={() => location.reload()} reason={gateReason} />
+          <TokenGate onLogin={() => location.reload()} reason={gateReason} ssoAsked={ssoAsked} />
         </Suspense>
         <ToastViewport />
         <ConfirmViewport />

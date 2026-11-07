@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { PasswordField } from "@clickhouse/click-ui/PasswordField";
@@ -19,6 +19,8 @@ interface TokenGateProps {
   /** Why the gate is showing: "expired" when the server refused a sign-in session's stored
    *  token, "ended" any other, "refused" one a sign-in link brought; null on a first visit. */
   reason?: GateReason;
+  /** A Loom page sent the browser here to start SSO (`takeSsoAsk` in `lib/boot.ts`). */
+  ssoAsked?: boolean;
 }
 
 // No hosted docs site — the repo's Markdown is the documentation (README).
@@ -39,8 +41,8 @@ export const DOCS_MCP_URL = `${REPO_DOCS}/features/integrations/mcp-clients.md`;
  * With SSO on (the `__LOOM_SSO` boot flag) the gate is one button instead:
  * the server refuses password sign-in and sign-up there.
  */
-export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
-  if (window.__LOOM_SSO === true) return <SsoGate reason={reason} />;
+export function TokenGate({ onLogin, reason = null, ssoAsked = false }: TokenGateProps) {
+  if (window.__LOOM_SSO === true) return <SsoGate reason={reason} ssoAsked={ssoAsked} />;
   return <PasswordGate onLogin={onLogin} reason={reason} />;
 }
 
@@ -68,17 +70,6 @@ function startSso(e: MouseEvent<HTMLAnchorElement>): void {
   goToSso(rememberSignInStart());
 }
 
-/** Whether the address asks the gate to start SSO (`SSO_REQUEST_PATH` in `lib/boot.ts`); the
- *  ask is scrubbed, so neither a reload nor the way back after the sign-in repeats it. */
-function takeSsoRequest(): boolean {
-  const query = new URLSearchParams(window.location.search);
-  if (query.get("sign_in") !== "sso") return false;
-  query.delete("sign_in");
-  const qs = query.toString();
-  history.replaceState(history.state, "", window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash);
-  return true;
-}
-
 // When the gate last started an SSO sign-in on its own in this tab, so a provider that
 // sends the browser straight back with a token the server refuses cannot loop.
 const SSO_RESUMED_AT = "loom_sso_resumed_v1";
@@ -101,17 +92,18 @@ export function resumeSsoOnce(now: number = Date.now()): boolean {
  *  expired session (the gate shows only while the app boots), and in the tab the
  *  session-expired card opens, it goes there by itself, so a person still signed in at the
  *  provider returns to the page they were on. */
-function SsoGate({ reason }: { reason?: GateReason }) {
+function SsoGate({ reason, ssoAsked }: { reason?: GateReason; ssoAsked: boolean }) {
+  const started = useRef(false);
   useEffect(() => {
-    // An ask (`?sign_in=sso`, scrubbed here) counts only from a page of Loom's own origin (the
-    // session-ended card, the server's Start again link): another site could send the browser
-    // here to start a sign-in whose token is stored unasked. Each counted ask is a click on a
-    // Loom page, so it needs no loop guard; after a sign-out it starts nothing. The resume
-    // after an expired session is the guarded one.
-    const asked = takeSsoRequest() && window.__LOOM_OWN_ORIGIN === true && !signedOut();
+    if (started.current) return;
+    // A counted ask (`takeSsoAsk` in `lib/boot.ts`) follows a click on a Loom page, so it needs
+    // no loop guard; after a sign-out it starts nothing. The resume after an expired session
+    // is the guarded one.
+    const asked = ssoAsked && !signedOut();
     if (!asked && (reason !== "expired" || !resumeSsoOnce())) return;
+    started.current = true;
     goToSso(rememberSignInStart());
-  }, [reason]);
+  }, [reason, ssoAsked]);
   return (
     <GateShell>
       <Panel className="space-y-4">

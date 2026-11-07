@@ -152,7 +152,6 @@ describe("TokenGate", () => {
   describe("with single sign-on on", () => {
     afterEach(() => {
       delete window.__LOOM_SSO;
-      delete window.__LOOM_OWN_ORIGIN;
       sessionStorage.clear();
     });
 
@@ -232,32 +231,34 @@ describe("TokenGate", () => {
 
     it("starts on an explicit ask though a sign-in started on its own minutes ago", () => {
       window.__LOOM_SSO = true;
-      window.__LOOM_OWN_ORIGIN = true; // a Loom page asked for this load
       resumeSsoOnce(); // the loop guard is set: an expired session would wait for a click
       expect(sessionStorage.getItem("loom_sso_resumed_v1")).not.toBeNull();
-      history.replaceState(null, "", "/me?sign_in=sso");
-      render(<TokenGate onLogin={() => undefined} reason="expired" />);
+      render(<TokenGate onLogin={() => undefined} reason="expired" ssoAsked />);
       const { nonce } = JSON.parse(sessionStorage.getItem(SIGN_IN_PENDING) ?? "{}");
       expect(goToSso).toHaveBeenCalledTimes(1);
       expect(goToSso).toHaveBeenCalledWith(nonce);
-      history.replaceState(null, "", "/");
     });
 
-    it("after a sign-out the session-expired card's address starts no sign-in", () => {
+    it("after a sign-out the session-expired card's ask starts no sign-in", () => {
       window.__LOOM_SSO = true;
-      window.__LOOM_OWN_ORIGIN = true;
       localStorage.setItem("loom_signed_out_v1", "1");
       try {
-        history.replaceState(null, "", "/me?sign_in=sso");
-        render(<TokenGate onLogin={() => undefined} reason={null} />);
+        render(<TokenGate onLogin={() => undefined} reason={null} ssoAsked />);
         expect(goToSso).not.toHaveBeenCalled();
         expect(sessionStorage.getItem(SIGN_IN_PENDING)).toBeNull();
-        expect(window.location.search).toBe(""); // the ask is scrubbed all the same
         expect(screen.getByRole("link", { name: "Sign in with SSO" })).toBeInTheDocument();
       } finally {
         localStorage.removeItem("loom_signed_out_v1");
-        history.replaceState(null, "", "/");
       }
+    });
+
+    it("starts once for an ask that arrives after it mounted, and not again when the reason comes", () => {
+      window.__LOOM_SSO = true;
+      const { rerender } = render(<TokenGate onLogin={() => undefined} reason={null} />);
+      expect(goToSso).not.toHaveBeenCalled();
+      rerender(<TokenGate onLogin={() => undefined} reason={null} ssoAsked />);
+      rerender(<TokenGate onLogin={() => undefined} reason="expired" ssoAsked />);
+      expect(goToSso).toHaveBeenCalledTimes(1);
     });
 
     it("a click that opens another tab or window follows the bare link and marks nothing here", () => {
@@ -287,27 +288,11 @@ describe("TokenGate", () => {
       }
     });
 
-    it("starts the sign-in by itself in the tab the session-expired card opens, and scrubs the ask", () => {
+    it("starts the sign-in by itself in the tab the session-expired card opens", () => {
       window.__LOOM_SSO = true;
-      window.__LOOM_OWN_ORIGIN = true; // opened by the dashboard itself
-      history.replaceState(null, "", "/me?sign_in=sso");
-      render(<TokenGate onLogin={() => undefined} reason={null} />);
+      render(<TokenGate onLogin={() => undefined} reason={null} ssoAsked />);
       const { nonce } = JSON.parse(sessionStorage.getItem(SIGN_IN_PENDING) ?? "{}");
       expect(goToSso).toHaveBeenCalledWith(nonce);
-      expect(window.location.pathname + window.location.search).toBe("/me");
-      history.replaceState(null, "", "/");
-    });
-
-    it("an ask another site sent the browser with starts nothing, and is scrubbed", () => {
-      window.__LOOM_SSO = true;
-      window.__LOOM_OWN_ORIGIN = false; // the server saw a cross-site navigation
-      history.replaceState(null, "", "/me?sign_in=sso");
-      render(<TokenGate onLogin={() => undefined} reason={null} />);
-      expect(goToSso).not.toHaveBeenCalled();
-      expect(sessionStorage.getItem(SIGN_IN_PENDING)).toBeNull();
-      expect(window.location.search).toBe("");
-      expect(screen.getByRole("link", { name: "Sign in with SSO" })).toBeInTheDocument();
-      history.replaceState(null, "", "/");
     });
 
     it("shows the password gate when it is off", () => {

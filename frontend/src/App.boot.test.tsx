@@ -526,6 +526,20 @@ describe("a link's namespace", () => {
     }
   });
 
+  it("a signed-in boot of the session-ended card's address drops the ask from it", async () => {
+    window.__LOOM_OWN_ORIGIN = true;
+    try {
+      window.history.replaceState(null, "", "/me?sign_in=sso");
+      serve(MINE);
+      render(<App />);
+      await until(() => useStore.getState().identity !== null);
+      expect(window.location.search).not.toContain("sign_in");
+      expect(goToSso).not.toHaveBeenCalled();
+    } finally {
+      delete window.__LOOM_OWN_ORIGIN;
+    }
+  });
+
   it("a move inside one view after a switch brings the address back to the page's namespace", async () => {
     window.history.replaceState(null, "", `/memories?namespace=${NS}`);
     serve(MINE);
@@ -667,6 +681,24 @@ describe("login link", () => {
     render(<App />);
     await screen.findByRole("button", { name: "Sign in as mallory" });
     expect(stored).toEqual([]);
+  });
+
+  it("a signed-out boot of the session-ended card's address starts this tab's own sign-in", async () => {
+    window.__LOOM_SSO = true;
+    window.__LOOM_OWN_ORIGIN = true;
+    vi.mocked(goToSso).mockClear();
+    try {
+      window.history.replaceState(null, "", "/me?sign_in=sso");
+      render(<App />);
+      await until(() => vi.mocked(goToSso).mock.calls.length > 0, 10_000);
+      const { nonce } = JSON.parse(sessionStorage.getItem("loom_sign_in_pending_v1") ?? "{}");
+      expect(goToSso).toHaveBeenCalledWith(nonce);
+      expect(goToSso).toHaveBeenCalledTimes(1);
+      expect(window.location.search).toBe("");
+    } finally {
+      delete window.__LOOM_SSO;
+      delete window.__LOOM_OWN_ORIGIN;
+    }
   });
 
   it("a fresh mark trusts no token that does not bring its nonce back", async () => {

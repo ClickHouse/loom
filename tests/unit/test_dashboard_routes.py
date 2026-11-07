@@ -175,6 +175,14 @@ def test_the_page_says_whether_loom_itself_asked_for_it(client, headers, own: bo
     assert f"window.__LOOM_OWN_ORIGIN = {flag};" in r.text
 
 
+def test_a_referer_on_the_default_port_is_the_public_origin(client, monkeypatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "public_base_url", "https://loom.example:443")
+    r = client.get("/me?sign_in=sso", headers={"Referer": "https://loom.example/settings"})
+    assert "window.__LOOM_OWN_ORIGIN = true;" in r.text
+
+
 def test_the_sign_in_landing_never_follows_the_aggregator_redirect(client, monkeypatch) -> None:
     """A sign-in lands on `/me#token=…`; the browser would carry that fragment
     through a redirect, so `/me` serves the page whatever the root does."""

@@ -69,6 +69,20 @@ export const SIGN_IN_PENDING = "loom_sign_in_pending_v1";
  *  brings back is stored without asking. */
 export const SSO_REQUEST_PATH = "/me?sign_in=sso";
 
+/** Take the session-ended card's ask (`SSO_REQUEST_PATH`) from the address, signed in or
+ *  not, so neither a reload nor the way back after the sign-in repeats it. True only when a
+ *  page of Loom's own origin sent the browser here (`__LOOM_OWN_ORIGIN`, from the load's
+ *  `Sec-Fetch-Site`): another site could send it to start a sign-in whose token the tab
+ *  stores unasked. */
+export function takeSsoAsk(): boolean {
+  const query = new URLSearchParams(window.location.search);
+  if (query.get("sign_in") !== "sso") return false;
+  query.delete("sign_in");
+  const qs = query.toString();
+  history.replaceState(history.state, "", window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash);
+  return window.__LOOM_OWN_ORIGIN === true;
+}
+
 /** How long a sign-in this tab started stays its own. */
 const SIGN_IN_PENDING_TTL_MS = 10 * 60 * 1000;
 
