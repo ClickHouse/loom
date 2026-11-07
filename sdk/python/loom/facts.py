@@ -82,7 +82,7 @@ class FactsClient:
         "alice WORKS_AT acme" (acme is object) from "acme EMPLOYS alice"
         (alice is object).
 
-        Returns `{"entity": <the canonical node matched>, "related":
+        Returns `{"entity": <entity canonicalised like a write>, "related":
         [{entity, co_occur, role}, ...]}`.
         """
         return await self._agent.transport.post(

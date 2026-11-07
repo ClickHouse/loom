@@ -114,8 +114,7 @@ class _RelatedEntity(BaseModel):
 
 
 class FactsRelatedOutput(BaseModel):
-    # The node matched: `entity` canonicalised like a write, or "" when it has no
-    # canonical form.
+    # `entity` canonicalised like a write, or "" when it has no canonical form.
     entity: str
     # Neighbours of `entity` over any relation, by summed `co_occur` descending.
     related: list[_RelatedEntity]

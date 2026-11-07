@@ -1064,7 +1064,7 @@ async def test_facts_list_and_related_match_the_canonical_and_the_lowered_spelli
 async def test_a_name_with_no_canonical_form_matches_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.memory.api.models_facts import FactsRelatedInput
+    from server.memory.api.models_facts import FactsListInput, FactsRelatedInput
     from server.memory.app import facts as facts_handlers
 
     ch = StubCH()
@@ -1074,4 +1074,8 @@ async def test_a_name_with_no_canonical_form_matches_nothing(
             FactsRelatedInput(org="o", namespace="n", entity=blank)
         )
         assert out.entity == "" and out.related == []
-        assert ch.query_all_calls[-1][1]["ent"] == []
+        listed = await facts_handlers.handle_facts_list(
+            FactsListInput(org="o", namespace="n", object=blank)
+        )
+        assert listed.rows == []
+    assert ch.query_all_calls == []  # nothing to match, so nothing is asked

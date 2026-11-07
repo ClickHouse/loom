@@ -98,7 +98,7 @@ Return the entities that co-occur with `input.entity` via any relation, ranked b
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `entity` | `str` | The node matched: `entity` canonicalised like a write, or "" when it has no canonical form. |
+| `entity` | `str` | `entity` canonicalised like a write, or "" when it has no canonical form. |
 | `related` | `list[_RelatedEntity]` | Neighbours of `entity` over any relation, by summed `co_occur` descending. |
 
 ## `facts.traverse`

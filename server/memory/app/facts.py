@@ -71,6 +71,8 @@ async def handle_facts_list(input: FactsListInput) -> FactsListOutput:
         if input.object is not None:
             where.append("object IN {obj:Array(String)}")
             params["obj"] = _stored_spellings(input.object)
+    if [] in (params.get("ent"), params.get("subj"), params.get("obj")):
+        return FactsListOutput(rows=[])  # a name with no canonical form is no node
     if input.relation is not None:
         where.append("relation = {rel:String}")
         # Stored relations went through canonicalize_verb + canonical_relation
@@ -257,8 +259,10 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
     "acme EMPLOYS alice" (alice is object).
     """
 
-    ch = get_client()
     spellings = _stored_spellings(input.entity)
+    if not spellings:
+        return FactsRelatedOutput(entity="", related=[])  # no canonical form, no node
+    ch = get_client()
     validity_predicate = ""
     params: dict[str, Any] = {
         "org": input.org,
@@ -322,7 +326,7 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
         key=lambda x: -x.co_occur,
     )[: input.top_k]
 
-    return FactsRelatedOutput(entity=spellings[0] if spellings else "", related=related)
+    return FactsRelatedOutput(entity=spellings[0], related=related)
 
 
 async def _after_own_projections(org: str, ns: str) -> tuple[datetime | None, datetime]:
@@ -589,7 +593,7 @@ def _hub_lookup(ch: Any, org: str, namespace: str, hub_degree: int, hub_share: f
 def _stored_spellings(raw: str) -> list[str]:
     """The spellings a stored node can have for `raw`, canonical first: its canonical form,
     which every writer stores, and `raw` lowered, a spelling stored rows of a "commit:" or
-    "error:" concept facet can hold. None for a name with no canonical form."""
+    "error:" concept facet can hold. Empty for a name with no canonical form."""
     from server.memory.domain.graph_quality import canonical_entity_text
 
     node = canonical_entity_text(raw)
