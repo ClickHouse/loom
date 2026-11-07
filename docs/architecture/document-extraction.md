@@ -490,6 +490,75 @@ sheet of 100,000 by 20 numbers (62 MB inflated, 4 MB zipped) extracts in about 9
 characters. A block it cut is marked (`attrs.keys_truncated`, `attrs.section_truncated`) and the artifact's
 `coverage.lost` names what it lost (`exact_keys`, `section_path`); the block's text and locator still hold all of it.
 
+## Qualification
+
+The reference extractor declares a format only when that format passes its floors below, measured separately for each
+format and slice so a good mean cannot hide a failed one. `tests/unit/test_extraction_gates.py` reads this table, scores
+the reference extractor against labelled fixtures and fails a slice under its floor, and fails when the reference
+extractor's capabilities declare a format with no row here or claim anything beyond formats and their options. PDF, DOCX
+and PPTX are scored on the parsing bench's corpus (`bench/docparse/corpus`, its gold labels and
+`bench/docparse/score.py`); the other formats on labelled fixtures built in the test.
+
+| Format   | Slice                   | Metric         | Floor |
+| -------- | ----------------------- | -------------- | ----- |
+| pdf      | text layer, every slice | text recall    | 0.97  |
+| pdf      | text layer, every slice | reading order  | 0.95  |
+| pdf      | text layer, every slice | heading F1     | 0.95  |
+| pdf      | text layer, every slice | table cell F1  | 0.95  |
+| pdf      | text layer, every slice | locator        | 0.90  |
+| pdf      | scanned                 | failed units   | 1.00  |
+| pdf      | every slice             | announced loss | 1.00  |
+| docx     | documents               | text recall    | 0.98  |
+| docx     | documents               | heading F1     | 0.98  |
+| docx     | documents               | table cell F1  | 0.98  |
+| pptx     | decks                   | text recall    | 0.95  |
+| pptx     | decks                   | heading F1     | 0.98  |
+| pptx     | decks                   | locator        | 0.90  |
+| pptx     | decks                   | notes          | 1.00  |
+| pptx     | decks                   | announced loss | 1.00  |
+| markdown | fixtures                | text recall    | 1.00  |
+| markdown | fixtures                | heading F1     | 1.00  |
+| markdown | fixtures                | locator        | 1.00  |
+| html     | fixtures                | text recall    | 1.00  |
+| html     | fixtures                | heading F1     | 1.00  |
+| html     | fixtures                | table rows     | 1.00  |
+| text     | fixtures                | text recall    | 1.00  |
+| text     | fixtures                | locator        | 1.00  |
+| sql      | fixtures                | statements     | 1.00  |
+| sql      | fixtures                | locator        | 1.00  |
+| sql      | fixtures                | names          | 1.00  |
+| toml     | fixtures                | key paths      | 1.00  |
+| toml     | fixtures                | locator        | 1.00  |
+| csv      | fixtures                | typed cells    | 1.00  |
+| csv      | fixtures                | headers        | 1.00  |
+| xlsx     | fixtures                | typed cells    | 1.00  |
+| xlsx     | fixtures                | headers        | 1.00  |
+| parquet  | fixtures                | typed cells    | 1.00  |
+| parquet  | fixtures                | headers        | 1.00  |
+
+The metrics:
+
+- **text recall**, **reading order**, **heading F1**, **table cell F1** and **locator** are the bench scorer's: the
+  share of the gold's words the parse holds, of its blocks in order, of its headings found at their level, of its table
+  cells, and of its blocks cited on their page or slide; for a text format, locator is the share of gold lines whose
+  block's line span holds them.
+- **failed units**: the share of a scanned file's pages the artifact reads with OCR (`attrs.ocr_pages`) or reports
+  failed, never read as empty; with OCR off, every page is a failed unit.
+- **announced loss**: the share of the gold's text drawn inside images whose page or slide the artifact reads with OCR
+  or names as not read, in `coverage.failed`, `attrs.images_unread` or its warnings.
+- **notes**: the share of speaker notes held as notes, on their slide.
+- **table rows**: the share of an HTML table's rows held as one row, its cells in order.
+- **statements**, **names**, **key paths**: the share of SQL statements found whole, of the objects they define or read
+  among their keys, and of TOML key paths found as keys.
+- **typed cells** and **headers**: the share of a table's cells read with their value and type, and of its columns read
+  with their names.
+
+What is not qualified, and so the reference extractor does not claim: the words OCR reads (it reads a scanned page and a
+large picture where the extractor image carries the engine, and the scanned and announced-loss gates count a page it
+read as read, but no floor measures its text yet), text inside smaller images, charts and diagrams (named in
+`attrs.images_unread` and the artifact's warnings, never read), and a Markdown pipe table as a typed table (its rows
+stay one paragraph, as written).
+
 ## Structural chunks
 
 `chunk_artifact` cuts chunks from blocks instead of fixed windows over flattened text:
