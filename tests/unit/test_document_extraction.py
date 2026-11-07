@@ -10,6 +10,7 @@ failure, not a new golden value.
 
 from __future__ import annotations
 
+import gc
 import io
 import json
 import sys
@@ -992,11 +993,14 @@ def _cpu(fn: Any) -> float:
     every caller runs extractor code, which the unit job's coverage does not measure."""
     previous = sys.gettrace()
     sys.settrace(None)
+    gc.collect()  # the collector off too: a full pass walks every earlier test's heap
+    gc.disable()
     try:
         start = time.process_time()
         fn()
         return time.process_time() - start
     finally:
+        gc.enable()
         sys.settrace(previous)
 
 
@@ -1188,10 +1192,8 @@ def test_one_line_sql_with_a_comment_after_every_semicolon_splits_in_linear_time
     text = "SELECT 1; /* c */ " * 160_000
     out: list[list[Any]] = []
     large = _cpu(lambda: out.append(sql._spans(text, "clickhouse")))
-    # Sixteen times the statements cost about seventeen times the time; the bound allows
-    # 24. A newline search from each `;` that is not stopped at the next token scans to
-    # the end of this one-line text and costs about fifty, which a fixed bound misses:
-    # that scan runs in C, fast enough to stay under any bound the linear split needs.
+    # A linear split costs about 17x for 16x the statements; a newline search from each `;`
+    # not stopped at the next token scans to the end of this one-line text (about 50x).
     assert large < 24 * small + 0.05, (small, large)
     assert len(out[0]) == 160_000
     # No span cuts a comment: each holds every `*/` its `/*` opens.
