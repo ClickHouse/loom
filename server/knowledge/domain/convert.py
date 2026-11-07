@@ -1,6 +1,6 @@
-"""Markdown from what a document source hands over: a presentation as the slides
-API describes it, a page store's page as its blocks, and an extraction artifact.
-Pure: no I/O.
+"""Markdown from what a document source hands over: a native document's Markdown
+export, a presentation as the slides API describes it, a page store's page as its
+blocks, and an extraction artifact. Pure: no I/O.
 
 A slide becomes one `# Slide N: <title>` section, so the chunker cuts one chunk per
 slide: its shape text (groups read through, a table one row per line), then its
@@ -279,10 +279,13 @@ def _skip(kind: str, skipped: dict[str, int]) -> str:
     return ""
 
 
-def _picture_marker(pictures: int, captions: list[str]) -> str:
+def _picture_note(pictures: int) -> str:
     noun = "picture" if pictures == 1 else "pictures"
-    marker = f"> [image-only: {pictures} {noun}, rationale not extracted]"
-    return "\n\n".join([marker, *captions])
+    return f"[image-only: {pictures} {noun}, rationale not extracted]"
+
+
+def _picture_marker(pictures: int, captions: list[str]) -> str:
+    return "\n\n".join([f"> {_picture_note(pictures)}", *captions])
 
 
 def _blocks_markdown(blocks: list[dict[str, Any]], skipped: dict[str, int]) -> str:
@@ -369,6 +372,198 @@ def coverage_of(artifact: Artifact) -> dict[str, Any]:
     }
 
 
+# A reference definition whose destination is an inline picture (`[image1]:
+# <data:image/png;base64,...>`, with or without a quoted or parenthesised title), as a
+# native document's Markdown export holds each pasted picture, and a reference or
+# inline image that shows one. `store.sources._INLINE_PICTURE` flags these lines in
+# stored text, and a few more (a fenced one, one that only starts like a definition),
+# which the stored-copy comparison then finds unchanged.
+_DATA_DEFINITION = re.compile(
+    r" {0,3}\[([^\]\n]+)\]:[ \t]*<?data:[^\s>]*>?"
+    r"""(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)\n]*\)))?[ \t]*"""
+)
+_IMAGE_REF = re.compile(r"!\[([^\]\n]*)\](?:\[([^\]\n]+)\]|\(<?data:[^)\s>]*>?\))")
+# What opens a list item, a quote line or a heading, kept in front of a marker that
+# replaces the line's pictures.
+_ITEM_LEAD = re.compile(r"[ \t]*(?:(?:[-*+]|\d{1,9}[.)]|#{1,6})[ \t]+|>[ \t]?)*")
+# An emphasis run closing the text before a picture, and one opening the text after it.
+_TRAILING_EMPHASIS = re.compile(r"[*_~]+$")
+_LEADING_EMPHASIS = re.compile(r"[*_~]+")
+# A fence line: at any indent and after any list-item or quote marks, so a fence
+# nested in a list item is code too; an opening and a closing line match the same way.
+_FENCE = re.compile(r"[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]?)*(`{3,}|~{3,})")
+
+
+def _fenced(lines: list[str]) -> list[bool]:
+    """Which lines are inside a fenced code block, its fence lines included."""
+    out: list[bool] = []
+    fence = ""
+    for line in lines:
+        m = _FENCE.match(line)
+        rest = line[m.end() :] if m else ""
+        if fence:
+            out.append(True)
+            if m and m.group(1).startswith(fence) and not rest.strip():
+                fence = ""
+            continue
+        if m and not (m.group(1)[0] == "`" and "`" in rest):
+            fence = m.group(1)
+        out.append(bool(m) and bool(fence))
+    return out
+
+
+class _Pictures:
+    """The pictures of one export: which references show inlined bytes, and the run of
+    picture-only lines that one marker replaces."""
+
+    def __init__(self, labels: set[str]) -> None:
+        self.labels = labels
+        self.seen = 0
+        self.alts: list[str] = []
+        self.indent = ""  # the first replaced line's, so a marker under a list item stays in it
+
+    def shown(self, m: re.Match[str]) -> bool:
+        return m.group(2) is None or m.group(2).lower() in self.labels
+
+    def refs(self, line: str) -> list[re.Match[str]]:
+        return [m for m in _IMAGE_REF.finditer(line) if self.shown(m)]
+
+    def only(self, text: str) -> bool:
+        """Whether `text` holds nothing but pictures (and the emphasis around them)."""
+        rest = _IMAGE_REF.sub(lambda m: "" if self.shown(m) else m.group(0), text)
+        return not rest.strip(" \t*_~")
+
+    def drop(self, line: str) -> str:
+        """`line` with its pictures out: a picture becomes its alt text, and exactly one
+        space stays between the neighbouring words (none at the line's ends, inside
+        brackets or emphasis, or before punctuation); emphasis around a picture with
+        no alt text goes with it."""
+        lead = _lead(line)  # a list marker or quote mark is not emphasis
+        body, at = "", len(lead)
+        for m in self.refs(line):
+            body = (body + line[at : m.start()]).rstrip(" \t")
+            at = _skip_blanks(line, m.end())
+            alt = m.group(1).strip()
+            if not alt and (run := _emptied_emphasis(body, line[at:])):
+                body = body[:-run].rstrip(" \t")
+                at = _skip_blanks(line, at + run)
+            body = _joined(body, alt, line[at:])
+        return lead + body + line[at:]
+
+    def add(self, refs: list[re.Match[str]], lead: str) -> None:
+        if not self.seen:
+            self.indent = lead
+        self.seen += len(refs)
+        self.alts.extend(m.group(1).strip() for m in refs if m.group(1).strip())
+
+    def flush(self) -> list[str]:
+        """The marker for the run so far, as lines, and the run cleared."""
+        lines = _picture_marker(self.seen, self.alts).split("\n")
+        self.seen, self.alts = 0, []
+        return [self.indent + x if x else x for x in lines]
+
+
+def _lead(line: str) -> str:
+    """What opens `line` as a list item, a quote line or a heading ("" for none)."""
+    m = _ITEM_LEAD.match(line)
+    assert m is not None  # the pattern matches the empty string
+    return m.group(0)
+
+
+def _skip_blanks(line: str, at: int) -> int:
+    while line[at : at + 1] in (" ", "\t"):
+        at += 1
+    return at
+
+
+def _opening_run(before: str) -> str:
+    """The emphasis run ending `before` when it opens at a word boundary, else ""."""
+    head = _TRAILING_EMPHASIS.search(before)
+    if head is None or (head.start() > 0 and before[head.start() - 1] not in " \t"):
+        return ""
+    return head.group()
+
+
+def _closing_run(after: str) -> str:
+    """The emphasis run starting `after` when it closes at a word boundary, else ""."""
+    tail = _LEADING_EMPHASIS.match(after)
+    if tail is None or after[tail.end() : tail.end() + 1] not in ("", " ", "\t"):
+        return ""
+    return tail.group()
+
+
+def _emptied_emphasis(before: str, after: str) -> int:
+    """The length of an emphasis run that opens right before a removed picture and
+    closes right after it, so nothing is left inside it; 0 when there is none."""
+    run = _opening_run(before)
+    return len(run) if run and run == _closing_run(after) else 0
+
+
+def _joined(before: str, alt: str, after: str) -> str:
+    """`before` with a removed picture's alt text appended, spaced so the words on both
+    sides of the picture stay one space apart: no space at a line's end, after an
+    opening bracket or emphasis, or before punctuation or a closing one."""
+    left = before[-1:] in ("", "(", "[", "{") or bool(_opening_run(before))
+    right = after[:1] in ("", *".,;:!?)]}") or bool(_closing_run(after))
+    if alt:
+        return before + ("" if left else " ") + alt + ("" if right else " ")
+    return before + ("" if left or right else " ")
+
+
+def _item_marker(lead: str, refs: list[re.Match[str]]) -> str:
+    """A list item, quote line or heading that only shows pictures, as one marker in
+    place."""
+    alts = " ".join(m.group(1).strip() for m in refs if m.group(1).strip())
+    return lead + _picture_note(len(refs)) + (f" {alts}" if alts else "")
+
+
+def exported_markdown(markdown: str) -> str:
+    """A native document's Markdown export with its pictures out of the text: the
+    export inlines each pasted picture as a base64 reference definition, which is
+    most of a diagram-heavy document's bytes and no text anyone searches. A line of
+    only pictures (or a run of such lines) becomes one marker, the way a page's run
+    of pictures does, so a reader knows a picture was there; a list item, quote line
+    or heading of only pictures keeps its marker in place; a picture inside a line of text
+    is dropped and its alt text kept. Fenced code is left as it is, and only the blank
+    lines the removed lines leave behind go."""
+    lines = markdown.split("\n")
+    fenced = _fenced(lines)
+    pics = _Pictures(
+        {
+            m.group(1).lower()
+            for line, code in zip(lines, fenced, strict=True)
+            if not code and (m := _DATA_DEFINITION.fullmatch(line))
+        }
+    )
+    out: list[str] = []
+    gap = False  # a line was removed since the last line of text
+    for line, code in zip(lines, fenced, strict=True):
+        if not code and _DATA_DEFINITION.fullmatch(line):
+            gap = True
+            continue
+        refs = [] if code else pics.refs(line)
+        lead = _lead(line) if refs else ""
+        alone = bool(refs) and pics.only(line[len(lead) :])
+        if alone and not lead.strip():
+            pics.add(refs, lead)
+            gap = True
+            continue
+        if not line.strip() and gap and (not out or not out[-1].strip()):
+            continue
+        if pics.seen and line.strip():
+            out.extend([*pics.flush(), ""])
+        gap = False
+        if alone:
+            out.append(_item_marker(lead, refs))
+        elif refs:
+            out.append(pics.drop(line))
+        else:
+            out.append(line)
+    if pics.seen:
+        out.extend([*pics.flush(), ""] if markdown.endswith("\n") else pics.flush())
+    return "\n".join(out)
+
+
 def description_of(markdown: str) -> str:
     """A document's first paragraph that is neither a heading nor a marker, cut short."""
     for paragraph in markdown.split("\n\n"):
@@ -384,6 +579,7 @@ __all__ = [
     "coverage_of",
     "description_of",
     "drop_number_runs",
+    "exported_markdown",
     "page_markdown",
     "presentation_markdown",
     "slide_markdown",

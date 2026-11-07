@@ -21,6 +21,7 @@ import pytest
 from server.clients import gdrive
 from server.core import leases
 from server.core.errors import ValidationError
+from server.core.hashing import sha256_text
 from server.core.secrets_at_rest import seal
 from server.knowledge.app import extractors, source_sync, writes
 from server.knowledge.app import sources as source_ops
@@ -145,13 +146,18 @@ class _World:
         self.sources = [s for s in self.sources if s.name != src.name] + [src]
 
     async def source_revisions(
-        self, org: str, ns: str, name: str, *, searchable_only: bool = True
+        self, org: str, ns: str, name: str, *, searchable_only: bool = True, pictures: bool = False
     ) -> list[dict[str, str]]:
         return [
             {
                 "source_uri": uri,
                 "file_id": d["metadata"]["ingested_from"],
                 "source_revision": d["metadata"]["source_revision"],
+                "text_sha256": d["metadata"].get("text_sha256", ""),
+                "inline_pictures": "1" if pictures and "]: <data:" in d.get("content", "") else "",
+                "stored_content_sha256": sha256_text(d.get("content", ""))
+                if pictures and "]: <data:" in d.get("content", "")
+                else "",
             }
             for uri, d in self.docs.items()
             if d["actor"] == SYNC_WORKER_ACTOR
@@ -255,7 +261,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
                 namespace=ns,
                 source_uri=uri,
                 doc_id="d",
-                content="",
+                content=d.get("content", ""),
                 version=1,
                 ingested_at="2026-01-01T00:00:00",
                 actor=d["actor"],
@@ -271,6 +277,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
             "actor": pipeline_actor_var.get(),
             "tags": list(inp.tags),
             "metadata": dict(inp.metadata),
+            "content": inp.content,
         }
 
     async def _delete(inp: Any) -> Any:
@@ -437,6 +444,266 @@ def test_a_later_turn_lists_only_changes_and_skips_unchanged_files(world: _World
     asyncio.run(source_sync.run_sync(full=True))
     assert world.upserts == []
     assert [r.url.path for r in world.requests] == ["/drive/v3/files", f"/drive/v3/files/{FOLDER}"]
+
+
+OLD_EXPORT = "# Design\n\n![][image1]\n\n[image1]: <data:image/png;base64,AAAA>\n"
+
+
+def _stored(world: _World, file_id: str, mime: str, content: str) -> str:
+    """A copy of `file_id` the sync stored at REV1."""
+    uri = source_sync.source_uri_of(_file(file_id, mime, REV1))
+    world.docs[uri] = {
+        "actor": SYNC_WORKER_ACTOR,
+        "tags": ["source-kind:design_doc", "source:decks"],
+        "metadata": {"ingested_from": file_id, "source_revision": REV1},
+        "content": content,
+    }
+    return uri
+
+
+def test_a_document_stored_with_its_pictures_bytes_is_converted_and_mined_again(
+    world: _World,
+) -> None:
+    world.files = [_file("doc1", DOCS, REV1)]
+    uri = _stored(world, "doc1", DOCS, OLD_EXPORT)
+    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
+    asyncio.run(source_sync.run_sync())
+    assert [inp.source_uri for inp, _ in world.upserts] == [uri]
+    assert "data:" not in world.docs[uri]["content"]
+    assert [u for u, _, _ in world.mined] == [uri]
+    world.upserts.clear()
+    asyncio.run(source_sync.run_sync(full=True))
+    assert world.upserts == []
+
+
+def test_a_definition_shown_in_code_is_fetched_but_neither_written_nor_mined_again(
+    world: _World,
+) -> None:
+    sample = "# Export\n\n```md\n[image1]: <data:image/png;base64,AAAA>\n```\n"
+    world.files = [_file("doc1", DOCS, REV1)]
+    world.file_answers["doc1"] = httpx.Response(200, text=sample)
+    uri = _stored(world, "doc1", DOCS, sample)
+    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
+    for _ in range(2):
+        asyncio.run(source_sync.run_sync(full=True))
+    assert world.upserts == [] and world.mined == []
+    exports = [r for r in world.requests if r.url.path == "/drive/v3/files/doc1/export"]
+    assert len(exports) == 1
+    assert _detail(world)["mined"] == {uri: REV1}
+
+
+def test_a_given_up_flagged_copy_whose_address_moved_is_counted_unconverted(
+    world: _World,
+) -> None:
+    _stored(world, "doc1", DOCS, OLD_EXPORT)
+    moved = _file("doc1", DOCS, REV1, webViewLink="https://docs.example.com/document/d/doc1/v2")
+    world.files = [moved]
+    waits = {"doc1": [REV1, 3, "http_500"]}
+    listed = "2026-01-02T00:00:00+00:00"
+    detail = {"file_waits": waits, "full_listed_at": listed, "retry_granted_for": listed}
+    world.states["decks"] = {"state_value": REV1, "detail": json.dumps(detail)}
+    asyncio.run(source_sync.run_sync())
+    assert world.upserts == [] and _detail(world)["unconverted"] == 1
+
+
+def test_a_flagged_copy_whose_address_moved_is_written_at_the_new_one(world: _World) -> None:
+    old = _stored(world, "doc1", DOCS, OLD_EXPORT)
+    moved = _file("doc1", DOCS, REV1, webViewLink="https://docs.example.com/document/d/doc1/v2")
+    world.files = [moved]
+    asyncio.run(source_sync.run_sync(full=True))
+    new = source_sync.source_uri_of(moved)
+    assert new != old and old not in world.docs
+    assert "data:" not in world.docs[new]["content"]
+
+
+def test_unchanged_flagged_copies_do_not_hold_a_full_listing_at_the_pass_bound(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 2)
+    sample = "# Export\n\n```md\n[image1]: <data:image/png;base64,AAAA>\n```\n"
+    world.files = [_file(f"doc{i}", DOCS, REV1) for i in (1, 2)]
+    world.files.append(_file("doc3", DOCS, "2026-01-02T00:00:00.000Z"))
+    for i in (1, 2):
+        world.file_answers[f"doc{i}"] = httpx.Response(200, text=sample)
+        _stored(world, f"doc{i}", DOCS, sample)
+    for _ in range(3):
+        asyncio.run(source_sync.run_sync(full=True))
+    # The two were exported once each at their revision; the file after them was written.
+    exports = [r for r in world.requests if r.url.path.endswith("/export")]
+    assert sorted(r.url.path for r in exports if "doc3" not in r.url.path) == [
+        "/drive/v3/files/doc1/export",
+        "/drive/v3/files/doc2/export",
+    ]
+    assert _uri("doc3") in world.docs and _detail(world)["status"] == "ok"
+    # Once a file is listed at another revision, its record goes.
+    world.files[0] = _file("doc1", DOCS, "2026-03-01T00:00:00.000Z")
+    asyncio.run(source_sync.run_sync(full=True))
+    assert _detail(world)["pictures_checked"] == {"doc2": REV1}
+    # A file an incremental turn does not list keeps its record; a full listing without
+    # it drops the record.
+    world.files = [f for f in world.files if f["id"] != "doc2"]
+    asyncio.run(source_sync.run_sync())
+    assert _detail(world)["pictures_checked"] == {"doc2": REV1}
+    asyncio.run(source_sync.run_sync(full=True))
+    assert "doc2" not in _detail(world)["pictures_checked"]
+
+
+def test_a_document_stored_without_pictures_bytes_is_not_fetched_again(world: _World) -> None:
+    world.files = [_file("doc1", DOCS, REV1)]
+    _stored(world, "doc1", DOCS, "# Design\n\nText only.\n")
+    asyncio.run(source_sync.run_sync(full=True))
+    assert world.upserts == []
+
+
+def test_a_turn_cut_after_a_reconverting_write_still_mines_the_new_text(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc1", DOCS, REV1)]
+    uri = _stored(world, "doc1", DOCS, OLD_EXPORT)
+    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
+    real = source_sync._write_state
+
+    async def _cut(*a: Any, **kw: Any) -> None:
+        raise RuntimeError("cut before the turn's state")
+
+    monkeypatch.setattr(source_sync, "_write_state", _cut)
+    asyncio.run(source_sync.run_sync())
+    monkeypatch.setattr(source_sync, "_write_state", real)
+    asyncio.run(source_sync.run_sync())
+    assert uri in [u for u, _, _ in world.mined]
+
+
+def test_a_reconverting_write_cut_before_its_chunks_still_mines_the_new_text(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc1", DOCS, REV1)]
+    uri = _stored(world, "doc1", DOCS, OLD_EXPORT)
+    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
+    real = writes.handle_knowledge_upsert
+
+    async def _cut_before_chunks(inp: Any) -> Any:
+        await real(inp)
+        world.docs[inp.source_uri]["chunks"] = False  # the document row, no live chunks
+        raise RuntimeError("cut before the chunks")
+
+    monkeypatch.setattr(writes, "handle_knowledge_upsert", _cut_before_chunks)
+    asyncio.run(source_sync.run_sync())
+    monkeypatch.setattr(writes, "handle_knowledge_upsert", real)
+    asyncio.run(source_sync.run_sync(full=True))
+    assert "data:" not in world.docs[uri]["content"]
+    assert uri in [u for u, _, _ in world.mined]
+
+
+def test_a_failed_reconverting_write_leaves_the_document_to_be_mined_again(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc1", DOCS, REV1)]
+    uri = _stored(world, "doc1", DOCS, OLD_EXPORT)
+    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
+    real = writes.handle_knowledge_upsert
+
+    async def _down(inp: Any) -> Any:
+        raise RuntimeError("store down")
+
+    monkeypatch.setattr(writes, "handle_knowledge_upsert", _down)
+    asyncio.run(source_sync.run_sync())
+    detail = _detail(world)
+    assert detail["file_waits"]["doc1"][2] == "write_failed:RuntimeError"
+    assert "data:" in world.docs[uri]["content"]
+    monkeypatch.setattr(writes, "handle_knowledge_upsert", real)
+    asyncio.run(source_sync.run_sync(full=True))
+    assert "data:" not in world.docs[uri]["content"]
+    # The failed write left the old copy and its mined key: only the new text is mined.
+    assert [u for u, _, _ in world.mined] == [uri]
+
+
+def test_a_document_given_up_on_is_not_fetched_again_for_its_pictures(world: _World) -> None:
+    world.files = [_file("doc1", DOCS, REV1)]
+    _stored(world, "doc1", DOCS, OLD_EXPORT)
+    waits = {"doc1": [REV1, 3, "http_500"]}
+    # A periodic full listing whose one more try was already granted.
+    listed = "2026-01-02T00:00:00+00:00"
+    detail = {"file_waits": waits, "full_listed_at": listed, "retry_granted_for": listed}
+    world.states["decks"] = {"state_value": REV1, "detail": json.dumps(detail)}
+    asyncio.run(source_sync.run_sync())
+    assert world.upserts == []
+    detail = _detail(world)
+    assert (detail["file_waits"], detail["unconverted"]) == (waits, 0)
+
+
+@pytest.mark.parametrize(("file_id", "mime"), [("deck1", SLIDES), ("pdf1", PDF)])
+def test_a_deck_or_uploaded_file_is_not_fetched_again_for_pictures_bytes(
+    world: _World, file_id: str, mime: str
+) -> None:
+    world.files = [_file(file_id, mime, REV1, size="14")]
+    _stored(world, file_id, mime, OLD_EXPORT)
+    asyncio.run(source_sync.run_sync(full=True))
+    assert world.upserts == []
+
+
+def test_a_document_export_keeps_its_text_and_marks_its_inlined_pictures() -> None:
+    data = "data:image/png;base64," + "iVBORw0KGgo" * 40
+    exported = (
+        "# Design\n\nThe planner runs first.\n\n![][image1]\n\n![][image2]\n\n"
+        "* ![][image3] the operator version shown\n* ![][image2]\n> ![Flow][image1]\n\n"
+        "![Flow][image4]*Figure 2: flow*\n\n```md\n![][image1]\n\n\n  indented\n```\n\n"
+        "See [the spec][spec].\n\n"
+        f"[image1]: <{data}>\n\n[image2]: <{data}>\n\n[image3]: <{data}>\n\n"
+        f"[image4]: <{data}>\n\n[spec]: https://example.com/spec\n"
+    )
+    assert convert.exported_markdown(exported) == (
+        "# Design\n\nThe planner runs first.\n\n"
+        "> [image-only: 2 pictures, rationale not extracted]\n\n"
+        "* the operator version shown\n"
+        "* [image-only: 1 picture, rationale not extracted]\n"
+        "> [image-only: 1 picture, rationale not extracted] Flow\n\n"
+        "Flow *Figure 2: flow*\n\n```md\n![][image1]\n\n\n  indented\n```\n\n"
+        "See [the spec][spec].\n\n[spec]: https://example.com/spec\n"
+    )
+    nested = "1. Step\n\n   ![][image1]\n\n2. Next\n\n[image1]: <data:image/png;base64,AAAA>\n"
+    assert convert.exported_markdown(nested) == (
+        "1. Step\n\n   > [image-only: 1 picture, rationale not extracted]\n\n2. Next\n"
+    )
+    heading = "# ![][image1]\n\nText.\n\n[image1]: <data:image/png;base64,AAAA>\n"
+    assert convert.exported_markdown(heading) == (
+        "# [image-only: 1 picture, rationale not extracted]\n\nText.\n"
+    )
+    joined = "one![][image1]two\n\n[image1]: <data:image/png;base64,AAAA>\n"
+    assert convert.exported_markdown(joined) == "one two\n"
+    inline = "![](data:image/png;base64,AAAA)\n\nA ![Graph](data:image/png;base64,AAAA) here.\n"
+    assert convert.exported_markdown(inline) == (
+        "> [image-only: 1 picture, rationale not extracted]\n\nA Graph here.\n"
+    )
+    tilde = "~~~\n![][image1]\n~~~\n``` x ` ```\n\n[image1]: <data:image/png;base64,AAAA>\n"
+    assert convert.exported_markdown(tilde) == "~~~\n![][image1]\n~~~\n``` x ` ```\n"
+    listed = "- Step\n\n    ```\n    ![][image1]\n    [image2]: <data:a>\n    ```\n"
+    assert convert.exported_markdown(listed) == listed
+    on_item = "- ```\n  ![][image1]\n  ```\n\nText ![][image2]\n\n[image1]: <data:a>\n[image2]: <data:b>\n"
+    assert convert.exported_markdown(on_item) == "- ```\n  ![][image1]\n  ```\n\nText\n"
+    quoted = "> ```\n> [image1]: <data:a>\n> ```\n\n![][image2]\n\n[image2]: <data:b>\n"
+    assert convert.exported_markdown(quoted) == (
+        "> ```\n> [image1]: <data:a>\n> ```\n\n> [image-only: 1 picture, rationale not extracted]\n"
+    )
+    crlf = "Text.\r\n[image1]: <data:a>\r\n"
+    assert convert.exported_markdown(crlf) == crlf
+    prose = "[Step 1]: data: the raw input\n\n[image1]: <data:a>\n"
+    assert convert.exported_markdown(prose) == "[Step 1]: data: the raw input\n"
+    emphasis = "*![][image1]*\n\nx **![Flow][image1]** y\n\n[image1]: <data:a>\n"
+    assert convert.exported_markdown(emphasis) == (
+        "> [image-only: 1 picture, rationale not extracted]\n\nx **Flow** y\n"
+    )
+    emptied = "x **![][image1]** y\n\n[image1]: <data:a>\n"
+    assert convert.exported_markdown(emptied) == "x y\n"
+    bracketed = "see (![Fig][image1]) here\n\n[image1]: <data:a>\n"
+    assert convert.exported_markdown(bracketed) == "see (Fig) here\n"
+    ended = "The flow is ![][image1]. Then ![Flow][image1], done.\n\n[image1]: <data:a>\n"
+    assert convert.exported_markdown(ended) == "The flow is. Then Flow, done.\n"
+    spaced = "see![][image1] next\n\n[image1]: <data:image/png;base64,AAAA>\n"
+    assert convert.exported_markdown(spaced) == "see next\n"
+    captioned = "see![Flow][image1] next\n\n[image1]: <data:image/png;base64,AAAA>\n"
+    assert convert.exported_markdown(captioned) == "see Flow next\n"
+    plain = "# Plain\n\nNo pictures.\n\n\n```\n  kept\n```"
+    assert convert.exported_markdown(plain) == plain
 
 
 def test_a_full_listing_retires_what_the_folder_no_longer_has(world: _World) -> None:
@@ -1581,6 +1848,17 @@ REV1 = "2026-01-01T00:00:00.000Z"
 REV2 = "2026-01-02T00:00:00.000Z"
 
 
+def _at(world: _World, uri: str, revision: str = "") -> str:
+    """The key the extraction leg mines the stored copy at `uri` by: its revision and the
+    hash of its text, which every native document's write records."""
+    meta = world.docs[uri]["metadata"]
+    if revision:
+        assert meta["source_revision"] == revision
+    return source_sync._mined_revision(
+        {"source_revision": meta["source_revision"], "text_sha256": meta.get("text_sha256", "")}
+    )
+
+
 def _two_docs(world: _World) -> None:
     world.files = [_file("doc1", DOCS, REV1), _file("doc2", DOCS, REV2)]
 
@@ -1609,7 +1887,7 @@ def test_a_written_document_is_mined_in_the_same_pass_as_the_worker(
     assert (result.extracted, result.failed, result.extract_deferred) == (1, 0, 0)
     detail = _detail(world)
     assert (detail["mined"], detail["extract_waits"], detail["pending_extract"]) == (
-        {DOC1: REV1},
+        {DOC1: _at(world, DOC1)},
         {},
         0,
     )
@@ -1649,7 +1927,7 @@ def test_a_document_written_by_a_turn_that_did_not_finish_is_mined_next_pass(
     assert DOC1 in world.docs
     asyncio.run(source_sync.run_sync())
     assert [uri for uri, _, _ in world.mined][-1:] == [DOC1]
-    assert _detail(world)["mined"] == {DOC1: REV1}
+    assert _detail(world)["mined"] == {DOC1: _at(world, DOC1)}
 
 
 def test_pinned_rows_a_run_tags_are_counted_and_kept_through_a_held_turn(
@@ -1760,14 +2038,14 @@ def test_a_failing_extraction_is_given_up_after_its_tries_until_rewritten(
     result = asyncio.run(source_sync.run_sync())
     assert result.failed == 1 and result.errors == [f"{ORG}/{NS}/decks: extraction not_run"]
     detail = _detail(world)
-    assert detail["extract_waits"] == {DOC1: [REV1, 1, "not_run"]}
+    assert detail["extract_waits"] == {DOC1: [_at(world, DOC1), 1, "not_run"]}
     assert (detail["extract_error"], detail["pending_extract"]) == ("not_run", 1)
     asyncio.run(source_sync.run_sync())
     result = asyncio.run(source_sync.run_sync())
     assert len(world.mined) == source_sync._WAIT_PASSES and result.unextracted == 1
     detail = _detail(world)
     assert (detail["mined"], detail["extract_waits"], detail["pending_extract"]) == (
-        {DOC1: REV1},
+        {DOC1: _at(world, DOC1)},
         {},
         0,
     )
@@ -1806,7 +2084,10 @@ def test_each_failed_document_counts_one_try(
     _two_docs(world)
     result = asyncio.run(source_sync.run_sync())
     assert result.failed == 2
-    assert _detail(world)["extract_waits"] == {DOC1: [REV1, 1, reason], DOC2: [REV2, 1, reason]}
+    assert _detail(world)["extract_waits"] == {
+        DOC1: [_at(world, DOC1), 1, reason],
+        DOC2: [_at(world, DOC2), 1, reason],
+    }
 
 
 def test_a_document_no_longer_the_source_s_is_not_mined_and_leaves_the_map(
@@ -1874,7 +2155,7 @@ def test_a_document_out_of_time_with_a_whole_pass_is_given_up_at_once(world: _Wo
     result = asyncio.run(source_sync.run_sync())
     assert result.unextracted == 1
     detail = _detail(world)
-    assert (detail["mined"], detail["extract_waits"]) == ({DOC1: REV1}, {})
+    assert (detail["mined"], detail["extract_waits"]) == ({DOC1: _at(world, DOC1)}, {})
     assert (detail["unextracted"], detail["extract_error"]) == (1, "too_large_for_pass")
     asyncio.run(source_sync.run_sync())
     assert len(world.mined) == 1
@@ -1907,7 +2188,7 @@ def test_a_permanent_refusal_settles_the_document(world: _World) -> None:
     result = asyncio.run(source_sync.run_sync())
     assert (result.extracted, result.failed) == (1, 0)
     detail = _detail(world)
-    assert (detail["mined"], detail["extract_waits"]) == ({DOC1: REV1}, {})
+    assert (detail["mined"], detail["extract_waits"]) == ({DOC1: _at(world, DOC1)}, {})
     asyncio.run(source_sync.run_sync())
     assert len(world.mined) == 1
 
@@ -2097,7 +2378,7 @@ def test_a_turn_ended_from_outside_writes_no_state_and_is_mined_next_pass(
     monkeypatch.setattr(decision_extract, "extract_document", mined)
     monkeypatch.setattr(leases, "cluster_lease", _plain_lease(world))
     asyncio.run(source_sync.run_sync())
-    assert _detail(world)["mined"] == {DOC1: "2026-03-01T00:00:00.000Z"}
+    assert _detail(world)["mined"] == {DOC1: _at(world, DOC1, "2026-03-01T00:00:00.000Z")}
 
 
 def _plain_lease(world: _World) -> Any:

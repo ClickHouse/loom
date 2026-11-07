@@ -17,7 +17,10 @@ the source's own lease, so two copies of the worker never sync it at once.
 A turn lists the source's files: every file on its first turn, when asked
 (`full`) and once `knowledge_source_sync_full_interval_seconds` have passed
 since the last full listing; otherwise those changed after the stored stamp. A
-file whose stored copy has the listed revision is skipped without a fetch. A
+file whose stored copy has the listed revision is skipped without a fetch, unless
+a full listing finds a native document whose stored text still holds its
+pictures' bytes and that the sync state has not recorded as checked at this
+revision. A
 changed file is fetched, turned into Markdown and written with
 `knowledge.upsert` as `worker:knowledge-source-sync`, `imported`, tagged
 `source:<name>`. A native document is exported as Markdown, a presentation
@@ -49,17 +52,20 @@ source holds is never written or retired.
 The stamp moves only when every listed file was handled, so a cut turn is
 listed again and its written files are skipped by revision.
 
-After the sync, the extraction leg mines into decision rows in the same namespace
-(`decision_extract.extract_document`, as `loom decisions extract` does) each of a
-source's documents whose stored revision is not the one last mined for it. The
-mined revision is kept per document in the source's sync state and written only
-after that document's extraction settled, so a document a turn wrote is mined on
-a later pass whatever stopped this one. The leg holds the source's lease and
+After the sync, the extraction leg mines into decision rows in the same
+namespace (`decision_extract.extract_document`, as `loom decisions extract`
+does) each of a source's documents whose stored revision is not the one last
+mined for it. The mined revision is kept per document in the source's sync state
+and written only after that document's extraction settled, so a document a turn
+wrote is mined on a later pass whatever stopped this one. A native document is
+written with a hash of its title and text, which its mined key carries, so a
+copy written again at its mined revision with other text (a reconversion, or its
+redo after a cut write) is mined again. The leg holds the source's lease and
 bills its model calls to the namespace. A namespace whose own spend on this leg
-reached `knowledge_source_sync_cap_share` of its daily cost cap (read before each
-document; a cap that cannot be read counts as reached), an org whose model calls
-are switched off and a namespace whose calls are held are left for a later pass.
-A document whose extraction fails waits like a file: it is tried again for
+reached `knowledge_source_sync_cap_share` of its daily cost cap (read before
+each document; a cap that cannot be read counts as reached), an org whose model
+calls are switched off and a namespace whose calls are held are left for a later
+pass. A document whose extraction fails waits like a file: it is tried again for
 `_WAIT_PASSES` passes on the same revision, then left until it is written again.
 Its model reads stop shortly before the pass's deadline (a try, nothing written;
 one that had a whole pass's read time is given up on at once). Each decision's
@@ -82,7 +88,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from server.clients import gdrive
 from server.code.app.index.pass_budget import PassBudget, rotate_to
@@ -91,6 +97,7 @@ from server.code.domain.index.repos import repo_for_namespace
 from server.core import leases
 from server.core.ch import sequential_reads
 from server.core.errors import OverloadedError, ValidationError
+from server.core.hashing import sha256_text
 from server.core.secrets_at_rest import unseal
 from server.knowledge.api.models_knowledge import KnowledgeDeleteInput, KnowledgeUpsertInput
 from server.knowledge.app import extractors, writes
@@ -128,6 +135,8 @@ _LEASE_TTL_S = 120.0  # not a setting: the entry-lease shape
 # the default interval, past a restart or a redeploy of the service it needs, and
 # short enough that one file cannot hold a source's stamp for good.
 _WAIT_PASSES = 3  # not a setting: a bound on how long one file may stall a stamp
+# The sync-state key of the files the picture check flagged but found unchanged.
+_PICTURES_CHECKED = "pictures_checked"
 # How far behind the listing's start the stamp stays: a file the store stamps just
 # before the listing but indexes just after it is listed again next turn.
 _STAMP_SKEW_S = 60.0  # not a setting: a margin on the store's own indexing delay
@@ -410,6 +419,10 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     turn = TurnResult()
     turn.full = bool(detail.get("full")) or not valid_stamp(stamp) or full_due(detail)
     start_waits(turn, detail)
+    # Files whose stored copy the picture check flags but whose conversion changes
+    # nothing (a definition in a code sample): file id -> the revision checked.
+    checked = detail.get(_PICTURES_CHECKED)
+    checked = checked if isinstance(checked, dict) else {}
     credential = unseal("knowledge_sources.credential", src.credential_enc)
     if not credential:
         # Fail closed: a credential that no longer opens is never read as "no auth".
@@ -446,12 +459,20 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     turn.newest = capped(
         max((str(f.get("modifiedTime") or "") for f in files), default=""), listed_at
     )
-    if trusted:
-        listed_ids = {str(f["id"]) for f in files}
-        turn.waits = {k: v for k, v in turn.waits.items() if k in listed_ids}
-    stored = {
-        d["file_id"]: d for d in await store.source_revisions(src.org, src.namespace, src.name)
+    # A record of a file listed at another revision, or (on a trusted listing) not
+    # listed at all, no longer says anything.
+    listed_at_revision = {str(f["id"]): str(f.get("modifiedTime") or "") for f in files}
+    turn.kind_state[_PICTURES_CHECKED] = {
+        k: v
+        for k, v in checked.items()
+        if (rev := listed_at_revision.get(k)) == v or (rev is None and not trusted)
     }
+    if trusted:
+        listed_ids = set(listed_at_revision)
+        turn.waits = {k: v for k, v in turn.waits.items() if k in listed_ids}
+    # Only a full listing lists an unchanged file, so only it asks for the pictures.
+    revisions = await store.source_revisions(src.org, src.namespace, src.name, pictures=turn.full)
+    stored = {d["file_id"]: d for d in revisions}
     for f in files:
         if not await _sync_file(src, token, f, stored.get(str(f["id"])), run, turn):
             break
@@ -484,7 +505,7 @@ def start_waits(turn: TurnResult, detail: dict[str, Any]) -> None:
     elif turn.full and detail.get("retry_granted_for") != listed:
         turn.retry_granted_for = listed
         for file_id, entry in waits.items():
-            if isinstance(entry, list) and len(entry) == 3 and int(entry[1]) >= _WAIT_PASSES:
+            if _spent(entry):
                 waits[file_id] = [entry[0], _WAIT_PASSES - 1, entry[2]]
     turn.waits = waits
     turn.waits_read = True
@@ -602,6 +623,11 @@ def source_uri_of(f: dict[str, Any]) -> str:
     return link.split("#", 1)[0].split("?", 1)[0]
 
 
+def _spent(entry: Any) -> TypeGuard[list[Any]]:
+    """Whether a wait entry ([revision, passes, reason]) waited all its passes."""
+    return isinstance(entry, list) and len(entry) == 3 and int(entry[1]) >= _WAIT_PASSES
+
+
 def _waiting(turn: TurnResult, f: dict[str, Any]) -> list[Any] | None:
     """The file's wait entry, dropped when its revision changed since."""
     file_id = str(f["id"])
@@ -624,6 +650,8 @@ async def sync_item(
     turn: TurnResult,
     fetch_and_write: Callable[[], Awaitable[str]],
     before_fetch: Callable[[], Awaitable[bool]] | None = None,
+    *,
+    refetch: bool = False,
 ) -> bool:
     """Handle one listed item (`f`: its `id` and its revision as `modifiedTime`) at
     address `uri`; False when the turn must stop listing. In order: an item with no
@@ -631,18 +659,25 @@ async def sync_item(
     address is skipped; one given up on this revision is unconverted; one at an
     address another writer holds is skipped; `before_fetch` (a kind's own checks)
     may settle it; then it costs one of the pass bound and `fetch_and_write` runs,
-    answering `written`, `waiting`, `given_up` or `stop`. A written item that moved
-    to a new address has its old one retired."""
+    answering `written`, `unchanged` (fetched again and nothing to write), `waiting`,
+    `given_up` or `stop`. A written item that moved to a new address has its old one
+    retired. With `refetch`, a stored copy at this revision is fetched again all the
+    same (a kind's own conversion changed)."""
     file_id = str(f["id"])
     revision = str(f.get("modifiedTime") or "")
     if not uri.startswith("https://"):
         turn.unconverted_for("no_address")
         return True
-    if prior and prior["source_revision"] == revision and prior["source_uri"] == uri:
+    if (
+        not refetch
+        and prior
+        and prior["source_revision"] == revision
+        and prior["source_uri"] == uri
+    ):
         turn.waits.pop(file_id, None)
         return True  # unchanged: no fetch, no embedding
     entry = _waiting(turn, f)
-    if entry is not None and int(entry[1]) >= _WAIT_PASSES:
+    if _spent(entry):
         # It waited its passes on this revision: unconverted until it changes.
         turn.unconverted_for(str(entry[2]))
         return True
@@ -676,11 +711,42 @@ async def _sync_file(
     run: Pass,
     turn: TurnResult,
 ) -> bool:
-    """Handle one listed file; False when the turn must stop listing."""
+    """Handle one listed file; False when the turn must stop listing. A native
+    document whose stored text still holds its pictures' bytes (an earlier
+    conversion's) is fetched and converted again at its same revision when a full
+    listing lists it."""
     uri = source_uri_of(f)
+    revision = str(f.get("modifiedTime") or "")
+    # A copy stored with its pictures' bytes, at this revision and address, is converted
+    # again; a moved file takes the ordinary write-and-retire path.
+    reconvert = bool(
+        prior is not None
+        and f.get("mimeType") == GDRIVE_MIME_TYPES["docs"]
+        and prior.get("inline_pictures")
+        and prior["source_revision"] == revision
+        and prior["source_uri"] == uri
+        # Checked at this revision already: its conversion changed nothing.
+        and turn.kind_state[_PICTURES_CHECKED].get(str(f["id"])) != revision
+    )
+    if reconvert and _given_up(turn, f):
+        # Its older copy is still served: not counted unconverted; the waits say when it
+        # is tried again.
+        return True
+    # The stored content's hash, from the full listing's read.
+    stored_content_sha256 = prior["stored_content_sha256"] if reconvert and prior else ""
     before_fetch = functools.partial(_fetchable, f, run, turn)
-    fetch_and_write = functools.partial(_fetch_and_write, src, token, f, uri, turn)
-    return await sync_item(src, f, uri, prior, run, turn, fetch_and_write, before_fetch)
+    fetch_and_write = functools.partial(
+        _fetch_and_write, src, token, f, uri, turn, stored_content_sha256=stored_content_sha256
+    )
+    return await sync_item(
+        src, f, uri, prior, run, turn, fetch_and_write, before_fetch, refetch=reconvert
+    )
+
+
+def _given_up(turn: TurnResult, f: dict[str, Any]) -> bool:
+    """Whether the file waited its passes on its listed revision and was given up on."""
+    entry = turn.waits.get(str(f["id"]))
+    return _spent(entry) and entry[0] == str(f.get("modifiedTime") or "")
 
 
 async def _fetchable(f: dict[str, Any], run: Pass, turn: TurnResult) -> bool:
@@ -703,13 +769,19 @@ async def _fetchable(f: dict[str, Any], run: Pass, turn: TurnResult) -> bool:
 
 
 async def _fetch_and_write(
-    src: KnowledgeSource, token: str, f: dict[str, Any], uri: str, turn: TurnResult
+    src: KnowledgeSource,
+    token: str,
+    f: dict[str, Any],
+    uri: str,
+    turn: TurnResult,
+    *,
+    stored_content_sha256: str,
 ) -> str:
-    """Fetch, convert and write one file: `written`, `waiting` (a failure that may
-    pass holds the turn for `_WAIT_PASSES` passes), `given_up` (a refusal gives the
-    file up at once; for both the wait entry is kept, and `start_waits` says when
-    it is tried again) or `stop` (the turn's own failure: a rate limit, a refused
-    credential)."""
+    """Fetch, convert and write one file: `written`, `unchanged` (a reconversion whose
+    text equals the stored copy), `waiting` (a failure that may pass holds the turn
+    for `_WAIT_PASSES` passes), `given_up` (a refusal gives the file up at once; for
+    both the wait entry is kept, and `start_waits` says when it is tried again) or
+    `stop` (the turn's own failure: a rate limit, a refused credential)."""
     try:
         fetched = await _fetch(token, f)
     except gdrive.RateLimited:
@@ -738,6 +810,19 @@ async def _fetch_and_write(
         log.warning("knowledge_source_sync: reading %s failed: %s", f["id"], e)
         return wait(f, turn, f"fetch_failed:{type(e).__name__}", type(e).__name__)
     await require_current(src)
+    extra: dict[str, Any] = {"extraction_coverage": fetched.coverage} if fetched.coverage else {}
+    # A reconversion of a stored copy that held pictures' bytes.
+    if stored_content_sha256 and sha256_text(fetched.content) == stored_content_sha256:
+        # The stored text only shows a definition (in a code sample, say): nothing to
+        # write, mine or embed again, and not fetched again at this revision.
+        turn.kind_state[_PICTURES_CHECKED][str(f["id"])] = str(f.get("modifiedTime") or "")
+        return "unchanged"
+    if f.get("mimeType") == GDRIVE_MIME_TYPES["docs"]:
+        # The mining step keys a document that carries a text hash by its revision and
+        # that hash, so text written again at the same revision with other content (a
+        # reconversion, or its redo after a write cut before its chunks) is mined again;
+        # a write that fails leaves the old copy and its old key.
+        extra["text_sha256"] = sha256_text(f"{f.get('name') or ''}\n{fetched.content}")
     try:
         await write_document(
             src,
@@ -746,7 +831,7 @@ async def _fetch_and_write(
             fetched.content,
             ingested_format=fetched.ingested_format,
             original=fetched.original,
-            extra_metadata={"extraction_coverage": fetched.coverage} if fetched.coverage else None,
+            extra_metadata=extra or None,
         )
     except ValidationError as e:
         # The write refuses this file whatever the pass: it will not go through.
@@ -835,7 +920,7 @@ async def _fetch(token: str, f: dict[str, Any]) -> _Fetched:
     max_bytes = int(settings.knowledge_source_sync_max_file_bytes)
     if mime == GDRIVE_MIME_TYPES["docs"]:
         text = await gdrive.export_markdown(token, file_id, max_bytes=max_bytes)
-        return _Fetched(text, "markdown")
+        return _Fetched(convert.exported_markdown(text), "markdown")
     if mime == GDRIVE_MIME_TYPES["slides"]:
         deck = await gdrive.presentation(token, file_id, max_bytes=max_bytes)
         return _Fetched(convert.presentation_markdown(deck), "slides")
@@ -1048,9 +1133,10 @@ def _extract_waits(detail: dict[str, Any]) -> dict[str, list[Any]]:
 
 def _mined_revision(doc: dict[str, str]) -> str:
     """The revision a document is mined at: its source revision, with the hash of its
-    text for a kind that records one (`text_sha256`), since such a copy can be written
-    again at the same revision, with other text or the same. Every other kind keeps no
-    `text_sha256`, so its key is the source revision alone."""
+    text when its metadata records one (`text_sha256`: a page store's page and a
+    folder's native document), since such a copy can be written again at the same
+    revision with other text. Every other document's key is the source revision
+    alone."""
     text = doc.get("text_sha256") or ""
     return f"{doc['source_revision']}@{text}" if text else doc["source_revision"]
 

@@ -236,19 +236,29 @@ async def source_documents(
     return [dict(r) for r in rows]
 
 
+# A reference definition whose destination is a picture's bytes, as a native
+# document's raw export holds it (`convert.exported_markdown` removes them).
+_INLINE_PICTURE = r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*<?data:"
+
+
 async def source_revisions(
     org: str,
     namespace: str,
     name: str,
     *,
     searchable_only: bool = True,
+    pictures: bool = False,
     ch: _CHClient | None = None,
 ) -> list[dict[str, str]]:
     """Each live document of the source: its address, the store's file id it came
     from, the revision stamp of the ingested copy, and for a kind that keeps them
     (else "") when the copy was read (`read_at`) and the exact hash of what was
-    written (`text_sha256`). One statement, a tag filter over the namespace's key
-    prefix like `source_documents`.
+    written (`text_sha256`). With `pictures`, also whether the stored text still
+    holds a picture's bytes as a reference definition (`inline_pictures`, "1" or
+    ""), as a native document stored by an earlier conversion does, and the SHA-256
+    of the stored text (`stored_content_sha256`): that reads every document's text,
+    so only a full listing asks; the hash is computed only for a flagged copy. One
+    statement, a tag filter over the namespace's key prefix like `source_documents`.
 
     With `searchable_only`, only a version whose chunks are live counts: a write cut
     between its document row and its chunks leaves a version nobody can search, and
@@ -262,16 +272,29 @@ async def source_revisions(
         if searchable_only
         else ""
     )
+    checks = (
+        "match(content, {pic:String}) AS inline_pictures, "
+        "if(inline_pictures, lower(hex(SHA256(content))), '') AS stored_content_sha256"
+        if pictures
+        else "0 AS inline_pictures, '' AS stored_content_sha256"
+    )
     rows = await (ch or _default_client()).query_all(
         "SELECT source_uri, JSONExtractString(metadata, 'ingested_from') AS file_id, "
         "JSONExtractString(metadata, 'source_revision') AS source_revision, "
         "JSONExtractString(metadata, 'read_at') AS read_at, "
-        "JSONExtractString(metadata, 'text_sha256') AS text_sha256 "
+        "JSONExtractString(metadata, 'text_sha256') AS text_sha256, "
+        f"{checks} "
         "FROM loom.documents FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
         "AND actor = {actor:String} AND superseded_at IS NULL "
         f"{chunks}LIMIT {REVISIONS_LIMIT}",
-        params={"org": org, "ns": namespace, "tag": source_tag(name), "actor": SYNC_WORKER_ACTOR},
+        params={
+            "org": org,
+            "ns": namespace,
+            "tag": source_tag(name),
+            "actor": SYNC_WORKER_ACTOR,
+            **({"pic": _INLINE_PICTURE} if pictures else {}),
+        },
     )
     return [
         {
@@ -280,6 +303,8 @@ async def source_revisions(
             "source_revision": str(r.get("source_revision") or ""),
             "read_at": str(r.get("read_at") or ""),
             "text_sha256": str(r.get("text_sha256") or ""),
+            "inline_pictures": "1" if r.get("inline_pictures") else "",
+            "stored_content_sha256": str(r.get("stored_content_sha256") or ""),
         }
         for r in rows
     ]
