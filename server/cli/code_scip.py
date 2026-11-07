@@ -250,7 +250,8 @@ async def _entry_locked(args: argparse.Namespace) -> int:
                 command, env={HOLDER_ENV: current_holder()}, tail=tail, stopped=stopped
             )
             if tier:
-                await _record_tier(org, ns, tier, rc, bytes(tail or b""), stopped=stopped.is_set())
+                assert tail is not None  # kept whenever a tier is recorded
+                await _record_tier(org, ns, tier, rc, bytes(tail), stopped=stopped.is_set())
             return rc
     except EntryLockHeld:
         print(f"entry-lock {org}/{ns}: held by another pass")

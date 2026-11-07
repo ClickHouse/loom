@@ -293,7 +293,15 @@ def test_registry_gives_the_go_worker_its_own_deadline(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("error", ["TierDegraded: svc: go mod download failed: x", "fatal: auth"])
+@pytest.mark.parametrize(
+    "error",
+    [
+        "TierDegraded: svc: go mod download failed: x",
+        # many modules: the stored error keeps only its end
+        "TierDegraded: " + "; ".join(f"m{i}: go mod download failed: 404" for i in range(40)),
+        "fatal: auth",
+    ],
+)
 async def test_a_pass_that_builds_nothing_keeps_a_module_failure_and_clears_any_other(
     error: str,
 ) -> None:
@@ -319,4 +327,4 @@ async def test_a_pass_that_builds_nothing_keeps_a_module_failure_and_clears_any_
     with p1, p2:
         await w.run_pass()
     still = tier_health.parse("go", state["tier_health:go"]).failing
-    assert still is error.startswith("TierDegraded:")
+    assert still is ("go mod download failed" in error)

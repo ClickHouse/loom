@@ -201,13 +201,13 @@ async def _has_commit(checkout: Path, sha: str) -> bool:
 
 
 async def _modules_failing(repo: CodeRepo, cfg: RepoConfig) -> bool:
-    """The tier's record holds a module that would not build (`TierDegraded`): a pass
-    that builds nothing leaves it as it is."""
+    """The tier's record holds a module that would not build (kind `module`, classified
+    from the whole error): a pass that builds nothing leaves it as it is."""
     from server.code.domain.index import tier_health
 
     raw = await repo.get_state(cfg.org, cfg.namespace, tier_health.state_key(PRODUCER))
     record = tier_health.parse(PRODUCER, raw or "")
-    return record is not None and record.failing and record.error.startswith("TierDegraded:")
+    return record is not None and record.failing and record.kind == "module"
 
 
 async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResult) -> bool:
