@@ -122,8 +122,8 @@ class MemoryCrossPromoteInput(BaseModel):
     )
     rationale: str = Field(
         default="",
-        description="Human-readable reason. Recorded on the audit row so "
-        "future operators can answer 'why did this lesson land here?'",
+        description="Human-readable reason. The audit row records its SHA-256 and "
+        "length, not the text: erasure does not reach the audit log.",
     )
 
 
@@ -177,7 +177,8 @@ class MemoryCopyToInput(BaseModel):
     )
     rationale: str = Field(
         default="",
-        description="Human-readable reason, recorded on the audit row.",
+        description="Human-readable reason. The audit row records its SHA-256 and "
+        "length, not the text: erasure does not reach the audit log.",
     )
 
 

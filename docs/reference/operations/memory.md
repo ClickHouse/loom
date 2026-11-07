@@ -439,7 +439,7 @@ Self-service copy of a memory into another namespace.
 | `to_namespace` | `str` | required | Target namespace. |
 | `target_key` | `str \| None` | `None` | Destination memory_key. |
 | `target_agent` | `str` | `'-'` | Attribution in the target; '-' reads as namespace-owned. |
-| `rationale` | `str` | `''` | Human-readable reason, recorded on the audit row. |
+| `rationale` | `str` | `''` | Human-readable reason. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

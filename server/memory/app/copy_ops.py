@@ -189,7 +189,7 @@ async def handle_memory_cross_promote(
             "to_memory_id": target_memory_id,
             "memory_key": target_key,
             "memory_type": src.memory_type,
-            "rationale": input.rationale,
+            "rationale": _audit.digest(input.rationale),
         },
         request_id=target_memory_id,
     )
@@ -302,7 +302,7 @@ async def handle_memory_copy_to(
             "to_memory_id": target_memory_id,
             "memory_key": target_key,
             "memory_type": src.memory_type,
-            "rationale": input.rationale,
+            "rationale": _audit.digest(input.rationale),
         },
         request_id=target_memory_id,
     )

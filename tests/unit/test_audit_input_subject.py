@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -248,12 +248,22 @@ def test_an_enum_and_an_optional_nested_model_are_shaped_by_their_type() -> None
         colour: Colour
         inner: Inner | None = None
         stages: list[Literal["a", "b"]] = []
+        until: datetime | None = None
+        on: date
 
-    body = Body(colour=Colour.RED, inner=Inner(item_key="k", note=SECRET), stages=["a"])
+    body = Body(
+        colour=Colour.RED,
+        inner=Inner(item_key="k", note=SECRET),
+        stages=["a"],
+        until=datetime(2026, 9, 12, 8, 30, tzinfo=UTC),
+        on=date(2026, 9, 12),
+    )
     assert input_subject(body) == {
         "colour": "red",
         "inner": {"item_key": "k", "note": _digest(SECRET)},
         "stages": ["a"],
+        "until": "2026-09-12T08:30:00Z",
+        "on": "2026-09-12",
     }
 
 

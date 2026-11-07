@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import Enum
 from types import UnionType
 from typing import Any, Literal, Union, get_args, get_origin
@@ -186,9 +186,9 @@ _NAMING_SUFFIXES = (
     "_by",
 )
 # Parts of a field name that mark a credential, which can end in a naming suffix
-# (`api_key`, `refresh_token_id`): such a field is hashed whatever its suffix. A bare
-# `key` is not one (memory ops address rows by `key`), nor `tokens` (`*_tokens` count
-# model tokens).
+# (`refresh_token_id`, `db_password_id`): such a field is hashed whatever its suffix. A
+# bare `key` is not one (memory ops address rows by `key`), nor `tokens` (`*_tokens`
+# count model tokens); `_CREDENTIAL_KEYS` names the `*_key` compounds that are.
 _CREDENTIAL_WORDS = frozenset(
     {
         "password",
@@ -232,13 +232,14 @@ def _is_vocabulary(annotation: Any) -> bool:
     return False
 
 
-def _is_number(annotation: Any) -> bool:
-    """True for an int, float or bool annotation, alone or inside Optional/Union. A
-    number in a field typed `Any` (a memory value) is content, and is hashed."""
-    if annotation in (int, float, bool):
+def _is_number_or_time(annotation: Any) -> bool:
+    """True for an int, float, bool, datetime or date annotation, alone or inside
+    Optional/Union (a lock's `until`, a `valid_at`). A number in a field typed `Any` (a
+    memory value) is content, and is hashed."""
+    if annotation in (int, float, bool, datetime, date):
         return True
     if get_origin(annotation) in (Union, UnionType):
-        return all(a is type(None) or _is_number(a) for a in get_args(annotation))
+        return all(a is type(None) or _is_number_or_time(a) for a in get_args(annotation))
     return False
 
 
@@ -252,7 +253,7 @@ def _nested_model(annotation: Any) -> type[BaseModel] | None:
     return None
 
 
-def _digest(value: Any) -> dict[str, Any]:
+def digest(value: Any) -> dict[str, Any]:
     """A value's `sha256_value` (so a memory value's matches its `content_sha256`) and
     length: a string's characters, else its compact JSON's."""
     size = (
@@ -277,22 +278,22 @@ def _shape(model: type[BaseModel], dumped: dict[str, Any]) -> dict[str, Any]:
             continue
         keep = (
             value in (None, "", [], {})
-            or (annotation is not None and _is_number(annotation))
+            or (annotation is not None and _is_number_or_time(annotation))
             or (
                 (name in _NAMING_FIELDS or name.endswith(_NAMING_SUFFIXES))
                 and not is_credential(name)
             )
             or (annotation is not None and _is_vocabulary(annotation))
         )
-        subject[name] = value if keep else _digest(value)
+        subject[name] = value if keep else digest(value)
     return subject
 
 
 def input_subject(input_obj: BaseModel) -> dict[str, Any]:
     """The audit subject of a validated op input that declares no `audit_subject`. Kept as
-    sent: empty values, numbers, booleans, Literal or Enum values, and naming fields not
-    named as a credential. A nested model is shaped by the same rule; every other value (a
-    free-form dict included) becomes its SHA-256 and length."""
+    sent: empty values, numbers, booleans, dates and times, Literal or Enum values, and
+    naming fields not named as a credential. A nested model is shaped by the same rule;
+    every other value (a free-form dict included) becomes its SHA-256 and length."""
     return _shape(type(input_obj), input_obj.model_dump(mode="json"))
 
 
