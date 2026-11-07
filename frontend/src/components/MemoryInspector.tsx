@@ -19,9 +19,18 @@ import type {
   LineageStep,
   MemoryProvenance,
   MemoryMoveResult,
-  MemoryEvidenceItem,
-  MemoryBacklinkEdge,
 } from "../api";
+import {
+  memoryBacklinks,
+  memoryEvidence,
+  recordMemoryOutcome,
+  redactMemoryVersion,
+  shareMemory,
+  unlockMemory,
+  unshareMemory,
+  type MemoryBacklinkEdge,
+  type MemoryEvidenceItem,
+} from "../api/memoryLifecycle";
 import { sharedTagVocabulary } from "../lib/sharedReads";
 import { readSession, writeSession } from "../lib/afterPaint";
 import {
@@ -40,13 +49,6 @@ import {
   moveMemory,
   restoreMemory,
   relatedFacts,
-  memoryEvidence,
-  memoryBacklinks,
-  unlockMemory,
-  shareMemory,
-  unshareMemory,
-  redactMemoryVersion,
-  recordMemoryOutcome,
 } from "../api";
 import { LockMemoryDialog, RedactVersionDialog, RejectMemoryDialog } from "../flows/MemoryReasonDialogs";
 import { navigationHref, useStore } from "../lib/state";
@@ -170,6 +172,8 @@ export function MemoryInspector({
   const [links, setLinks] = useState<{ in: MemoryBacklinkEdge[]; out: MemoryBacklinkEdge[] } | null>(null);
   // The Lock or Mark-as-wrong dialog, over the drawer.
   const [reasonDialog, setReasonDialog] = useState<"lock" | "reject" | null>(null);
+  const [redacting, setRedacting] = useState<{ entry: MemoryHistoryEntry; label: string } | null>(null);
+  const loadHistory = (key: string) => memoryHistory(identity, key, 8).then((r) => r.rows || []);
   const [conflictCount, setConflictCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   // A Restore in flight for the memory on screen; reset when the drawer moves on.
@@ -377,9 +381,9 @@ export function MemoryInspector({
         .finally(() => finish(id));
     };
     want("history", () =>
-      memoryHistory(identity, k, 8)
-        .then((r) => {
-          if (fresh()) setHistory(r.rows || []);
+      loadHistory(k)
+        .then((rows) => {
+          if (fresh()) setHistory(rows);
         })
         .catch(() => {
           if (fresh()) setHistory([]);
@@ -548,17 +552,16 @@ export function MemoryInspector({
 
   // A past version's value is scrubbed in place, with the reason (for a leaked secret or
   // personal data): `memory.redact`, through RedactVersionDialog.
-  const [redacting, setRedacting] = useState<{ entry: MemoryHistoryEntry; label: string } | null>(null);
   const redact = async (h: MemoryHistoryEntry, label: string, reason: string) => {
-    if (!h.memory_id || !h.version_text) return;
+    if (!h.memory_id || !h.version_text) throw new Error(`${label} has no exact version to redact.`);
     const r = await redactMemoryVersion(identity.org, h.memory_id, h.version_text, reason);
     if (r.refused_head) throw new Error(`${label} is a live version; edit or delete the memory instead.`);
     if (!r.redacted) throw new Error(`${label} is no longer recorded.`);
     toast(`Redacted ${label}`, "ok");
     const mine = inspection.current;
-    memoryHistory(identity, memoryKey, 8)
-      .then((r) => {
-        if (inspection.current === mine) setHistory(r.rows || []);
+    loadHistory(memoryKey)
+      .then((rows) => {
+        if (inspection.current === mine) setHistory(rows);
       })
       .catch(() => {});
   };
@@ -912,6 +915,7 @@ export function MemoryInspector({
                   <RenameForm
                     identity={identity}
                     fromKey={memoryKey}
+                    mustRedirect={deleteLocked}
                     onCancel={() => setRenaming(false)}
                     onRenamed={onRenamed}
                   />
@@ -1413,7 +1417,7 @@ export function MemoryInspector({
                       <MenuLabel icon="user">Stop sharing</MenuLabel>
                     </Dropdown.Item>
                   )}
-                  {canMove && !editing && (
+                  {canMove && !editing && !valueLocked && (
                     <Dropdown.Item
                       onSelect={() => {
                         menuHandsOff.current = true;
@@ -2007,11 +2011,14 @@ function RedirectBadge({ canonicalKey, onFollow }: { canonicalKey: string; onFol
 function RenameForm({
   identity,
   fromKey,
+  mustRedirect,
   onCancel,
   onRenamed,
 }: {
   identity: Identity;
   fromKey: string;
+  /** A locked row keeps its old key: a rename without the redirect deletes it. */
+  mustRedirect: boolean;
   onCancel: () => void;
   onRenamed: (r: MemoryMoveResult) => void;
 }) {
@@ -2063,6 +2070,7 @@ function RenameForm({
       <Checkbox
         label="Keep old key readable (redirect)"
         checked={keepRedirect}
+        disabled={mustRedirect}
         onCheckedChange={(c) => {
           setKeepRedirect(c === true);
           setPreview(null);

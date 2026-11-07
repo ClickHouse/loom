@@ -42,36 +42,39 @@ vi.mock("../api", async (importOriginal) => {
     getProvenance: vi.fn(async () => ({ found: false })),
     conflictKeys: vi.fn(async (): Promise<string[]> => []),
     listMine: vi.fn(async () => []),
-    lockMemory: vi.fn(async () => ({ locked: true })),
-    unlockMemory: vi.fn(async () => ({ unlocked: true, reason: "" })),
-    rejectMemory: vi.fn(async () => ({ rejected: true })),
-    shareMemory: vi.fn(async () => ({ shared_memory_key: "coffee_pref" })),
-    unshareMemory: vi.fn(async () => ({ demoted: true })),
-    redactMemoryVersion: vi.fn(async () => ({ redacted: true, refused_head: false })),
-    recordMemoryOutcome: vi.fn(async () => ({ recorded: true, quarantined: false })),
-    memoryEvidence: vi.fn(async () => ({
-      found: true,
-      truncated: false,
-      items: [
-        {
-          evidence_id: "e1",
-          scope: "cited",
-          role: "user",
-          observed_at: null,
-          content: "I take my coffee with oat milk",
-          span: "oat milk",
-        },
-      ],
-    })),
-    memoryBacklinks: vi.fn(async () => ({
-      found: true,
-      digests: [],
-      links_in: [{ memory_key: "morning_routine", relation: "mentions", created_at: "" }],
-      links_out: [],
-    })),
   };
 });
+vi.mock("../api/memoryLifecycle", () => ({
+  lockMemory: vi.fn(async () => ({ locked: true })),
+  unlockMemory: vi.fn(async () => ({ unlocked: true, reason: "" })),
+  rejectMemory: vi.fn(async () => ({ rejected: true })),
+  shareMemory: vi.fn(async () => ({ shared_memory_key: "coffee_pref" })),
+  unshareMemory: vi.fn(async () => ({ demoted: true })),
+  redactMemoryVersion: vi.fn(async () => ({ redacted: true, refused_head: false })),
+  recordMemoryOutcome: vi.fn(async () => ({ recorded: true, quarantined: false })),
+  memoryEvidence: vi.fn(async () => ({
+    found: true,
+    truncated: false,
+    items: [
+      {
+        evidence_id: "e1",
+        scope: "cited",
+        role: "user",
+        observed_at: null,
+        content: "I take my coffee with oat milk",
+        span: "oat milk",
+      },
+    ],
+  })),
+  memoryBacklinks: vi.fn(async () => ({
+    found: true,
+    digests: [],
+    links_in: [{ memory_key: "morning_routine", relation: "mentions", created_at: "" }],
+    links_out: [],
+  })),
+}));
 import * as api from "../api";
+import * as lc from "../api/memoryLifecycle";
 import { confirmAction } from "./ConfirmDialog";
 import { toast } from "./Toast";
 
@@ -177,6 +180,10 @@ describe("MemoryInspector lifecycle actions", () => {
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Change" })).toBeNull();
     expect(screen.queryByLabelText("Add a tag")).toBeNull();
+    const items = within(await menu())
+      .getAllByRole("menuitem")
+      .map((i) => i.textContent);
+    expect(items).not.toContain("Rename");
     cleanup();
 
     await open("writer", { ...LIVE, lock_mode: "no_delete" });
@@ -202,21 +209,21 @@ describe("MemoryInspector lifecycle actions", () => {
   });
 
   it("says an outcome was not recorded", async () => {
-    vi.mocked(api.recordMemoryOutcome).mockResolvedValueOnce({ recorded: false, quarantined: false });
+    vi.mocked(lc.recordMemoryOutcome).mockResolvedValueOnce({ recorded: false, quarantined: false });
     await open("writer");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "This helped" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Couldn't record that", "error"));
   });
 
   it("says a lock is gone when the unlock finds none", async () => {
-    vi.mocked(api.unlockMemory).mockResolvedValueOnce({ unlocked: false, reason: "not_locked" });
+    vi.mocked(lc.unlockMemory).mockResolvedValueOnce({ unlocked: false, reason: "not_locked" });
     await open("admin", { ...LIVE, lock_mode: "read_only" });
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Unlock" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("This memory carried no lock", "info"));
   });
 
   it("says why a share was refused", async () => {
-    vi.mocked(api.shareMemory).mockRejectedValueOnce(new Error("a shared memory already holds this key"));
+    vi.mocked(lc.shareMemory).mockRejectedValueOnce(new Error("a shared memory already holds this key"));
     await open("admin");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Share failed: /), "error"));
@@ -241,12 +248,12 @@ describe("MemoryInspector lifecycle actions", () => {
     await userEvent.click(within(dialog).getByRole("radio", { name: "No delete" }));
     await userEvent.type(within(dialog).getByLabelText("Reason"), "legal hold");
     await userEvent.click(within(dialog).getByRole("button", { name: "Lock" }));
-    await waitFor(() => expect(api.lockMemory).toHaveBeenCalledWith(row, "coffee_pref", "no_delete", "legal hold"));
+    await waitFor(() => expect(lc.lockMemory).toHaveBeenCalledWith(row, "coffee_pref", "no_delete", "legal hold"));
   });
 
   it("holds the reason dialog open while its call runs", async () => {
     let finish: (v: { locked: boolean }) => void = () => {};
-    vi.mocked(api.lockMemory).mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    vi.mocked(lc.lockMemory).mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
     await open("writer");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Lock…" }));
     const dialog = await screen.findByRole("dialog", { name: "Lock memory" });
@@ -274,7 +281,7 @@ describe("MemoryInspector lifecycle actions", () => {
 
     await open("admin", locked);
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Unlock" }));
-    await waitFor(() => expect(api.unlockMemory).toHaveBeenCalledWith(row, "coffee_pref"));
+    await waitFor(() => expect(lc.unlockMemory).toHaveBeenCalledWith(row, "coffee_pref"));
   });
 
   it("marks a memory as wrong with the reason", async () => {
@@ -283,15 +290,15 @@ describe("MemoryInspector lifecycle actions", () => {
     const dialog = await screen.findByRole("dialog", { name: "Mark as wrong" });
     await userEvent.type(within(dialog).getByLabelText("Reason"), "she switched to soy");
     await userEvent.click(within(dialog).getByRole("button", { name: "Mark as wrong" }));
-    await waitFor(() => expect(api.rejectMemory).toHaveBeenCalledWith(row, "coffee_pref", "she switched to soy"));
+    await waitFor(() => expect(lc.rejectMemory).toHaveBeenCalledWith(row, "coffee_pref", "she switched to soy"));
   });
 
   it("shares with every agent and stops sharing, for an admin, each after a confirmation", async () => {
     await open("admin");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
-    await waitFor(() => expect(api.shareMemory).toHaveBeenCalledWith(row, "coffee_pref"));
+    await waitFor(() => expect(lc.shareMemory).toHaveBeenCalledWith(row, "coffee_pref"));
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Stop sharing" }));
-    await waitFor(() => expect(api.unshareMemory).toHaveBeenCalledWith(identity, "coffee_pref"));
+    await waitFor(() => expect(lc.unshareMemory).toHaveBeenCalledWith(identity, "coffee_pref"));
     expect(confirmAction).toHaveBeenCalledTimes(2);
     expect(vi.mocked(confirmAction).mock.calls[1][0]).toMatchObject({ title: "Stop sharing coffee_pref in team?" });
   });
@@ -301,7 +308,7 @@ describe("MemoryInspector lifecycle actions", () => {
     await open("admin");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
     await waitFor(() => expect(confirmAction).toHaveBeenCalled());
-    expect(api.shareMemory).not.toHaveBeenCalled();
+    expect(lc.shareMemory).not.toHaveBeenCalled();
   });
 
   it("reads the evidence of the memory it moved to, under that memory's own identity", async () => {
@@ -313,11 +320,11 @@ describe("MemoryInspector lifecycle actions", () => {
     );
     await screen.findByText("oat milk, no sugar");
     await userEvent.click(screen.getByRole("button", { name: /Evidence/ }));
-    await waitFor(() => expect(api.memoryEvidence).toHaveBeenCalledWith(row, "coffee_pref"));
+    await waitFor(() => expect(lc.memoryEvidence).toHaveBeenCalledWith(row, "coffee_pref"));
     rerender(<MemoryInspector identity={identity} memoryKey="tea_pref" onClose={() => {}} onChanged={() => {}} />);
     await screen.findByText("black");
-    await waitFor(() => expect(api.memoryEvidence).toHaveBeenCalledTimes(2));
-    expect(api.memoryEvidence).toHaveBeenLastCalledWith(
+    await waitFor(() => expect(lc.memoryEvidence).toHaveBeenCalledTimes(2));
+    expect(lc.memoryEvidence).toHaveBeenLastCalledWith(
       { ...identity, agent: "cursor", user_id: "bob", session_id: "s9" },
       "tea_pref",
     );
@@ -325,11 +332,11 @@ describe("MemoryInspector lifecycle actions", () => {
 
   it("reads the evidence and the links only when their sections open", async () => {
     await open("viewer");
-    expect(api.memoryEvidence).not.toHaveBeenCalled();
+    expect(lc.memoryEvidence).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: /Evidence/ }));
     expect(await screen.findByText("oat milk")).toBeInTheDocument();
     // Under the row's own identity: an extracted row carries its agent, user and session.
-    expect(api.memoryEvidence).toHaveBeenCalledWith(row, "coffee_pref");
+    expect(lc.memoryEvidence).toHaveBeenCalledWith(row, "coffee_pref");
     await userEvent.click(screen.getByRole("button", { name: /Links/ }));
     expect(await screen.findByRole("button", { name: "morning_routine" })).toBeInTheDocument();
     expect(screen.getByText("mentions from")).toBeInTheDocument();
@@ -357,13 +364,13 @@ describe("MemoryInspector lifecycle actions", () => {
     await userEvent.type(within(dialog).getByLabelText("Reason"), "card number");
     await userEvent.click(within(dialog).getByRole("button", { name: "Redact" }));
     await waitFor(() =>
-      expect(api.redactMemoryVersion).toHaveBeenCalledWith("dev", "m1", "1790000000000000001", "card number"),
+      expect(lc.redactMemoryVersion).toHaveBeenCalledWith("dev", "m1", "1790000000000000001", "card number"),
     );
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Redact v1" })).toBeNull());
   });
 
   it("keeps the redact dialog open with the reason when the version is live", async () => {
-    vi.mocked(api.redactMemoryVersion).mockResolvedValueOnce({ redacted: false, refused_head: true });
+    vi.mocked(lc.redactMemoryVersion).mockResolvedValueOnce({ redacted: false, refused_head: true });
     vi.mocked(api.memoryHistory).mockResolvedValue({
       rows: [
         {
@@ -402,11 +409,11 @@ describe("MemoryInspector lifecycle actions", () => {
     await open("writer");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "This misled" }));
     // By id: the op resolves a key in the `-` session only, and this row has its own.
-    await waitFor(() => expect(api.recordMemoryOutcome).toHaveBeenCalledWith(identity, "m-live", "negative"));
+    await waitFor(() => expect(lc.recordMemoryOutcome).toHaveBeenCalledWith(identity, "m-live", "negative"));
   });
 
   it("reads the memory again when a bad outcome rejects it", async () => {
-    vi.mocked(api.recordMemoryOutcome).mockResolvedValueOnce({ recorded: true, quarantined: true });
+    vi.mocked(lc.recordMemoryOutcome).mockResolvedValueOnce({ recorded: true, quarantined: true });
     await open("writer");
     const reads = vi.mocked(api.getMemory).mock.calls.length;
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "This misled" }));
