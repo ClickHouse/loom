@@ -28,6 +28,7 @@ from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.context import set_current_auth
 from server.auth.gateway import effective_auth, personal_namespace
 from server.core import fail_open, tenant_slots
+from server.core.document_formats import format_of
 from server.core.errors import RateLimitedError
 from server.identity.app.restricted_access import note_restricted_access
 from server.operations.base import Role
@@ -106,8 +107,6 @@ async def knowledge_upload(
     name = filename.strip().replace("\\", "/").rsplit("/", 1)[-1]
     if not name:
         raise _refuse(400, "VALIDATION_FAILED", "filename is required")
-    from server.core.document_formats import format_of
-
     # Named from the file name and media type, never by reading the bytes: the
     # server parses no original. One whose content is another format is refused
     # by the extractor at ingest (`format_mismatch`).

@@ -287,16 +287,15 @@ async def _loom_primer_text(
             from server.memory.api.models_profile import ProfileRenderInput
             from server.memory.app.profile import handle_profile_render
 
-            # outside the op gate: read the classification (a single-user default
-            # had no gate check) so the row below is decided on it
-            await is_restricted(defaults["org"], defaults["namespace"])
-            await note_restricted_access(
-                auth,
-                op="mcp.primer",
-                org=defaults["org"],
-                namespace=defaults["namespace"],
-                transport="mcp",
-            )
+            # outside the op gate, which a single-user default never passed
+            if await is_restricted(defaults["org"], defaults["namespace"]):
+                await note_restricted_access(
+                    auth,
+                    op="mcp.primer",
+                    org=defaults["org"],
+                    namespace=defaults["namespace"],
+                    transport="mcp",
+                )
             rendered_out = await handle_profile_render(
                 ProfileRenderInput(
                     org=defaults["org"],
