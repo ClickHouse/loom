@@ -53,6 +53,13 @@ log = logging.getLogger(__name__)
 GRANTED_BY_PREFIX = "repo-maintainers:"
 # The namespaces whose sync waited for the registry read, logged once each per process.
 _UNSYNCED: set[tuple[str, str]] = set()
+
+
+def reset_for_tests() -> None:
+    """Forget which namespaces logged a skipped sync."""
+    _UNSYNCED.clear()
+
+
 _ACTIVE = ("", "active")
 
 
@@ -95,7 +102,7 @@ def repo_change(org: str, namespace: str, subject: str) -> AbstractAsyncContextM
 
 @asynccontextmanager
 async def repo_admin_claims(org: str, repo: str | None, subject: str) -> AsyncIterator[None]:
-    """Hold what a change that takes a maintainer off every branch of `repo`
+    """Hold what a change that takes a maintainer off the repository's other branches
     needs: `subject`'s maintainer grants there, then the repository's admins,
     from its own last-admin count to its last write, so two such changes in
     one repository run one after the other. Taken before any namespace's
@@ -385,8 +392,7 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     admins of the branches that reach it (`_reaches`). Returns the number of
     grant rows written; none while the self-service registry has never been
     read, when the branches added from the page are unknown: a grant made then
-    is copied by the registrar's next pass once the registry is read, or by
-    the next admin change on the repository."""
+    is copied by the next admin change on the repository."""
     from server.code.app.index.repo_registry import registry_read
 
     repo = repo_of(org, namespace)

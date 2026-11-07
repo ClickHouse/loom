@@ -94,7 +94,7 @@ def _admin(
 def _repos(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(repos, "configured_repos", lambda: REPOS)
     monkeypatch.setattr(repo_registry, "registry_read", lambda: True)
-    monkeypatch.setattr(maintainers, "_UNSYNCED", set())
+    maintainers.reset_for_tests()
 
     async def _refresh(**_k: Any) -> list[Any]:
         return []
@@ -922,6 +922,30 @@ async def test_a_sync_takes_the_repository_claim_before_the_branch_s(
         "-code-x-26-5",
         "-repo:Org/x",
     ]
+
+
+async def test_a_revoke_answers_busy_and_writes_nothing_while_the_registry_cannot_be_read(
+    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _any(*_a: Any, **_k: Any) -> GrantState:
+        return GrantState.from_row(
+            {"subject": "alice", "role": "admin", "status": "active", "granted_by": "ops"}
+        )
+
+    async def _two(*_a: Any, **_k: Any) -> int:
+        return 2
+
+    async def _failed(_ch: Any = None) -> bool:
+        return False
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _any)
+    monkeypatch.setattr(grants_repo, "count_active_admins", _two)
+    monkeypatch.setattr(repo_registry, "read_registry", _failed)
+    with pytest.raises(GrantBusyError):
+        await grants_mod.handle_grants_revoke(
+            GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
+        )
+    assert _handler_env["revoke"] == [] and _handler_env["rows"] == [], "the grant stays live"
 
 
 async def test_a_revoke_holds_the_repository_claim_across_its_fan_out_and_write(
