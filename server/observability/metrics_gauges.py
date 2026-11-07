@@ -768,7 +768,7 @@ def _register_worker_gauges(meter: Any) -> None:
     meter.create_observable_gauge(
         name="loom.langfuse.breaker",
         callbacks=[_breaker],
-        description="Langfuse circuit breaker: 0=closed 1=half-open 2=open",
+        description="Langfuse score-POST breaker: 0=closed 1=half-open 2=open",
         unit="1",
     )
 
