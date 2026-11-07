@@ -4900,7 +4900,7 @@ export interface MemoryCopyToInput {
   target_key?: string | null;
   /** Attribution in the target; '-' reads as namespace-owned. */
   target_agent?: string;
-  /** Human-readable reason, recorded on the audit row. */
+  /** Human-readable reason; the audit row keeps only its SHA-256 and length. */
   rationale?: string;
 }
 
@@ -4922,7 +4922,7 @@ export interface MemoryCrossPromoteInput {
   target_key?: string | null;
   /** Agent identity to attribute the target row to. Defaults to '-' so the row reads as namespace-owned, not bound to any single agent in the target. */
   target_agent?: string;
-  /** Human-readable reason. Recorded on the audit row so future operators can answer 'why did this lesson land here?' */
+  /** Human-readable reason; the audit row keeps only its SHA-256 and length. */
   rationale?: string;
 }
 

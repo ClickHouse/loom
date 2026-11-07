@@ -11,11 +11,16 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import UTC, datetime
-from typing import Any
+from datetime import UTC, date, datetime
+from enum import Enum
+from types import UnionType
+from typing import Any, Literal, Union, get_args, get_origin
+
+from pydantic import BaseModel
 
 from server.core.ch import get_client
 from server.core.ch_writes import batched_insert_settings
+from server.core.hashing import sha256_value
 from server.observability.instance import stamp_row
 
 log = logging.getLogger(__name__)
@@ -145,6 +150,151 @@ async def emit_many(
         await get_client().insert("loom.audit_log", rows, settings=batched_insert_settings())
     except Exception as e:  # fail open: an audit write never fails the op it records
         log.exception("audit.emit_many failed for event_type=%s: %s", event_type, e)
+
+
+# Fields that name what a call acted on and who acted, kept as sent; `version` is here
+# because `memory.delete_version`'s is `int | str`, which the number rule misses.
+_NAMING_FIELDS = frozenset(
+    {
+        "org",
+        "namespace",
+        "agent",
+        "subject",
+        "actor",
+        "grantee",
+        "owner_email",
+        "requester",
+        "approver",
+        "decision_maker",
+        "key",
+        "keys",
+        "name",
+        "version",
+    }
+)
+_NAMING_SUFFIXES = (
+    "_id",
+    "_ids",
+    "_key",
+    "_keys",
+    "_uri",
+    "_uris",
+    "_namespace",
+    "_org",
+    "_agent",
+    "_name",
+    "_by",
+)
+# Parts of a field name that mark a credential, which can end in a naming suffix
+# (`refresh_token_id`, `db_password_id`): such a field is hashed whatever its suffix. A
+# bare `key` is not one (memory ops address rows by `key`), nor `tokens` (`*_tokens`
+# count model tokens); `_CREDENTIAL_KEYS` names the `*_key` compounds that are.
+_CREDENTIAL_WORDS = frozenset(
+    {
+        "password",
+        "passwords",
+        "passwd",
+        "secret",
+        "secrets",
+        "apikey",
+        "token",
+        "credential",
+        "credentials",
+        "authorization",
+        "bearer",
+        "cookie",
+    }
+)
+_CREDENTIAL_KEYS = ("api_key", "private_key", "signing_key", "encryption_key")
+
+
+def is_credential(name: str) -> bool:
+    """True for a field name that marks a credential. `*_ref` names the environment
+    variable that holds one, and `token_budget` a size in model tokens."""
+    parts = set(name.split("_"))
+    if name.endswith("_ref") or parts & {"budget", "budgets"}:
+        return False
+    return bool(_CREDENTIAL_WORDS & parts) or any(key in name for key in _CREDENTIAL_KEYS)
+
+
+def _is_vocabulary(annotation: Any) -> bool:
+    """True for a Literal or Enum annotation, alone, in a list or inside Optional/Union."""
+    origin = get_origin(annotation)
+    if origin is Literal:
+        return True
+    if isinstance(annotation, type) and issubclass(annotation, Enum):
+        return True
+    if origin in (Union, UnionType):
+        return all(a is type(None) or _is_vocabulary(a) for a in get_args(annotation))
+    if origin in (list, tuple, set, frozenset):
+        args = [a for a in get_args(annotation) if a is not Ellipsis]
+        return bool(args) and all(_is_vocabulary(a) for a in args)
+    return False
+
+
+def _is_number_or_time(annotation: Any) -> bool:
+    """True for an int, float, bool, datetime or date annotation, alone or inside
+    Optional/Union (a lock's `until`, a `valid_at`). A number in a field typed `Any` (a
+    memory value) is content, and is hashed."""
+    if annotation in (int, float, bool, datetime, date):
+        return True
+    if get_origin(annotation) in (Union, UnionType):
+        return all(a is type(None) or _is_number_or_time(a) for a in get_args(annotation))
+    return False
+
+
+def _nested_model(annotation: Any) -> type[BaseModel] | None:
+    """The model a field holds, alone or inside Optional."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    if get_origin(annotation) in (Union, UnionType):
+        models = [m for m in map(_nested_model, get_args(annotation)) if m is not None]
+        return models[0] if len(models) == 1 else None
+    return None
+
+
+def digest(value: Any) -> dict[str, Any]:
+    """A value's `sha256_value` (so a memory value's matches its `content_sha256`) and
+    length: a string's characters, else its compact JSON's."""
+    size = (
+        len(value)
+        if isinstance(value, str)
+        else len(json.dumps(value, separators=(",", ":"), ensure_ascii=False))
+    )
+    return {"sha256": sha256_value(value), "chars": size}
+
+
+def _shape(model: type[BaseModel], dumped: dict[str, Any]) -> dict[str, Any]:
+    fields = model.model_fields
+    subject: dict[str, Any] = {}
+    for name, value in dumped.items():
+        field = fields.get(name)
+        annotation = field.annotation if field is not None else None
+        # A nested model is shaped field by field; a free-form dict (a record's fields)
+        # has no model and is hashed whole below.
+        nested = _nested_model(annotation)
+        if nested is not None and isinstance(value, dict):
+            subject[name] = _shape(nested, value)
+            continue
+        keep = (
+            value in (None, "", [], {})
+            or (annotation is not None and _is_number_or_time(annotation))
+            or (
+                (name in _NAMING_FIELDS or name.endswith(_NAMING_SUFFIXES))
+                and not is_credential(name)
+            )
+            or (annotation is not None and _is_vocabulary(annotation))
+        )
+        subject[name] = value if keep else digest(value)
+    return subject
+
+
+def input_subject(input_obj: BaseModel) -> dict[str, Any]:
+    """The audit subject of a validated op input that declares no `audit_subject`. Kept as
+    sent: empty values, numbers, booleans, dates and times, Literal or Enum values, and
+    naming fields not named as a credential. A nested model is shaped by the same rule;
+    every other value (a free-form dict included) becomes its SHA-256 and length."""
+    return _shape(type(input_obj), input_obj.model_dump(mode="json"))
 
 
 def _audit_row(

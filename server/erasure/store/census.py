@@ -621,8 +621,9 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.erasure_requests": "the erasure ledger; scope_value names the scope, 90-day TTL.",
     "loom.erasure_reversals": "reversal ledger: memory ids/keys restored after an erasure.",
     "loom.audit_log": (
-        "the audit trail, including of the deletion itself; `subject` names keys and "
-        "ids, never values (an allow-list)."
+        "the audit trail, including of the deletion itself; `subject` names keys, ids, "
+        "principals and vocabulary values, and holds other text only as a SHA-256 and "
+        "length (`audit.input_subject`)."
     ),
     # -- counters and aggregates: ids or counts, no text -----------------------
     "loom.memory_usage_events": "usage ledger keyed by memory_id; counts only.",

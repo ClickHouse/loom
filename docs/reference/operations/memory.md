@@ -439,7 +439,7 @@ Self-service copy of a memory into another namespace.
 | `to_namespace` | `str` | required | Target namespace. |
 | `target_key` | `str \| None` | `None` | Destination memory_key. |
 | `target_agent` | `str` | `'-'` | Attribution in the target; '-' reads as namespace-owned. |
-| `rationale` | `str` | `''` | Human-readable reason, recorded on the audit row. |
+| `rationale` | `str` | `''` | Human-readable reason; the audit row keeps only its SHA-256 and length. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -462,7 +462,7 @@ Cross-namespace promotion with provenance.
 | `to_namespace` | `str` | required | The namespace the copy is written into, in the same org; the caller needs ADMIN on it. |
 | `target_key` | `str \| None` | `None` | Override the destination memory_key. |
 | `target_agent` | `str` | `'-'` | Agent identity to attribute the target row to. |
-| `rationale` | `str` | `''` | Human-readable reason. |
+| `rationale` | `str` | `''` | Human-readable reason; the audit row keeps only its SHA-256 and length. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1691,7 +1691,7 @@ Scrub the value of a historical memory row, preserving its audit entry.
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `memory_id` | `str` | required | The id every version of the memory shares; `version` picks the historical row. |
 | `version` | `int` | required | target row's version (from memory.set / memory.history) |
-| `reason` | `str` | `''` | short justification recorded in the audit log |
+| `reason` | `str` | `''` | short justification; the audit row keeps its SHA-256 and length |
 | `redacted_by` | `str` | `''` | actor for the audit row (caller-supplied) |
 
 | Output field | Type | Meaning |

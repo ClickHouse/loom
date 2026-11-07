@@ -17,6 +17,7 @@ from server.memory.app.webhooks import (
     handle_webhook_list,
     handle_webhook_register,
     handle_webhook_remove,
+    register_audit_subject,
 )
 from server.operations.base import Operation, Role
 
@@ -32,6 +33,7 @@ webhook_register = Operation(
     idempotent=True,
     required_role=Role.ADMIN,
     audit=True,
+    audit_subject=register_audit_subject,
 )
 
 # ADMIN: the list names the URLs and secret variables of the namespace.

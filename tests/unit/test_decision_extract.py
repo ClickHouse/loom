@@ -2007,7 +2007,9 @@ async def test_each_write_leaves_the_audit_row_the_transport_would(monkeypatch) 
         ("memory.delete_version", "process:cli:decisions"),
     ]
     record_subject = next(s for e, _, s in world.audits if e == "decision.record")
-    assert record_subject["agent"] == "loom-decisions" and record_subject["category"]
+    assert record_subject["agent"] == "loom-decisions"
+    # The decision's text is hashed, never stored: the audit log is not erased.
+    assert set(record_subject["scenario"]) == {"sha256", "chars"}
     assert len(world.updates) == 1
 
 

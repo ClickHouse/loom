@@ -54,7 +54,7 @@ from server.memory.app import provenance
 from server.memory.domain.webhook_events import EventType
 from server.memory.store import webhooks as store
 from server.memory.store.rows import next_version
-from server.observability import degradations
+from server.observability import audit, degradations
 from server.settings import settings
 from server.workers import pass_context
 
@@ -358,3 +358,15 @@ async def handle_webhook_deliveries(input: WebhookDeliveriesInput) -> WebhookDel
 async def webhook_tally(org: str, namespace: str) -> tuple[int, datetime | None]:
     """How many live webhooks the namespace has registered, and the newest registration."""
     return await store.webhook_tally(org, namespace)
+
+
+def register_audit_subject(inp: WebhookRegisterInput, _response: object) -> dict[str, object]:
+    """`webhook.register`'s audit subject: where the namespace's events now go, as the
+    URL's scheme, host and port, with the whole URL hashed (a hook URL often carries its
+    token in the path or query) and the secret's variable name as sent."""
+    parts = urlsplit(inp.url)
+    return {
+        **audit.input_subject(inp),
+        "url_host": f"{parts.scheme}://{parts.netloc}",
+        "secret_ref": inp.secret_ref,
+    }
