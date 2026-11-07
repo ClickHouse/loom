@@ -308,6 +308,29 @@ async def test_revoking_the_address_reaches_the_tokens_its_squatter_made(
 
 
 @pytest.mark.asyncio
+async def test_revoking_a_grant_reaches_the_tokens_made_under_another_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.identity.app import token_grants
+    from server.identity.store import grants as grants_repo
+
+    kept = KeptCH(
+        tmp_path,
+        *SETUP,
+        ddl("service_accounts"),
+        "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by) VALUES"
+        f" ('{ORG}', 'bot', 'sa:bot', 'Mallory')",
+        _grant("team-y", "sa:bot"),
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
+    monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
+    touched = await token_grants.cascade_revoke_to_created_tokens(
+        ORG, "team-y", "mallory", unheld=False, ch=kept
+    )
+    assert touched == 1
+
+
+@pytest.mark.asyncio
 async def test_revoking_a_handle_leaves_the_tokens_its_unverified_email_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -229,10 +229,11 @@ async def cascade_revoke_to_created_tokens(
     sa_rows = await ch.query_all(
         """
         SELECT DISTINCT sa_subject FROM loom.service_accounts FINAL
-        WHERE org = {org:String} AND created_by IN {subs:Array(String)}
+        WHERE org = {org:String} AND lower(created_by) IN {subs:Array(String)}
           AND revoked_at IS NULL
         """,
-        params={"org": org, "subs": creators},
+        # Any case, as the token list matches its maker.
+        params={"org": org, "subs": sorted({c.lower() for c in creators})},
     )
     touched = 0
     for r in sa_rows:

@@ -207,7 +207,9 @@ def _flat_role(
     parent's ceiling there rather than the creator's grant: such a token reads
     through the creator's live grants, which cap every call, so a repository
     the creator only reads does not leave the token unable to write anywhere.
-    The child still never exceeds the parent on any namespace."""
+    The child still never exceeds the parent on any namespace. Under a
+    per-namespace parent, `*` is that parent's list and the child takes the
+    lowest role on it; a role per namespace needs a list."""
     if "*" not in requested:
         return min(roles.values())
 
@@ -215,9 +217,9 @@ def _flat_role(
         # A namespace `*` expanded into carries the role asked for on `*`.
         if requested.get(ns, requested["*"]) is not None:
             return roles[ns]
-        # `or roles[ns]` only satisfies the type: `_allowed_roles` refused or dropped
-        # every namespace without a ceiling.
-        return ceiling_role(parent, org, ns) or roles[ns]
+        ceiling = ceiling_role(parent, org, ns)
+        assert ceiling is not None  # `_allowed_roles` dropped every namespace without one
+        return ceiling
 
     flat = min(counted(ns) for ns in roles)
     # A role asked for on `*` also caps the names beside it that asked for none.

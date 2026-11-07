@@ -158,7 +158,7 @@ export function TokensSection({
     mintedAtMs !== null &&
     Date.now() - mintedAtMs < 10 * 60_000 &&
     (tokens || []).some((s) => !s.last_used_at && !s.revoked_at);
-  // Each tick's setSa re-renders, which re-checks the ten-minute window.
+  // Each poll's reload re-renders, which re-checks the ten-minute window.
   useVisiblePoll(reloadTokens, 15_000, waitingForFirstCall);
 
   const onRevoke = async (tokenName: string) => {
@@ -190,14 +190,7 @@ export function TokensSection({
             here at any time.
           </p>
           {!formVisible && (
-            <Button
-              ref={newTokenRef}
-              id="setup-generate-token"
-              type="primary"
-              htmlType="button"
-              iconLeft="plus"
-              onClick={() => toggleForm(true)}
-            >
+            <Button ref={newTokenRef} type="primary" htmlType="button" iconLeft="plus" onClick={() => toggleForm(true)}>
               New token
             </Button>
           )}

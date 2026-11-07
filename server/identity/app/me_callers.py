@@ -24,8 +24,7 @@ async def caller_admin_of(org: str, namespace: str, subject: str) -> bool:
     """True if `subject` holds an active admin grant on `(org, namespace)`."""
     from server.core.ch import get_client
 
-    # Any case, as the gate matches a grant's subject (`authz.grant_role_for`).
-    subs = [s.lower() for s in await subject_aliases_of(org, subject)]
+    subs = await lowered_aliases(org, subject)
     row = await get_client().query_one(
         """
         SELECT 1 AS x FROM loom.namespace_grants FINAL
@@ -61,8 +60,7 @@ async def caller_role_on(org: str, namespace: str, subject: str) -> str | None:
     from server.core.ch import get_client
     from server.core.grant_sql import GRANT_RANK_SQL
 
-    # Any case, as the gate matches a grant's subject (`authz.grant_role_for`).
-    subs = [s.lower() for s in await subject_aliases_of(org, subject)]
+    subs = await lowered_aliases(org, subject)
     row = await get_client().query_one(
         """
         SELECT role
@@ -123,6 +121,12 @@ async def subject_aliases_of(org: str, subject: str) -> list[str]:
     from server.auth.aliases import subject_aliases
 
     return await subject_aliases(org, subject) if org and subject else [subject]
+
+
+async def lowered_aliases(org: str, subject: str) -> list[str]:
+    """The caller's spellings in lower case, to match a stored subject in any case, as the
+    gate does (`authz.grant_role_for`)."""
+    return sorted({s.lower() for s in await subject_aliases_of(org, subject)})
 
 
 def caller_identity(request: Request, *, prefer_bearer_in_dev: bool = False) -> tuple[str, str]:
