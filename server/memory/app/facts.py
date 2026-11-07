@@ -591,9 +591,9 @@ def _hub_lookup(ch: Any, org: str, namespace: str, hub_degree: int, hub_share: f
 
 
 def _stored_spellings(raw: str) -> list[str]:
-    """The spellings a stored node can have for `raw`, canonical first: its canonical form,
-    which every writer stores, and `raw` lowered, a spelling stored rows of a "commit:" or
-    "error:" concept facet can hold. Empty for a name with no canonical form."""
+    """The spellings a stored node can have for `raw`, canonical first: the form every
+    writer stores, then `raw` lowered, which a "commit:" or "error:" concept facet row can
+    still hold. Empty for a name with no canonical form."""
     from server.memory.domain.graph_quality import canonical_entity_text
 
     node = canonical_entity_text(raw)
