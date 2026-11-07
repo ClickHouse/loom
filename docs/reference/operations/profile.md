@@ -124,7 +124,7 @@ WHAT: Create or replace a profile section at `label`.
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
-| `label` | `str` | required | The section's name (its memory key), e.g. |
+| `label` | `str` | required | The section's name (its memory key), e.g. `persona`; setting it again replaces its text. |
 | `value` | `str` | required | The section's whole new text. |
 | `char_limit` | `int` | `8192` | The section's size cap, measured on the JSON-encoded value; a longer value is a 422. |
 | `source_trace` | `str` | `''` | Where the section came from; a trace starting with `memory.delete_version:` is refused (that op's tombstone marker). |

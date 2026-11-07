@@ -13,20 +13,20 @@ an `ops*.py` module in its domain's `api/` package (`server/memory/api/ops_memor
 `_OPERATION_MODULES` into `ALL_OPERATIONS`, which the transports iterate. An `Operation`
 carries:
 
-| Field                                   | Meaning                                                                                                                                |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                                  | Dotted `<group>.<verb>`. The group is the text before the first dot.                                                                   |
-| `input_model`, `output_model`           | Pydantic models: the request body and the 200 response.                                                                                |
-| `handler`                               | The async function that runs the op, in its domain's `app/` package (`server/<domain>/app/`).                                          |
-| `required_role`                         | The minimum role the caller's token must hold on the namespace.                                                                        |
-| `idempotent`                            | Safe to retry. Idempotent ops accept an idempotency key; see [HTTP API](./http-api.md#idempotency).                                    |
-| `audit`                                 | A successful call writes a row to `loom.audit_log`.                                                                                    |
-| `writes`                                | Set on the few viewer-callable, idempotent ops that still change stored state (a feedback row, a watch), so they are not read-only.    |
-| `maturity`                              | `stable` or `experimental`. It decides one thing: the [MCP `all` listing](#mcp-all-listing).                                           |
-| `budget_p99_ms`, `shape_budgets_p99_ms` | The target p99 latency, overall and per request shape. A successful call over budget emits a `budget.violated` event.                  |
-| `skip_namespace_authz`                  | The op acts _on_ a namespace (join, leave, register) rather than in one; the handler checks membership. The role check still runs.     |
-| `deployment_scoped`                     | The op reads facts about the deployment (build, registry), not tenant data; a namespace-scoped token passes with its best role.        |
-| `row_scoped`                            | The op is addressed by an org-wide id (`memory_id`, `erasure_id`). The handler authorizes the row's namespace and hides a foreign row. |
+| Field                                   | Meaning                                                                                                                                               |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                                  | Dotted `<group>.<verb>`. The group is the text before the first dot.                                                                                  |
+| `input_model`, `output_model`           | Pydantic models: the request body and the 200 response.                                                                                               |
+| `handler`                               | The async function that runs the op, in its domain's `app/` package (`server/<domain>/app/`).                                                         |
+| `required_role`                         | The minimum role the caller's token must hold on the namespace.                                                                                       |
+| `idempotent`                            | Safe to retry. Idempotent ops accept an idempotency key; see [HTTP API](./http-api.md#idempotency).                                                   |
+| `audit`                                 | A successful call writes a row to `loom.audit_log`.                                                                                                   |
+| `writes`                                | Set on the few viewer-callable, idempotent ops that still change stored state (a feedback row, a watch), so they are not read-only.                   |
+| `maturity`                              | `stable` or `experimental`. It decides the [MCP `all` listing](#mcp-all-listing), and `op_reach_census.py --check` fails a stable op nothing reaches. |
+| `budget_p99_ms`, `shape_budgets_p99_ms` | The target p99 latency, overall and per request shape. A successful call over budget emits a `budget.violated` event.                                 |
+| `skip_namespace_authz`                  | The op acts _on_ a namespace (join, leave, register) rather than in one; the handler checks membership. The role check still runs.                    |
+| `deployment_scoped`                     | The op reads facts about the deployment (build, registry), not tenant data; a namespace-scoped token passes with its best role.                       |
+| `row_scoped`                            | The op is addressed by an org-wide id (`memory_id`, `erasure_id`). The handler authorizes the row's namespace and hides a foreign row.                |
 
 [Adding an operation](../development/adding-an-operation.md) walks through declaring one.
 
@@ -68,13 +68,14 @@ name, so a `GROUP BY operation` lines up with this page.
 either `stable` or on the core or atomic roster (`listed_under_all` in
 `server/operations/toolsets.py`). The `code.*` ops also need `LOOM_MCP_CODE_TOOLS=true`.
 
-An op left out of that listing behaves like any other op. It is callable by name over MCP or
-through `loom_op`, at `POST /v1/<op>`, and from both SDKs. Role checks, rate limits, audit and
-serving do not depend on `maturity`.
+An op left out of that listing behaves like any other op: it is served at `POST /v1/<op>` and
+from both SDKs, and, unless MCP hides it, callable by name over MCP or through `loom_op`. Role
+checks, rate limits, audit and serving do not depend on `maturity`.
 
 The label is set by hand in the op's declaration. The reach census
 (`scripts/codegen/op_reach_census.py`, gated by `tests/unit/test_op_reach_census.py`) reports
-each op's reach and, with `--call-counts`, its calls; it never rewrites the declaration.
+each op's reach and, with `--call-counts`, its calls; it never rewrites the declaration, and
+its `--check` (in `make lint`) fails a stable op hidden from MCP that nothing else reaches.
 
 ## Toolsets
 

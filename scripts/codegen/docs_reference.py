@@ -16,6 +16,8 @@ table it carries. A region's name picks its renderer:
 - `errors`: the typed errors in `server/core/errors.py` and every other `"code"`
   literal the server answers with
 - `schema`: the tables and materialized views in `schemas/schema.sql`
+- `status_ops`, `status_switches`: each op group's stable and experimental ops (op
+  `maturity`), and every boolean setting in `server/settings/catalog.py` that loads false
 
 It also writes `llms.txt` at the repository root (every doc page with its outcome line, for
 agents), and one fully generated page per op group, `docs/reference/operations/<group>.md`,
@@ -30,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import functools
 import importlib
 import json
 import re
@@ -37,6 +40,7 @@ import sys
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:  # run as a file
@@ -44,6 +48,10 @@ if str(ROOT) not in sys.path:  # run as a file
 
 from scripts.codegen.common import write_atomic  # noqa: E402
 from scripts.codegen.sdk_py_admin_gen import render_admin_routes_table  # noqa: E402
+
+if TYPE_CHECKING:
+    from server.operations.base import Operation
+    from server.settings import Settings
 
 COMMAND = "python scripts/codegen/docs_reference.py"
 REFERENCE = ROOT / "docs" / "reference"
@@ -69,7 +77,8 @@ def _first_sentence(text: str | None, limit: int = 200) -> str:
     if not text:
         return ""
     para = " ".join(text.strip().split("\n\n")[0].split())
-    m = re.search(r"(?<!\.\.)(?<=[.!?])\s+(?=[A-Z`*(])", para)
+    # Not after "e.g." or "i.e.", which never end a sentence ("etc." may).
+    m = re.search(r"(?<!\.\.)(?<![eE]\.g\.)(?<![iI]\.e\.)(?<=[.!?])\s+(?=[A-Z`*(])", para)
     sentence = para[: m.start()] if m else para
     sentence = sentence.replace("**", "")
     if len(sentence) > limit:
@@ -81,34 +90,43 @@ def _first_sentence(text: str | None, limit: int = 200) -> str:
 # --- operations ---------------------------------------------------------------
 
 
-def _op_summary(op: object, curated: dict[str, str]) -> str:
+def _op_summary(op: Operation, curated: dict[str, str]) -> str:
     """Developer prose first (the input model's docstring), then the MCP guidance,
     then the handler's docstring."""
-    model_doc = op.input_model.__doc__  # type: ignore[attr-defined]
+    model_doc = op.input_model.__doc__
     if model_doc and "Usage docs: https://docs.pydantic.dev" in model_doc:
         model_doc = None  # pydantic's inherited BaseModel docstring
-    for text in (model_doc, curated.get(op.name), op.handler.__doc__):  # type: ignore[attr-defined]
+    for text in (model_doc, curated.get(op.name), op.handler.__doc__):
         s = _first_sentence(text)
         if s:
             return s
     return ""
 
 
-def _listed_under_all(op: object) -> bool:
+def _listed_under_all(op: Operation) -> bool:
     """Whether an MCP `tools/list` on `LOOM_MCP_TOOLSET=all` lists `op`. The
     `code.*` ops also need `LOOM_MCP_CODE_TOOLS=true`; the legend says so."""
     from server.operations.toolsets import listed_under_all
 
-    return listed_under_all(op)  # type: ignore[arg-type]
+    return listed_under_all(op)
+
+
+def _op_groups() -> dict[str, list[Operation]]:
+    """The registry's ops by group (the part of the name before the first dot), groups and
+    their ops sorted by name."""
+    from server.operations import registry
+
+    groups: dict[str, list[Operation]] = defaultdict(list)
+    for op in sorted(registry.ALL_OPERATIONS, key=lambda o: o.name):
+        groups[op.name.split(".")[0]].append(op)
+    return dict(sorted(groups.items()))
 
 
 def render_operations() -> str:
     from server.operations import registry
     from server.transport.mcp_tools import _TOOL_DESCRIPTIONS
 
-    groups: dict[str, list[object]] = defaultdict(list)
-    for op in registry.ALL_OPERATIONS:
-        groups[op.name.split(".")[0]].append(op)
+    groups = _op_groups()
     out = [
         f"{len(registry.ALL_OPERATIONS)} operations in {len(groups)} groups. "
         "Every op is served at `POST /v1/<op>` and as the MCP tool `loom_<op>` "
@@ -121,26 +139,103 @@ def render_operations() -> str:
         "`LOOM_MCP_CODE_TOOLS=true`); an op marked `no` is still callable by name or "
         "through `loom_op`, unless it is hidden from MCP; **Audit** marks ops that leave "
         "an `audit_log` row.\n",
-        "Groups: " + " · ".join(f"[`{g}`](#{g.replace('_', '_')})" for g in sorted(groups)) + "\n",
+        "Groups: " + " · ".join(f"[`{g}`](#{g})" for g in groups) + "\n",
     ]
-    for group in sorted(groups):
-        ops = sorted(groups[group], key=lambda o: o.name)  # type: ignore[attr-defined]
+    for group, ops in groups.items():
         out.append(f"### {group}\n")
         page = f"operations/{group}.md"
         out.append(f"Fields for every `{group}` op: [{page}]({page}).\n")
         out.append("| Operation | Summary | Role | Kind | Listed under `all` | Audit |")
         out.append("| --- | --- | --- | --- | --- | --- |")
         for op in ops:
-            kind = "read" if op.read_only else ("idempotent" if op.idempotent else "write")  # type: ignore[attr-defined]
+            kind = "read" if op.read_only else ("idempotent" if op.idempotent else "write")
             listed = "yes" if _listed_under_all(op) else "no"
             out.append(
-                f"| [`{op.name}`](operations/{group}.md#{_op_anchor(op.name)}) | "  # type: ignore[attr-defined]
-                f"{_cell(_op_summary(op, _TOOL_DESCRIPTIONS))} | "  # type: ignore[attr-defined]
-                f"{op.required_role.name.lower()} | {kind} | {listed} | "  # type: ignore[attr-defined]
-                f"{'yes' if op.audit else ''} |"  # type: ignore[attr-defined]
+                f"| [`{op.name}`](operations/{group}.md#{_op_anchor(op.name)}) | "
+                f"{_cell(_op_summary(op, _TOOL_DESCRIPTIONS))} | "
+                f"{op.required_role.name.lower()} | {kind} | {listed} | "
+                f"{'yes' if op.audit else ''} |"
             )
         out.append("")
     return "\n".join(out)
+
+
+# --- settings -----------------------------------------------------------------
+
+
+@functools.cache
+def _loaded_defaults() -> Settings:
+    """Settings built from defaults alone with a real LLM provider (`openai`; any provider
+    but `fake` resolves the same), so load-time validators (the conflict resolver) resolve
+    as they run."""
+    from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
+
+    from server.settings import Settings
+
+    class _Defaults(Settings):
+        @classmethod
+        def settings_customise_sources(
+            cls,
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
+            return (init_settings,)
+
+    return _Defaults(llm_provider="openai")
+
+
+# --- status -------------------------------------------------------------------
+
+
+def render_status_ops() -> str:
+    """How many of each op group's ops are stable (`Operation.maturity`), and each
+    experimental op linked to its field reference."""
+    groups = _op_groups()
+    rows: list[str] = []
+    experimental_total = 0
+    for group, ops in groups.items():
+        experimental = [op for op in ops if op.maturity == "experimental"]
+        experimental_total += len(experimental)
+        links = ", ".join(
+            f"[`{op.name}`](operations/{group}.md#{_op_anchor(op.name)})" for op in experimental
+        )
+        rows.append(f"| `{group}` | {len(ops) - len(experimental)} | {links} |")
+    total = sum(len(ops) for ops in groups.values())
+    return "\n".join(
+        [
+            f"{total} operations, {experimental_total} of them experimental.\n",
+            "| Group | Stable | Experimental |",
+            "| --- | --- | --- |",
+            *rows,
+        ]
+    )
+
+
+def render_status_switches() -> str:
+    """Every boolean setting that loads false, with the first sentence of its description
+    in the catalog."""
+    from server.settings import Settings
+    from server.settings._describe import descriptions
+
+    described = descriptions(Settings)
+    loaded = _loaded_defaults()
+    off = sorted(
+        name
+        for name, field in Settings.model_fields.items()
+        if field.annotation is bool and getattr(loaded, name) is False
+    )
+    rows = [f"| `LOOM_{n.upper()}` | {_cell(_first_sentence(described[n]))} |" for n in off]
+    return "\n".join(
+        [
+            f"{len(off)} boolean settings load false.\n",
+            "| Setting | Meaning |",
+            "| --- | --- |",
+            *rows,
+        ]
+    )
 
 
 # --- per-group field pages ----------------------------------------------------
@@ -251,7 +346,7 @@ def _field_rows(model: type, with_default: bool) -> list[str]:
     return rows
 
 
-def render_group(group: str, ops: list[object]) -> str:
+def render_group(group: str, ops: list[Operation]) -> str:
     from server.transport.mcp_tools import _TOOL_DESCRIPTIONS
 
     out = [
@@ -267,26 +362,26 @@ def render_group(group: str, ops: list[object]) -> str:
         "listing. Unknown input fields are served and named in `ignored_args`.\n",
         "<!-- prettier-ignore-start -->\n",
     ]
-    for op in sorted(ops, key=lambda o: o.name):  # type: ignore[attr-defined]
-        kind = "read" if op.read_only else ("idempotent" if op.idempotent else "write")  # type: ignore[attr-defined]
-        out.append(f"## `{op.name}`\n")  # type: ignore[attr-defined]
+    for op in ops:
+        kind = "read" if op.read_only else ("idempotent" if op.idempotent else "write")
+        out.append(f"## `{op.name}`\n")
         summary = _op_summary(op, _TOOL_DESCRIPTIONS)
         if summary:
             out.append(summary + "\n")
-        role = op.required_role.name.lower()  # type: ignore[attr-defined]
-        audited = " · audited" if op.audit else ""  # type: ignore[attr-defined]
+        role = op.required_role.name.lower()
+        audited = " · audited" if op.audit else ""
         unlisted = "" if _listed_under_all(op) else " · not listed under the MCP `all` toolset"
         out.append(
-            f"`POST /v1/{op.name}` · MCP `{op.mcp_tool_name}` · role `{role}` · "  # type: ignore[attr-defined]
+            f"`POST /v1/{op.name}` · MCP `{op.mcp_tool_name}` · role `{role}` · "
             f"{kind}{audited}{unlisted}\n"
         )
         out.append("| Input field | Type | Default | Meaning |")
         out.append("| --- | --- | --- | --- |")
-        out += _field_rows(op.input_model, with_default=True)  # type: ignore[attr-defined]
+        out += _field_rows(op.input_model, with_default=True)
         out.append("")
         out.append("| Output field | Type | Meaning |")
         out.append("| --- | --- | --- |")
-        out += _field_rows(op.output_model, with_default=False)  # type: ignore[attr-defined]
+        out += _field_rows(op.output_model, with_default=False)
         out.append("")
     out.append("<!-- prettier-ignore-end -->")
     return "\n".join(out) + "\n"
@@ -294,12 +389,7 @@ def render_group(group: str, ops: list[object]) -> str:
 
 def render_group_pages() -> dict[str, str]:
     """File name → content for every per-group field page."""
-    from server.operations import registry
-
-    groups: dict[str, list[object]] = defaultdict(list)
-    for op in registry.ALL_OPERATIONS:
-        groups[op.name.split(".")[0]].append(op)
-    return {f"{g}.md": render_group(g, ops) for g, ops in sorted(groups.items())}
+    return {f"{g}.md": render_group(g, ops) for g, ops in _op_groups().items()}
 
 
 # --- llms.txt -----------------------------------------------------------------
@@ -378,11 +468,11 @@ def _setting_default(name: str | None) -> str:
         return ""
     from server.settings import Settings
 
-    info = Settings.model_fields.get(name)
-    if info is None:
+    if name not in Settings.model_fields:
         return ""
-    value = info.default_factory() if info.default_factory else info.default  # type: ignore[call-arg]
-    return str(value)
+    # The value it loads with, so a switch a validator resolves (the conflict resolver)
+    # shows as it runs.
+    return str(getattr(_loaded_defaults(), name))
 
 
 def _module_summary(module: str) -> str:
@@ -602,6 +692,8 @@ RENDERERS: dict[str, Callable[[], str]] = {
     "workers": render_workers,
     "cli": render_cli,
     "errors": render_errors,
+    "status_ops": render_status_ops,
+    "status_switches": render_status_switches,
     "schema": render_schema,
     "admin_routes": render_admin_routes_table,
 }

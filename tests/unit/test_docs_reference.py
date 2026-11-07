@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from scripts.codegen import docs_reference as gen
@@ -58,3 +60,56 @@ def test_listed_under_all_column_matches_the_mcp_listing(monkeypatch) -> None:
         if gen._listed_under_all(op) != (op.name in listed)
     ]
     assert not wrong, wrong
+
+
+@pytest.mark.parametrize(
+    ("text", "first"),
+    [
+        ("Turns it on. Read the guide.", "Turns it on."),
+        ("Sets a label (e.g. `iso:x`). Every process sets one.", "Sets a label (e.g. `iso:x`)."),
+        ("E.g. `ci` or `iso`. Every process sets one.", "E.g. `ci` or `iso`."),
+        ("Reads one value, i.e. `x`. Then more.", "Reads one value, i.e. `x`."),
+        ("Rows, keys, etc. Writes stay grant-driven.", "Rows, keys, etc."),
+    ],
+)
+def test_first_sentence_skips_e_g_and_i_e_but_may_end_at_etc(text, first) -> None:
+    assert gen._first_sentence(text) == first
+
+
+def test_status_switches_list_what_loads_false_not_what_is_declared_false(monkeypatch) -> None:
+    """The conflict resolver is declared false and resolved on at load with a real
+    provider; the env of the process that renders the page changes nothing."""
+    from server.settings import Settings
+
+    assert Settings.model_fields["memory_conflict_resolver_enabled"].default is False
+    monkeypatch.setenv("LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED", "false")
+    monkeypatch.setenv("LOOM_CODE_ORG_READABLE", "true")
+    # Built under this env, not taken from a cache another test filled.
+    gen._loaded_defaults.cache_clear()
+    try:
+        rendered = gen.render_status_switches()
+    finally:
+        gen._loaded_defaults.cache_clear()
+    assert "`LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED`" not in rendered
+    assert "| `LOOM_CODE_ORG_READABLE` |" in rendered
+
+
+def test_status_ops_lists_each_experimental_op_once_and_counts_the_rest() -> None:
+    from server.operations import registry
+
+    groups = gen._op_groups()
+    rendered = gen.render_status_ops().splitlines()
+    total = len(registry.ALL_OPERATIONS)
+    rows = {}
+    for line in rendered:
+        m = re.match(r"\| `([a-z_]+)` \| (\d+) \| (.*) \|$", line)
+        if m:
+            rows[m.group(1)] = (int(m.group(2)), re.findall(r"\[`([^`]+)`\]", m.group(3)))
+    assert set(rows) == set(groups)
+    for group, (stable, experimental) in rows.items():
+        want = [op.name for op in groups[group] if op.maturity == "experimental"]
+        assert experimental == want, group
+        assert stable == len(groups[group]) - len(want), group
+    listed = [name for _, names in rows.values() for name in names]
+    assert sum(stable for stable, _ in rows.values()) + len(listed) == total
+    assert rendered[0] == f"{total} operations, {len(listed)} of them experimental."

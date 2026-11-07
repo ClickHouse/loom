@@ -25,7 +25,7 @@ Open a RUN — one execution of a task — BEFORE you start working on it.
 | `goal` | `str` | required | What the run sets out to do, in the agent's words; stored on the run row. |
 | `user_request` | `str` | `''` | The original request that started the run, verbatim; empty when not given. |
 | `expected_outcome` | `str` | `''` | What a successful run should produce; stored for later review, empty when not given. |
-| `environment` | `str` | `''` | Free-text label of where the run executes (e.g. |
+| `environment` | `str` | `''` | Free-text label of where the run executes (e.g. `ci`, `local`); stored as given. |
 | `model` | `str` | `''` | The model the agent runs on; stored as given, empty when not given. |
 | `consumer` | `str` | `''` | The calling integration's tag, recorded on the ledger row. |
 | `role` | `str` | `''` | The agent's role in a multi-agent run — planner, executor, critic, or the team's own word. |

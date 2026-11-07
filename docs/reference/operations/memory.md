@@ -1940,7 +1940,7 @@ Semantic search over the agent's own memory.
 | `fallback_elapsed_ms` | `int` | Wall-clock milliseconds spent in the fallback cascade. |
 | `retrieval_plan` | `str` | Planner diagnostics: pre-execution shape estimate + best-effort actual work. |
 | `retrieval_cost_estimate` | `dict[str, Any]` | Pre-execution work estimate: budget_class, llm_calls, embedding_calls, vector / lexical / graph / structured queries, candidate_pool, top_k. |
-| `retrieval_work` | `dict[str, Any]` | Work actually done: per-stage counters (e.g. |
+| `retrieval_work` | `dict[str, Any]` | Work actually done: per-stage counters (e.g. `<stage>_added`), fallback LLM and vector-query use against their budgets, and `llm_calls_total`. |
 | `pending_extraction` | `int` | Deferred set_from_messages batches not yet extracted in the searched scope. >0 means "a save is in flight", so an empty or thin result is not evidence of absence; re-ask after the worker runs. |
 | `derived_aggregate` | `dict[str, Any] \| None` | Exact in-ClickHouse aggregate for derived-answer queries (aggregational / temporal_diff) over per-occurrence rows — what the vector planes structurally can't produce. |
 

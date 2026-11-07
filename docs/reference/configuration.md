@@ -218,7 +218,7 @@ One code namespace indexes one repository. No repository is configured by defaul
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_CODE_ORG_READABLE` | `bool` | `False` |  | Who may READ the code index. False: the namespace's own visibility and grants. True: every authenticated principal of the org reads every configured code namespace (right for public or org-internal repos). Writes stay grant-driven. Per-entry "org_readable" in LOOM_CODE_REPOS_JSON. |
+| `LOOM_CODE_ORG_READABLE` | `bool` | `False` |  | True lets every authenticated principal of the org read every configured code namespace (right for public or org-internal repos); false leaves reads to the namespace's own visibility and grants. Writes stay grant-driven. Per-entry "org_readable" in LOOM_CODE_REPOS_JSON. |
 | `LOOM_CODE_REPO_PUBLIC` | `bool` | `False` |  | The scalar repo entry is public: its namespace registers join_policy=open and discoverable. Per-entry `"public": true` does the same. |
 
 ### Checks and conventions
@@ -472,7 +472,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_INGEST_MAX_FILE_BYTES` | `int` | `1000000` |  | Files above this size are recorded (index_error) and not chunked. 0 = no cap. |
-| `LOOM_CODE_INGEST_DENYLIST_BUILTIN` | `bool` | `False` |  | Ingest denylist (code/app/index/denylist.py): the built-in generated/minified/vendored rules are off (they match 0.19% of rows); `exclude` globs (CSV here, a list per repo entry) and the repo-local ignore file are always honoured. |
+| `LOOM_CODE_INGEST_DENYLIST_BUILTIN` | `bool` | `False` |  | True applies the built-in generated, minified and vendored ingest rules (code/app/index/denylist.py), which match 0.19% of rows. The `exclude` globs (CSV here, a list per repo entry) and the repo-local ignore file are always honoured. |
 | `LOOM_CODE_INGEST_EXCLUDE` | `str` | `''` |  | CSV of path globs never indexed (the scalar entry's `exclude`). |
 | `LOOM_CODE_INGEST_IGNORE_FILE` | `str` | `'.loomignore'` |  | Name of the repo-local ignore file whose patterns are never indexed. |
 
@@ -1645,7 +1645,7 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_BOOT_WARMUP_TIMEOUT_S` | `float` | `30.0` |  | Seconds boot waits for the first load of the tracker registry and the runtime overrides, and the first publish of the dashboard bundle, before it serves; readiness stays false until the first two load. |
 | `LOOM_READY_REQUIRES_MIRRORS` | `bool` | `False` |  | True: /v1/health/ready also waits until the mirror warm-up has queued its clones and while a clone of this host's git mirrors is running or queued (a failed clone does not hold it). Needs LOOM_CODE_MIRROR_WARMUP: without the warm-up nothing is cloned at boot and readiness does not wait for mirrors. Off by default: history ops answer `no_git_mirror` meanwhile. |
 | `LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS` | `float` | `10.0` |  | Seconds between re-reads of loom.runtime_overrides (the admin rate-limit, latency-budget and live-setting overrides) in every process. |
-| `LOOM_DEPLOYMENT` | `bool` | `False` |  | The deployment's compose files set LOOM_DEPLOYMENT=1; every other process must set LOOM_INSTANCE_LABEL (e.g. `iso:<worktree>:<port>`, `ci:integration`). A process with neither refuses to start, so every ledger row is attributable. |
+| `LOOM_DEPLOYMENT` | `bool` | `False` |  | True marks this process as the deployment itself: its compose files set LOOM_DEPLOYMENT=1, and every other process sets LOOM_INSTANCE_LABEL instead (e.g. `iso:<worktree>:<port>`, `ci:integration`). A process with neither refuses to start, so every ledger row is attributable. |
 | `LOOM_BUDGET_VIOLATION_AUDIT_INTERVAL_S` | `float` | `60.0` |  | At most one `budget.violated` audit row per op per this many seconds (the row carries `suppressed_since_last`). 0 = a row per violation. |
 | `LOOM_BUDGET_VIOLATION_AUDIT_BURST` | `int` | `5` |  | Violations per window that still write their own row before the rest are folded into the next: a short burst stays visible, a storm costs at most this many inserts a minute per (op, org, namespace). |
 | `LOOM_PUBLIC_BASE_URL` | `str` | `''` |  | The address the server hands to clients — the Setup page's config block, `claude mcp add`, a bot's claim_url, OAuth metadata. Empty = the request's own Host and scheme, which only a loopback bind may rely on: a non-loopback bind_host refuses to start without it. |
