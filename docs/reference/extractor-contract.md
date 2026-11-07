@@ -179,4 +179,6 @@ from it, so they are bounded by count and length as well as by the artifact's si
 longer key, keeps the first 10,000 and the first 64 section entries cut to 500 characters, and marks the block
 `attrs.keys_truncated` or `attrs.section_truncated` and the artifact's `coverage.lost` (`exact_keys`, `section_path`),
 so it does not report itself complete. A character, here and in `char_start`/`char_end`, is a Unicode code point of the
-decoded text (not a UTF-16 unit or a byte).
+decoded text (not a UTF-16 unit or a byte). A line or character range lies within the original: the server refuses an
+artifact with a `char_end` past the original's size in bytes or a `line_end` past that size plus one, bounds that hold
+in any encoding.

@@ -520,6 +520,33 @@ the job, and a job whose own publish is found ends published whatever cancel cam
 oldest open job of a source is offered, a stale one before any later one), and namespaces in turn (the one served
 longest ago first), and a run cut off at that deadline or by a stopped process counts toward the job's attempts.
 
+## Faults
+
+Each fault below meets the next revision of a source that already serves one: the job ends in the state shown, its
+`error_code` and `error_message` say why, and the earlier revision's document row and chunks are the ones served. A
+transient fault puts the job back to `pending` with `retrying` until `LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS` is spent, then
+fails it `retries_exhausted`. The cases are
+`tests/unit/test_knowledge_ingest.py::test_a_fault_on_the_next_revision_fails_typed_and_the_earlier_one_keeps_serving`.
+
+| Fault                                                                                           | Job ends                                   |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Extractor unreachable                                                                           | retried, then `failed` `retries_exhausted` |
+| Extractor slower than `LOOM_DOCUMENT_EXTRACTOR_TIMEOUT_S`                                       | retried, then `failed` `retries_exhausted` |
+| Extractor answers compressed (any `Content-Encoding`)                                           | retried, then `failed` `retries_exhausted` |
+| Extractor refuses the source past its own time limit                                            | `failed` `timeout`                         |
+| No extractor configured, or the service has no parser for it                                    | `failed` `format_unavailable`              |
+| Artifact over `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES`                                      | `failed` `resource_limit`                  |
+| Artifact not JSON, out of contract, a block under a missing parent, a locator past the original | `failed` `invalid_artifact`                |
+| Object store fails the original's read or the artifact's write                                  | retried, then `failed` `retries_exhausted` |
+| Embedder down or past its deadline                                                              | retried, then `failed` `retries_exhausted` |
+| Embedder defect (any other error)                                                               | `failed` `internal`                        |
+| The store refuses the document row after the chunks                                             | `failed` `internal`                        |
+
+An original gone from the store fails `original_gone` (in the same file).
+`tests/integration/test_knowledge_ingest_faults_live.py` runs the extractor down, a block under a missing parent, the
+object store's read failing, the embedder down and the document row refused after the chunks against a server and its
+ClickHouse, reading the earlier revision back through `knowledge.get` and `knowledge.search`.
+
 ## Datasets
 
 A table of the artifact (a sheet, a CSV or Parquet file, a PDF's table) also becomes a typed dataset
