@@ -323,7 +323,8 @@ email verification or password reset. In `gateway`, Loom never sees a password.
 sign-up writes, or, for an account made before the prefix, a plain hash on an agent sign-up's
 shape (an `agent-` name that is its own owner, with no email) without the claim's tag. Only
 sign-up writes that shape, no settings write changes the owner, the email or the password, and
-every other account with a password names an email. Linking an account to an SSO email (`loom
+every other account with a password names an email but a claimed agent's, which carries the
+claim's tag. Linking an account to an SSO email (`loom
 sso link`, the one operator step that writes an email on a password account) refuses an
 unclaimed one (`is_unclaimed`, the same rule on a row already read); the claim page is closed
 under SSO, so such an account is claimed with SSO off, or released with `loom claim-release`.

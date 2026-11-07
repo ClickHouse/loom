@@ -71,7 +71,7 @@ async def _shutdown_drains(lease: Any, supervisor: Any, emitter: Any) -> None:
     # An agent claim's last cutoff, which ends what an older replica's sign-in
     # with the code issued while the claim was landing: started first, so it
     # runs beside the drains below.
-    claims = asyncio.create_task(_agent_claim.drain())
+    claims, started = asyncio.create_task(_agent_claim.drain()), time.monotonic()
     try:
         await _leader.shutdown(lease, supervisor)
         # The service-side writes still in flight land while what they use is
@@ -91,9 +91,11 @@ async def _shutdown_drains(lease: Any, supervisor: Any, emitter: Any) -> None:
 
         await retrieval_judge.stop()
         await langfuse_scores.drain(timeout_s=5.0)
-        # Bounded so the emitter and the clients below still close in the budget.
+        # Counted from the drains' start, so the emitter and the clients below
+        # still close in the budget.
+        left = _agent_claim.SHUTDOWN_WAIT_S - (time.monotonic() - started)
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(claims, _agent_claim.SHUTDOWN_WAIT_S)
+            await asyncio.wait_for(claims, max(0.0, left))
     finally:
         claims.cancel()  # a no-op once it is done
     await emitter.stop()

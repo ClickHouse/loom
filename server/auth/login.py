@@ -149,8 +149,8 @@ async def _release_quietly(admitted: attempts.Admission) -> None:
 
 async def _check_credentials(ident: str, password: str) -> Identity | None:
     if not ident:
-        # Unclaimed agents' rows name no email: a blank identifier would test
-        # the password against every one of them. Timed as an unknown account.
+        # Agent accounts name no email: a blank identifier would test the
+        # password against every one of them. Timed as an unknown account.
         await verify_as_unknown(password)
         return None
     ch = get_client()

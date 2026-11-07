@@ -27,7 +27,8 @@ CLAIMED_TAG = "machine:agent-signup:claimed"
 # A `loom.namespaces` row whose password is still an agent's claim code: a
 # prefixed hash, or a plain one on an agent sign-up's shape (an `agent-` name
 # that is its own owner, with no email) that no claim has marked. No other
-# account has a password and no email. Constants only, inlined into the WHERE.
+# account has a password and no email but a claimed agent's, which carries the
+# tag. Constants only, inlined into the WHERE.
 UNCLAIMED_SQL = (
     f"(password_hash != '' AND (startsWith(password_hash, '{CLAIM_PREFIX}')"
     " OR (startsWith(namespace, 'agent-') AND owner_email = namespace"

@@ -121,11 +121,9 @@ async def test_a_claim_past_its_wait_leaves_the_emitter_and_the_clients_to_close
     monkeypatch.setattr(_http, "aclose", aclose)
     monkeypatch.setattr(m._otel, "shutdown", lambda: None)
     monkeypatch.setattr(agent_claim, "SHUTDOWN_WAIT_S", 0.05)
-    claim = asyncio.get_running_loop().create_task(asyncio.sleep(10))
-    agent_claim._running.add(claim)
+    claim = agent_claim._running.spawn(asyncio.sleep(10), name="probe")
     try:
         await m._shutdown_drains(None, None, _Emitter())
         assert closed == ["emitter", "http"] and not claim.done()
     finally:
-        agent_claim._running.discard(claim)
         claim.cancel()

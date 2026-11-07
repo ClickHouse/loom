@@ -32,6 +32,7 @@ from server.auth.self_signup import (
     AGENT_DESCRIPTION_UNCLAIMED,
     AGENT_NAME_PREFIX,
 )
+from server.core.background import TaskSet
 from server.core.ch import get_client, own_write_reads
 from server.core.errors import (
     BackendTimeoutError,
@@ -230,7 +231,7 @@ async def _proven(namespace: str, code: str) -> tuple[str, str] | None:
 
 # A claim's write and the cutoffs after it, kept here while they run so a
 # cancelled request does not drop them.
-_running: set[asyncio.Task[Any]] = set()
+_running = TaskSet()
 # The longest the read-back after a claim's write may take.
 _READ_BACK_S = 5.0
 
@@ -238,7 +239,6 @@ _READ_BACK_S = 5.0
 def _done(task: asyncio.Task[Any]) -> None:
     # Logged here, not by the request, which a disconnect may have cancelled; a
     # busy account or backend is expected and answered.
-    _running.discard(task)
     if not task.cancelled() and not isinstance(task.exception(), (type(None), *_BUSY)):
         log.warning("agent claim: the claim's task failed: %r", task.exception())
 
@@ -251,8 +251,9 @@ SHUTDOWN_WAIT_S = 20.0
 async def drain() -> None:
     """Wait for the claims still running, so a shutdown does not drop a cutoff;
     the shutdown's drain budget bounds the wait."""
-    if _running:
-        await asyncio.wait(set(_running))
+    live = [t for t in _running if not t.done()]
+    if live:
+        await asyncio.wait(live)
 
 
 async def claim_shielded(
@@ -260,8 +261,9 @@ async def claim_shielded(
 ) -> tuple[str, datetime | None, list[str] | None]:
     """`_replace_code` in a task of its own: a client that disconnects cancels
     the request, never the write's cutoffs."""
-    task = asyncio.create_task(_replace_code(org, namespace, code_hash, password_hash))
-    _running.add(task)
+    task = _running.spawn(
+        _replace_code(org, namespace, code_hash, password_hash), name="agent-claim"
+    )
     task.add_done_callback(_done)
     return await asyncio.shield(task)
 
