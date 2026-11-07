@@ -176,9 +176,7 @@ def tracker_namespaces_for(
     if operator is None:
         operator = operator_repositories()
     if (org, code_namespace) not in operator:
-        # Issue and PR numbers are repository-wide: a branch reads its repository's
-        # trackers. Only an operator source is followed, one level, and only for a
-        # registered branch: a removal or a late copy can leave the row behind.
+        # A registered branch reads its operator repository's trackers, one level.
         if (
             source
             and (org, source) in operator

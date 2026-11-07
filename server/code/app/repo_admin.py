@@ -119,9 +119,7 @@ async def _register(
     from server.code.store.index import CodeRepo
 
     subject = current_caller()[0] or auth_off_subject()
-    # A removed namespace of this name may have left rows (a removal on N-1 clears none,
-    # the purge is detached), and this replica's snapshot may hold rows another replica's
-    # removal emptied or its purge deleted.
+    # Rows a removed namespace of this name left (N-1 clears none; the purge is detached).
     await _empty_tracker_links(org, namespace, detail="stale row of a removed namespace")
     await reg.insert_entry(
         org=org,
@@ -436,9 +434,7 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
     # a call that fails between the two leaves the repository registered to retry.
     ch = get_client()
     async with sources_lease(input.org, input.namespace):
-        # Under the lease and before any deactivation: a refused removal keeps the links.
-        # The purge is detached, and a namespace of this name registered before it runs
-        # must not follow the removed one's source or links.
+        # Before any deactivation, so a refused removal keeps the links.
         await _empty_tracker_links(input.org, input.namespace, detail="repository removed")
         sources_off = await deactivate_namespace_sources(input.org, input.namespace)
         registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)
