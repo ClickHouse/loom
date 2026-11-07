@@ -68,7 +68,7 @@ describe("RepairsPanel", () => {
     expect(vi.mocked(api.sweepExpired).mock.calls.map((c) => c[1])).toEqual([true, true]);
   });
 
-  it("says an apply that did not all land failed", async () => {
+  it("says a pass whose insert failed wrote nothing", async () => {
     vi.mocked(api.sweepExpired)
       .mockResolvedValueOnce({ scanned: 9, tombstoned: 2, demoted: 0, anonymized: 0, locked_skipped: 0, failures: [] })
       .mockResolvedValueOnce({
@@ -92,7 +92,7 @@ describe("RepairsPanel", () => {
     render(<RepairsPanel />);
     await userEvent.click(screen.getByRole("button", { name: "Apply expiries now" }));
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith("Expired 2; search may list some until the next pass", "info"),
+      expect(toast).toHaveBeenCalledWith("Expired 2; the search index did not follow: mirror:2 keys: Timeout", "error"),
     );
   });
 
@@ -209,6 +209,16 @@ describe("RepairsPanel", () => {
     await waitFor(() => expect(api.restoreNamespace).toHaveBeenCalled());
     expect(confirmAction).toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining("It is a snapshot of globex/team:") }),
+    );
+  });
+
+  it("names the other org of a snapshot that carries no namespace", async () => {
+    render(<RepairsPanel />);
+    const file = new File([JSON.stringify({ org: "globex" })], "globex.json", { type: "application/json" });
+    await userEvent.upload(screen.getByLabelText("Snapshot file"), file);
+    await waitFor(() => expect(api.restoreNamespace).toHaveBeenCalled());
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("It is a snapshot of globex:") }),
     );
   });
 });

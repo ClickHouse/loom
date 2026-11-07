@@ -3,11 +3,11 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Table } from "@clickhouse/click-ui/Table";
 import {
   FAILURE_LIST_LIMIT,
-  type ProjectionRetry,
   listProjectionFailures,
   resolveProjectionFailures,
   retryProjectionFailures,
   type ProjectionFailure,
+  type ProjectionRetry,
 } from "../../api/maintenance";
 import { useIdentity } from "../../lib/state";
 import { useAbortableEffect } from "../../lib/hooks";
@@ -57,16 +57,16 @@ export function ProjectionFailuresPanel() {
       const r = await retryProjectionFailures(identity);
       const count = (keep: (x: ProjectionRetry) => boolean) => r.results.filter(keep).length;
       const fixed = count((x) => x.resolved);
-      const failed = count((x) => x.retried && !x.resolved);
+      const failedAgain = count((x) => x.retried && !x.resolved && !x.abandoned);
       const outcomes: [number, string][] = [
         [fixed, "fixed"],
-        [count((x) => x.retried && !x.resolved && !x.abandoned), "failed again"],
+        [failedAgain, "failed again"],
         [count((x) => x.abandoned), "given up"],
         [count((x) => x.reason === "pending" || x.reason === "model_calls_held"), "waiting for a later pass"],
         [count((x) => x.reason === "unsupported_projection"), "with no retry"],
       ];
       const parts = outcomes.filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`);
-      const tone = fixed ? "ok" : failed ? "error" : "info";
+      const tone = fixed ? "ok" : failedAgain ? "error" : "info";
       toast(`Tried ${r.results.length}: ${parts.join(", ") || "nothing changed"}`, tone);
     });
   const dismiss = (id: string) =>
@@ -130,7 +130,7 @@ export function ProjectionFailuresPanel() {
                     type="empty"
                     htmlType="button"
                     disabled={busy}
-                    aria-label={`Dismiss failure ${f.failure_id}`}
+                    aria-label={`Dismiss the ${f.projection} failure of ${f.memory_keys[0] || f.source_operation || "a write"} (${f.failure_id.slice(0, 8)})`}
                     onClick={() => void dismiss(f.failure_id)}
                   >
                     Dismiss

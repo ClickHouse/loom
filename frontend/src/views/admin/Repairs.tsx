@@ -62,11 +62,12 @@ export function RepairsPanel() {
         return;
       const r = await sweepExpired(identity, false);
       const done = r.tombstoned + r.demoted + r.anonymized;
-      // The pass counts before it writes: a scan or insert failure wrote nothing, and only
-      // the search mirror's write comes after the memory rows landed.
+      // The pass counts before it writes: a scan or insert failure wrote nothing; a mirror
+      // failure means the memories expired but their search rows were not updated.
       if (r.failures.some((f) => !f.startsWith("mirror")))
         return toast(`The expiry did not land: ${r.failures.join("; ")}`, "error");
-      if (r.failures.length) return toast(`Expired ${done}; search may list some until the next pass`, "info");
+      if (r.failures.length)
+        return toast(`Expired ${done}; the search index did not follow: ${r.failures.join("; ")}`, "error");
       // A full pass may have left more; one that expired nothing only met locked rows.
       const rest = r.scanned === SWEEP_LIMIT && done > 0 ? "; run it again for the rest" : "";
       toast(`Expired ${done}; ${r.locked_skipped} locked kept${rest}`, "ok");

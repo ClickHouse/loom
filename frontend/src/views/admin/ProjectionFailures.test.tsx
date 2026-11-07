@@ -45,7 +45,7 @@ describe("ProjectionFailuresPanel", () => {
     await waitFor(() =>
       expect(api.retryProjectionFailures).toHaveBeenCalledWith(expect.objectContaining({ namespace: "team" })),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Dismiss failure f1" }));
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss the embedding failure of deploy_window (f1)" }));
     await waitFor(() => expect(api.resolveProjectionFailures).toHaveBeenCalledWith("acme", ["f1"]));
   });
 
@@ -81,6 +81,34 @@ describe("ProjectionFailuresPanel", () => {
         "ok",
       ),
     );
+  });
+
+  it("toasts an error when nothing was fixed and a retry failed again, not when one was only given up", async () => {
+    const row = (over: Partial<ProjectionRetry>): ProjectionRetry => ({
+      failure_id: "f",
+      projection: "embedding",
+      retried: true,
+      resolved: false,
+      abandoned: false,
+      reason: "",
+      error: "",
+      ...over,
+    });
+    vi.mocked(api.retryProjectionFailures)
+      .mockResolvedValueOnce({ results: [row({ error: "timeout" })], retried: 1, resolved: 0, abandoned: 0 })
+      .mockResolvedValueOnce({
+        results: [row({ abandoned: true, reason: "malformed_payload" })],
+        retried: 1,
+        resolved: 0,
+        abandoned: 1,
+      });
+    render(<ProjectionFailuresPanel />);
+    const retry = await screen.findByRole("button", { name: "Retry failures" });
+    await userEvent.click(retry);
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Tried 1: 1 failed again", "error"));
+    await waitFor(() => expect(retry).toBeEnabled());
+    await userEvent.click(retry);
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Tried 1: 1 given up", "info"));
   });
 
   it("says a retry held by the org's model calls is waiting, not lost", async () => {
@@ -127,6 +155,6 @@ describe("ProjectionFailuresPanel", () => {
     vi.mocked(api.listProjectionFailures).mockImplementationOnce(() => new Promise(() => {}));
     act(() => useStore.setState({ identity: { org: "acme", namespace: "other", agent: "loom-ui" } }));
     await waitFor(() => expect(screen.queryByText("embedder timed out")).toBeNull());
-    expect(screen.queryByRole("button", { name: "Dismiss failure f1" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Dismiss the embedding failure of deploy_window (f1)" })).toBeNull();
   });
 });
