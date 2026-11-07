@@ -389,7 +389,9 @@ async def test_a_self_service_repository_matching_the_glob_opens_nothing(monkeyp
         ),
     )
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
-    monkeypatch.setattr(repos, "_registry_repos", [_registry_entry("code-clickhouse")])
+    monkeypatch.setattr(repos, "_registry_namespaces", repos._registry_namespaces)
+    monkeypatch.setattr(repos, "_registry_repos", repos._registry_repos)
+    repos.set_registry_repos([_registry_entry("code-clickhouse")])
     assert await fo.readable_tracker_namespaces(ORG, PRIV, [], 4) == [PRIV]
 
 

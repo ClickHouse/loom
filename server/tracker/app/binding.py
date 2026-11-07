@@ -38,6 +38,7 @@ import time
 from collections.abc import Collection
 from typing import Any
 
+from server.code.domain.index import repos
 from server.settings import settings
 
 log = logging.getLogger("loom.tracker.binding")
@@ -113,7 +114,8 @@ async def refresh_overrides(*, force: bool = False) -> dict[tuple[str, str], str
         forgotten = _FORGOTTEN
         rows = await code_index().state_values_for_keys([OVERRIDE_KEY, BRANCH_OF_KEY])
         if forgotten != _FORGOTTEN:
-            return dict(_OVERRIDES)  # the next call reads again
+            _OVERRIDES_AT = 0.0  # the next call reads again
+            return dict(_OVERRIDES)
         _OVERRIDES, _BRANCH_OF = rows[OVERRIDE_KEY], rows[BRANCH_OF_KEY]
         _OVERRIDES_AT = now
     except Exception as e:  # noqa: BLE001 — keep the last snapshot
@@ -150,8 +152,6 @@ def operator_repositories() -> frozenset[tuple[str, str]]:
     """(org, namespace) of every repository the operator configured, the only
     kind the deployment's map links. One read of the repository list: a caller
     looking up many namespaces builds it once and passes it down."""
-    from server.code.domain.index import repos
-
     return frozenset((c.org, c.namespace) for c in repos.configured_repos() if c.source == "config")
 
 
@@ -179,13 +179,12 @@ def tracker_namespaces_for(
         # Issue and PR numbers are repository-wide: a branch reads its repository's
         # trackers. Only an operator source is followed, one level, and only for a
         # registered branch: a removal or a late copy can leave the row behind.
-        if source and (org, source) in operator:
-            from server.code.domain.index import repos
-
-            if (org, code_namespace) in repos.registry_namespaces():
-                return tracker_namespaces_for(org, source, operator=operator)
-        return []
-    if not m:
+        if (
+            source
+            and (org, source) in operator
+            and (org, code_namespace) in repos.registry_namespaces()
+        ):
+            return tracker_namespaces_for(org, source, operator=operator)
         return []
     if code_namespace in m:
         return parse_binding(m[code_namespace])

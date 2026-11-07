@@ -142,7 +142,8 @@ def plane(monkeypatch):
 
     monkeypatch.setattr(reg, "refresh_db_repos", _refresh)
     monkeypatch.setattr(repos, "_registry_namespaces", repos._registry_namespaces)
-    monkeypatch.setattr(repos, "_registry_repos", [reg.row_to_config(row)])
+    monkeypatch.setattr(repos, "_registry_repos", repos._registry_repos)
+    repos.set_registry_repos([reg.row_to_config(row)])
 
     import server.code.store.index as code_repo_mod
 

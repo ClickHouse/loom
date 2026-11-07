@@ -220,11 +220,12 @@ async def tracker_section_rows(
     code namespace's cache. Status is `not_bound`, `restricted`, `served` or `empty`; a
     failed read raises."""
     from server.identity.app.namespace_classification import is_restricted
-    from server.tracker.app.binding import tracker_namespace_for
+    from server.tracker.app.binding import refresh_overrides, tracker_namespace_for
     from server.tracker.app.facts import fact_of, tracker_fact_line
     from server.tracker.app.source import tracker_source
     from server.tracker.domain import bisect as bi
 
+    await refresh_overrides()  # the links as of the refresh interval, branches included
     tracker_ns = tracker_namespace_for(org, ns)
     if not tracker_ns:
         return "not_bound", []

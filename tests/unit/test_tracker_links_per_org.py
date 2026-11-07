@@ -221,3 +221,61 @@ def test_a_refresh_read_before_forget_links_keeps_nothing(monkeypatch) -> None:
     monkeypatch.setattr(reads_mod, "code_index", lambda: CodeRepo(ch))  # type: ignore[arg-type]
     asyncio.run(binding.refresh_overrides(force=True))
     assert (ORG_X, CODE) not in binding._BRANCH_OF
+
+
+def test_a_discarded_refresh_leaves_the_next_call_to_read_again(monkeypatch) -> None:
+    import server.code.app.reads as reads_mod
+    import server.core.ch as ch_mod
+
+    calls: list[int] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            calls.append(1)
+            if len(calls) == 1:
+                binding.forget_links(ORG_X, "code-other")  # a registration lands mid-read
+            return []
+
+    ch = _CH()
+    monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
+    monkeypatch.setattr(reads_mod, "code_index", lambda: CodeRepo(ch))  # type: ignore[arg-type]
+    asyncio.run(binding.refresh_overrides(force=True))
+    asyncio.run(binding.refresh_overrides())  # not forced, and still reads
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("caller", ["pack", "brief", "risk_fit", "token_setup"])
+def test_every_reader_of_the_links_refreshes_them_first(monkeypatch, caller) -> None:
+    """A process that has served no admin op still reads current links, a branch's
+    `qa_branch_of` included: each reader refreshes the snapshot (cached for the refresh
+    interval) before its lookup."""
+    seen: list[str] = []
+
+    async def _refresh(*, force: bool = False) -> dict[Any, str]:
+        seen.append("refresh")
+        return {}
+
+    def _lookup(org: str, ns: str, **_: Any) -> Any:
+        seen.append("lookup")
+        return [] if caller == "token_setup" else ""
+
+    monkeypatch.setattr(binding, "refresh_overrides", _refresh)
+    monkeypatch.setattr(binding, "tracker_namespace_for", _lookup)
+    monkeypatch.setattr(binding, "tracker_namespaces_for", _lookup)
+    if caller == "pack":
+        from server.code.app.index import packs
+
+        asyncio.run(packs.tracker_section_rows(ORG_X, CODE, 1, []))
+    elif caller == "brief":
+        from server.code.app.index import review_brief_sources
+
+        asyncio.run(review_brief_sources.tracker_pr_facts(ORG_X, CODE, 1))
+    elif caller == "risk_fit":
+        from server.code.app.index import risk_fit
+
+        asyncio.run(risk_fit._bound_tracker_namespace(ORG_X, CODE))
+    else:
+        from server.identity.app import me_setup
+
+        asyncio.run(me_setup._with_bound_tracker(ORG_X, "alice", [CODE]))
+    assert seen == ["refresh", "lookup"]
