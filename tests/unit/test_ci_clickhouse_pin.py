@@ -88,10 +88,9 @@ def test_the_release_clickhouse_job_sees_the_candidate_tags() -> None:
 
 
 def test_a_dispatch_names_its_clickhouse_through_the_environment() -> None:
-    """The input reaches the shell as data, and is checked as one exact release."""
+    """The input reaches the shell as data; the script checks it
+    (test_release_clickhouse.py)."""
     (step,) = [s for s in _jobs("release.yml")["clickhouse"]["steps"] if s.get("id") == "resolve"]
     assert step["env"]["CLICKHOUSE_IMAGE"] == "${{ inputs.clickhouse_image }}"
     assert "inputs." not in step["run"]
     assert "scripts/release/release_clickhouse.sh" in step["run"]
-    script = WORKFLOWS.parents[1] / "scripts" / "release" / "release_clickhouse.sh"
-    assert "EXACT_CLICKHOUSE.fullmatch" in script.read_text()

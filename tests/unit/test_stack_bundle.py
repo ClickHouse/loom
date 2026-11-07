@@ -155,15 +155,6 @@ def _release_workflow() -> dict:
     )
 
 
-def test_the_release_warns_when_a_published_bundle_keeps_its_own_release() -> None:
-    (resolve,) = [
-        s for s in _release_workflow()["jobs"]["clickhouse"]["steps"] if s.get("id") == "resolve"
-    ]
-    assert "scripts/release/release_clickhouse.sh" in resolve["run"]
-    script = Path(__file__).parents[2] / "scripts" / "release" / "release_clickhouse.sh"
-    assert "::warning::clickhouse_image=" in script.read_text()
-
-
 # `gh` as a release step sees it: v1.1.0 is not published yet, and v1.2.0's
 # bundle (STUB_BUNDLE) was published by another tag's run.
 STUB_GH = """#!/usr/bin/env bash

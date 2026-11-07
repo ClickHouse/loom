@@ -10,19 +10,8 @@ Run with the project's environment (the notes import the server's registry):
     .venv/bin/python scripts/release/prepare.py check-chart 1.2.0       # the chart moved
     .venv/bin/python scripts/release/prepare.py check-tag 1.2.0-rc.1    # candidate order
 
-One version names the server, the images, the web app, both SDKs, the root
-skills and the chart's `appVersion` (docs/development/release-process.md). The
-files carry final versions only: a release candidate is a `vX.Y.Z-rc.N` tag on
-the commit the final tag goes on later. The chart's own `version` moves with
-every release, since its `appVersion` does: a minor for a major or minor
-release, a patch for a patch release. The coding-agent plugins keep their own
-version and are left alone.
-
-The notes are the changelog entries of the pull requests merged since the
-previous release, in the template's category order, their operator steps, the
-pull requests whose description names no single category, and the wire
-changelog (scripts/codegen/wire_changelog.py), for the release pull request's
-description.
+What each file carries, the chart rule, the release candidates and the notes:
+docs/development/release-process.md.
 """
 
 from __future__ import annotations
@@ -119,7 +108,10 @@ def next_chart_version(version: str, previous_version: str, previous_chart: str)
 
 def check(root: Path = ROOT) -> list[tuple[str, str]]:
     """(file, error) for every pin that does not carry the server's version."""
-    want = read(SERVER, root)
+    try:
+        want = read(SERVER, root)
+    except ValueError as e:
+        return [(SERVER.path, str(e))]
     errors = []
     for pin in FOLLOWERS:
         try:
@@ -360,7 +352,7 @@ def changelog(body: str) -> tuple[str, str, str]:
     return category, "" if entry in ("", "...") else entry, _operator_steps(body)
 
 
-def merged_pull_requests(previous_tag: str, root: Path = ROOT) -> dict[int, int]:
+def squash_merges(previous_tag: str, root: Path = ROOT) -> dict[int, int]:
     """Pull request number to squash-merge commit time, oldest first, for the
     merges since `previous_tag`; the release pull request's own merge (the one
     that moves `__version__`) is left out."""
@@ -416,7 +408,7 @@ def notes(version: str, previous: str, pulls: list[dict[str, Any]], wire: str) -
     return "\n".join(out)
 
 
-def merged_pulls(merged: dict[int, int]) -> list[dict[str, Any]]:
+def pull_requests(merged: dict[int, int]) -> list[dict[str, Any]]:
     """The merged pull requests' number, title and body, in `merged`'s order,
     from one `gh pr list` call."""
     if not merged:
@@ -439,7 +431,7 @@ def merged_pulls(merged: dict[int, int]) -> list[dict[str, Any]]:
 
 
 def release_notes(version: str, previous: str, root: Path = ROOT) -> str:
-    pulls = merged_pulls(merged_pull_requests(previous, root))
+    pulls = pull_requests(squash_merges(previous, root))
     wire = subprocess.run(
         [sys.executable, "scripts/codegen/wire_changelog.py", previous, "HEAD"],
         cwd=root,
@@ -450,7 +442,7 @@ def release_notes(version: str, previous: str, root: Path = ROOT) -> str:
     return notes(version, previous, pulls, wire)
 
 
-def _check() -> None:
+def _check(args: argparse.Namespace) -> None:
     errors = check()
     for path, error in errors:
         print(f"::error file={path}::{error}")
@@ -458,7 +450,8 @@ def _check() -> None:
         raise SystemExit(1)
 
 
-def _check_tag(tag_version: str) -> None:
+def _check_tag(args: argparse.Namespace) -> None:
+    tag_version = args.tag_version
     if not tag_on_head(tag_version):
         print(f"::notice::no candidate-order check: v{tag_version} is not on this commit")
         return
@@ -467,7 +460,8 @@ def _check_tag(tag_version: str) -> None:
         raise SystemExit(f"::error::{tag_error}")
 
 
-def _check_chart(tag_version: str) -> None:
+def _check_chart(args: argparse.Namespace) -> None:
+    tag_version = args.tag_version
     baseline = chart_baseline(tag_version)
     if not baseline:
         # Said in the log, so a skip never reads as a chart checked.
@@ -493,12 +487,14 @@ def _fetch_tags_and_validate(version: str) -> None:
     validate(version)
 
 
-def _notes(version: str) -> None:
+def _notes(args: argparse.Namespace) -> None:
+    version = args.version
     _fetch_tags_and_validate(version)
     print(release_notes(version, previous_release(version)))
 
 
-def _bump(version: str) -> None:
+def _bump(args: argparse.Namespace) -> None:
+    version = args.version
     _fetch_tags_and_validate(version)
     refuse_tagged(version)
     previous = previous_release(version)
@@ -523,25 +519,23 @@ def _one_line(e: Exception) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    bump_parser = commands.add_parser("bump", help="write the release notes, then bump")
-    notes_parser = commands.add_parser("notes", help="only print the release notes")
-    for command in (bump_parser, notes_parser):
-        command.add_argument("version", help="the release, X.Y.Z")
-    bump_parser.set_defaults(run=lambda args: _bump(args.version))
-    notes_parser.set_defaults(run=lambda args: _notes(args.version))
-    commands.add_parser("check", help="every file names one version").set_defaults(
-        run=lambda args: _check()
-    )
-    chart_parser = commands.add_parser(
+    bump = commands.add_parser("bump", help="write the release notes, then bump")
+    bump.add_argument("version", help="the release, X.Y.Z")
+    bump.set_defaults(run=_bump)
+    notes = commands.add_parser("notes", help="only print the release notes")
+    notes.add_argument("version", help="the release, X.Y.Z")
+    notes.set_defaults(run=_notes)
+    commands.add_parser("check", help="every file names one version").set_defaults(run=_check)
+    chart = commands.add_parser(
         "check-chart", help="the chart's version is above the previous release's"
     )
-    tag_parser = commands.add_parser(
+    chart.add_argument("tag_version", help="the tag's version, X.Y.Z or X.Y.Z-rc.N")
+    chart.set_defaults(run=_check_chart)
+    tag = commands.add_parser(
         "check-tag", help="a candidate before its final, the final on its last candidate's commit"
     )
-    for command in (chart_parser, tag_parser):
-        command.add_argument("tag_version", help="the tag's version, X.Y.Z or X.Y.Z-rc.N")
-    chart_parser.set_defaults(run=lambda args: _check_chart(args.tag_version))
-    tag_parser.set_defaults(run=lambda args: _check_tag(args.tag_version))
+    tag.add_argument("tag_version", help="the tag's version, X.Y.Z or X.Y.Z-rc.N")
+    tag.set_defaults(run=_check_tag)
     args = parser.parse_args()
     try:
         args.run(args)

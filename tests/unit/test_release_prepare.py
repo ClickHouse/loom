@@ -452,7 +452,7 @@ def test_the_merged_pull_requests_are_the_squash_merges_since_the_tag(tmp_path: 
     (tmp_path / "server").mkdir()
     (tmp_path / "server/__init__.py").write_text('__version__ = "1.1.0"\n')
     _commit(tmp_path, "Release 1.1.0 (#15)")  # the release pull request itself
-    assert list(prepare.merged_pull_requests("v1.0.0", tmp_path)) == [12, 13, 14]
+    assert list(prepare.squash_merges("v1.0.0", tmp_path)) == [12, 13, 14]
 
 
 def _released(root: Path, merges: tuple[int, ...] = (12, 13, 14)) -> Path:
@@ -640,18 +640,20 @@ def test_a_release_with_no_final_tag_below_is_refused(monkeypatch: pytest.Monkey
         prepare.main()
 
 
-def test_a_version_file_the_check_cannot_read_is_an_error_line(
-    monkeypatch: pytest.MonkeyPatch,
+def test_a_server_version_the_check_cannot_read_is_an_error_line_on_its_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def unreadable() -> list[tuple[str, str]]:
-        raise ValueError("server/__init__.py: matches 0 times, not once")
-
-    monkeypatch.setattr(prepare, "check", unreadable)
+    root = _copy(tmp_path)
+    (root / "server/__init__.py").write_text("version = 1\n")
+    check = prepare.check
+    monkeypatch.setattr(prepare, "check", lambda: check(root))
     monkeypatch.setattr(sys, "argv", ["prepare.py", "check"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
-    # A message exits with status 1.
-    assert str(exited.value) == "::error::server/__init__.py: matches 0 times, not once"
+    assert exited.value.code == 1
+    out = capsys.readouterr().out
+    assert out.startswith("::error file=server/__init__.py::server/__init__.py: ")
+    assert "matches 0 times, not once" in out
 
 
 def test_a_skipped_chart_check_says_so(

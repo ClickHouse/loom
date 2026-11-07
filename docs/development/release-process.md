@@ -49,6 +49,8 @@ since the highest final tag below the release:
   that name no step;
 - the wire diff ([code generation](./code-generation.md#wire-changelog)).
 
+A fix that a patch release of an older line already shipped is listed again; the author drops it.
+
 It fetches the upstream repository's tags itself, reads the pull requests with `gh` and the wire
 diff through the server's registry, so it needs a signed-in `gh` and the project's environment
 (`uv sync`). `.venv/bin/python scripts/release/prepare.py notes X.Y.Z` prints the section again
@@ -94,8 +96,9 @@ the tag ships.
    gh workflow run release.yml --ref vX.Y.Z
    ```
 
-6. Paste the release notes made at the final tag's commit (`prepare.py notes X.Y.Z`, above) into
-   the GitHub Release, above the generated notes.
+6. Paste the release notes made at the final tag's commit (`prepare.py notes X.Y.Z` with
+   `vX.Y.Z` checked out, `git switch --detach vX.Y.Z`) into the GitHub Release, above the
+   generated notes.
 
 A release candidate is a `vX.Y.Z-rc.N` tag, and makes a GitHub pre-release; the release refuses any
 other prerelease tag. The first candidate goes on the release pull request's merge commit, whose

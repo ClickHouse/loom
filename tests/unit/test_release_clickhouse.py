@@ -92,7 +92,7 @@ def resolve(tmp_path: Path, repo: Path, git: Git) -> Resolve:
 def test_a_re_run_keeps_its_published_bundles_release(resolve: Resolve) -> None:
     result = resolve("1.2.0", {"v1.2.0": "ch:a"}, CLICKHOUSE_IMAGE="ch:b")
     assert result.stdout == "ch:a\n"
-    assert "clickhouse_image=ch:b ignored" in result.stderr
+    assert "::warning::clickhouse_image=ch:b ignored" in result.stderr
 
 
 def test_a_final_keeps_its_last_candidates_release(resolve: Resolve) -> None:
