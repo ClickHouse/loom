@@ -41,7 +41,10 @@ export function TokenReadScopePanel({
               and {repoCount} repositor{repoCount === 1 ? "y" : "ies"}
             </>
           ) : null}
-          <span className="font-normal text-text-muted"> today, and any you join later.</span>
+          <span className="font-normal text-text-muted">
+            {" "}
+            today, and any you join later. A restricted one is read only when added to the token.
+          </span>
         </div>
         <div className="flex flex-wrap gap-1">
           {scope.namespaces.map((ns) => (

@@ -12,7 +12,7 @@ from typing import Any
 
 from server.cli._client import DEFAULT_BASE_URL, agent_mode, default_base_url, resolve_token
 from server.cli._paths import write_private
-from server.identity.app.token_clients import CONFIG_PATHS, config_key
+from server.identity.app.token_clients import CONFIG_PATHS, config_key, mcp_entry
 
 # ============================================================
 # `loom install` — wire Loom into a local AI client's config
@@ -57,25 +57,6 @@ def _detect_installed_clients() -> list[str]:
         except Exception:  # noqa: BLE001 — detection must never crash install
             continue
     return found
-
-
-def _mcp_entry(client: str, mcp_url: str, token: str) -> dict[str, Any]:
-    """The MCP-server config block for one client. Stdio-only clients need the
-    `mcp-remote` npx shim to bridge to a remote HTTP server; the rest take the
-    URL + headers form directly."""
-    if client in {"claude-desktop", "zed", "cline"}:
-        return {
-            "command": "npx",
-            "args": [
-                "-y",
-                "mcp-remote",
-                mcp_url,
-                "--allow-http",
-                "--header",
-                f"Authorization: Bearer {token}",
-            ],
-        }
-    return {"url": mcp_url, "headers": {"Authorization": f"Bearer {token}"}}
 
 
 def _toolset_arg(value: str) -> str:
@@ -389,7 +370,7 @@ def _install_one(
     section = config_key(client)
     cfg_path = _resolve_install_path(client)
     mcp_url = _install_mcp_url(server_url, toolset)
-    entry = _mcp_entry(client, mcp_url, token)
+    entry = mcp_entry(client, mcp_url, token)
 
     existing: dict[str, Any] = {}
     if cfg_path.exists():

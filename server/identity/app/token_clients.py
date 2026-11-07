@@ -74,41 +74,49 @@ def config_key(client: str) -> str:
 
 
 def _coding_url(mcp_url: str) -> str:
+    # The dashboard's withToolset, kept alike for the fixture: a URL that already has a
+    # query or a toolset keeps it.
     if re.search(r"[?&]toolset=", mcp_url):
         return mcp_url
     return f"{mcp_url}{'&' if '?' in mcp_url else '?'}toolset=coding"
 
 
-def client_config(client: str, mcp_url: str, minted: str) -> dict[str, object]:
-    """One MCP client's setup for a token: the config-file key, the server entry
-    (URL + bearer, the `mcp-remote` bridge for stdio clients), the file's own text
-    when it is not JSON, the one-line registration command, the variables to export
-    before the client starts, and the file's path per platform."""
-    url = _coding_url(mcp_url) if client in _CODING_CLIENTS else mcp_url
-    bearer = f"Bearer {minted}"
-    auth_header = f"Authorization: {bearer}"
-    toml, command, env = "", "", {}
+def mcp_entry(client: str, url: str, minted: str) -> dict[str, object]:
+    """The `loom` entry a client's MCP config holds for `url`: the `mcp-remote` bridge
+    for a stdio client, the bearer's env var for Codex, else the URL and its header."""
     if client == "codex":
         # Codex reads the bearer from an env var; the token never sits in config.toml.
-        entry: dict[str, object] = {"url": url, "bearer_token_env_var": "LOOM_API_KEY"}
+        return {"url": url, "bearer_token_env_var": "LOOM_API_KEY"}
+    if client in _STDIO_VIA_NPX:
+        header = f"Authorization: Bearer {minted}"
+        return {
+            "command": "npx",
+            "args": ["-y", "mcp-remote", url, "--allow-http", "--header", header],
+        }
+    entry: dict[str, object] = {"url": url, "headers": {"Authorization": f"Bearer {minted}"}}
+    if client in {"claude-code", "vscode"}:
+        entry["type"] = "http"
+    return entry
+
+
+def client_config(client: str, mcp_url: str, minted: str) -> dict[str, object]:
+    """One MCP client's setup for a token: the config-file key and entry (coding agents
+    on the `coding` toolset), the file's own text when it is not JSON, the one-line
+    registration command, the variables to export before the client starts, and the
+    file's path per platform."""
+    url = _coding_url(mcp_url) if client in _CODING_CLIENTS else mcp_url
+    toml, command, env = "", "", {}
+    if client == "codex":
         toml = f'[mcp_servers.loom]\nurl = "{url}"\nbearer_token_env_var = "LOOM_API_KEY"\n'
         command = f'codex mcp add loom --url "{url}" --bearer-token-env-var LOOM_API_KEY'
         env = {"LOOM_API_KEY": minted}
-    elif client in _STDIO_VIA_NPX:
-        entry = {
-            "command": "npx",
-            "args": ["-y", "mcp-remote", url, "--allow-http", "--header", auth_header],
-        }
-    else:
-        entry = {"url": url, "headers": {"Authorization": bearer}}
-        if client in {"claude-code", "vscode"}:
-            entry["type"] = "http"
-    if client == "claude-code":
+    elif client == "claude-code":
         # User scope, kept in ~/.claude.json; the dashboard prints the same line.
-        command = f'claude mcp add --transport http loom "{url}" -H "{auth_header}" -s user'
+        header = f"Authorization: Bearer {minted}"
+        command = f'claude mcp add --transport http loom "{url}" -H "{header}" -s user'
     return {
         "config_key": config_key(client),
-        "config": {config_key(client): {"loom": entry}},
+        "config": {config_key(client): {"loom": mcp_entry(client, url, minted)}},
         "config_toml": toml,
         "command": command,
         "env": env,

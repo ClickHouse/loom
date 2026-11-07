@@ -62,9 +62,9 @@ describe("TokenReadScopePanel", () => {
         docsHref="https://example.test/docs"
       />,
     );
-    expect(screen.getByRole("link", { name: "How restricted access works (opens in a new tab)" }).getAttribute("href")).toBe(
-      "https://example.test/docs",
-    );
+    expect(
+      screen.getByRole("link", { name: "How restricted access works (opens in a new tab)" }).getAttribute("href"),
+    ).toBe("https://example.test/docs");
     const box = screen.getByRole("checkbox", { name: "Also read org/private" });
     expect(box).not.toBeChecked();
     expect(screen.queryByTestId("token-read-scope-included")).toBeNull();

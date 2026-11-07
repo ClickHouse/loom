@@ -140,9 +140,10 @@ async def _name_holder(org: str, name: str) -> str | None:
     return str(row["created_by"]) if row is not None else None
 
 
-def token_name(raw: object) -> str:
-    """A new token's name in its owner's token list; 422 for one off its shape."""
-    name = str(raw or "").strip()
+def token_name(raw: object, default: str = "") -> str:
+    """A new token's name in its owner's token list, `default` when `raw` is blank; 422
+    for one off its shape."""
+    name = str(raw or "").strip() or default
     if not 1 <= len(name) <= 64:
         raise _invalid("name must be 1-64 chars")
     if "\x00" in name:  # reserved: revocation cutoffs key on a NUL (mint_token refuses it)
@@ -322,8 +323,7 @@ async def me_service_accounts_create(
         parent = dev_parent(request, payload)
     subject, org = parent.subject, parent.org
 
-    raw_name = str(payload.get("name") or "").strip()
-    name = token_name(raw_name or generated_name(naive_utc_now_seconds()))
+    name = token_name(payload.get("name"), default=generated_name(naive_utc_now_seconds()))
     requested_role = _requested_roles(payload)
     ttl_seconds = parse_ttl_days(payload.get("ttl_days"))
     everything = "*" in requested_role
