@@ -61,18 +61,23 @@ async def handle_facts_list(input: FactsListInput) -> FactsListOutput:
     # `entity` is a convenience that ORs across subject + object.
     # When set, it overrides subject/object so the caller can't
     # accidentally write a contradictory filter set.
+    # A name with no canonical form is no node: nothing can match it.
     if input.entity is not None:
+        if not (ent := _stored_spellings(input.entity)):
+            return FactsListOutput(rows=[])
         where.append("(subject IN {ent:Array(String)} OR object IN {ent:Array(String)})")
-        params["ent"] = _stored_spellings(input.entity)
+        params["ent"] = ent
     else:
         if input.subject is not None:
+            if not (subj := _stored_spellings(input.subject)):
+                return FactsListOutput(rows=[])
             where.append("subject IN {subj:Array(String)}")
-            params["subj"] = _stored_spellings(input.subject)
+            params["subj"] = subj
         if input.object is not None:
+            if not (obj := _stored_spellings(input.object)):
+                return FactsListOutput(rows=[])
             where.append("object IN {obj:Array(String)}")
-            params["obj"] = _stored_spellings(input.object)
-    if any(params.get(name) == [] for name in ("ent", "subj", "obj")):
-        return FactsListOutput(rows=[])  # a name with no canonical form is no node
+            params["obj"] = obj
     if input.relation is not None:
         where.append("relation = {rel:String}")
         # Stored relations went through canonicalize_verb + canonical_relation

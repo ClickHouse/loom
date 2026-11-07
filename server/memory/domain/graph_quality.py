@@ -20,6 +20,9 @@ _PUNCT_RE = re.compile(r"[^\w\s:/.-]+")
 _NOT_WORD_RE = re.compile(r"\W+")
 _VERB_GAP_RE = re.compile(r"[\s_]+")
 _ARTICLE_RE = re.compile(r"(?:the|a|an)\s+")
+# "commit:<sha>" / "error:<name>" is an identifier: never singularised. A blank (or markup,
+# which becomes one) after the colon reads as prose ("Error: the build failed").
+_CODE_FACET_NAME = re.compile(r"(?:commit|error):\S")
 _SINGLE_VALUED_RELATIONS = {
     "works_at",
     "employed_by",
@@ -438,11 +441,6 @@ def _normalise(lowered: str) -> str:
     text = _lead(_SPACE_RE.sub(" ", text))
     text = text.rstrip(" .") if _CODE_FACET_NAME.match(text) else _settle(text)
     return SELF_SUBJECT if text in _FIRST_PERSON_FORMS else text
-
-
-# "commit:<sha>" / "error:<name>" is an identifier: never singularised. A blank (or markup,
-# which becomes one) after the colon reads as prose ("Error: the build failed").
-_CODE_FACET_NAME = re.compile(r"(?:commit|error):\S")
 
 
 def _capped_normal(original: str) -> str | None:
