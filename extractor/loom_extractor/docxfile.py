@@ -10,12 +10,15 @@ Read as the document holds it: inserted text is kept, and a tracked deletion
 (its runs, rows and cells) and moved text at its old place left out, a content
 control's or a custom XML element's text is read in place (in the body, a
 table's rows and its cells), and an alternate-content choice is read once (its
-fallback copy is skipped). Headers, footers and comments are not the
-document's body and are not read. An embedded document (`altChunk`) is a
-failed unit, as is a document of pictures and no text: what it says is in
-them. The body is one part, so a body nested past what the reader walks fails
-the file. A DOCX has no pages of its own (pagination is the renderer's), so a
-block's locator is empty and its section path is what a citation names.
+fallback copy is skipped). Headers, footers and comments are not the document's
+body and are not read. An embedded document (`altChunk`) is a failed unit. A
+document of pictures, charts, diagrams or embedded objects and no text fails the
+same way; one of text with any of them warns that it is not read, in its body,
+its tables or its notes; a text box's text is read, and a line or a plain shape
+holds nothing to read. The body is one part, so a body nested past what the
+reader walks fails the file. A DOCX has no pages of its own (pagination is the
+renderer's), so a block's locator is empty and its section path is what a
+citation names.
 
 Pure and I/O-free.
 """
@@ -28,10 +31,9 @@ from xml.etree.ElementTree import Element
 from loom_extractor.artifact import Artifact, Blocks, Coverage, Failure, Locator
 from loom_extractor.ooxml import Package, PartError, q
 
-PARSER_VERSION = "3"  # a document's headings sit under its Title paragraph
+PARSER_VERSION = "4"  # a document of text with pictures names them as not read
 _MAIN = "word/document.xml"
 _MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
-_PICT = q("w:pict")
 # What the document no longer holds, or holds twice: a tracked deletion (its runs
 # keep their tabs, breaks and pictures), the old place of moved text (a tracked move
 # keeps its text in ordinary runs at both places), an alternate-content fallback copy.
@@ -140,23 +142,60 @@ def _deleted(el: Element, props: str, mark: str) -> bool:
     return pr is not None and pr.find(q(mark)) is not None
 
 
-def _draws(el: Element) -> bool:
-    """Whether `el` holds a picture or a drawing the document still holds."""
+# An image's reference (DrawingML's, VML's), and the graphics read as charts or diagrams.
+_IMAGES = (q("a:blip"), "{urn:schemas-microsoft-com:vml}imagedata")
+_UNREAD_GRAPHICS = ("/chart", "/chartex", "/diagram")
+_VML_FILL = "{urn:schemas-microsoft-com:vml}fill"
+_VML_TEXTPATH = "{urn:schemas-microsoft-com:vml}textpath"
+_R_ID = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+_O_RELID = "{urn:schemas-microsoft-com:office:office}relid"
+
+
+def _vml_picture_fill(el: Element) -> bool:
+    """Whether `el` is a VML shape's fill that is a picture: one naming an image part,
+    but for a pattern, whose part is the pattern's tile."""
+    names = el.get(_R_ID) is not None or el.get(_O_RELID) is not None
+    return el.tag == _VML_FILL and names and el.get("type") != "pattern"
+
+
+def _pictures(el: Element, fallback: bool = False) -> bool:
+    """Whether `el` holds what a drawing shows and the reader does not read: an
+    image, drawn text (WordArt, a locked canvas's), a chart, a diagram or an
+    embedded object; the same walk fails a document of these and no text. An
+    alternate-content fallback is searched for images too: a drawing the reader
+    does not know (a 3D model) holds its only picture there, where its text is the
+    choice's, read already."""
     for child in el:
-        if child.tag in _NOT_READ:
+        tag = child.tag
+        if tag in _NOT_READ and tag != _MC_FALLBACK:
             continue
-        if child.tag in (q("w:drawing"), _PICT) or _draws(child):
+        if tag == q("w:object") or tag in _IMAGES or _vml_picture_fill(child):
+            return True
+        # WordArt's text (`v:textpath`) and DrawingML's (`a:t`, as a locked canvas holds
+        # it) are drawn, not read; a text box's is read (`w:t`).
+        drawn = (tag == _VML_TEXTPATH and child.get("string")) or (tag == q("a:t") and child.text)
+        if drawn and not fallback:
+            return True
+        if tag == q("a:graphicData") and child.get("uri", "").endswith(_UNREAD_GRAPHICS):
+            return True
+        if _pictures(child, fallback or tag == _MC_FALLBACK):
             return True
     return False
 
 
-def _table(tbl: Element) -> tuple[str, int, int]:
+def _kept(tbl: Element) -> list[list[Element]]:
+    """A table's rows, each its cells, a tracked deletion of either left out."""
     rows = []
     for tr in _children(tbl, q("w:tr")):
-        if _deleted(tr, "w:trPr", "w:del"):
-            continue
-        cells = [tc for tc in _children(tr, q("w:tc")) if not _deleted(tc, "w:tcPr", "w:cellDel")]
-        rows.append([" ".join(_text(tc).split()) for tc in cells])
+        if not _deleted(tr, "w:trPr", "w:del"):
+            rows.append(
+                [tc for tc in _children(tr, q("w:tc")) if not _deleted(tc, "w:tcPr", "w:cellDel")]
+            )
+    return rows
+
+
+def _table(kept: list[list[Element]]) -> tuple[str, int, int]:
+    rows = [[" ".join(_text(tc).split()) for tc in cells] for cells in kept]
     columns = max((len(r) for r in rows), default=0)
     return "\n".join(" | ".join(r) for r in rows), len(rows), columns
 
@@ -170,7 +209,7 @@ class _Body:
         self.items: list[str] = []  # the open list's paragraphs
         self.units = 0  # paragraphs with text, and tables
         self.failed: list[Failure] = []
-        self.drawings = False  # whether a paragraph holds a picture or a drawing
+        self.pictures = False  # whether it holds what a drawing shows and is not read (`_pictures`)
 
     def close_list(self) -> None:
         if self.items:
@@ -179,8 +218,7 @@ class _Body:
 
     def paragraph(self, p: Element) -> None:
         text = _text(p)
-        if _draws(p):
-            self.drawings = True
+        self.pictures = self.pictures or _pictures(p)
         if not text:
             return
         self.units += 1
@@ -204,9 +242,9 @@ class _Body:
 
     def table(self, tbl: Element) -> None:
         self.close_list()
-        if _draws(tbl):
-            self.drawings = True
-        text, rows, columns = _table(tbl)
+        kept = _kept(tbl)
+        self.pictures = self.pictures or any(_pictures(tc) for row in kept for tc in row)
+        text, rows, columns = _table(kept)
         if text.strip(" |\n"):
             self.units += 1
             self.acc.add("paragraph", text, _NO_LOC, table={"rows": rows, "columns": columns})
@@ -240,6 +278,7 @@ class _Body:
             if note.get(q("w:type"), "normal") != "normal":
                 continue  # the separator lines between body and notes
             text = _text(note)
+            self.pictures = self.pictures or _pictures(note)
             if text:
                 self.units += 1
                 self.acc.add("paragraph", text, _NO_LOC, note=kind)
@@ -259,14 +298,28 @@ def extract_docx(data: bytes) -> Artifact:
         reader.read(body)
     reader.notes(pkg, "word/footnotes.xml", "footnote")
     reader.notes(pkg, "word/endnotes.xml", "endnote")
-    if not reader.units and reader.drawings:
+    if not reader.units and reader.pictures:
         # Pictures and no text, like a slide of pictures alone: what it says is in them.
-        reader.failed.append(Failure("document", "no text: its pictures are not read"))
+        reader.failed.append(
+            Failure(
+                "document",
+                "no text: its pictures, charts, diagrams or embedded objects are not read",
+            )
+        )
     failed = tuple(reader.failed)
+    pictures = reader.units > 0 and reader.pictures
     return Artifact(
         format="docx",
         parser="loom-docx",
         parser_version=PARSER_VERSION,
         blocks=tuple(reader.acc.blocks),
         coverage=Coverage("paragraphs", reader.units + len(failed), reader.units, failed=failed),
+        warnings=(
+            (
+                "its pictures, charts, diagrams or embedded objects are not read: text inside"
+                " them is not extracted",
+            )
+            if pictures
+            else ()
+        ),
     )

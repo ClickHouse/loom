@@ -84,9 +84,55 @@ def test_a_large_picture_on_a_text_page_is_read_and_a_small_one_is_not(engine: F
     text = text_at(72, 740, "A page of text with a whiteboard photo.")
     big = extract(laid_out_pdf([text + b"q 400 0 0 300 100 300 cm /Im1 Do Q"], image=GRAY), "b.pdf")
     assert "Scanned runbook text" in "\n".join(b.text for b in big.blocks)
+    assert "images_unread" not in big.attrs  # OCR read it
     small = extract(laid_out_pdf([text + b"q 40 0 0 30 100 300 cm /Im1 Do Q"], image=GRAY), "s.pdf")
     assert [b.text for b in small.blocks] == ["A page of text with a whiteboard photo."]
     assert small.coverage.complete and len(engine.seen) == 1
+    # OCR leaves the small one: the page is named as holding an image not read.
+    assert small.attrs["images_unread"] == [1] and len(small.warnings) == 1
+
+
+def test_a_text_page_partial_for_its_pictures_is_named_there_not_listed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ocr, "engine", lambda: None)
+    text = text_at(72, 740, "A page of text with a photo and an icon.")
+    pictures = b"q 400 0 0 300 100 300 cm /Im1 Do Q q 40 0 0 30 100 100 cm /Im2 Do Q"
+    a = extract(laid_out_pdf([text + pictures], image=[GRAY, GRAY]), "p.pdf")
+    assert not a.coverage.complete
+    assert "images_unread" not in a.attrs and a.warnings == ()
+
+
+def test_a_picture_under_a_point_high_is_no_unread_image(engine: FakeEngine) -> None:
+    text = text_at(72, 740, "A page of text over a thin bar.")
+    a = extract(laid_out_pdf([text + b"q 500 0 0 0.5 50 300 cm /Im1 Do Q"], image=GRAY), "r.pdf")
+    assert a.coverage.complete and "images_unread" not in a.attrs and a.warnings == ()
+
+
+def test_a_slide_with_a_picture_ocr_read_and_a_small_one_is_listed(engine: FakeEngine) -> None:
+    large = '<p:spPr><a:xfrm><a:ext cx="9000000" cy="4500000"/></a:xfrm></p:spPr>'
+    small = '<p:spPr><a:xfrm><a:ext cx="500000" cy="500000"/></a:xfrm></p:spPr>'
+    a = extract(_one_slide(_pic(large) + _pic(small)), "s.pptx")
+    assert a.coverage.complete and a.attrs["ocr_slides"] == [1]
+    assert a.attrs["images_unread"] == [1]
+
+
+def test_a_text_page_with_a_picture_ocr_read_and_a_small_one_is_listed(
+    engine: FakeEngine,
+) -> None:
+    text = text_at(72, 740, "A page of text with a photo and an icon.")
+    pictures = b"q 400 0 0 300 100 300 cm /Im1 Do Q q 40 0 0 30 100 100 cm /Im2 Do Q"
+    a = extract(laid_out_pdf([text + pictures], image=[GRAY, GRAY]), "p.pdf")
+    assert a.coverage.complete and a.attrs["ocr_pages"] == [1]
+    assert a.attrs["images_unread"] == [1]
+
+
+def test_a_small_image_its_own_text_layer_fills_is_not_listed(engine: FakeEngine) -> None:
+    # a scan in strips: a small image with its text layer drawn over it
+    lines = b"".join(text_at(110, 380 - 14 * k, f"Strip line {k} of text.") for k in range(6))
+    a = extract(laid_out_pdf([b"q 200 0 0 90 100 300 cm /Im1 Do Q\n" + lines], image=GRAY), "s.pdf")
+    assert a.coverage.complete and engine.seen == []
+    assert "images_unread" not in a.attrs and a.warnings == ()
 
 
 def test_a_diagrams_labels_on_a_text_page_are_text_not_a_table_or_a_heading(
@@ -277,6 +323,7 @@ def test_a_slides_large_picture_is_read_with_ocr_into_a_block_of_its_own(
         ("paragraph", "Scanned runbook text\nsecond line here", {"ocr": True}),
     ]
     assert a.coverage.complete and a.attrs["ocr_slides"] == [1]
+    assert "images_unread" not in a.attrs and a.warnings == ()  # OCR read it
     assert engine.seen == [(b"\x89PNG fake", pytest.approx(9_000_000 / 914_400))]
     assert a.parser_version.endswith("+tesseract5.0.0")
 
@@ -288,12 +335,14 @@ def test_a_slides_small_picture_is_not_read_and_without_ocr_a_large_one_fails_it
     assert (
         [b.text for b in a.blocks] == ["Whiteboard"] and engine.seen == [] and a.coverage.complete
     )
+    assert a.attrs["images_unread"] == [1]  # OCR leaves the small one, which is said
     monkeypatch.setattr(ocr, "engine", lambda: None)
     b = extract(_deck(9_000_000), "d.pptx")
     assert [b.text for b in b.blocks] == ["Whiteboard"]
     assert [(f.unit, f.reason) for f in b.coverage.failed] == [
         ("slide 1", "a picture covers a fifth of it or more: its text needs OCR, which is not run")
     ]
+    assert "images_unread" not in b.attrs  # its failure names it
 
 
 def test_the_services_ocr_settings_are_checked_when_it_starts() -> None:
@@ -337,6 +386,7 @@ def test_a_text_layer_over_a_page_image_is_read_once_and_not_again_with_ocr(
         laid_out_pdf([b"q 400 0 0 400 100 200 cm /Im1 Do Q\n" + lines], image=GRAY), "t.pdf"
     )
     assert engine.seen == [] and a.coverage.complete and "ocr_pages" not in a.attrs
+    assert "images_unread" not in a.attrs  # its own text layer is its text
     assert sum(b.text.count("Line 3 of") for b in a.blocks) == 1
 
 
@@ -481,7 +531,7 @@ def test_a_slide_with_a_chart_beside_a_picture_ocr_read_is_not_complete(
     a = extract(deck, "c.pptx")
     assert not a.coverage.complete and len(eng.seen) == 1
     assert [f.reason for f in a.coverage.failed] == [
-        "no text: its pictures, charts or diagrams are not read"
+        "no text: its pictures, charts, diagrams or embedded objects are not read"
     ]
 
 
@@ -730,8 +780,10 @@ def test_a_chart_beside_a_picture_whose_text_ocr_read_still_fails_its_slide(
     a = extract(_one_slide(_pic(large) + chart), "c.pptx")
     assert [b.attrs for b in a.blocks] == [{"ocr": True}]
     assert [(f.unit, f.reason) for f in a.coverage.failed] == [
-        ("slide 1", "its charts or diagrams are not read")
+        ("slide 1", "its charts, diagrams or embedded objects are not read")
     ]
+    # Its failure names the chart: the slide is not listed again.
+    assert "images_unread" not in a.attrs and a.warnings == ()
 
 
 def test_an_image_the_engine_cannot_decode_leaves_the_files_bound(
@@ -1156,6 +1208,7 @@ def test_a_text_page_whose_layout_fails_beside_an_image_is_partial(
     assert [f.reason for f in a.coverage.failed] == [
         "its layout could not be read, so a picture on it may be unread: RuntimeError"
     ]
+    assert "images_unread" not in a.attrs  # its reason names it
 
 
 def test_a_page_whose_image_check_fails_too_fails_alone(

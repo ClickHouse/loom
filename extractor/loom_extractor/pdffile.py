@@ -11,7 +11,9 @@ A page with no text is read with OCR (`ocr`) from the images it draws, and a
 picture covering a fifth of a page with text is read into lines of its own;
 where OCR is off, cannot read an image, or the image is drawn inline, the page
 is partial or a failed unit naming why, so a page of images is never reported
-complete when its text was not read.
+complete when its text was not read. A page of text with a smaller picture,
+which OCR leaves (but one its own text fills, a scan's text layer), is listed
+in `attrs.images_unread`, with one warning for the file.
 
 Pure and I/O-free.
 """
@@ -44,10 +46,10 @@ from loom_extractor.artifact import (
     Table,
 )
 from loom_extractor.csvfile import typed_cell
-from loom_extractor.tabular import EMPTY, Budget, Cell, Rows
+from loom_extractor.tabular import EMPTY, Budget, Cell, Rows, counted
 from loom_extractor.tabular import table as tabular_table
 
-PARSER_VERSION = "3"  # pictures with text are read with OCR, or the page says it is not complete
+PARSER_VERSION = "4"  # a page of text names the pictures OCR leaves as not read
 # A page's layout is trusted when its elements hold this share of the letters
 # and digits its text layer holds (counted apart from spacing, which the text
 # layer gets wrong where it runs two words together); under it the page is
@@ -213,6 +215,7 @@ class _Page:
     failure: str = ""  # the page is not read
     partial: str = ""  # the page is read, but not all of it: what was not
     ocr: bool = False  # some of its text was read from its images
+    unread: bool = False  # a page of text with a picture OCR leaves: under a fifth of it
     # OCR's lines in a picture on a page with text (a diagram's labels): read
     # as text, apart from the page's tables and headings
     pictured: list[layout.Line] = field(default_factory=list)
@@ -239,13 +242,13 @@ def _read_layout(
     texted = bool(read.text.strip())
     area = read.width * read.page_height
     problems = []
-    # each image once (`drawing` collects it where it is first drawn)
+    # each image once (`drawing` collects it where it is first drawn); one shown under
+    # a point wide (a spacer, a tracking pixel) holds no text
+    shown = [p for p in pictures if math.hypot(p.ctm[0], p.ctm[1]) >= 1]
     targets = [
         p
-        for p in pictures
-        # one shown under a point wide (a spacer, a tracking pixel) holds no text
-        if math.hypot(p.ctm[0], p.ctm[1]) >= 1
-        and (not texted or (p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p)))
+        for p in shown
+        if not texted or (p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p))
     ]
     if len(targets) > layout.MAX_PICTURES:
         problems.append(f"it shows more than {layout.MAX_PICTURES} pictures OCR would read")
@@ -322,6 +325,19 @@ def _read_layout(
             )
         else:
             read.partial = f"OCR did not read all of its pictures: {problems[0]}"
+    # The pictures OCR leaves on a page of text: under a fifth of it, not under a point
+    # high (a rule, a bar), and not a scan its own text fills. A page partial for its
+    # pictures is named by its reason instead.
+    read.unread = (
+        texted
+        and not problems
+        and any(
+            p.area < ocr.PICTURE_SHARE * area
+            and math.hypot(p.ctm[2], p.ctm[3]) >= 1
+            and not _filled(found, p)
+            for p in [*shown, *shown_inline]
+        )
+    )
     read.lines = layout.lines_of(found, layout.text_words(read.text), read.dropped)
     return rules
 
@@ -673,7 +689,7 @@ def extract_pdf(data: bytes) -> Artifact:
         except MemoryError:
             raise
         except Exception as e:  # noqa: BLE001 — a page whose layout cannot be read is read as its text layer
-            read.lines, read.pictured, read.ocr = [], [], False
+            read.lines, read.pictured, read.ocr, read.unread = [], [], False, False
             try:
                 imaged = _has_image(page, reader)
             except MemoryError:
@@ -715,6 +731,13 @@ def extract_pdf(data: bytes) -> Artifact:
     ocr_pages = [r.number for r in reads if r.ocr]
     if ocr_pages:
         attrs["ocr_pages"] = ocr_pages
+    unread = [r.number for r in reads if r.unread]
+    if unread:
+        attrs["images_unread"] = unread
+        warnings.append(
+            f"images on {counted(len(unread), 'page')} of text are not read: text drawn only"
+            " inside a small image is not extracted (attrs.images_unread)"
+        )
     # Furniture by its shape (digits aside): a running footer is one entry,
     # its first text and the pages it is on.
     furniture: dict[str, tuple[str, set[int]]] = {}  # a shape: its first text and its pages

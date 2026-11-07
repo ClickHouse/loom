@@ -11,7 +11,12 @@ slide or more may carry text of its own (a screenshot, a whiteboard photo):
 OCR reads it into a block marked `attrs.ocr` after the slide's shapes, and
 without OCR the slide is a failed unit. A slide that holds pictures, charts,
 diagrams or embedded objects and no text is a failed unit: what it shows is in
-them, which this parser does not read.
+them, which this parser does not read. A slide of text with a picture OCR does
+not read (one under a fifth of it, one as a fill or background, or an
+alternate content's fallback picture), a chart, a diagram or an embedded object
+is read for its text and listed in `attrs.images_unread`, with one warning for
+the file, unless the slide failed for what it shows: its failure names the first
+thing that stopped it, not all it holds.
 
 Pure and I/O-free.
 """
@@ -24,14 +29,18 @@ from xml.etree.ElementTree import Element
 from loom_extractor import ocr
 from loom_extractor.artifact import Artifact, Blocks, Coverage, Failure, Locator
 from loom_extractor.ooxml import Package, PartError, q
+from loom_extractor.tabular import counted
 
-PARSER_VERSION = "3"  # pictures a fifth of a slide or more are read with OCR
+PARSER_VERSION = "4"  # a slide of text names what it does not read
 _EMU_PER_INCH = 914_400
 _DEFAULT_SLIDE = (9_144_000, 6_858_000)  # a deck that names no slide size: 10 x 7.5 inches
 _MAX_PICTURE_BYTES = 32 * 1024 * 1024  # not a setting: an image part OCR reads
 _PRESENTATION = "ppt/presentation.xml"
 _TITLES = {"title", "ctrTitle"}
 _MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+_A14_MATH = "{http://schemas.microsoft.com/office/drawing/2010/main}m"  # an equation
+# The kinds of shape the walk reads.
+_SHAPES = {q("p:sp"), q("p:pic"), q("p:grpSp"), q("p:graphicFrame")}
 
 
 def _paragraphs(body: Element) -> str:
@@ -83,6 +92,10 @@ class _Slide:
         self.title = ""
         self.shapes: list[tuple[str, dict[str, object]]] = []  # (text, attrs)
         self.charts = False  # a chart, diagram or embedded object among them
+        # A picture OCR never sees: the background here, a fill or a fallback in the walk.
+        self.unread_picture = (
+            root.find(f"{q('p:cSld')}/{q('p:bg')}/{q('p:bgPr')}/{q('a:blipFill')}") is not None
+        )
         self.picture_count = 0  # its pictures, those `pictures` lists and any other
         # (relationship id, its width and height in EMU, or the placeholder it takes
         # its size from when it states none)
@@ -96,6 +109,8 @@ class _Slide:
         group's children are sized in its own child space."""
         for el in tree:
             if el.tag == q("p:grpSp"):
+                if el.find(f"{q('p:grpSpPr')}/{q('a:blipFill')}") is not None:
+                    self.unread_picture = True  # a group filled with a picture
                 ext, child = _extent(el, "p:grpSpPr"), _extent(el, "p:grpSpPr", "a:chExt")
                 if ext and child:
                     self._walk(el, sx * ext[0] / child[0], sy * ext[1] / child[1])
@@ -105,6 +120,23 @@ class _Slide:
                 choice = el.find(f"{_MC}Choice")
                 if choice is not None:
                     self._walk(choice, sx, sy)
+                # A choice of a kind the walk does not know (ink), or an equation, whose
+                # math is no text the walk reads, shows its picture in the fallback.
+                fallback = el.find(f"{_MC}Fallback")
+                known = (
+                    choice is not None
+                    and any(c.tag in _SHAPES for c in choice)
+                    and choice.find(f".//{_A14_MATH}") is None
+                )
+                if (
+                    fallback is not None
+                    and not known
+                    and (
+                        fallback.find(f".//{q('p:pic')}") is not None
+                        or fallback.find(f".//{q('a:blipFill')}") is not None
+                    )
+                ):
+                    self.unread_picture = True
             elif el.tag == q("p:pic"):
                 self.picture_count += 1
                 blip = el.find(f"{q('p:blipFill')}/{q('a:blip')}")
@@ -118,6 +150,8 @@ class _Slide:
                 elif ph is not None:
                     self.pictures.append((rid, ph))
             elif el.tag == q("p:sp"):
+                if el.find(f"{q('p:spPr')}/{q('a:blipFill')}") is not None:
+                    self.unread_picture = True  # a shape filled with a picture
                 body = el.find(q("p:txBody"))
                 text = _paragraphs(body) if body is not None else ""
                 if not text:
@@ -130,6 +164,8 @@ class _Slide:
                 tables = list(el.iter(q("a:tbl")))
                 if not tables:
                     self.charts = True  # a chart, a diagram or an embedded object
+                elif el.find(f".//{q('a:tcPr')}/{q('a:blipFill')}") is not None:
+                    self.unread_picture = True  # a table cell filled with a picture
                 for tbl in tables:
                     text, rows, columns = _table(tbl)
                     if text.strip(" |\n"):
@@ -297,6 +333,7 @@ def extract_pptx(data: bytes) -> Artifact:
     images = ocr.Images()
     holders = _Holders(pkg)
     ocr_slides: list[int] = []
+    unread_slides: list[int] = []  # slides of text showing what is not read
     acc = Blocks()
     failed: list[Failure] = []
     incomplete: set[int] = set()  # slides with a failure, their own or their notes'
@@ -320,7 +357,7 @@ def extract_pptx(data: bytes) -> Artifact:
         try:
             rels = pkg.rels(part)
         except (PartError, RecursionError) as e:  # the slide's text is still read
-            seen, unread = 0, f"its relationships could not be read: {e}"
+            seen, picture_failure = 0, f"its relationships could not be read: {e}"
         else:
             try:
                 notes = _notes(pkg, rels)
@@ -329,20 +366,24 @@ def extract_pptx(data: bytes) -> Artifact:
                 incomplete.add(number)
             # a layout or master that cannot be read: the slide's pictures are not read
             try:
-                pictured, seen, unread = _picture_texts(pkg, rels, slide, size, images, holders)
+                pictured, seen, picture_failure = _picture_texts(
+                    pkg, rels, slide, size, images, holders
+                )
             except (PartError, RecursionError) as e:
-                pictured, seen, unread = [], 0, f"its pictures could not be read: {e}"
-        if unread:
-            failed.append(Failure(f"slide {number}", unread))
+                pictured, seen, picture_failure = [], 0, f"its pictures could not be read: {e}"
+        if picture_failure:
+            failed.append(Failure(f"slide {number}", picture_failure))
             incomplete.add(number)
         if seen:
             ocr_slides.append(number)
+        # pictures that OCR read every one of, and found no text in, lose nothing
+        holds_unread = slide.charts or slide.unread_picture or seen < slide.picture_count
         if not (slide.title or slide.shapes or notes or pictured):
-            # pictures that OCR read every one of, and found no text in, lose nothing
-            if not unread and (slide.charts or seen < slide.picture_count):
+            if not picture_failure and holds_unread:
                 failed.append(
                     Failure(
-                        f"slide {number}", "no text: its pictures, charts or diagrams are not read"
+                        f"slide {number}",
+                        "no text: its pictures, charts, diagrams or embedded objects are not read",
                     )
                 )
                 incomplete.add(number)
@@ -350,8 +391,12 @@ def extract_pptx(data: bytes) -> Artifact:
         if slide.charts and not (slide.title or slide.shapes or notes):
             # what the slide says of its own is in a chart or diagram, beside the
             # text OCR read in its pictures
-            failed.append(Failure(f"slide {number}", "its charts or diagrams are not read"))
+            failed.append(
+                Failure(f"slide {number}", "its charts, diagrams or embedded objects are not read")
+            )
             incomplete.add(number)
+        elif holds_unread and not picture_failure:  # a slide failed for it is named there
+            unread_slides.append(number)
         if slide.title:
             acc.heading(1, slide.title, loc, **hidden)
         else:
@@ -368,5 +413,18 @@ def extract_pptx(data: bytes) -> Artifact:
         parser_version=PARSER_VERSION + (f"+tesseract{images.version}" if images.version else ""),
         blocks=tuple(acc.blocks),
         coverage=Coverage("slides", len(parts), len(parts) - len(incomplete), failed=tuple(failed)),
-        attrs={"slides": len(parts), **({"ocr_slides": ocr_slides} if ocr_slides else {})},
+        warnings=(
+            (
+                "pictures, charts, diagrams or embedded objects on"
+                f" {counted(len(unread_slides), 'slide')} of text are not read: text inside"
+                " them is not extracted (attrs.images_unread)",
+            )
+            if unread_slides
+            else ()
+        ),
+        attrs={
+            "slides": len(parts),
+            **({"ocr_slides": ocr_slides} if ocr_slides else {}),
+            **({"images_unread": unread_slides} if unread_slides else {}),
+        },
     )
