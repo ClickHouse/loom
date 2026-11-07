@@ -308,7 +308,8 @@ describe("MemoryInspector lifecycle actions", () => {
     await screen.findByText("oat milk, no sugar");
     await userEvent.click(screen.getByRole("button", { name: "Edit" }));
     await userEvent.click(await screen.findByRole("button", { name: "Save new version" }));
-    vi.mocked(api.getMemory).mockResolvedValue({ ...LIVE, memory_id: "m-other", value: "black" });
+    const other = { ...LIVE, memory_id: "m-other", value: "black" };
+    vi.mocked(api.getMemory).mockImplementation(async (_id, key) => (key === "morning_routine" ? other : LIVE));
     view.rerender(
       <MemoryInspector identity={identity} memoryKey="morning_routine" onClose={() => {}} onChanged={() => {}} />,
     );
@@ -316,16 +317,21 @@ describe("MemoryInspector lifecycle actions", () => {
     // The editor did not follow the drawer to the next key.
     expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Edit" }));
-    act(() => finish({ version: 4, pinned: false }));
-    expect(await screen.findByRole("button", { name: "Save new version" })).toBeInTheDocument();
+    await act(async () => finish({ version: 4, pinned: false }));
+    // The late answer neither closes the next key's editor nor brings the key left back.
+    expect(screen.getByRole("button", { name: "Save new version" })).toBeInTheDocument();
+    expect(screen.queryByText("oat milk, no sugar")).toBeNull();
     expect(api.setMemory).toHaveBeenCalledTimes(1);
   });
 
-  it("offers no Edit while a rename is open", async () => {
+  it("offers no Edit while a rename is open, by button or by key", async () => {
     await open("writer");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Rename" }));
     await screen.findByTestId("rename-form");
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    screen.getByRole("dialog").focus();
+    await userEvent.keyboard("e");
+    expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
   });
 
   it("drops an open edit when the drawer moves to another key, without a lock toast", async () => {
