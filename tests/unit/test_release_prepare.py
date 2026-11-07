@@ -139,14 +139,21 @@ def test_a_version_already_tagged_is_refused(tmp_path: Path) -> None:
     ("version", "error"),
     [
         # A release candidate is a tag on the release commit, whose files name the final.
-        ("1.9.0-rc.1", "is not a final X.Y.Z: a candidate is a tag"),
+        ("1.9.0-rc.1", "1.9.0-rc.1 is not a final X.Y.Z: a candidate is a tag"),
+        ("1.9.0-beta.1", "'1.9.0-beta.1' is not X.Y.Z"),
         ("1.9", "'1.9' is not X.Y.Z"),
         ("v1.9.0", "'v1.9.0' is not X.Y.Z"),
     ],
 )
-def test_a_bump_takes_a_final_version_only(version: str, error: str) -> None:
-    with pytest.raises(ValueError, match=error):
-        prepare.require_final(version)
+def test_a_bump_takes_a_final_version_only(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], version: str, error: str
+) -> None:
+    for command in ("bump", "notes"):
+        monkeypatch.setattr(sys, "argv", ["prepare.py", command, version])
+        with pytest.raises(SystemExit) as exited:
+            prepare.main()
+        assert exited.value.code == 2  # the parser's refusal
+        assert error in capsys.readouterr().err
 
 
 def test_a_bump_refuses_an_older_version(tmp_path: Path) -> None:
@@ -604,8 +611,9 @@ def test_a_refused_version_stops_before_any_gh_call(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(prepare, "release_notes", no_call)
     monkeypatch.setattr(prepare, "_git", no_fetch)  # a non-final version needs no tags
     monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "9.9.9-rc.1"])
-    with pytest.raises(SystemExit, match="is not a final X.Y.Z: a candidate is a tag"):
+    with pytest.raises(SystemExit) as exited:
         prepare.main()
+    assert exited.value.code == 2
 
 
 def test_a_version_tagged_on_the_remote_is_refused_after_the_fetch(
@@ -709,6 +717,7 @@ def test_a_candidate_comes_before_its_final_and_the_final_goes_where_it_was_soak
     git_repo.git(tmp_path, "tag", "v1.2.0")
     error = prepare.check_tag("1.2.0", tmp_path)
     assert error and "v1.2.0 is not on v1.2.0-rc.1's commit" in error
+    assert ":refs/tags/v1.2.0) and tag it on v1.2.0-rc.1's commit" in error
     git_repo.git(tmp_path, "tag", "v1.2.0-rc.2")  # the fix soaked as rc.2: its commit is HEAD
     assert prepare.check_tag("1.2.0", tmp_path) is None
     git_repo.git(tmp_path, "tag", "v1.2.0-rc.3")
@@ -798,8 +807,9 @@ def test_a_tag_check_takes_only_a_final_or_a_candidate(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], command: str
 ) -> None:
     monkeypatch.setattr(sys, "argv", ["prepare.py", command, "1.2.0-beta.1"])
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as exited:
         prepare.main()
+    assert exited.value.code == 2  # the parser's refusal, not a later failure
     assert "'1.2.0-beta.1' is not X.Y.Z or X.Y.Z-rc.N" in capsys.readouterr().err
 
 

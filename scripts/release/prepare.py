@@ -87,15 +87,6 @@ def final_of(tag_version: str) -> str:
     return tag_version.split("-", 1)[0]
 
 
-def require_final(version: str) -> None:
-    """A version file names a final X.Y.Z; a candidate is a tag on the release commit."""
-    if FINAL.fullmatch(version):
-        return
-    if SEMVER.fullmatch(version):
-        raise ValueError(f"{version} is not a final X.Y.Z: a candidate is a tag, not a bump")
-    raise ValueError(f"{version!r} is not X.Y.Z")
-
-
 class PinError(ValueError):
     """A version file that cannot be read. The path and the reason are kept apart
     so an `::error file=` annotation names the file once."""
@@ -216,7 +207,7 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
     `vX.Y.Z` is out, or a final `vX.Y.Z` on another commit than its last
     candidate."""
     final = final_of(tag_version)
-    if tag_version != final:  # a candidate: the version job takes no other prerelease
+    if tag_version != final:  # a candidate: _tag_version admits no other prerelease
         released = _sha(root, f"v{final}")
         if released == _sha(root, "HEAD"):
             # No deletion advice: the final's runs may read this tag as the one soaked.
@@ -239,8 +230,8 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
     if candidates and _sha(root, candidates[-1]) != _sha(root, "HEAD"):
         return (
             f"v{final} is not on {candidates[-1]}'s commit: delete {candidates[-1]} if it is"
-            f" a stray; if v{final}'s run published nothing, tag v{final} on"
-            f" {candidates[-1]}'s commit"
+            f" a stray; if v{final}'s run published nothing, delete v{final}"
+            f" (git push origin :refs/tags/v{final}) and tag it on {candidates[-1]}'s commit"
         )
     return None
 
@@ -253,7 +244,7 @@ def released_chart(tag: str, root: Path = ROOT) -> str:
         parse(version)
     except PinError as e:
         raise PinError(CHART.path, f"{e.reason} (at {tag})") from None
-    except ValueError as e:  # the version is not X.Y.Z
+    except ValueError as e:  # the version is not X.Y.Z[-pre]
         raise PinError(CHART.path, f"{e} (at {tag})") from None
     return version
 
@@ -502,14 +493,13 @@ def _check_chart(args: argparse.Namespace) -> None:
         chart_error = f"could not read the chart at {baseline}: {e.stderr.strip()}"
     except PinError as e:  # a chart version missing, here or at the baseline
         chart_error = e.reason
-    except ValueError as e:  # the working tree's chart version is not X.Y.Z
+    except ValueError as e:  # the working tree's chart version is not X.Y.Z[-pre]
         chart_error = str(e)
     if chart_error:
         raise SystemExit(f"::error file={CHART.path}::{chart_error}")
 
 
 def _fetch_tags_and_validate(version: str) -> None:
-    require_final(version)  # needs no tags, so before the fetch
     # Forced, so a tag moved upstream replaces a stale local one.
     _git(ROOT, "fetch", "--quiet", "--force", "--tags", f"https://github.com/{REPOSITORY}.git")
     validate(version)
@@ -534,6 +524,16 @@ def _bump(args: argparse.Namespace) -> None:
     print(f"Bumped to {version}; the release notes are in {NOTES_FILE}")
 
 
+def _final_version(text: str) -> str:
+    """An argparse type: a version the files can take. A candidate is a tag on
+    the release commit, whose files name the final."""
+    if CANDIDATE.fullmatch(text):
+        raise argparse.ArgumentTypeError(f"{text} is not a final X.Y.Z: a candidate is a tag")
+    if not FINAL.fullmatch(text):
+        raise argparse.ArgumentTypeError(f"{text!r} is not X.Y.Z")
+    return text
+
+
 def _tag_version(text: str) -> str:
     """An argparse type: a release tag's version, final or candidate."""
     if not (FINAL.fullmatch(text) or CANDIDATE.fullmatch(text)):
@@ -554,19 +554,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
     bump_cmd = commands.add_parser("bump", help="write the release notes, then bump")
-    bump_cmd.add_argument("version", help="the release, X.Y.Z")
+    bump_cmd.add_argument("version", type=_final_version, help="the release, X.Y.Z")
     bump_cmd.set_defaults(run=_bump)
     notes_cmd = commands.add_parser("notes", help="only print the release notes")
-    notes_cmd.add_argument("version", help="the release, X.Y.Z")
+    notes_cmd.add_argument("version", type=_final_version, help="the release, X.Y.Z")
     notes_cmd.set_defaults(run=_notes)
-    tag_version = {"type": _tag_version, "help": "the tag's version, X.Y.Z or X.Y.Z-rc.N"}
+    tag_version_help = "the tag's version, X.Y.Z or X.Y.Z-rc.N"
     check_cmd = commands.add_parser("check", help="every file names the tag's final version")
-    check_cmd.add_argument("tag_version", **tag_version)
+    check_cmd.add_argument("tag_version", type=_tag_version, help=tag_version_help)
     check_cmd.set_defaults(run=_check)
     tag_cmd = commands.add_parser(
         "check-tag", help="a candidate before its final, the final on its last candidate's commit"
     )
-    tag_cmd.add_argument("tag_version", **tag_version)
+    tag_cmd.add_argument("tag_version", type=_tag_version, help=tag_version_help)
     tag_cmd.add_argument(
         "--dry-run", action="store_true", help="skip, with a notice, when the tag is not HEAD"
     )
@@ -574,12 +574,12 @@ def main() -> None:
     chart_cmd = commands.add_parser(
         "check-chart", help="the chart's version is above the previous release's"
     )
-    chart_cmd.add_argument("tag_version", **tag_version)
+    chart_cmd.add_argument("tag_version", type=_tag_version, help=tag_version_help)
     chart_cmd.set_defaults(run=_check_chart)
     previous_cmd = commands.add_parser(
         "previous", help="the highest final release tag below the tag's version"
     )
-    previous_cmd.add_argument("tag_version", **tag_version)
+    previous_cmd.add_argument("tag_version", type=_tag_version, help=tag_version_help)
     previous_cmd.set_defaults(run=_previous)
     args = parser.parse_args()
     # A refusal, a failed git or gh call, or a missing gh, git or file is one line;
