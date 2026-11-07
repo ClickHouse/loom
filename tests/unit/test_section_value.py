@@ -101,6 +101,7 @@ def test_the_labelled_set_scores_as_measured() -> None:
         ("Storage sync 2026-03-04", ("Cache",), "Decision (deferred)"),
         ("Storage sync 2026-03-04", ("Cache",), "**Decision:** none"),
         ("Storage sync 2026-03-04", ("Cache",), "**Outcome:** no decision yet"),
+        ("Storage sync 2026-03-04", ("Cache",), "__Decision:__ deferred to next sync"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: not decided yet"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: no decision"),
         ("Storage sync 2026-03-04", ("Decision: not decided",), "- Revisit next week."),
@@ -188,7 +189,10 @@ def test_bookkeeping_and_discussion_without_a_decision_are_noise(
         ("Storage sync 2026-03-04", ("Cache",), "Decision: pending-write queue goes first."),
         # A label over a topic keeps the label: content when unsure.
         ("Storage sync 2026-03-04", ("Cache",), "Decision: no consensus on Kafka."),
-        # A deferral to a target of more than 40 characters keeps the label.
+        ("Storage sync 2026-03-04", ("Cache",), "__Decision:__ drop the cache."),
+        ("Storage sync 2026-03-04", ("Cache",), "__Agreed:__ drop the block cache."),
+        ("Storage sync 2026-03-04", ("__Decisions__",), "- New services use the shared cluster."),
+        # A deferral to a target of more than 40 characters is read as a topic: content when unsure.
         (
             "Storage sync 2026-03-04",
             ("Cache",),

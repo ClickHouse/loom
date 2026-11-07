@@ -76,7 +76,8 @@ _UNDECIDED = re.compile(
     # reads", "Decision: deferred the rewrite", "Decision: open-source the parser" and
     # "Decision: no consensus on Kafka, so we stay on Redis" keep the label, and so does
     # "Decision: no consensus on Kafka": content when unsure. A deferral to a target of
-    # more than 40 characters keeps the label too. The label may be bold or dashed
+    # more than 40 characters is read as a topic and keeps the label too, for the same
+    # reason; the bound keeps the match linear. The label may be bold or dashed
     # ("**Decision:** deferred", "Decision - open").
     rf"\b(?:outcome|conclusion|resolved|decisions?)\W*"
     rf"(?:{_NO_DECISION}|none|pending|open|deferred(?: (?:to|until) [^.;,]{{0,40}}?)?)"
@@ -138,6 +139,8 @@ _SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
 # A list marker, a table pipe or a quote mark opening a line, dropped before the
 # line is read.
 _LINE_LEAD = re.compile(r"^\s*(?:[-+>|]|\*(?!\*)|\d{1,3}[.)])\s*")
+# Underscore emphasis ("__Agreed:__"), which `\b` cannot see past; snake_case stays.
+_UNDERSCORES = re.compile(r"(?<!\w)_{1,2}|_{1,2}(?!\w)")
 # A table's separator row, an empty table row and a horizontal rule carry no text.
 _RULE = re.compile(r"^[\s|:\-=*_]*$")
 
@@ -154,7 +157,7 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
     notes = dated and not _DESIGN_TITLE.search(name)
     prose, code = _lines(text)
     # A heading is not in the section's text: a decision it states counts the same.
-    headings = [h.replace("\u2019", "'") for h in section_path]
+    headings = [_plain(h) for h in section_path]
     # A heading that says no decision was reached is not one, in any document.
     if any(_decides(line, notes) for line in prose) or any(_decides(h, True) for h in headings):
         return False
@@ -210,7 +213,12 @@ def _lines(text: str) -> tuple[list[str], int]:
         if marker := fence_marker(raw):
             fence = marker
             continue
-        line = _LINE_LEAD.sub("", raw).replace("\u2019", "'").strip()
+        line = _plain(_LINE_LEAD.sub("", raw)).strip()
         if line and not _RULE.match(line):
             prose.append(line)
     return prose, code
+
+
+def _plain(text: str) -> str:
+    """`text` with curly apostrophes made straight and underscore emphasis dropped."""
+    return _UNDERSCORES.sub("", text.replace("\u2019", "'"))
