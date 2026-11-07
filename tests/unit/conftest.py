@@ -1052,3 +1052,14 @@ def no_directory_ties(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("server.auth.aliases.read_aliases", _alone)
     monkeypatch.setattr("server.auth.aliases.verified_tie", _tie)
     monkeypatch.setattr("server.identity.store.grants.stored_spellings", _as_given)
+
+
+@pytest.fixture
+def off_code_repos(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An admin revoke reads neither the self-service registry nor a directory
+    row to learn whether its namespace is a code index: it is not one."""
+
+    async def _no_repo(*_a: object, **_k: object) -> None:
+        return None
+
+    monkeypatch.setattr("server.code.app.index.maintainers.read_repo", _no_repo)

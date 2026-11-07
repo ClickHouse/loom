@@ -90,8 +90,8 @@ async def _make_maintainer(org: str, namespace: str, subject: str) -> None:
     from server.identity.app.registration import grant_self_admin
 
     await grant_self_admin(org, namespace, subject)
-    # The repository's other maintainers get this branch and
-    # the creator gets the repository's other branches.
+    # The repository's maintainers get this branch, and the creator gets
+    # the repository's other branches added from the page.
     from server.code.app.index import maintainers
 
     await maintainers.sync_quietly(org, namespace)

@@ -217,22 +217,33 @@ async def _create_grant(
     from server.auth.aliases import canonical_subject
 
     subject = await canonical_subject(input.org, input.subject)
-
-    async def _write(_row: GrantState | None) -> datetime:
-        return await _write_grant(input, subject, may_replace)
-
-    if input.replace and input.role != "admin":
-        # Only `replace=true` lowers a grant (else 409): it may take admin.
-        now = await _taking_admin(input, subject, _write, lowered_to=input.role)
-    else:
-        async with grant_change(input.org, input.namespace, subject):
-            now = await _write_grant(input, subject, may_replace)
+    now = await _write_or_lower(input, subject, may_replace)
     if input.role == "admin":
-        # A maintainer maintains every branch of the repository.
+        # Admin flows to the repository's other branches: from an operator entry to
+        # all of them, from a page-added branch to page-added ones (`_reaches`).
         from server.code.app.index import maintainers
 
         await maintainers.sync_quietly(input.org, input.namespace)
     return now
+
+
+async def _write_or_lower(
+    input: GrantsCreateInput, subject: str, may_replace: Callable[[GrantState], None] | None
+) -> datetime:
+    """Write the grant under its own claim, unless it lowers an active admin:
+    only `replace=true` lowers a grant (else 409), and that goes through
+    `_taking_admin`."""
+
+    async def _write(_row: GrantState | None) -> datetime:
+        return await _write_grant(input, subject, may_replace)
+
+    async with grant_change(input.org, input.namespace, subject):
+        row = None
+        if input.replace and input.role != "admin":
+            row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
+        if row is None or not _active_admin(row):
+            return await _write_grant(input, subject, may_replace)
+    return await _taking_admin(input, subject, _write, lowered_to=input.role)
 
 
 async def _write_grant(
@@ -510,9 +521,9 @@ async def _taking_admin[T](
     from server.code.app.index import maintainers
 
     org, namespace = input.org, input.namespace
+    repo = await maintainers.read_repo(org, namespace)
     async with (
-        maintainers.repo_change(org, namespace, subject),
-        maintainers.repo_admins_change(org, namespace),
+        maintainers.repo_admin_claims(org, repo, subject),
         admins_change(org, namespace),
     ):
         fanned_out = False
@@ -521,7 +532,7 @@ async def _taking_admin[T](
             if row is not None and _active_admin(row) and not fanned_out:
                 await _refuse_last_admin(input)
                 await maintainers.revoke_repo_maintainer(
-                    org, namespace, subject, lowered_to=lowered_to
+                    org, namespace, subject, repo=repo, lowered_to=lowered_to
                 )
                 fanned_out = True
             async with grant_change(org, namespace, subject):
@@ -593,7 +604,8 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
     async with grant_change(input.org, input.namespace, input.subject):
         out = await _decide_request(input)
     if out.decision == "approve" and out.role == "admin":
-        # An approved maintainer maintains every branch.
+        # Admin flows to the repository's other branches: from an operator entry to
+        # all of them, from a page-added branch to page-added ones (`_reaches`).
         from server.code.app.index import maintainers
 
         await maintainers.sync_quietly(input.org, input.namespace)
