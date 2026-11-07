@@ -26,8 +26,6 @@ JOBS=${JOBS:-$(($(nproc) / 2 > 0 ? $(nproc) / 2 : 1))}
 cd "$CHECKOUT"
 HEAD_SHA=${HEAD_SHA:-$(git rev-parse HEAD)}
 
-# 1. compile_commands.json — cmake configure only (no build).
-
 # cmake_configure <cmake args...>: a configure that fails fails the run, with
 # CMake's last lines and one line the tier-health record classifies as `cmake`.
 cmake_configure() {
@@ -38,9 +36,7 @@ cmake_configure() {
   fi
 }
 
-CONFIGURED=
-# without its cache, or with a cache naming a compiler the host no longer has, the
-# compile database cannot be reconfigured: start clean
+# cached_compiler_missing: the cache names a C or C++ compiler the host no longer has.
 cached_compiler_missing() {
   local tool
   for tool in $(sed -n 's/^CMAKE_C\(XX\)\?_COMPILER:[A-Z]*=//p' build/CMakeCache.txt); do
@@ -48,6 +44,11 @@ cached_compiler_missing() {
   done
   return 1
 }
+
+# 1. compile_commands.json — cmake configure only (no build). Without its cache,
+# or with a cache naming a compiler the host no longer has, the compile database
+# cannot be reconfigured: start clean.
+CONFIGURED=
 if [[ ! -f build/compile_commands.json || ! -f build/CMakeCache.txt ]] || cached_compiler_missing; then
   # ClickHouse's CMake refuses GCC ("Compiler GNU is not supported"), and a
   # fresh checkout has no cache to remember the compiler — pin clang

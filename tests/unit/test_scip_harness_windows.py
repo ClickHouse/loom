@@ -229,7 +229,11 @@ class _CppWindow:
             for n in ("a.cpp", "b.cpp")
         ]
         (self.repo / "build" / "compile_commands.json").write_text(json.dumps(compdb))
-        (self.repo / "build" / "CMakeCache.txt").write_text("CMAKE_GENERATOR:INTERNAL=Ninja\n")
+        # a cache whose compilers the host has: the reconfigure tests keep it
+        (self.repo / "build" / "CMakeCache.txt").write_text(
+            "CMAKE_GENERATOR:INTERNAL=Ninja\n"
+            "CMAKE_C_COMPILER:FILEPATH=/bin/sh\nCMAKE_CXX_COMPILER:FILEPATH=/bin/sh\n"
+        )
         _git(tmp_path, "init", "-q", str(self.repo))
         self.base = _commit(self.repo, "init")
         bin_dir = tmp_path / "bin"
