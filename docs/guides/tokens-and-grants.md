@@ -439,8 +439,8 @@ exists. If the classification cannot be read, access is denied.
   (`LOOM_RESTRICTED_AUDIT_INLINE=false` writes it beside the request instead,
   which a killed process can lose). A [delegated](#delegated-tokens) mint
   (`POST /v1/admin/token.mint`, `POST /v1/me/service_accounts.create`) writes one
-  for each restricted namespace whose direct grant it writes for
-  the new token, with the minter as actor and the token's subject as `granted_to`.
+  for each restricted namespace whose direct grant it writes for the new token,
+  with the minter as actor and the token's subject as `granted_to`.
   An inbox watch writes one for the inbox's owner namespace, and the MCP primer
   (audit `op` `mcp.primer`) for the default namespace whose profile it renders. A read an
   op handler admits by id, on the row's own namespace, writes none.

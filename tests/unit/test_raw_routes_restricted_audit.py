@@ -449,10 +449,16 @@ async def test_a_service_account_mint_onto_a_restricted_namespace_writes_the_aud
 
 
 @pytest.mark.asyncio
-async def test_a_star_mint_writes_a_row_only_for_the_restricted_namespace_it_granted(
+async def test_a_star_mint_writes_a_row_for_each_namespace_its_grant_write_granted(
     monkeypatch: pytest.MonkeyPatch, mint_env: Any, audit_rows: list[Any]
 ) -> None:
+    """The rows follow what the grant write granted, not what the mint asked for."""
     me_service_accounts = mint_env
+    asked: dict[str, str] = {}
+
+    async def _granted_one(org: str, sa_subject: str, creator: str, ns_roles: Any) -> list[str]:
+        asked.update(ns_roles)
+        return [NS]
 
     class _Star(_Delegated):
         namespaces = ("*", NS, "other")
@@ -467,7 +473,7 @@ async def test_a_star_mint_writes_a_row_only_for_the_restricted_namespace_it_gra
 
     monkeypatch.setattr(me_service_accounts, "delegate", _delegate)
     monkeypatch.setattr(me_service_accounts, "default_namespace", _no_default)
-    # both names are restricted; the grant write (mint_env) grants only NS
+    monkeypatch.setattr(token_grants, "grant_restricted_to_token", _granted_one)
     monkeypatch.setitem(nc._cache, ORG, (1e12, frozenset({NS, "other"})))
     async with _client(me_service_accounts) as c:
         r = await c.post(
@@ -476,6 +482,8 @@ async def test_a_star_mint_writes_a_row_only_for_the_restricted_namespace_it_gra
             headers=BEARER,
         )
     assert r.status_code == 200, r.text
+    # Both restricted names reach the grant write, capped at the caller's viewer grant.
+    assert asked == {NS: "viewer", "other": "viewer"}
     _assert_one_row(audit_rows, "me.service_accounts.create")
     assert audit_rows[0][1]["subject"]["granted_to"] == r.json()["sa_subject"]
 
