@@ -25,7 +25,8 @@ _TABLES = (
 OTHERS_OPEN, OTHERS_DONE, OWN_OPEN, AGENTS_OPEN = (
     f"00000000-0000-0000-0000-00000000000{n}" for n in (1, 2, 3, 4)
 )
-# a day ago, inside the table's 30-day TTL, and never now64(3)
+# a day ago: inside the 30-day TTL, and not the column's now64(3) default, so the
+# comparison below shows the copy keeping it
 ASKED = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S.123")
 
 

@@ -893,7 +893,7 @@ _USERS_OWN_ORIGINALS = (
     " WHERE org = {org:String} AND user_id != {uid:String} AND expires_at > now64(3)"
     " UNION ALL SELECT namespace, toString(sha256) FROM loom.knowledge_ingestions FINAL"
     " WHERE org = {org:String} AND user_id != {uid:String}"
-    " AND state IN ('pending', 'processing'))"
+    " AND state IN {open:Array(String)})"
 )
 # The catalog rows of those originals, by the pairs bound: reading the subquery
 # again could name rows whose objects the step did not delete.
@@ -1032,7 +1032,7 @@ async def _still_own(
     rows = await ch.query_all(
         f"SELECT namespace, sha FROM ({_USERS_OWN_ORIGINALS})"
         " WHERE (namespace, sha) IN {pairs:Array(Tuple(String, String))}",
-        params={"org": org, "uid": user_id, "pairs": pairs},
+        params={"org": org, "uid": user_id, "pairs": pairs, "open": list(OPEN_STATES)},
     )
     return sorted((str(r["namespace"]), str(r["sha"])) for r in rows)
 
@@ -1041,7 +1041,9 @@ async def _erase_user_originals_by_batch(org: str, user_id: str, ch: _CHClient) 
     """The user's originals, read, then a batch at a time, each batch read again right
     before it is deleted, so an original another writer's document named since stays;
     with a bucket, its objects go before and after its rows."""
-    rows = await ch.query_all(_USERS_OWN_ORIGINALS, params={"org": org, "uid": user_id})
+    rows = await ch.query_all(
+        _USERS_OWN_ORIGINALS, params={"org": org, "uid": user_id, "open": list(OPEN_STATES)}
+    )
     pairs = sorted((str(r["namespace"]), str(r["sha"])) for r in rows)
     n = 0
     # As many originals per statement as one bound parameter carries.

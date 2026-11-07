@@ -14,6 +14,7 @@ from server.erasure.api.erasure import ErasureRequestInput
 from server.erasure.app import saga
 from server.erasure.store import census as erasure_census
 from server.erasure.store import ledger as erasure_ledger
+from server.erasure.store import steps_memory
 
 _STEP: contextvars.ContextVar[str] = contextvars.ContextVar("step", default="")
 _ALTER = re.compile(r"ALTER TABLE\s+(\S+)\s+(UPDATE|DELETE)\b")
@@ -69,10 +70,9 @@ class _TraceCH:
             entry = ("LIGHTWEIGHT", m.group(1))
         else:
             entry = ("OTHER", sql.split()[0])
-            # A rewrite: its rows stop matching the count. A copy whose columns leave
-            # out user_id is a row outside the scope, not a rewrite of the scope's rows.
-            columns = sql.split(" SELECT ", 1)[0]
-            if sql.startswith("INSERT INTO ") and ("user_id" in columns or "(" not in columns):
+            # A rewrite: its rows stop matching the count. The copy of a user's cancels
+            # writes rows with no identity, outside the scope, and rewrites none of it.
+            if sql.startswith("INSERT INTO ") and sql != steps_memory._KEEP_OTHERS_CANCELS:
                 self.rewritten.add((_STEP.get(), sql.split()[2]))
         self.trace.setdefault(_STEP.get(), []).append(entry)
         self.executed.append(sql)
