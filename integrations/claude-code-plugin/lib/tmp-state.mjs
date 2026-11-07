@@ -70,7 +70,8 @@ export function touchPrivateFile(file) {
     const fd = fs.openSync(file, c.O_RDWR | (c.O_NOFOLLOW ?? 0) | (c.O_NONBLOCK ?? 0));
     try {
       const st = fs.fstatSync(fd);
-      if (!st.isFile() || (typeof process.getuid === "function" && st.uid !== process.getuid())) return false;
+      if (!st.isFile() || st.nlink !== 1) return false;
+      if (typeof process.getuid === "function" && st.uid !== process.getuid()) return false;
       const now = new Date();
       fs.futimesSync(fd, now, now);
       return true;

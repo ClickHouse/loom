@@ -268,7 +268,8 @@ async function decorate(raw, { single, env, cfg, token, url, opts }) {
       // and the operand compare whatever their spelling (macOS /private/tmp,
       // a Windows 8.3 name); the file keeps its own name. The server takes `/`.
       const r = relative(root, join(physical(dirname(abs)), basename(abs)));
-      if (r && !r.startsWith("..") && !isAbsolute(r) && statSync(abs).isFile()) rel = r.split(sep).join("/");
+      const outside = r === ".." || r.startsWith(`..${sep}`) || isAbsolute(r);
+      if (r && !outside && statSync(abs).isFile()) rel = r.split(sep).join("/");
     } catch {
       rel = null;
     }

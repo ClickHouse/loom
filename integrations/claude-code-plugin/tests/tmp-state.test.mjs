@@ -77,4 +77,7 @@ test("touchPrivateFile moves a state file's mtime to now, on every OS", () => {
   assert.equal(touchPrivateFile(f), true);
   assert.ok(fs.statSync(f).mtimeMs > old.getTime() + 3_000_000);
   assert.equal(touchPrivateFile(path.join(dir, "missing.json")), false);
+  // A hard link planted at a state name is not ours to keep alive.
+  fs.linkSync(f, path.join(dir, "linked.json"));
+  assert.equal(touchPrivateFile(f), false);
 });

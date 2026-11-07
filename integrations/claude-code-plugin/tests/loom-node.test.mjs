@@ -512,6 +512,32 @@ test("the Claude Code header helper runs through the launcher under sh, LOOM_NOD
   }
 });
 
+test("the Claude Code header helper falls back to the node on PATH when LOOM_NODE is too old", {
+  skip: WINDOWS,
+}, () => {
+  const f = fixture();
+  try {
+    const plugin = claudePlugin(f, "{}");
+    const old = f.node("old", "v16.20.2");
+    const onPath = path.dirname(f.node("path-bin"));
+    const r = spawnSync("/bin/sh", ["-c", claudeHelper()], {
+      encoding: "utf8",
+      env: {
+        HOME: f.home,
+        PATH: `${onPath}:/usr/bin:/bin`,
+        CLAUDE_PLUGIN_ROOT: plugin,
+        LOOM_NODE: old,
+        LOOM_NODE_SYSTEM_DIRS: "",
+      },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, "{}");
+    assert.match(r.stderr, /^loom: LOOM_NODE=.* is not Node\.js 18\+/, "the launcher still says why");
+  } finally {
+    f.done();
+  }
+});
+
 test("the Claude Code header helper runs under cmd.exe the way Claude Code starts it", { skip: !WINDOWS }, () => {
   const f = fixture();
   try {
