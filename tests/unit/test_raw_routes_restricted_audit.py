@@ -428,8 +428,8 @@ async def test_a_setup_mint_onto_a_restricted_namespace_writes_the_audit_row(
     async def _restricted(org: str, subject: str, raw: object) -> list[str]:
         return [NS]
 
-    async def _saved(**_k: Any) -> tuple[str, str, None]:
-        return "jwt", "sa:cursor-x", None
+    async def _saved(**_k: Any) -> tuple[str, str, None, list[str]]:
+        return "jwt", "sa:cursor-x", None, [NS]
 
     async def _no_default(*_a: Any) -> str:
         return ""
@@ -450,6 +450,34 @@ async def test_a_setup_mint_onto_a_restricted_namespace_writes_the_audit_row(
     _assert_one_row(audit_rows, "me.setup.mcp_config")
 
 
+@pytest.mark.asyncio
+async def test_the_mcp_primer_profile_read_writes_the_audit_row(
+    monkeypatch: pytest.MonkeyPatch, audit_rows: list[Any]
+) -> None:
+    """The primer renders the default namespace's profile outside the op gate."""
+    from server.memory.app import profile
+    from server.transport import mcp_primer
+
+    class _Rendered:
+        section_count = 0
+        rendered = ""
+
+    async def _render(_input: Any) -> _Rendered:
+        return _Rendered()
+
+    monkeypatch.setattr(profile, "handle_profile_render", _render)
+    alice = AuthInfo(
+        subject="alice", org=ORG, namespaces=(NS,), roles=(Role.VIEWER,), is_service_account=False
+    )
+    await mcp_primer._loom_primer_text(alice, defaults={"org": ORG, "namespace": NS})
+    ((event, kw),) = audit_rows
+    assert (event, kw["namespace"], kw["subject"]["op"]) == (
+        "namespace.restricted_access",
+        NS,
+        "mcp.primer",
+    )
+
+
 # The checks that admit a caller to a namespace outside the op transport.
 _ADMISSION = {
     "check_authorized",
@@ -459,6 +487,9 @@ _ADMISSION = {
     "_may_release",
     "grant_restricted_to_token",
     "delegate",
+    "admits",
+    "may_be_restricted",
+    "authorize_op",
 }
 _AUDIT = {"note_restricted_access", "note_restricted_grants"}
 # The op transports admit through `gates.authorize`, which writes the row

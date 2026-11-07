@@ -124,6 +124,8 @@ def test_a_mint_onto_a_restricted_namespace_writes_the_access_audit_row(
 
     monkeypatch.setattr(token_grants, "grant_restricted_to_token", _grant_restricted)
     monkeypatch.setattr(settings, "restricted_audit_inline", True)
+    refused = _mint(client, _bearer(["org_admin"]), [PRIV], roles=["viewer"])
+    assert refused.status_code == 403 and client.audit_rows == []  # no grant: no row
     client.grants[(ORG, PRIV, "ops@x")] = Role.VIEWER
     r = _mint(client, _bearer(["org_admin"]), ["clickgap-public", PRIV], roles=["viewer"])
     assert r.status_code == 200, r.text

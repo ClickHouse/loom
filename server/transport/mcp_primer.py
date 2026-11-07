@@ -282,9 +282,18 @@ async def _loom_primer_text(
     profile_section = ""
     if include_profile and defaults and defaults["namespace"]:
         try:
+            from server.identity.app.restricted_access import note_restricted_access
             from server.memory.api.models_profile import ProfileRenderInput
             from server.memory.app.profile import handle_profile_render
 
+            # read outside the op gate, so it leaves the row the gate would
+            await note_restricted_access(
+                auth,
+                op="mcp.primer",
+                org=defaults["org"],
+                namespace=defaults["namespace"],
+                transport="mcp",
+            )
             rendered_out = await handle_profile_render(
                 ProfileRenderInput(
                     org=defaults["org"],
