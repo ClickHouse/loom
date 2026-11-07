@@ -317,10 +317,13 @@ describe("MemoryInspector lifecycle actions", () => {
     // The editor did not follow the drawer to the next key.
     expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const readsBefore = vi.mocked(api.getMemory).mock.calls.length;
     await act(async () => finish({ version: 4, pinned: false }));
-    // The late answer neither closes the next key's editor nor brings the key left back.
+    // The late answer neither closes the next key's editor nor reads the key left again.
     expect(screen.getByRole("button", { name: "Save new version" })).toBeInTheDocument();
-    expect(screen.queryByText("oat milk, no sugar")).toBeNull();
+    expect(vi.mocked(api.getMemory).mock.calls.slice(readsBefore).map((c) => c[1])).not.toContain("coffee_pref");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByText("black")).toBeInTheDocument();
     expect(api.setMemory).toHaveBeenCalledTimes(1);
   });
 

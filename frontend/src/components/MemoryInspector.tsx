@@ -201,9 +201,6 @@ export function MemoryInspector({
   const requested = useRef<Set<SectionId>>(new Set());
   // Bumped whenever the drawer moves to another memory or identity, or closes.
   const inspection = useRef(0);
-  // The inspection a rename or a reason dialog was opened under, for its reread.
-  const renameAt = useRef(0);
-  const dialogAt = useRef(0);
   // The memory the drawer has open, so a restore that answers late can tell
   // whether the drawer came back to it. Compared by value: parents rebuild identity.
   const shown = useRef<string | null>(null);
@@ -324,9 +321,11 @@ export function MemoryInspector({
 
   useEffect(() => {
     setLoading(true);
-    // Another key: an edit or a rename of the one left does not carry over.
+    // Another key: an edit, a rename or a dialog of the one left does not carry over.
     setEditing(false);
     setRenaming(false);
+    setReasonDialog(null);
+    setRedacting(null);
     setRestoring(false);
     setDetail(null);
     setHistory(null);
@@ -544,7 +543,6 @@ export function MemoryInspector({
   // A person's verdict on the fact: it helped, or relying on it went badly.
   const onOutcome = async (outcome: "positive" | "negative") => {
     if (!detail?.memory_id) return;
-    const mine = inspection.current;
     try {
       // By id: the op resolves a key in the `-` session only, and an extracted row has its own.
       const r = await recordMemoryOutcome(identity, detail.memory_id, outcome);
@@ -555,7 +553,7 @@ export function MemoryInspector({
       if (r.quarantined) {
         // Enough bad outcomes retire the memory: it leaves search.
         toast("Recorded as unhelpful; the memory is now rejected", "ok");
-        await reread(mine);
+        await reread();
         return;
       }
       toast(outcome === "positive" ? "Recorded as helpful" : "Recorded as unhelpful", "ok");
@@ -582,23 +580,22 @@ export function MemoryInspector({
 
   // A write changes the row: read it again. A failed re-read leaves the drawer as it was;
   // the write itself already landed.
-  // `mine` is the inspection the write started under: a drawer moved to another key since
-  // keeps that key's row, since this one under it would be what Edit, Pin and Verify then
-  // write back.
-  const reread = async (mine: number) => {
+  // A write changes the row: read it again, unless the drawer moved off the key this
+  // closure was made for; a failed re-read leaves the drawer as it was.
+  const showing = () => shown.current === shownAs(identity, memoryKey);
+  const reread = async () => {
     onChanged();
-    if (inspection.current !== mine) return;
+    if (!showing()) return;
     try {
       const row = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
-      if (inspection.current === mine) setDetail(row);
+      if (showing()) setDetail(row);
     } catch (e) {
-      if (inspection.current === mine) toast(`Couldn't read the memory again: ${humanizeError(e)}`, "error");
+      if (showing()) toast(`Couldn't read the memory again: ${humanizeError(e)}`, "error");
     }
   };
 
   const onUnlock = async () => {
     if (!detail) return;
-    const mine = inspection.current;
     try {
       const r = await unlockMemory(rowIdentity(identity, detail), memoryKey);
       if (!r.unlocked) {
@@ -610,7 +607,7 @@ export function MemoryInspector({
       toast(`Unlock failed: ${humanizeError(e)}`, "error");
       return;
     }
-    await reread(mine);
+    await reread();
   };
 
   // Promote copies the row to the namespace's shared layer, read by every agent there;
@@ -715,7 +712,6 @@ export function MemoryInspector({
 
   const onChangeExpiry = async (ttlSeconds: number | null) => {
     if (!detail) return;
-    const mine = inspection.current;
     try {
       await setMemory(rowIdentity(identity, detail), memoryKey, detail.value, {
         memoryType: detail.memory_type || "semantic",
@@ -731,13 +727,11 @@ export function MemoryInspector({
       toast(`Expiry update failed: ${humanizeError(e)}`, "error");
       return;
     }
-    await reread(mine);
+    await reread();
   };
 
   const onSaveEdit = async () => {
     if (!detail) return;
-    // A save that answers after the drawer moved leaves the next key's editor open.
-    const mine = inspection.current;
     try {
       // Parse JSON if it looks like an object/array; else keep the string.
       let nextValue: unknown = draft;
@@ -755,18 +749,24 @@ export function MemoryInspector({
         charLimit: detail.char_limit ?? undefined,
       });
       toast("Saved", "ok");
-      if (inspection.current === mine) setEditing(false);
+      // A save that answers after the drawer moved leaves the next key's editor open.
+      if (showing()) setEditing(false);
     } catch (e) {
       toast(`Save failed: ${humanizeError(e)}`, "error");
       return;
     }
-    await reread(mine);
+    await reread();
   };
 
   // After a move: with a redirect the old key still answers (now carrying
   // `canonical_key`), so the row is re-read and the badge appears; without
   // one the old key is tombstoned and the drawer follows the new key.
   const onRenamed = async (r: MemoryMoveResult) => {
+    // A move that answers after the drawer moved leaves the next key's drawer as it is.
+    if (!showing()) {
+      onChanged();
+      return;
+    }
     setRenaming(false);
     toast(
       r.redirected
@@ -775,7 +775,7 @@ export function MemoryInspector({
       "ok",
     );
     if (r.redirected) {
-      await reread(renameAt.current);
+      await reread();
     } else {
       onChanged();
       followMoved(r.to_key);
@@ -1418,7 +1418,6 @@ export function MemoryInspector({
                         <Dropdown.Item
                           onSelect={() => {
                             menuHandsOff.current = true;
-                            dialogAt.current = inspection.current;
                             setReasonDialog("lock");
                           }}
                         >
@@ -1439,7 +1438,6 @@ export function MemoryInspector({
                     <Dropdown.Item
                       onSelect={() => {
                         menuHandsOff.current = true;
-                        renameAt.current = inspection.current;
                         setRenaming(true);
                       }}
                     >
@@ -1464,7 +1462,6 @@ export function MemoryInspector({
                       type="danger"
                       onSelect={() => {
                         menuHandsOff.current = true;
-                        dialogAt.current = inspection.current;
                         setReasonDialog("reject");
                       }}
                     >
@@ -1511,7 +1508,7 @@ export function MemoryInspector({
             <LockMemoryDialog
               row={rowIdentity(identity, detail)}
               memoryKey={memoryKey}
-              onDone={() => void reread(dialogAt.current)}
+              onDone={() => void reread()}
               onClose={() => setReasonDialog(null)}
             />
           )}
@@ -1519,7 +1516,7 @@ export function MemoryInspector({
             <RejectMemoryDialog
               row={rowIdentity(identity, detail)}
               memoryKey={memoryKey}
-              onDone={() => void reread(dialogAt.current)}
+              onDone={() => void reread()}
               onClose={() => setReasonDialog(null)}
             />
           )}
