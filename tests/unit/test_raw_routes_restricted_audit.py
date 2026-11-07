@@ -7,9 +7,9 @@ are not registry ops, so the transport gate
 itself and must write the `namespace.restricted_access` row the gate writes
 for an admitted op. The contract test holds every raw route to it: a route
 module that names one of the namespace checks in `_ADMISSION` calls
-`note_restricted_access` or `note_restricted_grants`. It reads names per module, so a route that admits
-through a check under another name, or through a module-level helper of
-another file, needs its name added there.
+`note_restricted_access` or `note_restricted_grants`. It reads names per
+module, so a route that admits through a check under another name, or
+through a module-level helper of another file, needs its name added there.
 """
 
 from __future__ import annotations
@@ -82,6 +82,10 @@ def _client(module: Any) -> AsyncClient:
     else:
         app.include_router(module.router)
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://t")
+
+
+async def _one_frame(**_k: Any) -> Any:
+    yield "retry: 1000\n\n"
 
 
 BEARER = {"Authorization": "Bearer alice"}
@@ -175,6 +179,7 @@ async def test_an_admitted_inbox_watch_writes_the_audit_row_for_the_owner_namesp
 
     monkeypatch.setattr(repo, "fetch_inbox_row", _inbox)
     monkeypatch.setattr(repo, "events_since", _no_events)
+    monkeypatch.setattr(watch_routes, "event_stream", _one_frame)  # no real-time wait
     monkeypatch.setattr(task_common, "_in_scope", _in_scope)
     async with _client(watch_routes) as c:
         r = await c.get(
@@ -256,6 +261,7 @@ async def test_the_real_inbox_check_fills_the_snapshot_the_audit_row_reads(
     monkeypatch.setattr(authz, "grant_role_for", _direct_grant)
     monkeypatch.setattr(repo, "fetch_inbox_row", _inbox)
     monkeypatch.setattr(repo, "events_since", _no_events)
+    monkeypatch.setattr(watch_routes, "event_stream", _one_frame)  # no real-time wait
     async with _client(watch_routes) as c:
         r = await c.get(
             "/v1/task/watch",

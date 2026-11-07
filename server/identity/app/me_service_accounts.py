@@ -310,7 +310,7 @@ async def me_service_accounts_create(
     and an ordered `namespaces` claim (the read priority). Returns the JWT
     exactly once.
     """
-    caller: AuthInfo | None = None  # auth off: no caller, so no audit row
+    caller: AuthInfo | None = None  # auth off: a mint writes no audit row
     if settings.auth_actually_required():
         parent = caller = me_callers.require_authed_info(request)
     else:

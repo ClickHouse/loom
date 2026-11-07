@@ -305,7 +305,7 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
       }
     """
     parent = _setup_parent(request, payload)
-    # auth off: `parent` is the dev stand-in, no caller, so no audit row
+    # auth off: a mint writes no audit row
     caller = parent if settings.auth_actually_required() else None
     subject, org = parent.subject, parent.org
 

@@ -283,9 +283,10 @@ No org-readable rule, `visibility=public`, `org_admin` or `platform_admin` bypas
 refusal is the generic "cannot access". If the classification cannot be read, access is
 denied.
 
-Every request admitted to the restricted namespace it names, through an op or a raw
-route that serves or grants its content, writes a `namespace.restricted_access` audit
-row, and code search traces keep only the query digest; neither can be switched off.
+Every request admitted to the restricted namespace it names, through an op, or a raw
+route that serves its content or grants a token access to it, writes a
+`namespace.restricted_access` audit row, and code search traces keep only the query
+digest; neither can be switched off.
 
 | Setting                        | Default | Effect                                                            |
 | ------------------------------ | ------- | ----------------------------------------------------------------- |
