@@ -1247,6 +1247,10 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
         ("server/tracker/app/dupcheck_fanout.py", "readable_tracker_namespaces", never),
         ("server/tracker/app/common.py", "linked_trackers", never),
         ("server/auth/context.py", "restricted_namespaces_hidden_from", never),
+        # (the ADMIN check refused the link; this picks 403 or NOT_A_TRACKER_NAMESPACE)
+        ("server/code/app/repo_admin.py", "_tracker_or_refuse", never),
+        # (the inbox is taken either way; this picks whether its owner is named)
+        ("server/tasks/app/inboxes.py", "handle_inbox_register", never),
         # A code answer the linked tracker only enriches.
         ("server/code/app/bisect_scan.py", "_linked_scan", never),
         ("server/code/app/blame.py", "_tracker_side", never),

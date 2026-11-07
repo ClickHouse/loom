@@ -71,14 +71,14 @@ def bindings() -> dict[str, str]:
 
 
 # A maintainer's binding, written by `code.repo.set_source` as
-# the `tracker_binding` state row of the code namespace; "" clears the config's.
+# the `OVERRIDE_KEY` state row of the code namespace; "" clears the config's.
 OVERRIDE_KEY = "qa_binding"  # storage key
 _OVERRIDES: dict[str, str] = {}
 _OVERRIDES_AT = 0.0
 
 
 async def refresh_overrides(*, force: bool = False) -> dict[str, str]:
-    """Re-read the `tracker_binding` state rows when the snapshot is older than
+    """Re-read the `OVERRIDE_KEY` state rows when the snapshot is older than
     `code_repos_refresh_seconds` (or `force`); never raises — a directory that
     cannot be read keeps the last snapshot."""
     global _OVERRIDES, _OVERRIDES_AT

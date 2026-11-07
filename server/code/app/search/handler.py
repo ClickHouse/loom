@@ -63,7 +63,7 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
 
         if len(input.namespaces) >= 2:
             return await fanout.fan_out(input, handle_code_search)
-        input = fanout.normalize(input)
+        input = await fanout.normalize(input)
     started = time.monotonic()
     start_stage_wall()  # every code_span below reports into it
     org, ns = resolve_code_identity(input.org, input.namespace)

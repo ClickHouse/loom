@@ -606,7 +606,7 @@ async def handle_code_repo_set_access(input: Any) -> Any:
 
 async def handle_code_repo_set_source(input: Any) -> Any:
     """The maintainer sets the trackers this repository reads, primary first
-    (`CodeRepoSetSourceInput`). The links are the `tracker_binding` state row of the code
+    (`CodeRepoSetSourceInput`). The links are the `binding.OVERRIDE_KEY` state row of the code
     namespace (comma-joined); `tracker_namespaces_for` reads it before the deployment's map."""
     require_code_intel()
     from server.code.domain.index.repos import repo_for_namespace
@@ -620,8 +620,14 @@ async def handle_code_repo_set_source(input: Any) -> Any:
         raise ValidationError(f"{input.namespace} is not a repository index", code="NOT_A_REPO")
     await binding.refresh_overrides(force=True)
     previous = binding.tracker_namespaces_for(input.namespace)
+    # This repository's own stored links, read for its org and raising when unread.
+    stored = binding.parse_binding(
+        await CodeRepo().get_state(input.org, input.namespace, binding.OVERRIDE_KEY)
+    )
     wanted = binding.parse_binding(input.tracker_namespaces)
-    targets = [await _tracker_or_refuse(input.org, qa) for qa in wanted]
+    # A link the repository's stored links do not hold needs the tracker's admin; one only
+    # the operator map holds counts as new.
+    targets = [await _tracker_or_refuse(input.org, qa, new=qa not in stored) for qa in wanted]
     # A record reads only the repositories it names (`splitByChar('#', source_id)[1] IN
     # repos`), so a link to one that does not name this repository answers nothing — said, not
     # refused (a fork may mean to read its upstream's record)
@@ -655,8 +661,13 @@ async def handle_code_repo_set_source(input: Any) -> Any:
     )
 
 
-async def _tracker_or_refuse(org: str, qa: str) -> Any:
-    """The tracker namespace `qa` names, or NOT_A_TRACKER_NAMESPACE."""
+async def _tracker_or_refuse(org: str, qa: str, *, new: bool) -> Any:
+    """The tracker namespace `qa` names, or NOT_A_TRACKER_NAMESPACE. A `new` link also
+    needs the caller to administer it, restricted or not: a linked standard tracker is
+    read by every reader of the repository. A reader of it gets 403; anyone else gets
+    NOT_A_TRACKER_NAMESPACE."""
+    from server.auth.authz import row_in_scope
+    from server.operations.base import Role
     from server.tracker.domain.namespaces import tracker_namespace
 
     if tracker_namespace(org, qa) is None:
@@ -667,10 +678,18 @@ async def _tracker_or_refuse(org: str, qa: str) -> Any:
 
         await registry_sources.refresh_db_sources(force=True)
     target = tracker_namespace(org, qa)
+    not_a_tracker = ValidationError(
+        f"{qa} is not a tracker namespace of {org} — register its source first "
+        "(tracker.source.add)",
+        code="NOT_A_TRACKER_NAMESPACE",
+    )
     if target is None:
-        raise ValidationError(
-            f"{qa} is not a tracker namespace of {org} — register its source first "
-            "(tracker.source.add)",
-            code="NOT_A_TRACKER_NAMESPACE",
+        raise not_a_tracker
+    if not new or await row_in_scope(org, qa, Role.ADMIN):
+        return target
+    if await row_in_scope(org, qa, Role.VIEWER, hides_answer=False):
+        raise AuthInsufficientError(
+            f"linking {qa} needs an admin of it: it is not among this repository's stored "
+            "links (a link from the deployment's map counts as new)"
         )
-    return target
+    raise not_a_tracker

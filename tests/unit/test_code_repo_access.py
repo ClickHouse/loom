@@ -221,6 +221,9 @@ async def test_set_source_writes_the_binding_state_and_the_override_is_read_firs
     states: list[tuple[str, str, str, str]] = []
 
     class _Repo:
+        async def get_state(self, org, ns, key):
+            return next((v for o, n, k, v in reversed(states) if (o, n, k) == (org, ns, key)), "")
+
         async def set_state(self, org, ns, key, value, detail=""):
             states.append((org, ns, key, value))
 
