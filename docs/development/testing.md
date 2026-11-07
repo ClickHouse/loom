@@ -175,29 +175,35 @@ between files.
 ## The CI workflow
 
 `.github/workflows/ci.yml` runs on every pull request into `main` and on pushes to
-`main`, with Python 3.12 and Node 22. A newer push to the same ref cancels the running
-workflow. Every action is pinned to a full commit SHA (its version in a comment), and the
-workflow grants its jobs read-only repository access (`permissions: contents: read`).
+`main`, with Python 3.12 and Node 22. A newer push to a pull request cancels that pull
+request's running workflow; every push to `main` runs to completion in its own
+concurrency group, so a failure on one merge commit is never hidden by the next. Every
+action is pinned to a full commit SHA (its version in a comment), and the workflow grants
+its jobs read-only repository access (`permissions: contents: read`).
 
 | Job                    | Runs                                                                                                                                                                                                                                                                             |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clickhouse`           | resolves the ClickHouse release `dev/clickhouse_release.sh` names, so `unit`, `schema-check` and `integration` test the same one                                                                                                                                                 |
 | `lint`                 | `ruff check`, `ruff format --check`, the `--check` of `sdk_py_gen.py`, `sdk_py_client_gen.py`, `agent_plugin_sync.py`, `settings_reference.py`, `docs_reference.py` and `op_reach_census.py`, `mypy --strict` on the SDK, the mypy ratchet, the function-length and secret gates |
 | `unit`                 | `pytest tests/unit` in six parts (`LOOM_TEST_SHARD`), each on its own runner, in random order on every core with coverage                                                                                                                                                        |
 | `unit-coverage`        | the parts' coverage combined (floor 40%) and the per-module floors, then `pytest bench`; its `shard-weights` artifact is the run's seconds per unit file, to commit as `tests/shard_weights.json` when the parts drift apart                                                     |
+| `sandbox`              | the hostile repository-job sandbox suite under real bubblewrap, where a skip fails (`LOOM_TEST_REQUIRE_SANDBOX=1`)                                                                                                                                                               |
 | `schema-check`         | a fresh ClickHouse (`dev/ci_start_clickhouse.sh`), every migration, the strict dry run, `make schema-check`                                                                                                                                                                      |
 | `ts-typecheck`         | the dashboard build (`tsc -b` + Vite) and its bundle budget (`npm run budget`)                                                                                                                                                                                                   |
 | `format`               | Biome, Prettier, Taplo and shfmt checks at pinned versions                                                                                                                                                                                                                       |
+| `helm`                 | `helm lint --strict` and kubeconform on every overlay, the values the chart must refuse, and `scripts/gates/helm_extractor_isolation.py`                                                                                                                                         |
 | `agent-plugins`        | `node --test` for the plugin hooks and the grep shim, a parse check of every hook, library and `bin/` helper script of both plugins and the shim, and a check that the grep shim's entry points are executable                                                                   |
 | `plugin-node-launcher` | the `bin/loom-node` launcher tests on macOS and Windows (Git Bash)                                                                                                                                                                                                               |
 | `frontend-vitest`      | vitest (unit, component, axe), in parts on separate runners                                                                                                                                                                                                                      |
 | `frontend-e2e`         | Playwright, in parts on separate runners                                                                                                                                                                                                                                         |
 | `integration`          | parts, each with its own ClickHouse, migrations and booted server (fake providers, workers off): the numbered parts split `pytest tests/integration` (`LOOM_TEST_SHARD`), the isolation gates part the provider staging tests, the auth-on gates and `pytest tests/analyzer`     |
+| `mixed-version`        | `scripts/gates/mixed_version.py`: builds N-1 and N side by side on one ClickHouse, N-1 being the merge base on a pull request and the previous commit on `main`                                                                                                                  |
 | `sdk-typescript`       | `sdk_ts_gen.py --check`, `npm run check` (lint, types, version, README examples, tests), `npm run check:dist`                                                                                                                                                                    |
 | `sdk-python-package`   | builds the SDK wheel with uv, installs it into a clean venv and runs `scripts/gates/sdk_wheel_smoke.py`                                                                                                                                                                          |
 
-CI runs only on pull requests into `main`. A pull request stacked on another branch gets
-no checks until it is retargeted to `main`, and a pull request with a merge conflict gets
-none either: "no checks reported" after a push usually means one of the two.
+Pull requests into `main` and pushes to `main` are the only triggers. A pull request
+stacked on another branch gets no checks until it is retargeted to `main`, and a pull
+request with a merge conflict gets none either: "no checks reported" after a push usually means one of the two.
 
 ## Related
 
