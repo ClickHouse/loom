@@ -57,6 +57,7 @@ from server.transport.mcp_config import (
     INVALID_PARAMS,
     INVALID_REQUEST,
     LIST_TTL_MS,
+    MAX_BATCH_ENTRIES,
     MCP_SUPPORTED_PROTOCOL_VERSIONS,
     META_SERVER_INFO,
     METHOD_NOT_FOUND,
@@ -278,11 +279,6 @@ def _accepted(response: Response) -> Response:
     return Response(status_code=202, headers=dict(response.headers))
 
 
-# Entries one JSON-RPC batch may hold: only tools/call meets the rate limiter, and not
-# loom_activate or loom_op's catalog, so the batch length bounds one request's work.
-MAX_BATCH_ENTRIES = 64  # not a setting: a protocol bound, not a deployment's capacity
-
-
 async def _dispatch_batch(
     payload: list[Any], dispatch: Callable[[Any], Awaitable[dict[str, Any] | None]]
 ) -> list[dict[str, Any]]:
@@ -316,11 +312,11 @@ def attach(app: FastAPI) -> None:
         from server.auth.jwt import TokenError
 
         # `Mcp-Session-Id` correlates the `initialize` handshake (carrying
-        # `clientInfo.name`) with later `tools/call` POSTs. Server-assigned at
-        # initialize (in _dispatch) and echoed on every response, refusals
-        # included, so clients keep sending it — that round-trip drives the
-        # provenance cache.
-        session_id = request.headers.get("mcp-session-id") or request.headers.get("Mcp-Session-Id")
+        # `clientInfo.name`) with later `tools/call` POSTs. Assigned at initialize
+        # when the client sent none (in _dispatch) and echoed on every answer this
+        # endpoint returns, refusals included, so clients keep sending it — that
+        # round-trip drives the provenance cache.
+        session_id = request.headers.get("mcp-session-id")
         if session_id:
             response.headers["Mcp-Session-Id"] = session_id
 
@@ -461,7 +457,7 @@ def attach(app: FastAPI) -> None:
             response.headers["Retry-After"] = str(wait)
             msg = f"MCP session end rate limit exceeded (retry in {wait}s)"
             return {"error": msg, "code": "RATE_LIMITED", "retry_after_s": wait}
-        session_id = request.headers.get("mcp-session-id") or request.headers.get("Mcp-Session-Id")
+        session_id = request.headers.get("mcp-session-id")
         closed = await _mcp_runs.close_session(session_id, org, _mcp_runs.subject_of(auth))
         if session_id:
             _MCP_AGENT_BY_SESSION.pop(session_id, None)

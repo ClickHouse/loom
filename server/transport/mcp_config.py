@@ -124,6 +124,10 @@ TOOL_EXEC_FAILED = -32000  # implementation-defined
 # asked for is not one this transport serves.
 UNSUPPORTED_PROTOCOL_VERSION = -32022
 
+# Entries one JSON-RPC batch may hold: only tools/call meets the rate limiter, and not
+# loom_activate or loom_op's catalog, so the batch length bounds one request's work.
+MAX_BATCH_ENTRIES = 64  # not a setting: a protocol bound, not a deployment's capacity
+
 # Id of a transport-level error frame when the request carried none. MCP
 # narrows `JSONRPCError.id` to string | number, so `null` is
 # never an option.
