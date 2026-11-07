@@ -40,9 +40,9 @@ export function OrgGuardrails() {
   // holds (a draft, a busy save, a late answer) reaches another scope.
   return (
     <div className="mt-8 space-y-6">
-      <ModelCallsPanel key={identity.org} />
-      <ExtractionRules key={identity.org} scope="org" />
-      <ExtractionRules key={`${identity.org}/${identity.namespace}`} scope="namespace" />
+      <ModelCallsPanel key={`calls/${identity.org}`} />
+      <ExtractionRules key={`org/${identity.org}`} scope="org" />
+      <ExtractionRules key={`ns/${identity.org}/${identity.namespace}`} scope="namespace" />
     </div>
   );
 }
@@ -77,7 +77,9 @@ function ExtractionRules({ scope }: { scope: PolicyScope }) {
         : await setExtractionPolicy(identity, scope, draft.trim());
       setPolicy(p);
       setDraft(p.policy);
-      toast(clear ? "Rules removed" : "Rules saved", "ok");
+      // The panel's own scope: a save that answers after a switch names where it landed.
+      const where = scope === "org" ? identity.org : identity.namespace;
+      toast(`Rules ${clear ? "removed" : "saved"} for ${where}`, "ok");
     } catch (e) {
       toast(`Save failed: ${humanizeError(e)}`, "error");
     } finally {

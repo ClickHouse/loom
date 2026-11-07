@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "../test/rtl";
+import { act, cleanup, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry, TokenEntry, WhoAmI } from "../api";
@@ -187,6 +187,26 @@ describe("Setup's 'Never save' panel", () => {
     expect(screen.queryByText(PRIVACY_FILTERS_MANAGED_BY_ADMIN)).not.toBeInTheDocument();
     expect(screen.queryByText(PRIVACY_FILTERS_READ_ONLY)).not.toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Webhooks" }, WAIT)).toBeInTheDocument();
+  });
+
+  it("drops the previous namespace's webhooks on a switch: the section is keyed by its namespace", async () => {
+    const admin: WhoAmI = { authenticated: true, subject: "a@x", org: ORG, roles: ["ADMIN"] };
+    const hook = {
+      webhook_id: "w1",
+      url: "https://hooks.example.com/loom",
+      secret_ref: "LOOM_WEBHOOK_SECRET_DEV__CI",
+      events: ["memory.written" as const],
+      created_at: "2000-01-01 00:00:00",
+      secret_present: true,
+    };
+    vi.mocked(listWebhooks).mockResolvedValueOnce({ webhooks: [hook] });
+    seed(admin, [], MEMORY_NS);
+    render(<Setup />);
+    await openMemoryTab();
+    expect(await screen.findByText(hook.url, undefined, WAIT)).toBeInTheDocument();
+    vi.mocked(listWebhooks).mockImplementationOnce(() => new Promise(() => {}));
+    act(() => useStore.setState({ identity: { org: ORG, namespace: "other-ns", agent: "loom-ui" } }));
+    await waitFor(() => expect(screen.queryByText(hook.url)).toBeNull(), WAIT);
   });
 });
 

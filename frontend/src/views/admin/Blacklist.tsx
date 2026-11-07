@@ -176,12 +176,15 @@ export function PrivacyFilters({
     try {
       const s = await sweepBlacklistPattern(identity, r.pattern_id);
       if (s.error) throw new Error(s.error);
+      // Where the sweep ran, said in its answer: the page may have moved since.
+      const where = inNamespace ? identity.namespace : identity.org;
       if (s.matched === 0) {
-        toast("No stored memory matches this pattern", "info");
+        toast(`No stored memory in ${where} matches this pattern`, "info");
         return;
       }
       const more = s.truncated ? "; more remain, sweep again" : "";
-      toast(`Deleted ${s.tombstoned} of ${s.matched} matching ${s.matched === 1 ? "memory" : "memories"}${more}`, "ok");
+      const noun = s.matched === 1 ? "memory" : "memories";
+      toast(`Deleted ${s.tombstoned} of ${s.matched} matching ${noun} in ${where}${more}`, "ok");
     } catch (e) {
       toast(`Sweep failed: ${humanizeError(e)}`, "error");
     } finally {

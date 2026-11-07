@@ -73,10 +73,13 @@ describe("PrivacyFilters sweep", () => {
     await sweepOf("secret-p1");
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Sweep failed: the pattern no longer compiles", "error"));
     await sweepOf("secret-p1");
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("No stored memory matches this pattern", "info"));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("No stored memory in team matches this pattern", "info"));
     await sweepOf("secret-p1");
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith("Deleted 5000 of 5000 matching memories; more remain, sweep again", "ok"),
+      expect(toast).toHaveBeenCalledWith(
+        "Deleted 5000 of 5000 matching memories in team; more remain, sweep again",
+        "ok",
+      ),
     );
   });
 

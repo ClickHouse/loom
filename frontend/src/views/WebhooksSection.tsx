@@ -29,15 +29,12 @@ import { Alert, ListTime, Loading } from "../components/ui";
 /**
  * The namespace's memory webhooks: a URL told of every memory write, revision, delete,
  * restore, redaction and erasure, signed with a secret the server reads from an
- * environment variable. Shown to the namespace's admin (the webhook ops are ADMIN).
+ * environment variable. Shown to the namespace's admin (the webhook ops are ADMIN), and
+ * keyed by its namespace where it is mounted, so a switch starts a fresh section.
  */
 export function WebhooksSection() {
   const identity = useIdentity();
-  // Kept with the namespace it was read for: after a switch the old list is not shown,
-  // and its Remove is not offered under the new namespace.
-  const scopeKey = `${identity.org}/${identity.namespace}`;
-  const [loaded, setLoaded] = useState<{ scope: string; hooks: Webhook[] } | null>(null);
-  const hooks = loaded?.scope === scopeKey ? loaded.hooks : null;
+  const [hooks, setHooks] = useState<Webhook[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
   const [adding, setAdding] = useState(false);
@@ -47,10 +44,10 @@ export function WebhooksSection() {
     (signal, live) => {
       setError(null);
       listWebhooks(identity, { signal })
-        .then((r) => live() && setLoaded({ scope: scopeKey, hooks: r.webhooks }))
+        .then((r) => live() && setHooks(r.webhooks))
         .catch((e) => live() && setError(e));
     },
-    [identity.org, identity.namespace, reload],
+    [reload],
   );
   const refresh = () => setReload((n) => n + 1);
 
@@ -203,12 +200,11 @@ const DELIVERY_STATE: Record<WebhookDelivery["status"], BadgeState> = {
   dead: "danger",
 };
 
-/** Why a delivery has not arrived: the receiver's HTTP status, or the transport error when
- *  no status came back; "" once it arrived. */
+/** Why a delivery has not arrived: the worker's reason when it gave one, else the
+ *  receiver's last HTTP status; "" once it arrived. */
 function deliveryFailure(d: WebhookDelivery): string {
   if (d.status === "delivered") return "";
-  if (d.last_status) return `HTTP ${d.last_status}`;
-  return d.last_error;
+  return d.last_error || (d.last_status ? `HTTP ${d.last_status}` : "");
 }
 
 /** The webhook's newest events of the last three days and whether each arrived. */

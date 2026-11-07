@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api/webhooks";
@@ -142,15 +142,6 @@ describe("WebhooksSection", () => {
     const dialog = await screen.findByRole("dialog", { name: "Deliveries" });
     expect(await within(dialog).findByText("connection refused")).toBeInTheDocument();
     expect(within(dialog).queryByText("HTTP 200")).toBeNull();
-  });
-
-  it("drops the previous namespace's webhooks on a switch", async () => {
-    render(<WebhooksSection />);
-    expect(await screen.findByText(HOOK.url)).toBeInTheDocument();
-    vi.mocked(api.listWebhooks).mockImplementationOnce(() => new Promise(() => {}));
-    act(() => useStore.setState({ identity: { ...scope, namespace: "other", agent: "loom-ui" } }));
-    await waitFor(() => expect(screen.queryByText(HOOK.url)).toBeNull());
-    expect(screen.queryByRole("button", { name: `Actions for ${HOOK.url}` })).toBeNull();
   });
 
   it("shows a refused registration in the dialog", async () => {

@@ -301,7 +301,7 @@ function MemoryTab() {
         </Modal>
       </section>
 
-      {showWebhooks && <WebhooksSection />}
+      {showWebhooks && <WebhooksSection key={`${identity.org}/${identity.namespace}`} />}
     </div>
   );
 }
