@@ -955,6 +955,18 @@ describe("Assistant: overview", () => {
     expect(screen.getByLabelText("User id")).toHaveValue("ada");
   });
 
+  it("clears the id field on a namespace switch and on a change of subject", async () => {
+    render(<Assistant />);
+    await screen.findByTestId("assistant-populations");
+    await userEvent.click(screen.getByRole("button", { name: "ada 12 memories" }));
+    expect(screen.getByLabelText("User id")).toHaveValue("ada");
+    await userEvent.click(screen.getByRole("button", { name: "Session" }));
+    expect(screen.getByLabelText("Session id")).toHaveValue("");
+    await userEvent.click(screen.getByRole("button", { name: "ada 12 memories" }));
+    switchNamespace();
+    expect(screen.getByLabelText("User id")).toHaveValue("");
+  });
+
   it("moves the focus to the answer for a pick made while an earlier one is still read", async () => {
     inspectMemories.mockImplementationOnce(() => new Promise<MemoryInspection>(() => {}));
     render(<Assistant />);

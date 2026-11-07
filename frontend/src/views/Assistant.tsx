@@ -98,6 +98,12 @@ export function Assistant() {
   useEffect(() => {
     if (org && overviewGate === null) readOverview();
   }, [org, overviewGate, readOverview]);
+  // An id picked or typed in one namespace is not meant for the next one.
+  const [idFor, setIdFor] = useState(`${org}/${namespace}`);
+  if (idFor !== `${org}/${namespace}`) {
+    setIdFor(`${org}/${namespace}`);
+    setSubjectId("");
+  }
 
   if (!identity) return null;
   const where = { org, namespace };
@@ -184,7 +190,11 @@ export function Assistant() {
             aria-label="Whose memories"
             options={SUBJECT_OPTIONS}
             selected={subject}
-            onClick={(v) => setSubject(v as InspectSubject)}
+            onClick={(v) => {
+              // A user id is not an agent name or a session id.
+              setSubject(v as InspectSubject);
+              setSubjectId("");
+            }}
           />
           <div className="w-64 max-w-full">
             {/* A text input with a datalist is the native combobox: it suggests the users or

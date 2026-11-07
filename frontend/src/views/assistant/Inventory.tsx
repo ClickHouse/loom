@@ -66,7 +66,7 @@ function planeHint(s: InventorySection): ReactNode {
 
 const POPULATION_LABEL: Record<InventoryPopulationName, { title: string; what: string }> = {
   subjects: { title: "Users", what: "users that memories are filed under" },
-  agents: { title: "Agents", what: "agents that wrote memories" },
+  agents: { title: "Agents", what: "agents that memories were written under" },
   authors: { title: "Authors", what: "people and services that wrote memories" },
   members: { title: "Members", what: "people with access to this namespace" },
 };

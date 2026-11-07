@@ -1241,7 +1241,7 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
         calls.facts.push(body);
         return json({ rows: [] });
       case "/v1/namespace.inventory":
-        // The Assistant reads it on load: a small namespace with one user and one agent.
+        // The Assistant reads it on load.
         return json(inventoryFor(String(body.org ?? "dev"), ns));
       case "/v1/tracker.binding": {
         calls.qa.push({ op: "binding", ...body });

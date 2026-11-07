@@ -1,5 +1,5 @@
 import { Button } from "@clickhouse/click-ui/Button";
-import { render, screen } from "../../test/rtl";
+import { render, screen, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { Unavailable } from "./Unavailable";
@@ -68,6 +68,8 @@ describe("Unavailable", () => {
     );
     expect(button).toHaveAttribute("aria-disabled", "true");
     expect(button).toHaveAccessibleDescription("Read-only here");
-    expect(screen.getByRole("tooltip")).toHaveTextContent("Read-only herethe whole id");
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toHaveTextContent("Read-only here");
+    expect(within(tooltip).getByText("the whole id")).toBeInTheDocument();
   });
 });
