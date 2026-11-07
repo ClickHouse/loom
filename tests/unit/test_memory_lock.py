@@ -241,18 +241,20 @@ def _thirty_day_type(monkeypatch: pytest.MonkeyPatch) -> None:
             retention_days=30, dedup_threshold=None, hot_quota=0, conflict_policy=""
         )
 
-    async def no_match(**_: Any) -> None:
-        return None
-
     monkeypatch.setattr(namespace_types, "get_type_config", thirty_days)
-    monkeypatch.setattr(blacklist_guard, "enforce_on_insert", no_match)
 
 
 async def _restate(monkeypatch: pytest.MonkeyPatch, existing: MemoryRow) -> dict[str, Any]:
     """The loom.memory row a same-value memory.set writes over `existing`."""
     _thirty_day_type(monkeypatch)
     ch = _stub_repo(monkeypatch, existing)
-    # The whole write path runs: the conflict check reads from the same fake.
+
+    # The whole write path runs: the blacklist passes and the conflict check reads from
+    # the same fake.
+    async def no_match(**_: Any) -> None:
+        return None
+
+    monkeypatch.setattr(blacklist_guard, "enforce_on_insert", no_match)
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
     await write_mod.handle_memory_set(
         MemorySetInput(**_ID, memory_key="deploy_window", value="Tue and Thu only", classify=False)
