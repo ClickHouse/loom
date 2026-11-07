@@ -92,8 +92,8 @@ These pages are rendered from the code. Edit the source, then run the generator.
 | [reference/workers.md](../reference/workers.md)             | `server/workers/registry.py` (`_WORKERS`)                                              | `python scripts/codegen/docs_reference.py`     |
 | [reference/cli.md](../reference/cli.md)                     | the `loom` parser snapshot `tests/unit/snapshots/cli_tree.json`                        | `python scripts/codegen/docs_reference.py`     |
 | [reference/errors.md](../reference/errors.md)               | `server/core/errors.py`                                                                | `python scripts/codegen/docs_reference.py`     |
-| [reference/schema.md](../reference/schema.md)               | `schemas/schema.sql`                                                                   | `python scripts/codegen/docs_reference.py`     |
 | [reference/status.md](../reference/status.md)               | op `maturity` and the boolean settings of `server/settings/catalog.py` that load false | `python scripts/codegen/docs_reference.py`     |
+| [reference/schema.md](../reference/schema.md)               | `schemas/schema.sql`                                                                   | `python scripts/codegen/docs_reference.py`     |
 
 The SDK op tables (`sdk/python/loom/ops.py`, `sdk/typescript/src/generated/ops.ts`) come from `scripts/codegen/sdk_py_gen.py` and `sdk_ts_gen.py` ([code generation](code-generation.md)).
 

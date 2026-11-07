@@ -1,8 +1,9 @@
 # Status of Loom's surfaces
 
-This page lists each op's maturity label (stable or experimental) and every boolean
-setting that loads false. Both tables are generated from the code: each op's `maturity` in the operation registry,
-and the boolean settings of `server/settings/catalog.py` as they load.
+This page counts each op group's stable ops, names its experimental ones, and lists every
+boolean setting that loads false. Both tables are generated from the code: each op's
+`maturity` in the operation registry, and the boolean settings of
+`server/settings/catalog.py` as they load.
 
 ## Operations
 
@@ -67,12 +68,9 @@ serves is in the [MCP reference](./mcp.md#toolsets).
 
 The boolean settings that load false in a deployment with a real LLM provider and nothing
 else set (a setting resolved at load, such as `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED`, is
-listed only when it resolves to false). They are of several kinds: a feature or a
-worker that does nothing until set, a relaxation of a check, a check that makes Loom refuse
-to start or report itself degraded, and a marker of what a process is. Some take effect in
-other ways too (`LOOM_INFERENCE_GATEWAY_REQUIRED` is on whenever a workload token is sent),
-and some name a precondition. Read a setting's full entry in the
-[configuration reference](./configuration.md) before turning it on. Settings that are not
+listed only when it resolves to false). Each row is the first sentence of the setting's
+description; read its full entry in the [configuration reference](./configuration.md)
+before turning it on. Settings that are not
 boolean (`LOOM_POLICY_MODE`, `LOOM_SELF_SIGNUP` and others whose default is `off`) are not
 listed here.
 

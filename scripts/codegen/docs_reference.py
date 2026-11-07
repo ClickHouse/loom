@@ -50,6 +50,7 @@ from scripts.codegen.common import write_atomic  # noqa: E402
 from scripts.codegen.sdk_py_admin_gen import render_admin_routes_table  # noqa: E402
 
 if TYPE_CHECKING:
+    from server.operations.base import Operation
     from server.settings import Settings
 
 COMMAND = "python scripts/codegen/docs_reference.py"
@@ -110,13 +111,21 @@ def _listed_under_all(op: object) -> bool:
     return listed_under_all(op)  # type: ignore[arg-type]
 
 
+def _op_groups() -> dict[str, list[Operation]]:
+    """The registry's ops by group, the part of the name before the first dot."""
+    from server.operations import registry
+
+    groups: dict[str, list[Operation]] = defaultdict(list)
+    for op in registry.ALL_OPERATIONS:
+        groups[op.name.split(".")[0]].append(op)
+    return groups
+
+
 def render_operations() -> str:
     from server.operations import registry
     from server.transport.mcp_tools import _TOOL_DESCRIPTIONS
 
-    groups: dict[str, list[object]] = defaultdict(list)
-    for op in registry.ALL_OPERATIONS:
-        groups[op.name.split(".")[0]].append(op)
+    groups = _op_groups()
     out = [
         f"{len(registry.ALL_OPERATIONS)} operations in {len(groups)} groups. "
         "Every op is served at `POST /v1/<op>` and as the MCP tool `loom_<op>` "
@@ -132,20 +141,20 @@ def render_operations() -> str:
         "Groups: " + " · ".join(f"[`{g}`](#{g.replace('_', '_')})" for g in sorted(groups)) + "\n",
     ]
     for group in sorted(groups):
-        ops = sorted(groups[group], key=lambda o: o.name)  # type: ignore[attr-defined]
+        ops = sorted(groups[group], key=lambda o: o.name)
         out.append(f"### {group}\n")
         page = f"operations/{group}.md"
         out.append(f"Fields for every `{group}` op: [{page}]({page}).\n")
         out.append("| Operation | Summary | Role | Kind | Listed under `all` | Audit |")
         out.append("| --- | --- | --- | --- | --- | --- |")
         for op in ops:
-            kind = "read" if op.read_only else ("idempotent" if op.idempotent else "write")  # type: ignore[attr-defined]
+            kind = "read" if op.read_only else ("idempotent" if op.idempotent else "write")
             listed = "yes" if _listed_under_all(op) else "no"
             out.append(
-                f"| [`{op.name}`](operations/{group}.md#{_op_anchor(op.name)}) | "  # type: ignore[attr-defined]
-                f"{_cell(_op_summary(op, _TOOL_DESCRIPTIONS))} | "  # type: ignore[attr-defined]
-                f"{op.required_role.name.lower()} | {kind} | {listed} | "  # type: ignore[attr-defined]
-                f"{'yes' if op.audit else ''} |"  # type: ignore[attr-defined]
+                f"| [`{op.name}`](operations/{group}.md#{_op_anchor(op.name)}) | "
+                f"{_cell(_op_summary(op, _TOOL_DESCRIPTIONS))} | "
+                f"{op.required_role.name.lower()} | {kind} | {listed} | "
+                f"{'yes' if op.audit else ''} |"
             )
         out.append("")
     return "\n".join(out)
@@ -155,26 +164,20 @@ def render_operations() -> str:
 
 
 def render_status_ops() -> str:
-    """Each op group's stable and experimental ops (`Operation.maturity`), linked to their
-    field reference."""
-    from server.operations import registry
-    from server.operations.base import Operation
-
-    groups: dict[str, list[Operation]] = defaultdict(list)
-    for op in registry.ALL_OPERATIONS:
-        groups[op.name.split(".")[0]].append(op)
-    experimental_total = sum(op.maturity == "experimental" for op in registry.ALL_OPERATIONS)
+    """How many of each op group's ops are stable (`Operation.maturity`), and each
+    experimental op linked to its field reference."""
+    groups = _op_groups()
     rows: list[str] = []
+    experimental_total = 0
     for group in sorted(groups):
         ops = sorted(groups[group], key=lambda o: o.name)
-        stable = sum(op.maturity == "stable" for op in ops)
-        experimental = ", ".join(
-            f"[`{op.name}`](operations/{group}.md#{_op_anchor(op.name)})"
-            for op in ops
-            if op.maturity == "experimental"
+        experimental = [op for op in ops if op.maturity == "experimental"]
+        experimental_total += len(experimental)
+        links = ", ".join(
+            f"[`{op.name}`](operations/{group}.md#{_op_anchor(op.name)})" for op in experimental
         )
-        rows.append(f"| `{group}` | {stable} | {experimental} |")
-    total = len(registry.ALL_OPERATIONS)
+        rows.append(f"| `{group}` | {len(ops) - len(experimental)} | {links} |")
+    total = sum(len(ops) for ops in groups.values())
     return "\n".join(
         [
             f"{total} operations, {experimental_total} of them experimental.\n",
@@ -340,7 +343,7 @@ def _field_rows(model: type, with_default: bool) -> list[str]:
     return rows
 
 
-def render_group(group: str, ops: list[object]) -> str:
+def render_group(group: str, ops: list[Operation]) -> str:
     from server.transport.mcp_tools import _TOOL_DESCRIPTIONS
 
     out = [
@@ -356,26 +359,26 @@ def render_group(group: str, ops: list[object]) -> str:
         "listing. Unknown input fields are served and named in `ignored_args`.\n",
         "<!-- prettier-ignore-start -->\n",
     ]
-    for op in sorted(ops, key=lambda o: o.name):  # type: ignore[attr-defined]
-        kind = "read" if op.read_only else ("idempotent" if op.idempotent else "write")  # type: ignore[attr-defined]
-        out.append(f"## `{op.name}`\n")  # type: ignore[attr-defined]
+    for op in sorted(ops, key=lambda o: o.name):
+        kind = "read" if op.read_only else ("idempotent" if op.idempotent else "write")
+        out.append(f"## `{op.name}`\n")
         summary = _op_summary(op, _TOOL_DESCRIPTIONS)
         if summary:
             out.append(summary + "\n")
-        role = op.required_role.name.lower()  # type: ignore[attr-defined]
-        audited = " · audited" if op.audit else ""  # type: ignore[attr-defined]
+        role = op.required_role.name.lower()
+        audited = " · audited" if op.audit else ""
         unlisted = "" if _listed_under_all(op) else " · not listed under the MCP `all` toolset"
         out.append(
-            f"`POST /v1/{op.name}` · MCP `{op.mcp_tool_name}` · role `{role}` · "  # type: ignore[attr-defined]
+            f"`POST /v1/{op.name}` · MCP `{op.mcp_tool_name}` · role `{role}` · "
             f"{kind}{audited}{unlisted}\n"
         )
         out.append("| Input field | Type | Default | Meaning |")
         out.append("| --- | --- | --- | --- |")
-        out += _field_rows(op.input_model, with_default=True)  # type: ignore[attr-defined]
+        out += _field_rows(op.input_model, with_default=True)
         out.append("")
         out.append("| Output field | Type | Meaning |")
         out.append("| --- | --- | --- |")
-        out += _field_rows(op.output_model, with_default=False)  # type: ignore[attr-defined]
+        out += _field_rows(op.output_model, with_default=False)
         out.append("")
     out.append("<!-- prettier-ignore-end -->")
     return "\n".join(out) + "\n"
@@ -383,12 +386,7 @@ def render_group(group: str, ops: list[object]) -> str:
 
 def render_group_pages() -> dict[str, str]:
     """File name → content for every per-group field page."""
-    from server.operations import registry
-
-    groups: dict[str, list[object]] = defaultdict(list)
-    for op in registry.ALL_OPERATIONS:
-        groups[op.name.split(".")[0]].append(op)
-    return {f"{g}.md": render_group(g, ops) for g, ops in sorted(groups.items())}
+    return {f"{g}.md": render_group(g, ops) for g, ops in sorted(_op_groups().items())}
 
 
 # --- llms.txt -----------------------------------------------------------------
