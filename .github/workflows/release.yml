@@ -123,13 +123,14 @@ jobs:
         env:
           VERSION: ${{ steps.parse.outputs.version }}
           DRY_RUN: ${{ inputs.dry_run == true }}
-        # Off the tag's commit (a dry run of a branch) the two tag checks skip; a tag run refuses.
+        # A dry run of a branch is off the tag's commit: check-tag skips there, and a tag
+        # run refuses; check-chart skips when vX.Y.Z is tagged on another commit.
         run: |
           dry_run=()
           [ "$DRY_RUN" != true ] || dry_run=(--dry-run)
           python3 scripts/release/prepare.py check "$VERSION"
           python3 scripts/release/prepare.py check-tag "${dry_run[@]}" "$VERSION"
-          python3 scripts/release/prepare.py check-chart "${dry_run[@]}" "$VERSION"
+          python3 scripts/release/prepare.py check-chart "$VERSION"
           previous=$(python3 scripts/release/prepare.py previous "$VERSION")
           echo "previous=$previous" >> "$GITHUB_OUTPUT"
 

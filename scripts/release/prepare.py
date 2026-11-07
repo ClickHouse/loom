@@ -251,10 +251,9 @@ def released_chart(tag: str, root: Path = ROOT) -> str:
     try:
         version = _match(CHART, shown.stdout).group("v")
         parse(version)
-    except PinError as e:
-        raise PinError(CHART.path, f"{e.reason} (at {tag})") from None
     except ValueError as e:
-        raise PinError(CHART.path, f"{e} (at {tag})") from None
+        reason = e.reason if isinstance(e, PinError) else str(e)
+        raise PinError(CHART.path, f"{reason} (at {tag})") from None
     return version
 
 
@@ -492,11 +491,9 @@ def _check_chart(args: argparse.Namespace) -> None:
     tag_version = args.tag_version
     baseline = chart_baseline(tag_version)
     if not baseline:
-        final = final_of(tag_version)
-        if not args.dry_run:
-            raise ValueError(f"v{final} is tagged on another commit than the checked-out one")
-        # Said in the log, so a skip never reads as a chart checked.
-        print(f"::notice::no chart check: v{final} is tagged on another commit")
+        # Only off the tag's commit, which check-tag refuses before this outside a dry
+        # run. Said in the log, so a skip never reads as a chart checked.
+        print(f"::notice::no chart check: v{final_of(tag_version)} is tagged on another commit")
         return
     # Caught here, not in main(), for the annotation's file= and the baseline's name.
     try:
@@ -556,7 +553,6 @@ def main() -> None:
     notes_cmd.add_argument("version", help="the release, X.Y.Z")
     notes_cmd.set_defaults(run=_notes)
     tag_version = "the tag's version, X.Y.Z or X.Y.Z-rc.N"
-    dry_run = "skip, with a notice, off the tag's commit"
     check_cmd = commands.add_parser("check", help="every file names the tag's final version")
     check_cmd.add_argument("tag_version", help=tag_version)
     check_cmd.set_defaults(run=_check)
@@ -564,13 +560,14 @@ def main() -> None:
         "check-tag", help="a candidate before its final, the final on its last candidate's commit"
     )
     tag_cmd.add_argument("tag_version", help=tag_version)
-    tag_cmd.add_argument("--dry-run", action="store_true", help=dry_run)
+    tag_cmd.add_argument(
+        "--dry-run", action="store_true", help="skip, with a notice, when the tag is not HEAD"
+    )
     tag_cmd.set_defaults(run=_check_tag)
     chart_cmd = commands.add_parser(
         "check-chart", help="the chart's version is above the previous release's"
     )
     chart_cmd.add_argument("tag_version", help=tag_version)
-    chart_cmd.add_argument("--dry-run", action="store_true", help=dry_run)
     chart_cmd.set_defaults(run=_check_chart)
     previous_cmd = commands.add_parser(
         "previous", help="the highest final release tag below the tag's version"

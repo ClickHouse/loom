@@ -24,7 +24,7 @@ The server reads its version from `server/__init__.py` only; the OpenAPI documen
 | `npm run check:version` (TypeScript SDK)       | its four version sources agree                                                                                                        |
 | `tests/unit/test_codex_plugin.py`              | both plugin manifests carry one version and one `minServerVersion`, no newer than the server's version                                |
 | `tests/unit/test_release_prepare.py`           | every file `prepare.py` bumps names the server's version                                                                              |
-| `prepare.py check`, `check-chart`, `check-tag` | the release's `version` job ([step 1](#what-the-release-workflow-does)): one version everywhere, the chart moved, the candidate order |
+| `prepare.py check`, `check-tag`, `check-chart` | the release's `version` job ([step 1](#what-the-release-workflow-does)): one version everywhere, the candidate order, the chart moved |
 
 Two plugin pull requests that bump to the same number merge without a conflict, and the second ships nothing to clients the first already updated. Check the plugin version on `main` before bumping.
 
@@ -164,9 +164,9 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    `X.Y.Z-rc.N`. It fails when any of these is false (for `vX.Y.Z-rc.N`, against `X.Y.Z`):
    - `prepare.py check`: `server/__init__.py` reads `__version__ = "X.Y.Z"`, and every other
      version file, `server.json` included, names that version;
-   - `prepare.py check-chart`: the chart's version is above the previous release's;
    - `prepare.py check-tag`: a candidate `vX.Y.Z-rc.N` before `vX.Y.Z` is tagged, and a final
      `vX.Y.Z` on the commit of its last candidate;
+   - `prepare.py check-chart`: the chart's version is above the previous release's;
 2. `preflight` fails the run on a missing [prerequisite](#before-the-first-release);
 3. `clickhouse` names the ClickHouse release the Compose bundle runs
    (`scripts/release/release_clickhouse.sh`), the first of: the one this version's published bundle

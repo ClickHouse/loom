@@ -11,7 +11,6 @@ import shutil
 import subprocess
 import sys
 import tomllib
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -667,7 +666,7 @@ def test_a_skipped_chart_check_says_so(
 ) -> None:
     monkeypatch.setattr(prepare, "chart_baseline", lambda version: None)
     for tag_version in ("1.2.0", "1.2.0-rc.3"):  # the final is what is on another commit
-        monkeypatch.setattr(sys, "argv", ["prepare.py", "check-chart", "--dry-run", tag_version])
+        monkeypatch.setattr(sys, "argv", ["prepare.py", "check-chart", tag_version])
         prepare.main()
         assert capsys.readouterr().out == (
             "::notice::no chart check: v1.2.0 is tagged on another commit\n"
@@ -712,6 +711,18 @@ def test_a_candidate_comes_before_its_final_and_the_final_goes_where_it_was_soak
     assert prepare.check_tag("1.2.0", tmp_path) is None
 
 
+def test_the_last_candidate_is_the_highest_number_not_the_last_string(tmp_path: Path) -> None:
+    (tmp_path / "f").write_text("a")
+    git_repo.git(tmp_path, "init", "-q")
+    _commit(tmp_path, "rc.9")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.9")
+    (tmp_path / "f").write_text("b")
+    _commit(tmp_path, "rc.10")
+    git_repo.git(tmp_path, "tag", "v1.2.0-rc.10")
+    git_repo.git(tmp_path, "tag", "v1.2.0")
+    assert prepare.check_tag("1.2.0", tmp_path) is None  # on rc.10, which sorts below rc.9
+
+
 def test_annotated_tags_keep_the_candidate_order(tmp_path: Path) -> None:
     """A release tag is annotated (signed): its commit, not the tag object, is compared."""
     (tmp_path / "f").write_text("a")
@@ -733,7 +744,7 @@ def test_a_final_with_no_candidate_is_not_refused(tmp_path: Path) -> None:
     assert prepare.check_tag("1.3.0", tmp_path) is None
 
 
-def test_a_dry_run_after_a_candidate_shipped_is_not_refused(tmp_path: Path) -> None:
+def test_a_tag_is_on_head_only_on_its_own_commit(tmp_path: Path) -> None:
     (tmp_path / "f").write_text("a")
     git_repo.git(tmp_path, "init", "-q")
     _commit(tmp_path, "soaked")
@@ -759,23 +770,11 @@ def test_a_tag_check_off_its_commit_says_it_skipped(
     )
 
 
-@pytest.mark.parametrize(
-    ("command", "patch", "error"),
-    [
-        ("check-tag", ("tag_on_head", lambda version: False), "is not on the checked-out commit"),
-        ("check-chart", ("chart_baseline", lambda version: None), "is tagged on another commit"),
-    ],
-)
-def test_a_tag_run_off_its_tag_is_refused(
-    monkeypatch: pytest.MonkeyPatch,
-    command: str,
-    patch: tuple[str, Callable[..., object]],
-    error: str,
-) -> None:
+def test_a_tag_run_off_its_tag_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     """Outside a dry run the tag is the checked-out commit; one moved after the push fails."""
-    monkeypatch.setattr(prepare, *patch)
-    monkeypatch.setattr(sys, "argv", ["prepare.py", command, "1.2.0"])
-    with pytest.raises(SystemExit, match=f"^::error::v1.2.0 {error}"):
+    monkeypatch.setattr(prepare, "tag_on_head", lambda version: False)
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "check-tag", "1.2.0"])
+    with pytest.raises(SystemExit, match="^::error::v1.2.0 is not on the checked-out commit"):
         prepare.main()
 
 
@@ -912,7 +911,7 @@ def test_the_release_runs_every_check_on_the_tag_with_its_tags() -> None:
     lines = [
         'python3 scripts/release/prepare.py check "$VERSION"',
         'python3 scripts/release/prepare.py check-tag "${dry_run[@]}" "$VERSION"',
-        'python3 scripts/release/prepare.py check-chart "${dry_run[@]}" "$VERSION"',
+        'python3 scripts/release/prepare.py check-chart "$VERSION"',
     ]
     assert "\n".join(lines) + "\n" in script
 
