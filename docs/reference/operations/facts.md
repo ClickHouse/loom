@@ -36,8 +36,8 @@ Subject-relation-object triples from the entity graph, filtered by subject / obj
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `subject` | `str \| None` | `None` | subject/object/relation AND together; unfiltered returns top triples by co_occur. |
-| `object` | `str \| None` | `None` | Only triples with this object (lowercased); ignored when `entity` is set. |
+| `subject` | `str \| None` | `None` | subject/object/relation AND together; unfiltered returns top triples by co_occur. subject, object and entity match a node as the write path stores it (canonicalised) or as given, lowered. |
+| `object` | `str \| None` | `None` | Only triples with this object; ignored when `entity` is set. |
 | `relation` | `str \| None` | `None` | Only triples with this relation, normalised the way writes store it (`works_at` -> `work_at`). |
 | `entity` | `str \| None` | `None` | subject OR object match. |
 | `limit` | `int` | `50` | At most this many triples; the server caps it at 500. |
@@ -92,7 +92,7 @@ Return the entities that co-occur with `input.entity` via any relation, ranked b
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `entity` | `str` | required | The entity whose neighbours to list (lowercased; matched as subject or object). |
+| `entity` | `str` | required | The entity whose neighbours to list, matched as subject or object: as the write path stores it (canonicalised) or as given, lowered. |
 | `top_k` | `int` | `20` | At most this many neighbours; the server caps it at 200. |
 | `as_of` | `datetime \| None` | `None` | Only edges valid at this time; `None` keeps the edges still valid now. |
 

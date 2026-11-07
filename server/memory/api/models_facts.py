@@ -26,8 +26,10 @@ class FactsListInput(BaseModel):
     org: str
     namespace: str
     # subject/object/relation AND together; unfiltered returns top triples by co_occur.
+    # subject, object and entity match a node as the write path stores it (canonicalised)
+    # or as given, lowered.
     subject: str | None = None
-    # Only triples with this object (lowercased); ignored when `entity` is set.
+    # Only triples with this object; ignored when `entity` is set.
     object: str | None = None
     # Only triples with this relation, normalised the way writes store it (`works_at` ->
     # `work_at`).
@@ -94,7 +96,8 @@ class FactsListOutput(BaseModel):
 class FactsRelatedInput(BaseModel):
     org: str
     namespace: str
-    # The entity whose neighbours to list (lowercased; matched as subject or object).
+    # The entity whose neighbours to list, matched as subject or object: as the write path
+    # stores it (canonicalised) or as given, lowered.
     entity: str
     # At most this many neighbours; the server caps it at 200.
     top_k: int = Field(default=20, ge=1, le=200)
