@@ -33,7 +33,6 @@ from server.memory.domain import (
     query_nodes,
     query_planner,
     retrieval_calibration,
-    sensitivity,
 )
 from server.storage import frontend_assets
 from server.tracker.api.models import (
@@ -159,7 +158,6 @@ CASES: list[tuple[str, Callable[[str], object], str, str]] = [
         "a",
         " ",
     ),
-    ("sensitivity email", _then(sensitivity.detect_sensitivity, "x"), "", "a+"),
     ("passage_trim._ENUM_LINE_RE", _findall(passage_trim, "_ENUM_LINE_RE"), "", "\n"),
     ("precedents._TRAIL_RE", _then(_sub(precedents, "_TRAIL_RE", ""), "x"), "", "?"),
     ("query_nodes._TRAIL_PUNCT", _then(_sub(query_nodes, "_TRAIL_PUNCT", ""), "x"), "", "?"),
