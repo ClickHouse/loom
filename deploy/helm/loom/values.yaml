@@ -345,7 +345,8 @@ networkPolicy:
   # extraEgress rule can reopen it): the instance metadata service, so repository
   # code a pod builds cannot take the node's cloud role. 169.254.169.254 serves
   # most clouds, the IPv6 entries AWS and GCE; add your provider's address if it
-  # differs, and the cluster's own ranges to keep pods off them.
+  # differs, the address a metadata proxy redirects it to (169.254.169.252/32 on
+  # GKE without Dataplane V2), and the cluster's own ranges to keep pods off them.
   egressExcept: [169.254.169.254/32, fd00:ec2::254/128, fd20:ce::254/128]
   # With enabled: false, render the egress-only policy above. Set false when your
   # own policies limit the pods' egress: NetworkPolicies add up, so this one

@@ -52,8 +52,8 @@ def sets(*values: str) -> tuple[str, ...]:
     return tuple(arg for v in values for arg in ("--set", v))
 
 
-def loom_pods(docs: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
-    """The labels of every pod that runs the Loom image, by object name."""
+def loom_pods(docs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Every pod template that runs the Loom image, by object name."""
     image = next(
         c["image"]
         for d in docs
@@ -73,9 +73,7 @@ def loom_pods(docs: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
             continue
         containers = pod["spec"].get("containers", []) + pod["spec"].get("initContainers", [])
         if any(c.get("image") == image for c in containers):
-            # a host-network pod is outside every NetworkPolicy
-            assert not pod["spec"].get("hostNetwork"), f"{d['metadata']['name']} uses hostNetwork"
-            out[f"{d['kind']}/{d['metadata']['name']}"] = pod["metadata"].get("labels", {})
+            out[f"{d['kind']}/{d['metadata']['name']}"] = pod
     return out
 
 
@@ -103,7 +101,9 @@ def check_metadata_denied(docs: list[dict[str, Any]], what: str) -> None:
     policies = [d["spec"] for d in docs if d["kind"] == "NetworkPolicy"]
     pods = loom_pods(docs)
     assert len(pods) > 1, f"{what}: found only {pods}"
-    for name, labels in pods.items():
+    for name, pod in pods.items():
+        assert not pod["spec"].get("hostNetwork"), f"{what}: {name} is outside every policy"
+        labels = pod["metadata"].get("labels", {})
         mine = [p for p in policies if selects(p, labels) and "Egress" in p["policyTypes"]]
         assert mine, f"{what}: no egress policy selects {name}"
         for policy in mine:
@@ -115,7 +115,7 @@ def check_metadata_denied(docs: list[dict[str, Any]], what: str) -> None:
 
 
 def web_policies(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    labels = loom_pods(docs)["Deployment/loom"]
+    labels = loom_pods(docs)["Deployment/loom"]["metadata"]["labels"]
     return [d["spec"] for d in docs if d["kind"] == "NetworkPolicy" and selects(d["spec"], labels)]
 
 
@@ -142,6 +142,8 @@ def main() -> None:
         }
     ], policy["egress"]
     assert not web_policies(render(*sets("networkPolicy.guardMetadata=false")))
+    # a release upgraded with --reuse-values has no such key: the guard stays on
+    assert web_policies(render(*sets("networkPolicy.guardMetadata=null"))) == [policy]
     assert not web_policies(render("--set-json", "networkPolicy.egressExcept=[]"))
     print("metadata egress: denied with the policy on and off; other egress open when off")
 

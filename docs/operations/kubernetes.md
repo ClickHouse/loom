@@ -359,8 +359,12 @@ NetworkPolicy whose one rule allows every pod and every address but those; the c
 needs a policy engine for it to hold. What changes:
 
 - A pod that took cloud credentials from the metadata service has none: the node's
-  instance role, and GKE Workload Identity, which is served at that address. IRSA and
-  EKS Pod Identity are not affected. Set `guardMetadata: false` to keep that access.
+  instance role, and GKE Workload Identity on Dataplane V2. IRSA and EKS Pod Identity
+  are not affected. Set `guardMetadata: false` to keep that access.
+- A metadata proxy that redirects 169.254.169.254 to another address (GKE without
+  Dataplane V2 uses `169.254.169.252`, port 988; node agents use the node's address) is
+  reached at that address, which the engine may check instead: add it to
+  `egressExcept`.
 - NetworkPolicies add up: where your own policies limit the pods' egress, this one
   would let them reach everything else. Set `guardMetadata: false` and deny the
   metadata addresses in your own policy.
