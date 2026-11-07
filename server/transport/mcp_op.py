@@ -193,7 +193,7 @@ def hidden_refusal(name: str) -> dict[str, Any] | None:
         return None
     default = _NEEDS_THE_USER if "dashboard" in op.reach else _NEEDS_AN_OPERATOR
     return {
-        "error": f"{name} exists but is not on this MCP connection",
+        "error": f"{name} exists but agents cannot call it over MCP",
         "code": "OP_NOT_ON_MCP",
         "instead": _INSTEAD.get(name, default),
     }

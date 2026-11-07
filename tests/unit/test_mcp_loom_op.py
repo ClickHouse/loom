@@ -113,7 +113,7 @@ def test_a_hidden_op_is_refused_as_a_direct_call_is(monkeypatch: pytest.MonkeyPa
         "params": {"name": f"loom_{hidden.replace('.', '_')}", "arguments": {}},
     }
     body = _client(monkeypatch, authed=False).post("/mcp", json=direct).json()["result"]
-    assert body["isError"] and "is not on this MCP connection" in body["content"][0]["text"]
+    assert body["isError"] and "agents cannot call it over MCP" in body["content"][0]["text"]
 
 
 def test_an_unknown_op_names_the_nearest_ones() -> None:

@@ -207,17 +207,17 @@ def test_an_op_kept_off_mcp_is_never_agent_only():
         assert NOT_IN_DASHBOARD.get(name) not in AGENT_ONLY, name
 
 
-def test_a_refusal_names_the_dashboard_only_for_an_op_it_calls():
+def test_a_refusal_names_the_dashboard_exactly_when_the_dashboard_calls_the_op():
+    """A hidden op with no alternative of its own sends the agent to the user in the
+    dashboard when the dashboard calls it, and to an operator when it does not."""
     for name in _MCP_HIDDEN_OPS:
-        if "dashboard" in mcp_op.hidden_refusal(name)["instead"]:
-            assert "dashboard" in OPERATIONS_BY_NAME[name].reach, name
-
-
-def test_a_hidden_op_the_dashboard_does_not_call_sends_the_agent_to_an_operator():
-    for name in _MCP_HIDDEN_OPS - set(mcp_op._INSTEAD):
-        if "dashboard" not in OPERATIONS_BY_NAME[name].reach:
-            instead = mcp_op.hidden_refusal(name)["instead"]
-            assert "operator" in instead and "dashboard" not in instead, name
+        instead = mcp_op.hidden_refusal(name)["instead"]
+        called = "dashboard" in OPERATIONS_BY_NAME[name].reach
+        if "dashboard" in instead:
+            assert called, name
+        if name not in mcp_op._INSTEAD:
+            assert ("dashboard" in instead) == called, name
+            assert ("operator" in instead) == (not called), name
 
 
 def test_an_op_a_reason_names_is_on_the_dashboard():
