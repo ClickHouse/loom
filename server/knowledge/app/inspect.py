@@ -52,8 +52,8 @@ from server.knowledge.api.models_inspect import (
     SourceJobs,
 )
 from server.knowledge.app.ingest_run import JOB_LEASE_S
+from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.store import inspect as store
-from server.knowledge.store.ingestions import OPEN_STATES
 from server.memory.app.query import document_decision_tally
 from server.settings import settings
 

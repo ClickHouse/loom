@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -22,7 +23,11 @@ _TABLES = (
     "datasets",
     "dataset_rows",
 )
-OTHERS_OPEN, OTHERS_DONE, OWN_OPEN = (f"00000000-0000-0000-0000-00000000000{n}" for n in (1, 2, 3))
+OTHERS_OPEN, OTHERS_DONE, OWN_OPEN, AGENTS_OPEN = (
+    f"00000000-0000-0000-0000-00000000000{n}" for n in (1, 2, 3, 4)
+)
+# a day ago, inside the table's 30-day TTL, and never now64(3)
+ASKED = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S.123")
 
 
 class _LocalCH:
@@ -84,6 +89,7 @@ def _cancel(job_id: str) -> dict[str, Any]:
         "user_id": "alice",
         "session_id": "s",
         "actor": "user:alice",
+        "requested_at": ASKED,
     }
 
 
@@ -92,22 +98,34 @@ def test_a_cancel_on_another_writers_open_job_outlives_its_canceller(tmp_path) -
     ch.write(
         "knowledge_ingestions",
         [_job(OTHERS_OPEN, "bob", "pending"), _job(OTHERS_DONE, "bob", "cancelled")]
-        + [_job(OWN_OPEN, "alice", "processing")],
+        + [_job(OWN_OPEN, "alice", "processing"), _job(AGENTS_OPEN, "-", "processing")],
     )
-    ch.write("knowledge_ingest_cancels", [_cancel(j) for j in (OTHERS_OPEN, OTHERS_DONE, OWN_OPEN)])
+    ch.write(
+        "knowledge_ingest_cancels",
+        [_cancel(j) for j in (OTHERS_OPEN, OTHERS_DONE, OWN_OPEN, AGENTS_OPEN)],
+    )
 
     asyncio.run(steps_memory.delete_ingestions_by_user("o", "alice", ch=ch))
 
     def cancelled(job_id: str) -> bool:
         return asyncio.run(ingestions.cancel_requested("o", "ns", job_id, ch=ch))
 
-    assert cancelled(OTHERS_OPEN)
+    assert cancelled(OTHERS_OPEN) and cancelled(AGENTS_OPEN)
     assert not cancelled(OTHERS_DONE) and not cancelled(OWN_OPEN)
-    left = run([], "SELECT * FROM loom.knowledge_ingest_cancels", path=tmp_path)
-    assert [(r["user_id"], r["agent"], r["session_id"], r["actor"]) for r in left] == [
-        ("-", "-", "-", "")
+    left = run(
+        [], "SELECT * FROM loom.knowledge_ingest_cancels ORDER BY ingestion_id", path=tmp_path
+    )
+    anonymous = {"org": "o", "namespace": "ns", "agent": "-", "user_id": "-", "session_id": "-"}
+    assert left == [
+        {**anonymous, "ingestion_id": job, "actor": "", "requested_at": ASKED}
+        for job in (OTHERS_OPEN, AGENTS_OPEN)
     ]
-    assert run([], "SELECT ingestion_id FROM loom.knowledge_ingestions", path=tmp_path) == [
+    assert run(
+        [],
+        "SELECT ingestion_id FROM loom.knowledge_ingestions ORDER BY ingestion_id",
+        path=tmp_path,
+    ) == [
         {"ingestion_id": OTHERS_OPEN},
         {"ingestion_id": OTHERS_DONE},
+        {"ingestion_id": AGENTS_OPEN},
     ]

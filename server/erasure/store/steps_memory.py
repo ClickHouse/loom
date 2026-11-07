@@ -31,6 +31,7 @@ from server.erasure.store.predicates import (
     UID,
 )
 from server.erasure.store.scope_reads import hashes, slices_or_one_empty, user_key_pairs
+from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
 from server.settings import settings
@@ -892,7 +893,7 @@ _USERS_OWN_ORIGINALS = (
     " WHERE org = {org:String} AND user_id != {uid:String} AND expires_at > now64(3)"
     " UNION ALL SELECT namespace, toString(sha256) FROM loom.knowledge_ingestions FINAL"
     " WHERE org = {org:String} AND user_id != {uid:String}"
-    " AND state IN ('pending', 'processing'))"
+    " AND state IN {open:Array(String)})"
 )
 # The catalog rows of those originals, by the pairs bound: reading the subquery
 # again could name rows whose objects the step did not delete.
@@ -1178,7 +1179,12 @@ _KEEP_OTHERS_CANCELS = (
 
 async def delete_ingestions_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
     ch = ch or _default_client()
-    await ch.execute(_KEEP_OTHERS_CANCELS, params={"org": org, "uid": user_id})
+    # Sequential: a replica behind the cancel or the job would copy nothing, and the
+    # delete below still takes the cancel.
+    with sequential_reads():
+        await ch.execute(
+            _KEEP_OTHERS_CANCELS, params={"org": org, "uid": user_id, "open": list(OPEN_STATES)}
+        )
     n = 0
     for table in _INGESTION_TABLES:
         n += await count_then_mutate(
