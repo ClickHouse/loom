@@ -131,7 +131,9 @@ def registry_row(
 
     # A workload trust's mark is the trust's to give, and an agent claim's mark
     # (`claim_codes.CLAIMED_TAG`, under the same prefix) the claim's: dropped from
-    # the form, carried forward from the row. Only a trust's mark binds the owner.
+    # the form, carried forward from the row. On this build only a trust's mark binds
+    # the owner; the build before binds it to the claim's too, which keeps a claimed
+    # namespace's owner as the claim left it and a released one's empty.
     from server.auth.claim_codes import CLAIMED_TAG
     from server.identity.app.namespace_autoregister import classify_kind
 

@@ -12,6 +12,7 @@ whoever held it. The agent's own token is a separate subject and keeps working.
 from __future__ import annotations
 
 import html
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -24,12 +25,13 @@ from server.auth.claim_codes import CLAIMED_TAG, UNCLAIMED_SQL, verify_claim_cod
 from server.auth.grant_claims import account_change
 from server.auth.login import LoginThrottled, throttled, verify_as_unknown
 from server.auth.passwords import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, hash_password_off_loop
-from server.core.ch import get_client
+from server.core.ch import get_client, own_write_reads
 from server.identity.app import account_admin
 from server.identity.store import namespaces
 from server.observability import audit
 from server.settings import settings
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 _TITLE = "Claim an agent's namespace"
@@ -96,53 +98,55 @@ async def agent_claim(request: Request) -> Response:
         return _form(namespace, "The two passwords differ.", 400)
     try:
         # A code is a secret like a password: guesses count against the name
-        # and the address under the sign-in limits.
-        claimed = await throttled(
-            namespace, client_address(request), lambda: _claim(namespace, code, password)
+        # and the address under the sign-in limits, which hold a check slot only
+        # for the code's own check.
+        proven = await throttled(
+            namespace, client_address(request), lambda: _proven(namespace, code)
         )
     except LoginThrottled as e:
         page = _form(namespace, e.message, 429)
         page.headers["Retry-After"] = str(e.retry_after_s)
         return page
+    claimed = None
+    if proven is not None:
+        org, code_hash = proven
+        # Hashed only once the code is proven, so a guess costs one hash.
+        password_hash = await hash_password_off_loop(password)
+        claimed = await _replace_code(org, namespace, code_hash, password_hash)
     if claimed is None:
         return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
-    org, cutoff = claimed
-    await audit.emit(
-        "auth.agent_claimed", org=org, namespace=namespace, actor=namespace, subject={}
-    )
     # The person signs in next: past the cutoff on every replica's clock, so the
     # token they get is not one it ends.
-    await revocation.wait_out(cutoff)
+    await revocation.wait_out(claimed)
     return oauth.html_page(
         _TITLE,
         f"<h2>Claimed</h2><p>Sign in as <b>{html.escape(namespace)}</b> with your password.</p>",
     )
 
 
-async def _claim(namespace: str, code: str, password: str) -> tuple[str, datetime] | None:
-    """The org whose `namespace` the code claimed and the cutoff of its earlier
-    tokens, or None. The first claim replaces the code with the hash of
-    `password`, so a second finds nothing."""
+async def _proven(namespace: str, code: str) -> tuple[str, str] | None:
+    """(org, stored hash) of the unclaimed `namespace` the code verifies, or None."""
     rows = await get_client().query_all(_UNCLAIMED, params={"ns": namespace})
     if not rows:
         await verify_as_unknown(code)  # timed like a wrong code
         return None
     for r in rows:
         if await verify_claim_code_off_loop(r["password_hash"], code):
-            # Hashed only once the code is proven, so a guess costs one hash.
-            password_hash = await hash_password_off_loop(password)
-            return await _replace_code(r["org"], namespace, r["password_hash"], password_hash)
+            return str(r["org"]), str(r["password_hash"])
     return None
 
 
 async def _replace_code(
     org: str, namespace: str, code_hash: str, password_hash: str
-) -> tuple[str, datetime] | None:
+) -> datetime | None:
+    """Replace the code with `password_hash` and cut off the subject's earlier
+    tokens; the cutoff the claimer waits out, or None when the row changed since
+    the code was checked (a claim or release that landed first)."""
     # Held from the read to the write, as a release or a password link holds
-    # the account: a claim or release that landed first changed the row, and
-    # this one is refused.
+    # the account.
     async with account_change(org, namespace):
-        row = await namespaces.fetch_row(org, namespace)
+        with own_write_reads():
+            row = await namespaces.fetch_row(org, namespace)
         if row is None or not row["active"] or row["password_hash"] != code_hash:
             return None
         # Before the write, so a write that fails leaves the code to retry with,
@@ -163,10 +167,18 @@ async def _replace_code(
                 }
             ],
         )
-        # Again after it: a replica of the build before signs in with a plain-hash
-        # code until the write lands, and the first cutoff predates that.
-        cutoff = await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
-    return org, cutoff
+        # The claim stands from here: audited before anything after it can fail.
+        await audit.emit(
+            "auth.agent_claimed", org=org, namespace=namespace, actor=namespace, subject={}
+        )
+        # Again once the write reads back: a replica of the build before signs in
+        # with a plain-hash code, reading without sequential consistency, until its
+        # ClickHouse replica has the write, and the first cutoff predates it.
+        with own_write_reads():
+            landed = await namespaces.fetch_row(org, namespace)
+        if (landed or {}).get("password_hash") != password_hash:
+            log.warning("agent claim of %s/%s: the write does not read back yet", org, namespace)
+        return await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
 
 
 def attach(app: Any) -> None:

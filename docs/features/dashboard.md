@@ -64,22 +64,22 @@ or with auth off, is dropped without asking.
 `loom init --agent NAME` signs an agent up on its own and prints a claim code a person enters
 once at `/oauth/agent-claim`, with a password of their own, to claim the namespace; they then
 sign in here with the namespace name and that password. The token sits in the browser's local
-storage; a stored token the server refuses (expired or revoked) ends the session on the next call, from
-any page, and so does another tab dropping the token; a sign-out in another tab reloads this
-one to the sign-in screen instead. Mid-session a card among the toasts says so, over any open
-dialog (a pointer reaches it at once; a keyboard user closes the dialog to reach it), and the
-page stays as it is. **Sign in in a new tab** signs in there, and this tab uses the new token:
-a token another tab stores for someone else reloads the page as soon as the tab hears of it,
-and no call of this page goes out under it; for the same person, the card goes away once the
-server accepts the token. **Reload** signs in in this tab instead. While the page loads, a
-refused token shows the sign-in screen saying the session ended. When that token was a sign-in
-session's, with SSO on, the screen starts the sign-in again by itself (once in five minutes per
-tab), so a person still signed in at the identity provider returns to the page they were on. A
-minted token, and a refused `#token=` link, wait for a click instead, since either may be the
-way in while the identity provider is down.
-**Sign out** forgets the token here, and ends the server-side session of a sign-in session's token (the
-dashboard's SSO token, or a `loom login` access token opened with `#token=`). A minted
-token opened with `#token=` is only forgotten here: it may be the one a CLI or CI job uses.
+storage; a stored token the server refuses (expired or revoked) ends the session on the next
+call, from any page, and so does another tab dropping the token; a sign-out in another tab
+reloads this one to the sign-in screen instead. Mid-session a card among the toasts says so,
+over any open dialog (a pointer reaches it at once; a keyboard user closes the dialog to reach
+it), and the page stays as it is. **Sign in in a new tab** signs in there, and this tab uses
+the new token: a token another tab stores for someone else reloads the page as soon as the tab
+hears of it, and no call of this page goes out under it; for the same person, the card goes
+away once the server accepts the token. **Reload** signs in in this tab instead. While the page
+loads, a refused token shows the sign-in screen saying the session ended. When that token was a
+sign-in session's, with SSO on, the screen starts the sign-in again by itself (once in five
+minutes per tab), so a person still signed in at the identity provider returns to the page they
+were on. A minted token, and a refused `#token=` link, wait for a click instead, since either
+may be the way in while the identity provider is down. **Sign out** forgets the token here, and
+ends the server-side session of a sign-in session's token (the dashboard's SSO token, or a
+`loom login` access token opened with `#token=`). A minted token opened with `#token=` is only
+forgotten here: it may be the one a CLI or CI job uses.
 
 ## The pages
 

@@ -311,19 +311,34 @@ def test_a_claim_ends_the_tokens_and_sessions_the_code_started(world) -> None:
 
 def test_the_cutoff_waited_out_follows_the_password_write(world, monkeypatch) -> None:
     # A replica of the build before signs in with a plain-hash code until the
-    # write lands: the cutoff the page waits out is taken after it.
+    # write lands: the cutoff the page waits out is taken after it. The cutoff
+    # clock is a seam the write moves on.
     from datetime import UTC, datetime
 
-    monkeypatch.setattr(revocation, "CLOCK_SKEW_S", 0)
+    from server.core.ch import sequential_reads_active
+
+    clock, steps = [datetime(2026, 1, 1, tzinfo=UTC)], []
+
+    def from_now_on() -> datetime:
+        steps.append("cutoff")
+        return clock[0]
+
+    monkeypatch.setattr(revocation, "from_now_on", from_now_on)
     ch, written = world["ch"], []
-    insert = ch.insert
+    insert, fetch_row = ch.insert, namespaces.fetch_row
 
     async def slow_insert(table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
-        if table == "loom.namespaces":
-            await asyncio.sleep(1.5)
         await insert(table, rows, settings)
         if table == "loom.namespaces":
-            written.append(datetime.now(UTC))
+            clock[0] += timedelta(seconds=2)
+            written.append(clock[0])
+            steps.append("write")
+
+    async def read(org: str, namespace: str) -> Any:
+        steps.append(("read", sequential_reads_active()))
+        return await fetch_row(org, namespace)
+
+    monkeypatch.setattr(agent_claim.namespaces, "fetch_row", read)
 
     monkeypatch.setattr(ch, "insert", slow_insert)
     assert (
@@ -332,8 +347,33 @@ def test_the_cutoff_waited_out_follows_the_password_write(world, monkeypatch) ->
     [write] = written
     [cutoff] = world["waited"]
     assert cutoff >= write
+    # The last cutoff follows a sequentially consistent read of the write.
+    assert steps[-3:] == ["write", ("read", True), "cutoff"]
     # The claim is audited when it lands, not after the wait.
     assert world["audited_before_wait"] == [1]
+
+
+def test_a_cutoff_that_fails_after_the_write_leaves_the_claim_audited(world, monkeypatch) -> None:
+    from server.identity.app import account_admin
+
+    real, calls = account_admin.end_tokens, []
+
+    async def second_fails(subject: str, *, by: str, reason: str) -> Any:
+        calls.append(subject)
+        if len(calls) == 2:
+            raise RuntimeError("revocation store away")
+        return await real(subject, by=by, reason=reason)
+
+    monkeypatch.setattr(account_admin, "end_tokens", second_fails)
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(agent_claim.router)
+    c = TestClient(app, raise_server_exceptions=False)
+    r = _claim(c, world["legacy_code"], "correct horse", namespace=_LEGACY)
+    assert r.status_code == 500 and len(calls) == 2
+    assert [e for e, _ in world["events"]] == ["auth.agent_claimed"]
+    assert passwords.verify_password(_row(world, _LEGACY)["password_hash"], "correct horse")
 
 
 def revocation_cutoff(world: dict[str, Any], subject: str) -> Any:

@@ -171,8 +171,10 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
             # An email would end the claim code's hold on the account and leave
             # the code as its password.
             raise ValueError(
-                f"{org}/{namespace} is an agent's namespace nobody has claimed: claim it "
-                "at /oauth/agent-claim first"
+                f"{org}/{namespace} is an agent's namespace nobody has claimed; the claim "
+                "page is closed under SSO: claim it at /oauth/agent-claim before turning "
+                f"SSO on, or release it with `loom claim-release --org {org} --namespace "
+                f"{namespace}`"
             )
         was = str(row["contact_email"])
         if was == email:
