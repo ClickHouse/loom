@@ -113,8 +113,8 @@ without workers never accepts a revoked token.
 3. Restart that container, then confirm the worker's state (below).
 
 Turning on an LLM-backed worker (`profile_consolidation`, `reflection_distill`,
-`observe_extract`, `code_summary`, and the default-on `entity_extractor` and
-`conversation_titler`) needs more than the flag:
+`observe_extract`, `code_summary`, and the default-on `entity_extractor`,
+`conversation_titler` and `conflict_resolver`) needs more than the flag:
 
 1. Configure a real LLM provider. With the fake provider the worker runs on
    fake output; `loom doctor`'s `llm_provider` line warns when the resolved
@@ -160,14 +160,14 @@ that keeps failing is in [Troubleshooting](../operations/troubleshooting.md).
 
 ## Reading the table
 
-| Column              | Meaning                                                                                                                                                             |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Worker**          | The registry name. It appears in `workers.status`, in `worker.<name>` query tags and in the `DEGRADED` log line.                                                    |
-| **What it does**    | The first sentence of the worker module's docstring.                                                                                                                |
-| **Switched on by**  | The environment variable of the row's `enabled` field (plus `also_requires`), or "always on".                                                                       |
-| **Default**         | That setting's default in `server/settings/`. A deployment's `.env` can differ; the stock stack is described in the [quickstart](../getting-started/quickstart.md). |
-| **Cadence setting** | The interval's environment variable, or `<module>.<attribute>` when the interval is a constant in the worker module.                                                |
-| **Default (s)**     | The interval's default in seconds (blank for a module constant).                                                                                                    |
+| Column              | Meaning                                                                                                                                                                                                                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Worker**          | The registry name. It appears in `workers.status`, in `worker.<name>` query tags and in the `DEGRADED` log line.                                                                                                                                                                       |
+| **What it does**    | The first sentence of the worker module's docstring.                                                                                                                                                                                                                                   |
+| **Switched on by**  | The environment variable of the row's `enabled` field (plus `also_requires`), or "always on".                                                                                                                                                                                          |
+| **Default**         | That setting's value as it loads with a real LLM provider and nothing else set (a validator resolves some: the conflict resolver is off with the fake provider). A deployment's `.env` can differ; the stock stack is described in the [quickstart](../getting-started/quickstart.md). |
+| **Cadence setting** | The interval's environment variable, or `<module>.<attribute>` when the interval is a constant in the worker module.                                                                                                                                                                   |
+| **Default (s)**     | The interval's default in seconds (blank for a module constant).                                                                                                                                                                                                                       |
 
 The generator (`scripts/codegen/docs_reference.py`, `render_workers`) reads
 `_WORKERS` and the settings defaults; `make lint` fails when this page is stale.
@@ -216,7 +216,7 @@ adding its row.
 | `code_scip_py_delta` | Python compiler-tier deltas per merge. | `LOOM_CODE_SCIP_PY_DELTA_ENABLED` | True | `LOOM_CODE_SCIP_PY_DELTA_INTERVAL_SECONDS` | 600 |
 | `code_scip_ts_delta` | Per-merge compiler-tier freshness for TypeScript. | `LOOM_CODE_SCIP_TS_DELTA_ENABLED` | True | `LOOM_CODE_SCIP_TS_DELTA_INTERVAL_SECONDS` | 600 |
 | `code_summary` | Weekly LLM file/module summary cards for code.map orientation. | `LOOM_CODE_SUMMARY_ENABLED` | False | `LOOM_CODE_SUMMARY_INTERVAL_SECONDS` | 604800 |
-| `conflict_resolver` | Judge the writes the conflict check marked, one LLM call per row, up to `memory_conflict_resolver_concurrency` at once, and act on the verdicts (`memory.app.conflict_resolver`). | `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` | False | `LOOM_MEMORY_CONFLICT_RESOLVER_INTERVAL_SECONDS` | 10.0 |
+| `conflict_resolver` | Judge the writes the conflict check marked, one LLM call per row, up to `memory_conflict_resolver_concurrency` at once, and act on the verdicts (`memory.app.conflict_resolver`). | `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` | True | `LOOM_MEMORY_CONFLICT_RESOLVER_INTERVAL_SECONDS` | 10.0 |
 | `conversation_titler` | Conversation-titler worker. | `LOOM_CONVERSATION_TITLER_ENABLED` | True | `LOOM_CONVERSATION_TITLER_INTERVAL_SECONDS` | 1800 |
 | `delete_version_check` | Finish the checks memory.delete_version owes after its tombstone. | `LOOM_DELETE_VERSION_CHECK_ENABLED` | True | `LOOM_DELETE_VERSION_CHECK_INTERVAL_SECONDS` | 60 |
 | `document_blob_gc` | Document-original sweep: `loom.document_blobs` rows no live document names, and bucket objects no row names. | `LOOM_DOCUMENT_BLOB_GC_ENABLED` | True | `LOOM_DOCUMENT_BLOB_GC_INTERVAL_SECONDS` | 3600 |

@@ -11,16 +11,17 @@ These pages, or the tables in them, are rendered from the source that defines th
 generator has a `--check` mode that `make lint` runs, so a page that drifts from the code fails
 CI. Edit the source and regenerate; never edit a generated table by hand.
 
-| Page                                | What it lists                                                                                             | Source                                                             | Generator                                      |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------- |
-| [Configuration](./configuration.md) | Every `LOOM_*` setting, its default and meaning, by area.                                                 | the comments above fields in `server/settings/`                    | `python scripts/codegen/settings_reference.py` |
-| [Operations](./operations.md)       | Every operation, grouped, with role, kind, MCP `all` listing and audit flag; plus how the registry works. | `server.operations.registry.ALL_OPERATIONS`                        | `python scripts/codegen/docs_reference.py`     |
-| [Workers](./workers.md)             | Every background worker, its switch, default and cadence; plus how the supervisor runs them.              | `server/workers/registry.py` (`_WORKERS`)                          | `python scripts/codegen/docs_reference.py`     |
-| [CLI](./cli.md)                     | Every `loom` command and subcommand with its flags; plus where the CLI runs and the common commands.      | the `loom` parser tree (`tests/unit/snapshots/cli_tree.json`)      | `python scripts/codegen/docs_reference.py`     |
-| [Errors](./errors.md)               | Every error code the server answers with; plus the envelope, retry rules and fixes for the common codes.  | `server/core/errors.py` and every `"code"` literal under `server/` | `python scripts/codegen/docs_reference.py`     |
-| [Schema](./schema.md)               | Every table and materialized view with engine, keys, TTL and indexes; plus the column conventions.        | `schemas/schema.sql`                                               | `python scripts/codegen/docs_reference.py`     |
+| Page                                | What it lists                                                                                             | Source                                                                               | Generator                                      |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| [Configuration](./configuration.md) | Every `LOOM_*` setting, its default and meaning, by area.                                                 | the comments above fields in `server/settings/`                                      | `python scripts/codegen/settings_reference.py` |
+| [Operations](./operations.md)       | Every operation, grouped, with role, kind, MCP `all` listing and audit flag; plus how the registry works. | `server.operations.registry.ALL_OPERATIONS`                                          | `python scripts/codegen/docs_reference.py`     |
+| [Workers](./workers.md)             | Every background worker, its switch, default and cadence; plus how the supervisor runs them.              | `server/workers/registry.py` (`_WORKERS`)                                            | `python scripts/codegen/docs_reference.py`     |
+| [CLI](./cli.md)                     | Every `loom` command and subcommand with its flags; plus where the CLI runs and the common commands.      | the `loom` parser tree (`tests/unit/snapshots/cli_tree.json`)                        | `python scripts/codegen/docs_reference.py`     |
+| [Errors](./errors.md)               | Every error code the server answers with; plus the envelope, retry rules and fixes for the common codes.  | `server/core/errors.py` and every `"code"` literal under `server/`                   | `python scripts/codegen/docs_reference.py`     |
+| [Status](./status.md)               | Each op group's stable and experimental ops, and every boolean setting that loads false.                  | op `maturity` in the registry and the boolean fields of `server/settings/catalog.py` | `python scripts/codegen/docs_reference.py`     |
+| [Schema](./schema.md)               | Every table and materialized view with engine, keys, TTL and indexes; plus the column conventions.        | `schemas/schema.sql`                                                                 | `python scripts/codegen/docs_reference.py`     |
 
-On the five `docs_reference.py` pages only the region between the
+On the six `docs_reference.py` pages only the region between the
 `<!-- BEGIN GENERATED: … -->` and `<!-- END GENERATED: … -->` markers is generated; the prose
 around it is hand-written. The op tables inside the SDK packages (`sdk/python/loom/ops.py`,
 `sdk/typescript/src/generated/ops.ts`) are generated too, by
@@ -46,6 +47,7 @@ describe.
 - "What is this op called, and who may call it?" → [Operations](./operations.md).
 - "What does this setting do?" → [Configuration](./configuration.md).
 - "What does this error code mean, and should I retry?" → [Errors](./errors.md).
+- "Is this op stable or experimental, and is this setting on by default?" → [Status](./status.md).
 - "Which header, which route, how do I page?" → [HTTP API](./http-api.md).
 - "Why does my MCP client not list a tool?" → [MCP](./mcp.md#toolsets).
 - "Is this worker running, and how do I turn it on?" → [Workers](./workers.md).

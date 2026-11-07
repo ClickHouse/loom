@@ -1236,7 +1236,7 @@
         "code_org_readable": {
           "default": false,
           "type": "boolean",
-          "description": "Who may READ the code index. False: the namespace's own visibility and grants. True: every authenticated principal of the org reads every configured code namespace (right for public or org-internal repos). Writes stay grant-driven. Per-entry \"org_readable\" in LOOM_CODE_REPOS_JSON."
+          "description": "True lets every authenticated principal of the org read every configured code namespace (right for public or org-internal repos); false leaves reads to the namespace's own visibility and grants. Writes stay grant-driven. Per-entry \"org_readable\" in LOOM_CODE_REPOS_JSON."
         },
         "code_path_prefixes": {
           "default": "",

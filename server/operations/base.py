@@ -50,10 +50,10 @@ def rank_role(rank: int) -> Role | None:
 # single model type can name "the op's input" across a mixed registry.
 HandlerFn = Callable[[Any], Awaitable[BaseModel]]
 
-# Maturity of an operation on the wire. ``stable`` has a
-# production caller in the 30-day reach census; ``experimental`` has a reach
-# path but no call in 30 days on the deployment the census read. A census run
-# flips the label, never a silent edit.
+# Maturity of an operation on the wire. ``stable`` must have a reach path
+# besides a raw HTTP POST (scripts/codegen/op_reach_census.py fails otherwise)
+# and is meant to have production callers; ``experimental`` may have neither.
+# The label is set by hand, from what the 30-day reach census reports.
 Maturity = Literal["stable", "experimental"]
 MATURITIES: tuple[Maturity, ...] = get_args(Maturity)
 

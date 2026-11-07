@@ -25,7 +25,7 @@ Answer a tracker question in prose — or from an artefact's anchors — by runn
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `intent` | `str` | What the planner read the question as (e.g. |
+| `intent` | `str` | What the planner read the question as (e.g. `release_readiness`); "" when unclear. |
 | `anchors` | `dict[str, Any]` | The anchors the plan used: the prose's merged with the ones passed in. |
 | `sections` | `list[dict[str, Any]]` | [{template, title, access, params, why, status served\|empty\|restricted_required\| tracker_unavailable\|planned, cites, rows}] |
 | `searched` | `list[str]` | one string per section: template(params) — what was searched |
@@ -218,7 +218,7 @@ Release readiness for one version (`26.3`): the blocker rows with their status a
 | --- | --- | --- | --- |
 | `org` | `str` | `''` | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `version` | `str` | required | The release to check, as the tracker names it (e.g. |
+| `version` | `str` | required | The release to check, as the tracker names it (e.g. `26.3`). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

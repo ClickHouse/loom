@@ -218,7 +218,7 @@ One code namespace indexes one repository. No repository is configured by defaul
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_CODE_ORG_READABLE` | `bool` | `False` |  | Who may READ the code index. False: the namespace's own visibility and grants. True: every authenticated principal of the org reads every configured code namespace (right for public or org-internal repos). Writes stay grant-driven. Per-entry "org_readable" in LOOM_CODE_REPOS_JSON. |
+| `LOOM_CODE_ORG_READABLE` | `bool` | `False` |  | True lets every authenticated principal of the org read every configured code namespace (right for public or org-internal repos); false leaves reads to the namespace's own visibility and grants. Writes stay grant-driven. Per-entry "org_readable" in LOOM_CODE_REPOS_JSON. |
 | `LOOM_CODE_REPO_PUBLIC` | `bool` | `False` |  | The scalar repo entry is public: its namespace registers join_policy=open and discoverable. Per-entry `"public": true` does the same. |
 
 ### Checks and conventions

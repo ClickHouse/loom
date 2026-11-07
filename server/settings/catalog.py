@@ -771,9 +771,9 @@ class CodeSettings(BaseModel):
     # The org of `code_ask_memory_namespace`; empty = `code_org`.
     code_ask_memory_org: str = ""
     # --- repository access ---
-    # Who may READ the code index. False: the namespace's own visibility and
-    # grants. True: every authenticated principal of the org reads every
-    # configured code namespace (right for public or org-internal repos).
+    # True lets every authenticated principal of the org read every configured
+    # code namespace (right for public or org-internal repos); false leaves reads
+    # to the namespace's own visibility and grants.
     # Writes stay grant-driven. Per-entry "org_readable" in LOOM_CODE_REPOS_JSON.
     code_org_readable: bool = False
     # The scalar repo entry is public: its namespace registers join_policy=open

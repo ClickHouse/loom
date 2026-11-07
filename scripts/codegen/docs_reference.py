@@ -16,6 +16,8 @@ table it carries. A region's name picks its renderer:
 - `errors`: the typed errors in `server/core/errors.py` and every other `"code"`
   literal the server answers with
 - `schema`: the tables and materialized views in `schemas/schema.sql`
+- `status_ops`, `status_switches`: each op group's stable and experimental ops (op
+  `maturity`), and every boolean setting in `server/settings/catalog.py` that loads false
 
 It also writes `llms.txt` at the repository root (every doc page with its outcome line, for
 agents), and one fully generated page per op group, `docs/reference/operations/<group>.md`,
@@ -30,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import functools
 import importlib
 import json
 import re
@@ -37,6 +40,7 @@ import sys
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:  # run as a file
@@ -44,6 +48,9 @@ if str(ROOT) not in sys.path:  # run as a file
 
 from scripts.codegen.common import write_atomic  # noqa: E402
 from scripts.codegen.sdk_py_admin_gen import render_admin_routes_table  # noqa: E402
+
+if TYPE_CHECKING:
+    from server.settings import Settings
 
 COMMAND = "python scripts/codegen/docs_reference.py"
 REFERENCE = ROOT / "docs" / "reference"
@@ -69,7 +76,8 @@ def _first_sentence(text: str | None, limit: int = 200) -> str:
     if not text:
         return ""
     para = " ".join(text.strip().split("\n\n")[0].split())
-    m = re.search(r"(?<!\.\.)(?<=[.!?])\s+(?=[A-Z`*(])", para)
+    # Not after "e.g." or "i.e.", which never end a sentence ("etc." may).
+    m = re.search(r"(?<!\.\.)(?<![eE]\.g\.)(?<![iI]\.e\.)(?<=[.!?])\s+(?=[A-Z`*(])", para)
     sentence = para[: m.start()] if m else para
     sentence = sentence.replace("**", "")
     if len(sentence) > limit:
@@ -141,6 +149,88 @@ def render_operations() -> str:
             )
         out.append("")
     return "\n".join(out)
+
+
+# --- status -------------------------------------------------------------------
+
+
+def render_status_ops() -> str:
+    """Each op group's stable and experimental ops (`Operation.maturity`), linked to their
+    field reference."""
+    from server.operations import registry
+    from server.operations.base import Operation
+
+    groups: dict[str, list[Operation]] = defaultdict(list)
+    for op in registry.ALL_OPERATIONS:
+        groups[op.name.split(".")[0]].append(op)
+    rows, stable_total = [], 0
+    for group in sorted(groups):
+        ops = sorted(groups[group], key=lambda o: o.name)
+        stable = sum(1 for op in ops if op.maturity == "stable")
+        stable_total += stable
+        named = ", ".join(
+            f"[`{op.name}`](operations/{group}.md#{_op_anchor(op.name)})"
+            for op in ops
+            if op.maturity == "experimental"
+        )
+        rows.append(f"| `{group}` | {stable} | {named} |")
+    total = len(registry.ALL_OPERATIONS)
+    return "\n".join(
+        [
+            f"{total} operations, {total - stable_total} of them experimental.\n",
+            "| Group | Stable | Experimental |",
+            "| --- | --- | --- |",
+            *rows,
+        ]
+    )
+
+
+@functools.cache
+def _loaded_defaults() -> Settings:
+    """The settings as a deployment with a real LLM provider loads them with nothing else
+    set: the catalog's defaults after the validators that resolve a field at load (the
+    conflict resolver turns on), whatever this process's env holds."""
+    from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
+
+    from server.settings import Settings
+
+    class _Defaults(Settings):
+        @classmethod
+        def settings_customise_sources(
+            cls,
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
+            return (init_settings,)
+
+    return _Defaults(llm_provider="openai")
+
+
+def render_status_switches() -> str:
+    """Every boolean setting that loads false, with the first sentence of its description
+    in the catalog."""
+    from server.settings import Settings
+    from server.settings._describe import descriptions
+
+    text = descriptions(Settings)
+    loaded = _loaded_defaults()
+    off = sorted(
+        name
+        for name, field in Settings.model_fields.items()
+        if field.annotation is bool and getattr(loaded, name) is False
+    )
+    rows = [f"| `LOOM_{n.upper()}` | {_cell(_first_sentence(text.get(n, '')))} |" for n in off]
+    return "\n".join(
+        [
+            f"{len(off)} boolean settings load false.\n",
+            "| Setting | Meaning |",
+            "| --- | --- |",
+            *rows,
+        ]
+    )
 
 
 # --- per-group field pages ----------------------------------------------------
@@ -378,11 +468,10 @@ def _setting_default(name: str | None) -> str:
         return ""
     from server.settings import Settings
 
-    info = Settings.model_fields.get(name)
-    if info is None:
+    if name not in Settings.model_fields:
         return ""
-    value = info.default_factory() if info.default_factory else info.default  # type: ignore[call-arg]
-    return str(value)
+    # As it loads, so a switch a validator resolves (the conflict resolver) reads as it runs.
+    return str(getattr(_loaded_defaults(), name))
 
 
 def _module_summary(module: str) -> str:
@@ -602,6 +691,8 @@ RENDERERS: dict[str, Callable[[], str]] = {
     "workers": render_workers,
     "cli": render_cli,
     "errors": render_errors,
+    "status_ops": render_status_ops,
+    "status_switches": render_status_switches,
     "schema": render_schema,
     "admin_routes": render_admin_routes_table,
 }

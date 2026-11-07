@@ -58,3 +58,27 @@ def test_listed_under_all_column_matches_the_mcp_listing(monkeypatch) -> None:
         if gen._listed_under_all(op) != (op.name in listed)
     ]
     assert not wrong, wrong
+
+
+@pytest.mark.parametrize(
+    ("text", "first"),
+    [
+        ("Turns it on. Read the guide.", "Turns it on."),
+        ("Sets a label (e.g. `iso:x`). Every process sets one.", "Sets a label (e.g. `iso:x`)."),
+        ("E.g. `ci` or `iso`. Every process sets one.", "E.g. `ci` or `iso`."),
+        ("Reads one value, i.e. `x`. Then more.", "Reads one value, i.e. `x`."),
+        ("Rows, keys, etc. Writes stay grant-driven.", "Rows, keys, etc."),
+    ],
+)
+def test_first_sentence_skips_e_g_and_i_e_but_may_end_at_etc(text, first) -> None:
+    assert gen._first_sentence(text) == first
+
+
+def test_status_switches_list_what_loads_false_not_what_is_declared_false(monkeypatch) -> None:
+    """The conflict resolver is declared false and resolved on at load with a real
+    provider; the env of the process that renders the page changes nothing."""
+    monkeypatch.setenv("LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED", "false")
+    monkeypatch.setenv("LOOM_CODE_ORG_READABLE", "true")
+    rendered = gen.render_status_switches()
+    assert "`LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED`" not in rendered
+    assert "| `LOOM_CODE_ORG_READABLE` |" in rendered
