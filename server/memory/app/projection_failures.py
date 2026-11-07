@@ -125,6 +125,10 @@ def facts_owed_payload(key: Sequence[str], memory_id: str, version: int) -> dict
     return {"key": list(key), "memory_id": memory_id, "version": version}
 
 
+# The `error_type` of a failure recorded with Loom-written text, not an exception.
+TEXT_REASON = "-"
+
+
 def projection_failure_row(
     *,
     org: str,
@@ -143,7 +147,8 @@ def projection_failure_row(
     payload = dict(payload or {})
     if user_id and not payload.get("user_id"):
         payload["user_id"] = user_id
-    error_type = type(error).__name__ if isinstance(error, BaseException) else "Error"
+    # "-" for a reason Loom wrote as text: no exception class has that name.
+    error_type = type(error).__name__ if isinstance(error, BaseException) else TEXT_REASON
     return {
         "failure_id": str(uuid.uuid4()),
         "org": org,

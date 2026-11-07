@@ -1191,9 +1191,13 @@ def test_the_list_shows_the_error_kind_and_an_abandon_reason_never_the_text() ->
     )
     # An active row's text is the exception's alone, whatever it holds.
     assert ops_app._projection_failure_row(row(echoed, "active")).error_message == ""
-    # A reason Loom recorded as text (`error_type` "Error") is shown whole.
+    # A reason Loom recorded as text (`error_type` "-") is shown whole; an exception
+    # class named `Error` is not one.
+    named_error = row(text, "active")
+    named_error.error_type = "Error"
+    assert ops_app._projection_failure_row(named_error).error_message == ""
     own = row("conflict_resolver: retirement to follow", "active")
-    own.error_type = "Error"
+    own.error_type = "-"
     assert ops_app._projection_failure_row(own).error_message == (
         "conflict_resolver: retirement to follow"
     )

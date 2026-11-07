@@ -25,6 +25,7 @@ from server.insights.api.models_ops import (
     ProjectionFailureRow,
 )
 from server.insights.store import ops as ops_store
+from server.memory.app.projection_failures import TEXT_REASON
 
 log = logging.getLogger(__name__)
 
@@ -588,10 +589,10 @@ _ABANDONED_SEP = "; abandoned: "
 
 def _shown_error_message(message: str, status: str, error_type: str) -> str:
     """A projection failure's message as the list shows it: a reason Loom recorded as
-    text (`error_type` "Error") whole, else only the reason a retry abandoned it with,
+    text (`error_type` "-") whole, else only the reason a retry abandoned it with,
     so `""` on a row that is not abandoned. An exception's text can carry a statement
     or the server's address; `error_type` names its kind."""
-    if error_type == "Error":
+    if error_type == TEXT_REASON:
         return message
     _, sep, reason = message.rpartition(_ABANDONED_SEP)
     if sep and status == "abandoned":

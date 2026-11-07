@@ -54,10 +54,10 @@ class ProjectionFailureRow(BaseModel):
     source_operation: str = ""
     source_resource_id: str = ""
     memory_keys: list[str] = Field(default_factory=list)
-    # The exception's kind.
+    # The exception's kind, or `-` for a reason Loom recorded as text.
     error_type: str = ""
-    # `abandoned: <reason>` once a retry gave up on the row, `""` otherwise; the
-    # exception's text stays in `loom.memory_projection_failures` for an operator.
+    # A Loom-written reason whole; for an exception, `abandoned: <reason>` once a retry
+    # gave up on the row, `""` otherwise (its text stays in the table for an operator).
     error_message: str = ""
     payload: dict[str, Any] = Field(default_factory=dict)
     status: str = "active"
