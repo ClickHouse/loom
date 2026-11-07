@@ -94,8 +94,7 @@ class _Tsv(csv.excel_tab):
 
 
 def _whole_lines(text: str, chars: int) -> str:
-    """The first `chars` of `text`, cut back to a line end: a cut line counts too few
-    delimiters."""
+    """The first `chars` of `text`, cut back to its last line end."""
     if len(text) <= chars:
         return text
     sample = text[:chars]

@@ -1389,7 +1389,7 @@ def test_merges_after_a_later_part_of_the_sheet_still_count_a_cut(
     assert [f.unit for f in a.coverage.failed] == ["S merges"]
 
 
-def test_a_csv_whose_quotes_start_past_the_quote_sample_is_split_by_delimiter_counts() -> None:
+def test_a_quoted_delimiter_past_the_quote_sample_still_splits_on_the_delimiter() -> None:
     head = "id;name;city\n" + "".join(f"{i};n{i};c{i}\n" for i in range(600))  # about 8 KB
     a = extract((head + '700;"a, b";"c, d"\n').encode(), "late.csv")
     rows = a.tables[0].rows
