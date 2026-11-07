@@ -504,11 +504,20 @@ async def test_reject_of_a_locked_row_is_refused_and_writes_nothing(
 async def test_an_automatic_quarantine_leaves_a_locked_row_and_rejects_the_rest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from server.memory.domain.lock import refuses_retirement
+
     ch = _RejectCH()
     _wire_sessions(monkeypatch, ch)
     _lock_session(monkeypatch, "m2", "read_only")
     written = await lifecycle.reject_by_identity(
-        "o", "n", "a", "u", "home", "auto-quarantine: 3 negative outcomes", locked="skip", ch=ch
+        "o",
+        "n",
+        "a",
+        "u",
+        "home",
+        "auto-quarantine: 3 negative outcomes",
+        skip=refuses_retirement,
+        ch=ch,
     )
     assert written == 1
     assert [(m["session_id"], m["status"]) for m in ch.inserts[0][1]] == [("s1", "rejected")]

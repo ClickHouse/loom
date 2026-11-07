@@ -83,7 +83,8 @@ class MemoryRejectInput(_Identity):
 
 
 class MemoryRejectOutput(BaseModel):
-    # Always True, also when no live row matched (nothing is written then).
+    # Always True, also when no live row matched (nothing is written then); a locked
+    # row in any session refuses the whole reject with 423 LOCKED and writes nothing.
     rejected: bool
     # The server time of the reject.
     rejected_at: datetime | None = None

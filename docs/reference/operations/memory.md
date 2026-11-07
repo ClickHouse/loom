@@ -1318,7 +1318,7 @@ External outcome signal for a memory row.
 | --- | --- | --- |
 | `recorded` | `bool` | False when the row was not found or the usage write failed. |
 | `evidence_count_after` | `int` | evidence_count after the bump (0 if unknown) |
-| `quarantined` | `bool` | Set when a negative outcome crossed memory_negative_demote_threshold and the memory was auto-quarantined (status -> 'rejected'). |
+| `quarantined` | `bool` | Set when a negative outcome crossed memory_negative_demote_threshold and the memory was auto-quarantined (status -> 'rejected'); a locked memory stays as it is and answers False, and a locked copy in another session stays too. |
 
 ## `memory.outcome_run`
 
@@ -1741,7 +1741,7 @@ Mark a memory as explicitly rejected (extractor / user review decided the candid
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `rejected` | `bool` | Always True, also when no live row matched (nothing is written then). |
+| `rejected` | `bool` | Always True, also when no live row matched (nothing is written then); a locked row in any session refuses the whole reject with 423 LOCKED and writes nothing. |
 | `rejected_at` | `datetime \| None` | The server time of the reject. |
 
 ## `memory.related`

@@ -36,6 +36,7 @@ from server.memory.api.models_temporal import (
     MemoryOutcomeRunInput,
     MemoryOutcomeRunOutput,
 )
+from server.memory.domain.lock import refuses_retirement
 from server.memory.store import categories
 from server.memory.store.lifecycle import reject_by_identity
 
@@ -148,19 +149,19 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
                     "AND memory_id = {mid:UUID} AND tombstoned_at IS NULL",
                     params={"org": input.org, "ns": input.namespace, "mid": memory_id},
                 )
-                if idr:
-                    # A locked row stays as it is: quarantined only if a row was rejected.
-                    rejected = await reject_by_identity(
+                # A locked memory is left as it is, and so is a locked copy in another session.
+                if idr and not refuses_retirement(row):
+                    written = await reject_by_identity(
                         input.org,
                         input.namespace,
                         str(idr["agent"]),
                         str(idr["user_id"]),
                         str(idr["memory_key"]),
                         f"auto-quarantine: {int((cnt or {}).get('n') or 0)} negative outcomes",
-                        locked="skip",
+                        skip=refuses_retirement,
                         ch=ch,
                     )
-                    quarantined = rejected > 0
+                    quarantined = written > 0
 
     usage = await ch.query_one(
         """
