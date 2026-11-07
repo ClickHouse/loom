@@ -483,7 +483,7 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
             recall_by_agent = [
                 _RecallByAgent(agent=str(r["agent"]), count=int(r["n_30d"]), last_at=r["last_at"])
                 for r in sorted(agent_rows, key=lambda r: -int(r["n_30d"]))
-                if int(r["n_30d"]) > 0 and str(r["agent"]) not in ("", "*", "-")
+                if int(r["n_30d"]) > 0
             ]
         except Exception as e:  # noqa: BLE001 — the served figures are optional detail on memory.get
             log.warning("served lookup failed (non-fatal): %s", e)

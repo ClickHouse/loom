@@ -964,7 +964,7 @@ Knowledge-base health for (org, namespace): how much of what is stored is ever r
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `live` | `int` | Active, untombstoned rows in the namespace, across every agent and user. |
-| `recalled_ever` | `int` | Live rows whose key carries a recall credit on any live row, or was returned by an agent read (memory.search, search.query, context.pack, memory.stack, memory.ask, procedure.match, memory.for_file) in the last `silent_after_days` days. |
+| `recalled_ever` | `int` | Live rows whose key carries a recall credit on an active row, or was returned by an agent read (memory.search, search.query, context.pack, memory.stack, memory.ask, procedure.match, memory.for_file) in the last `silent_after_days` days… |
 | `used_ever` | `int` | Live rows with at least one reported use. |
 | `harmed_ever` | `int` | live rows with at least one harm event |
 | `silent` | `int` | live, no recall credit, and no agent read in the last silent_after_days |

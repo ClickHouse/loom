@@ -173,8 +173,8 @@ read that recalls memory, credited or not, adds one row per key its answer retur
 `rendered` answer still holds after every section and pack budget, memory stack rows
 included, and none from a memories search that abstained), `memory.stack`, `memory.ask`,
 `procedure.match` and `memory.for_file` (the rows its pre-edit block prints). A hit the op
-trims before answering is not counted; what a client discards from an answer is its own.
-Neither is a `memory.search` sent with `auto_touch: false` or a `memory.ask` with
+trims before answering is not counted; what a client discards from an answer is its own. Not
+counted either: a `memory.search` sent with `auto_touch: false`, a `memory.ask` with
 `reinforce: false`, a read by the dashboard or the assistant, a measurement read (a bench
 label, or the `*` / `-` agent with no named consumer), a key lookup (`memory.get`,
 `memory.bulk_get`, `memory.list`: the agent names the key it reads), or an op that runs a
@@ -188,7 +188,8 @@ or session, a row of its own. `memory.get` with `include_recall_breakdown` reads
 live rows inside the same scope and answers `served_count` and `last_served_at` (never
 below `recall_count`, which a bulk import can seed with no reads behind it); the
 inspector's **Last recalled** shows them. `memory.health` counts a key as recalled, not
-silent, on a recall credit or a served row within `silent_after_days`.
+silent, on a recall credit of an active row or a served row on any live copy within
+`silent_after_days`.
 
 ## Settings
 
