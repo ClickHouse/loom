@@ -214,13 +214,13 @@ describe("a sign-in this tab started", () => {
     expect(window.location.search).toBe("?n=1");
   });
 
-  it("names the same account only for the same subject and org", () => {
+  it("names the same account only when the server's answer has the held token's subject and org", () => {
     const alice = jwt({ sub: "alice", org: "acme" });
-    expect(sameAccount(jwt({ sub: "alice", org: "acme", iat: 2 }), alice)).toBe(true);
-    expect(sameAccount(jwt({ sub: "bob", org: "acme" }), alice)).toBe(false);
-    expect(sameAccount(jwt({ sub: "alice", org: "other" }), alice)).toBe(false);
-    expect(sameAccount(alice, null)).toBe(false);
-    expect(sameAccount("garbage", "garbage")).toBe(false);
+    expect(sameAccount({ subject: "alice", org: "acme" }, alice)).toBe(true);
+    expect(sameAccount({ subject: "bob", org: "acme" }, alice)).toBe(false);
+    expect(sameAccount({ subject: "alice", org: "other" }, alice)).toBe(false);
+    expect(sameAccount({ subject: "alice", org: "acme" }, null)).toBe(false);
+    expect(sameAccount({}, "garbage")).toBe(false);
   });
 });
 

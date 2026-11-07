@@ -224,7 +224,6 @@ export default function App() {
   const [ssoAsked, setSsoAsked] = useState(false);
   // A link token boot holds, unstored, until the person says whose account to sign in as.
   const [linkAsk, setLinkAsk] = useState<{
-    token: string;
     subject: string | null;
     org: string | null;
     answer: (ok: boolean) => void;
@@ -329,6 +328,8 @@ export default function App() {
       let sent: string | null = null;
       // whoami's answer for a same-account link's token, which boot then does not ask again.
       let linkAnswer: WhoAmI | null = null;
+      // whoami refused the link's token: the gate says so.
+      let linkRefused = false;
       try {
         // A login link (federation redirect) carries the token in the #token= fragment: taken
         // and scrubbed before anything can fail. The return to the page its sign-in started on
@@ -346,14 +347,19 @@ export default function App() {
             linkAnswer = await whoamiWhenReady(token).catch(() => null);
             const answer = linkAnswer;
             // Refused, expired or unanswered: dropped without asking.
-            if (!answer?.authenticated) link = { ...link, token: null };
+            if (!answer?.authenticated) {
+              linkRefused = answer?.authenticated === false;
+              link = { ...link, token: null };
+            }
             // Another account than the one held: the person confirms the one the server named.
-            else if (!sameAccount(token, storedToken())) {
+            else if (!sameAccount(answer, storedToken())) {
               const ok = await new Promise<boolean>((resolve) =>
-                setLinkAsk({ token, subject: answer.subject ?? null, org: answer.org ?? null, answer: resolve }),
+                setLinkAsk({ subject: answer.subject ?? null, org: answer.org ?? null, answer: resolve }),
               );
               setLinkAsk(null);
               if (!ok) link = { ...link, token: null };
+              // The person may have read the question for longer than the token lives.
+              linkAnswer = null;
             }
             if (!link.token) linkAnswer = null;
           }
@@ -424,9 +430,9 @@ export default function App() {
           // may be the way in while the identity provider is down.
           const out = signedOut();
           const note = sessionEndedNote();
-          if (((note || dropped) && !out) || hasToken()) {
+          if (((note || dropped) && !out) || hasToken() || linkRefused) {
             clearToken();
-            useStore.getState().setGateReason(link?.token ? "refused" : note || lostReason(sent));
+            useStore.getState().setGateReason(link?.token || linkRefused ? "refused" : note || lostReason(sent));
           }
           setAuthed(false);
           return;
@@ -563,8 +569,8 @@ export default function App() {
         // Only a token this boot itself lost: an earlier load's note alone (a Reload while
         // the server is away) starts no sign-in by itself.
         const note = sessionEndedNote();
-        if (!storedToken() && (link?.token || (note && !signedOut() && sent)))
-          useStore.getState().setGateReason(link?.token ? "refused" : note);
+        if (!storedToken() && (link?.token || linkRefused || (note && !signedOut() && sent)))
+          useStore.getState().setGateReason(link?.token || linkRefused ? "refused" : note);
         toastError("Auth bootstrap failed", e);
         setAuthed(false);
       }
@@ -577,7 +583,8 @@ export default function App() {
     return (
       <Suspense fallback={null}>
         <LinkTokenConfirm
-          claims={{ subject: linkAsk.subject, org: linkAsk.org, namespaces: [], session: null }}
+          subject={linkAsk.subject}
+          org={linkAsk.org}
           current={claimsFromToken(storedToken())}
           onConfirm={() => linkAsk.answer(true)}
           onCancel={() => linkAsk.answer(false)}

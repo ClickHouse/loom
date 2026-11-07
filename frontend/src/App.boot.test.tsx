@@ -707,6 +707,56 @@ describe("login link", () => {
     expect(window.location.href).not.toContain("token=");
   });
 
+  it("asks about a link whose token claims the held account when the server names another", async () => {
+    localStorage.setItem("loom_token_v1", alice);
+    stored = [];
+    // The payload says alice; only the server's answer is verified.
+    const claimsAlice = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], iat: 5 });
+    const serve = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const bearer = new Headers(init?.headers).get("Authorization");
+      if (String(input).includes("/v1/whoami") && bearer === `Bearer ${claimsAlice}`)
+        return json({ authenticated: true, subject: "mallory", org: ORG });
+      return serve ? serve(input, init) : json(GENERIC);
+    });
+    window.history.replaceState(null, "", `/settings#token=${claimsAlice}`);
+    render(<App />);
+    await screen.findByRole("button", { name: "Sign in as mallory" });
+    expect(stored).toEqual([]);
+  });
+
+  it("asks whoami again after the confirmation: a token that expired meanwhile shows the refused gate", async () => {
+    localStorage.setItem("loom_token_v1", alice);
+    stored = [];
+    let confirmed = false;
+    const serve = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const bearer = new Headers(init?.headers).get("Authorization");
+      if (String(input).includes("/v1/whoami") && bearer === `Bearer ${mallory}`)
+        return json(confirmed ? { authenticated: false } : { authenticated: true, subject: "mallory", org: ORG });
+      return serve ? serve(input, init) : json(GENERIC);
+    });
+    window.history.replaceState(null, "", `/settings#token=${mallory}`);
+    render(<App />);
+    const button = await screen.findByRole("button", { name: "Sign in as mallory" });
+    confirmed = true; // the token expires while the person reads the question
+    fireEvent.click(button);
+    await until(() => useStore.getState().gateReason !== null);
+    expect(useStore.getState().gateReason).toBe("refused");
+    expect(useStore.getState().authed).toBe(false);
+    expect(localStorage.getItem("loom_token_v1")).toBeNull();
+  });
+
+  it("a refused link with no sign-in mark and no held token shows the gate saying so", async () => {
+    window.history.replaceState(null, "", `/me#token=${"eyJhbGciOiJIUzI1NiJ9.eyJub3N1YiI6MX0.forged"}`);
+    render(<App />);
+    await until(() => useStore.getState().gateReason !== null);
+    expect(useStore.getState().gateReason).toBe("refused");
+    expect(useStore.getState().authed).toBe(false);
+    expect(stored).toEqual([]);
+    expect(screen.queryByText(/Sign in from a link/)).toBeNull();
+  });
+
   it("a sign-in mark older than ten minutes counts as none", async () => {
     window.history.replaceState(null, "", `/me${markSignIn(Date.now() - 11 * 60 * 1000)}#token=${mallory}`);
     render(<App />);

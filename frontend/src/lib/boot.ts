@@ -7,7 +7,7 @@
 // at once, and paints a deep link's shell as soon as whoami confirms, on the namespace
 // the claims settle. list_mine still decides the final namespace (a joined namespace is
 // not in the claims) and the kinds; its answer corrects the shell only when it differs.
-import type { Identity, MyNamespaceEntry } from "../api";
+import type { Identity, MyNamespaceEntry, WhoAmI } from "../api";
 import { deepLinkNamespace, isReferenceKind, needsMemoryNamespace } from "./namespace";
 import type { View } from "./state";
 import { isRecord } from "./guards";
@@ -114,13 +114,12 @@ export function takeSignInStarted(nonce: string | null, now: number = Date.now()
   }
 }
 
-/** Whether a link token names the subject and org of the held token: stored without asking
- *  once the server accepts it. Any other would sign this browser in as whoever sent the
- *  link. */
-export function sameAccount(link: string, held: string | null): boolean {
-  const a = claimsFromToken(link);
+/** Whether the server's answer for a link token names the subject and org of the held
+ *  token: that link token is stored without asking. Any other would sign this browser in as
+ *  whoever sent the link; the link's own claims are unverified and never decide. */
+export function sameAccount(answer: Pick<WhoAmI, "subject" | "org">, held: string | null): boolean {
   const b = claimsFromToken(held);
-  return !!a?.subject && !!a.org && a.subject === b?.subject && a.org === b?.org;
+  return !!answer.subject && !!answer.org && answer.subject === b?.subject && answer.org === b?.org;
 }
 
 /** Accept fragment tokens only; scrub both token forms before boot can fail.

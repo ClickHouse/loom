@@ -55,10 +55,11 @@ function rememberSignInStart(): string {
   const nonce = markSignInStarted();
   const path = window.location.pathname + window.location.search;
   try {
-    if (window.location.pathname === "/me") {
-      /* a restart: keep the page the sign-in started on */
-    } else if (path === "/") sessionStorage.removeItem(SIGN_IN_FROM);
-    else sessionStorage.setItem(SIGN_IN_FROM, JSON.stringify({ path, at: Date.now() }));
+    // A restart from the landing keeps the page the sign-in started on.
+    if (window.location.pathname !== "/me") {
+      if (path === "/") sessionStorage.removeItem(SIGN_IN_FROM);
+      else sessionStorage.setItem(SIGN_IN_FROM, JSON.stringify({ path, at: Date.now() }));
+    }
   } catch {
     /* no session storage: the sign-in lands on the root */
   }
@@ -135,18 +136,20 @@ function GateNotice({ reason }: { reason?: GateReason }) {
  *  holding a token can send one, and storing it unasked would put what this browser
  *  writes next in the sender's account. */
 export function LinkTokenConfirm({
-  claims,
+  subject,
+  org,
   current,
   onConfirm,
   onCancel,
 }: {
-  claims: TokenClaims | null;
+  /** The account the server says the link's token signs in as. */
+  subject: string | null;
+  org: string | null;
   /** The account of the token this browser holds, when it holds one. */
   current: TokenClaims | null;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const subject = claims?.subject || null;
   return (
     <GateShell>
       <Panel className="space-y-4">
@@ -159,10 +162,10 @@ export function LinkTokenConfirm({
         ) : null}
         <p className="m-0 text-sm">
           This link signs this browser in as {subject ? <strong>{subject}</strong> : "an account it does not name"}
-          {claims?.org ? (
+          {org ? (
             <>
               {" "}
-              in org <strong>{claims.org}</strong>
+              in org <strong>{org}</strong>
             </>
           ) : null}
           . What you upload, write or mint next goes to that account. Continue only if you opened a link you asked for.

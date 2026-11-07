@@ -321,7 +321,8 @@ describe("LinkTokenConfirm", () => {
   it("names both accounts and passes axe", async () => {
     const { container } = render(
       <LinkTokenConfirm
-        claims={claims("mallory", "acme")}
+        subject="mallory"
+        org="acme"
         current={claims("alice", "acme")}
         onConfirm={() => undefined}
         onCancel={() => undefined}
@@ -335,7 +336,8 @@ describe("LinkTokenConfirm", () => {
   it("offers a plain Sign in for a token that names no subject", async () => {
     const { container } = render(
       <LinkTokenConfirm
-        claims={claims(null, null)}
+        subject={null}
+        org={null}
         current={null}
         onConfirm={() => undefined}
         onCancel={() => undefined}

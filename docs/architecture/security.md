@@ -445,9 +445,10 @@ rules it out.
 `/oauth/sso?n=<nonce>`, with a random nonce it keeps in that tab's session storage. The
 server seals the nonce into the sign-in's cookie and lands the token at
 `/me?n=<nonce>#token=<jwt>`. The dashboard stores a token without asking only when its
-nonce is the one the tab kept (used once, for ten minutes), or when it names the account
-already signed in, once the server accepts it; any other token, a planted sign-in's or a
-link's, waits for the person to confirm the account it names. The page's
+nonce is the one the tab kept (used once, for ten minutes), or when the server's answer
+for it names the account already signed in (the token's own claims are unverified and never
+decide); any other token, a planted sign-in's or a link's, waits for the person to confirm
+the account the server names, and is checked again after the confirmation. The page's
 Cross-Origin-Opener-Policy ([response headers](#response-headers)) keeps a page that
 opened it from navigating it while it is away at the identity provider. A page load at
 `/me?sign_in=sso`, which starts SSO without a click on the gate, is honoured only when a
