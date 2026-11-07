@@ -102,8 +102,8 @@ REGION_ROWS = [(f"zone-{n:02d}", f"team-{chr(96 + n % 26 + 1)}{n}", n * 8) for n
 REGIONS = (
     "region,owner,storage_limit_gb\n" + "".join(f"{r},{o},{g}\n" for r, o, g in REGION_ROWS)
 ).encode()
-# The same columns but racks, for other regions.
-SITES = b"region,owner,racks\nwest-1,Ops,12\nwest-2,Data,40\neast-1,Platform,8\n"
+# The same columns, for other regions.
+SITES = b"region,owner,storage_limit_gb\nwest-1,Ops,96\nwest-2,Data,320\neast-1,Platform,64\n"
 
 
 def _plans(title: str, rows: list[tuple[str, int, int]]) -> bytes:
@@ -179,7 +179,7 @@ QUERIES = [
     Query("exact identifiers", "FAC-7713", "repo://onboarding.pdf", "FAC-7713"),
     Query("table questions", "zone-25 storage limit", "repo://regions.csv", "region: zone-25;"),
     Query("table questions", "zone-03 owner", "repo://regions.csv", "region: zone-03;"),
-    Query("table questions", "west-2 racks", "repo://sites.csv", "region: west-2;"),
+    Query("table questions", "west-2 storage limit", "repo://sites.csv", "region: west-2;"),
     Query("table questions", "Scale plan monthly price", "repo://pricing.html", "Scale | 50 | 399"),
     Query(
         "table questions",
@@ -291,14 +291,14 @@ def _inside(hit: dict[str, Any], filters: dict[str, Any]) -> bool:
     return (
         ("formats" not in filters or hit["format"] in filters["formats"])
         and ("block_types" not in filters or hit["block_type"] in filters["block_types"])
-        and ("tags" not in filters or bool(set(hit.get("tags") or []) & set(filters["tags"])))
+        and ("tags" not in filters or bool(set(hit["tags"]) & set(filters["tags"])))
     )
 
 
 def _text(hit: dict[str, Any]) -> str:
     """What a hit shows: its passage and the headings it sits under (an error code
     is often its section's heading, not the passage's text)."""
-    return "\n".join([*hit.get("section_path", []), hit["content"]])
+    return "\n".join([*hit["section_path"], hit["content"]])
 
 
 def _measure(
@@ -329,7 +329,10 @@ async def test_each_retrieval_slice_meets_its_floor(control_plane_url: str) -> N
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=10) as c:
         health = (await c.get("/v1/health")).json()
     # The server embeds the queries and this process the chunks: the same fake model.
-    same = health.get("embedding_model") == settings.embedding_model
+    same = (health.get("embedding_model"), health.get("embedding_dim_configured")) == (
+        settings.embedding_model,
+        settings.embedding_dim,
+    )
     if not (health.get("fake_embedding") and embedder_is_fake() and same):
         pytest.skip("the floors are measured with one fake n-gram embedder, here and in the server")
     org, ns = unique_org("retrieval-floors"), f"docs-{uuid.uuid4().hex[:6]}"
