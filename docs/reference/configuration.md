@@ -1516,7 +1516,7 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_OTEL_EXPORTER_OTLP_ENDPOINT` | `str` | `''` |  | OTLP/HTTP collector base URL (`/v1/traces` and `/v1/metrics` are appended); set with `otel_exporter` = "", it selects the otlp exporter. |
 | `LOOM_OTEL_EXPORTER_OTLP_HEADERS` | `str` | *(unset)* |  | Comma-separated K=V headers sent to `otel_exporter_otlp_endpoint`, e.g. `Authorization=Bearer <token>`. |
 | `LOOM_OTEL_SERVICE_NAME` | `str` | `'loom'` |  | The OTel resource `service.name` stamped on every span, log and metric. |
-| `LOOM_OTEL_ENVIRONMENT` | `str` | `'dev'` |  | The OTel resource `deployment.environment` stamped on every span, log and metric. |
+| `LOOM_OTEL_ENVIRONMENT` | `str` | `'dev'` |  | The OTel resource `deployment.environment.name` stamped on every span, log and metric. |
 | `LOOM_OTEL_EXCLUDED_URLS` | `str` | `'/v1/health'` |  | Comma-separated path regexes the FastAPI instrumentation opens no span for (health polls). "" = instrument every path but the sign-in routes (/oauth/), which are always left out: their URLs carry codes. |
 | `LOOM_LATENCY_BUDGET_MULTIPLIER` | `float` | `1.0` |  | Scales every op's p99 budget (OP_BUDGETS_P99_MS in server/settings/catalog.py, tuned for local CH) at the comparison site; set e.g. 20.0 on Cloud so SLO alerts don't fire on baseline RTT. |
 | `LOOM_LATENCY_BUDGET_OVERRIDES` | `str` | `''` |  | JSON map {op: ms \| "<n>x"} over the op budgets table (OP_BUDGETS_P99_MS in server/settings/catalog.py): an integer replaces that op's budget, "3x" multiplies it. Checked after the per-consumer overrides and `admin/budget.set`; a value that is neither ms nor "<n>x" stops startup, an op this build lacks is logged and ignored. '' = the table as declared. |

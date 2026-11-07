@@ -150,7 +150,9 @@ def test_unpriced_model_is_marked_unknown_not_zero() -> None:
     span = _FakeSpan()
     genai._Generation(span, "some-model-nobody-priced").record_usage(10, 5, priced=False)
     assert "gen_ai.usage.cost" not in span.attrs
-    assert span.attrs["gen_ai.usage.cost_unknown"] is True
+    assert span.attrs["loom.llm.cost_unknown"] is True
+    # Langfuse adds any `gen_ai.usage.*` key to the token total.
+    assert not [k for k in span.attrs if k.startswith("gen_ai.usage.") and "token" not in k]
 
 
 def test_every_model_a_setting_defaults_to_is_priced() -> None:
@@ -226,7 +228,7 @@ def test_cache_hits_are_reported_as_cached_not_billed() -> None:
     `_embed_one_raw` is the only place the provider's `usage` block is read, and
     it does not run on a hit, so a hit would report zero tokens and
     `embedding_tokens` would undercount. The tokens are counted locally, but they
-    go on `cached_input_tokens` with a cost of 0: `report_embed` feeds
+    go on `loom.embed.cached_tokens` with a cost of 0: `report_embed` feeds
     `agent_events.embedding_tokens`, which `insights/app/cost.py` sums into a billing
     report, so counting a hit as billed would invent spend that never happened.
     """
@@ -236,7 +238,10 @@ def test_cache_hits_are_reported_as_cached_not_billed() -> None:
     )
     assert span.attrs["gen_ai.usage.input_tokens"] == 0
     assert span.attrs["gen_ai.usage.cost"] == 0.0
-    assert span.attrs["gen_ai.usage.cached_input_tokens"] == 400
+    assert span.attrs["loom.embed.cached_tokens"] == 400
+    # Not a provider cache read: under a `gen_ai.usage.*` cache key both tools
+    # would subtract it from the billed input.
+    assert not [k for k in span.attrs if k.startswith("gen_ai.usage.cache")]
     assert span.attrs["loom.embed.cost_saved_usd"] > 0.0
     assert span.attrs["loom.embed.cache_hits"] == 1
 
@@ -322,13 +327,13 @@ def test_search_llm_helpers_are_all_stage_labelled() -> None:
     )
 
 
-def test_cache_hit_is_not_a_generation() -> None:
-    """A cache hit made no provider call, so it is a SPAN, not a GENERATION.
+def test_cache_hit_is_not_an_embedding_observation() -> None:
+    """A cache hit made no provider call, so it is a SPAN, not an EMBEDDING.
 
-    Marking every embed a generation would put cache hits in Langfuse as
-    generations with 0 tokens and $0, as `traced(..., model=...)` would without
-    the same rule. Empty generations inflate the count and drag every
-    per-generation average down by exactly the cache hit rate.
+    Marking every embed an embedding would put cache hits in Langfuse as
+    embedding calls with 0 tokens and $0, as `traced(..., model=...)` would without
+    the same rule. Empty embedding observations inflate the count and drag every
+    per-call average down by exactly the cache hit rate.
     """
     span = _FakeSpan()
     genai._Embedding(span, "text-embedding-3-small").record_usage(
@@ -340,21 +345,20 @@ def test_cache_hit_is_not_a_generation() -> None:
     genai._Embedding(span2, "text-embedding-3-small").record_usage(
         billed_tokens=400, cache_misses=1, called_provider=True
     )
-    assert span2.attrs["langfuse.observation.type"] == "generation"
+    assert span2.attrs["langfuse.observation.type"] == "embedding"
 
 
-def test_embedding_span_defers_observation_type() -> None:
+def test_embedding_span_defers_observation_type(monkeypatch: pytest.MonkeyPatch) -> None:
     """It cannot be set at span start: cache-hit status is not known until after.
 
-    A hard-coded "generation" at span creation is what produced the $0 rows, so
-    guard that the span helper does not reintroduce it.
+    A type set when the span opens is what produced the $0 rows, so a span that
+    records no usage must carry no type at all.
     """
-    src = (ROOT / "server" / "observability" / "genai.py").read_text()
-    body = src.split("def embedding_span(", 1)[1].split("\ndef ", 1)[0]
-    assert 'langfuse.observation.type", "generation"' not in body, (
-        "embedding_span must not declare the observation type up front — a cache "
-        "hit is not a generation, and that is unknown until the call returns"
-    )
+    exporter = _recording_tracer(monkeypatch)
+    with genai.embedding_span(provider="openai", model="text-embedding-3-small"):
+        pass
+    (span,) = exporter.get_finished_spans()
+    assert "langfuse.observation.type" not in span.attributes
 
 
 def test_billed_tokens_come_from_the_provider_not_an_estimate() -> None:
@@ -423,3 +427,73 @@ def test_a_cancelled_provider_call_is_not_an_error_span(monkeypatch: pytest.Monk
         raise asyncio.CancelledError
     (span,) = exporter.get_finished_spans()
     assert span.status.status_code is StatusCode.UNSET
+
+
+def test_provider_spans_carry_the_genai_semantic_convention_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HyperDX's LLM view and Langfuse key on these: the provider under
+    `gen_ai.provider.name`, the operation as a convention value (`chat`,
+    `embeddings`), and the cascade leg apart from it under `loom.llm.stage`."""
+    exporter = _recording_tracer(monkeypatch)
+    with (
+        genai.llm_stage("hyde"),
+        genai.generation_span(provider="openai", model="gpt-4o-mini") as g,
+    ):
+        g.record_usage(1000, 50, priced=True, cached_input_tokens=600, cache_write_5m_tokens=100)
+    with (
+        genai.llm_stage("hyde"),
+        genai.embedding_span(provider="openai", model="text-embedding-3-small") as e,
+    ):
+        e.record_usage(billed_tokens=30, cache_misses=1)
+    chat, embed = exporter.get_finished_spans()
+    assert chat.name == "llm.hyde"
+    assert chat.attributes["gen_ai.provider.name"] == "openai"
+    assert chat.attributes["gen_ai.operation.name"] == "chat"
+    assert chat.attributes["loom.llm.stage"] == "hyde"
+    assert chat.attributes["langfuse.observation.type"] == "generation"
+    assert chat.attributes["gen_ai.usage.input_tokens"] == 1000
+    assert chat.attributes["gen_ai.usage.cache_read.input_tokens"] == 600
+    assert chat.attributes["gen_ai.usage.cache_creation.input_tokens"] == 100
+    assert embed.attributes["gen_ai.operation.name"] == "embeddings"
+    assert embed.attributes["langfuse.observation.type"] == "embedding"
+    for span in (chat, embed):
+        assert "gen_ai.system" not in span.attributes
+        assert "gen_ai.operation.kind" not in span.attributes
+
+
+def test_the_resource_names_the_environment_under_the_current_convention_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`deployment.environment.name` (stable in semantic conventions 1.41.0), the
+    key Langfuse and HyperDX read first; the deprecated `deployment.environment`
+    is not sent."""
+    from opentelemetry.sdk.resources import Resource
+
+    from server.observability import otel
+
+    seen: dict[str, Any] = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _create(attrs: dict[str, Any]) -> Any:
+        seen.update(attrs)
+        raise _Stop
+
+    monkeypatch.setattr(Resource, "create", staticmethod(_create))
+    monkeypatch.setattr(otel.settings, "otel_environment", "staging")
+    with pytest.raises(_Stop):
+        otel._start_tracing("ch", "")
+    assert seen["deployment.environment.name"] == "staging"
+    assert "deployment.environment" not in seen
+
+
+def test_a_cache_write_without_a_read_is_its_own_share_of_the_input() -> None:
+    span = _FakeSpan()
+    genai._Generation(span, "claude-haiku-4-5").record_usage(
+        1000, 20, priced=True, cache_write_5m_tokens=200, cache_write_1h_tokens=100
+    )
+    assert span.attrs["gen_ai.usage.input_tokens"] == 1000
+    assert span.attrs["gen_ai.usage.cache_creation.input_tokens"] == 300
+    assert "gen_ai.usage.cache_read.input_tokens" not in span.attrs

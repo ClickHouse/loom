@@ -4370,8 +4370,8 @@ settings:
   # The OTel resource `service.name` stamped on every span, log and metric. [restart]
   # otel_service_name: "loom"
 
-  # The OTel resource `deployment.environment` stamped on every span, log and metric.
-  # [restart]
+  # The OTel resource `deployment.environment.name` stamped on every span, log and
+  # metric. [restart]
   # otel_environment: "dev"
 
   # Comma-separated path regexes the FastAPI instrumentation opens no span for (health

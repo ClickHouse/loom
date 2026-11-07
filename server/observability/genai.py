@@ -5,9 +5,17 @@ second instrumentation path:
 
   * ClickStack gets an ordinary child span in the trace waterfall, so
     "where did the latency go" finally includes the LLM legs.
-  * Langfuse renders it as a **GENERATION** because it carries a `model`
-    attribute, and reads `gen_ai.usage.*` as token usage and
-    `gen_ai.usage.cost` as cost.
+  * Langfuse renders it as a **GENERATION** (an LLM call) or an
+    **EMBEDDING** from `langfuse.observation.type`, and reads `gen_ai.usage.*`
+    as token usage and `gen_ai.usage.cost` as cost.
+  * HyperDX's LLM view finds it by the `gen_ai.*` keys and reads the provider
+    (`gen_ai.provider.name`), the operation (`chat`, `embeddings`), the token
+    split and the cost from the same attributes.
+
+The keys, and the operation values, are the OpenTelemetry GenAI semantic
+conventions'; the provider value is Loom's own provider name (`openai`,
+`anthropic`, `gemini`, ...). The cascade leg that made the call is
+`loom.llm.stage`, and for a chat call also the span name (`llm.<stage>`).
 
 That mapping is verified, not assumed: a probe span carrying
 `gen_ai.request.model`, `gen_ai.usage.input_tokens/output_tokens` and
@@ -584,23 +592,29 @@ class _Generation:
             self._span.set_attribute("gen_ai.usage.input_tokens", int(tokens_in))
             self._span.set_attribute("gen_ai.usage.output_tokens", int(tokens_out))
             if cached_input_tokens:
-                # Provider-side prompt-cache read. Reported alongside, never
-                # subtracted from, `input_tokens`: the provider's own number is
-                # the total, and making the two disagree would put loom's cost
-                # figure out of step with the invoice.
+                # Provider-side prompt-cache read, under the semantic-convention
+                # key both Langfuse and HyperDX read as a cache read. It is part
+                # of `input_tokens` (the provider's total), and both tools take
+                # it out of the uncached share themselves; under any other key
+                # Langfuse stores it as an extra usage type and counts it twice
+                # in the total.
                 self._span.set_attribute(
-                    "gen_ai.usage.cached_input_tokens", int(cached_input_tokens)
+                    "gen_ai.usage.cache_read.input_tokens", int(cached_input_tokens)
                 )
                 if tokens_in > 0:
                     self._span.set_attribute(
                         "loom.llm.prompt_cache_hit_ratio",
                         round(cached_input_tokens / tokens_in, 4),
                     )
+            w5, w1 = max(0, int(cache_write_5m_tokens)), max(0, int(cache_write_1h_tokens))
+            if w5 + w1:
+                # Also part of `input_tokens`; Langfuse subtracts it from the
+                # uncached share as it does a cache read.
+                self._span.set_attribute("gen_ai.usage.cache_creation.input_tokens", w5 + w1)
             if self._attempts:
                 self._span.set_attribute("gen_ai.request.attempts", self._attempts)
             if priced:
                 reads = max(0, int(cached_input_tokens))
-                w5, w1 = max(0, int(cache_write_5m_tokens)), max(0, int(cache_write_1h_tokens))
                 self._span.set_attribute(
                     "gen_ai.usage.cost",
                     turn_cost_usd(
@@ -615,7 +629,9 @@ class _Generation:
             else:
                 # Deliberately absent rather than 0.0: an unpriced model billing
                 # $0 reads as "free" on a cost panel, which is worse than a gap.
-                self._span.set_attribute("gen_ai.usage.cost_unknown", True)
+                # Not under `gen_ai.usage.`: Langfuse counts every key there as
+                # usage, and would add this flag to the token total.
+                self._span.set_attribute("loom.llm.cost_unknown", True)
         except Exception:  # noqa: BLE001 — telemetry must not fail a completion
             pass
 
@@ -640,11 +656,14 @@ def generation_span(
     """
     stage = current_stage()
     attrs: dict[str, Any] = {
-        "gen_ai.system": provider,
+        "gen_ai.provider.name": provider,
         "gen_ai.request.model": model,
         "gen_ai.response.model": model,
-        "gen_ai.operation.name": stage,
-        "gen_ai.operation.kind": operation,
+        # The semantic-convention operation (`chat`), which both tools key their
+        # LLM views on; the cascade leg that asked is `loom.llm.stage`, and the
+        # span name.
+        "gen_ai.operation.name": operation,
+        "loom.llm.stage": stage,
         # Explicit, so Langfuse does not have to infer from `model` alone.
         "langfuse.observation.type": "generation",
     }
@@ -747,23 +766,25 @@ class _Embedding:
         try:
             from server.observability.cost_accumulator import embed_cost_usd
 
-            # Only a call that actually reached the provider is a GENERATION.
-            # Marking every embed one would put cache hits in Langfuse as
-            # generations with 0 tokens and $0, inflating the generation count with
-            # empty rows and dragging every per-generation average down by the cache
-            # hit rate. Set here rather than at span start because whether the
-            # cache served the request is not known until it returns.
+            # Only a call that actually reached the provider is an EMBEDDING
+            # observation. Marking every embed one would put cache hits in Langfuse
+            # as embeddings with 0 tokens and $0, inflating the count with empty
+            # rows and dragging every per-call average down by the cache hit rate.
+            # Set here rather than at span start because whether the cache served
+            # the request is not known until it returns.
             self._span.set_attribute(
                 "langfuse.observation.type",
-                "generation" if called_provider else "span",
+                "embedding" if called_provider else "span",
             )
             self._span.set_attribute("gen_ai.usage.input_tokens", int(billed_tokens))
             self._span.set_attribute(
                 "gen_ai.usage.cost", embed_cost_usd(self._model, billed_tokens)
             )
             if cached_tokens:
-                # OpenAI's own convention for tokens not charged for.
-                self._span.set_attribute("gen_ai.usage.cached_input_tokens", int(cached_tokens))
+                # Served by Loom's own cache, so NOT part of `input_tokens` and not a
+                # provider cache read: under a `gen_ai.usage.*` cache key both tools
+                # would subtract it from the billed input.
+                self._span.set_attribute("loom.embed.cached_tokens", int(cached_tokens))
                 self._span.set_attribute(
                     "loom.embed.cost_saved_usd",
                     embed_cost_usd(self._model, cached_tokens),
@@ -781,7 +802,7 @@ class _Embedding:
 
 @contextlib.contextmanager
 def embedding_span(*, provider: str, model: str) -> Iterator[_Embedding]:
-    """Wrap one embedder call in a span Langfuse reads as a generation.
+    """Wrap one embedder call in a span both tools read as an embedding call.
 
     Embeddings are instrumented at the embedder, not at the four `embed.compute`
     call sites: the batch path (`embed_many`) is driven by the embedding worker,
@@ -789,19 +810,18 @@ def embedding_span(*, provider: str, model: str) -> Iterator[_Embedding]:
     the bulk of all embedding spend.
     """
     attrs: dict[str, Any] = {
-        "gen_ai.system": provider,
+        "gen_ai.provider.name": provider,
         "gen_ai.request.model": model,
         "gen_ai.response.model": model,
-        "gen_ai.operation.name": "embed",
-        "gen_ai.operation.kind": "embedding",
+        "gen_ai.operation.name": "embeddings",
         # The leg that needed the vector, so embedding latency is attributable
         # to search vs write vs a worker backfill.
         "loom.llm.stage": current_stage(),
     }
     # `langfuse.observation.type` is deliberately NOT set here — see
     # `_Embedding.record_usage`. A cache hit made no provider call and is not
-    # a generation, and whether the cache served the request is unknown until
-    # after it returns.
+    # an embedding observation, and whether the cache served the request is
+    # unknown until after it returns.
     #
     # Named "embed.provider", NOT "embed.compute": four call sites already open
     # a `traced("embed.compute")` block, and this span nests inside them. Two

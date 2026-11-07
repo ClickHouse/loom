@@ -12,6 +12,10 @@ tables are in that database instead of `default`, here and in every query below.
 `schemas/otel/clickstack_otel_tables.sql`; if ClickStack changes its schema, that file
 must follow.
 
+Model-call spans carry the OpenTelemetry GenAI attributes
+([telemetry](../observability/telemetry.md#traces-and-logs)) under the keys HyperDX's LLM
+view reads for the provider, the operation, token use, the prompt-cache share and cost.
+
 ## Choose the export path
 
 | `LOOM_OTEL_EXPORTER` | Behaviour                                                                                                                                 |

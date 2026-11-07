@@ -3890,7 +3890,7 @@ class ObservabilitySettings(BaseModel):
     otel_exporter_otlp_headers: str = ""
     # The OTel resource `service.name` stamped on every span, log and metric.
     otel_service_name: str = "loom"
-    # The OTel resource `deployment.environment` stamped on every span, log and metric.
+    # The OTel resource `deployment.environment.name` stamped on every span, log and metric.
     otel_environment: str = "dev"
     # Comma-separated path regexes the FastAPI instrumentation opens no span
     # for (health polls). "" = instrument every path but the sign-in routes

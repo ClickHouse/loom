@@ -297,7 +297,7 @@ def test_prompt_cache_read_is_recorded_with_a_ratio() -> None:
     g, span = _gen_span()
     g.record_usage(16000, 200, priced=True, cached_input_tokens=15000)
     assert span.attrs["gen_ai.usage.input_tokens"] == 16000
-    assert span.attrs["gen_ai.usage.cached_input_tokens"] == 15000
+    assert span.attrs["gen_ai.usage.cache_read.input_tokens"] == 15000
     assert span.attrs["loom.llm.prompt_cache_hit_ratio"] == 0.9375
 
 
@@ -324,7 +324,8 @@ def test_no_cache_attributes_when_nothing_was_cached() -> None:
     average it in."""
     g, span = _gen_span()
     g.record_usage(500, 50, priced=True)
-    assert "gen_ai.usage.cached_input_tokens" not in span.attrs
+    assert "gen_ai.usage.cache_read.input_tokens" not in span.attrs
+    assert "gen_ai.usage.cache_creation.input_tokens" not in span.attrs
     assert "loom.llm.prompt_cache_hit_ratio" not in span.attrs
 
 

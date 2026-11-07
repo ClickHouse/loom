@@ -107,6 +107,15 @@ ClickHouse.
   `enduser.id`. Health polls open no span (`LOOM_OTEL_EXCLUDED_URLS`, default
   `/v1/health`). Every HTTP response carries `X-Request-Id` (the client's, when it sends
   one of 1 to 64 letters, digits, `.`, `_` or `-`) and `X-Trace-Id`. Spans never carry query text.
+- **Model calls.** Each LLM and embedding call is its own span, `llm.<stage>` or
+  `embed.provider`, with the OpenTelemetry GenAI attributes: `gen_ai.provider.name`,
+  `gen_ai.operation.name` (`chat` or `embeddings`), `gen_ai.request.model`,
+  `gen_ai.usage.input_tokens` and `output_tokens`, the provider prompt-cache share in
+  `gen_ai.usage.cache_read.input_tokens` and `cache_creation.input_tokens` (both part
+  of `input_tokens`), and `gen_ai.usage.cost` from Loom's price table. The leg that made
+  the call is `loom.llm.stage`. Tokens served by Loom's own embedding cache are
+  `loom.embed.cached_tokens`, apart from the billed input. HyperDX's LLM view and
+  Langfuse read these keys as they are.
 - **Logs.** `docker logs loom-server` and `docker logs loom-workers`, and the OTel log
   export to `default.otel_logs`. `LOOM_LOG_FORMAT=json` for a log pipeline,
   `LOOM_LOG_LEVEL` for verbosity. The boot log names the resolved providers and each
@@ -125,7 +134,7 @@ observability tables. `LOOM_OTEL_ENABLED=false` turns emission off.
 | `LOOM_OTEL_EXPORTER`                              | `""`          | `ch` writes straight into the `default.otel_*` tables on Loom's own ClickHouse service; `otlp` ships to a collector; empty = `otlp` when an endpoint is set, else `ch` |
 | `LOOM_OTEL_EXPORTER_OTLP_ENDPOINT`                | `""`          | OTLP/HTTP collector base URL (`/v1/traces` and `/v1/metrics` are appended)                                                                                             |
 | `LOOM_OTEL_EXPORTER_OTLP_HEADERS`                 | `""`          | comma-separated `K=V` headers, e.g. `Authorization=Bearer <token>`                                                                                                     |
-| `LOOM_OTEL_SERVICE_NAME`, `LOOM_OTEL_ENVIRONMENT` | `loom`, `dev` | `service.name` and `deployment.environment` on every span, log and metric                                                                                              |
+| `LOOM_OTEL_SERVICE_NAME`, `LOOM_OTEL_ENVIRONMENT` | `loom`, `dev` | `service.name` and `deployment.environment.name` on every span, log and metric                                                                                         |
 | `LOOM_OTEL_METRICS_EXPORT_INTERVAL_S`             | `60`          | metric export cadence; spans keep their own 3-second batch delay                                                                                                       |
 | `LOOM_OTEL_METRICS_DELTA_TEMPORALITY`             | `false`       | delta instead of cumulative counters and histograms; the stock dashboards read cumulative rows, so flip them together                                                  |
 | `LOOM_OTEL_GAUGE_HEARTBEAT_S`                     | `0`           | `ch` exporter only: write a gauge point only on change or after this many seconds; 0 = every export (gauge tiles fill gaps with 0). OTLP exports every point           |
