@@ -42,10 +42,10 @@ export interface OpGate {
 
 // One shared object per gate: the table sits in the index chunk, and a literal per entry
 // costs bytes on every page load.
-const VIEWER: OpGate = VIEWER;
-const WRITER: OpGate = WRITER;
-const ADMIN: OpGate = ADMIN;
-const ADMIN_CLAIM: OpGate = ADMIN_CLAIM;
+const VIEWER: OpGate = { min: "viewer", by: "namespace" };
+const WRITER: OpGate = { min: "writer", by: "namespace" };
+const ADMIN: OpGate = { min: "admin", by: "namespace" };
+const ADMIN_CLAIM: OpGate = { min: "admin", by: "claim" };
 
 export const OP_MIN_ROLE = {
   // Gated at a call site: Sidebar badge polls, Recent / MemoryInspector
