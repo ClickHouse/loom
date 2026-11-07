@@ -112,14 +112,14 @@ def _listed_under_all(op: Operation) -> bool:
 
 
 def _op_groups() -> dict[str, list[Operation]]:
-    """The registry's ops by group (the part of the name before the first dot), each
-    sorted by name."""
+    """The registry's ops by group (the part of the name before the first dot), groups and
+    their ops sorted by name."""
     from server.operations import registry
 
     groups: dict[str, list[Operation]] = defaultdict(list)
     for op in sorted(registry.ALL_OPERATIONS, key=lambda o: o.name):
         groups[op.name.split(".")[0]].append(op)
-    return groups
+    return dict(sorted(groups.items()))
 
 
 def render_operations() -> str:
@@ -139,9 +139,9 @@ def render_operations() -> str:
         "`LOOM_MCP_CODE_TOOLS=true`); an op marked `no` is still callable by name or "
         "through `loom_op`, unless it is hidden from MCP; **Audit** marks ops that leave "
         "an `audit_log` row.\n",
-        "Groups: " + " · ".join(f"[`{g}`](#{g.replace('_', '_')})" for g in sorted(groups)) + "\n",
+        "Groups: " + " · ".join(f"[`{g}`](#{g.replace('_', '_')})" for g in groups) + "\n",
     ]
-    for group in sorted(groups):
+    for group in groups:
         ops = groups[group]
         out.append(f"### {group}\n")
         page = f"operations/{group}.md"
@@ -172,7 +172,7 @@ def render_status_ops() -> str:
     groups = _op_groups()
     rows: list[str] = []
     experimental_total = 0
-    for group in sorted(groups):
+    for group in groups:
         ops = groups[group]
         experimental = [op for op in ops if op.maturity == "experimental"]
         experimental_total += len(experimental)
@@ -389,7 +389,7 @@ def render_group(group: str, ops: list[Operation]) -> str:
 
 def render_group_pages() -> dict[str, str]:
     """File name → content for every per-group field page."""
-    return {f"{g}.md": render_group(g, ops) for g, ops in sorted(_op_groups().items())}
+    return {f"{g}.md": render_group(g, ops) for g, ops in _op_groups().items()}
 
 
 # --- llms.txt -----------------------------------------------------------------

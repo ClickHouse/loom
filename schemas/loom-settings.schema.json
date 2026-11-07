@@ -1014,7 +1014,7 @@
         "code_ingest_denylist_builtin": {
           "default": false,
           "type": "boolean",
-          "description": "True applies the built-in generated/minified/vendored ingest rules (code/app/index/denylist.py; they match 0.19% of rows); `exclude` globs (CSV here, a list per repo entry) and the repo-local ignore file are always honoured."
+          "description": "True applies the built-in generated, minified and vendored ingest rules (code/app/index/denylist.py), which match 0.19% of rows. The `exclude` globs (CSV here, a list per repo entry) and the repo-local ignore file are always honoured."
         },
         "code_ingest_dependents_concurrency": {
           "default": 4,

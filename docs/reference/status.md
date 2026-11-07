@@ -9,7 +9,8 @@ boolean setting that loads false. Both tables are generated from the code: each 
 
 - **Stable** ops are reached by more than a raw HTTP POST (the reach census fails a
   stable op otherwise) and are meant to have production callers.
-- **Experimental** ops may have none yet.
+- **Experimental** ops may have no reach path besides a raw HTTP POST, and no production
+  callers yet.
 
 The label is set by hand from what the 30-day reach census reports. What it decides is in
 the [operations reference](./operations.md#mcp-all-listing), and which ops each MCP toolset
@@ -89,7 +90,7 @@ listed here.
 | `LOOM_CODE_EMBED_RECOVERY_ENABLED` | Embedding recovery for code_chunks/code_summaries stubs (dim=0). |
 | `LOOM_CODE_GRAPH_STATS_ENABLED` | Weekly graph statistics: PageRank, degrees, test_map rebuild. |
 | `LOOM_CODE_HOST_ISLANDS` | Shell inside CI/build files (Actions `run:`, GitLab `script:`, Dockerfile `RUN`, Makefile recipes, Jenkinsfile `sh`) is parsed for facets, script `includes` edges and SQL; jobs, targets and stages… |
-| `LOOM_CODE_INGEST_DENYLIST_BUILTIN` | True applies the built-in generated/minified/vendored ingest rules (code/app/index/denylist.py; they match 0.19% of rows); `exclude` globs (CSV here, a list per repo entry) and the repo-local ignore… |
+| `LOOM_CODE_INGEST_DENYLIST_BUILTIN` | True applies the built-in generated, minified and vendored ingest rules (code/app/index/denylist.py), which match 0.19% of rows. |
 | `LOOM_CODE_INGEST_ENABLED` | Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark. |
 | `LOOM_CODE_ORG_READABLE` | True lets every authenticated principal of the org read every configured code namespace (right for public or org-internal repos); false leaves reads to the namespace's own visibility and grants. |
 | `LOOM_CODE_PR_HISTORY_ENABLED` | Merged-PR history sync (GitHub REST, cursor-resumable). |

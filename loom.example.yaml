@@ -1450,9 +1450,10 @@ settings:
   # [restart]
   # code_ingest_max_file_bytes: 1000000
 
-  # True applies the built-in generated/minified/vendored ingest rules
-  # (code/app/index/denylist.py; they match 0.19% of rows); `exclude` globs (CSV here, a
-  # list per repo entry) and the repo-local ignore file are always honoured. [restart]
+  # True applies the built-in generated, minified and vendored ingest rules
+  # (code/app/index/denylist.py), which match 0.19% of rows. The `exclude` globs (CSV
+  # here, a list per repo entry) and the repo-local ignore file are always honoured.
+  # [restart]
   # code_ingest_denylist_builtin: false
 
   # CSV of path globs never indexed (the scalar entry's `exclude`). [restart]
