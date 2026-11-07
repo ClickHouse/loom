@@ -311,11 +311,13 @@ the policies and the catalog come from one definition. The rules a write keeps:
   (`server/core/leases.py`), waiting for it when another holds it, and reads what the
   entities hold once it has it. `loom secrets reseal` takes the same lease.
 - **Never over a newer build.** The settings profile carries the allowlist's version,
-  written last; a version names exactly one set of entities (a unit test pins it), so a
-  change to a grant, a policy or a cap is a new version. A build writes when there is no
-  version or its own is newer, so during a rolling upgrade a build N-1 never narrows N's
-  grants or loosens N's policies. N-1 keeps answering on N's entities: its statements
-  that name a column N dropped are refused until the roll forward.
+  written last; a version names exactly one set of grants and policies (a unit test pins
+  it), so a change to either is a new version. The caps are deployment settings, the
+  same on every replica, written with the profile whenever the stored ones differ from
+  the build's. A build writes when there is no version or its own is newer, so during a
+  rolling upgrade a build N-1 never narrows N's grants or loosens N's policies. N-1
+  keeps answering on N's entities: its statements that name a column N dropped are
+  refused until the roll forward.
 - **No granted table without its policy.** ClickHouse lets a user with no policy on a
   table read every row of it, so each policy is replaced in place before any grant is
   given, grants the allowlist drops are revoked after, and a policy is never dropped: a
