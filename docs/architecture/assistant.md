@@ -224,11 +224,10 @@ user, Loom's own included, reading the tables as before, whatever the server's
 The key is derived from the deployment's signing secret (`LOOM_JWT_SECRET`) with an
 HMAC, so every replica holds the same key and none is stored. The analyst user cannot
 read it: it has no grant on `system.row_policies`, and it cannot run `EXPLAIN`. Loom
-writes the policies with `log_queries = 0`, so the key is not in `system.query_log`,
-and the bundled ClickHouse's configuration carries a query masking rule that blanks the
-key's literals in its server log; a self-managed ClickHouse needs the same rule, which
-`loom ch-setup` prints. An administrator who reads
-`system.row_policies` sees the key, as they can read every row anyway.
+writes the policies with `log_queries = 0`, so the key is not in `system.query_log`.
+ClickHouse's server log records the policy statements at its `debug` level, key
+included, and `system.row_policies` shows the key to an administrator; both are read
+only by whoever administers the ClickHouse host, who can read every row anyway.
 
 While `LOOM_JWT_SECRET_PREVIOUS` is set the analyst user accepts the previous secret's
 password and the policy its signature, so replicas mid-rotation log in and sign under
