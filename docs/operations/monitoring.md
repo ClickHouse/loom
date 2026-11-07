@@ -45,7 +45,7 @@ flowchart TD
 ### /v1/health
 
 ```bash
-curl -s http://localhost:7777/v1/health | jq '{status, ch_ok, build_commit, schema, problems}'
+curl -s http://localhost:7777/v1/health | jq '{status, version, ch_ok, build_commit, schema, problems}'
 curl -s 'http://localhost:7777/v1/health?include=workers' | jq '.workers_leader'
 ```
 

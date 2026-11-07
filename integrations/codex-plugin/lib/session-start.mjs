@@ -58,10 +58,10 @@ export function startPackBody(scope, payload, { tokenBudget = 1200, runId = "", 
 }
 
 /**
- * The SessionStart output: first-session and duplicate-mount notices, then
- * (when context.pack rendered one) the memory primer under a heading, the
- * repository tag line, the code block, the task, brief and collections lines, and the
- * recording line, which is always present.
+ * The SessionStart output: first-session, server-version and duplicate-mount
+ * notices, then (when context.pack rendered one) the memory primer under a
+ * heading, the repository tag line, the code block, the task, brief and
+ * collections lines, and the recording line, which is always present.
  */
 export function renderPrimer({
   notices = [],

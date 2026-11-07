@@ -18,7 +18,7 @@ import {
   envSwitch,
   gitToplevel,
   hookClient,
-  measureRoundTrip,
+  probeHealth,
   postBounded,
   readStdinJson,
   recordRoundTrip,
@@ -34,6 +34,7 @@ import { ensureCredential, renderFirstSessionNotice } from "../lib/first-session
 import { duplicateNotice } from "../lib/mcp-duplicate.mjs";
 import { localFirstOn } from "../lib/code-shunt.mjs";
 import { sessionRunId } from "../lib/run-hook.mjs";
+import { serverVersionLine } from "../lib/server-version.mjs";
 import {
   checkoutDir,
   codeArbitration,
@@ -95,18 +96,20 @@ async function main() {
   const scope = resolveScope(payload.cwd);
   const tokenBudget = Math.round(envNumber("LOOM_CONTEXT_TOKEN_BUDGET", 1200, { min: 100 }));
 
-  // One GET /v1/health round trip, measured beside the primer and cached per
-  // server, sets every later hook's request bound.
+  // One GET /v1/health beside the primer: its round trip sets later hooks' bound,
+  // its `version` feeds the minServerVersion line.
   const serverUrl = resolveServerUrl();
-  measureRoundTrip(serverUrl)
-    .then((ms) => {
+  const health = probeHealth(serverUrl)
+    .then(({ ms, body }) => {
       if (ms) recordRoundTrip(serverUrl, ms);
+      return serverVersionLine(body, { serverUrl });
     })
-    .catch(() => {});
+    .catch(() => "");
 
   // The primer's parts are independent bounded reads: run them side by side,
   // so a hung server costs the session one request bound, not one per part.
-  const [result, codeBlock, taskLine, briefsLine, recording, collectionsText] = await Promise.all([
+  const [versionLine, result, codeBlock, taskLine, briefsLine, recording, collectionsText] = await Promise.all([
+    health,
     postBounded(
       "context.pack",
       startPackBody(scope, payload, { tokenBudget, runId: sessionRunId(payload.session_id) || "" }),
@@ -125,7 +128,7 @@ async function main() {
   const dup = hookClient() === "claude-code" ? duplicateNotice({ serverUrl }) : "";
   process.stdout.write(
     renderPrimer({
-      notices: [firstSessionNotice, dup, optionNotice],
+      notices: [firstSessionNotice, versionLine, dup, optionNotice],
       project: scope.project,
       repo: scope.repo,
       rendered: result && typeof result.rendered === "string" ? result.rendered : "",

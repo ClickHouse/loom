@@ -185,3 +185,18 @@ test("the Codex copy checks the hooks' server and makes no source comparison", a
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("status warns, without failing, about a server older than the plugin's minimum", async () => {
+  const fetchImpl = async (url) => ({
+    status: 200,
+    json: async () =>
+      url.endsWith("/v1/health")
+        ? { build_commit: "abc123", version: "0.0.1" }
+        : { rows: [{ namespace: "work", role: "writer", status: "active" }] },
+  });
+  const result = await clientStatus({ serverUrl, token: token(), scope, now, fetchImpl });
+  assert.equal(result.ok, true);
+  const check = result.checks.find((c) => c.name === "server version");
+  assert.equal(check.grade, "WARN");
+  assert.ok(check.detail.includes("runs 0.0.1") && check.detail.includes("upgrade the server"), check.detail);
+});
