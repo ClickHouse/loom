@@ -370,10 +370,11 @@ failing the file; Parquet reads each by its column's type (below).
 
 **CSV.** The delimiter (a comma, semicolon, tab or pipe; a tab, with no quoting, for a `.tsv` name; a tab-separated file
 sent with no such name is sniffed, so it reads quotes as CSV does) is guessed from quoted fields in the whole lines of
-the file's first 4 KiB, or else from delimiter counts over the whole lines of its first 64 KiB; a field is quoted with
-`"`, its quotes doubled, whatever the sniffer guesses, and a value is text unless it is written as a plain number, an
-ISO date or an ISO date and time (its zone kept). A row holds only its non-empty fields. A field over a megabyte, a
-record over 8 MiB, or quoting the reader cannot close, fails the rows from there on.
+the file's first 4 KiB, or else from delimiter counts over the whole lines of its first 64 KiB (each sample cut mid-line
+only when its first line is longer); a field is quoted with `"`, its quotes doubled, whatever the sniffer guesses, and a
+value is text unless it is written as a plain number, an ISO date or an ISO date and time (its zone kept). A row holds
+only its non-empty fields. A field over a megabyte, a record over 8 MiB, or quoting the reader cannot close, fails the
+rows from there on.
 
 **XLSX.** The workbook, its styles, its shared strings and its worksheets are read as they inflate, never held as a
 tree; the workbook's relationships are read whole, from a part of at most 4 MiB (past it, or not XML, the file is

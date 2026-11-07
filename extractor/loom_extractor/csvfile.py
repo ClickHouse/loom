@@ -94,7 +94,8 @@ class _Tsv(csv.excel_tab):
 
 
 def _whole_lines(text: str, chars: int) -> str:
-    """The first `chars` of `text`, cut back to its last line end."""
+    """The first `chars` of `text`, cut back to its last line end (a cut line counts too
+    few delimiters); the `chars` as they are when no line ends in them."""
     if len(text) <= chars:
         return text
     sample = text[:chars]
@@ -102,9 +103,8 @@ def _whole_lines(text: str, chars: int) -> str:
 
 
 class _Sniffer(csv.Sniffer):
-    """The standard sniffer, its quote guess bounded to `_QUOTE_SNIFF_CHARS`; the
-    delimiter-frequency guess it falls back to still reads the whole sample, in linear
-    time."""
+    """csv.Sniffer with its quote guess, quadratic on an unclosed quote, limited to the
+    first `_QUOTE_SNIFF_CHARS`."""
 
     def _guess_quote_and_delimiter(
         self, data: str, delimiters: str | None
