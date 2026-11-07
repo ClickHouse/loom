@@ -46,8 +46,7 @@ from server.memory.domain.context_layout import (
 from server.memory.domain.decision_statement import states_reason
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
 from server.memory.domain.memory_types import excluded_from_unfiltered_search
-from server.memory.domain.search_types import hit_row_key, names_row
-from server.memory.domain.served import hit_row
+from server.memory.domain.search_types import hit_row, hit_row_key, names_row
 from server.memory.store.shared import SHARED_AGENT
 
 log = logging.getLogger(__name__)
@@ -287,9 +286,8 @@ async def _pack_memory_stack(st: _PackState) -> None:
             layers.append(layer)
         cite = f"stack:{layer}/{entry.memory_key or entry.memory_type}"
         citations.append(cite)
-        # the stack reads the request's namespace only
         stored = layer in STACK_ROW_LAYERS and entry.memory_key
-        rows.append((input.namespace, entry.memory_key) if stored else None)
+        rows.append((entry.namespace or input.namespace, entry.memory_key) if stored else None)
         author = author_label([entry.actor]) if layer in STACK_ROW_LAYERS else ""
         label = label_part(f"{layer}/{entry.memory_key}")
         lines.append(one_item(f"- [{label}{author}] {entry.value}"))

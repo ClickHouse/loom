@@ -51,8 +51,15 @@ def _stub_all_but_the_stack(monkeypatch: pytest.MonkeyPatch, entries: list[Any])
     monkeypatch.setattr("server.memory.app.stack.handle_memory_stack", _stack)
 
 
-def _entry(section: str, key: str, width: int) -> NS:
-    return NS(section=section, memory_key=key, memory_type="fact", value="v" * width, actor="")
+def _entry(section: str, key: str, width: int, namespace: str = "") -> NS:
+    return NS(
+        section=section,
+        memory_key=key,
+        memory_type="fact",
+        value="v" * width,
+        actor="",
+        namespace=namespace,
+    )
 
 
 def test_a_stack_section_cut_to_its_budget_records_the_rows_it_kept(
@@ -243,3 +250,16 @@ def test_a_pack_whose_search_abstained_records_none_of_its_hits(
 
 async def _no_records(*a: Any, **k: Any) -> dict[str, Any]:
     return {}
+
+
+def test_a_stack_procedure_from_another_namespace_records_there(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entries = [_entry("pinned", "pin", 20), _entry("procedure", "deploy", 20, namespace="proj-a")]
+    _stub_all_but_the_stack(monkeypatch, entries)
+    out = asyncio.run(
+        handle_context_pack(
+            ContextPackInput(org="o", namespace="ns", agent="a", query="q", token_budget=4000)
+        )
+    )
+    assert out._served_rows == [("ns", "pin"), ("proj-a", "deploy")]

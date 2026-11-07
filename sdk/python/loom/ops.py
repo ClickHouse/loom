@@ -15200,6 +15200,7 @@ class StackEntry(TypedDict, total=False):
     recall_count: NotRequired[int]
     last_recalled_at: NotRequired[Optional[str]]
     actor: NotRequired[str]
+    namespace: NotRequired[str]
 
 
 class MemoryStatusesInput(TypedDict, total=False):

@@ -33,10 +33,3 @@ def served_totals(
         "served_count": max(int(recall_count or 0), events),
         "last_served_at": max(times) if times else None,
     }
-
-
-def hit_row(hit: Any, namespace: str) -> tuple[str, str]:
-    """The (namespace, memory_key) of the stored row a search hit came from: a chunk hit
-    (`chunk:<session>:<n>`) is its parent fact's; a hit with no namespace is the read's."""
-    key = getattr(hit, "parent_memory_key", "") or hit.memory_key
-    return (str(getattr(hit, "namespace", "") or namespace), str(key))

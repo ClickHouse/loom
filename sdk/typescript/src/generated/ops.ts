@@ -6797,6 +6797,7 @@ export interface StackEntry {
   recall_count?: number;
   last_recalled_at?: string | null;
   actor?: string;
+  namespace?: string;
 }
 
 export interface MemoryStackOutput {

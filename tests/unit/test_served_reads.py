@@ -91,14 +91,16 @@ def test_a_search_without_usage_records_nothing(written: list[dict[str, Any]]) -
 
 def test_memory_stack_records_its_stored_rows() -> None:
     entries = [
-        SimpleNamespace(section="pinned", memory_key="pin1"),
-        SimpleNamespace(section="recent_recall", memory_key="r1"),
-        SimpleNamespace(section="profile", memory_key="role"),
-        SimpleNamespace(section="knowledge", memory_key=""),
+        SimpleNamespace(section="pinned", memory_key="pin1", namespace=""),
+        SimpleNamespace(section="recent_recall", memory_key="r1", namespace=""),
+        # a procedure matched in another of the caller's namespaces records there
+        SimpleNamespace(section="procedure", memory_key="deploy", namespace="proj-a"),
+        SimpleNamespace(section="profile", memory_key="role", namespace=""),
+        SimpleNamespace(section="knowledge", memory_key="", namespace=""),
     ]
     out = SimpleNamespace(entries=entries)
     keys = served_reads.stack_keys(SimpleNamespace(namespace="n"), out)
-    assert keys == [("n", "pin1"), ("n", "r1")]
+    assert keys == [("n", "pin1"), ("n", "r1"), ("proj-a", "deploy")]
 
 
 def test_search_query_records_the_memory_hits_it_kept() -> None:
@@ -299,3 +301,11 @@ def test_an_op_whose_input_names_no_agent_records_its_named_consumer(
     written.clear()
     _run(_wrapped(served_reads.rendered_rows, out), inp, consumer="")
     assert written == []
+
+
+def test_hit_row_reads_a_search_hit_and_a_wire_dict_alike() -> None:
+    from server.memory.domain.search_types import hit_row
+
+    chunk = {"memory_key": "chunk:s:1", "parent_memory_key": "fact", "namespace": ""}
+    assert hit_row(chunk, "n") == ("n", "fact")
+    assert hit_row(SimpleNamespace(memory_key="k", namespace="m"), "n") == ("m", "k")

@@ -257,6 +257,8 @@ async def _stack_procedures(input: MemoryStackInput, fill: _StackFill) -> None:
                     value=val,
                     tokens=cost,
                     actor=m.actor,
+                    # a procedure can be matched in another of the caller's namespaces
+                    namespace=m.namespace,
                 )
             )
     except Exception as e:  # noqa: BLE001 — a failed procedure section must not fail the stack

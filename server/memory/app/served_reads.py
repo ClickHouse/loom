@@ -27,7 +27,7 @@ from typing import Any, Protocol
 from server.identity.app.request_scope import request_scope
 from server.memory.app import after_write, recall_credit
 from server.memory.domain.context_layout import STACK_ROW_LAYERS
-from server.memory.domain.served import hit_row
+from server.memory.domain.search_types import hit_row
 from server.memory.store import served
 from server.observability.consumer import INSPECTOR_CONSUMERS
 
@@ -145,7 +145,7 @@ def rendered_rows(input: Any, out: Any) -> Keys:
 def stack_keys(input: Any, out: Any) -> Keys:
     """memory.stack: the stored rows of its entries (not the profile or knowledge ones)."""
     return [
-        (input.namespace, e.memory_key)
+        (e.namespace or input.namespace, e.memory_key)
         for e in out.entries
         if e.section in STACK_ROW_LAYERS and e.memory_key
     ]
@@ -155,10 +155,7 @@ def search_query_keys(input: Any, out: Any) -> Keys:
     """search.query: the memory section's hits it kept."""
     memory = out.memory or {}
     return [
-        (
-            str(h.get("namespace") or input.namespace),
-            str(h.get("parent_memory_key") or h["memory_key"]),
-        )
+        hit_row(h, input.namespace)
         for h in memory.get("results") or []
         if isinstance(h, dict) and h.get("memory_key")
     ]

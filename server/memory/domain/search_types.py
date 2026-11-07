@@ -351,6 +351,15 @@ def names_row(hit: Any) -> bool:
     return _identity(hit) is not None
 
 
+def hit_row(hit: Any, namespace: str = "") -> tuple[str, str]:
+    """(namespace, memory_key) of the stored row a hit came from, for a search hit or a
+    wire hit dict alike: a chunk hit (`chunk:<session>:<n>`) is its parent fact's, and a
+    hit with no namespace is the read's (`namespace`)."""
+    get = hit.get if isinstance(hit, dict) else lambda k: getattr(hit, k, "")
+    key = get("parent_memory_key") or get("memory_key")
+    return (str(get("namespace") or namespace), str(key))
+
+
 def hit_row_key(hit: Any, namespace: str = "") -> RowKey:
     """(namespace, agent, user_id, session_id, memory_key) of the stored row a hit is: one
     key holds a row for each writer and session, so a key alone does not name one row.
