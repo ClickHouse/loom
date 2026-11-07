@@ -198,7 +198,8 @@ def test_the_image_and_the_release_ask_for_latest_when_they_apply_it() -> None:
 
 def test_a_dry_run_publishes_nothing() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
-    for name in ("docker-tag", "github-release", "pypi", "npm", "mcp-registry"):
+    # The registries follow github-release, which a dry run skips (test_release_job_paths.py).
+    for name in ("docker-tag", "github-release"):
         assert "!inputs.dry_run" in jobs[name]["if"], name
     # A release stops at the first failing image; a dry run reports them all.
     assert jobs["docker"]["strategy"]["fail-fast"] == "${{ !inputs.dry_run }}"
@@ -396,7 +397,7 @@ def test_the_registries_publish_after_a_release_that_skipped_its_image_jobs(name
     job = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"][name]
     condition = job["if"]
     assert condition.startswith("${{ !cancelled() && needs.github-release.result == 'success' && ")
-    assert "github.event_name == 'workflow_dispatch' && !inputs.dry_run" in condition
+    assert "github.event_name == 'workflow_dispatch'" in condition
 
 
 def test_a_missing_push_token_is_named_apart_from_a_missing_grant(tmp_path: Path) -> None:
