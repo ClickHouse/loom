@@ -139,7 +139,7 @@ An op's **reach** is derived (`Operation.reach`, `server/operations/reach.py`): 
 
 Every op is on every surface or says why not in code. HTTP serves every op in the registry, and both SDKs are generated from it. MCP reaches it unless `_MCP_HIDDEN_OPS` keeps it for people and operators. The dashboard calls it when a person needs it: to administer, review, inspect, configure, or delete with a confirmation; a new op of that kind ships with its control. An op only an agent or a client program calls, or one the dashboard serves through another op, is named in `NOT_IN_DASHBOARD` (`server/operations/dashboard.py`) with the reason; `DASHBOARD_PENDING` there lists the ops a person needs whose control is not built yet, and only shrinks. The census's `--check` (`tests/unit/test_op_reach_census.py`) fails on an op with neither a dashboard call site nor an entry in `server/operations/dashboard.py`.
 
-- An op hidden from MCP that no SDK method, example, plugin hook or dashboard call site reaches declares `maturity="experimental"`.
+- An op hidden from MCP that has no other reach path (`server/operations/reach.py` lists the kinds) declares `maturity="experimental"`.
 - A `stable` op is [listed under the MCP `all` toolset](../reference/operations.md#mcp-all-listing), or, if hidden from MCP, has another reach path, and is meant to have production callers; `python scripts/codegen/op_reach_census.py --call-counts --days 30` shows whether it has them. Declare a new op `experimental` unless it replaces a stable one.
 - Refresh the manifest: `python scripts/codegen/op_reach_census.py --write-manifest` (writes `server/operations/reach_manifest.py`).
 

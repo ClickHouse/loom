@@ -1,18 +1,17 @@
 # Status of Loom's surfaces
 
 This page counts each op group's stable ops, names its experimental ones, and lists every
-boolean setting that loads false, so a caller can tell, before relying on an op or a
-switch, whether it is stable and whether it is on by default. Both tables are generated
-from the code: each op's
-`maturity` in the operation registry, and the boolean settings of
+boolean setting that loads false, so a caller can tell, before relying on an op or a switch,
+whether it is stable and whether it is on by default. Both tables are generated from the
+code: each op's `maturity` in the operation registry, and the boolean settings of
 `server/settings/catalog.py` as they load.
 
 ## Operations
 
 - **Stable** ops are [listed under the MCP `all` toolset](./operations.md#mcp-all-listing)
-  (the `code.*` ops also need `LOOM_MCP_CODE_TOOLS=true`); one hidden from MCP must be
-  reached by an SDK method, an example, a plugin hook or the dashboard (the reach census
-  fails it otherwise). They are meant to have production callers.
+  (the `code.*` ops also need `LOOM_MCP_CODE_TOOLS=true`); one hidden from MCP must have
+  another reach path (`server/operations/reach.py` lists the kinds; the reach census fails
+  it otherwise). They are meant to have production callers.
 - **Experimental** ops may have no production callers yet. One not hidden from MCP is still
   callable by name, and one a toolset names is listed on it (on core or atomic, also under
   `all`; [MCP toolsets](./mcp.md#toolsets)).
