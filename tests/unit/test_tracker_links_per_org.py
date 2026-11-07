@@ -129,7 +129,11 @@ def test_a_branch_follows_only_an_operator_source_and_its_own_row_wins(monkeypat
         "code_repos_json",
         json.dumps([{"org": ORG_X, "namespace": CODE, "repo": "Acme/widgets"}]),
     )
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
     branch = "code-widgets-26-8"
+    monkeypatch.setattr(
+        repos, "_registry_repos", [_entry(ORG_X, branch), _entry(ORG_X, "code-widgets-fork-1")]
+    )
     binding.reset_overrides_for_tests(
         branches={(ORG_X, branch): CODE, (ORG_X, "code-widgets-fork-1"): "code-widgets-fork"}
     )
@@ -140,3 +144,40 @@ def test_a_branch_follows_only_an_operator_source_and_its_own_row_wins(monkeypat
     assert binding.tracker_namespaces_for(ORG_Y, branch) == []
     binding.reset_overrides_for_tests({(ORG_X, branch): "tracker-own"}, {(ORG_X, branch): CODE})
     assert binding.tracker_namespaces_for(ORG_X, branch) == ["tracker-own"]
+
+
+def _entry(org: str, namespace: str) -> repos.RepoConfig:
+    return repos.RepoConfig(
+        org=org,
+        namespace=namespace,
+        repo="Acme/widgets",
+        git_dir="",
+        git_remote="",
+        git_branch="26.8",
+        path_prefixes=(),
+        github_token="",
+        source="registry",
+    )
+
+
+def test_a_branch_row_with_no_repository_entry_is_not_followed(monkeypatch) -> None:
+    """A removal or a late copy can leave a `qa_branch_of` row behind; a namespace with
+    no entry beside it reads nothing from the operator's repository."""
+    monkeypatch.setattr(
+        settings, "tracker_code_namespace_bindings_json", '{"code-widgets*": "tracker-widgets"}'
+    )
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        json.dumps([{"org": ORG_X, "namespace": CODE, "repo": "Acme/widgets"}]),
+    )
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    branch = "code-widgets-26-8"
+    binding.reset_overrides_for_tests(branches={(ORG_X, branch): CODE})
+    monkeypatch.setattr(repos, "_registry_repos", [])
+    assert binding.tracker_namespaces_for(ORG_X, branch) == []
+    monkeypatch.setattr(repos, "_registry_repos", [_entry(ORG_X, branch)])
+    assert binding.tracker_namespaces_for(ORG_X, branch) == ["tracker-widgets"]
+    # self-service switched off: the registry reads empty, and the row is not followed
+    monkeypatch.setattr(settings, "code_self_service_enabled", False)
+    assert binding.tracker_namespaces_for(ORG_X, branch) == []

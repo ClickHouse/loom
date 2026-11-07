@@ -17,9 +17,10 @@ maintainer's link applies only in the org that set it. The operator's map
 applies only to the repositories the operator configured (`source ==
 "config"`): a self-service repository, or a namespace with no repository
 entry, whose name matches a glob gets nothing from the map. A branch added
-from an operator repository (`code.repo.add_branch`, its `qa_branch_of` row)
-reads that repository's links when read, so it follows the map as the
-repository does.
+from an operator repository (`code.repo.add_branch`, its `qa_branch_of` row
+and its self-service entry) reads that repository's links when read, so it
+follows the map as the repository does; a `qa_branch_of` row with no entry
+beside it is not followed.
 
 The bound namespace is read inside a request the transport authorized
 against the CODE namespace, so the read runs the gate again for the current
@@ -114,6 +115,13 @@ async def refresh_overrides(*, force: bool = False) -> dict[tuple[str, str], str
     return dict(_OVERRIDES)
 
 
+def forget_links(org: str, code_namespace: str) -> None:
+    """Drop the org's namespace from this replica's snapshot, whose rows were just
+    emptied: a refresh that failed must not leave the old ones in place."""
+    _OVERRIDES.pop((org, code_namespace), None)
+    _BRANCH_OF.pop((org, code_namespace), None)
+
+
 def override_for(org: str, code_namespace: str) -> str | None:
     """The maintainer's binding for the org's namespace ("" = cleared), None
     when no row exists."""
@@ -139,6 +147,13 @@ def operator_repositories() -> frozenset[tuple[str, str]]:
     return frozenset((c.org, c.namespace) for c in repos.configured_repos() if c.source == "config")
 
 
+def _registered(org: str, code_namespace: str) -> bool:
+    """Whether the namespace is a self-service entry (the registry snapshot, no I/O)."""
+    from server.code.domain.index import repos
+
+    return any(c.org == org and c.namespace == code_namespace for c in repos.registry_repos())
+
+
 def tracker_namespaces_for(
     org: str, code_namespace: str, *, operator: Collection[tuple[str, str]] | None = None
 ) -> list[str]:
@@ -161,8 +176,9 @@ def tracker_namespaces_for(
         operator = operator_repositories()
     if (org, code_namespace) not in operator:
         # Issue and PR numbers are repository-wide: a branch reads its repository's
-        # trackers. Only an operator source is followed, one level.
-        if source and (org, source) in operator:
+        # trackers. Only an operator source is followed, one level, and only for a
+        # registered branch: a removal or a late copy can leave the row behind.
+        if source and (org, source) in operator and _registered(org, code_namespace):
             return tracker_namespaces_for(org, source, operator=operator)
         return []
     if not m:
@@ -318,11 +334,15 @@ async def resolve_binding(org: str, namespace: str) -> dict[str, Any]:
 
 
 __all__ = [
+    "BRANCH_OF_KEY",
+    "OVERRIDE_KEY",
     "authorized_tracker_namespace",
     "authorized_tracker_namespaces",
     "bindings",
     "code_namespaces_linking",
     "encode_binding",
+    "forget_links",
+    "operator_repositories",
     "parse_binding",
     "resolve_binding",
     "tracker_namespace_for",

@@ -95,6 +95,21 @@ def test_the_refresh_fills_both_snapshots_from_one_read(monkeypatch: Any) -> Non
         "code_repos_json",
         '[{"org": "acme", "namespace": "code-w", "repo": "Acme/w"}]',
     )
+    from server.code.domain.index import repos
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    branch = repos.RepoConfig(
+        org="acme",
+        namespace="code-w-1-2",
+        repo="Acme/w",
+        git_dir="",
+        git_remote="",
+        git_branch="1.2",
+        path_prefixes=(),
+        github_token="",
+        source="registry",
+    )
+    monkeypatch.setattr(repos, "_registry_repos", [branch])
     try:
         asyncio.run(binding.refresh_overrides(force=True))
         assert len(ch.calls) == 1

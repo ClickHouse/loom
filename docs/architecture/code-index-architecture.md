@@ -383,14 +383,16 @@ operator's `LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON` applies only to the opera
 repositories (`LOOM_CODE_REPOS_JSON` or `LOOM_CODE_REPO`), never to a self-service one whose
 name matches a glob. `code.repo.add_branch` writes the new branch's `qa_branch_of` row
 naming the root repository (the source, or the source's own root when the source is a
-branch). A branch whose root is an operator repository follows that repository's links at
-read time, the glob included; a source that is not an operator repository has its own
-`qa_binding` row copied to the branch, a cleared one included. An operator source is its own
-root. Both rows are written with the source's rows read first and `qa_branch_of` last, so a
+branch). A registered branch whose root is an operator repository follows that
+repository's links at read time, the glob included; a `qa_branch_of` row with no
+self-service entry beside it is not followed. A source that is not an operator repository
+has its own `qa_binding` row copied to the branch, a cleared one included. An operator
+source is its own root. Both rows are written with the source's rows read first and `qa_branch_of` last, so a
 failure leaves the branch following nothing. `code.repo.remove` empties whichever of the
 two rows holds a value before the namespace's detached purge, and registering a namespace
-empties any row a removed one of the same name left, so the new namespace follows neither;
-an emptied `qa_binding` reads as cleared until its maintainer links it. A namespace that
+empties any row a removed one of the same name left and drops the name from its own
+replica's snapshot, so the new namespace follows neither; an emptied `qa_binding` reads as
+cleared until its maintainer links it. A namespace that
 had no `qa_binding` row gets none, so the operator's map still reaches a namespace of the
 same name. An operator entry configured under a removed name gets no such cleanup: until
 the purge runs, it reads the removed namespace's `qa_binding` row when there is one, the

@@ -119,7 +119,7 @@ async def _register(
     from server.code.store.index import CodeRepo
 
     subject = current_caller()[0] or auth_off_subject()
-    await _drop_stale_tracker_links(org, namespace)
+    await _empty_tracker_links(org, namespace, detail="stale row of a removed namespace")
     await reg.insert_entry(
         org=org,
         namespace=namespace,
@@ -434,7 +434,7 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
     ch = get_client()
     async with sources_lease(input.org, input.namespace):
         # Under the lease and before any deactivation: a refused removal keeps the links.
-        await _clear_tracker_links(input.org, input.namespace)
+        await _empty_tracker_links(input.org, input.namespace, detail="repository removed")
         sources_off = await deactivate_namespace_sources(input.org, input.namespace)
         registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)
     await reg.refresh_db_repos(force=True)
@@ -523,41 +523,24 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
     return out
 
 
-async def _drop_stale_tracker_links(org: str, namespace: str) -> None:
-    """Empty the `qa_branch_of` / `qa_binding` rows a removed namespace of this name
-    left, before the new entry is visible; a fresh name writes nothing. Any row at all,
-    an emptied one included, refreshes the snapshot: a removal on another replica empties
-    the rows in the store, not in this replica's snapshot."""
-    from server.code.store.index import CodeRepo
-    from server.tracker.app import binding
-
-    repo = CodeRepo()
-    found = False
-    for key in (binding.BRANCH_OF_KEY, binding.OVERRIDE_KEY):
-        value = await repo.get_state_or_none(org, namespace, key)
-        if value is None:
-            continue
-        found = True
-        if value:
-            await repo.set_state(org, namespace, key, "", detail="stale row of a removed namespace")
-    if found:
-        await binding.refresh_overrides(force=True)
-
-
-async def _clear_tracker_links(org: str, namespace: str) -> None:
-    """Empty the namespace's `qa_branch_of` and `qa_binding` rows that hold a value now.
-    The purge that deletes them is detached, and a namespace of the same name registered
-    before it runs must not follow the removed one's source or links; an empty row means
-    neither. A row that is absent stays absent: an empty `qa_binding` reads as cleared,
-    so writing one for a namespace that had no links would hide the operator's."""
+async def _empty_tracker_links(org: str, namespace: str, *, detail: str) -> None:
+    """Empty the namespace's `qa_branch_of` and `qa_binding` rows that hold a value, then
+    refresh this replica's snapshot. On removal: the purge that deletes the rows is
+    detached, and a namespace of the same name registered before it runs must not follow
+    the removed one's source or links. On registration: rows a removed namespace of this
+    name left, and a snapshot that still holds them after a removal on another replica;
+    the snapshot drops the namespace even when the refresh fails. An absent row stays
+    absent: an empty `qa_binding` reads as cleared, so writing one for a namespace that
+    had no links would hide the operator's."""
     from server.code.store.index import CodeRepo
     from server.tracker.app import binding
 
     repo = CodeRepo()
     for key in (binding.BRANCH_OF_KEY, binding.OVERRIDE_KEY):
         if await repo.get_state_or_none(org, namespace, key):
-            await repo.set_state(org, namespace, key, "", detail="repository removed")
+            await repo.set_state(org, namespace, key, "", detail=detail)
     await binding.refresh_overrides(force=True)
+    binding.forget_links(org, namespace)
 
 
 async def _inherit_tracker_links(

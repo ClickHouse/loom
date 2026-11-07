@@ -732,6 +732,37 @@ async def test_a_re_add_after_a_removal_on_another_replica_refreshes_the_snapsho
         )
         assert refreshed == [True]
         assert _link_rows(plane) == []  # the rows are empty already
-        assert binding._BRANCH_OF.get((ORG, "code-widgets")) == ""  # not code-clickhouse
+        assert not binding._BRANCH_OF.get((ORG, "code-widgets"))  # not code-clickhouse
+    finally:
+        binding.reset_overrides_for_tests()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refresh_fails", [False, True])
+async def test_a_re_add_after_the_purge_drops_the_stale_snapshot_row(
+    plane, monkeypatch, refresh_fails
+) -> None:
+    """Another replica removed the name and its purge deleted the rows: the store holds
+    none, but this replica's snapshot still names the operator root. Registering the
+    name drops it, whether or not the refresh reads the store."""
+    from server.tracker.app import binding
+
+    async def _refresh(*, force: bool = False) -> dict[Any, str]:
+        if not refresh_fails:
+            binding.reset_overrides_for_tests()
+        return {}
+
+    monkeypatch.setattr(binding, "refresh_overrides", _refresh)
+    binding.reset_overrides_for_tests(
+        {(ORG, "code-widgets"): "tracker-old"},
+        branches={(ORG, "code-widgets"): "code-clickhouse"},
+    )
+    try:
+        await admin.handle_code_repo_add(
+            CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main", join_policy="open")
+        )
+        assert _link_rows(plane) == []
+        assert binding.override_for(ORG, "code-widgets") is None
+        assert (ORG, "code-widgets") not in binding._BRANCH_OF
     finally:
         binding.reset_overrides_for_tests()
