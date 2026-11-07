@@ -947,8 +947,10 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
 
   const decide = async (key: string, decision: "accept" | "reject") => {
     const row = rowBoxes.current.get(key);
-    // The proposal clicked, before a re-read can bring a newer one of the key.
-    const clicked = rowsNow.current?.find((r) => r.memory_key === key);
+    // The proposal clicked, and the keys above it, before a re-read can change either.
+    const clickedAt = rowsNow.current?.findIndex((r) => r.memory_key === key) ?? -1;
+    const clicked = rowsNow.current?.[clickedAt];
+    const above = new Set(rowsNow.current?.slice(0, Math.max(0, clickedAt)).map((r) => r.memory_key));
     setDeciding((d) => new Set(d).add(key));
     try {
       const out = await decideProposal(
@@ -962,9 +964,9 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
       else if (result?.status === "conflicted")
         toast("Accepted; it contradicts a live fact, which now waits in the Conflicts tab", "ok");
       else toast(decision === "accept" ? "Accepted" : "Rejected", "ok");
-      // Where the decided row is now, not where it was when clicked: another decision may
-      // have taken a row above it off the list meanwhile, or a re-read the row itself.
-      const at = Math.max(0, rowsNow.current?.findIndex((r) => r.memory_key === key) ?? 0);
+      // Where the decided row is now: below the rows above it that are still listed, so a
+      // decision that took one of them, or a re-read that dropped this row, moves it up.
+      const at = rowsNow.current?.filter((r) => above.has(r.memory_key)).length ?? 0;
       if (clicked) decided.current.add(proposalId(clicked));
       // Off the list at once, so its buttons cannot send the decision again.
       setRows((rs) => rs?.filter((r) => r.memory_key !== key) ?? rs);
