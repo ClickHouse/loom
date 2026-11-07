@@ -27,6 +27,13 @@ sync 24/7"), and a title holding a design-document, release or incident word
 ("Calendar sync design 2026-01-15", "Release notes 2026-03-04") is never notes. A
 document with no title is named by its first heading. Lines inside a fenced code block
 are code, never questions.
+
+Notes a meeting tool writes from a recording carry the meeting's date and clock time and
+a transcript or notes-by mark in their title ("Planner sync - 2026/03/04 10:00 CET -
+Notes by ..."). Their summary and topic sections are the tool's account of the meeting
+and stay content; only the transcript (its clock-time segments) and the template around
+it (the invite header, next steps, the tool's footer) are noise, each unless it records
+a decision.
 """
 
 from __future__ import annotations
@@ -41,7 +48,9 @@ _CHOICE_VERB = (
     r"(?:(?:going to |be )?(?:go(?:ing)?(?: ahead)? with|proceed(?:ing)? with|use|using|"
     r"keep|keeping|drop|dropping|"
     r"switch(?:ing)? to|move|moving|migrate|migrating|adopt|adopting|support|supporting|"
-    r"ship|shipping|pick|choose|stick with|stay with|replace|replacing))"
+    r"ship|shipping|pick|choose|stick with|stay with|replace|replacing|"
+    r"enable|enabling|disable|disabling|lower|raise|remove|removing|deprecate|disallow|"
+    r"roll out|rolling out))"
 )
 _CHOSE = (
     r"(?:picked|chose|selected|switched to|moved to|migrated to|adopted|went with|dropped|"
@@ -54,7 +63,8 @@ _DECISION = re.compile(
     r"going with|going ahead with|proceeding with|went with|chosen|ruled out|resolved:|"
     r"conclusion:|outcome:|opted (?:for|to)|concluded|not supporting|"
     r"defaults? to|"
-    rf"we(?:'re| are|'ll| will| won't| will not)(?: not)? {_CHOICE_VERB}|"
+    rf"(?:we|i)(?:'re| are|'m| am|'ll| will| won't| will not)(?: not)? {_CHOICE_VERB}|"
+    r"the plan is to|"
     rf"(?:we|the team)(?:'ve| have| had)? {_CHOSE}|"
     r"(?:was|were|is|are) (?:picked|selected)|"
     r"(?:option|proposal|approach)\b[^.;]{0,80}\b(?:accepted|rejected)\b|"
@@ -111,9 +121,30 @@ _NOTES_TITLE = re.compile(
 _MEETING_TITLE = re.compile(_MEETING, re.IGNORECASE)
 _DAY = (
     rf"(?:\d{{4}}[-/]\d{{2}}[-/]\d{{2}}|\d{{1,2}}/\d{{1,2}}/(?:\d{{4}}|\d{{2}})|"
-    rf"{_MONTH}\s+\d{{1,2}}|\d{{1,2}}\s+{_MONTH})"
+    rf"{_MONTH}\s+\d{{1,2}}(?:,?\s+\d{{4}})?|\d{{1,2}}\s+{_MONTH}(?:\s+\d{{4}})?)"
 )
 _DATE_HEADING = re.compile(rf"^\W*{_DAY}\b\W*$", re.IGNORECASE)
+# Notes a meeting tool writes from a recording: a title with the meeting's date and clock
+# time and a transcript or notes-by mark ("Planner sync - 2026/03/04 10:00 CET - Notes by
+# ...", "Planner sync — Transcript & notes — 2026-03-04 10.00.12 CET"). Their summary and
+# topic sections are the tool's account of the meeting, content; their transcript and
+# the template around it (invitees, next steps, the tool's footer) are noise.
+_RECORDED_STAMP = re.compile(rf"\b{_DAY}\s+\d{{1,2}}[:.]\d{{2}}\b", re.IGNORECASE)
+_RECORDED_MARK = re.compile(r"\b(?:transcript|notes by)\b", re.IGNORECASE)
+# A transcript's segment (a clock-time heading such as "00:12:30"), the transcript itself
+# and the template's own sections.
+_TRANSCRIPT_HEADING = re.compile(
+    r"^\W*\d{1,2}:\d{2}(?::\d{2})?\W*$|\btranscript(?:ion)?\b"
+    r"|^\W*(?:suggested\s+)?(?:next\s+steps|action\s+items|attendees)\b",
+    re.IGNORECASE,
+)
+# The template's text: the invite header ("Invited ...", "Mar 4, 2026 <attendees>"), the
+# transcript's preamble, the footer that asks for a rating or a review.
+_TEMPLATE_TEXT = re.compile(
+    rf"^\W*(?:invited\b|{_MONTH}\s+\d{{1,2}},\s+\d{{4}}\b|this editable transcript\b|"
+    r"please\W+rate\b|you should review\b)",
+    re.IGNORECASE,
+)
 _DESIGN_TITLE = re.compile(
     r"\b(?:design|rfc|proposal|spec|specification|architecture|adr|plan|runbook|release|"
     r"upgrade|migration|incident|postmortem|changelog)\b",
@@ -155,7 +186,8 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
         bool(_MEETING_TITLE.search(name))
         and bool(_DATE_HEADING.match(_top_heading(name, headings)))
     )
-    notes = dated and not _DESIGN_TITLE.search(name)
+    recorded = bool(_RECORDED_STAMP.search(name) and _RECORDED_MARK.search(name))
+    notes = recorded or (dated and not _DESIGN_TITLE.search(name))
     prose, code = _lines(text)
     # A heading is not in the section's text: a decision it states counts the same.
     # A heading that says no decision was reached is not one, in any document.
@@ -168,6 +200,10 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
         return False
     if _unanswered(headings, prose, code):
         return True
+    if recorded:
+        return any(_TRANSCRIPT_HEADING.search(h) for h in headings) or bool(
+            prose and _TEMPLATE_TEXT.match(prose[0])
+        )
     return notes
 
 

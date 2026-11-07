@@ -120,6 +120,8 @@ def test_the_labelled_set_scores_as_measured() -> None:
         ("Planner sync notes 2026-09-24", ("Fallbacks",), "Talked about the fallback list."),
         ("Storage sync 2026-03-04", ("Scheduling",), "Next sync moves to Thursday 10:00."),
         ("Session store RFC", ("Open questions",), "- Keep sessions across it?\n- Who owns it?"),
+        # a running notes page that dates each meeting with its year
+        ("Storage weekly sync", ("Aug 13, 2026", "Cache"), "Talked about the TTL."),
     ],
 )
 def test_bookkeeping_and_discussion_without_a_decision_are_noise(
@@ -323,6 +325,71 @@ def test_bookkeeping_and_discussion_without_a_decision_are_noise(
 )
 def test_a_decision_or_design_text_is_content(title: str, path: tuple[str, ...], text: str) -> None:
     assert not is_noise(title, path, text)
+
+
+_RECORDED = "Planner sync - 2026/03/04 10:00 CET - Notes by Assistant"
+_TRANSCRIPT = "Planner sync — Transcript & notes — 2026-03-04 10.00.12 CET"
+
+
+@pytest.mark.parametrize(
+    ("title", "path", "text"),
+    [
+        (_RECORDED, ("Planner sync - Transcript", "00:12:30"), "**Ana:** uh so the cache is big"),
+        (_RECORDED, ("Transcript",), "**Tomas:** right, next one"),
+        (_RECORDED, ("Next steps",), "- [ ] [Ana] Task: check the bench by Friday"),
+        (_RECORDED, (), "Invited [Ana](mailto:ana@example.com) [Tomas](mailto:t@example.com)"),
+        (_RECORDED, (), "Mar 4, 2026 [Ana](mailto:ana@example.com)"),
+        (
+            _RECORDED,
+            (),
+            "This editable transcript was computer generated and might contain errors.",
+        ),
+        (_RECORDED, (), "Please rate these notes."),
+        (_RECORDED, ("Transcription ended after 00:41:12",), "**Ana:** bye"),
+        (_TRANSCRIPT, ("Transcript", "00:01:02"), "**Ana:** okay let's start"),
+    ],
+)
+def test_a_recorded_meetings_transcript_and_template_are_noise(
+    title: str, path: tuple[str, ...], text: str
+) -> None:
+    assert is_noise(title, path, text)
+
+
+@pytest.mark.parametrize(
+    ("title", "path", "text"),
+    [
+        # the tool's account of the meeting is content, a decision or not
+        (_RECORDED, ("Summary",), "The team reviewed the fallback list and the cache budget."),
+        (_RECORDED, ("Details",), "Ana walked through the cache budget per tenant."),
+        (_RECORDED, ("Cache budget per tenant",), "Ana showed the per-tenant numbers."),
+        (_RECORDED, ("Decisions", "Needs Further Discussion"), "- The TTL for cold tenants."),
+        # a decisions heading keeps every section under it
+        (_RECORDED, ("Decisions", "Aligned", "Suggested next steps"), "- [ ] [Ana] check it"),
+        (_TRANSCRIPT, ("Summary",), "The team reviewed the fallback list."),
+        # a transcript segment that records a decision or a plan
+        (_RECORDED, ("Transcript", "00:14:10"), "**Ana:** so the plan is to drop the cache"),
+        (_RECORDED, ("Transcript", "00:15:02"), "**Ana:** I'm going to disallow warning alerts."),
+        # a clock time without a transcript or notes-by mark names no recording
+        ("Cutover 2026-03-04 10:00", ("Transcript",), "Ana walked through the steps."),
+    ],
+)
+def test_a_recorded_meetings_account_is_content(
+    title: str, path: tuple[str, ...], text: str
+) -> None:
+    assert not is_noise(title, path, text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "We'll enable the cache by default.",
+        "We are rolling out the new router on Monday.",
+        "The plan is to lower the alert to info.",
+        "I'll remove the old flag in the next release.",
+    ],
+)
+def test_a_stated_plan_is_a_decision_in_notes(text: str) -> None:
+    assert not is_noise("Storage sync 2026-03-04", ("Cache",), text)
 
 
 def _rows(chunks: list[Any], doc_format: str = "") -> list[Any]:
@@ -706,4 +773,6 @@ def test_a_long_line_is_judged_in_linear_time() -> None:
     is_noise("Storage sync 2026-03-04", ("X",), "Decision" + "*:" * 20_000 + "x")
     is_noise("Storage sync 2026-03-04", ("X",), "_" * 40_000 + "x")
     is_noise("Storage sync 2026-03-04", ("X",), "Decision: deferred to " + "x " * 20_000)
+    is_noise(_RECORDED, ("00:12:30",), "we " * 20_000)
+    is_noise("Jan 4, " * 20_000 + "notes by", ("X",), "x")
     assert time.perf_counter() - started < 5.0

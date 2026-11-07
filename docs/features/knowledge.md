@@ -604,8 +604,12 @@ its title and a date as the top heading of each meeting. A document with no titl
 named by its first heading. A title that names a design document, a plan, a release, a
 migration or an incident is never notes, as in `Calendar sync design 2026-01-15` or
 `Release notes 2026-03-04`. In notes, a section that records no decision is noise, its
-bookkeeping (attendees, an agenda, action items) included. The rules leave a section as
-content when unsure.
+bookkeeping (attendees, an agenda, action items) included. Notes a meeting tool writes
+from a recording, titled with the meeting's date and clock time and a transcript or
+notes-by mark (`Planner sync - 2026/03/04 10:00 CET - Notes by ...`), keep their
+summary and topic sections as content; there only the transcript, its clock-time
+segments and the template around it (the invite header, next steps, the tool's footer)
+are noise. The rules leave a section as content when unsure.
 
 A hit reports `noise`. With `LOOM_KNOWLEDGE_NOISE_FILTER` on (the default), a noise hit
 moves below the last hit close to the query (cosine similarity 0.30 or more, or the
