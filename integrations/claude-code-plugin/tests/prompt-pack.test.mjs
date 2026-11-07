@@ -1,7 +1,7 @@
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { accept, renderPack, searchBody, shouldAsk, SEEN_CAP } from "../lib/prompt-pack.mjs";
+import { accept, renderPack, searchBody, searchQuery, shouldAsk, SEEN_CAP } from "../lib/prompt-pack.mjs";
 
 const RES = {
   abstain: false,
@@ -81,8 +81,7 @@ test("the index is asked about the request, not about how to answer it", async (
   );
 });
 
-test("a wrapper tag followed by a long whitespace run and no close tag is matched in linear time", async () => {
-  const { searchQuery } = await import("../lib/prompt-pack.mjs");
+test("a wrapper tag followed by a long whitespace run and no close tag is matched in linear time", () => {
   const prompt = "please look at this <task>" + " ".repeat(2000) + "why";
   const start = performance.now();
   shouldAsk(prompt);
