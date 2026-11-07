@@ -31,8 +31,9 @@ def _module():
 
 
 prepare = _module()
-PLANNED_CHART = prepare.planned_chart  # before a fixture replaces it
+# The real functions, which the `prepared` fixture and some tests replace.
 VALIDATE = prepare.validate
+CHECK = prepare.check
 
 TEMPLATE = (ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md").read_text()
 
@@ -72,7 +73,9 @@ def prepared(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str,
 
     monkeypatch.setattr(prepare, "validate", lambda version: None)
     monkeypatch.setattr(prepare, "refuse_tagged", lambda version: None)
-    monkeypatch.setattr(prepare, "_git", lambda root, *args: subprocess.CompletedProcess(args, 0))
+    monkeypatch.setattr(
+        prepare, "_git", lambda root, *args, **kw: subprocess.CompletedProcess(args, 0)
+    )
     monkeypatch.setattr(prepare, "previous_release", lambda version: "v1.1.0")
     monkeypatch.setattr(prepare, "released_chart", lambda tag: "0.1.0")
     monkeypatch.setattr(prepare, "planned_chart", lambda *args: "0.2.0")
@@ -166,7 +169,7 @@ def test_a_file_left_behind_is_named(tmp_path: Path) -> None:
     chart.write_text(chart.read_text().replace('appVersion: "', 'appVersion: "0.0.0-'))
     ((path, error),) = prepare.check(root=root)
     assert path == "deploy/helm/loom/Chart.yaml"
-    assert error.startswith("deploy/helm/loom/Chart.yaml names 0.0.0-")
+    assert error.startswith("names 0.0.0-")
 
 
 def test_the_version_table_names_every_file_the_script_bumps() -> None:
@@ -605,15 +608,14 @@ def test_a_version_tagged_on_the_remote_is_refused_after_the_fetch(
     git_repo.git(root, "init", "-q")
     _commit(root, "files")
 
-    def fetch(where: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    def fetch(where: Path, *args: str, **kw: object) -> subprocess.CompletedProcess[str]:
         if args[0] == "fetch":
             git_repo.git(root, "tag", "v98.0.0")  # what the remote has
             return subprocess.CompletedProcess(args, 0, "", "")
         return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
 
-    validate = prepare.validate
     monkeypatch.setattr(prepare, "_git", fetch)
-    monkeypatch.setattr(prepare, "validate", lambda version: validate(version, root))
+    monkeypatch.setattr(prepare, "validate", lambda version: VALIDATE(version, root))
     monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "98.0.0"])
     with pytest.raises(SystemExit, match="v98.0.0 is already tagged"):
         prepare.main()
@@ -621,9 +623,11 @@ def test_a_version_tagged_on_the_remote_is_refused_after_the_fetch(
 
 def test_the_tags_that_cannot_be_fetched_stop_the_release(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(prepare, "validate", lambda version: None)
-    monkeypatch.setattr(
-        prepare, "_git", lambda root, *args: subprocess.CompletedProcess(args, 1, "", "no network")
-    )
+
+    def no_network(root: Path, *args: str, **kw: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.CalledProcessError(1, ["git", *args], stderr="no network")
+
+    monkeypatch.setattr(prepare, "_git", no_network)
     monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "1.2.0"])
     with pytest.raises(SystemExit, match="failed: no network$"):
         prepare.main()
@@ -632,7 +636,7 @@ def test_the_tags_that_cannot_be_fetched_stop_the_release(monkeypatch: pytest.Mo
 def test_a_release_with_no_final_tag_below_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     # Every git call succeeds, and the tag list is empty.
     monkeypatch.setattr(
-        prepare, "_git", lambda root, *args: subprocess.CompletedProcess(args, 0, "", "")
+        prepare, "_git", lambda root, *args, **kw: subprocess.CompletedProcess(args, 0, "", "")
     )
     monkeypatch.setattr(prepare, "validate", lambda version: None)
     monkeypatch.setattr(prepare, "refuse_tagged", lambda version: None)
@@ -646,14 +650,13 @@ def test_a_server_version_the_check_cannot_read_is_an_error_line_on_its_file(
 ) -> None:
     root = _copy(tmp_path)
     (root / "server/__init__.py").write_text("version = 1\n")
-    check = prepare.check
-    monkeypatch.setattr(prepare, "check", lambda **kw: check(root=root, **kw))
+    monkeypatch.setattr(prepare, "check", lambda **kw: CHECK(root=root, **kw))
     monkeypatch.setattr(sys, "argv", ["prepare.py", "check", "1.2.0"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
     assert exited.value.code == 1
     out = capsys.readouterr().out
-    assert out.startswith("::error file=server/__init__.py::server/__init__.py: ")
+    assert out.startswith("::error file=server/__init__.py::")
     assert "matches 0 times, not once" in out
 
 
@@ -662,7 +665,7 @@ def test_a_skipped_chart_check_says_so(
 ) -> None:
     monkeypatch.setattr(prepare, "chart_baseline", lambda version: None)
     for tag_version in ("1.2.0", "1.2.0-rc.3"):  # the final is what is on another commit
-        monkeypatch.setattr(sys, "argv", ["prepare.py", "check-chart", tag_version])
+        monkeypatch.setattr(sys, "argv", ["prepare.py", "check-chart", "--dry-run", tag_version])
         prepare.main()
         assert capsys.readouterr().out == (
             "::notice::no chart check: v1.2.0 is tagged on another commit\n"
@@ -746,12 +749,29 @@ def test_a_tag_check_off_its_commit_says_it_skipped(
 ) -> None:
     monkeypatch.setattr(prepare, "tag_on_head", lambda version: False)
     monkeypatch.setattr(prepare, "check_tag", lambda version: "never asked")
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "check-tag", "1.2.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "check-tag", "--dry-run", "1.2.0"])
     prepare.main()
     assert (
         "::notice::no candidate-order check: v1.2.0 is not on this commit"
         in capsys.readouterr().out
     )
+
+
+@pytest.mark.parametrize(
+    ("command", "patch", "error"),
+    [
+        ("check-tag", ("tag_on_head", lambda version: False), "is not on the checked-out commit"),
+        ("check-chart", ("chart_baseline", lambda version: None), "is tagged on another commit"),
+    ],
+)
+def test_a_tag_run_off_its_tag_is_refused(
+    monkeypatch: pytest.MonkeyPatch, command: str, patch: tuple, error: str
+) -> None:
+    """Outside a dry run the tag is the checked-out commit; one moved after the push fails."""
+    monkeypatch.setattr(prepare, *patch)
+    monkeypatch.setattr(sys, "argv", ["prepare.py", command, "1.2.0"])
+    with pytest.raises(SystemExit, match=f"^::error::v1.2.0 {error}"):
+        prepare.main()
 
 
 def test_a_tag_out_of_candidate_order_is_an_error_line(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -803,15 +823,17 @@ def test_a_chart_that_cannot_be_planned_stops_before_the_notes(
 def test_a_tag_list_that_cannot_be_read_fails_the_candidate_check(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    def git(root: Path, *args: str, **kw: object) -> subprocess.CompletedProcess[str]:
         if args[0] == "tag":
-            return subprocess.CompletedProcess(["git", *args], 128, "", "fatal: bad repository\n")
+            raise subprocess.CalledProcessError(
+                128, ["git", *args], stderr="fatal: bad repository\n"
+            )
         return subprocess.CompletedProcess(["git", *args], 0, "abc\n", "")  # on HEAD
 
     monkeypatch.setattr(prepare, "_git", git)
     monkeypatch.setattr(sys, "argv", ["prepare.py", "check-tag", "1.2.0"])
     with pytest.raises(SystemExit) as exited:
-        prepare.main()  # an empty list would have passed the final
+        prepare.main()
     assert str(exited.value) == "::error::git tag --list v1.2.0-rc.* failed: fatal: bad repository"
 
 
@@ -820,14 +842,13 @@ def test_a_version_file_that_is_missing_is_an_error_line(
 ) -> None:
     root = _copy(tmp_path)
     (root / "frontend/package-lock.json").unlink()
-    check = prepare.check
-    monkeypatch.setattr(prepare, "check", lambda **kw: check(root=root, **kw))
+    monkeypatch.setattr(prepare, "check", lambda **kw: CHECK(root=root, **kw))
     monkeypatch.setattr(sys, "argv", ["prepare.py", "check", "1.2.0"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
     assert exited.value.code == 1
     out = capsys.readouterr().out
-    assert "::error file=frontend/package-lock.json::frontend/package-lock.json: missing\n" in out
+    assert "::error file=frontend/package-lock.json::missing\n" in out
 
 
 def test_a_bump_with_a_version_file_missing_is_a_plain_line(
@@ -835,9 +856,10 @@ def test_a_bump_with_a_version_file_missing_is_a_plain_line(
 ) -> None:
     root = _copy(tmp_path)
     (root / "frontend/package-lock.json").unlink()
-    validate = prepare.validate
-    monkeypatch.setattr(prepare, "_git", lambda root, *args: subprocess.CompletedProcess(args, 0))
-    monkeypatch.setattr(prepare, "validate", lambda version: validate(version, root))
+    monkeypatch.setattr(
+        prepare, "_git", lambda root, *args, **kw: subprocess.CompletedProcess(args, 0)
+    )
+    monkeypatch.setattr(prepare, "validate", lambda version: VALIDATE(version, root))
     monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "99.0.0"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
@@ -863,8 +885,10 @@ def test_the_release_runs_every_check_on_the_tag_with_its_tags() -> None:
     (checkout,) = [s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout@")]
     assert checkout["with"]["fetch-depth"] == 0  # the candidate order and the chart read tags
     script = "\n".join(s.get("run", "") for s in job["steps"])
-    for command in ("check", "check-chart", "check-tag"):
-        assert f'python3 scripts/release/prepare.py {command} "$VERSION"\n' in script, command
+    assert 'python3 scripts/release/prepare.py check "$VERSION"\n' in script
+    for command in ("check-chart", "check-tag"):
+        line = f'python3 scripts/release/prepare.py {command} "${{dry_run[@]}}" "$VERSION"\n'
+        assert line in script, command
 
 
 def test_the_github_release_notes_start_at_the_previous_final() -> None:
@@ -889,12 +913,12 @@ def test_a_tag_whose_files_name_another_release_is_an_error_on_the_server_file(
     version = prepare.read(prepare.SERVER, root)
     assert prepare.check(root=root, tag_version=f"{version}-rc.1") == []  # a candidate of it
     assert prepare.check(root=root, tag_version="0.0.1") == [
-        ("server/__init__.py", f"server/__init__.py names {version}, not 0.0.1 (the tag v0.0.1)")
+        ("server/__init__.py", f"names {version}, not 0.0.1 (the tag v0.0.1)")
     ]
 
 
 def test_the_checks_need_only_the_standard_library(tmp_path: Path) -> None:
-    """The release workflow runs them on the runner's python3, outside the project."""
+    """The release workflow runs them on python3 without the project's environment."""
     version = prepare.read(prepare.SERVER)
     result = subprocess.run(
         [sys.executable, "-I", "-S", str(ROOT / "scripts/release/prepare.py"), "check", version],

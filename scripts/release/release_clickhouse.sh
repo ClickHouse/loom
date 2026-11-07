@@ -52,7 +52,7 @@ if [ -z "$image" ] && [[ $version != *-* ]]; then
   candidates=$(git tag --points-at HEAD --list "v$version-rc.*" --sort=-v:refname)
   # A candidate whose run published no bundle: the next one down.
   for candidate in $candidates; do
-    [[ $candidate =~ -rc\.[0-9]+$ ]] || continue
+    [[ $candidate =~ ^v${version//./\\.}-rc\.[0-9]+$ ]] || continue
     status=0
     image=$(published "${candidate#v}") || status=$?
     [ "$status" = 0 ] && break

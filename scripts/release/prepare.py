@@ -4,7 +4,7 @@ and the version checks the release workflow runs.
 
 `bump` and `notes` run with the project's environment (the notes import the
 server's registry); the other commands, which the release workflow runs on the
-runner's own python3, need only the standard library:
+python3 without the project's environment, need only the standard library:
 
     .venv/bin/python scripts/release/prepare.py bump 1.2.0   # notes, then the bump
     .venv/bin/python scripts/release/prepare.py notes 1.2.0  # the notes alone
@@ -74,6 +74,28 @@ PINS = [SERVER, *FOLLOWERS]
 CHART = Pin("deploy/helm/loom/Chart.yaml", r"^version: (?P<v>\S+)$")
 
 
+def parse(version: str) -> tuple[int, int, int]:
+    match = SEMVER.fullmatch(version)
+    if not match:
+        raise ValueError(f"{version!r} is not a SemVer X.Y.Z[-pre] version")
+    major, minor, patch = match.groups()
+    return int(major), int(minor), int(patch)
+
+
+def final_of(tag_version: str) -> str:
+    """X.Y.Z of a tag version, its own or its candidate's."""
+    return tag_version.split("-", 1)[0]
+
+
+def require_final(version: str) -> None:
+    """A version file names a final X.Y.Z; a candidate is a tag on the release commit."""
+    if FINAL.fullmatch(version):
+        return
+    if SEMVER.fullmatch(version):
+        raise ValueError(f"{version} is not a final X.Y.Z: a candidate is a tag, not a bump")
+    raise ValueError(f"{version!r} is not X.Y.Z")
+
+
 def _match(pin: Pin, text: str) -> re.Match[str]:
     found = list(re.finditer(pin.pattern, text, re.MULTILINE))
     if len(found) != 1:
@@ -92,114 +114,68 @@ def read(pin: Pin, root: Path = ROOT) -> str:
     return _match(pin, _text(pin.path, root)).group("v")
 
 
-def parse(version: str) -> tuple[int, int, int]:
-    match = SEMVER.fullmatch(version)
-    if not match:
-        raise ValueError(f"{version!r} is not a SemVer X.Y.Z[-pre] version")
-    major, minor, patch = match.groups()
-    return int(major), int(minor), int(patch)
-
-
-def next_chart_version(version: str, previous_version: str, previous_chart: str) -> str:
-    """The chart after `previous_chart`, which `previous_version` shipped: a patch
-    release moves it a patch, any other a minor."""
-    major, minor, patch = parse(previous_chart)
-    if parse(version)[:2] == parse(previous_version)[:2]:
-        return f"{major}.{minor}.{patch + 1}"
-    return f"{major}.{minor + 1}.0"
-
-
 def check(tag_version: str | None = None, root: Path = ROOT) -> list[tuple[str, str]]:
     """(file, error) for every pin that does not carry the server's version, and
     for the server's version when it is not the final `tag_version` names."""
     try:
         want = read(SERVER, root)
     except ValueError as e:
-        return [(SERVER.path, str(e))]
+        return [(SERVER.path, str(e).removeprefix(f"{SERVER.path}: "))]
     errors = []
     final = final_of(tag_version) if tag_version else want
     if want != final:
-        errors.append(
-            (SERVER.path, f"{SERVER.path} names {want}, not {final} (the tag v{tag_version})")
-        )
+        errors.append((SERVER.path, f"names {want}, not {final} (the tag v{tag_version})"))
     for pin in FOLLOWERS:
         try:
             got = read(pin, root)
         except ValueError as e:
-            errors.append((pin.path, str(e)))
+            errors.append((pin.path, str(e).removeprefix(f"{pin.path}: ")))
             continue
         if got != want:
-            errors.append((pin.path, f"{pin.path} names {got}, {SERVER.path} {want}"))
+            errors.append((pin.path, f"names {got}, {SERVER.path} {want}"))
     return errors
 
 
-def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
+def validate(version: str, root: Path = ROOT) -> None:
+    """Refuse a final version the files cannot take, before any `gh` call or
+    write: every pin is found once, the chart's own version parses, and the version
+    is not below the current one."""
+    for pin in FOLLOWERS:
+        read(pin, root)
+    chart = read(CHART, root)
+    try:
+        parse(chart)
+    except ValueError as e:  # the next chart version is planned from it
+        raise ValueError(f"{CHART.path}: {e}") from None
+    current = read(SERVER, root)
+    if parse(version) < parse(current):
+        raise ValueError(f"{version} is below the current version {current}")
+
+
+def bump(version: str, chart: str, root: Path = ROOT) -> None:
+    """Every pin to `version` and the chart's own version to `chart`. Every file
+    is edited in memory first, so a pin not found writes nothing."""
+    texts: dict[str, str] = {}
+    edits = [(CHART, chart)] + [(p, version) for p in PINS]
+    for pin, value in edits:
+        text = texts[pin.path] if pin.path in texts else _text(pin.path, root)
+        start, end = _match(pin, text).span("v")
+        texts[pin.path] = text[:start] + value + text[end:]
+    for path, text in texts.items():
+        (root / path).write_text(text, encoding="utf-8")
+
+
+def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=check)
 
 
 def _sha(root: Path, ref: str) -> str:
     """The commit `ref` names, or "" when there is none; a git that cannot read
     the repository raises."""
-    found = _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    found = _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", check=False)
     if found.returncode not in (0, 1):  # 1 is "no such ref"
         found.check_returncode()
     return found.stdout.strip()
-
-
-def final_of(tag_version: str) -> str:
-    """X.Y.Z of a tag version, its own or its candidate's."""
-    return tag_version.split("-", 1)[0]
-
-
-def chart_baseline(tag_version: str, root: Path = ROOT) -> str | None:
-    """The release before `tag_version`'s, or None when `vX.Y.Z` is on another
-    commit (a dry run of a branch still naming a shipped release)."""
-    version = final_of(tag_version)
-    if _sha(root, f"v{version}") and not tag_on_head(version, root):
-        return None
-    return previous_release(version, root)
-
-
-def previous_release(version: str, root: Path = ROOT) -> str:
-    """The highest final v* tag below `version`."""
-    listed = _git(root, "tag", "--list", "v*")
-    listed.check_returncode()
-    finals = [t for t in listed.stdout.split() if FINAL.fullmatch(t[1:])]
-    older = [t for t in finals if parse(t[1:]) < parse(version)]
-    if not older:
-        raise ValueError(f"no final release tag below {version} (are the tags fetched?)")
-    return max(older, key=lambda t: parse(t[1:]))
-
-
-def check_chart(baseline: str, root: Path = ROOT) -> str | None:
-    """An error when the chart's version is not above the one `baseline` shipped:
-    every release moves the chart's `appVersion`, so every release changes it."""
-    new = read(CHART, root)
-    old = released_chart(baseline, root)
-    if parse(new) <= parse(old):
-        return f"the chart's version is {new}, not above the {old} that {baseline} shipped"
-    return None
-
-
-def released_chart(tag: str, root: Path = ROOT) -> str:
-    """The chart's own version at a release tag."""
-    shown = _git(root, "show", f"{tag}:{CHART.path}")
-    shown.check_returncode()
-    try:
-        version = _match(CHART, shown.stdout).group("v")
-        parse(version)
-    except ValueError as e:
-        raise ValueError(f"{e} (at {tag})") from None
-    return version
-
-
-def require_final(version: str) -> None:
-    """A version file names a final X.Y.Z; a candidate is a tag on the release commit."""
-    if FINAL.fullmatch(version):
-        return
-    if SEMVER.fullmatch(version):
-        raise ValueError(f"{version} is not a final X.Y.Z: a candidate is a tag, not a bump")
-    raise ValueError(f"{version!r} is not X.Y.Z")
 
 
 def tag_on_head(tag_version: str, root: Path = ROOT) -> bool:
@@ -207,6 +183,23 @@ def tag_on_head(tag_version: str, root: Path = ROOT) -> bool:
     run or a branch run."""
     own = _sha(root, f"v{tag_version}")
     return bool(own) and own == _sha(root, "HEAD")
+
+
+def previous_release(version: str, root: Path = ROOT) -> str:
+    """The highest final v* tag below `version`."""
+    listed = _git(root, "tag", "--list", "v*")
+    finals = [t for t in listed.stdout.split() if FINAL.fullmatch(t[1:])]
+    older = [t for t in finals if parse(t[1:]) < parse(version)]
+    if not older:
+        raise ValueError(f"no final release tag below {version} (are the tags fetched?)")
+    return max(older, key=lambda t: parse(t[1:]))
+
+
+def refuse_tagged(version: str, root: Path = ROOT) -> None:
+    """A bump for a version already tagged would rename a shipped release. The
+    notes alone may be made again for it."""
+    if _sha(root, f"v{version}"):
+        raise ValueError(f"v{version} is already tagged: prepare the next version")
 
 
 def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
@@ -229,7 +222,6 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
             )
         return None
     tags = _git(root, "tag", "--list", f"v{final}-rc.*")
-    tags.check_returncode()  # an empty list would pass the final
     listed = tags.stdout.split()
     candidates = sorted(
         (t for t in listed if CANDIDATE.fullmatch(t[1:])),
@@ -243,27 +235,43 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
     return None
 
 
-def validate(version: str, root: Path = ROOT) -> None:
-    """Refuse a final version the files cannot take, before any `gh` call or
-    write: every pin is found once, the chart's own version parses, and the version
-    is not below the current one."""
-    for pin in FOLLOWERS:
-        read(pin, root)
-    chart = read(CHART, root)
+def released_chart(tag: str, root: Path = ROOT) -> str:
+    """The chart's own version at a release tag."""
+    shown = _git(root, "show", f"{tag}:{CHART.path}")
     try:
-        parse(chart)
-    except ValueError as e:  # the next chart version is planned from it
-        raise ValueError(f"{CHART.path}: {e}") from None
-    current = read(SERVER, root)
-    if parse(version) < parse(current):
-        raise ValueError(f"{version} is below the current version {current}")
+        version = _match(CHART, shown.stdout).group("v")
+        parse(version)
+    except ValueError as e:
+        raise ValueError(f"{e} (at {tag})") from None
+    return version
 
 
-def refuse_tagged(version: str, root: Path = ROOT) -> None:
-    """A bump for a version already tagged would rename a shipped release. The
-    notes alone may be made again for it."""
-    if _sha(root, f"v{version}"):
-        raise ValueError(f"v{version} is already tagged: prepare the next version")
+def chart_baseline(tag_version: str, root: Path = ROOT) -> str | None:
+    """The release before `tag_version`'s, or None when `vX.Y.Z` is on another
+    commit (a dry run of a branch still naming a shipped release)."""
+    version = final_of(tag_version)
+    if _sha(root, f"v{version}") and not tag_on_head(version, root):
+        return None
+    return previous_release(version, root)
+
+
+def check_chart(baseline: str, root: Path = ROOT) -> str | None:
+    """An error when the chart's version is not above the one `baseline` shipped:
+    every release moves the chart's `appVersion`, so every release changes it."""
+    new = read(CHART, root)
+    old = released_chart(baseline, root)
+    if parse(new) <= parse(old):
+        return f"the chart's version is {new}, not above the {old} that {baseline} shipped"
+    return None
+
+
+def next_chart_version(version: str, previous_version: str, previous_chart: str) -> str:
+    """The chart after `previous_chart`, which `previous_version` shipped: a patch
+    release moves it a patch, any other a minor."""
+    major, minor, patch = parse(previous_chart)
+    if parse(version)[:2] == parse(previous_version)[:2]:
+        return f"{major}.{minor}.{patch + 1}"
+    return f"{major}.{minor + 1}.0"
 
 
 def planned_chart(
@@ -273,18 +281,6 @@ def planned_chart(
     when it was raised higher since; so a second bump moves it once."""
     chart = next_chart_version(version, previous_version, previous_chart)
     return max(chart, read(CHART, root), key=parse)
-
-
-def bump(version: str, chart: str, root: Path = ROOT) -> None:
-    """Every pin to `version` and the chart's own version to `chart`. Every file
-    is edited in memory first, so a pin not found writes nothing."""
-    texts: dict[str, str] = {}
-    for pin, value in [(CHART, chart), *((pin, version) for pin in PINS)]:
-        text = texts[pin.path] if pin.path in texts else _text(pin.path, root)
-        start, end = _match(pin, text).span("v")
-        texts[pin.path] = text[:start] + value + text[end:]
-    for path, text in texts.items():
-        (root / path).write_text(text, encoding="utf-8")
 
 
 # The notes.
@@ -372,7 +368,6 @@ def squash_merges(previous_tag: str, root: Path = ROOT) -> dict[int, int]:
     merges since `previous_tag`; the release pull request's own merge (the one
     that moves `__version__`) is left out."""
     log = _git(root, "log", "--reverse", "--format=%H %ct %s", f"{previous_tag}..HEAD")
-    log.check_returncode()
     bumps = _git(
         root,
         "log",
@@ -383,7 +378,6 @@ def squash_merges(previous_tag: str, root: Path = ROOT) -> dict[int, int]:
         "--",
         SERVER.path,
     )
-    bumps.check_returncode()
     releases = set(bumps.stdout.split())
     merged = {}
     for line in log.stdout.splitlines():
@@ -472,6 +466,8 @@ def _previous(args: argparse.Namespace) -> None:
 def _check_tag(args: argparse.Namespace) -> None:
     tag_version = args.tag_version
     if not tag_on_head(tag_version):
+        if not args.dry_run:  # a tag run's tag moved after the push
+            raise ValueError(f"v{tag_version} is not on the checked-out commit")
         print(f"::notice::no candidate-order check: v{tag_version} is not on this commit")
         return
     tag_error = check_tag(tag_version)
@@ -483,8 +479,11 @@ def _check_chart(args: argparse.Namespace) -> None:
     tag_version = args.tag_version
     baseline = chart_baseline(tag_version)
     if not baseline:
+        final = final_of(tag_version)
+        if not args.dry_run:
+            raise ValueError(f"v{final} is tagged on another commit than the checked-out one")
         # Said in the log, so a skip never reads as a chart checked.
-        print(f"::notice::no chart check: v{final_of(tag_version)} is tagged on another commit")
+        print(f"::notice::no chart check: v{final} is tagged on another commit")
         return
     # Caught here, not in main(), for the annotation's file= and the baseline's name.
     try:
@@ -500,9 +499,7 @@ def _check_chart(args: argparse.Namespace) -> None:
 def _fetch_tags_and_validate(version: str) -> None:
     require_final(version)  # needs no tags, so before the fetch
     # Forced, so a tag moved upstream replaces a stale local one.
-    _git(
-        ROOT, "fetch", "--quiet", "--force", "--tags", f"https://github.com/{REPOSITORY}.git"
-    ).check_returncode()
+    _git(ROOT, "fetch", "--quiet", "--force", "--tags", f"https://github.com/{REPOSITORY}.git")
     validate(version)
 
 
@@ -553,6 +550,10 @@ def main() -> None:
         command = commands.add_parser(name, help=help_text)
         command.add_argument("tag_version", help="the tag's version, X.Y.Z or X.Y.Z-rc.N")
         command.set_defaults(run=run)
+        if name in ("check-chart", "check-tag"):
+            command.add_argument(
+                "--dry-run", action="store_true", help="skip, with a notice, off the tag's commit"
+            )
     args = parser.parse_args()
     # A refusal, a failed git or gh call, or a missing gh, git or file is one line;
     # in a check, an ::error:: annotation.

@@ -97,9 +97,8 @@ the tag ships.
    gh workflow run release.yml --ref vX.Y.Z
    ```
 
-6. Paste the release notes made at the final tag's commit (`prepare.py notes X.Y.Z` with
-   `vX.Y.Z` checked out, `git switch --detach vX.Y.Z`) into the GitHub Release, above the
-   generated notes.
+6. Paste the release notes made at the final tag's commit ([release notes](#release-notes)) into
+   the GitHub Release, above the generated notes.
 
 A release candidate is a `vX.Y.Z-rc.N` tag, and makes a GitHub pre-release; the release refuses any
 other prerelease tag. The first candidate goes on the release pull request's merge commit, whose

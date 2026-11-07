@@ -82,6 +82,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0 # the tags: the chart's previous version and the candidate order
+      # prepare.py's checks need only the standard library, of the project's Python.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
       # A dispatch from a branch would otherwise take the branch name as the
       # version and publish it. A dry run publishes nothing, so it runs on any
       # ref, at the version the server names.
@@ -118,10 +122,14 @@ jobs:
         id: checks
         env:
           VERSION: ${{ steps.parse.outputs.version }}
+          DRY_RUN: ${{ inputs.dry_run == true }}
+        # Off the tag's commit (a dry run of a branch) the two tag checks skip; a tag run refuses.
         run: |
+          dry_run=()
+          [ "$DRY_RUN" != true ] || dry_run=(--dry-run)
           python3 scripts/release/prepare.py check "$VERSION"
-          python3 scripts/release/prepare.py check-chart "$VERSION"
-          python3 scripts/release/prepare.py check-tag "$VERSION"
+          python3 scripts/release/prepare.py check-chart "${dry_run[@]}" "$VERSION"
+          python3 scripts/release/prepare.py check-tag "${dry_run[@]}" "$VERSION"
           previous=$(python3 scripts/release/prepare.py previous "$VERSION")
           echo "previous=$previous" >> "$GITHUB_OUTPUT"
 
