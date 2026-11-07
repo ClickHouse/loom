@@ -40,15 +40,6 @@ def test_history_rows_carry_their_version_exactly_as_text() -> None:
         memory_id="m", version=version, confidence=1.0, created_at=datetime(2000, 1, 1)
     )
     assert row.version_text == str(version)
-    assert float(version) != version
-
-
-def test_redact_takes_the_version_text_back_exactly() -> None:
-    from server.memory.api.models_crud import MemoryRedactInput
-
-    version = 2**60 + 1
-    sent = MemoryRedactInput.model_validate({"org": "o", "memory_id": "m", "version": str(version)})
-    assert sent.version == version
 
 
 def test_written_now_is_utc_naive_now() -> None:

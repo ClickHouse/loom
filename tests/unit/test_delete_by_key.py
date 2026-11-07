@@ -332,6 +332,17 @@ def test_a_versioned_delete_takes_the_version_as_a_decimal_string() -> None:
             MemoryDeleteVersionInput(**ident, version=bad)
 
 
+def test_a_redact_takes_a_decimal_version_back_exactly() -> None:
+    import pydantic
+
+    from server.memory.api.models_crud import MemoryRedactInput
+
+    big = 1_760_000_000_000_000_001
+    assert MemoryRedactInput(org="o", memory_id="m", version=str(big)).version == big
+    with pytest.raises(pydantic.ValidationError, match="version number"):
+        MemoryRedactInput(org="o", memory_id="m", version="latest")
+
+
 def test_a_versioned_delete_tombstones_the_version_it_read(world, monkeypatch) -> None:
     async def _get_by_key(identity: Any, key: str, **kw: Any) -> Any:
         return world["row"]

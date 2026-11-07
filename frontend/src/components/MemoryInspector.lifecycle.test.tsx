@@ -35,6 +35,7 @@ vi.mock("../api", async (importOriginal) => {
     ...actual,
     getMemory: vi.fn(async () => LIVE),
     setMemory: vi.fn(),
+    deleteMemory: vi.fn(async () => ({ tombstoned: true, version: 4 })),
     memoryHistory: vi.fn(async () => ({ rows: [] })),
     memoryRelated: vi.fn(async () => ({ results: [] })),
     memoryLineage: vi.fn(async () => ({ steps: [] })),
@@ -156,6 +157,55 @@ describe("MemoryInspector lifecycle actions", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Save new version" }));
     await waitFor(() => expect(api.setMemory).toHaveBeenCalledTimes(2));
     expect(vi.mocked(api.setMemory).mock.calls[1][0]).toEqual(row);
+  });
+
+  it("deletes the row it shows, and says so when nothing was deleted", async () => {
+    await open("writer");
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(api.deleteMemory).toHaveBeenCalledWith(row, "coffee_pref"));
+    cleanup();
+
+    vi.mocked(api.deleteMemory).mockResolvedValueOnce({ tombstoned: false, version: 0 });
+    await open("writer");
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("This memory is no longer live", "info"));
+  });
+
+  it("offers no write a lock refuses", async () => {
+    await open("writer", { ...LIVE, lock_mode: "read_only" });
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Change" })).toBeNull();
+    expect(screen.queryByLabelText("Add a tag")).toBeNull();
+    cleanup();
+
+    await open("writer", { ...LIVE, lock_mode: "no_delete" });
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  });
+
+  it("offers sharing to an admin only, and no share of a profile or a high memory", async () => {
+    await open("writer");
+    let items = within(await menu())
+      .getAllByRole("menuitem")
+      .map((i) => i.textContent);
+    expect(items).not.toContain("Share with every agent");
+    expect(items).not.toContain("Stop sharing");
+    cleanup();
+
+    await open("admin", { ...LIVE, sensitivity: "high" });
+    items = within(await menu())
+      .getAllByRole("menuitem")
+      .map((i) => i.textContent);
+    expect(items).not.toContain("Share with every agent");
+    expect(items).toContain("Stop sharing");
+  });
+
+  it("says an outcome was not recorded", async () => {
+    vi.mocked(api.recordMemoryOutcome).mockResolvedValueOnce({ recorded: false, quarantined: false });
+    await open("writer");
+    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "This helped" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Couldn't record that", "error"));
   });
 
   it("says a lock is gone when the unlock finds none", async () => {

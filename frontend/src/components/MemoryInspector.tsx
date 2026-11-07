@@ -306,10 +306,10 @@ export function MemoryInspector({
       return;
     }
     if (typing || e.metaKey || e.ctrlKey || e.altKey || shortcutOff(e.nativeEvent)) return;
-    if (e.key === "e" && !editing) {
+    if (e.key === "e" && !editing && !valueLocked) {
       e.preventDefault();
       onStartEdit();
-    } else if (e.key === "d") {
+    } else if (e.key === "d" && !deleteLocked) {
       e.preventDefault();
       onDelete();
     } else if (e.key === "p") {
@@ -455,6 +455,12 @@ export function MemoryInspector({
   const canReject = canCall("memory.reject", role, whoami);
   const canShare = canCall("memory.promote", role, whoami);
   const canUnshare = canCall("memory.demote", role, whoami);
+  // memory.promote refuses a profile row and a high one.
+  const shareable = detail?.memory_type !== "profile" && detail?.sensitivity !== "high";
+  // Both lock modes refuse a delete; read_only also refuses a value, tag or expiry change.
+  const valueLocked = detail?.lock_mode === "read_only";
+  const deleteLocked = !!detail?.lock_mode;
+  const linkCount = links ? links.in.length + links.out.length : 0;
   const canRedact = canCall("memory.redact", role, whoami);
   const canJudge = canCall("memory.outcome", role, whoami);
   const verified = detail?.verification === "human" || detail?.verification === "process";
@@ -551,22 +557,22 @@ export function MemoryInspector({
     toast(`Redacted ${label}`, "ok");
     const mine = inspection.current;
     memoryHistory(identity, memoryKey, 8)
-      .then((fresh) => {
-        if (inspection.current === mine) setHistory(fresh.rows || []);
+      .then((r) => {
+        if (inspection.current === mine) setHistory(r.rows || []);
       })
       .catch(() => {});
   };
 
-  // A lock, an unlock or a reject changes the row: read it again. A failed re-read leaves
-  // the drawer as it was; the write itself already landed.
+  // A write changes the row: read it again. A failed re-read leaves the drawer as it was;
+  // the write itself already landed.
   const reread = async () => {
     onChanged();
     // A drawer moved to another key meanwhile keeps that key's row: this one under it
     // would be what Edit, Pin and Verify then write back.
     const mine = inspection.current;
     try {
-      const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
-      if (inspection.current === mine) setDetail(fresh);
+      const row = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
+      if (inspection.current === mine) setDetail(row);
     } catch (e) {
       if (inspection.current === mine) toast(`Couldn't read the memory again: ${humanizeError(e)}`, "error");
     }
@@ -590,34 +596,37 @@ export function MemoryInspector({
 
   // Promote copies the row to the namespace's shared layer, read by every agent there;
   // demote removes that copy and leaves this row as it is.
-  const onShare = async (share: boolean) => {
+  const onShare = async () => {
     if (!detail) return;
-    const ok = await confirmAction(
-      share
-        ? {
-            title: `Share ${memoryKey} with every agent in ${identity.namespace}?`,
-            message: "This value becomes the namespace's shared memory under the key, replacing any shared there now.",
-            confirmLabel: "Share",
-          }
-        : {
-            title: `Stop sharing ${memoryKey} in ${identity.namespace}?`,
-            message: "The namespace's shared memory under the key goes, whichever agent shared it. This memory stays.",
-            confirmLabel: "Stop sharing",
-            danger: true,
-          },
-    );
+    const ok = await confirmAction({
+      title: `Share ${memoryKey} with every agent in ${identity.namespace}?`,
+      message: "This value becomes the namespace's shared memory under the key, replacing any shared there now.",
+      confirmLabel: "Share",
+    });
     if (!ok) return;
     try {
-      if (share) {
-        const r = await shareMemory(rowIdentity(identity, detail), memoryKey);
-        toast(`Shared as ${r.shared_memory_key}`, "ok");
-      } else {
-        const r = await unshareMemory(identity, memoryKey);
-        toast(r.demoted ? "No longer shared" : "This memory was not shared", "ok");
-      }
+      const r = await shareMemory(rowIdentity(identity, detail), memoryKey);
+      toast(`Shared as ${r.shared_memory_key}`, "ok");
       onChanged();
     } catch (e) {
-      toast(`${share ? "Share" : "Stop sharing"} failed: ${humanizeError(e)}`, "error");
+      toast(`Share failed: ${humanizeError(e)}`, "error");
+    }
+  };
+
+  const onUnshare = async () => {
+    const ok = await confirmAction({
+      title: `Stop sharing ${memoryKey} in ${identity.namespace}?`,
+      message:
+        "The namespace's shared memory under the key goes, whichever agent shared it, if there is one. This memory stays.",
+      confirmLabel: "Stop sharing",
+    });
+    if (!ok) return;
+    try {
+      const r = await unshareMemory(identity, memoryKey);
+      toast(r.demoted ? "No longer shared" : "This memory was not shared", "ok");
+      onChanged();
+    } catch (e) {
+      toast(`Stop sharing failed: ${humanizeError(e)}`, "error");
     }
   };
 
@@ -698,12 +707,11 @@ export function MemoryInspector({
         charLimit: detail.char_limit ?? undefined,
       });
       toast(ttlSeconds === null ? "Expiry cleared — never expires" : "Expiry updated", "ok");
-      const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
-      setDetail(fresh);
-      onChanged();
     } catch (e) {
       toast(`Expiry update failed: ${humanizeError(e)}`, "error");
+      return;
     }
+    await reread();
   };
 
   const onSaveEdit = async () => {
@@ -726,12 +734,11 @@ export function MemoryInspector({
       });
       toast("Saved", "ok");
       setEditing(false);
-      const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
-      setDetail(fresh);
-      onChanged();
     } catch (e) {
       toast(`Save failed: ${humanizeError(e)}`, "error");
+      return;
     }
+    await reread();
   };
 
   // After a move: with a redirect the old key still answers (now carrying
@@ -745,15 +752,10 @@ export function MemoryInspector({
         : `Renamed to ${r.to_key} — the old key was deleted`,
       "ok",
     );
-    onChanged();
     if (r.redirected) {
-      try {
-        const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
-        setDetail(fresh);
-      } catch (e) {
-        toast(`Reload failed: ${humanizeError(e)}`, "error");
-      }
+      await reread();
     } else {
+      onChanged();
       followMoved(r.to_key);
     }
   };
@@ -810,6 +812,7 @@ export function MemoryInspector({
   };
 
   const onDelete = async () => {
+    if (!detail) return;
     if (
       !(await confirmAction({
         title: `Delete ${memoryKey}?`,
@@ -820,7 +823,11 @@ export function MemoryInspector({
     )
       return;
     try {
-      await deleteMemory(identity, memoryKey);
+      const r = await deleteMemory(rowIdentity(identity, detail), memoryKey);
+      if (!r.tombstoned) {
+        toast("This memory is no longer live", "info");
+        return;
+      }
       toast("Deleted", "ok");
       onChanged();
       onClose();
@@ -975,7 +982,15 @@ export function MemoryInspector({
                     )}
                     <dt className="text-text-muted">Expires</dt>
                     <dd>
-                      <ExpiryEditor expiresAt={detail.expires_at ?? null} onChange={onChangeExpiry} />
+                      {valueLocked ? (
+                        detail.expires_at ? (
+                          relativeTime(detail.expires_at)
+                        ) : (
+                          "Never expires"
+                        )
+                      ) : (
+                        <ExpiryEditor expiresAt={detail.expires_at ?? null} onChange={onChangeExpiry} />
+                      )}
                     </dd>
                     <TipRow label="Last recalled" tip={RECALLED_TIP} value={recalledLabel(detail)} />
                     <TipRow label="Recall credit" tip={CREDIT_TIP} value={creditLabel(detail.recall_count)} />
@@ -1018,39 +1033,41 @@ export function MemoryInspector({
                         label={t}
                         tip={`Show all memories tagged ${t}`}
                         onClick={() => searchByTag(t)}
-                        onRemove={() => onRemoveTag(t)}
+                        onRemove={valueLocked ? undefined : () => onRemoveTag(t)}
                       />
                     ))}
-                    <span className="w-36">
-                      <TextField
-                        aria-label="Add a tag"
-                        placeholder={(detail.tags || []).length > 0 ? "Add tag" : "Add tags…"}
-                        list="loom-inspector-tags"
-                        value={tagDraft}
-                        onChange={(v) => setTagDraft(v)}
-                        onFocus={() => {
-                          // The vocabulary is read when someone goes to add a tag, not on
-                          // every open.
-                          if (namespaceTags.length === 0)
-                            sharedTagVocabulary(identity)
-                              .then(setNamespaceTags)
-                              .catch(() => setNamespaceTags([]));
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === ",") {
-                            e.preventDefault();
-                            onAddTag(tagDraft);
-                            setTagDraft("");
-                          }
-                        }}
-                        onBlur={() => {
-                          if (tagDraft.trim()) {
-                            onAddTag(tagDraft);
-                            setTagDraft("");
-                          }
-                        }}
-                      />
-                    </span>
+                    {!valueLocked && (
+                      <span className="w-36">
+                        <TextField
+                          aria-label="Add a tag"
+                          placeholder={(detail.tags || []).length > 0 ? "Add tag" : "Add tags…"}
+                          list="loom-inspector-tags"
+                          value={tagDraft}
+                          onChange={(v) => setTagDraft(v)}
+                          onFocus={() => {
+                            // The vocabulary is read when someone goes to add a tag, not on
+                            // every open.
+                            if (namespaceTags.length === 0)
+                              sharedTagVocabulary(identity)
+                                .then(setNamespaceTags)
+                                .catch(() => setNamespaceTags([]));
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === ",") {
+                              e.preventDefault();
+                              onAddTag(tagDraft);
+                              setTagDraft("");
+                            }
+                          }}
+                          onBlur={() => {
+                            if (tagDraft.trim()) {
+                              onAddTag(tagDraft);
+                              setTagDraft("");
+                            }
+                          }}
+                        />
+                      </span>
+                    )}
                     {namespaceTags.length > 0 && (
                       <datalist id="loom-inspector-tags">
                         {namespaceTags
@@ -1188,13 +1205,13 @@ export function MemoryInspector({
                   icon="url"
                   open={sections.links}
                   onToggle={toggleSection}
-                  count={links ? links.in.length + links.out.length || undefined : undefined}
+                  count={linkCount || undefined}
                 >
                   {!done.has("links") || links === null ? (
                     <LoadingSkeleton label="Loading links">
                       <SkeletonText lines={2} />
                     </LoadingSkeleton>
-                  ) : links.in.length + links.out.length === 0 ? (
+                  ) : linkCount === 0 ? (
                     <SectionEmpty>No typed link points to or from this memory.</SectionEmpty>
                   ) : (
                     <LinkList links={links} onOpen={openMemory} />
@@ -1328,7 +1345,7 @@ export function MemoryInspector({
               they wrap to two rows on a narrow drawer. */}
           {detail && detail.found && (
             <footer className="px-5 py-3 border-t border-border bg-surface flex items-center gap-2 shrink-0">
-              {!editing && (
+              {!editing && !valueLocked && (
                 <Button type="secondary" htmlType="button" iconLeft="pencil" onClick={onStartEdit}>
                   Edit
                 </Button>
@@ -1386,15 +1403,13 @@ export function MemoryInspector({
                           <MenuLabel icon="lock">Lock…</MenuLabel>
                         </Dropdown.Item>
                       )}
-                  {canShare && (
-                    <>
-                      <Dropdown.Item onSelect={() => void onShare(true)}>
-                        <MenuLabel icon="users">Share with every agent</MenuLabel>
-                      </Dropdown.Item>
-                    </>
+                  {canShare && shareable && (
+                    <Dropdown.Item onSelect={() => void onShare()}>
+                      <MenuLabel icon="users">Share with every agent</MenuLabel>
+                    </Dropdown.Item>
                   )}
                   {canUnshare && (
-                    <Dropdown.Item onSelect={() => void onShare(false)}>
+                    <Dropdown.Item onSelect={() => void onUnshare()}>
                       <MenuLabel icon="user">Stop sharing</MenuLabel>
                     </Dropdown.Item>
                   )}
@@ -1452,9 +1467,11 @@ export function MemoryInspector({
                 </Tip>
               )}
               <div className="flex-1" />
-              <Button type="danger" htmlType="button" iconLeft="trash" onClick={onDelete}>
-                Delete
-              </Button>
+              {!deleteLocked && (
+                <Button type="danger" htmlType="button" iconLeft="trash" onClick={onDelete}>
+                  Delete
+                </Button>
+              )}
             </footer>
           )}
           <CopyToNamespaceDialog open={copyOpen} onOpenChange={setCopyOpen} source={identity} memoryKey={memoryKey} />
