@@ -46,25 +46,39 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
 
 ## Cutting the release
 
-1. On a branch from `main`, open a pull request that sets the version everywhere above, with the
+1. Check that a scheduled run of `.github/workflows/docker-smoke.yml` on `main` from the past week
+   passed:
+
+   ```bash
+   gh run list -R ClickHouse/loom --workflow docker-smoke.yml --event schedule --branch main -L 1 --json conclusion,createdAt,headSha
+   ```
+
+   Or start a fresh one with `gh workflow run docker-smoke.yml -R ClickHouse/loom --ref main` and read
+   it with `--event workflow_dispatch` in place of `--event schedule`. It scans both images as the
+   release does, and a scheduled run's failure notifies only the last editor of its schedule. A red
+   scan names the package: move the pin that brings it in (a `Dockerfile` `ARG` or base-image digest,
+   or a lock file) on `main` first. The base image's own packages move only with a new base-image
+   digest; a package an `apt-get install` layer adds moves with any uncached build.
+
+2. On a branch from `main`, open a pull request that sets the version everywhere above, with the
    [release notes](#release-notes) section in its description. CI must pass, including
    `make schema-check` and the strict migration dry run.
-2. After it merges, tag the merge commit and push the tag:
+3. After the release pull request merges, tag its merge commit and push the tag:
 
    ```bash
    git tag vX.Y.Z <merge commit>
    git push origin vX.Y.Z
    ```
 
-3. The tag push runs `.github/workflows/release.yml` (below), publishes the server and
+4. The tag push runs `.github/workflows/release.yml` (below), publishes the server and
    extractor images, and only then creates the GitHub Release. Check the images and release files.
-4. To publish the SDKs and the MCP Registry listing, run the same workflow manually on the tag:
+5. To publish the SDKs and the MCP Registry listing, run the same workflow manually on the tag:
 
    ```bash
    gh workflow run release.yml --ref vX.Y.Z
    ```
 
-5. Paste the pull request's release notes section into the GitHub Release, above the generated notes.
+6. Paste the pull request's release notes section into the GitHub Release, above the generated notes.
 
 A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release. Only the highest final version
 becomes the repository's Latest release (`releases/latest` serves the installer) and moves
