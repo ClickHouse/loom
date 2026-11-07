@@ -440,17 +440,24 @@ def _normalise(lowered: str) -> str:
 
 
 # A commit or error facet ("commit:<sha>", "error:<name>") names an identifier: it is
-# case-folded with its blanks collapsed and its wrapping (quotes, brackets, a leading
-# article, a closing dot) trimmed, never singularised or stripped of inner punctuation.
-# A blank right after the colon reads as prose ("Error: the build failed"), normalised
-# as usual.
+# case-folded, its blanks collapse to one space and its wrapping is trimmed (a leading
+# article, a closing dot, an outer pair of quotes or brackets), but it is never
+# singularised and its own punctuation stays ("error:httperror(404)"). A blank right
+# after the colon reads as prose ("Error: the build failed"), normalised as usual.
 _CODE_FACET_NAME = re.compile(r"(?:commit|error):\S")
-_WRAPPING = "`\"'“”‘’()[]{}<> ."
+_PAIRS = {"(": ")", "[": "]", "{": "}", "<": ">", "`": "`", '"': '"', "'": "'", "“": "”", "‘": "’"}
 
 
 def _code_facet_name(folded: str) -> str | None:
     """`folded` as a commit or error facet name, or None when it is not one."""
-    text = _lead(_SPACE_RE.sub(" ", folded).strip(_WRAPPING)).strip(_WRAPPING)
+    text = _SPACE_RE.sub(" ", folded)
+    while True:
+        text = _lead(text).rstrip(" .")
+        inner = text[1:-1]
+        closer = _PAIRS.get(text[:1])
+        if closer is None or text[-1] != closer or text[0] in inner or closer in inner:
+            break
+        text = inner
     return text if _CODE_FACET_NAME.match(text) else None
 
 
@@ -474,8 +481,8 @@ def canonical_entity(raw: str) -> CanonicalEntity:
     Collapses first-person forms (i / me / user / ...) to "user" to match the
     read side (graph seeds and query triples use `canonical_entity_text`); the original
     surface form is preserved in `aliases` for provenance and recall. A "commit:" or
-    "error:" name is only case-folded. Text longer than `MAX_ENTITY_CHARS`, as written or
-    once normalised, is no entity: its text is empty."""
+    "error:" name is only case-folded and trimmed (`_code_facet_name`). Text longer than
+    `MAX_ENTITY_CHARS`, as written or once normalised, is no entity: its text is empty."""
 
     original = str(raw or "").strip()
     text = _capped_normal(original)
@@ -489,7 +496,7 @@ def canonical_entity_text(raw: str) -> str:
     """The one entity normalizer for writes and reads: strips articles,
     possessives and punctuation and folds first-person forms to "user", so a
     query seed and the stored node land on identical text; a "commit:" or "error:"
-    name is only case-folded and trimmed (`canonical_entity`). Idempotent."""
+    name is only case-folded and trimmed (`_code_facet_name`). Idempotent."""
     return canonical_entity(raw).text
 
 

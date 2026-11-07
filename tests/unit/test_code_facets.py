@@ -489,7 +489,7 @@ async def test_a_query_triple_names_an_error_facet_as_it_is_stored(
 def test_a_prose_name_that_starts_with_error_is_normalised_as_prose() -> None:
     from server.memory.domain.graph_quality import canonical_entity_text
 
-    assert canonical_entity_text("Error: the Thing's") == "error: the thing"  # as on main
+    assert canonical_entity_text("Error: the Thing's") == "error: the thing"
     assert canonical_entity_text("error:Timeouts") == "error:timeouts"
 
 
