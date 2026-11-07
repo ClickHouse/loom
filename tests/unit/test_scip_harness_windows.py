@@ -348,6 +348,28 @@ def test_a_failed_reconfigure_indexes_with_the_last_compile_database(tmp_path: P
     assert delta is not None and "src/a.cpp" in [f["path"] for f in delta["files"]]
 
 
+def test_a_failed_reconfigure_is_retried_until_one_succeeds(tmp_path: Path) -> None:
+    """After a failed reconfigure, a window that only edits a translation unit
+    reconfigures again (and warns again), until a configure succeeds."""
+    w = _CppWindow(tmp_path)
+    w.env["CMAKE_FAIL"] = "1"
+    (w.repo / "CMakeLists.txt").write_text("project(y)\n")
+    w.run(_commit(w.repo, "edit the build"), [])
+    w.base = _git(w.repo, "rev-parse", "HEAD")
+    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
+    w.run(_commit(w.repo, "edit a"), ["src/a.cpp"])
+    assert len(w.cmake_runs) == 2 and "cmake reconfigure failed" in w.stderr
+    del w.env["CMAKE_FAIL"]
+    w.base = _git(w.repo, "rev-parse", "HEAD")
+    (w.repo / "src" / "a.cpp").write_text("int a() { return 4; }\n")
+    w.run(_commit(w.repo, "edit a again"), ["src/a.cpp"])
+    assert len(w.cmake_runs) == 3 and "cmake reconfigure failed" not in w.stderr
+    w.base = _git(w.repo, "rev-parse", "HEAD")
+    (w.repo / "src" / "a.cpp").write_text("int a() { return 5; }\n")
+    w.run(_commit(w.repo, "edit a once more"), ["src/a.cpp"])
+    assert len(w.cmake_runs) == 3
+
+
 def test_a_first_configure_is_not_followed_by_a_reconfigure(tmp_path: Path) -> None:
     w = _CppWindow(tmp_path)
     (w.repo / "build" / "compile_commands.json").unlink()

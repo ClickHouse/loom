@@ -26,7 +26,9 @@ JOBS=${JOBS:-$(($(nproc) / 2 > 0 ? $(nproc) / 2 : 1))}
 cd "$CHECKOUT"
 HEAD_SHA=${HEAD_SHA:-$(git rev-parse HEAD)}
 
-# 1. compile_commands.json — cmake configure only (no build).
+# 1. compile_commands.json — cmake configure only (no build). $STALE marks a
+# compile database whose reconfigure failed, until one succeeds.
+STALE=build/.loom-reconfigure-failed
 if [[ ! -f build/compile_commands.json ]]; then
   # ClickHouse's CMake refuses GCC ("Compiler GNU is not supported"), and a
   # fresh checkout has no cache to remember the compiler — pin clang
@@ -44,6 +46,7 @@ if [[ ! -f build/compile_commands.json ]]; then
     -DCOMPILER_CACHE=disabled -DENABLE_RUST=0 >/dev/null
   # ^ the two gates a fresh checkout hits: cmake/ccache.cmake errors without ccache/sccache, and
   #   corrosion wants a Rust toolchain the indexer host does not have.
+  rm -f "$STALE"
   CONFIGURED=1
 fi
 
@@ -51,12 +54,15 @@ fi
 # was configured on, so a file added since then has no entry and is never
 # indexed. Re-running CMake on the existing cache keeps its compiler and options.
 # A configure that fails writes no compile database, so the last one stays: the
-# translation units it lists keep being indexed, and the next window or full
-# index that reconfigures tries again.
+# translation units it lists keep being indexed, and every run reconfigures and
+# warns again until a configure succeeds.
 reconfigure() {
   if [[ -z "${CONFIGURED:-}" ]]; then
     echo ">> cmake reconfigure (compile_commands.json): $1"
-    if ! cmake -B build -S . >/dev/null; then
+    if cmake -B build -S . >/dev/null; then
+      rm -f "$STALE"
+    else
+      touch "$STALE"
       echo ">> warning: cmake reconfigure failed; indexing with the last compile_commands.json" >&2
     fi
     CONFIGURED=1
@@ -80,6 +86,8 @@ else
   if grep -E '\.(cpp|cc|cxx)$' "$WORK/added.txt" >/dev/null \
     || grep -E '(^|/)CMakeLists\.txt$|\.cmake$' "$WORK/changed.txt" "$WORK/deleted.txt" >/dev/null; then
     reconfigure "the window adds a translation unit or edits the build"
+  elif [[ -f "$STALE" ]]; then
+    reconfigure "the last reconfigure failed"
   fi
 
   grep -E '\.(cpp|cc|cxx)$' "$WORK/changed.txt" >"$WORK/tus.txt" || true
