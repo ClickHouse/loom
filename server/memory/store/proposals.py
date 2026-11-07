@@ -9,6 +9,9 @@ from typing import Any
 from server.core.repo_base import _CHClient
 from server.identity.domain.read_scope import ReadFilters, scope_where
 
+# The characters of a value a listed proposal shows (MemoryProposal.value_preview).
+PREVIEW_CHARS = 400
+
 
 async def scan_proposals(
     ch: _CHClient,
@@ -59,15 +62,17 @@ async def scan_proposals(
 async def proposal_details(
     ch: _CHClient, org: str, namespace: str, located: list[dict[str, Any]]
 ) -> dict[str, dict[str, Any]]:
-    """What a listed proposal shows, by memory id, read by the scan's (memory_id, version)
-    pairs without FINAL."""
+    """What a listed proposal shows, by memory id, read by (memory_id, version) pairs
+    without FINAL. The pairs must come from `scan_proposals`, which applied the read
+    scope: this read applies none."""
     if not located:
         return {}
     rows = await ch.query_all(
         """
         SELECT toString(memory_id) AS mid, agent, user_id, session_id, memory_type,
                -- a high value is readable by key only
-               if(sensitivity = 'high', '', substringUTF8(value_preview, 1, 400)) AS preview,
+               if(sensitivity = 'high', '', substringUTF8(value_preview, 1, {chars:UInt32}))
+                   AS preview,
                sensitivity, tags, toString(created_at) AS created, conflict_with
         FROM loom.memory
         WHERE org = {org:String}
@@ -78,6 +83,7 @@ async def proposal_details(
         params={
             "org": org,
             "ns": namespace,
+            "chars": PREVIEW_CHARS,
             "pairs": [(str(r["mid"]), int(r["version"])) for r in located],
         },
     )

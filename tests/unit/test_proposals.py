@@ -276,6 +276,26 @@ _INSERT = (
 )
 
 
+def _listing(monkeypatch: pytest.MonkeyPatch, insert: str) -> Any:
+    """`memory.proposals` over the rows `insert` writes, policy and counters stubbed."""
+    from server.memory.app import proposals_ops
+    from server.memory.domain.proposal_policy import ProposalPolicy
+
+    ch = LocalCH(ddl("memory"), insert)
+
+    async def _policy(*_a: Any, **_k: Any) -> Any:
+        return ProposalPolicy()
+
+    async def _none(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {}
+
+    monkeypatch.setattr(proposals_ops, "get_client", lambda: ch)
+    monkeypatch.setattr(p, "policy_for", _policy)
+    monkeypatch.setattr(p, "graded_counts", _none)
+    monkeypatch.setattr(proposals_ops, "_usage_counts", _none)
+    return proposals_ops.handle_memory_proposals
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 @pytest.mark.parametrize(
@@ -302,7 +322,6 @@ async def test_the_listing_offers_only_the_row_a_decision_takes(
     from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
     from server.memory.api.models_proposals import MemoryProposalsInput
     from server.memory.app import proposals_ops
-    from server.memory.domain.proposal_policy import ProposalPolicy
     from server.memory.store import Identity, get_many_by_keys
 
     a_user = "u1" if scope_user else "-"
@@ -310,31 +329,21 @@ async def test_the_listing_offers_only_the_row_a_decision_takes(
         _ROW.format(agent="a", mid=1, user=a_user, value="a value", status="proposed", version=1),
         _ROW.format(agent="b", mid=2, user=b_user, value="b value", status=b_status, version=2),
     ]
-    ch = LocalCH(ddl("memory"), _INSERT + ", ".join(rows))
     scope = (
         ReadFilters(scope="own_user", user_id=scope_user, session_id=None)
         if scope_user
         else WHOLE_NAMESPACE
     )
-
-    async def _policy(*_a: Any, **_k: Any) -> Any:
-        return ProposalPolicy()
-
-    async def _none(*_a: Any, **_k: Any) -> dict[str, Any]:
-        return {}
-
-    monkeypatch.setattr(proposals_ops, "get_client", lambda: ch)
+    list_ = _listing(monkeypatch, _INSERT + ", ".join(rows))
     monkeypatch.setattr(proposals_ops, "request_scope", lambda: scope)
-    monkeypatch.setattr(p, "policy_for", _policy)
-    monkeypatch.setattr(p, "graded_counts", _none)
-    monkeypatch.setattr(proposals_ops, "_usage_counts", _none)
-    out = await proposals_ops.handle_memory_proposals(MemoryProposalsInput(org="o", namespace="n"))
+    out = await list_(MemoryProposalsInput(org="o", namespace="n"))
     assert [(r.agent, r.value_preview) for r in out.proposals] == listed
     assert out.total == len(listed)
     for r in out.proposals:  # what the dashboard opens and filters by
         assert (r.user_id, r.session_id, r.version) == (b_user, "-", 2)
     # The row the decision reads is the one listed.
     ident = Identity(org="o", namespace="n", agent="*", user_id="-", session_id="-")
+    ch = proposals_ops.get_client()
     head = await get_many_by_keys(ident, ["k"], scope=WHOLE_NAMESPACE, ch=ch, strong=True)
     if listed:
         assert [str(r.memory_id) for r in head] == [out.proposals[0].memory_id]
@@ -350,7 +359,6 @@ async def test_proposals_grade_only_the_rows_they_can_return(
     reads one row's grades); `only="ready"` grades every row to choose."""
     from server.memory.api.models_proposals import MemoryProposalsInput
     from server.memory.app import proposals_ops
-    from server.memory.domain.proposal_policy import ProposalPolicy
 
     rows = [
         "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-00000000000a', 'trial/tea', "
@@ -358,12 +366,9 @@ async def test_proposals_grade_only_the_rows_they_can_return(
         "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-00000000000b', 'trial/door', "
         "'semantic', 'opens inward', 'proposed', 2, '2026-01-02 00:00:00')",
     ]
-    ch = LocalCH(ddl("memory"), _INSERT + ", ".join(rows))
+    list_ = _listing(monkeypatch, _INSERT + ", ".join(rows))
     asked: list[int] = []
     used: list[int] = []
-
-    async def _policy(*_a: Any, **_k: Any) -> Any:
-        return ProposalPolicy()
 
     async def _counts(_ch: Any, _o: str, _n: str, keys: list[str]) -> dict[str, Any]:
         asked.append(len(keys))
@@ -373,37 +378,13 @@ async def test_proposals_grade_only_the_rows_they_can_return(
         used.append(len(ids))
         return {}
 
-    monkeypatch.setattr(proposals_ops, "get_client", lambda: ch)
-    monkeypatch.setattr(p, "policy_for", _policy)
     monkeypatch.setattr(p, "graded_counts", _counts)
     monkeypatch.setattr(proposals_ops, "_usage_counts", _usage)
-    out = await proposals_ops.handle_memory_proposals(
-        MemoryProposalsInput(org="o", namespace="n", limit=1, only=only)
-    )
+    out = await list_(MemoryProposalsInput(org="o", namespace="n", limit=1, only=only))
     assert asked == used == [graded]
     assert out.total == 2
-    # The default policy decides neither row, so `ready` returns none.
-    assert len(out.proposals) == returned
-
-
-def _listing(monkeypatch: pytest.MonkeyPatch, insert: str) -> Any:
-    """`memory.proposals` over the rows `insert` writes, policy and counters stubbed."""
-    from server.memory.app import proposals_ops
-    from server.memory.domain.proposal_policy import ProposalPolicy
-
-    ch = LocalCH(ddl("memory"), insert)
-
-    async def _policy(*_a: Any, **_k: Any) -> Any:
-        return ProposalPolicy()
-
-    async def _none(*_a: Any, **_k: Any) -> dict[str, Any]:
-        return {}
-
-    monkeypatch.setattr(proposals_ops, "get_client", lambda: ch)
-    monkeypatch.setattr(p, "policy_for", _policy)
-    monkeypatch.setattr(p, "graded_counts", _none)
-    monkeypatch.setattr(proposals_ops, "_usage_counts", _none)
-    return proposals_ops.handle_memory_proposals
+    # The newest row; the default policy decides neither, so `ready` returns none.
+    assert [r.memory_key for r in out.proposals] == ["trial/door"][:returned]
 
 
 @pytest.mark.asyncio
@@ -442,3 +423,18 @@ async def test_a_tombstoned_newest_row_leaves_the_proposal_below_it_listed(
     )
     out = await _listing(monkeypatch, insert)(MemoryProposalsInput(org="o", namespace="n"))
     assert [r.value_preview for r in out.proposals] == ["a value"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_high_proposal_is_listed_without_its_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.memory.api.models_proposals import MemoryProposalsInput
+
+    insert = _INSERT.replace("created_at)", "created_at, sensitivity)") + (
+        "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-000000000001', 'k', 'semantic', "
+        "'the vault code', 'proposed', 1, '2026-01-01 00:00:00', 'high')"
+    )
+    out = await _listing(monkeypatch, insert)(MemoryProposalsInput(org="o", namespace="n"))
+    assert [(r.memory_key, r.sensitivity, r.value_preview) for r in out.proposals] == [
+        ("k", "high", "")
+    ]

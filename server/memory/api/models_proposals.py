@@ -43,7 +43,8 @@ class MemoryProposal(BaseModel):
     user_id: str = "-"
     session_id: str = "-"
     memory_type: str = ""
-    # The first 400 characters of the value; "" for a high row, read by key (memory.get).
+    # The first 400 characters of the value (server.memory.store.proposals.PREVIEW_CHARS);
+    # "" for a high row, read by key (memory.get).
     value_preview: str = ""
     # Sensitivity tier ('' | low | medium | high).
     sensitivity: str = ""
@@ -63,9 +64,12 @@ class MemoryProposal(BaseModel):
 
 
 class MemoryProposalsOutput(BaseModel):
-    # The proposals in scope, newest first, with graded counts and `ready`.
+    # Proposals a decision would take, newest first, with graded counts and `ready`: one
+    # per key whose newest row is a proposal (an older proposal under a decided key is
+    # left out).
     proposals: list[MemoryProposal] = Field(default_factory=list)
-    # Proposals in scope before `only` and `limit`.
+    # Keys whose newest row is a proposal the caller may read, before `only` and `limit`
+    # (at most memory_proposals_scan_cap).
     total: int = 0
     # The namespace's proposal policy: `mode` (manual / auto) and thresholds.
     policy: ProposalPolicy = Field(default_factory=ProposalPolicy)

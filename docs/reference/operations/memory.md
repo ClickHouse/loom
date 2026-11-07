@@ -1515,8 +1515,8 @@ List facts on trial (written with memory.set proposed=true) with the graded runs
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `proposals` | `list[MemoryProposal]` | The proposals in scope, newest first, with graded counts and `ready`. |
-| `total` | `int` | Proposals in scope before `only` and `limit`. |
+| `proposals` | `list[MemoryProposal]` | Proposals a decision would take, newest first, with graded counts and `ready`: one per key whose newest row is a proposal (an older proposal under a decided key is left out). |
+| `total` | `int` | Keys whose newest row is a proposal the caller may read, before `only` and `limit` (at most memory_proposals_scan_cap). |
 | `policy` | `ProposalPolicy` | The namespace's proposal policy: `mode` (manual / auto) and thresholds. |
 
 ## `memory.provenance`

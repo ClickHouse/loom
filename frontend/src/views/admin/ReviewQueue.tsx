@@ -861,8 +861,8 @@ function trialLabel(r: MemoryProposal): string {
   return r.ready ? `${graded} · the policy would ${r.ready} it` : graded;
 }
 
-// The characters of a proposal's value `memory.proposals` sends; mirrors the cut that
-// `MemoryProposal.value_preview` documents.
+// The characters of a proposal's value `memory.proposals` sends: the server's
+// PREVIEW_CHARS (server/memory/store/proposals.py).
 const PREVIEW_CHARS = 400;
 
 const proposalId = (p: MemoryProposal) => `${p.memory_id}@${p.version ?? 0}`;
@@ -947,6 +947,8 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
 
   const decide = async (key: string, decision: "accept" | "reject") => {
     const row = rowBoxes.current.get(key);
+    // The proposal clicked, before a re-read can bring a newer one of the key.
+    const clicked = rowsNow.current?.find((r) => r.memory_key === key);
     setDeciding((d) => new Set(d).add(key));
     try {
       const out = await decideProposal(
@@ -962,10 +964,8 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
       else toast(decision === "accept" ? "Accepted" : "Rejected", "ok");
       // Where the decided row is now, not where it was when clicked: another decision may
       // have taken a row above it off the list meanwhile, or a re-read the row itself.
-      const i = rowsNow.current?.findIndex((r) => r.memory_key === key) ?? -1;
-      const at = Math.max(0, i);
-      const decidedRow = rowsNow.current?.[i];
-      if (decidedRow) decided.current.add(proposalId(decidedRow));
+      const at = Math.max(0, rowsNow.current?.findIndex((r) => r.memory_key === key) ?? 0);
+      if (clicked) decided.current.add(proposalId(clicked));
       // Off the list at once, so its buttons cannot send the decision again.
       setRows((rs) => rs?.filter((r) => r.memory_key !== key) ?? rs);
       setReason(({ [key]: _gone, ...rest }) => rest);
@@ -1066,7 +1066,7 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
               <div className="text-xs text-text-muted mb-2">
                 {trialLabel(r)}
                 {(r.conflict_with?.length ?? 0) > 0 && (
-                  <> · contradicts {r.conflict_with?.length === 1 ? "1 fact" : `${r.conflict_with?.length} facts`}</>
+                  <> · contradicts {plural(r.conflict_with?.length ?? 0, "fact")}</>
                 )}
               </div>
               {mayDecide && (
