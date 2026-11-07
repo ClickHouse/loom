@@ -280,9 +280,9 @@ A run that stopped in `clickhouse` published nothing.
   the next `-rc.N` on the fix's commit. For a final (one with no candidate on its commit that
   published a bundle, as only that one resolves `latest`), delete its tag
   (`git push origin :refs/tags/vX.Y.Z`, and `git tag -d vX.Y.Z` in every clone that fetched it, as a
-  fetch never removes a tag), then tag a new candidate on the fix's commit. Either way dispatch the new candidate with the same
-  `-f clickhouse_image=...`, as its tag push resolves `latest` again; soak it, and tag the final
-  there, which keeps that release.
+  fetch never removes a tag), then tag a new candidate on the fix's commit. Either way dispatch the
+  new candidate with the same `-f clickhouse_image=...`, as its tag push resolves `latest` again;
+  soak it, and tag the final there, which keeps that release.
 - **A downgrade during the soak**: a final carrying its candidate's release is checked too, so a
   patch to an older line published during the soak with a newer release stops it. Either delete
   the final's tag (it published nothing), soak a new candidate on that commit dispatched with that

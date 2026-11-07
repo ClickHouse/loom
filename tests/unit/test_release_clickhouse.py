@@ -125,7 +125,8 @@ def test_a_dispatch_must_name_one_release(resolve: Resolve) -> None:
 def test_a_dispatch_names_the_release_over_the_candidates(resolve: Resolve) -> None:
     result = resolve("1.2.0", {"v1.2.0-rc.1": "ch:soaked"}, CLICKHOUSE_IMAGE="ch:named")
     assert result.stdout == "ch:named\n"
-    assert "::notice::clickhouse_image=ch:named replaces the release" in result.stderr
+    assert "::notice::clickhouse_image=ch:named is used in place of any release" in result.stderr
+    assert "(v1.2.0-rc.1)" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -168,8 +169,15 @@ def test_a_published_bundles_own_release_skips_the_downgrade_check(
 
 
 def test_a_dispatched_release_is_checked_for_a_downgrade(resolve: Resolve, tmp_path: Path) -> None:
-    resolve("1.2.0", {}, CLICKHOUSE_IMAGE="ch:named")
+    result = resolve("1.2.0", {}, CLICKHOUSE_IMAGE="ch:named")
     assert (tmp_path / "published" / "refuse.log").read_text() == "ch:named\n"
+    assert "::notice::clickhouse_image" not in result.stderr  # no candidates: nothing in its place
+
+
+def test_a_dispatched_candidate_says_nothing_of_other_candidates(resolve: Resolve) -> None:
+    result = resolve("1.2.0-rc.2", {"v1.2.0-rc.1": "ch:soaked"}, CLICKHOUSE_IMAGE="ch:named")
+    assert result.stdout == "ch:named\n"
+    assert "::notice::clickhouse_image" not in result.stderr
 
 
 def test_a_refused_downgrade_stops_the_job(resolve: Resolve) -> None:

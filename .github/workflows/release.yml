@@ -43,7 +43,7 @@ on:
         description: >-
           An exact ClickHouse release for a bundle not yet published (e.g.
           clickhouse/clickhouse-server:26.9.18.11), when `latest` names a bad one;
-          for a final it also replaces the release its candidates were soaked with
+          for a final it is used in place of any release its candidates published
         required: false
         default: ""
       allow_clickhouse_downgrade:

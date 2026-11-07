@@ -53,7 +53,7 @@ if [[ $version != *-* ]]; then
   candidates=$(python3 "$here/prepare.py" candidates-on-head "$version")
 fi
 if [ -n "$image" ] && [ -n "$candidates" ]; then
-  echo "::notice::clickhouse_image=$image replaces the release v$version's candidates were soaked with" >&2
+  echo "::notice::clickhouse_image=$image is used in place of any release its candidates on this commit (${candidates//$'\n'/ }) published" >&2
 elif [ -z "$image" ]; then
   # A candidate whose run published no bundle: the next one down.
   for candidate in $candidates; do
