@@ -685,8 +685,10 @@ async def test_scip_full_runs_in_the_clang_tree_when_clang_is_an_extra_tier(
 @pytest.mark.asyncio
 async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, monkeypatch) -> None:
     """The fetch reads the bare clone, which the sandbox mounts only when named,
-    and the submodule pins come from the network."""
+    and the submodule pins come from the network with the repository's token, so
+    a private submodule on the repository's host is fetched."""
     from server.code.app.index import compiler_tier, scip_full
+    from tests.unit.code_fixtures import repo_config
 
     calls: list[tuple[tuple[str, ...], dict]] = []
 
@@ -695,10 +697,43 @@ async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, mo
 
     monkeypatch.setattr(compiler_tier, "git", _git)
     bare = tmp_path / "bare.git"
-    await scip_full.move_checkout(tmp_path / "checkout", bare, "a" * 40)
+    cfg = repo_config(github_token="ghs_test", git_remote="https://github.com/o/private")
+    await scip_full.move_checkout(tmp_path / "checkout", bare, "a" * 40, cfg)
     fetch, _checkout, submodules = calls
     assert fetch[0][0] == "fetch" and fetch[1]["local_remote"] == bare
+    assert "token" not in fetch[1]
     assert submodules[0][0] == "submodule" and submodules[1]["network"] is True
+    assert submodules[1]["token"] == "ghs_test"
+    assert submodules[1]["remote"] == "https://github.com/o/private"
+
+
+@pytest.mark.asyncio
+async def test_a_networked_compiler_tier_git_authenticates_to_the_repository_host(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`git(..., token=, remote=)` hands the job the token as an extraheader for the
+    remote's host, never in argv; without a token the job carries no credential."""
+    from server.code.app.index import compiler_tier
+
+    envs: list[dict[str, str]] = []
+    argvs: list[list[str]] = []
+
+    async def _run_job(argv: list[str], **kw: object) -> object:
+        argvs.append(argv)
+        envs.append(kw["env"])  # type: ignore[arg-type]
+        return type("Done", (), {"returncode": 0, "stdout": b"", "stderr": b""})()
+
+    monkeypatch.setattr(compiler_tier, "run_job", _run_job)
+    args = ("submodule", "update", "--init")
+    await compiler_tier.git(
+        tmp_path, *args, network=True, token="ghs_test", remote="https://github.com/o/r"
+    )
+    await compiler_tier.git(tmp_path, *args, network=True)
+    with_token, without = envs
+    headers = [v for k, v in with_token.items() if k.startswith("GIT_CONFIG_VALUE_")]
+    assert any(v.startswith("AUTHORIZATION: basic ") for v in headers)
+    assert not any("ghs_test" in a for a in argvs[0])
+    assert not any(v.startswith("AUTHORIZATION") for v in without.values())
 
 
 @pytest.mark.asyncio

@@ -117,7 +117,17 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
     # repository's .gitmodules names, so it goes through the egress proxy.
     await git(checkout, *checkout_fetch_args(bare, target), local_remote=bare)
     await git(checkout, "checkout", "--force", target)
-    await git(checkout, "submodule", "update", "--init", "--recursive", "--quiet", network=True)
+    await git(
+        checkout,
+        "submodule",
+        "update",
+        "--init",
+        "--recursive",
+        "--quiet",
+        network=True,
+        token=cfg.github_token,
+        remote=cfg.git_remote,
+    )
 
     with tempfile.TemporaryDirectory(prefix="scip_delta_", dir=work_dir()) as tmp:
         delta_path = Path(tmp) / "delta.json"

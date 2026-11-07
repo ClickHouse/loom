@@ -243,6 +243,8 @@ A large C++ tree is the heavy case: a ClickHouse-sized checkout with its submodu
 and build tree is about 30 GB beside the mirror, and scip-clang holds a translation
 unit's AST per job (a few GB each), so `LOOM_CODE_SCIP_CLANG_JOBS` should fit the
 memory the workers process has. The full index of such a tree takes about an hour.
+The compiler tiers fetch submodule pins with the entry's GitHub token, so a private
+submodule on the repository's host needs no other credential.
 
 - **C/C++ delta cap.** The worker indexes changed translation units, including those
   that include a changed header, up to `LOOM_CODE_SCIP_DELTA_MAX_TUS` (200); above the
