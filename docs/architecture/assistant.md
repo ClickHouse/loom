@@ -324,14 +324,14 @@ stored key. Elsewhere an admin uses one of two commands:
   prints a complete rotation, in the order of a write, with the command that runs it in
   one session
   (`clickhouse-client --log_queries=0 --distributed_ddl_output_mode=throw --multiquery --queries-file <file>`):
-  the delete, the new password, a wait of `SELECT sleep(...)` statements, the rest of
-  the entity set under the new key, and last the `INSERT` of the new sealed row at a
-  version from ClickHouse's clock in nanoseconds. Run in full, it starts analysis on a
-  first install, recovers it after a lost row and rotates a healthy key alike. It is
-  outside the lease and the rules below, so it is printed by the newest build's CLI, and
-  it is run, not kept.
+  the delete, the new password, the `KILL QUERY`, the rest of the entity set under the
+  new key, a settle of `SELECT sleep(...)` statements, and last the `INSERT` of the new
+  sealed row at a version from ClickHouse's clock in nanoseconds. Run in full, it starts
+  analysis on a first install, recovers it after a lost row and rotates a healthy key
+  alike. It is outside the lease and the rules below, so it is printed by the newest
+  build's CLI, and it is run, not kept.
 
-A printed rotation run only in part is never an empty answer, by the order of a write
+A printed rotation run only in part leaves analysis unavailable, by the order of a write
 below. Its statements must run in that one session: ClickHouse takes no per-statement
 settings on an access statement, and a console that sends them one by one would log the
 key in `system.query_log`.
@@ -352,22 +352,29 @@ keeps:
   column N dropped are refused until the roll forward.
 - **The order of a write.** The version is the last of the entities. A first draw by a
   boot or `loom ch-setup`, made while no analyst user exists, stores the secrets row
-  before it creates the user. A rotation, by the CLI or the printed SQL, replaces a key
-  in this order: 1. It deletes the secrets row, so a rotation cut short reads as a lost
-  row, which `loom doctor` maps to `--rotate-analysis-key`, rather than as a row whose
-  password no longer works. From the delete on, a Loom replica that reads the row finds
-  no key and answers `ANALYSIS_UNAVAILABLE`. 2. It sets the new password and confirms it
-  on every ClickHouse server before going on (on a cluster, `ON CLUSTER` with
-  `distributed_ddl_output_mode = throw`; with access replicated through Keeper, by
-  trying the old password on each server until each refuses it), and stops if a server
-  cannot confirm. From then on no statement signs in with the old credentials, wherever
-  its key came from: read before the delete, held in a queue, or from a row a reseal put
-  back. Until then such a statement reads under the old policies, which still match its
-  key. 3. It waits out the statements already running: twice the catalog's upper bound
-  for `ch_analysis_max_execution_s`, since ClickHouse checks the time between blocks and
-  a statement can run past it. That wait is the least a rotation, `--live` included,
-  keeps analysis unavailable. 4. It writes the policies and the rest of the entities
-  under the new key, and stores the new row last.
+  before it creates the user. A rotation, by the CLI or the printed SQL, is a short
+  maintenance step that keeps analysis unavailable while it runs: 1. It deletes the
+  secrets row, which only decides what a rotation cut short looks like: a lost row,
+  which `loom doctor` maps to `--rotate-analysis-key`. 2. It sets the new password, so a
+  statement that reaches a server holding the new password cannot sign in with the old
+  one, wherever its key came from. 3. It ends every statement the analyst is running
+  (`KILL QUERY WHERE user = 'loom_analyst' SYNC`, `ON CLUSTER` where there is a
+  cluster). 4. It writes the policies and the rest of the entities under the new key. 5.
+  It waits for access changes to reach every server (`ch_analysis_rotation_settle_s`, a
+  catalog setting, default 30 seconds), then stores the new row.
+
+  On a single server, or a cluster that applies access statements `ON CLUSTER` with
+  `distributed_ddl_output_mode = throw`, every step has reached every server before the
+  next begins, and no answer is ever empty during a rotation: it is right or
+  `ANALYSIS_UNAVAILABLE`. Where access replicates asynchronously (through Keeper, as on
+  ClickHouse Cloud), a server slower than the settle time could, once the row is
+  stored, still hold the old policies and answer a statement under the new key with no
+  rows; the probe's signed canary read fails on such a server, so the window is at most
+  one probe long. A row a reseal puts back during a rotation signs in only until the
+  password changes. If a rotation stops after the password change and a reseal had put
+  the row back, the row opens but its password fails: `loom doctor` maps that to
+  `--live`.
+
 - **The caps apart.** The caps are deployment settings, kept in a second profile of
   their own: a write holding the lease (a boot, `loom ch-setup`) writes them when the
   stored ones differ from its settings, the printed SQL always writes them, and nothing
@@ -391,12 +398,12 @@ keeps:
   a new key and password and does a full write of its own version under them, in the
   order of a write, storing the row at the version it read plus one, or at ClickHouse's
   clock when there was no row. Until the row is stored no replica has a key to sign
-  with, so every replica answers `ANALYSIS_UNAVAILABLE`, never an empty answer, and a
-  run cut short leaves that state for the next run to finish. A rotation on purpose,
-  after a key may have leaked, is the same command with `--live`, which skips the
-  refusal for a row that opens and drops the row once the version and root checks pass,
-  so analysis is unavailable for the length of the run; a replica that still holds the
-  old password gets an authentication failure, which answers `ANALYSIS_UNAVAILABLE` too.
+  with, so every replica answers `ANALYSIS_UNAVAILABLE`, and a run cut short leaves that
+  state for the next run to finish. A rotation on purpose, after a key may have leaked,
+  is the same command with `--live`, which skips the refusal for a row that opens and
+  drops the row once the version and root checks pass, so analysis is unavailable for
+  the length of the run; a replica that still holds the old password gets an
+  authentication failure, which answers `ANALYSIS_UNAVAILABLE` too.
 
 A replica probes the analyst user at boot and then a minute after each probe, in the
 background, as the analyst itself, so the probe needs no access management:
@@ -529,19 +536,20 @@ viewer token. Each case must be refused or return no canary:
   are not the deployment's, and plain `loom ch-setup` refused over a lost row;
 - cut short at every step, the rotation, the printed SQL and a first draw from storing
   the row to writing the version, each of which leaves `ANALYSIS_UNAVAILABLE` or a state
-  the next run finishes with the stored key, never an empty answer;
+  the next run finishes with the stored key;
 - `loom.analysis_secrets` and `loom.analysis_canary` read directly, and neither the
   statement's text nor the key in `system.query_log`, the printed SQL run as printed
   included; a reseal whose read comes before a printed rotation and whose insert after
   it, which leaves the new key, and one whose insert lands between the printed delete
-  and the printed insert, which answers the right rows or `ANALYSIS_UNAVAILABLE`, never
-  an empty answer, and then the new key; a statement running when a rotation deletes the
-  row, on a second ClickHouse replica too, which finishes with the right rows before the
-  policies change; a statement whose key was read before the delete and sent after the
-  password change, and one signed from a row a reseal put back during the wait, each of
-  which answers `ANALYSIS_UNAVAILABLE`; a second ClickHouse server that applies the
-  password change late, which the rotation waits for, and one that cannot confirm it,
-  which stops the rotation before the wait.
+  and the printed insert, which answers the right rows or `ANALYSIS_UNAVAILABLE` (on one
+  server, never an empty answer), and then the new key; a statement running when a
+  rotation starts, which the `KILL QUERY` ends before the policies change; a statement
+  whose key was read before the delete and sent after the password change, and one
+  signed from a row a reseal put back, each of which answers `ANALYSIS_UNAVAILABLE`; a
+  second ClickHouse server that applies access changes within the settle time, which
+  answers no wrong row, and one slower than it, whose canary probe answers
+  `ANALYSIS_UNAVAILABLE` within a probe; and a rotation stopped after the password
+  change with a row a reseal put back, which `loom doctor` maps to `--live`.
 
 The same file will show that a revoked token stops new calls and that an erased memory
 is gone from the next statement. A unit test pins the generated grants and policies to
