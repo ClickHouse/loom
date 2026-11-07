@@ -378,11 +378,11 @@ async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_th
         # delete here (memory.tombstone counts none in a purge, the late stamp neither)
         assert await graph_steps.retire_memory_by_user("o", "alice", ch=ch) == 7
         calls = [(" ".join(sql.split()), params) for sql, params in ch.execute_calls]
-        embeddings, stamp, (links, link_params), late, cache, precedents, *rest = calls
-        assert late[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
+        embeddings, summaries, (links, link_params), stamp, cache, precedents, *rest = calls
+        assert stamp[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
         (memory, memory_params), (own, own_params) = rest
         assert embeddings[0].startswith("DELETE FROM loom.memory_embeddings")
-        assert stamp[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
+        assert summaries[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
         assert "loom.memory_code_links" in links and link_params["rows"] == [("ns", topic)]
         assert "loom.llm_response_cache" in cache[0] and cache[1]["keys"] == ["t"]
         assert "loom.memory_ask_precedents" in precedents[0]

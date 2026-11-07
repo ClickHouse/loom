@@ -134,7 +134,7 @@ async def test_the_answers_that_quoted_a_consolidated_row_leave_with_its_source(
         stopped: list[str] = []
 
         async def stop_once(table: str, **kw: Any) -> int:
-            if kw["scope_where"] == UID and not stopped:
+            if kw["scope_where"] == UID and erasure_mutations.purge_mode() and not stopped:
                 stopped.append(table)
                 raise RuntimeError("stopped")
             return await real(table, **kw)
@@ -168,6 +168,7 @@ async def test_the_answers_that_quoted_a_consolidated_row_leave_with_its_source(
             with pytest.raises(RuntimeError):
                 await _run(*_STEPS[-1], org, ch)
         await _run(*_STEPS[-1], org, ch)
+        assert not crash or stopped == ["loom.memory"]
         after = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
     assert after["loom.memory"] == 0
 
