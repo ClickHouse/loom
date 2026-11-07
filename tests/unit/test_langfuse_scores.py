@@ -332,7 +332,7 @@ def test_breaker_opens_after_the_threshold_and_probes_after_the_cooldown(
 def test_score_names_match_the_prompts_evaluate_gate() -> None:
     """The names are a contract with a consumer that already exists.
 
-    `prompts.evaluate` fetches `/api/public/scores?traceId=…&name=<rubric>`
+    `prompts.evaluate` reads the score list by `traceId` and `name=<rubric>`
     (`server/insights/app/admin_routes.py`). Renaming a score here does not fail loudly — it
     makes the auto-promote gate silently find nothing and decline to promote.
     """
@@ -340,7 +340,7 @@ def test_score_names_match_the_prompts_evaluate_gate() -> None:
 
     admin = Path(__file__).resolve().parents[2] / "server" / "insights" / "app" / "admin_routes.py"
     src = admin.read_text()
-    assert "name={rubric}" in src or "&name=" in src, (
+    assert '"name": rubric' in src, (
         "the prompts.evaluate gate no longer queries scores by name; the score "
         "name contract in langfuse_scores.py may be stale"
     )

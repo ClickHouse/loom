@@ -37,8 +37,8 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 
 # Score names. These are the contract with `prompts.evaluate`'s `rubric`
-# parameter (`server/insights/app/admin_routes.py`), which fetches
-# `/api/public/scores?traceId=…&name=<rubric>` — so a rename here silently breaks
+# parameter (`server/insights/app/admin_routes.py`), which reads the score list by
+# `traceId` and `name=<rubric>` — so a rename here silently breaks
 # the auto-promote gate rather than failing loudly.
 SCORE_CONFIDENCE = "retrieval_confidence"
 SCORE_TOP_SIMILARITY = "top_similarity"

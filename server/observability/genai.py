@@ -351,6 +351,11 @@ def _may_capture(stage: str) -> bool:
     return _stage_carries(stage) == "query"
 
 
+def _identity_tags(ident: dict[str, str]) -> list[str]:
+    """The `org:` and `namespace:` trace tags; erasure finds a tenant's traces by them."""
+    return [f"{k}:{ident[k]}" for k in ("org", "namespace") if ident.get(k)]
+
+
 def _stamp_identity(span: Any) -> None:
     """Put tenant + Langfuse identity on a provider span."""
     ident = _identity.get()
@@ -372,12 +377,11 @@ def _stamp_identity(span: Any) -> None:
         span.set_attribute("langfuse.session.id", ident["session_id"])
     if ident.get("user_id"):
         span.set_attribute("langfuse.user.id", ident["user_id"])
-    tags = [f"org:{ident[k]}" for k in ("org",) if ident.get(k)]
-    tags += [f"namespace:{ident[k]}" for k in ("namespace",) if ident.get(k)]
+    tags = _identity_tags(ident)
     if tags:
-        # Langfuse reads tags as a JSON array of strings. `admin.py` and
-        # docs/features/integrations/langfuse.md query by these two tag shapes, so
-        # keep the `key:value` form.
+        # Langfuse reads tags as a JSON array of strings. Erasure
+        # (`server/erasure/app/backends.py`) finds a tenant's traces by these two
+        # tag shapes, so keep the `key:value` form.
         span.set_attribute("langfuse.trace.tags", tags)
     if ident.get("operation"):
         # Also on the children: Langfuse names the trace from whichever span it
@@ -524,6 +528,13 @@ class _Generation:
             if name and version is not None:
                 self._span.set_attribute("langfuse.prompt.name", name)
                 self._span.set_attribute("langfuse.prompt.version", int(version))
+                # The tag `prompts.evaluate` finds the prompt version's traces by,
+                # on Langfuse 3 and 4 alike. Tags are set whole, so the identity
+                # tags are repeated beside it.
+                tags = _identity_tags(_identity.get() or {})
+                self._span.set_attribute(
+                    "langfuse.trace.tags", [*tags, f"prompt:{name}:{int(version)}"]
+                )
 
             # Tiered by what THIS leg's prompt contains, then by namespace consent.
             # A query-only leg records at the default level; a leg that embeds

@@ -13,10 +13,12 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import urlsplit
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from server.core.ch import set_query_tag
 from server.core.paths import MIGRATIONS_DIR
+from server.erasure.app.backends import ErasureBackendError, LangfuseBackend
 from server.insights.app.admin_models import (
     AuditSummaryInput,
     AuditSummaryOutput,
@@ -680,19 +682,40 @@ async def admin_fleet_cost(input: FleetCostInput) -> FleetCostOutput:
 # ============================================================
 
 
+# The traces one evaluation reads, and the scores it reads per trace.
+_EVAL_TRACES = 200
+_EVAL_SCORES_PER_TRACE = 10
+
+
+async def _rubric_scores(
+    c: httpx.AsyncClient, backend: LangfuseBackend, trace_ids: list[str], rubric: str
+) -> list[float]:
+    """The numeric `rubric` scores on each trace. Langfuse 4 serves the score
+    list only under `/api/public/v3/scores`. A failed read raises, so the caller
+    answers 502 rather than reporting that no scores exist."""
+    path = "/api/public/v3/scores" if await backend.api_major(c) >= 4 else "/api/public/scores"
+    scores: list[float] = []
+    for tid in trace_ids:
+        r = await backend.get_retried(
+            c, path, {"traceId": tid, "name": rubric, "limit": _EVAL_SCORES_PER_TRACE}
+        )
+        r.raise_for_status()
+        for row in r.json().get("data") or []:
+            try:
+                scores.append(float(row.get("value")))
+            except (TypeError, ValueError):
+                pass
+    return scores
+
+
 @admin_router.post("/v1/admin/prompts.evaluate")
 async def admin_prompts_evaluate(input: PromptsEvaluateInput) -> PromptsEvaluateOutput:
     """Compute a should-promote verdict for one prompt version.
 
-    Queries Langfuse traces tagged `prompt:<name>:<version>`, applies the
-    (min_evals, threshold) gate on `rubric` scores. Never mutates Langfuse.
+    Finds the Langfuse traces tagged `prompt:<name>:<version>` (each generation
+    linked to that prompt version carries the tag) and applies the
+    (min_evals, threshold) gate to their `rubric` scores. Never mutates Langfuse.
     """
-    import base64
-    import json as _json
-    import urllib.error
-    import urllib.parse
-    import urllib.request
-
     name = input.prompt_name
     version = input.prompt_version
     rubric = input.rubric
@@ -711,62 +734,23 @@ async def admin_prompts_evaluate(input: PromptsEvaluateInput) -> PromptsEvaluate
             },
         )
 
-    auth = (
-        "Basic "
-        + base64.b64encode(
-            settings.langfuse_admin_token.encode(),
-        ).decode()
+    backend = LangfuseBackend(
+        settings.langfuse_url, settings.langfuse_admin_token, settings.langfuse_timeout_s
     )
-
     tag = f"prompt:{name}:{version}"
-    list_url = (
-        f"{settings.langfuse_url.rstrip('/')}/api/public/traces"
-        f"?tags={urllib.parse.quote(tag, safe='')}&limit=200"
-    )
     try:
-        req = urllib.request.Request(list_url, headers={"Authorization": auth})
-
-        def _fetch_traces() -> Any:
-            with urllib.request.urlopen(req, timeout=settings.langfuse_timeout_s) as r:
-                return _json.load(r)
-
-        traces_body = await asyncio.to_thread(_fetch_traces)
-    except urllib.error.HTTPError as e:
-        # 400/404/422 = clean empty (no traces match the filter); only
-        # true server faults bubble.
-        if e.code in (400, 404, 422):
-            return PromptsEvaluateOutput.model_validate(
-                {
-                    "should_promote": False,
-                    "eval_count": 0,
-                    "mean_score": None,
-                    "min_score": None,
-                    "threshold": threshold,
-                    "rationale": (
-                        f"Langfuse returned HTTP {e.code} for tag {tag!r} — no traces to evaluate"
-                    ),
-                    "prompt_name": name,
-                    "prompt_version": version,
-                }
-            )
-        log.exception("prompt eval: list traces failed for %s", tag)
+        async with httpx.AsyncClient(timeout=settings.langfuse_timeout_s) as c:
+            trace_ids = await backend.find_trace_ids(c, tags=[tag], first=_EVAL_TRACES)
+            scores = await _rubric_scores(c, backend, trace_ids, rubric)
+    except (ErasureBackendError, httpx.HTTPError, ValueError) as e:
+        log.exception("prompt eval: Langfuse read failed for %s", tag)
         raise HTTPException(
             status_code=502,
             detail={
                 "code": "BACKEND_UNAVAILABLE",
-                "message": f"Langfuse trace list failed: HTTP {e.code}",
+                "message": f"Langfuse read failed: {type(e).__name__}: {e}",
             },
         ) from e
-    except Exception as e:
-        log.exception("prompt eval: list traces failed for %s", tag)
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "BACKEND_UNAVAILABLE",
-                "message": f"Langfuse trace list failed: {e}",
-            },
-        ) from e
-    trace_ids = [t["id"] for t in (traces_body.get("data") or []) if "id" in t]
     if not trace_ids:
         return PromptsEvaluateOutput.model_validate(
             {
@@ -780,28 +764,6 @@ async def admin_prompts_evaluate(input: PromptsEvaluateInput) -> PromptsEvaluate
                 "prompt_version": version,
             }
         )
-
-    scores: list[float] = []
-    for tid in trace_ids[:200]:
-        url = (
-            f"{settings.langfuse_url.rstrip('/')}/api/public/scores"
-            f"?traceId={tid}&name={rubric}&limit=10"
-        )
-        try:
-            req = urllib.request.Request(url, headers={"Authorization": auth})
-
-            def _fetch_score(req: urllib.request.Request = req) -> Any:
-                with urllib.request.urlopen(req, timeout=settings.langfuse_timeout_s) as r:
-                    return _json.load(r)
-
-            body = await asyncio.to_thread(_fetch_score)
-        except Exception:  # noqa: BLE001 — one trace's score fetch failure skips that trace
-            continue
-        for s in body.get("data") or []:
-            try:
-                scores.append(float(s.get("value")))
-            except (TypeError, ValueError):
-                pass
 
     if not scores:
         return PromptsEvaluateOutput.model_validate(

@@ -74,7 +74,7 @@ def _page(ids: list[str], total_pages: int) -> _Resp:
 @pytest.mark.asyncio
 async def test_lookup_asks_for_core_fields_and_follows_pages(backend) -> None:
     c = _Client([_page(["a", "b"], 2), _page(["c"], 2)])
-    ids = await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="")
+    ids = await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="", first=0)
     assert ids == ["a", "b", "c"]
     assert all(call["fields"] == "core" for call in c.calls)
     assert [call["page"] for call in c.calls] == [1, 2]
@@ -84,7 +84,7 @@ async def test_lookup_asks_for_core_fields_and_follows_pages(backend) -> None:
 @pytest.mark.asyncio
 async def test_a_timed_out_page_is_retried_then_read(backend) -> None:
     c = _Client([httpx.ReadTimeout("", request=None), _page(["a"], 1)])
-    ids = await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="")
+    ids = await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="", first=0)
     assert ids == ["a"] and len(c.calls) == 2
 
 
@@ -92,7 +92,7 @@ async def test_a_timed_out_page_is_retried_then_read(backend) -> None:
 async def test_a_5xx_page_is_retried_and_the_last_status_is_reported(backend) -> None:
     c = _Client([_Resp(502), _Resp(503), _Resp(500)])
     with pytest.raises(eb.ErasureBackendError) as ei:
-        await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="")
+        await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="", first=0)
     assert "HTTP 500" in str(ei.value) and len(c.calls) == 3
 
 
@@ -120,7 +120,7 @@ async def test_three_timeouts_fail_closed_with_the_exception_named(backend, monk
 async def test_a_4xx_page_is_not_retried(backend) -> None:
     c = _Client([_Resp(401)])
     with pytest.raises(eb.ErasureBackendError) as ei:
-        await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="")
+        await backend._find_trace_ids_v3(c, tags=["namespace:x", "org:o"], user_id="", first=0)
     assert "HTTP 401" in str(ei.value) and len(c.calls) == 1
 
 
@@ -145,7 +145,7 @@ def _obs_page(trace_ids: list[str], cursor: str | None) -> _Resp:
 @pytest.mark.asyncio
 async def test_langfuse_3_uses_the_trace_list(backend) -> None:
     c = _Client([_health("3.227.0"), _page(["a"], 1)])
-    ids = await backend._find_trace_ids(c, tags=["org:o"], user_id="u1")
+    ids = await backend.find_trace_ids(c, tags=["org:o"], user_id="u1")
     assert ids == ["a"]
     assert c.calls[0]["url"].endswith("/api/public/health")
     assert c.calls[1]["url"].endswith("/api/public/traces")
@@ -163,7 +163,7 @@ async def test_langfuse_4_reads_distinct_trace_ids_from_observations(backend) ->
             _obs_page(["t2", "t3"], None),
         ]
     )
-    ids = await backend._find_trace_ids(c, tags=["namespace:x", "org:o"], user_id="u1")
+    ids = await backend.find_trace_ids(c, tags=["namespace:x", "org:o"], user_id="u1")
     assert ids == ["t1", "t2", "t3"]
     pages = c.calls[1:]
     assert all(p["url"].endswith("/api/public/v2/observations") for p in pages)
@@ -183,7 +183,7 @@ async def test_langfuse_4_reads_distinct_trace_ids_from_observations(backend) ->
 @pytest.mark.asyncio
 async def test_langfuse_4_namespace_lookup_filters_on_tags_only(backend) -> None:
     c = _Client([_health("4.0.0"), _obs_page(["t1"], None)])
-    await backend._find_trace_ids(c, tags=["namespace:x", "org:o"])
+    await backend.find_trace_ids(c, tags=["namespace:x", "org:o"])
     assert [f["column"] for f in json.loads(c.calls[1]["filter"])] == ["tags"]
 
 
@@ -191,7 +191,7 @@ async def test_langfuse_4_namespace_lookup_filters_on_tags_only(backend) -> None
 async def test_langfuse_4_lookup_error_fails_closed(backend) -> None:
     c = _Client([_health("4.76.0"), _Resp(400)])
     with pytest.raises(eb.ErasureBackendError) as ei:
-        await backend._find_trace_ids(c, tags=["org:o"])
+        await backend.find_trace_ids(c, tags=["org:o"])
     assert "HTTP 400" in str(ei.value)
 
 
@@ -200,7 +200,7 @@ async def test_langfuse_4_lookup_refuses_a_truncated_set(backend, monkeypatch) -
     monkeypatch.setattr(eb.LangfuseBackend, "_MAX_TRACES", 2)
     c = _Client([_health("4.76.0"), _obs_page(["t1", "t2", "t3"], "c1")])
     with pytest.raises(eb.ErasureBackendError, match="truncated"):
-        await backend._find_trace_ids(c, tags=["org:o"])
+        await backend.find_trace_ids(c, tags=["org:o"])
 
 
 @pytest.mark.asyncio
@@ -217,15 +217,15 @@ async def test_langfuse_4_lookup_refuses_a_truncated_set(backend, monkeypatch) -
 async def test_an_unreadable_server_version_fails_closed(backend, resp) -> None:
     c = _Client([resp])
     with pytest.raises(eb.ErasureBackendError, match="server version"):
-        await backend._find_trace_ids(c, tags=["org:o"])
+        await backend.find_trace_ids(c, tags=["org:o"])
     assert len(c.calls) == 1
 
 
 @pytest.mark.asyncio
 async def test_the_server_version_is_probed_once_per_backend(backend) -> None:
     c = _Client([_health("4.76.0"), _obs_page(["t1"], None), _obs_page(["t2"], None)])
-    await backend._find_trace_ids(c, tags=["namespace:a", "org:o"])
-    await backend._find_trace_ids(c, tags=["namespace:b", "org:o"])
+    await backend.find_trace_ids(c, tags=["namespace:a", "org:o"])
+    await backend.find_trace_ids(c, tags=["namespace:b", "org:o"])
     assert [call["url"].rsplit("/", 1)[-1] for call in c.calls] == [
         "health",
         "observations",
@@ -237,7 +237,7 @@ async def test_the_server_version_is_probed_once_per_backend(backend) -> None:
 async def test_langfuse_4_lookup_fails_closed_on_a_repeated_cursor(backend) -> None:
     c = _Client([_health("4.76.0"), _obs_page(["t1"], "c1"), _obs_page([], "c1")])
     with pytest.raises(eb.ErasureBackendError, match="cursor"):
-        await backend._find_trace_ids(c, tags=["org:o"])
+        await backend.find_trace_ids(c, tags=["org:o"])
 
 
 @pytest.mark.asyncio
@@ -245,7 +245,7 @@ async def test_langfuse_4_lookup_fails_closed_past_the_page_cap(backend, monkeyp
     monkeypatch.setattr(eb.LangfuseBackend, "_V4_MAX_PAGES", 2)
     c = _Client([_health("4.76.0"), _obs_page([], "c1"), _obs_page([], "c2")])
     with pytest.raises(eb.ErasureBackendError, match="2 pages"):
-        await backend._find_trace_ids(c, tags=["org:o"])
+        await backend.find_trace_ids(c, tags=["org:o"])
 
 
 @pytest.mark.asyncio

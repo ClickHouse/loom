@@ -165,7 +165,7 @@ class LangfuseBackend:
     _PAGE_ATTEMPTS: ClassVar[int] = 3
     _PAGE_BACKOFF_S: ClassVar[float] = 2.0
 
-    async def _api_major(self, c: httpx.AsyncClient) -> int:
+    async def api_major(self, c: httpx.AsyncClient) -> int:
         """The Langfuse server's major version, from `GET /api/public/health`.
 
         Langfuse 4 removed the trace list (`GET /api/public/traces` answers 404)
@@ -176,7 +176,7 @@ class LangfuseBackend:
         """
         if self._major is not None:
             return self._major
-        r = await self._get_retried(c, "/api/public/health", {})
+        r = await self.get_retried(c, "/api/public/health", {})
         version = ""
         if r.status_code == 200:
             try:
@@ -194,17 +194,23 @@ class LangfuseBackend:
         self._major = int(major)
         return self._major
 
-    async def _find_trace_ids(
+    async def find_trace_ids(
         self,
         c: httpx.AsyncClient,
         *,
         tags: list[str],
         user_id: str = "",
+        first: int = 0,
     ) -> list[str]:
-        """Every trace id carrying all of `tags` (and `user_id`, when given)."""
-        if await self._api_major(c) >= 4:
-            return await self._find_trace_ids_v4(c, tags=tags, user_id=user_id)
-        return await self._find_trace_ids_v3(c, tags=tags, user_id=user_id)
+        """Every trace id carrying all of `tags` (and `user_id`, when given).
+
+        `first` > 0 stops once that many are found, for a read that wants a
+        sample rather than the whole set; erasure always reads the whole set."""
+        if await self.api_major(c) >= 4:
+            ids = await self._find_trace_ids_v4(c, tags=tags, user_id=user_id, first=first)
+        else:
+            ids = await self._find_trace_ids_v3(c, tags=tags, user_id=user_id, first=first)
+        return ids[:first] if first else ids
 
     async def _find_trace_ids_v4(
         self,
@@ -212,14 +218,16 @@ class LangfuseBackend:
         *,
         tags: list[str],
         user_id: str,
+        first: int,
     ) -> list[str]:
         """The trace ids of the observations matching the filter, on Langfuse 4.
 
         Langfuse 4 keeps tags and the user id on each observation, so the filter
         runs over `GET /api/public/v2/observations` and the distinct `traceId`s
-        are the traces to delete. Pagination follows `meta.cursor` until it is
-        absent; a page may be empty while a cursor is still present. The same
-        fail-closed rules as the Langfuse 3 lookup apply (no truncation).
+        are the matching traces. Pagination follows `meta.cursor` until it is
+        absent (or `first` are found); a page may be empty while a cursor is
+        still present. A whole-set read follows the same fail-closed rules as
+        the Langfuse 3 lookup (no truncation).
         """
         conditions: list[dict[str, Any]] = [
             {"type": "arrayOptions", "column": "tags", "operator": "all of", "value": tags}
@@ -238,7 +246,7 @@ class LangfuseBackend:
         ids: dict[str, None] = {}
         seen_cursors: set[str] = set()
         for _ in range(self._V4_MAX_PAGES):
-            r = await self._get_retried(c, "/api/public/v2/observations", query)
+            r = await self.get_retried(c, "/api/public/v2/observations", query)
             if r.status_code != 200:
                 raise ErasureBackendError(
                     f"langfuse observation lookup {tags} → HTTP {r.status_code}: "
@@ -251,21 +259,21 @@ class LangfuseBackend:
             if len(ids) > self._MAX_TRACES:
                 raise ErasureBackendError(
                     f"langfuse observation lookup {tags} matched more than "
-                    f"{self._MAX_TRACES} traces; refusing to erase a truncated set"
+                    f"{self._MAX_TRACES} traces; refusing to return a truncated set"
                 )
             cursor = (body.get("meta") or {}).get("cursor")
-            if not cursor:
+            if not cursor or (first and len(ids) >= first):
                 return list(ids)
             if cursor in seen_cursors:
                 raise ErasureBackendError(
                     f"langfuse observation lookup {tags} returned a cursor it had "
-                    f"already returned; refusing to erase a set it cannot finish reading"
+                    f"already returned; refusing to return a set it cannot finish reading"
                 )
             seen_cursors.add(cursor)
             query = {**query, "cursor": cursor}
         raise ErasureBackendError(
             f"langfuse observation lookup {tags} did not finish within "
-            f"{self._V4_MAX_PAGES} pages; refusing to erase a truncated set"
+            f"{self._V4_MAX_PAGES} pages; refusing to return a truncated set"
         )
 
     async def _find_trace_ids_v3(
@@ -274,10 +282,13 @@ class LangfuseBackend:
         *,
         tags: list[str],
         user_id: str,
+        first: int,
     ) -> list[str]:
-        """Collect every trace id matching a filter, following pagination.
+        """Collect the trace ids matching a filter, following pagination, until
+        `first` are found when it is set.
 
-        Fails closed on both partial outcomes. This is a GDPR path, and the
+        A whole-set read (`first` 0, which erasure always asks for) fails closed
+        on both partial outcomes. Erasure is a GDPR path, and its
         callers turn a returned count into a `completed` saga step that the
         recovery worker will never retry — so under-collecting here is silent,
         permanent non-erasure:
@@ -296,7 +307,7 @@ class LangfuseBackend:
         ids: list[str] = []
         page = 1
         while True:
-            r = await self._get_retried(
+            r = await self.get_retried(
                 c,
                 "/api/public/traces",
                 {"fields": self._LIST_FIELDS, "page": page, "limit": self._PAGE_SIZE, **params},
@@ -309,34 +320,31 @@ class LangfuseBackend:
             body = r.json()
             rows = body.get("data") or []
             ids.extend(str(t["id"]) for t in rows if t.get("id"))
-            if not rows:
+            if not rows or (first and len(ids) >= first):
                 break
             meta = body.get("meta") or {}
             total_pages = meta.get("totalPages")
             if total_pages is None:
                 raise ErasureBackendError(
                     f"langfuse trace lookup {params} returned {len(rows)} rows "
-                    f"with no meta.totalPages — cannot tell whether more exist, "
-                    f"so erasure must not report success"
+                    f"with no meta.totalPages — cannot tell whether more exist; "
+                    f"refusing to return a truncated set"
                 )
             if len(ids) > self._MAX_TRACES:
                 raise ErasureBackendError(
                     f"langfuse trace lookup {params} matched more than "
-                    f"{self._MAX_TRACES} traces; refusing to erase a truncated "
-                    f"set, because a partial delete would be recorded as a "
-                    f"completed erasure and never retried"
+                    f"{self._MAX_TRACES} traces; refusing to return a truncated set"
                 )
             if page >= int(total_pages):
                 break
             page += 1
         return ids
 
-    async def _get_retried(
+    async def get_retried(
         self, c: httpx.AsyncClient, path: str, query: dict[str, Any]
     ) -> httpx.Response:
-        """One GET to Langfuse (a lookup page or the health probe), retried on a
-        timeout, a 429 or a 5xx. Anything else is returned to the caller's status
-        check unchanged."""
+        """One GET to Langfuse, retried on a timeout, a 429 or a 5xx. Anything
+        else is returned unchanged for the caller's status check."""
         last: Exception | None = None
         for attempt in range(self._PAGE_ATTEMPTS):
             try:
@@ -388,7 +396,7 @@ class LangfuseBackend:
 
         Langfuse has no user-deletion endpoint (`DELETE /api/public/users/{id}`
         answers 404 with an HTML page, which would read as nothing to erase):
-        the traces are found by user id (`_find_trace_ids`, filtered
+        the traces are found by user id (`find_trace_ids`, filtered
         server-side) and deleted with `DELETE /api/public/traces`. Deleting a
         trace removes its observations and scores with it.
         """
@@ -398,7 +406,7 @@ class LangfuseBackend:
                 # is a caller-supplied opaque string and every org writes into
                 # one Langfuse project, so `userId` alone would erase another
                 # tenant's traces for anyone sharing an identifier.
-                ids = await self._find_trace_ids(c, tags=[f"org:{org}"], user_id=user_id)
+                ids = await self.find_trace_ids(c, tags=[f"org:{org}"], user_id=user_id)
                 if not ids:
                     return 0
                 return await self._delete_traces(c, ids)
@@ -421,7 +429,7 @@ class LangfuseBackend:
             async with httpx.AsyncClient(timeout=self._timeout) as c:
                 # Both lookups AND the tags server-side, so a nonexistent org
                 # tag matches nothing.
-                ids = await self._find_trace_ids(c, tags=[f"namespace:{namespace}", f"org:{org}"])
+                ids = await self.find_trace_ids(c, tags=[f"namespace:{namespace}", f"org:{org}"])
                 if not ids:
                     return 0
                 return await self._delete_traces(c, ids)
@@ -440,7 +448,7 @@ class LangfuseBackend:
         # Probed before the concurrent lookups, so they share one answer.
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as c:
-                await self._api_major(c)
+                await self.api_major(c)
         except httpx.HTTPError as e:
             raise ErasureBackendError(
                 f"langfuse.delete_namespaces {org} transport error: {_describe(e)}"
