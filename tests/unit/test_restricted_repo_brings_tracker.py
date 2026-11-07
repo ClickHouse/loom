@@ -45,10 +45,6 @@ def wired(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(nc, "is_restricted", _isr)
     monkeypatch.setattr(
-        binding, "tracker_namespace_for", lambda org, ns, **_: state["bindings"].get(ns, "")
-    )
-    # The token scope walks every linked tracker
-    monkeypatch.setattr(
         binding,
         "tracker_namespaces_for",
         lambda org, ns, **_: [state["bindings"][ns]] if state["bindings"].get(ns) else [],

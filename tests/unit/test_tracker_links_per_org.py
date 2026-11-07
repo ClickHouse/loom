@@ -244,7 +244,7 @@ def test_a_discarded_refresh_leaves_the_next_call_to_read_again(monkeypatch) -> 
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize("caller", ["pack", "brief", "risk_fit", "token_setup"])
+@pytest.mark.parametrize("caller", ["pack", "brief", "risk_fit", "token_mint"])
 def test_every_reader_of_the_links_sees_a_branch_from_an_empty_snapshot(
     monkeypatch, caller
 ) -> None:
@@ -307,10 +307,19 @@ def test_every_reader_of_the_links_sees_a_branch_from_an_empty_snapshot(
         got = asyncio.run(risk_fit._bound_tracker_namespace(ORG_X, branch))
         assert got == ("", "restricted")
     else:
-        from server.identity.app import me_setup
+        from server.auth.jwt import AuthInfo
+        from server.identity.app import me_service_accounts
+        from server.operations.base import Role
 
-        got = asyncio.run(me_setup._with_bound_tracker(ORG_X, "alice", [branch]))
-        assert got == [branch, "tracker-widgets"]
+        signed_in = AuthInfo(
+            subject="alice",
+            org=ORG_X,
+            namespaces=("*",),
+            roles=(Role.WRITER,),
+            is_service_account=False,
+        )
+        got = asyncio.run(me_service_accounts._bound_trackers(ORG_X, "alice", signed_in, [branch]))
+        assert got == ["tracker-widgets"]
 
 
 def test_a_link_set_on_an_operator_repository_later_reaches_its_branches(monkeypatch) -> None:
