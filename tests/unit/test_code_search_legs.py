@@ -198,7 +198,7 @@ def test_the_fuzzy_symbol_vote_runs_beside_the_legs() -> None:
     starts = {n: t for n, ev, t in repo.span if ev == "start"}
     ends = {n: t for n, ev, t in repo.span if ev == "end"}
     # The vote and the stats read (the lexical leg's first step) each start before the
-    # other ends, so the vote runs beside the legs, not before or inside one.
+    # other ends: the vote starts with the legs, not before or after them.
     assert starts["fuzzy"] < ends["stats"] and starts["stats"] < ends["fuzzy"]
     assert res.retrieval_work["symbol_queries"] == 1
     assert set(u.unit_id for u in res.units) == {"a", "b", "c"}
