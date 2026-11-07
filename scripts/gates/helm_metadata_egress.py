@@ -53,8 +53,9 @@ EVERYTHING = (
 
 def render(*args: str) -> list[dict[str, Any]]:
     cmd = ["helm", "template", "loom", str(CHART), *sets(*REQUIRED)]
-    out = subprocess.run([*cmd, *args], check=True, capture_output=True, text=True).stdout
-    return [d for d in yaml.safe_load_all(out) if d]
+    done = subprocess.run([*cmd, *args], capture_output=True, text=True)
+    assert done.returncode == 0, f"helm template {' '.join(args)}: {done.stderr}"
+    return [d for d in yaml.safe_load_all(done.stdout) if d]
 
 
 def sets(*values: str) -> tuple[str, ...]:
@@ -174,7 +175,5 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except subprocess.CalledProcessError as e:
-        sys.exit(f"metadata egress: {e}\n{e.stderr}")
     except AssertionError as e:
         sys.exit(f"metadata egress: {e}")

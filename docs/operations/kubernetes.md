@@ -371,7 +371,8 @@ NetworkPolicy whose one rule allows every pod and every address but those (none 
   CIDR fails the upgrade.
 - A metadata proxy that redirects 169.254.169.254 to another address is reached at
   that address, which the engine may check instead: add the address of one that passes
-  node credentials through to `egressExcept`.
+  node credentials through to `egressExcept` (outside the cluster's pods, which stay
+  reachable).
 - A service in the cluster that fetches URLs for its callers (a forward proxy, a
   ClickHouse whose `url()` reaches any host, such as the test-only dev ClickHouse) reaches
   `egressExcept` for them: deny those addresses in its own policy.
