@@ -311,7 +311,7 @@ async def test_leaf_error_is_reported_never_a_verdict():
     d = await P.evaluate([rule], ctx(), FakeCH(fail=True))
     assert d.decision == "allow"  # the evaluator does not decide on errors
     assert d.determining_rules == []
-    assert d.errors and d.errors[0] == "formerly: RuntimeError"  # the text stays in the log
+    assert d.errors and "clickhouse unreachable" in d.errors[0]
     assert d.verdicts[0].holds is None and d.verdicts[0].denies is False
 
 

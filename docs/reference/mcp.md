@@ -342,8 +342,8 @@ arguments."` followed by each field error, every unknown key with the field
   `NAMESPACE_NOT_ACCESSIBLE`. On a code or tracker namespace, or a shared
   collection (not someone else's personal one), the refusal says how to get access.
 - **Transport errors** stay JSON-RPC errors: parse error `-32700`, invalid
-  request `-32600` (HTTP 401 for authentication; 200 for a malformed request or a batch
-  outside 1 to 64), method not found `-32601`, unsupported
+  request `-32600` (an auth refusal carries its HTTP status; a malformed request or a
+  batch outside 1 to 64 answers 200), method not found `-32601`, unsupported
   protocol version `-32022`, and a server fault `-32000 "tool execution
 failed"`. A fault Loom names (`OVERLOADED`, `BACKEND_TIMEOUT`,
   `SCHEMA_PENDING`, `EMBED_TIMEOUT`) states its code and message in that error, and

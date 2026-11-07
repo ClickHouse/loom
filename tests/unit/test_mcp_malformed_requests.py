@@ -123,6 +123,7 @@ def test_a_batch_past_its_cap_or_empty_is_refused_before_any_entry_runs(
     assert ran == []
     r = client.post("/mcp", json=[ping] * mcp_mod.MAX_BATCH_ENTRIES, headers=_headers(auth))
     assert r.status_code == 200 and len(r.json()) == mcp_mod.MAX_BATCH_ENTRIES
+    assert len(ran) == mcp_mod.MAX_BATCH_ENTRIES
 
 
 def test_an_oversized_batch_is_refused_before_the_bearer_is_read(
@@ -131,10 +132,10 @@ def test_an_oversized_batch_is_refused_before_the_bearer_is_read(
     from server.transport import mcp as mcp_mod
 
     listing = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}  # needs a bearer
-    r = _client(monkeypatch, auth=True).post(
-        "/mcp", json=[listing] * (mcp_mod.MAX_BATCH_ENTRIES + 1)
-    )
-    assert r.status_code == 200 and r.json()["error"]["code"] == INVALID_REQUEST
+    client = _client(monkeypatch, auth=True)
+    for headers in ({}, {"Authorization": "Bearer not-a-token"}):
+        r = client.post("/mcp", json=[listing] * (mcp_mod.MAX_BATCH_ENTRIES + 1), headers=headers)
+        assert r.status_code == 200 and r.json()["error"]["code"] == INVALID_REQUEST
 
 
 def test_an_unsupported_protocol_version_answers_400_before_the_batch_cap(
