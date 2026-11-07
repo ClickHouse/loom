@@ -508,10 +508,11 @@ its wait), and then read it sequentially; a parked delivery is not waited for. T
 diagnostic reports (`namespace.audit`, `namespace.validate`, `namespace.tune`,
 `memory.inspect` and `knowledge.inspect`'s decision counts) start at the same barrier,
 but a wait that runs out, or a Postgres that does not answer, does not fail them: they
-read what ClickHouse holds and name `projection` in `skipped` (and in `coverage`, which
-then is not `complete`). A finding cites a sampled row only while it is its key's live
-head at the version ClickHouse read, redacted or not alike, with the hash of the value
-`memory.get` serves there; a row rewritten, deleted or redacted since is not cited. A copy of
+read what ClickHouse holds and name `projection` in `skipped`, and audit and validate
+also in `coverage`, which then is not `complete`. As a search's does, the wait may
+publish another writer's lapsed deliveries. A finding cites a sampled row only while it
+is its key's live head at the version ClickHouse read, in the same redaction state, with
+the hash of the value `memory.get` serves there; a row rewritten, deleted or redacted since is not cited. A copy of
 a head its writer read (`lifecycle.insert_versions_over_heads`: a tombstone, a status, a
 pin, a touch, the supersessions and cascades of any write), `memory.reject`,
 `memory.clear` and a period digest's row are done once committed, even when their

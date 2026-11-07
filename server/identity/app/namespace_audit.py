@@ -13,8 +13,9 @@ Thirteen checks, each one read over existing tables scoped to (org, namespace).
 No mutation, no new storage. A check that fails to run is reported in
 `skipped` and the rest still return. Samples carry keys and counts only,
 never a value. Under Postgres the checks start once ClickHouse holds what the
-namespace committed (`pg_validation.published_reads`), and a sample is cited
-only while the authority serves its row at the version read.
+namespace committed (`pg_validation.published_reads`; as for a search, the wait
+may publish another writer's lapsed deliveries), and a sample is cited only while
+the authority serves its row at the version read.
 
 There is no query-shape check: the ledger keeps no query text
 (`server/observability/event_args.py` replaces every free-text argument with

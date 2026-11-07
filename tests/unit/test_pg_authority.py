@@ -5388,7 +5388,7 @@ async def test_a_findings_citation_is_the_head_the_authority_serves(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Under Postgres a report cites a ClickHouse row only while it is its key's live head
-    at the version read, redacted or not alike, and hashes the value memory.get serves
+    at the version read, in the same redaction state, and hashes the value memory.get serves
     there, whose object keeps a null field the JSON column drops. A row the authority has
     rewritten, deleted or redacted since is not cited."""
     from server.core import pg
