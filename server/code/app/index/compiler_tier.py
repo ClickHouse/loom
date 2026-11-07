@@ -392,7 +392,7 @@ async def git(
             continue
         if done.returncode != 0:
             tail = done.stdout.decode("utf-8", "replace")[-500:]
-            raise RuntimeError(f"git {args[0]} failed: {tail}")
+            raise tier_health.ToolOutputError(f"git {args[0]} failed: {tail}")
         return
 
 
@@ -426,5 +426,5 @@ async def run_harness(
             merge_stderr=True,
         )
     except TimeoutError:
-        raise RuntimeError(f"harness timed out after {timeout_s}s") from None
+        raise tier_health.ToolOutputError(f"harness timed out after {timeout_s}s") from None
     return done.returncode, done.stdout.decode("utf-8", "replace")

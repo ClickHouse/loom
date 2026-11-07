@@ -586,11 +586,13 @@ async def handle_ops_health(input: OpsHealthInput) -> OpsHealthOutput:
 _ABANDONED_SEP = "; abandoned: "
 
 
-def _shown_error_message(message: str, status: str) -> str:
-    """A projection failure's message as the list shows it: only the reason a retry
-    abandoned it with, so `""` on a row that is not abandoned. The rest is the
-    exception's text, which can carry a statement or the server's address;
-    `error_type` names its kind."""
+def _shown_error_message(message: str, status: str, error_type: str) -> str:
+    """A projection failure's message as the list shows it: a reason Loom recorded as
+    text (`error_type` "Error") whole, else only the reason a retry abandoned it with,
+    so `""` on a row that is not abandoned. An exception's text can carry a statement
+    or the server's address; `error_type` names its kind."""
+    if error_type == "Error":
+        return message
     _, sep, reason = message.rpartition(_ABANDONED_SEP)
     if sep and status == "abandoned":
         return f"abandoned: {reason}"
@@ -608,7 +610,7 @@ def _projection_failure_row(row: Any) -> ProjectionFailureRow:
         source_resource_id=row.source_resource_id,
         memory_keys=row.memory_keys,
         error_type=row.error_type,
-        error_message=_shown_error_message(row.error_message, row.status),
+        error_message=_shown_error_message(row.error_message, row.status, row.error_type),
         payload=row.payload,
         status=row.status,
         created_at=row.created_at.isoformat() if row.created_at else None,

@@ -857,3 +857,10 @@ def test_a_recorded_error_keeps_tool_output_and_cuts_any_other_text() -> None:
     harness = compiler_tier.harness_failure(2, SUBMODULE_NO_TOKEN)
     assert SUBMODULE_NO_TOKEN in health_app.error_text(harness)
     assert SUBMODULE_NO_TOKEN in health_app.error_text(GitError(SUBMODULE_NO_TOKEN))
+
+
+@pytest.mark.asyncio
+async def test_a_failed_git_step_keeps_its_output_for_the_record(tmp_path: Path) -> None:
+    with pytest.raises(Exception) as ei:
+        await compiler_tier.git(tmp_path, "rev-parse", "HEAD")
+    assert "rev-parse" in recorder.error_text(ei.value)

@@ -1191,6 +1191,12 @@ def test_the_list_shows_the_error_kind_and_an_abandon_reason_never_the_text() ->
     )
     # An active row's text is the exception's alone, whatever it holds.
     assert ops_app._projection_failure_row(row(echoed, "active")).error_message == ""
+    # A reason Loom recorded as text (`error_type` "Error") is shown whole.
+    own = row("conflict_resolver: retirement to follow", "active")
+    own.error_type = "Error"
+    assert ops_app._projection_failure_row(own).error_message == (
+        "conflict_resolver: retirement to follow"
+    )
 
 
 async def test_a_retry_that_raises_reports_the_kind_only(monkeypatch) -> None:

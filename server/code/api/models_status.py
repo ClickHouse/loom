@@ -82,7 +82,7 @@ class CodeWorkerStatus(BaseModel):
     last_duration_ms: int = 0
     consecutive_failures: int = 0
     total_runs: int = 0
-    # Why the last pass failed: the error's class, or the pass's status (`timeout`) when
+    # Why the last pass failed: the error's class, or the pass's status (`cancelled`) when
     # it raised none; `""` after a clean pass. The text is in the server log.
     last_error: str = ""
 
