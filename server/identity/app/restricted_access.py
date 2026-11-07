@@ -1,12 +1,13 @@
 """What a request against a restricted namespace leaves behind.
 
-Three writers run after the authorization gate and would otherwise record
-what the gate protected: the agent_events argument projection (query /
-question text), the code_search_trace row (query text, returned paths) and
-the audit ledger, which otherwise records nothing for a plain read. For a
-restricted namespace the first two keep identifiers and digests and drop
-the text, and the third gains one row per request — the same shape as
-`memory.sensitive_read`, per request rather than per row.
+Three writers run after a request is admitted (by the op gate, or by a raw
+route's own check) and would otherwise record what the check protected: the
+agent_events argument projection (query / question text), the
+code_search_trace row (query text, returned paths) and the audit ledger,
+which otherwise records nothing for a plain read. For a restricted namespace
+the first two keep identifiers and digests and drop the text, and the third
+gains one row per request, or per granted namespace for a token mint — the
+same shape as `memory.sensitive_read`, per request rather than per row.
 
 Every check here is `is_restricted_cached`: synchronous, no I/O, answered
 from the snapshot the caller's own authorization (or classification read)
