@@ -371,8 +371,9 @@ NetworkPolicy whose one rule allows every pod and every address but those (none 
   metadata addresses in your own policy.
 - An engine that keeps address ranges off node IPs (Cilium's default) blocks host-network
   endpoints and the nodes' own addresses: NodeLocal DNSCache (so DNS), the EKS Pod
-  Identity agent, and a host-network API server (which `retireLostPods` calls). Turn on the engine's node matching, or set
-  `guardMetadata: false` and allow them in your own policy.
+  Identity agent, and a host-network API server (which `retireLostPods` calls). Turn on
+  the engine's node matching, or set `guardMetadata: false` and allow them in your own
+  policy.
 
 ## Separate workers
 

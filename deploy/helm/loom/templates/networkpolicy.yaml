@@ -1,4 +1,5 @@
-{{- if not (kindIs "bool" (.Values.networkPolicy.guardMetadata | default true)) }}
+{{- $guard := .Values.networkPolicy.guardMetadata }}
+{{- if not (or (kindIs "invalid" $guard) (kindIs "bool" $guard)) }}
 {{- fail "networkPolicy.guardMetadata must be true or false" }}
 {{- end }}
 {{- if .Values.networkPolicy.enabled }}

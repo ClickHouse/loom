@@ -349,9 +349,9 @@ networkPolicy:
   # node credentials through, and node or other non-pod ranges to keep pods off them.
   egressExcept: [169.254.169.254/32, fd00:ec2::254/128, fd20:ce::254/128]
   # With enabled: false, render the egress-only policy above (none with
-  # `egressExcept: []`). Set false when your
-  # own policies limit the pods' egress: NetworkPolicies add up, so this one
-  # would let the pods reach everything else. Deny `egressExcept` there instead.
+  # `egressExcept: []`). Set false when your own policies limit the pods' egress:
+  # NetworkPolicies add up, so this one would let the pods reach everything else.
+  # Deny `egressExcept` there instead.
   guardMetadata: true
   # More egress rules, e.g. SSH git remotes or an OTLP collector.
   extraEgress: []

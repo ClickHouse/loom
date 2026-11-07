@@ -143,6 +143,11 @@ def main() -> None:
         }
     ], policy["egress"]
     assert not web_policies(render(*sets("networkPolicy.guardMetadata=false")))
+    # the switch is the off-mode guard's only: the full policy still renders
+    (full,) = web_policies(
+        render(*sets("networkPolicy.enabled=true", "networkPolicy.guardMetadata=false"))
+    )
+    assert "Ingress" in full["policyTypes"], full
     # a release upgraded with --reuse-values has no such key: the guard stays on
     assert web_policies(render(*sets("networkPolicy.guardMetadata=null"))) == [policy]
     assert not web_policies(render("--set-json", "networkPolicy.egressExcept=[]"))
