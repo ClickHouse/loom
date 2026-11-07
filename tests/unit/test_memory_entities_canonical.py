@@ -105,9 +105,9 @@ def test_text_longer_than_the_cap_once_normalised_is_no_entity(n: int) -> None:
     assert canonical_entity_text("\ufb01" * n) == ""
 
 
-@pytest.mark.parametrize("unit", ["re.S", "x", "the ", "s."])
-def test_a_name_at_the_cap_is_a_fixed_point(unit: str) -> None:
-    once = canonical_entity_text((unit * MAX_ENTITY_CHARS)[:MAX_ENTITY_CHARS])
+@pytest.mark.parametrize(("prefix", "unit"), [("re", ".S"), ("", "x"), ("", "the "), ("", "s.")])
+def test_a_name_at_the_cap_is_a_fixed_point(prefix: str, unit: str) -> None:
+    once = canonical_entity_text((prefix + unit * MAX_ENTITY_CHARS)[:MAX_ENTITY_CHARS])
     assert once and canonical_entity_text(once) == once
 
 
