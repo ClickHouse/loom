@@ -37,7 +37,7 @@ import bisect
 import math
 import re
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -113,6 +113,19 @@ def _utf16(hexs: bytes) -> str:
     return raw.decode("utf-16-be", "replace") if len(raw) >= 2 else raw.decode("latin-1")
 
 
+def _blocks(data: bytes, begin: bytes, end: bytes) -> Iterator[bytes]:
+    """The text between each `begin` and the first `end` after it, left to right. Each
+    search starts where the last block ended, so an opening with no close costs one scan
+    of the rest, not one per opening as a lazy regex would."""
+    at = data.find(begin)
+    while at >= 0:
+        close = data.find(end, at + len(begin))
+        if close < 0:
+            return
+        yield data[at + len(begin) : close]
+        at = data.find(begin, close + len(end))
+
+
 def _to_unicode(font: Any) -> dict[int, str]:
     """A font's ToUnicode map, code to text, read as far as its bounds allow."""
     ref = font.get("/ToUnicode")
@@ -124,13 +137,13 @@ def _to_unicode(font: Any) -> dict[int, str]:
         return {}
     out: dict[int, str] = {}
     budget = _MAX_CMAP_CODES
-    for block in re.finditer(rb"beginbfchar(.*?)endbfchar", data, re.S):
-        pairs = _HEX.findall(block.group(1))
+    for block in _blocks(data, b"beginbfchar", b"endbfchar"):
+        pairs = _HEX.findall(block)
         for src, dst in zip(pairs[::2], pairs[1::2], strict=False):
             if src:
                 out[int(src, 16)] = _utf16(dst)
-    for block in re.finditer(rb"beginbfrange(.*?)endbfrange", data, re.S):
-        tokens = _RANGE_TOKEN.findall(block.group(1))
+    for block in _blocks(data, b"beginbfrange", b"endbfrange"):
+        tokens = _RANGE_TOKEN.findall(block)
         i = 0
         while i + 2 < len(tokens) and budget > 0:
             lo, hi = tokens[i], tokens[i + 1]

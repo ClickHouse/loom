@@ -3,6 +3,7 @@ aligned columns, headings from type, columns, page furniture and turned pages.""
 
 from __future__ import annotations
 
+import time
 from collections import Counter
 from collections.abc import Callable
 from io import BytesIO
@@ -217,6 +218,36 @@ def test_a_fonts_unicode_map_gives_its_codes_widths() -> None:
         0x20: "b",
         0x21: "fi",
     }
+
+
+class _CmapStream:
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+
+    def get_object(self) -> _CmapStream:
+        return self
+
+    def get_data(self) -> bytes:
+        return self.data
+
+
+@pytest.mark.parametrize("block", [b"beginbfchar", b"beginbfrange"])
+def test_an_unclosed_unicode_map_block_is_read_in_linear_time(block: bytes) -> None:
+    """A map of block openings with no close is read once, not rescanned from each
+    opening to the end: four times the openings cost about four times the time."""
+
+    def cpu(n: int) -> float:
+        start = time.process_time()
+        assert layout._to_unicode({"/ToUnicode": _CmapStream(block * n)}) == {}
+        return time.process_time() - start
+
+    small, large = cpu(2_000), cpu(8_000)
+    assert large < 8 * small + 0.05, (small, large)
+
+
+def test_a_map_block_runs_to_its_first_close() -> None:
+    cmap = b"beginbfchar <01> <0041> beginbfchar <02> <0042> endbfchar <03> <0043> endbfchar"
+    assert layout._to_unicode({"/ToUnicode": _CmapStream(cmap)}) == {1: "A", 2: "B"}
 
 
 def _cid_font(widths: list[object], cmap: bytes) -> object:
