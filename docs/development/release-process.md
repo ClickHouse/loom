@@ -292,8 +292,8 @@ A run that stopped in `clickhouse` published nothing.
 - **A downgrade during the soak**: a final carrying its candidate's release is checked too, so a
   patch to an older line published during the soak with a newer release stops it. Either delete
   the final's tag (it published nothing), tag a new candidate on that commit, soak it, and tag
-  the final there again (the candidate's tag push resolves `latest`; when that is older than the
-  release the error names, dispatch the candidate with `-f clickhouse_image=<that release>`); or
+  the final there again. The candidate's tag push resolves `latest`; when that is older than the
+  release the error names, dispatch the candidate with `-f clickhouse_image=<that release>`. Or
   dispatch the final with `-f allow_clickhouse_downgrade=true` and accept the downgrade for that
   patch's installs.
 
