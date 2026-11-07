@@ -332,7 +332,10 @@ export default function App() {
           // other tab) as it was. Any other waits, in memory only, for the person to confirm
           // the account it names; a cancelled one is dropped and boot goes on as before.
           const token = link.token;
-          if (token && !started) {
+          // Behind a proxy or with auth off the page sends no token of its own: one from a
+          // link is dropped, unasked.
+          if (token && (isProxyMode() || isAuthDisabled())) link = { ...link, token: null };
+          else if (token && !started) {
             if (sameAccount(token, storedToken())) {
               const accepted = await whoami(token).then(
                 (w) => w.authenticated,

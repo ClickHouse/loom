@@ -52,8 +52,11 @@ waits on a screen that names the token's subject and org, and the account the br
 signed in as: **Sign in as …** stores it, and **Cancel** drops it and keeps the session the
 browser had. Until then the token is held only in the page's memory. A same-account token is
 stored only once the server accepts it, so a refused one leaves the held token as it was.
-**Sign in in a new tab** on the session-ended card opens `/me?sign_in=sso`, whose sign-in
-screen starts SSO with a nonce of that tab's own.
+`/me?sign_in=sso` opens a sign-in screen that starts SSO by itself with a nonce of that
+tab's own, unless the person signed out: **Sign in in a new tab** on the session-ended card
+opens it, and so does **Start again** when the server could not finish an SSO sign-in. A
+`#token=` link behind a proxy that adds `Authorization`, or with auth off, is dropped
+without asking.
 
 `loom init --agent NAME` signs an agent up on its own and prints a one-time code a person
 enters in the dashboard to claim the namespace. The token sits in the browser's local storage;

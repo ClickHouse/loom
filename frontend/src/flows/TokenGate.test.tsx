@@ -229,6 +229,22 @@ describe("TokenGate", () => {
       expect(vi.mocked(goToSso).mock.calls[0][0]).not.toBe(nonce);
     });
 
+    it("after a sign-out the session-expired card's address starts no sign-in", () => {
+      window.__LOOM_SSO = true;
+      localStorage.setItem("loom_signed_out_v1", "1");
+      try {
+        history.replaceState(null, "", "/me?sign_in=sso");
+        render(<TokenGate onLogin={() => undefined} reason={null} />);
+        expect(goToSso).not.toHaveBeenCalled();
+        expect(sessionStorage.getItem(SIGN_IN_PENDING)).toBeNull();
+        expect(window.location.search).toBe(""); // the ask is scrubbed all the same
+        expect(screen.getByRole("link", { name: "Sign in with SSO" })).toBeInTheDocument();
+      } finally {
+        localStorage.removeItem("loom_signed_out_v1");
+        history.replaceState(null, "", "/");
+      }
+    });
+
     it("a click that opens another tab or window follows the bare link and marks nothing here", () => {
       window.__LOOM_SSO = true;
       render(<TokenGate onLogin={() => undefined} reason={null} />);

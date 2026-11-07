@@ -446,10 +446,10 @@ rules it out.
 server seals the nonce into the sign-in's cookie and lands the token at
 `/me?n=<nonce>#token=<jwt>`. The dashboard stores a token without asking only when its
 nonce is the one the tab kept (used once, for ten minutes), or when it names the account
-already signed in; any other token, a planted sign-in's or a link's, waits for the person to
-confirm the account it names. The dashboard page sends `Cross-Origin-Opener-Policy:
-same-origin`, so a page of another origin that opened it cannot navigate it while it is
-away at the identity provider.
+already signed in, once the server accepts it; any other token, a planted sign-in's or a
+link's, waits for the person to confirm the account it names. The page's
+Cross-Origin-Opener-Policy ([response headers](#response-headers)) keeps a page that opened
+it from navigating it while it is away at the identity provider.
 
 **A revocation that cannot be written is owed.** When ending a session cannot write
 `loom.revoked_tokens`, a `revocation_owed` row in `loom.oauth_state` stands in for it for
@@ -646,16 +646,15 @@ its value.
 never `unsafe-inline`, and whose `frame-src 'none'` allows no frame. It also carries
 `Cross-Origin-Opener-Policy: same-origin`: a page of another origin that opened the
 dashboard keeps no handle on its window, so it cannot navigate it to a sign-in link of its
-own. An uploaded document
-is attacker-chosen bytes under an attacker-chosen type, so `knowledge.download` previews
-inline only plain text (text, Markdown, CSV and JSON, all served as `text/plain`) and PNG,
-JPEG, GIF and WebP whose bytes match their type; anything else (HTML, SVG, XML, PDF,
-unknown, mismatched) is an `application/octet-stream` attachment, and every download
-carries `Content-Security-Policy: sandbox; default-src 'none'; frame-ancestors 'none'`.
-The dashboard applies the same allowlist to the bytes it fetches: it decodes the first 1
-MB of text as UTF-8 into a text node in a `<pre>`, shows images with `<img>` from a
-re-typed `blob:` URL (which ignores the server's headers), and downloads everything else,
-PDF and SVG included.
+own. An uploaded document is attacker-chosen bytes under an attacker-chosen type, so
+`knowledge.download` previews inline only plain text (text, Markdown, CSV and JSON, all
+served as `text/plain`) and PNG, JPEG, GIF and WebP whose bytes match their type; anything
+else (HTML, SVG, XML, PDF, unknown, mismatched) is an `application/octet-stream`
+attachment, and every download carries `Content-Security-Policy: sandbox; default-src
+'none'; frame-ancestors 'none'`. The dashboard applies the same allowlist to the bytes it
+fetches: it decodes the first 1 MB of text as UTF-8 into a text node in a `<pre>`, shows
+images with `<img>` from a re-typed `blob:` URL (which ignores the server's headers), and
+downloads everything else, PDF and SVG included.
 
 ## Rate limiting
 

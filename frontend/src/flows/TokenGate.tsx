@@ -7,7 +7,7 @@ import { TextField } from "@clickhouse/click-ui/TextField";
 import { ExternalLink } from "../components/ui/ExternalLink";
 import { Panel } from "../components/ui/Panel";
 import { TabTrigger } from "../components/ui/TabTrigger";
-import { selfSignup, setToken, loginWithPassword } from "../api";
+import { selfSignup, setToken, signedOut, loginWithPassword } from "../api";
 import { SIGN_IN_FROM, markSignInStarted, type TokenClaims } from "../lib/boot";
 import { goToSso } from "../lib/navigation";
 import { errorRequestId, humanizeError } from "../lib/format";
@@ -103,7 +103,8 @@ export function resumeSsoOnce(now: number = Date.now()): boolean {
  *  provider returns to the page they were on. */
 function SsoGate({ reason }: { reason?: GateReason }) {
   useEffect(() => {
-    const asked = takeSsoRequest();
+    // After a sign-out the ask starts nothing: the person chose to leave.
+    const asked = takeSsoRequest() && !signedOut();
     if ((reason !== "expired" && !asked) || !resumeSsoOnce()) return;
     goToSso(rememberSignInStart());
   }, [reason]);

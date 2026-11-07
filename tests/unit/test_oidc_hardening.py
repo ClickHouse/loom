@@ -403,7 +403,7 @@ async def test_only_a_callback_refused_before_the_idp_exchange_keeps_its_cookie(
 def test_a_restart_begins_each_sign_in_where_it_began() -> None:
     from urllib.parse import parse_qs, urlsplit
 
-    assert oauth._restart_url({"kind": "dashboard"}) == "/oauth/sso"
+    assert oauth._restart_url({"kind": "dashboard"}) == "/me?sign_in=sso"
     assert oauth._restart_url({"kind": "device", "user_code": "BCDFGHJK"}) == (
         "/oauth/device?user_code=BCDFGHJK"
     )
