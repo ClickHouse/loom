@@ -41,19 +41,17 @@ def _call(**kw: Any) -> None:
 
 
 @pytest.fixture()
-def _slow_rows(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """The rows written, and the most writes that were in flight at once."""
-    done = SimpleNamespace(rows=[], in_flight=0, peak=0)
+def writes(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """The fake row writes: the rows written, and the most that were in flight at once."""
+    writes = SimpleNamespace(rows=[], in_flight=0, peak=0)
 
-    def _row(name: str, fail: bool = False) -> Any:
+    def _row(name: str) -> Any:
         async def _write(**_: Any) -> None:
-            done.in_flight += 1
-            done.peak = max(done.peak, done.in_flight)
+            writes.in_flight += 1
+            writes.peak = max(writes.peak, writes.in_flight)
             await asyncio.sleep(0.01)
-            done.in_flight -= 1
-            if fail:
-                raise RuntimeError(f"{name} down")
-            done.rows.append(name)
+            writes.in_flight -= 1
+            writes.rows.append(name)
 
         return _write
 
@@ -61,18 +59,18 @@ def _slow_rows(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.setattr(common, "emit_budget_violation", _row("budget"))
     monkeypatch.setattr(common, "emit_op_audit", _row("audit"))
     monkeypatch.setattr(idempotency, "store", _row("idem"))
-    return done
+    return writes
 
 
-def test_the_three_rows_go_out_in_one_round(_slow_rows: SimpleNamespace) -> None:
+def test_the_three_rows_go_out_in_one_round(writes: SimpleNamespace) -> None:
     _call()
-    assert sorted(_slow_rows.rows) == ["audit", "budget", "idem"]
-    assert _slow_rows.peak == 3, "the three writes were in flight at once, not one by one"
+    assert sorted(writes.rows) == ["audit", "budget", "idem"]
+    assert writes.peak == 3, "the three writes were in flight at once, not one by one"
 
 
-def test_under_budget_and_without_a_key_only_the_audit_row(_slow_rows: SimpleNamespace) -> None:
+def test_under_budget_and_without_a_key_only_the_audit_row(writes: SimpleNamespace) -> None:
     _call(elapsed_ms=1, idem=(None, None))
-    assert _slow_rows.rows == ["audit"]
+    assert writes.rows == ["audit"]
 
 
 def test_a_failing_row_is_logged_not_raised(monkeypatch: pytest.MonkeyPatch, caplog) -> None:
