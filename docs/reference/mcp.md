@@ -18,7 +18,7 @@ and others) with `loom install` or by hand is in
 
 | Request                          | Does                                                                                                                                                                |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /mcp`                      | One JSON-RPC request or a batch. The answer is a JSON body, not an event stream. A notification answers `202` with no body.                                         |
+| `POST /mcp`                      | One JSON-RPC request or a batch of 1 to 64. The answer is a JSON body, not an event stream. A notification answers `202` with no body.                             |
 | `DELETE /mcp` + `Mcp-Session-Id` | Ends the session and closes its implicit run. Rate-limited as `run.complete`, per caller within the org's budget: past the cap it answers `429` with `Retry-After`. |
 
 Query parameters on the URL select what `tools/list` shows for that connection:

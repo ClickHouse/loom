@@ -99,3 +99,27 @@ def test_non_object_params_on_other_methods(monkeypatch: pytest.MonkeyPatch) -> 
         r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 4, "method": method, "params": 7})
         assert r.status_code == 200
         assert r.json()["error"]["code"] == INVALID_PARAMS, method
+
+
+@pytest.mark.parametrize("auth", [False, True])
+def test_a_batch_past_its_cap_or_empty_is_refused_before_any_entry_runs(
+    monkeypatch: pytest.MonkeyPatch, auth: bool
+) -> None:
+    from server.transport import mcp as mcp_mod
+
+    client = _client(monkeypatch, auth=auth)
+    ran: list[Any] = []
+    real = mcp_mod._dispatch_batch
+
+    async def counting(payload: list[Any], dispatch: Any) -> list[dict[str, Any]]:
+        ran.append(len(payload))
+        return await real(payload, dispatch)
+
+    monkeypatch.setattr(mcp_mod, "_dispatch_batch", counting)
+    ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    for body in ([ping] * (mcp_mod.MAX_BATCH_ENTRIES + 1), []):
+        r = client.post("/mcp", json=body, headers=_headers(auth))
+        assert r.status_code == 200 and r.json()["error"]["code"] == INVALID_REQUEST
+    assert ran == []
+    r = client.post("/mcp", json=[ping] * mcp_mod.MAX_BATCH_ENTRIES, headers=_headers(auth))
+    assert ran == [mcp_mod.MAX_BATCH_ENTRIES]
