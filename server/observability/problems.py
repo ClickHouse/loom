@@ -819,7 +819,7 @@ _TIER_FAILURES_NAMED = 5
 
 
 def _code_tier_problems(st: HealthState) -> list[Problem]:
-    """One `code_tier_failing` problem for every code-index tier that keeps failing:
+    """One `code_tier_failing` problem for all the code-index tiers that keep failing:
     each tier with its error kind, failed passes, since when and how far behind, and
     the fix of each kind. It names no entry or repository, because `/v1/health` answers
     anyone and an entry may be restricted; `code.repos` and the repository page name
@@ -878,10 +878,18 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
     return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))
 
 
+# Problems about the data a deployment holds, not the deployment: they are listed, and
+# never make `status` degraded (a repository's failing code-index tier would otherwise
+# fail `loom up`, `helm test` and every health gate over a missing token).
+NOT_DEPLOYMENT_FAULTS = frozenset({"code_tier_failing"})
+
+
 def derive_status(ch_ok: bool, problems: list[Problem]) -> str:
     """`/v1/health` `status`: `degraded` when ClickHouse is down or any
-    error-severity problem exists; configured fakes are `warn` unless
-    `LOOM_REQUIRE_REAL_PROVIDERS=true`, so the stock dev stack stays `ok`."""
-    if not ch_ok or any(p.severity == "error" for p in problems):
+    error-severity problem exists but those in `NOT_DEPLOYMENT_FAULTS`; configured
+    fakes are `warn` unless `LOOM_REQUIRE_REAL_PROVIDERS=true`, so the stock dev stack
+    stays `ok`."""
+    faults = [p for p in problems if p.code not in NOT_DEPLOYMENT_FAULTS]
+    if not ch_ok or any(p.severity == "error" for p in faults):
         return "degraded"
     return "ok"

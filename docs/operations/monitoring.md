@@ -54,7 +54,8 @@ curl -s 'http://localhost:7777/v1/health?include=workers' | jq '.workers_leader'
   that reads only the status code (the image's healthcheck, a load balancer) then sees
   an outage instead of a 200 whose body it never parses.
 - **`status`** is `degraded` when ClickHouse is down or any entry in `problems` has
-  severity `error`; otherwise `ok`. A readiness check should also require
+  severity `error`, but `code_tier_failing`, which is about a repository's index and not
+  the deployment; otherwise `ok`. A readiness check should also require
   `schema.pending` to be empty (the zero-downtime pair's swap does exactly this).
 - **`problems`** is a list of `{code, severity, message, fix, source}`, worst first. The
   same list is printed by `loom doctor` and shown as the dashboard banner.

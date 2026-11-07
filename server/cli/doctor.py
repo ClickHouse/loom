@@ -4,6 +4,7 @@ problem list /v1/health carries, and the report body."""
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import sys
 from typing import Any
@@ -447,6 +448,7 @@ def _doctor_reader_probe(settings: Any) -> tuple[str, str]:
     return "ok", ""
 
 
+@functools.cache  # `--json` builds the problem list twice; read once
 def _doctor_tier_failures() -> tuple[Any, ...] | None:
     """The failing code-index tiers as `/v1/health` reports them, read once from
     ClickHouse; None when it cannot be read (`clickhouse_reachable` says why)."""
@@ -478,9 +480,10 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
 
 
 def _doctor_problems() -> list[Any]:
-    """The shared problem list as the doctor sees it: settings
-    only — no probed dim, breaker, lease or ledger before boot. Empty when
-    settings do not load (the `settings_load` check already says so)."""
+    """The shared problem list as the doctor sees it: settings, and the failing
+    code-index tiers read once from ClickHouse — no probed dim, breaker, lease or
+    ledger before boot. Empty when settings do not load (the `settings_load` check
+    already says so)."""
     try:
         from server.code.app.index.sandbox import layout_refusal, sandbox_available
         from server.observability.problems import HealthState, Problem, collect_problems

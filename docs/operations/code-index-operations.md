@@ -716,7 +716,7 @@ The record is read where each reader already looks:
   `/v1/health`, the dashboard banner and `loom doctor`
   ([monitoring](./monitoring.md#v1health)).
 
-The kinds and their fixes are defined in one table,
+The kinds (`_KINDS`) and their fixes (`fix_for`) are in
 [`server/code/domain/index/tier_health.py`](../../server/code/domain/index/tier_health.py).
 A failure with kind `unknown` carries the end of the output to read.
 

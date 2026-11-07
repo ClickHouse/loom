@@ -25,15 +25,10 @@ spec:
               with urllib.request.urlopen(base + path, timeout=10) as r:
                   assert r.status == 200, (path, r.status)
               print(path, "ok")
-          # ClickHouse answers and no error problem stands, but a repository's failing
-          # code-index tier, which is not a fault of this deployment.
+          # ClickHouse answers and no replica drifts from the published config.
           with urllib.request.urlopen(base + "/v1/health", timeout=10) as r:
               health = json.load(r)
-          errors = [
-              p for p in health["problems"]
-              if p["severity"] == "error" and p["code"] != "code_tier_failing"
-          ]
-          assert health["ch_ok"] and not errors, health["problems"]
+          assert health["ch_ok"] and health["status"] == "ok", health["problems"]
           print("/v1/health ok, build", health["build_commit"])
       resources:
         requests: { cpu: 50m, memory: 64Mi }

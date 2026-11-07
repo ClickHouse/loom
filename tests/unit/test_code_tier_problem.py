@@ -1,7 +1,7 @@
 """A code-index tier that keeps failing is one `code_tier_failing` health problem, fed
 from a per-process snapshot of the tier-health records (never a ClickHouse read in the
 probe): warn past the pass or hour threshold, error when also far behind, with the
-entry, tier, kind, since, lag and fix."""
+tier, kind, since, lag and fix."""
 
 from __future__ import annotations
 
@@ -243,6 +243,7 @@ def test_the_doctor_reads_the_failing_tiers_once_and_none_when_clickhouse_is_dow
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
     monkeypatch.setattr(repo_registry, "refresh_db_repos", registry)
     monkeypatch.setattr(recorder, "refresh_failing", refresh)
+    doctor._doctor_tier_failures.cache_clear()
     rows = doctor._doctor_tier_failures()
     if down:
         assert rows is None and calls == []
@@ -305,4 +306,13 @@ def test_the_doctor_skips_the_tier_read_when_nothing_could_answer(
         raise AssertionError("no client is made")
 
     monkeypatch.setattr("server.core.ch.get_client", never)
+    doctor._doctor_tier_failures.cache_clear()
     assert doctor._doctor_tier_failures() is None
+
+
+def test_a_failing_tier_never_makes_the_deployment_degraded() -> None:
+    from server.observability.problems import Problem, derive_status
+
+    tier = Problem("code_tier_failing", "error", "m", "f", source="workers")
+    assert derive_status(True, [tier]) == "ok"
+    assert derive_status(True, [tier, Problem("jwt_secret_empty", "error", "m", "f")]) == "degraded"
