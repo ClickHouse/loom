@@ -50,10 +50,15 @@ fi
 # reconfigure: the compile database lists the translation units of the tree it
 # was configured on, so a file added since then has no entry and is never
 # indexed. Re-running CMake on the existing cache keeps its compiler and options.
+# A configure that fails writes no compile database, so the last one stays: the
+# translation units it lists keep being indexed, and the next window or full
+# index that reconfigures tries again.
 reconfigure() {
   if [[ -z "${CONFIGURED:-}" ]]; then
     echo ">> cmake reconfigure (compile_commands.json): $1"
-    cmake -B build -S . >/dev/null
+    if ! cmake -B build -S . >/dev/null; then
+      echo ">> warning: cmake reconfigure failed; indexing with the last compile_commands.json" >&2
+    fi
     CONFIGURED=1
   fi
 }

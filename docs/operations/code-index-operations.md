@@ -235,10 +235,11 @@ your own build, or the C/C++ tier records `scip-clang missing` as a skip. Each w
 creates a missing working tree as an empty repository and fetches each commit into it
 from the entry's mirror, so a new leader starts from nothing. The C/C++ harness runs
 the repository's CMake configure (compile database only, no build) on the first run in
-a tree, and runs it again on the existing cache before a full index and for a delta
-whose window adds a `.cpp`, `.cc` or `.cxx` file or edits a `CMakeLists.txt` or
-`.cmake` file: the compile database lists only the translation units of the tree it
-was configured on. A worker whose project prerequisites are absent records a skip in
+a tree. It runs the configure again on the existing cache before a full index and for
+a delta whose window adds a `.cpp`, `.cc` or `.cxx` file or adds, changes or deletes a
+`CMakeLists.txt` or `.cmake` file, because the compile database lists only the
+translation units of the tree it was configured on. When that configure fails, the
+harness logs a warning and indexes with the last compile database. A worker whose project prerequisites are absent records a skip in
 `workers.status`; the Tree-sitter tier remains available. TypeScript projects have
 their dependencies installed automatically in their checkout.
 

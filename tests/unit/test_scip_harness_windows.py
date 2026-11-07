@@ -193,10 +193,11 @@ while [[ $# -gt 0 ]]; do
 done
 """
 
-# the stub cmake logs its call and lists every src/*.cpp of the tree in the compile
+# the stub cmake logs its call, fails when CMAKE_FAIL is set, and otherwise lists every src/*.cpp of the tree in the compile
 # database, as a configure over a glob does
 _FAKE_CMAKE = """#!/usr/bin/env bash
 echo "cmake $*" >>"$CMAKE_CALLS"
+[[ -n "${CMAKE_FAIL:-}" ]] && exit 1
 "$PYTHON" - <<'PYEOF'
 import json, pathlib
 root = pathlib.Path.cwd()
@@ -208,7 +209,7 @@ PYEOF
 
 class _CppWindow:
     """run_delta.sh over a checkout with a compile_commands.json already configured:
-    src/a.cpp and src/b.cpp, and b.cpp includes src/h.h."""
+    src/a.cpp and src/b.cpp, b.cpp includes src/h.h, and CMakeLists.txt builds them."""
 
     def __init__(self, tmp_path: Path) -> None:
         self.repo = tmp_path / "repo"
@@ -216,6 +217,7 @@ class _CppWindow:
         (self.repo / "src" / "a.cpp").write_text("int a() { return 1; }\n")
         (self.repo / "src" / "b.cpp").write_text('#include "h.h"\nint b() { return 2; }\n')
         (self.repo / "src" / "h.h").write_text("int h();\n")
+        (self.repo / "CMakeLists.txt").write_text("project(x)\n")
         (self.repo / ".gitignore").write_text("build/\n")
         (self.repo / "build").mkdir()
         compdb = [
@@ -249,13 +251,13 @@ class _CppWindow:
 
     def run(self, head: str, index_docs: list[str]) -> dict | None:
         _write_index(self.index, index_docs)
-        subprocess.run(
+        self.stderr = subprocess.run(
             ["bash", str(_HARNESS / "run_delta.sh"), str(self.repo), self.base, head, "-"],
             env=self.env,
             check=True,
             capture_output=True,
             text=True,
-        )
+        ).stderr
         return json.loads(self.delta.read_text()) if self.delta.exists() else None
 
     @property
@@ -304,16 +306,61 @@ def test_a_translation_unit_added_after_the_configure_is_indexed(tmp_path: Path)
     assert delta is not None and [f["path"] for f in delta["files"]] == ["src/c.cpp"]
 
 
+def _edit_build(repo: Path, edit: str) -> None:
+    if edit == "change CMakeLists.txt":
+        (repo / "CMakeLists.txt").write_text("project(y)\n")
+    elif edit == "delete CMakeLists.txt":
+        _git(repo, "rm", "-q", "CMakeLists.txt")
+    else:
+        path = repo / edit.removeprefix("add ")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("set(X 1)\n")
+
+
 @pytest.mark.parametrize(
-    "build_file", ["CMakeLists.txt", "src/CMakeLists.txt", "cmake/flags.cmake"]
+    "edit",
+    [
+        "change CMakeLists.txt",
+        "delete CMakeLists.txt",
+        "add src/CMakeLists.txt",
+        "add cmake/flags.cmake",
+    ],
 )
-def test_a_window_that_edits_the_build_reconfigures(tmp_path: Path, build_file: str) -> None:
+def test_a_window_that_edits_the_build_reconfigures(tmp_path: Path, edit: str) -> None:
     w = _CppWindow(tmp_path)
-    (w.repo / build_file).parent.mkdir(parents=True, exist_ok=True)
-    (w.repo / build_file).write_text("project(x)\n")
-    head = _commit(w.repo, "edit the build")
+    _edit_build(w.repo, edit)
+    head = _commit(w.repo, edit)
     w.run(head, [])
     assert w.cmake_runs == ["cmake -B build -S ."]
+
+
+def test_a_failed_reconfigure_indexes_with_the_last_compile_database(tmp_path: Path) -> None:
+    """A build edit the host cannot configure leaves the last compile database: the
+    window's edited translation unit is still indexed, and the harness warns."""
+    w = _CppWindow(tmp_path)
+    w.env["CMAKE_FAIL"] = "1"
+    (w.repo / "CMakeLists.txt").write_text("project(y)\n")
+    (w.repo / "src" / "a.cpp").write_text("int a() { return 3; }\n")
+    head = _commit(w.repo, "edit the build and a")
+    delta = w.run(head, ["src/a.cpp"])
+    assert w.cmake_runs == ["cmake -B build -S ."] and w.compdbs == [["a.cpp"]]
+    assert "cmake reconfigure failed" in w.stderr
+    assert delta is not None and "src/a.cpp" in [f["path"] for f in delta["files"]]
+
+
+def test_a_first_configure_is_not_followed_by_a_reconfigure(tmp_path: Path) -> None:
+    w = _CppWindow(tmp_path)
+    (w.repo / "build" / "compile_commands.json").unlink()
+    _write_index(w.index, ["src/a.cpp", "src/b.cpp"])
+    subprocess.run(
+        ["bash", str(_HARNESS / "run_delta.sh"), str(w.repo), "--full", "", "-"],
+        env={**w.env, "CC": "cc", "CXX": "c++"},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert len(w.cmake_runs) == 1 and "-G Ninja" in w.cmake_runs[0]
+    assert w.compdbs == [["a.cpp", "b.cpp"]]
 
 
 def test_a_full_index_reconfigures_before_it_reads_the_compile_database(tmp_path: Path) -> None:
