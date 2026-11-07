@@ -64,6 +64,7 @@ class _Row:
         self.memory_id = f"id-{key}"
         self.conflict_with = conflict_with or []
         self.content_sha256 = "sha"
+        self.version, self.created_at = 1, 0
 
 
 class _CH:
@@ -162,6 +163,29 @@ def test_a_decision_covers_every_agents_proposal_of_the_key(
     assert [(r.memory_key, r.decided, r.status) for r in out] == [("k", True, "conflicted")]
     assert [r["status"] for r in ch.inserts[0]] == ["active", "conflicted"]
     assert len(repo["audit"]) == 2
+
+
+def test_a_decision_leaves_another_writers_fact_of_the_key(
+    repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory import store as memory_repo
+
+    fact, proposal = _Row("k", "active"), _Row("k", "proposed")
+    fact.version = 2
+    heads = [proposal, fact]
+
+    async def _many(ident: Any, keys: list[str], **kw: Any) -> list[Any]:
+        return heads
+
+    monkeypatch.setattr(memory_repo, "get_many_by_keys", _many)
+    ch = _CH()
+    out = asyncio.run(p.decide("o", "n", ["k"], "reject", actor="human:t", ch=ch))
+    assert [(r.decided, r.status) for r in out] == [(True, "rejected")]
+    assert len(ch.inserts[0]) == 1
+    # No proposal left: the newest head names the key's status.
+    proposal.status = "rejected"
+    out = asyncio.run(p.decide("o", "n", ["k"], "accept", actor="human:t", ch=_CH()))
+    assert [(r.decided, r.reason) for r in out] == [(False, "not a proposal (status active)")]
 
 
 def test_an_accepted_proposal_that_met_a_contradiction_lands_conflicted(

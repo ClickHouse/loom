@@ -579,7 +579,8 @@ async def get_many_by_keys(
         params["sid"] = identity.session_id
     # With any axis open, several identities may hold the same key: the
     # newest row per key answers, the way `get_by_key`'s wildcard read orders
-    # (version DESC, created_at DESC) and takes one.
+    # (version DESC, created_at DESC) and takes one; `every_identity` takes
+    # each identity's newest instead.
     heads_by = "memory_key, agent, user_id, session_id" if every_identity else "memory_key"
     one_per_key = (
         f"ORDER BY {heads_by} ASC, version DESC, created_at DESC LIMIT 1 BY {heads_by}"

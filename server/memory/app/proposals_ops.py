@@ -16,6 +16,7 @@ from server.memory.api.models_proposals import (
     MemoryProposalsInput,
     MemoryProposalsOutput,
 )
+from server.memory.store import proposals as proposals_repo
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -43,22 +44,12 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
         where.append("hasAny(tags, {tags:Array(String)})")
         params["tags"] = list(input.tags)
     where.extend(scope_where(request_scope(), params))
-    # The scan reads ids only; values are read for the rows returned.
-    rows = await ch.query_all(
-        f"""
-        SELECT memory_key, toString(memory_id) AS mid
-        FROM loom.memory FINAL
-        WHERE {" AND ".join(where)}
-        ORDER BY created_at DESC
-        LIMIT {{cap:UInt32}}
-        {_sequential()}
-        """,
-        params=params,
-    )
+    rows = await proposals_repo.scan_proposals(ch, where, params)
     policy = await _p.policy_for(input.org, input.namespace, ch=ch)
     # `ready` grades every row to choose which to return.
     wanted = rows if input.only == "ready" else rows[: input.limit]
-    details = await _details(ch, where, params, [str(r["mid"]) for r in wanted])
+    ids = [str(r["mid"]) for r in wanted]
+    details = await proposals_repo.proposal_details(ch, where, params, ids)
     graded = [{**r, **details[str(r["mid"])]} for r in wanted if str(r["mid"]) in details]
     keys = [str(r["memory_key"]) for r in graded]
     counts = await _p.graded_counts(ch, input.org, input.namespace, keys)
@@ -95,34 +86,6 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
         total=len(rows),
         policy=policy,
     )
-
-
-async def _details(
-    ch: Any, where: list[str], params: dict[str, Any], memory_ids: list[str]
-) -> dict[str, dict[str, Any]]:
-    """What a listed proposal shows, for the scanned rows it returns, by memory id."""
-    if not memory_ids:
-        return {}
-    rows = await ch.query_all(
-        f"""
-        SELECT toString(memory_id) AS mid, agent, memory_type,
-               -- a high value is readable by key only
-               if(sensitivity = 'high', '', substring(value, 1, 400)) AS preview, sensitivity,
-               tags, toString(created_at) AS created, conflict_with
-        FROM loom.memory FINAL
-        WHERE {" AND ".join(where)} AND memory_id IN {{ids:Array(UUID)}}
-        {_sequential()}
-        """,
-        params={**params, "ids": memory_ids},
-    )
-    return {str(r["mid"]): r for r in rows}
-
-
-def _sequential() -> str:
-    """A re-read right after a decision must not see the decided row on a lagging replica."""
-    import server.memory.store as memory_repo
-
-    return memory_repo._SEQUENTIAL if memory_repo.read_your_writes_enabled() else ""
 
 
 async def _usage_counts(

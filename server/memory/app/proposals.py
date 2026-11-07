@@ -147,7 +147,7 @@ async def decide(
     ch: Any = None,
 ) -> list[DecideResult]:
     """Accept (→ `active`) or reject (→ `rejected`) the proposals under `keys`, every
-    agent's proposal of a key included.
+    writer's proposal of a key included.
 
     Only rows still `proposed` change; anything else is reported as it is.
     Each decided row is a new version carrying every column
@@ -168,7 +168,8 @@ async def decide(
     rows = await memory_repo.get_many_by_keys(
         ident, wanted, ch=ch, strong=True, scope=WHOLE_NAMESPACE, every_identity=True
     )
-    # Agents of one namespace may each propose the same key: a decision covers them all.
+    # Several writers (agents, users, sessions) may each propose the same key: a decision
+    # covers them all.
     by_key: dict[str, list[Any]] = {}
     for r in rows:
         by_key.setdefault(r.memory_key, []).append(r)
@@ -182,7 +183,8 @@ async def decide(
             continue
         proposed = [r for r in held if str(getattr(r, "status", "") or "") == PROPOSED]
         if not proposed:
-            status = str(getattr(held[0], "status", "") or "")
+            newest = max(held, key=lambda r: (r.version, r.created_at))
+            status = str(getattr(newest, "status", "") or "")
             out.append(DecideResult(key, False, status, f"not a proposal (status {status})"))
             continue
         statuses = []
