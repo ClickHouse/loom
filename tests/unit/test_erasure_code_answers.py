@@ -61,7 +61,12 @@ class _LocalCH:
     def __init__(self, path) -> None:
         self.path = path
         run(
-            ["SET enable_quantized_codec = 1", ddl("code_answers"), ddl("memory")],
+            [
+                "SET enable_quantized_codec = 1",
+                ddl("code_answers"),
+                ddl("memory"),
+                ddl("memory_versions"),
+            ],
             "SELECT 1",
             path=path,
         )
