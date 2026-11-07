@@ -6,6 +6,7 @@ harness over those only, an unbuildable module is named, not fatal."""
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -289,3 +290,33 @@ def test_registry_gives_the_go_worker_its_own_deadline(monkeypatch):
     spec = next(w for w in registry.enabled_workers() if w.name == "code_scip_go_delta")
     assert spec.deadline_seconds() == 7200.0 + registry._TIER_HEADROOM_S
     assert spec.interval_seconds == settings.code_scip_go_delta_interval_seconds
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", ["TierDegraded: svc: go mod download failed: x", "fatal: auth"])
+async def test_a_pass_that_builds_nothing_keeps_a_module_failure_and_clears_any_other(
+    error: str,
+) -> None:
+    from server.code.domain.index import tier_health
+
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    state = {
+        "git_head": "b" * 40,
+        "scip_commit_go": "b" * 40,  # current: nothing to build
+        "tier_health:go": tier_health.failed(None, "go", error, t0).to_json(),
+    }
+    repo = AsyncMock()
+
+    async def get_state(org, ns, key):
+        return state.get(key, "")
+
+    async def set_state(org, ns, key, value, detail=""):
+        state[key] = value
+
+    repo.get_state.side_effect = get_state
+    repo.set_state.side_effect = set_state
+    p1, p2 = _patched(repo, [_Cfg()])
+    with p1, p2:
+        await w.run_pass()
+    still = tier_health.parse("go", state["tier_health:go"]).failing
+    assert still is error.startswith("TierDegraded:")

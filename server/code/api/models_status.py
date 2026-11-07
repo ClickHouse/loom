@@ -113,7 +113,7 @@ class CodeTierHealth(BaseModel):
     # fetch | ingest | clang | typescript | go | python | clang_full (the weekly C++ full run)
     tier: str
     state: str = "ok"  # ok | failing
-    # credential | pin_missing | egress | network | timeout | disk | harness | unknown
+    # credential | pin_missing | egress | network | timeout | disk | harness | module | unknown
     kind: str = ""
     error: str = ""  # the end of the error output, credentials redacted
     fix: str = ""

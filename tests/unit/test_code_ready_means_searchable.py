@@ -431,6 +431,7 @@ async def test_code_repos_rows_carry_searchable_at_the_configured_threshold(
             fast_tier_lag=0,
             scip_lag=0,
             scip_py_lag=0,
+            tier_health=[],
             state={},
             last_refresh_at="",
             counts={},

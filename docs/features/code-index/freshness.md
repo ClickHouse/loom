@@ -25,7 +25,7 @@ The block is cached for 30 seconds per namespace; a pass that moves `git_head`
 invalidates it. It is fail-open: when freshness cannot be read, the block is empty and
 the answer still returns. Treat an empty `as_of` as unknown.
 
-A failing tier stops moving, so its facts trail the head even while `stale` is false:
+A failing tier's facts may trail the head even while `stale` is false:
 with `failing_tiers` naming a compiler tier, treat compiler-grade answers (exact call
 graphs, references) as possibly behind and read the code you rely on.
 

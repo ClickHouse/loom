@@ -203,6 +203,8 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     ("harness", re.compile(r"^(?:\w+: )?harness exit", re.IGNORECASE | re.MULTILINE)),
+    # a Go module the harness skipped because it would not build
+    ("module", re.compile(r"go mod download failed|scip-go failed", re.IGNORECASE)),
 )
 
 
@@ -276,6 +278,12 @@ def fix_for(kind: str, text: str) -> str:
         )
     if kind == "disk":
         return "The disk is full: free space under the code-index work directory."
+    if kind == "module":
+        return (
+            "A Go module did not build: the error names it and why. The rest of the "
+            "repository is indexed; the record clears on the next run that builds the "
+            "modules it changes."
+        )
     if kind == "harness":
         return "The indexer failed: the error holds the tail of its output."
     return "See the error; the tier retries every pass."

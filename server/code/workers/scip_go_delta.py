@@ -200,18 +200,30 @@ async def _has_commit(checkout: Path, sha: str) -> bool:
     return proc.returncode == 0
 
 
-async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResult) -> None:
+async def _modules_failing(repo: CodeRepo, cfg: RepoConfig) -> bool:
+    """The tier's record holds a module that would not build (`TierDegraded`): a pass
+    that builds nothing leaves it as it is."""
+    from server.code.domain.index import tier_health
+
+    raw = await repo.get_state(cfg.org, cfg.namespace, tier_health.state_key(PRODUCER))
+    record = tier_health.parse(PRODUCER, raw or "")
+    return record is not None and record.failing and record.error.startswith("TierDegraded:")
+
+
+async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResult) -> bool:
+    """False when it built nothing while a module failure is recorded (`run_tier` then
+    keeps the record); True otherwise."""
     target = await compiler_target(repo, cfg)
     if not target:
         result.skipped.append(f"{cfg.namespace}: git_head not seeded")
-        return
+        return False
     scip_commit = await repo.get_state(cfg.org, cfg.namespace, WATERMARK) or ""
     if target == scip_commit:
-        return  # compiler tier is current
+        return not await _modules_failing(repo, cfg)  # compiler tier is current
     checkout, bare, missing = await asyncio.to_thread(_resolve_paths, cfg)
     if missing:
         result.skipped.append(f"{cfg.namespace}: {missing}")
-        return
+        return False
     await git(checkout, *checkout_fetch_args(bare, target), local_remote=bare)
     await git(checkout, "checkout", "--force", target)
 
@@ -221,7 +233,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
         if not modules:
             logger.info("code_scip_go_delta: %s no Go change in window", cfg.namespace)
             await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
-            return
+            return not await _modules_failing(repo, cfg)
     else:
         modules = []  # first run: the runner walks every go.mod
 
@@ -259,6 +271,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
     )
     if failed:  # the rest is applied; the modules that would not build fail the tier
         raise TierDegraded("; ".join(failed))
+    return True
 
 
 def _bin_dirs() -> list[str]:
