@@ -104,6 +104,8 @@ def test_the_labelled_set_scores_as_measured() -> None:
         ("Storage sync 2026-03-04", ("Cache",), "__Decision:__ deferred to next sync"),
         ("Vector search design", ("__Open questions__",), "- Who owns it?"),
         ("Storage weekly sync", ("__2026-03-04__", "Cache"), "Talked about the TTL."),
+        ("__Storage sync__ 2026-03-04", ("Cache",), "Talked about the TTL."),
+        ("", ("__Storage sync 2026-03-04__", "Cache"), "Talked about the TTL."),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: not decided yet"),
         ("Storage sync 2026-03-04", ("Cache",), "Decision: no decision"),
         ("Storage sync 2026-03-04", ("Decision: not decided",), "- Revisit next week."),
