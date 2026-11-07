@@ -12,6 +12,7 @@ import pytest
 
 import server.tracker.store.source as src
 import server.tracker.store.source.qa_intel as qi
+from server.tracker.api.models import MAX_FRAME_CHARS
 from server.tracker.app import dupcheck_links as dl
 from server.tracker.domain.errors import TrackerUnavailable
 from server.tracker.store.source import contract_reports as reports
@@ -402,18 +403,23 @@ async def test_bisect_takes_a_strong_matchs_merged_fix_and_fails_open(monkeypatc
         )
 
     monkeypatch.setattr(tdc, "handle_tracker_duplicate_check", dupcheck)
+    long_line = "a" * (MAX_FRAME_CHARS + 1)
     task = bisect_fix._start_dupcheck_fix(
-        _bisect_input(before="2026-06-01 00:00:00"),
+        _bisect_input(
+            before="2026-06-01 00:00:00", paths=[long_line, "src/Columns/ColumnDynamic.cpp"]
+        ),
         ORG,
         "code-clickhouse",
-        ["DB::ColumnDynamic::get"],
+        ["DB::ColumnDynamic::get", long_line],
     )
     got = await bisect_fix._dupcheck_fix(task)
     assert got["issue"] == 107942 and got["fix_pr"] == 107997 and got["match"] == "duplicate"
     assert "fixed by #107997" in got["note"]
     assert seen["inp"].related_prs is False and seen["inp"].as_of == "2026-06-01 00:00:00"
     assert seen["inp"].rerank is False
+    # a line the check would refuse is dropped, not a failed check
     assert seen["inp"].frames == ["DB::ColumnDynamic::get"]
+    assert seen["inp"].paths == ["src/Columns/ColumnDynamic.cpp"]
 
     async def unmatched(inp: Any) -> Any:
         return _output(

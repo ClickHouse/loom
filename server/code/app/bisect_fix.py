@@ -84,7 +84,7 @@ def _start_dupcheck_fix(input: Any, org: str, ns: str, frames: list[str]) -> Any
         return None
 
     async def run() -> dict[str, Any]:
-        from server.tracker.api.models import TrackerDuplicateCheckInput, checkable_frames
+        from server.tracker.api.models import TrackerDuplicateCheckInput, within_item_bound
         from server.tracker.app import dupcheck as tdc
         from server.tracker.app import dupcheck_links as dl
 
@@ -100,8 +100,8 @@ def _start_dupcheck_fix(input: Any, org: str, ns: str, frames: list[str]) -> Any
                     namespace=ns,
                     title=title,
                     body=body,
-                    frames=checkable_frames(frames)[:60],
-                    paths=checkable_frames(input.paths)[:40],
+                    frames=within_item_bound(frames)[:60],
+                    paths=within_item_bound(input.paths)[:40],
                     related_prs=False,
                     rerank=False,  # the legs alone: the rerank's second is the budget
                     as_of=str(input.before or "")[:40],  # a replay sees what the report could

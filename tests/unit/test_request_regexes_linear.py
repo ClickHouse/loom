@@ -48,7 +48,7 @@ from server.tracker.api.models import (
     MAX_FRAME_CHARS,
     TrackerDuplicateCheckInput,
     TrackerSimilarInput,
-    checkable_frames,
+    within_item_bound,
 )
 from server.tracker.domain import bisect, defect_answer, similar
 
@@ -375,8 +375,8 @@ def test_the_search_tracker_leg_drops_a_frame_the_check_would_refuse() -> None:
 
 def test_a_frame_the_check_would_refuse_is_dropped_before_it() -> None:
     frames = ["DB::" + "a" * MAX_FRAME_CHARS, "DB::Foo::bar"]
-    assert checkable_frames(frames) == ["DB::Foo::bar"]
-    TrackerDuplicateCheckInput(namespace="t", frames=checkable_frames(frames))
+    assert within_item_bound(frames) == ["DB::Foo::bar"]
+    TrackerDuplicateCheckInput(namespace="t", frames=within_item_bound(frames))
 
 
 def _without(pattern: str, guard: str) -> str:
