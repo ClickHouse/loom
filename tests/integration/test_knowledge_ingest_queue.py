@@ -1,7 +1,8 @@
 """The ingestion queue on a real ClickHouse: one namespace's backlog takes turns
 with another's (each offers one due job, the namespace served longest ago, or
 never, first), one source's jobs run one at a time in the order asked, and each
-namespace offers only the head of its sources."""
+namespace offers only the head of its sources. Every test ends the jobs it
+inserts, whatever its assertions do, so none stays on the queue."""
 
 from __future__ import annotations
 
@@ -14,6 +15,15 @@ import pytest
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
+
+
+async def _end(rows: list[dict[str, Any]]) -> None:
+    """Cancel every job a test inserted: the queue is global, so an open one would
+    be offered to a later test's ingest passes before that test's own jobs."""
+    from server.knowledge.store import ingestions
+
+    for row in rows:
+        await ingestions.insert_ingestion(ingestions.ingestion_row(row, state="cancelled"))
 
 
 @pytest.mark.asyncio
@@ -46,11 +56,16 @@ async def test_a_backlog_takes_turns_with_another_namespaces_job(ch_client: Any)
     ch = get_client()
     await ch.connect()
     try:
-        for row in rows:
-            await ingestions.insert_ingestion(row)
-        due = [
-            d for d in await ingestions.due(1000, stale_after_s=120) if d["org"] in (busy, quiet)
-        ]
+        try:
+            for row in rows:
+                await ingestions.insert_ingestion(row)
+            due = [
+                d
+                for d in await ingestions.due(1000, stale_after_s=120)
+                if d["org"] in (busy, quiet)
+            ]
+        finally:
+            await _end(rows)
     finally:
         await ch.disconnect()
     # The busy namespace just ran a job, so the quiet one's later job goes first,
@@ -91,21 +106,24 @@ async def test_one_sources_jobs_run_one_at_a_time_in_order(ch_client: Any) -> No
     ch = get_client()
     await ch.connect()
     try:
-        for row in (earlier, later):
-            await ingestions.insert_ingestion(row)
+        try:
+            for row in (earlier, later):
+                await ingestions.insert_ingestion(row)
 
-        async def offered() -> list[str]:
-            due = await ingestions.due(1000, stale_after_s=120)
-            return [d["ingestion_id"] for d in due if d["org"] == org]
+            async def offered() -> list[str]:
+                due = await ingestions.due(1000, stale_after_s=120)
+                return [d["ingestion_id"] for d in due if d["org"] == org]
 
-        assert await offered() == [], "the later job waits while the earlier one runs"
-        stale = {
-            **earlier,
-            "updated_at": now - timedelta(minutes=9),
-            "version": earlier["version"] + 1,
-        }
-        await ingestions.insert_ingestion(stale)
-        assert await offered() == [earlier["ingestion_id"]]
+            assert await offered() == [], "the later job waits while the earlier one runs"
+            stale = {
+                **earlier,
+                "updated_at": now - timedelta(minutes=9),
+                "version": earlier["version"] + 1,
+            }
+            await ingestions.insert_ingestion(stale)
+            assert await offered() == [earlier["ingestion_id"]]
+        finally:
+            await _end([earlier, later])
     finally:
         await ch.disconnect()
 
@@ -114,7 +132,7 @@ async def test_one_sources_jobs_run_one_at_a_time_in_order(ch_client: Any) -> No
 async def test_each_namespace_offers_one_due_job_at_the_head_of_its_source(ch_client: Any) -> None:
     """One candidate per namespace, the job due longest of its sources' first open
     jobs; a source's later job waits behind the earlier one even while that one is
-    not due (a retry's delay). The rows are ended after, so none stays on the queue."""
+    not due (a retry's delay)."""
     from server.core.ch import get_client
     from server.knowledge.store import ingestions
 
@@ -145,11 +163,12 @@ async def test_each_namespace_offers_one_due_job_at_the_head_of_its_source(ch_cl
     ch = get_client()
     await ch.connect()
     try:
-        for row in rows:
-            await ingestions.insert_ingestion(row)
-        due = await ingestions.due(100_000, stale_after_s=120)
-        for row in rows:
-            await ingestions.insert_ingestion(ingestions.ingestion_row(row, state="cancelled"))
+        try:
+            for row in rows:
+                await ingestions.insert_ingestion(row)
+            due = await ingestions.due(100_000, stale_after_s=120)
+        finally:
+            await _end(rows)
     finally:
         await ch.disconnect()
     offered = sorted((d["namespace"], d["ingestion_id"]) for d in due if d["org"] == org)
