@@ -26,7 +26,6 @@ vi.mock("../../api", async (importOriginal) => {
     listLearnings: vi.fn(),
     reviewLearning: vi.fn(),
     listProposals: vi.fn(),
-    decideProposal: vi.fn(),
     listAutoResolved: vi.fn(),
     listUnsuperseded: vi.fn(),
     restoreMemory: vi.fn(),
@@ -34,6 +33,7 @@ vi.mock("../../api", async (importOriginal) => {
   };
 });
 // The page's yes/no probe is shared with the sidebar and lives in api/audit.
+vi.mock("../../api/proposalDecisions", () => ({ decideProposal: vi.fn() }));
 vi.mock("../../api/audit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/audit")>()),
   hasAutoResolved: vi.fn(),
@@ -45,9 +45,9 @@ vi.mock("../../components/Toast", async (importOriginal) => ({
   toast,
 }));
 import { hasAutoResolved } from "../../api/audit";
+import { decideProposal } from "../../api/proposalDecisions";
 import {
   countConflicts,
-  decideProposal,
   getMemoryById,
   listAllowlist,
   listAutoResolved,

@@ -34,25 +34,3 @@ export async function listProposals(
 ): Promise<ProposalList> {
   return post<ProposalList>("/v1/memory.proposals", { org: id.org, namespace: id.namespace, limit }, opts.signal);
 }
-
-export interface ProposalDecision {
-  memory_key: string;
-  decided: boolean;
-  status?: string;
-  reason?: string;
-}
-
-export async function decideProposal(
-  id: Pick<Identity, "org" | "namespace">,
-  memory_key: string,
-  decision: "accept" | "reject",
-  reason = "",
-): Promise<{ decided: number; results: ProposalDecision[] }> {
-  return post("/v1/memory.proposal_decide", {
-    org: id.org,
-    namespace: id.namespace,
-    memory_keys: [memory_key],
-    decision,
-    reason,
-  });
-}

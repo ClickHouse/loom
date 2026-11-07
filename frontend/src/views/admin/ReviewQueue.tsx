@@ -15,7 +15,6 @@ import {
   listLearnings,
   reviewLearning,
   listProposals,
-  decideProposal,
   listAutoResolved,
   listUnsuperseded,
   auditInstant,
@@ -32,6 +31,7 @@ import {
   type MemoryProposal,
   type ProposalList,
 } from "../../api";
+import { decideProposal } from "../../api/proposalDecisions";
 import { useIdentity, useStore } from "../../lib/state";
 import { IconButton } from "../../components/IconButton";
 import { Panel } from "../../components/ui/Panel";
