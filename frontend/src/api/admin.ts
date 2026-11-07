@@ -485,10 +485,13 @@ export interface ErasureStepResult {
   notes: string;
 }
 
+/** A saga's state: `server/erasure/api/erasure.py::ErasureStatus`. */
+export type ErasureStatusValue = "in_progress" | "completed" | "failed";
+
 /** Mirrors `server/erasure/api/erasure.py::ErasureRequestOutput`. */
 export interface ErasureRequestResult {
   erasure_id: string;
-  status: ErasureListRow["status"];
+  status: ErasureStatusValue;
   steps: ErasureStepResult[];
   residue_count: number;
   failure_reason: string;
@@ -501,8 +504,9 @@ export async function requestErasure(
   scope: ErasureScope,
   requester: string,
   purge: boolean,
+  signal?: AbortSignal,
 ): Promise<ErasureRequestResult> {
-  return post("/v1/erasure.request", { org, ...scope, requester, purge });
+  return post("/v1/erasure.request", { org, ...scope, requester, purge }, signal);
 }
 
 /** Mirrors `server/erasure/api/erasure.py::ErasureStatusOutput`. */
@@ -512,7 +516,7 @@ export interface ErasureStatus {
   scope_type: string | null;
   scope_value: string | null;
   requester: string | null;
-  status: ErasureListRow["status"] | null;
+  status: ErasureStatusValue | null;
   current_step: number | null;
   requested_at: string | null;
   completed_at: string | null;
@@ -528,6 +532,8 @@ export async function getErasureStatus(erasureId: string, opts: RequestOpts = {}
 
 /** Mirrors `server/memory/api/models_crud.py::MemoryClearOutput`. */
 export interface MemoryClearResult {
+  /** Rows tombstoned per table; `loom.memory` is the memories. */
+  rows_affected: Record<string, number>;
   total: number;
   locked_skipped: number;
 }
@@ -561,30 +567,63 @@ export interface OwnerReport {
 }
 
 /** POST /v1/memory.owner_report: one user's memory in this namespace and who read it. */
-export async function getOwnerReport(id: Pick<Identity, "org" | "namespace">, userId: string): Promise<OwnerReport> {
-  return post("/v1/memory.owner_report", { org: id.org, namespace: id.namespace, user_id: userId });
+export async function getOwnerReport(
+  id: Pick<Identity, "org" | "namespace">,
+  userId: string,
+  opts: RequestOpts = {},
+): Promise<OwnerReport> {
+  return post("/v1/memory.owner_report", { org: id.org, namespace: id.namespace, user_id: userId }, opts.signal);
 }
 
-/** POST /v1/memory.exposure_summary: how many distinct memories each token read. */
+/** Mirrors `server/memory/api/models_exposure.py::ExposureSummaryOutput`. */
+export interface ExposureSummary {
+  /** The namespace's live memories: what `fraction` divides by. */
+  namespace_rows: number;
+  rows: ExposureRow[];
+}
+
+/** POST /v1/memory.exposure_summary: how many distinct memories each reader read, the
+ *  `limit` widest first. */
 export async function getExposureSummary(
   id: Pick<Identity, "org" | "namespace">,
   sinceHours: number,
+  limit: number,
   opts: RequestOpts = {},
-): Promise<{ namespace_rows: number; rows: ExposureRow[] }> {
+): Promise<ExposureSummary> {
   return post(
     "/v1/memory.exposure_summary",
-    { org: id.org, namespace: id.namespace, since_hours: sinceHours, limit: 200 },
+    { org: id.org, namespace: id.namespace, since_hours: sinceHours, limit },
     opts.signal,
   );
 }
 
-/** POST /v1/erasure.export: everything Loom holds for the scope, as one JSON object. */
+/** One section of an export: its rows, and whether `section_limit` cut it. */
+export interface ErasureExportSection {
+  rows: Record<string, unknown>[];
+  count: number;
+  truncated: boolean;
+}
+
+/** Mirrors `server/erasure/api/erasure.py::ErasureExportOutput`. */
+export interface ErasureExport {
+  exported_at: string;
+  counts: Record<string, number>;
+  memory: ErasureExportSection;
+  knowledge: ErasureExportSection;
+  conversations: ErasureExportSection;
+  conversation_threads: ErasureExportSection;
+  agent_events: ErasureExportSection;
+  audit_log: ErasureExportSection;
+}
+
+/** POST /v1/erasure.export: what Loom holds for the scope, as one JSON object. */
 export async function exportErasureScope(
   org: string,
   scope: ErasureScope,
   requester: string,
-): Promise<Record<string, unknown>> {
-  return post("/v1/erasure.export", { org, ...scope, requester });
+  signal?: AbortSignal,
+): Promise<ErasureExport> {
+  return post("/v1/erasure.export", { org, ...scope, requester }, signal);
 }
 
 // ===== Extraction Quality =====

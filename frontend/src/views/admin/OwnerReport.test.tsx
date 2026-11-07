@@ -38,7 +38,11 @@ describe("OwnerReportSection", () => {
     await userEvent.type(screen.getByLabelText("User id"), "alice");
     await userEvent.click(screen.getByRole("button", { name: "Show" }));
     await waitFor(() =>
-      expect(api.getOwnerReport).toHaveBeenCalledWith(expect.objectContaining({ namespace: "team" }), "alice"),
+      expect(api.getOwnerReport).toHaveBeenCalledWith(
+        expect.objectContaining({ namespace: "team" }),
+        "alice",
+        expect.anything(),
+      ),
     );
     expect(await screen.findByText("alice owns 42 memories here.")).toBeInTheDocument();
     expect(screen.getByText("sa:bot")).toBeInTheDocument();

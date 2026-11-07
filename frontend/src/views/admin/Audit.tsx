@@ -222,6 +222,8 @@ export function Audit() {
   const isPlatformAdmin = hasOrgAdminClaim(whoami);
   // The tab reads on open, so only a role known to reach the op shows it.
   const showExposure = canCall("memory.exposure_summary", useNamespaceRole(identity.namespace), whoami);
+  // Exposure goes with the role that reaches it: a namespace without it shows Events.
+  const shownTab = tab === "exposure" && !showExposure ? "events" : tab;
   const scope = isPlatformAdmin ? { org: identity.org } : { org: identity.org, namespace: identity.namespace };
   // The window the first page read; older pages keep to it.
   const since = useRef("");
@@ -359,7 +361,7 @@ export function Audit() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <PageHeader title="Activity" tab={ACTIVITY_TABS[tab]}>
+        <PageHeader title="Activity" tab={ACTIVITY_TABS[shownTab]}>
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </PageHeader>
         <div className="text-sm text-text-muted max-w-[72ch]">
@@ -375,7 +377,7 @@ export function Audit() {
         </div>
       </div>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as ActivityTab)}>
+      <Tabs value={shownTab} onValueChange={(v) => setTab(v as ActivityTab)}>
         <Tabs.TriggersList className="mb-5" aria-label="Activity">
           <TabTrigger value="events" icon="history">
             {ACTIVITY_TABS.events}

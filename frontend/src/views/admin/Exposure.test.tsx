@@ -33,17 +33,19 @@ describe("ExposurePanel", () => {
       ],
     });
     render(<ExposurePanel />);
-    const table = await screen.findByRole("table", { name: "Memory reads by token" });
+    const table = await screen.findByRole("table", { name: "Memory reads by reader" });
     expect(await within(table).findByText("sa:etl")).toBeInTheDocument();
     expect(within(table).getByText("75%")).toBeInTheDocument();
+    expect(screen.getByText("1 reader of 200 memories")).toBeInTheDocument();
     expect(api.getExposureSummary).toHaveBeenLastCalledWith(
       expect.objectContaining({ namespace: "team" }),
       24,
+      200,
       expect.anything(),
     );
     await userEvent.click(screen.getByRole("button", { name: "7 days" }));
     await waitFor(() =>
-      expect(api.getExposureSummary).toHaveBeenLastCalledWith(expect.anything(), 168, expect.anything()),
+      expect(api.getExposureSummary).toHaveBeenLastCalledWith(expect.anything(), 168, 200, expect.anything()),
     );
   });
 

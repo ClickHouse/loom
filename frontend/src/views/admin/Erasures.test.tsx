@@ -23,6 +23,9 @@ vi.mock("../../api", async (importOriginal) => {
   };
 });
 vi.mock("../../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
+vi.mock("../../components/Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
+import { toast } from "../../components/Toast";
+import { ApiError } from "../../lib/errors";
 
 const ROW: ErasureListRow = {
   erasure_id: "e1",
@@ -50,6 +53,7 @@ beforeEach(() => signIn(["writer"]));
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
 });
 
 describe("ErasuresPanel", () => {
@@ -74,6 +78,7 @@ describe("ErasuresPanel", () => {
         { scope_type: "namespace", scope_value: "ns1" },
         "alice",
         false,
+        expect.anything(),
       ),
     );
     await waitFor(() => expect(api.listErasures).toHaveBeenCalledTimes(2));
@@ -100,14 +105,26 @@ describe("ErasuresPanel", () => {
         { scope_type: "user_id", scope_value: "bob" },
         "alice",
         true,
+        expect.anything(),
       ),
     );
   });
 
-  it("exports the scope as a JSON file", async () => {
+  it("exports the scope as a JSON file and says which sections were cut", async () => {
     signIn(["admin"]);
-    const createUrl = vi.fn(() => "blob:x");
-    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: createUrl, revokeObjectURL: vi.fn() }));
+    const createUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:x");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const section = (truncated = false) => ({ rows: [], count: 0, truncated });
+    vi.mocked(api.exportErasureScope).mockResolvedValueOnce({
+      exported_at: "",
+      counts: {},
+      memory: section(true),
+      knowledge: section(),
+      conversations: section(),
+      conversation_threads: section(),
+      agent_events: section(true),
+      audit_log: section(),
+    });
     render(<ErasuresPanel />);
     await userEvent.click(await screen.findByRole("button", { name: "Export data" }));
     const dialog = await screen.findByRole("dialog", { name: "Export data" });
@@ -117,10 +134,53 @@ describe("ErasuresPanel", () => {
         "dev",
         { scope_type: "namespace", scope_value: "ns1" },
         "alice",
+        expect.anything(),
       ),
     );
     expect(createUrl).toHaveBeenCalledTimes(1);
-    vi.unstubAllGlobals();
+    expect(toast).toHaveBeenCalledWith("The export holds the first 10,000 rows of memory, agent events", "info");
+  });
+
+  it("keeps a refused erase in its dialog, and closes on no answer, the saga perhaps still running", async () => {
+    signIn(["writer"], "admin");
+    vi.mocked(api.requestErasure).mockRejectedValueOnce(new ApiError({ status: 403, message: "not admin" }));
+    render(<ErasuresPanel />);
+    await userEvent.click(await screen.findByRole("button", { name: "Erase data" }));
+    let dialog = await screen.findByRole("dialog", { name: "Erase data" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Erase" }));
+    expect(await within(dialog).findByRole("alert")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Erase" })).toBeEnabled();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    vi.mocked(api.requestErasure).mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+    await userEvent.click(screen.getByRole("button", { name: "Erase data" }));
+    dialog = await screen.findByRole("dialog", { name: "Erase data" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Erase" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Erase data" })).toBeNull());
+    expect(toast).toHaveBeenCalledWith("The erasure may still be running; its row shows here once it ends", "info");
+  });
+
+  it("says a running saga was not checked yet", async () => {
+    vi.mocked(api.listErasures).mockResolvedValueOnce({ rows: [ROW] });
+    vi.mocked(api.getErasureStatus).mockResolvedValueOnce({
+      found: true,
+      erasure_id: "e1",
+      scope_type: "namespace",
+      scope_value: "ns1",
+      requester: "alice",
+      status: "in_progress",
+      current_step: 2,
+      requested_at: "2000-01-01 00:00:00",
+      completed_at: null,
+      failure_reason: null,
+      residue_count: 0,
+      residue: {},
+      verified_at: null,
+    });
+    render(<ErasuresPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: /Details of the erasure requested/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Erasure details" });
+    expect(await within(dialog).findByText("Not checked yet")).toBeInTheDocument();
   });
 
   it("shows a saga's status and what it left behind", async () => {
@@ -138,10 +198,10 @@ describe("ErasuresPanel", () => {
       failure_reason: "residue in loom.memory",
       residue_count: 2,
       residue: { "loom.memory": 2, "loom.chunks": 0 },
-      verified_at: null,
+      verified_at: "2000-01-01 00:00:09",
     });
     render(<ErasuresPanel />);
-    fireEvent.click(await screen.findByRole("button", { name: "Details of erasure ns1" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Details of the erasure requested/ }));
     const dialog = await screen.findByRole("dialog", { name: "Erasure details" });
     expect(await within(dialog).findByText("residue in loom.memory")).toBeInTheDocument();
     expect(within(dialog).getByText("loom.memory: 2")).toBeInTheDocument();

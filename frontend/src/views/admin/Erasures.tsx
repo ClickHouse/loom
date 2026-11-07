@@ -9,14 +9,19 @@ import {
   getErasureStatus,
   listErasures,
   requestErasure,
+  type ErasureExport,
   type ErasureListRow,
   type ErasureScope,
   type ErasureStatus,
 } from "../../api";
 import { useIdentity, useStore } from "../../lib/state";
-import { hasOrgAdminClaim, isNamespaceAdmin } from "../../lib/role";
+import { hasOrgAdminClaim } from "../../lib/role";
+import { canCall } from "../../lib/canCall";
+import { useNamespaceRole } from "../../lib/namespaceRole";
 import { useAbortableEffect } from "../../lib/hooks";
-import { humanizeError } from "../../lib/format";
+import { ApiError } from "../../lib/errors";
+import { humanizeError, listTime } from "../../lib/format";
+import { NameBadge } from "../../components/AgentBadge";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { Modal, ModalFooter } from "../../components/ui/Modal";
@@ -29,6 +34,10 @@ const ERASURE_STATE: Record<string, BadgeState> = { completed: "success", failed
 
 type ScopeKind = ErasureScope["scope_type"];
 
+// An erasure and an export each run whole inside their call: past the dashboard's usual
+// bound, so a long saga is not taken for a failed one.
+const LONG_CALL_MS = 15 * 60_000;
+
 /**
  * The erasure sagas of the org, and the controls to start one or export a scope's data.
  * erasure.list scopes the rows by caller (an org admin sees every one; anyone else the
@@ -39,7 +48,9 @@ type ScopeKind = ErasureScope["scope_type"];
 export function ErasuresPanel() {
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
-  const mine = useStore((s) => s.myNamespaces);
+  // erasure.export is ADMIN; erasure.request asks the same of a namespace scope beyond its
+  // WRITER floor, so one gate serves both.
+  const namespaceAdmin = canCall("erasure.export", useNamespaceRole(identity.namespace), whoami);
   const [rows, setRows] = useState<ErasureListRow[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
@@ -47,7 +58,7 @@ export function ErasuresPanel() {
   const [details, setDetails] = useState<string | null>(null);
 
   const scopes: ScopeKind[] = [
-    ...(isNamespaceAdmin(whoami, mine, identity.namespace) ? (["namespace"] as const) : []),
+    ...(namespaceAdmin ? (["namespace"] as const) : []),
     ...(hasOrgAdminClaim(whoami) ? (["user_id"] as const) : []),
   ];
 
@@ -101,7 +112,6 @@ export function ErasuresPanel() {
         <ScopeDialog
           mode={dialog}
           scopes={scopes}
-          namespace={identity.namespace}
           onClose={(changed) => {
             setDialog(null);
             if (changed) setReload((n) => n + 1);
@@ -140,7 +150,7 @@ function ErasuresTable({ rows, onDetails }: { rows: ErasureListRow[] | null; onD
               </span>
             ),
           },
-          { label: <span className="font-mono text-xs">{r.requester}</span> },
+          { label: <NameBadge name={r.requester} /> },
           {
             label: (
               <span className="inline-flex items-center gap-2">
@@ -163,7 +173,7 @@ function ErasuresTable({ rows, onDetails }: { rows: ErasureListRow[] | null; onD
               <Button
                 type="empty"
                 htmlType="button"
-                aria-label={`Details of erasure ${r.scope_value}`}
+                aria-label={`Details of the erasure requested ${listTime(r.requested_at)}`}
                 onClick={() => onDetails(r.erasure_id)}
               >
                 Details
@@ -186,15 +196,14 @@ const SCOPE_LABEL: Record<ScopeKind, string> = {
 function ScopeDialog({
   mode,
   scopes,
-  namespace,
   onClose,
 }: {
   mode: "request" | "export";
   scopes: ScopeKind[];
-  namespace: string;
   onClose: (changed: boolean) => void;
 }) {
   const identity = useIdentity();
+  const namespace = identity.namespace;
   const requester = useStore((s) => s.whoami?.subject) || "dashboard";
   const [kind, setKind] = useState<ScopeKind>(scopes[0]);
   const [userId, setUserId] = useState("");
@@ -215,7 +224,7 @@ function ScopeDialog({
         title: `Erase everything for ${target}?`,
         message: purge
           ? "Every row is hard-deleted, in every table and external backend. Nothing can be restored."
-          : "Every row is tombstoned, in every table and external backend. Memories stay restorable for 14 days.",
+          : "Memories and documents are tombstoned and can be restored for 14 days; everything else, external backends included, is deleted.",
         confirmLabel: "Erase",
         danger: true,
       });
@@ -223,20 +232,31 @@ function ScopeDialog({
     }
     setBusy(true);
     setError(null);
+    const signal = AbortSignal.timeout(LONG_CALL_MS);
     try {
       if (mode === "request") {
-        const r = await requestErasure(identity.org, scope, requester, purge);
+        const r = await requestErasure(identity.org, scope, requester, purge, signal);
         toast(
           r.status === "failed" ? `Erasure failed: ${r.failure_reason}` : `Erasure ${r.status}`,
           r.status === "failed" ? "error" : "ok",
         );
         onClose(true);
       } else {
-        const data = await exportErasureScope(identity.org, scope, requester);
+        const data = await exportErasureScope(identity.org, scope, requester, signal);
         saveJson(data, `loom-export-${scope.scope_value}.json`);
+        const cut = truncatedSections(data);
+        if (cut.length)
+          toast(`The export holds the first ${SECTION_LIMIT.toLocaleString()} rows of ${cut.join(", ")}`, "info");
         onClose(false);
       }
     } catch (e) {
+      // No answer is not a refusal: the saga may still be running, and a second Erase
+      // would start another. Its row shows in the list once it ends.
+      if (erase && !(e instanceof ApiError)) {
+        toast("The erasure may still be running; its row shows here once it ends", "info");
+        onClose(true);
+        return;
+      }
       setError(humanizeError(e));
       setBusy(false);
     }
@@ -260,7 +280,7 @@ function ScopeDialog({
           <p className="text-sm text-text-muted leading-relaxed">
             {erase
               ? "Removes every memory, document, conversation and event Loom holds for the scope, then checks that none is left."
-              : "Downloads every memory, document, conversation and event Loom holds for the scope as one JSON file."}
+              : `Downloads the memories, documents, conversations and events Loom holds for the scope as one JSON file, up to ${SECTION_LIMIT.toLocaleString()} rows a section.`}
           </p>
           {scopes.length > 1 && (
             <ChoiceGroup
@@ -307,6 +327,16 @@ function ScopeDialog({
   );
 }
 
+// erasure.export's default `section_limit`.
+const SECTION_LIMIT = 10_000;
+
+const SECTIONS = ["memory", "knowledge", "conversations", "conversation_threads", "agent_events", "audit_log"] as const;
+
+/** The sections the export cut at their limit. */
+function truncatedSections(data: ErasureExport): string[] {
+  return SECTIONS.filter((s) => data[s]?.truncated).map((s) => s.replace("_", " "));
+}
+
 function saveJson(data: unknown, filename: string) {
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
   const a = document.createElement("a");
@@ -350,7 +380,7 @@ function ErasureDetails({ erasureId, onClose }: { erasureId: string; onClose: ()
               size="sm"
             />
           </MetaRow>
-          <MetaRow label="Requester">{status.requester}</MetaRow>
+          <MetaRow label="Requester">{status.requester && <NameBadge name={status.requester} />}</MetaRow>
           {status.requested_at && (
             <MetaRow label="Requested">
               <ListTime time={status.requested_at} />
@@ -368,13 +398,15 @@ function ErasureDetails({ erasureId, onClose }: { erasureId: string; onClose: ()
           )}
           {status.failure_reason && <MetaRow label="Failure">{status.failure_reason}</MetaRow>}
           <MetaRow label="Left behind">
-            {residue.length === 0
-              ? "Nothing"
-              : residue.map(([table, n]) => (
-                  <div key={table} className="font-mono text-xs">
-                    {table}: {n}
-                  </div>
-                ))}
+            {!status.verified_at
+              ? "Not checked yet"
+              : residue.length === 0
+                ? "Nothing"
+                : residue.map(([table, n]) => (
+                    <div key={table} className="font-mono text-xs">
+                      {table}: {n}
+                    </div>
+                  ))}
           </MetaRow>
         </MetaList>
       )}

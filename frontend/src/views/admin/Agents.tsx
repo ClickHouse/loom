@@ -179,7 +179,8 @@ export function Agents() {
                       </span>
                     ),
                   },
-                  ...(canForget
+                  // `-` is no agent: memory.clear refuses it as a confirmation anyone can type.
+                  ...(canForget && r.agent !== "-"
                     ? [
                         {
                           label: (

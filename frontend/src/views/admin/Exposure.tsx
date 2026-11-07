@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Table } from "@clickhouse/click-ui/Table";
-import { getExposureSummary, type ExposureRow } from "../../api";
+import { getExposureSummary, type ExposureSummary } from "../../api";
 import { useIdentity } from "../../lib/state";
 import { useAbortableEffect } from "../../lib/hooks";
-import { AgentBadge } from "../../components/AgentBadge";
+import { AgentBadge, NameBadge } from "../../components/AgentBadge";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
@@ -18,7 +18,7 @@ const WINDOWS = [
 ];
 
 const HEADERS = [
-  { label: "Token" },
+  { label: "Reader" },
   { label: "Agent" },
   { label: "Memories read", width: "130px" },
   { label: "Of the namespace", width: "130px" },
@@ -26,12 +26,21 @@ const HEADERS = [
   { label: "Last read", width: "120px" },
 ];
 
-/** Which tokens read how much of the namespace (memory.exposure_summary): a token that has
- *  read most of it is the one to look at first when a token leaks. */
+// The widest readers the summary is asked for; the toolbar says when there may be more.
+const LIMIT = 200;
+
+/** A share of the namespace, never rounded to 0% when something was read. */
+function share(fraction: number): string {
+  return fraction > 0 && fraction < 0.005 ? "<1%" : `${Math.round(fraction * 100)}%`;
+}
+
+/** Which readers (a principal through one agent) read how much of the namespace
+ *  (memory.exposure_summary): one that has read most of it is the first to look at when a
+ *  token leaks. */
 export function ExposurePanel() {
   const identity = useIdentity();
   const [hours, setHours] = useState(24);
-  const [data, setData] = useState<{ namespace_rows: number; rows: ExposureRow[] } | null>(null);
+  const [data, setData] = useState<ExposureSummary | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
 
@@ -39,7 +48,7 @@ export function ExposurePanel() {
     (signal, live) => {
       setError(null);
       setData(null);
-      getExposureSummary(identity, hours, { signal })
+      getExposureSummary(identity, hours, LIMIT, { signal })
         .then((d) => live() && setData(d))
         .catch((e) => live() && setError(e));
     },
@@ -48,11 +57,7 @@ export function ExposurePanel() {
 
   return (
     <>
-      <ListToolbar
-        label="Time window"
-        search={false}
-        count={data ? `${data.rows.length} token${data.rows.length === 1 ? "" : "s"}` : undefined}
-      >
+      <ListToolbar label="Time window" search={false} count={data ? readerCount(data) : undefined}>
         <ButtonGroup
           aria-label="Time window"
           options={WINDOWS}
@@ -66,12 +71,12 @@ export function ExposurePanel() {
           kind="empty"
           icon="eye"
           title="No reads in this window"
-          description="Each search or read of this namespace's memories counts here, per token and agent."
+          description="Each search or read of this namespace's memories counts here, per reader and agent."
         />
       )}
       {!error && (data === null || data.rows.length > 0) && (
         <Table
-          aria-label="Memory reads by token"
+          aria-label="Memory reads by reader"
           aria-busy={data === null || undefined}
           noDataMessage={data === null ? <TableSkeleton label="Loading reads" /> : undefined}
           size="sm"
@@ -79,10 +84,10 @@ export function ExposurePanel() {
           rows={(data?.rows ?? []).map((r) => ({
             id: `${r.actor}/${r.agent}`,
             items: [
-              { label: <span className="font-mono text-xs">{r.actor}</span> },
+              { label: <NameBadge name={r.actor} /> },
               { label: <AgentBadge agent={r.agent} /> },
               { label: <span className="tabular">{r.distinct_keys.toLocaleString()}</span> },
-              { label: <span className="tabular">{Math.round(r.fraction * 100)}%</span> },
+              { label: <span className="tabular">{share(r.fraction)}</span> },
               { label: <span className="tabular">{r.calls.toLocaleString()}</span> },
               { label: <ListTime time={r.last_hour} quiet /> },
             ],
@@ -92,4 +97,10 @@ export function ExposurePanel() {
       <OwnerReportSection />
     </>
   );
+}
+
+function readerCount({ rows, namespace_rows }: ExposureSummary): string {
+  const widest =
+    rows.length >= LIMIT ? `the ${LIMIT} widest readers` : `${rows.length} reader${rows.length === 1 ? "" : "s"}`;
+  return `${widest} of ${namespace_rows.toLocaleString()} memories`;
 }

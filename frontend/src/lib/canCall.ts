@@ -52,6 +52,8 @@ export const OP_MIN_ROLE = {
   // Activity's Exposure tab reads on open; the Agents page's "Forget its memories".
   "memory.exposure_summary": { min: "admin", by: "namespace" },
   "memory.clear": { min: "admin", by: "namespace" },
+  // Activity → Erasures: Erase and Export of a namespace (its handlers ask ADMIN there).
+  "erasure.export": { min: "admin", by: "namespace" },
   "admin/workers.status": { min: "admin", by: "claim" },
   // Setup's "Don't save these" panel (`views/admin/Blacklist.tsx::PrivacyFilters`) must
   // not list the blacklist for every visitor — that is one AUTH_INSUFFICIENT per page

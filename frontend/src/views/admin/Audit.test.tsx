@@ -191,6 +191,15 @@ describe("Audit exposure tab", () => {
     render(<Audit />);
     expect(await screen.findByRole("tab", { name: /Exposure/ })).toBeInTheDocument();
   });
+
+  it("falls back to Events when the role that shows Exposure goes", async () => {
+    signIn("admin");
+    render(<Audit />);
+    fireEvent.mouseDown(await screen.findByRole("tab", { name: /Exposure/ }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Exposure/ })).toHaveAttribute("aria-selected", "true"));
+    act(() => signIn("writer"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Events/ })).toHaveAttribute("aria-selected", "true"));
+  });
 });
 
 describe("Audit table", () => {

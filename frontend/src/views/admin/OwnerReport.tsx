@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Table } from "@clickhouse/click-ui/Table";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { getOwnerReport, type OwnerReport } from "../../api";
 import { useIdentity } from "../../lib/state";
 import { humanizeError } from "../../lib/format";
-import { AgentBadge } from "../../components/AgentBadge";
+import { AgentBadge, NameBadge } from "../../components/AgentBadge";
 import { ListTime } from "../../components/ui/ListTime";
 import { Alert, SectionHeading } from "../../components/ui";
 
@@ -17,20 +17,37 @@ export function OwnerReportSection() {
   const [report, setReport] = useState<OwnerReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The read out, aborted by a newer one or by leaving the namespace.
+  const reading = useRef<AbortController | null>(null);
+  useEffect(() => {
+    reading.current?.abort();
+    setReport(null);
+    setError(null);
+    setBusy(false);
+  }, [identity.org, identity.namespace]);
+  useEffect(() => () => reading.current?.abort(), []);
   const read = async () => {
+    reading.current?.abort();
+    const ctl = new AbortController();
+    reading.current = ctl;
     setBusy(true);
     setError(null);
     try {
-      setReport(await getOwnerReport(identity, userId.trim()));
+      const r = await getOwnerReport(identity, userId.trim(), { signal: ctl.signal });
+      if (!ctl.signal.aborted) setReport(r);
     } catch (e) {
-      setError(humanizeError(e));
+      if (!ctl.signal.aborted) setError(humanizeError(e));
     } finally {
-      setBusy(false);
+      if (!ctl.signal.aborted) setBusy(false);
     }
   };
   return (
     <section className="mt-8">
-      <SectionHeading label="One user's memory" level={2} caption="Who read what one user's memories hold." />
+      <SectionHeading
+        label="One user's memory"
+        level={2}
+        caption="Which readers and agents read one user's memories in the last 30 days."
+      />
       <form
         className="mt-2 flex flex-wrap items-end gap-2"
         onSubmit={(e) => {
@@ -56,7 +73,7 @@ export function OwnerReportSection() {
               aria-label={`Reads of ${report.user_id}'s memories`}
               size="sm"
               headers={[
-                { label: "Token" },
+                { label: "Reader" },
                 { label: "Agent" },
                 { label: "Memories read", width: "130px" },
                 { label: "Reads", width: "90px" },
@@ -65,7 +82,7 @@ export function OwnerReportSection() {
               rows={report.reads.map((r) => ({
                 id: `${r.actor}/${r.agent}`,
                 items: [
-                  { label: <span className="font-mono text-xs">{r.actor}</span> },
+                  { label: <NameBadge name={r.actor} /> },
                   { label: <AgentBadge agent={r.agent} /> },
                   { label: <span className="tabular">{r.distinct_keys.toLocaleString()}</span> },
                   { label: <span className="tabular">{r.calls.toLocaleString()}</span> },
