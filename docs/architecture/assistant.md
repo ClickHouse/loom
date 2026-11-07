@@ -41,13 +41,15 @@ caller needs `viewer` there, and the answer's model spend is charged there.
 
 `loom_assistant_ask` is in no curated MCP roster and, while `experimental`, not in the
 `all` listing either: each call spends model budget, so an agent calls it by name on
-purpose, as every unlisted op can be called. It is never in the [assistant
-toolset](../reference/mcp.md#the-assistant-toolset), so the agent cannot call itself.
+purpose, as every unlisted op can be called. It is never in the
+[assistant toolset](../reference/mcp.md#the-assistant-toolset), so the agent cannot call
+itself.
 
 LibreChat's web UI and API will not be published: LibreChat listens on an internal
-network only Loom reaches. A person has one sign-in and one URL, Loom's. The [LibreChat
-integration](../features/integrations/librechat.md), in which each person runs
-LibreChat's UI with a pasted token, is replaced by this deployment when it is built.
+network only Loom reaches. A person has one sign-in and one URL, Loom's. The
+[LibreChat integration](../features/integrations/librechat.md), in which each person
+runs LibreChat's UI with a pasted token, is replaced by this deployment when it is
+built.
 
 **Why LibreChat hosts the agent.** One agent definition, versioned in
 `integrations/librechat/`, will serve every surface. LibreChat runs the model, the tool
@@ -132,9 +134,10 @@ the agent's tools read only with the token each request carries: a request witho
 gets `401` on every tool call, and a request with one reads as that token. The key is
 therefore not a credential that reads anything in Loom. One row of a KeeperMap table,
 `loom.assistant_service`, holds the service user's email, a random password, its agents
-API key and the agent's id, the two secrets sealed (`server/core/secrets_at_rest.py`)
-like every stored credential, so `loom secrets reseal` covers them when the signing
-secret is replaced and the deployment carries no second secret.
+API key, the agent's id and the version and model of the definition last written, the
+two secrets sealed (`server/core/secrets_at_rest.py`) like every stored credential, so
+`loom secrets reseal` covers them when the signing secret is replaced and the deployment
+carries no second secret.
 
 Setting the service up is one step that a boot runs holding a cluster lease
 (`cluster_lease` in `server/core/leases.py`), so two boots never run it at once; the
@@ -144,11 +147,13 @@ before the next:
 1. No row: write the email and a sealed random password.
 2. No key: sign in with the row's password, registering first only when LibreChat
    answers that the email does not exist (LibreChat words a wrong password the same way
-   but for its text, so the qualification pins that answer), then create the key.
+   but for its text, so the qualification pins that answer), delete any key of the
+   service user's that a boot cut short left behind (keys carry the definition's name),
+   then create the key.
 3. No agent id: list the service user's agents by the definition's name, keep the oldest
    and delete the rest, or create the agent when there is none, and store its id.
-4. A definition older than this build's: write it, as [the agent
-   definition](#the-agent-definition) says.
+4. A stored definition older than this build's, or of the same version with another
+   model: write it and store its version and model on the row.
 
 A boot that stopped halfway leaves the row at a step the next one finishes. Signing in
 is needed only for these steps, so answers run on the stored key whatever the sign-in
@@ -215,10 +220,10 @@ change.
 tables and return its rows, capped. The agent uses it for questions no other read
 answers, such as which agents wrote the most contradicted facts last week or what a
 namespace holds by kind and age. Any token with `viewer` on the namespaces it names can
-call it directly, on any transport, and it joins the [assistant
-toolset](../reference/mcp.md#the-assistant-toolset). A token whose `read_scope` is
-narrower than its namespaces is refused it, as every op outside `SCOPED_OPS` and
-`NARROW_SAFE_OPS` is.
+call it directly, on any transport, and it joins the
+[assistant toolset](../reference/mcp.md#the-assistant-toolset). A token whose
+`read_scope` is narrower than its namespaces is refused it, as every op outside
+`SCOPED_OPS` and `NARROW_SAFE_OPS` is.
 
 ### The boundary is the database user
 
@@ -270,31 +275,18 @@ A second policy, `AS PERMISSIVE USING 1 TO ALL EXCEPT loom_analyst`, keeps every
 user, Loom's own included, reading the tables as before, whatever the server's
 `users_without_row_policies_can_read_rows` says.
 
-The key is derived from the deployment's signing secret (`LOOM_JWT_SECRET`) with an
-HMAC, so every replica holds the same key and none is stored. The analyst user cannot
-read it: it has no grant on `system.row_policies`, and it cannot run `EXPLAIN`. Loom
-writes the policies with `log_queries = 0`, so the key is not in `system.query_log`. It
-is in ClickHouse's own access storage (on disk, or in Keeper when access is replicated),
-in a backup of the access entities, in `system.row_policies` and in the server log at
-`debug` level: all read only by whoever administers the ClickHouse host, who can read
-every row anyway.
-
-The key and the analyst's password (an HMAC of the signing secret under a label of its
-own, as the key is) follow the current signing secret alone, as tokens do: Loom does not
-accept a token signed under `LOOM_JWT_SECRET_PREVIOUS`, so that a leaked root mints
-nothing, and the analyst does not accept that secret's signature or password either. A
-replica whose password the analyst refuses answers `ANALYSIS_UNAVAILABLE`.
-
-A policy that does not accept the key a replica signs with reads no rows, and an
-aggregate would answer zero instead of failing. So Loom counts a one-row sentinel table,
-`loom.analysis_sentinel`, whose policy checks the signature alone, in a statement of its
-own just before the caller's and again just after it. An answer is returned only when
-both count one; otherwise it is `ANALYSIS_UNAVAILABLE`. A rewrite sets the sentinel's
-policy to read nothing (`USING 0`) first and under the new key last, after every table's
-policy. So a statement that read a table during a rewrite is caught, whether it returned
-rows or none: under the old key, a table already rewritten was read after the rewrite
-began, so the count after it finds nothing; under the new key, a table not yet rewritten
-was read before the rewrite ended, so the count before it found nothing.
+The key and the analyst's password are random, made once by the first boot and kept in
+one row of a KeeperMap table, `loom.analysis_secrets`, sealed
+(`server/core/secrets_at_rest.py`) like every stored credential. Every replica reads the
+same row, and a signing-secret rotation leaves them as they are: `loom secrets reseal`
+reseals them with every other stored credential, so the policies never change key and no
+replica ever signs with a key they do not accept. The analyst user cannot read the key:
+it has no grant on `system.row_policies` or on `loom.analysis_secrets`, and it cannot
+run `EXPLAIN`. Loom writes the policies with `log_queries = 0`, so the key is not in
+`system.query_log`. It is in ClickHouse's own access storage (on disk, or in Keeper when
+access is replicated), in a backup of the access entities, in `system.row_policies` and
+in the server log at `debug` level: all read only by whoever administers the ClickHouse
+host, who can read every row anyway.
 
 **Why not ClickHouse credentials in LibreChat.** A ClickHouse login in the agent would
 read every org, skip the request ledger and the exposure records, and keep no link to
@@ -309,45 +301,37 @@ whose ClickHouse user has access management (the bundled ClickHouse's `loom` use
 self-managed admin) writes them at boot. Elsewhere `loom ch-setup` writes them, or
 prints the SQL for an admin, as it does for the reader user.
 
-The analyst's settings profile carries three custom settings: the allowlist's version, a
-digest of the grants, policies and caps with the key left out, and the key's
-fingerprint. At boot a build decides the key first and the version second:
+The analyst's settings profile carries two custom settings: the allowlist's version and
+a digest of the grants, policies and caps. A boot writes the entities when there are
+none, when its version is newer, or when the version is the same and the digest differs;
+it never writes over a newer version, so during a rolling upgrade a build N-1 never
+narrows N's grants, and each build's catalog names only the columns the grants in place
+allow. A boot decides and writes holding a cluster lease (`cluster_lease` in
+`server/core/leases.py`), reading the stamp once it holds it, and sends each statement
+with a timeout well inside the lease's, as every lease holder does, so a holder that
+loses the lease has no statement left to land. Provisioning runs beside the server's
+start, not before it: until it is done `insights.query` answers `ANALYSIS_UNAVAILABLE`.
 
-- **The key.** A build writes under its own key when there are no entities, or when the
-  stored key is its previous secret's (`LOOM_JWT_SECRET_PREVIOUS`: the first boot of a
-  rotation) and the stored version is not newer than its own; an older build on the new
-  secret waits, answering `ANALYSIS_UNAVAILABLE`. A stored key that is neither is left
-  alone, whatever the versions: that replica answers `ANALYSIS_UNAVAILABLE`, and
-  `loom doctor` reports it, with `loom
-ch-setup` to rewrite the key on purpose.
-- **The version.** Under its own key, a build rewrites the entities when its version is
-  newer, or the same with another digest; it never writes over a newer version, so
-  during a rolling upgrade a build N-1 never narrows N's grants, and each build's
-  catalog names only the columns the grants in place allow.
+The policies never change key, so a write only ever replaces scopes that all accept the
+signature every replica sends, and its order is what keeps a granted table from being
+read without its policy (ClickHouse lets a user with no policy on a table read every row
+of it):
 
-So during a rotation the first replica on the new secret moves the key, a replica still
-on the old secret cannot move it back (nor can a newer build on the old secret), and a
-replica given the new secret without the previous one waits for the operator: a rotation
-fails closed and leaves no retired key accepted.
+1. Each table's policy is replaced in one statement (`CREATE ROW POLICY OR REPLACE`), so
+   a table always has one.
+2. Then the grants the allowlist adds are given.
+3. Then the grants it drops are revoked.
+4. A policy is never dropped: a table that leaves the allowlist keeps one that reads
+   nothing (`USING 0`), so a grant that somehow outlives it still reads no row.
+5. The stamp is written last, so a write cut short is written again by the next boot.
 
-A boot decides and writes holding a cluster lease (`cluster_lease` in
-`server/core/leases.py`), and re-reads the profile once it holds it, so two boots never
-write at once. The profile's stamp (version, digest, fingerprint) is written last, so a
-write cut short reads as no entities and the next lease holder writes them again, and a
-boot that finds no stamp while another boot holds the lease waits for it. A write never
-leaves a granted table without its policy, since ClickHouse lets a user with no policy
-on a table read every row of it: the user is created with no grants; every write first
-revokes all of its grants; each policy is replaced in one statement (`CREATE ROW POLICY
-OR REPLACE`, never a drop and a create) before any grant is given back; and a table that
-leaves the allowlist loses its grant before its policy. The probe, which every replica
-runs at boot and then once a minute, checks that every table the user can read has its
-policy, and a replica whose probe fails answers `ANALYSIS_UNAVAILABLE`.
-
-At boot Loom probes the analyst user with one signed statement, checks that a `system`
-table is refused, and compares the grants with the allowlist; a missing or older user is
-a `loom doctor` problem, and `insights.query` answers `ANALYSIS_UNAVAILABLE` until it is
-fixed. The allowlist lives in code with the column comments that become the agent's
-catalog, so the grants, the policies and the catalog come from one definition.
+At boot, and on the first call a minute after its last probe, a replica probes the
+analyst user: one signed statement must read, a `system` table and a column outside the
+allowlist must be refused, and every table the user holds a grant on must have its
+policy. A replica whose probe fails answers `ANALYSIS_UNAVAILABLE` and reports a
+`loom doctor` problem. The allowlist lives in code with the column comments that become
+the agent's catalog, so the grants, the policies and the catalog come from one
+definition.
 
 ### What it can read
 
@@ -356,9 +340,9 @@ timestamps, counts, statuses, op names and latencies, from the memory, conflict,
 document and request-ledger tables. Memory values, document text, chunks, prompts,
 search queries and ledger arguments are left out; a question about content goes through
 `memory.search`, `memory.ask` or `knowledge.search`, which apply their own scope and
-sensitivity rules. The allowlist admits a table only when what the [erasure
-saga](memory-architecture.md#erasure-saga) removes from it is gone for the analyst too:
-its policy carries the census live predicate of a table the saga tombstones
+sensitivity rules. The allowlist admits a table only when what the
+[erasure saga](memory-architecture.md#erasure-saga) removes from it is gone for the
+analyst too: its policy carries the census live predicate of a table the saga tombstones
 (`server/erasure/store/census.py`), the saga deletes or scrubs its rows in place (as
 `agent_events.scrub` does), or the census lists it as holding no memory content. So a
 statement after an erasure cannot read what it removed.
@@ -423,15 +407,12 @@ viewer token. Each case must be refused or return no canary:
 - `SETTINGS` that set a scope value to a number, an array or a malformed string: no
   answer quotes the policy or its key;
 - a table granted to the analyst with no policy of its own, which the probe reports and
-  no write leaves, and two boots writing at once (one on the old secret and one on the
-  new, and a build N-1 beside N with a table taken off the allowlist), which the lease
-  serialises;
-- a statement run while the policies are rewritten under another key, by a replica on
-  the old key and on the new, with a `count()` and with an empty answer, and one whose
-  replica's password the analyst refuses: `ANALYSIS_UNAVAILABLE` or the right rows,
-  never a wrong zero;
-- policies written under another key: a `count()` answers `ANALYSIS_UNAVAILABLE`, not
-  zero, and neither the statement's text nor the key appears in `system.query_log`.
+  no write leaves; a table taken off the allowlist, which reads nothing whether or not
+  its grant is still there; and two boots writing at once (a build N-1 beside N with a
+  table taken off the allowlist), which the lease serialises;
+- a statement run while a write replaces the policies, which reads the right rows;
+- `loom.analysis_secrets`, and neither the statement's text nor the key in
+  `system.query_log`.
 
 The same file will show that a revoked token stops new calls and that an erased memory
 is gone from the next statement. A unit test pins the generated grants and policies to
@@ -483,8 +464,8 @@ LibreChat's configuration keeps the integration's memory off and search index ou
 gives the agents endpoint no capability but tools (no actions, which call any URL, and
 no code execution, file search, skills, subagents or web search), so the agent's only
 way out is Loom's tools. Its log level stays at `info`, which writes no message text.
-Loom signs in once per replica boot, well under LibreChat's per-address sign-in limit,
-and the deployment turns violation bans off (`BAN_VIOLATIONS=false`) and the
+Loom signs in at most once per replica boot, well under LibreChat's per-address sign-in
+limit, and the deployment turns violation bans off (`BAN_VIOLATIONS=false`) and the
 unverified-user expiry off (`ALLOW_UNVERIFIED_EMAIL_LOGIN=true`, so LibreChat never
 deletes the service user it registered without a mail server), so a burst of replica
 restarts cannot lock Loom out; nothing but Loom reaches LibreChat, so the bans protect
@@ -504,7 +485,7 @@ searches LibreChat's logs for the service user's password as it does for a token
 | Where                                       | What the assistant leaves                                                              | How it is deleted                                     |
 | ------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
-| `loom.analysis_sentinel`                    | one constant row                                                                       | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
+| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                           | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
 | `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                 | as every ledger row                                   |
 | LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot  | kept; no memory content                               |
 | LibreChat `transactions`                    | token counts per answer and its message id, no content                                 | kept, a few hundred bytes per answer                  |
@@ -560,8 +541,8 @@ token never reads more than the caller's own.
 `/v1/assistant/chat/completions` a new route: a build that does not know them answers
 `UNKNOWN_OP` or 404, so a client points at them once every replica serves them. The
 analyst user, its grants and policies, and `loom.assistant_service` live in ClickHouse
-and are shared by every replica; the agent definition is written as [the agent
-definition](#the-agent-definition) says, never by an older build.
+and are shared by every replica; the agent definition is written as
+[the agent definition](#the-agent-definition) says, never by an older build.
 
 ## Build order
 
