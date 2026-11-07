@@ -637,3 +637,36 @@ async def test_a_cancelled_flush_tells_its_callers_and_stays_cancelled(agent: Ag
     results = await asyncio.gather(*sets, return_exceptions=True)
     assert all(isinstance(r, asyncio.CancelledError) for r in results[2:])
     assert flush.cancelled()
+
+
+async def test_a_flush_cancelled_while_it_waits_its_turn_tells_its_callers(agent: Agent) -> None:
+    # The second window's flush waits for the first, held on the server; cancelled while
+    # it waits, its callers get CancelledError rather than waiting for good.
+    t: Any = agent.transport
+    t.bulk_gate = asyncio.Event()
+    first = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcd"]
+    await _settle()
+    _close_windows(agent)
+    second = [asyncio.create_task(agent.memory.set(k, k)) for k in "efgh"]
+    await _settle()
+    _close_windows(agent)
+    co: Any = agent.memory._coalescer
+    (queued,) = co._flushes.values()  # the identity's last flush: the second window's
+    queued.cancel()
+    coalesced = asyncio.gather(*second[2:], return_exceptions=True)
+    results = await asyncio.wait_for(coalesced, 1)
+    assert all(isinstance(r, asyncio.CancelledError) for r in results)
+    t.bulk_gate.set()
+    assert all(r["version"] for r in await asyncio.gather(*first, *second[:2]))
+
+
+async def test_a_windows_first_sets_go_out_side_by_side(agent: Agent) -> None:
+    # They wait only for the identity's last flush, not for each other.
+    t: Any = agent.transport
+    t.set_gates = {"held": asyncio.Event()}
+    held = asyncio.create_task(agent.memory.set("a", "held"))
+    other = asyncio.create_task(agent.memory.set("b", "free"))
+    await _settle()
+    assert t.landed == [("b", "free")]
+    t.set_gates["held"].set()
+    await asyncio.gather(held, other)

@@ -47,9 +47,9 @@ from loom.run import credit_answer, current_run_id  # noqa: E402  (after the mod
 # one COALESCE_WINDOW_S window per identity, sets are gathered and flushed at
 # the window's end as one `memory.bulk_set` (chunks of COALESCE_MAX_BATCH —
 # the server's bulk_conflict_check_max_entries default, so every entry keeps
-# its verdict). The first two sets of a window go out at once:
-# a lone or sequential writer pays no added latency; a burst pays one request
-# per ~200 entries instead of one per set.
+# its verdict). The first two sets of a window go out at once, after the
+# identity's last flush: a lone or sequential writer pays no added latency; a
+# burst pays one request per ~200 entries instead of one per set.
 COALESCE_WINDOW_S = 0.2
 COALESCE_MIN_BURST = 3
 COALESCE_MAX_BATCH = 200
@@ -76,7 +76,7 @@ _IDENTITY_KEYS = ("org", "namespace", "agent", "user_id", "session_id", "run_id"
 
 
 class _CoalesceWindow:
-    __slots__ = ("t0", "count", "pending", "timer", "identity")
+    __slots__ = ("t0", "count", "pending", "timer", "identity", "first_sets")
 
     def __init__(self, t0: float, identity: dict[str, str]) -> None:
         self.t0 = t0
@@ -84,9 +84,25 @@ class _CoalesceWindow:
         self.pending: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]] = []
         self.timer: asyncio.TimerHandle | None = None
         self.identity = identity
+        # The window's first sets, sent alone: its flush waits for them.
+        self.first_sets: list[asyncio.Task[Any]] = []
 
 
 _T = TypeVar("_T")
+
+
+def _after(
+    before: list[asyncio.Task[Any] | None], request: Callable[[], Awaitable[_T]]
+) -> asyncio.Task[_T]:
+    """A task that runs `request()` once every task in `before` is done."""
+
+    async def run() -> _T:
+        waits = [t for t in before if t is not None]
+        if waits:
+            await asyncio.wait(waits)
+        return await request()
+
+    return asyncio.get_running_loop().create_task(run())
 
 
 class _SetCoalescer:
@@ -97,17 +113,17 @@ class _SetCoalescer:
     verdict, as the point path spells it) and `noop` (version 0: a merge, or
     a restatement the server skipped, wrote nothing). A set the server refused
     raises the error the same set alone would have raised, and a failed bulk
-    request fails every set of its flush still waiting with the same exception. The sets the
-    blacklist could not check in the batch go out again in order, in smaller
-    batches."""
+    request fails every set of its flush still waiting with the same exception.
+    The sets the blacklist could not check in the batch go out again in order,
+    in smaller batches."""
 
     def __init__(self, transport: Any) -> None:
         self._transport = transport
         self._windows: dict[tuple[str, ...], _CoalesceWindow] = {}
         self._inflight: set[asyncio.Task[None]] = set()
-        # The last request of each identity, a window's first sets and its flush alike: the
-        # next starts after it, so a set sent again cannot land after a newer set of its key.
-        self._tails: dict[tuple[str, ...], asyncio.Task[Any]] = {}
+        # The last flush of each identity. The next window's first sets and its flush start
+        # after it, so a set sent again cannot land after a newer set of its key.
+        self._flushes: dict[tuple[str, ...], asyncio.Task[None]] = {}
 
     def _key(self, identity: dict[str, str]) -> tuple[str, ...]:
         return tuple(str(identity.get(k, SENTINEL)) for k in _IDENTITY_KEYS)
@@ -127,9 +143,11 @@ class _SetCoalescer:
             self._windows[key] = window
         window.count += 1
         if window.count < COALESCE_MIN_BURST:
-            direct: dict[str, Any] = await self._chain(
-                key, lambda: self._transport.post("/v1/memory.set", payload)
+            first = _after(
+                [self._flushes.get(key)], lambda: self._transport.post("/v1/memory.set", payload)
             )
+            window.first_sets.append(first)
+            direct: dict[str, Any] = await first
             return direct
         fut: asyncio.Future[dict[str, Any]] = loop.create_future()
         window.pending.append((entry, fut))
@@ -149,41 +167,27 @@ class _SetCoalescer:
         if not window.pending:
             return
         batch, window.pending = window.pending, []
-        task = self._chain(key, lambda: self._flush_or_cancel(window.identity, batch))
+        task = _after(
+            [self._flushes.get(key), *window.first_sets],
+            lambda: self._flush(window.identity, batch),
+        )
+        self._flushes[key] = task
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
+        task.add_done_callback(lambda done: self._flush_done(key, done, batch))
 
-    def _chain(
-        self, key: tuple[str, ...], request: Callable[[], Awaitable[_T]]
-    ) -> asyncio.Task[_T]:
-        """Run `request()` once the identity's last request is done, as its new last one."""
-        before = self._tails.get(key)
-
-        async def after() -> _T:
-            if before is not None:
-                await asyncio.wait([before])
-            return await request()
-
-        task = asyncio.get_running_loop().create_task(after())
-        self._tails[key] = task
-        task.add_done_callback(lambda done: self._forget_tail(key, done))
-        return task
-
-    def _forget_tail(self, key: tuple[str, ...], task: asyncio.Task[Any]) -> None:
-        if self._tails.get(key) is task:
-            del self._tails[key]
-
-    async def _flush_or_cancel(
+    def _flush_done(
         self,
-        identity: dict[str, str],
+        key: tuple[str, ...],
+        task: asyncio.Task[None],
         batch: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]],
     ) -> None:
-        try:
-            await self._flush(identity, batch)
-        except asyncio.CancelledError:
+        if self._flushes.get(key) is task:
+            del self._flushes[key]
+        if task.cancelled():
+            # Cancelled running or still waiting its turn: a caller waiting is told.
             for _, fut in batch:
-                fut.cancel()  # a caller still waiting is told, not left waiting
-            raise
+                fut.cancel()
 
     async def _flush(
         self,
