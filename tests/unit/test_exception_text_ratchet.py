@@ -87,7 +87,7 @@ BASELINE = {
     "server/identity/app/history_policy.py": 1,
     "server/identity/app/history_policy_ops.py": 2,
     "server/identity/app/namespace_classification.py": 1,
-    "server/insights/app/admin_routes.py": 4,
+    "server/insights/app/admin_routes.py": 2,
     "server/insights/app/provider_validation.py": 3,
     "server/insights/store/deploy_delta.py": 1,
     "server/knowledge/app/conversations.py": 1,
