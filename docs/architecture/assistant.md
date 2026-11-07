@@ -304,26 +304,27 @@ The analyst user, its settings profiles, grants and policies will be written wit
 never in a ClickHouse config file, which would put the key in the repository. A server
 whose ClickHouse user has access management (the bundled ClickHouse's `loom` user, a
 self-managed admin) writes them itself, and draws the secrets row when there is none and
-it sees no analyst user, storing the row before it creates the user, so a first install
-cut short is a row without a user, which the next boot finishes. Elsewhere an admin uses
-one of two commands:
+it sees no analyst user, in the order [the version rule](#provisioning) gives, so a
+first install cut short is a row without a user, which the next boot finishes with the
+stored key. Elsewhere an admin uses one of two commands:
 
 - `loom ch-setup`, run as a user with access management, writes the entities under the
   rules below (it holds the lease and writes unless the stored version is newer than its
   own), so it is also the repair on a server that cannot write them. It draws the row
   only when there is none and no analyst user exists; over a lost row with the user
   still there, it refuses and names `--rotate-analysis-key`.
-- `loom ch-setup --print-analyst-sql` is for an admin who runs the SQL by hand, and
-  needs no access management to print. Unlike `--print-sql`, which prints the admin SQL
-  `loom ch-setup` would run with the reader's password as a placeholder and changes
-  nothing, it proves its `LOOM_JWT_SECRET` as the rotation below does, draws a fresh key
-  and password, and prints a complete rotation: `SET log_queries = 0`, a delete of the
-  secrets row, the full entity set under the new key, and last the `INSERT` of the new
-  sealed row at a version above the one it read. From the delete on, replicas have no
-  key and answer `ANALYSIS_UNAVAILABLE`, so a partial run is never an empty answer. Run
-  in full, it starts analysis on a first install and recovers it after a lost row alike.
-  It is outside the lease and the version rule, so it is printed by the newest build's
-  CLI, and it is run, not kept.
+- `loom ch-setup --print-analyst-sql` prints SQL for an admin to run by hand, and needs
+  no access management to print (where `--print-sql` prints the admin SQL
+  `loom ch-setup` would run, with the reader's password as a placeholder). It proves its
+  `LOOM_JWT_SECRET` as the rotation below does, draws a fresh key and password, and
+  prints a complete rotation: `SET log_queries = 0`, a delete of the secrets row, the
+  full entity set under the new key, and last the `INSERT` of the new sealed row at a
+  version above the one it read. Run in full, it starts analysis on a first install,
+  recovers it after a lost row and rotates a healthy key alike. It is outside the lease
+  and the version rule, so it is printed by the newest build's CLI, and it is run, not
+  kept.
+- From the printed delete on, replicas have no key and answer `ANALYSIS_UNAVAILABLE`, so
+  a printed rotation run only in part is never an empty answer.
 
 The allowlist lives in code with the column comments that become the agent's catalog, so
 the grants, the policies and the catalog come from one definition. The rules a write
@@ -333,9 +334,10 @@ keeps:
   (`server/core/leases.py`), waiting for it when another holds it, and reads what the
   entities hold once it has it. `loom secrets reseal` takes the same lease.
 - **Never over a newer build.** The analyst's main settings profile carries the stored
-  version, the last of the entities (a write that stores a secrets row stores it after);
-  a version names exactly one set of grants and policies (a unit test pins it), so a
-  change to either is a new version. A build writes when there is no stored version or
+  version, the last of the entities: a rotation stores its new secrets row after it, and
+  a first draw, made while no analyst user exists, stores the row before it creates the
+  user; a version names exactly one set of grants and policies (a unit test pins it), so
+  a change to either is a new version. A build writes when there is no stored version or
   its own is newer, and at its own version only to repair (below) or as `loom ch-setup`,
   so during a rolling upgrade a build N-1 never narrows N's grants or loosens N's
   policies. N-1 keeps answering on N's entities: its statements that name a column N
@@ -360,13 +362,14 @@ keeps:
   against the root's own record in `loom.signing_keys` (refusing where none is
   recorded), and refuses while the analysis row opens; then, holding the lease, it draws
   a new key and password and does a full write of its own version under them (password,
-  policies, grants, version) and stores the row last. Until the row is stored no replica
-  has a key to sign with, so every replica answers `ANALYSIS_UNAVAILABLE`, never an
-  empty answer, and a run cut short leaves that state for the next run to finish. A
-  rotation on purpose, after a key may have leaked, is the same command with `--live`,
-  which drops the row once those checks pass, so analysis is unavailable for the length
-  of the run; a replica that still holds the old password gets an authentication
-  failure, which answers `ANALYSIS_UNAVAILABLE` too.
+  policies, grants, version) and stores the row last, at a version above the one it
+  read. Until the row is stored no replica has a key to sign with, so every replica
+  answers `ANALYSIS_UNAVAILABLE`, never an empty answer, and a run cut short leaves that
+  state for the next run to finish. A rotation on purpose, after a key may have leaked,
+  is the same command with `--live`, which skips the refusal for a row that opens and
+  drops the row once the version and root checks pass, so analysis is unavailable for
+  the length of the run; a replica that still holds the old password gets an
+  authentication failure, which answers `ANALYSIS_UNAVAILABLE` too.
 
 A replica probes the analyst user at boot and then a minute after each probe, in the
 background, as the analyst itself, so the probe needs no access management:
@@ -490,15 +493,16 @@ viewer token. Each case must be refused or return no canary:
   the reserved-scope read catches and no write tries to repair; a build N-1 beside an N
   that added a column and took a table off the allowlist, which keeps answering; and two
   replicas with different cap settings, which write the caps at boot only;
-- a canary under another key, which the probe catches; a secrets row that does not open
-  or is gone while the user is not, which answers `ANALYSIS_UNAVAILABLE`;
-  `--rotate-analysis-key` after a lost row and with `--live` on a healthy one, refused
-  when the CLI's secrets are not the deployment's, and plain `loom ch-setup` refused
-  over a lost row, the printed SQL run in full on a first install and over a lost row,
-  and in part over a healthy row, on a server whose Loom user cannot list users; a first
-  draw cut short after the row is stored; each followed by a statement that answers with
-  the right rows, and each cut short at every step, which leaves `ANALYSIS_UNAVAILABLE`,
-  never an empty answer;
+- a canary under another key, which the probe catches, and a secrets row that does not
+  open or is gone while the user is not, which answers `ANALYSIS_UNAVAILABLE`;
+- `--rotate-analysis-key` after a lost row and with `--live` on a healthy one, and the
+  printed SQL run in full on a first install, over a lost row and over a healthy row on
+  a server whose Loom user cannot list users, each followed by a statement that answers
+  with the right rows; `--rotate-analysis-key` refused when the CLI's secrets are not
+  the deployment's, and plain `loom ch-setup` refused over a lost row;
+- cut short at every step, the rotation, the printed SQL and a first draw between
+  creating the user and writing the version, each of which leaves `ANALYSIS_UNAVAILABLE`
+  or a state the next run finishes with the stored key, never an empty answer;
 - `loom.analysis_secrets` and `loom.analysis_canary` read directly, and neither the
   statement's text nor the key in `system.query_log`.
 
