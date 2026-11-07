@@ -3,10 +3,11 @@ name: release-check
 # A published release, checked from outside as a user meets it, signed in to
 # nothing: the one-line installer from github.com in clean Debian, Ubuntu and
 # Alpine containers on amd64 and arm64 (install, round trip, re-run, a refused
-# downgrade, an upgrade from the previous release), and the SDKs from PyPI and
-# npm. The release workflow calls it after publishing, with neither the upgrade
-# nor the SDKs (they publish later, from the registry dispatch); a maintainer
-# dispatches it for any release, with `previous_version` and `sdks`
+# downgrade, an upgrade from the previous release), both images' signatures, and
+# the SDKs from PyPI and npm. The release workflow calls it after publishing,
+# with neither the upgrade nor the SDKs (they publish later, from the registry
+# dispatch); a maintainer dispatches it for any release, with `previous_version`
+# and `sdks`
 # (docs/development/release-process.md).
 
 on:
@@ -77,6 +78,24 @@ jobs:
           args=(--published --version "$VERSION" --latest "$LATEST")
           [ -z "$PREVIOUS" ] || args+=(--previous-version "$PREVIOUS")
           python3 scripts/gates/installer_rehearsal.py "${args[@]}"
+
+  signatures:
+    name: Image signatures
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      # Signed by the release workflow's run for this tag, and by nothing else.
+      - name: Both images carry the release workflow's keyless signature
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          for image in ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor; do
+            cosign verify "$image:$VERSION" \
+              --certificate-identity "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v$VERSION" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null
+            echo "$image:$VERSION: signed by release.yml@refs/tags/v$VERSION"
+          done
 
   sdks:
     name: SDKs from PyPI and npm
