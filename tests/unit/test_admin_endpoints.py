@@ -394,12 +394,12 @@ def _adopt(
         return ns == "repo-secret"
 
     async def direct_grant(org: str, ns: str, subject: str) -> Role | None:
-        return Role.ADMIN if granted and ns == "repo-secret" else None
+        return Role.ADMIN if granted and ns in ("repo-secret", "just-restricted") else None
 
     adopted: list[tuple[str, str, str]] = []
 
     async def adopt(org: str, ns: str, new_admin: str, *, actor: str) -> datetime | None:
-        if granted and ns == "repo-secret":
+        if granted and ns in ("repo-secret", "just-restricted"):
             return None  # the caller's own grant is an active admin: nothing written
         assert ns == "ops", "a refused adoption writes nothing"
         adopted.append((org, ns, new_admin))
@@ -489,6 +489,28 @@ def test_an_admitted_adoption_of_a_restricted_namespace_writes_the_access_audit_
     assert event == "namespace.restricted_access"
     assert (kw["org"], kw["namespace"]) == ("acme", "repo-secret")
     assert kw["subject"]["op"] == "admin.namespace.adopt"
+
+
+def test_an_adoption_admitted_on_a_row_newer_than_the_snapshot_writes_the_audit_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import HTTPException
+
+    from server.identity.app import namespace_classification as nc
+    from server.settings import settings
+
+    rows: list[str] = []
+
+    async def emit(event_type: str, **kw: Any) -> str:
+        rows.append(kw["namespace"])
+        return "hash"
+
+    monkeypatch.setattr("server.observability.audit.emit", emit)
+    monkeypatch.setattr(settings, "restricted_audit_inline", True)
+    monkeypatch.setitem(nc._cache, "acme", (float("inf"), frozenset({"repo-secret"})))
+    with pytest.raises(HTTPException):
+        _adopt(monkeypatch, "just-restricted", granted=True, claim=("just-restricted",))
+    assert rows == ["just-restricted"]
 
 
 def test_namespace_adopt_installs_an_admin_on_a_standard_namespace(

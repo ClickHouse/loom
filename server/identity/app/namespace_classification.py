@@ -152,8 +152,10 @@ async def may_administer(
         restricted = await is_restricted(org, namespace)
     except ClassificationUnavailable:
         return False
-    if not restricted and (row is None or row.get("classification") != RESTRICTED):
-        return True
+    if not restricted:
+        if row is None or row.get("classification") != RESTRICTED:
+            return True
+        note_restricted(org, namespace)  # the row is newer: the audit row reads the snapshot
     return await restricted_allows(info, Role.ADMIN, org, namespace)
 
 

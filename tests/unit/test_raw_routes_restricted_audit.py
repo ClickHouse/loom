@@ -1,8 +1,8 @@
 """The raw HTTP routes leave the restricted-access audit row the op gate leaves.
 
 `knowledge.download`, `knowledge.upload`, `task/watch`,
-`admin/claim_release` and the token mints that grant a restricted namespace
-are not registry ops, so the transport gate
+`admin/claim_release`, `admin/namespace.adopt` and the token mints that grant
+a restricted namespace are not registry ops, so the transport gate
 (`server.transport.gates.authorize`) never runs for them: each authorizes
 itself and must write the `namespace.restricted_access` row the gate writes
 for an admitted op. The contract test holds every raw route to it: a route
