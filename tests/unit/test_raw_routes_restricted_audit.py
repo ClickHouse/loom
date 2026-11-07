@@ -377,6 +377,7 @@ class _Delegated:
     org = ORG
     namespaces = (NS,)
     ns_roles = {NS: "viewer"}
+    roles: list[str] = []
 
     def mint(self, subject: str) -> str:
         return "jwt"
@@ -400,7 +401,7 @@ def mint_env(monkeypatch: pytest.MonkeyPatch) -> Any:
     from contextlib import asynccontextmanager
 
     import server.auth.grant_claims as grant_claims
-    from server.identity.app import me_service_accounts, me_setup, token_grants
+    from server.identity.app import me_service_accounts, token_grants
     from server.settings import settings
 
     async def _delegate(*_a: Any, **_k: Any) -> _Delegated:
@@ -419,18 +420,23 @@ def mint_env(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
     monkeypatch.setattr(grant_claims, "service_account_change", _change)
     monkeypatch.setattr(token_grants, "grant_restricted_to_token", _granted)
-    for module in (me_service_accounts, me_setup):
-        monkeypatch.setattr(module, "delegate", _delegate)
+
+    async def _viewer(*_a: Any) -> str:
+        return "viewer"
+
+    monkeypatch.setattr(me_service_accounts, "delegate", _delegate)
+    # The mint caps a restricted grant at the caller's own: the caller views NS.
+    monkeypatch.setattr(me_service_accounts.me_callers, "caller_role_on", _viewer)
     monkeypatch.setattr(me_service_accounts, "refuse_taken_name", _nothing)
     monkeypatch.setattr(me_service_accounts, "save_token", _nothing)
-    return me_service_accounts, me_setup
+    return me_service_accounts
 
 
 @pytest.mark.asyncio
 async def test_a_service_account_mint_onto_a_restricted_namespace_writes_the_audit_row(
     mint_env: Any, audit_rows: list[Any]
 ) -> None:
-    me_service_accounts, _ = mint_env
+    me_service_accounts = mint_env
     async with _client(me_service_accounts) as c:
         r = await c.post(
             "/v1/me/service_accounts.create",
@@ -443,44 +449,34 @@ async def test_a_service_account_mint_onto_a_restricted_namespace_writes_the_aud
 
 
 @pytest.mark.asyncio
-async def test_a_setup_mint_onto_a_restricted_namespace_writes_the_audit_row(
+async def test_a_star_mint_writes_a_row_only_for_the_restricted_namespace_it_granted(
     monkeypatch: pytest.MonkeyPatch, mint_env: Any, audit_rows: list[Any]
 ) -> None:
-    from server.identity.app import me_callers
+    me_service_accounts = mint_env
 
-    _, me_setup = mint_env
+    class _Star(_Delegated):
+        namespaces = ("*", NS, "other")
+        ns_roles = {}
+        roles = ["writer"]
 
-    async def _restricted(org: str, subject: str, raw: object) -> list[str]:
-        return [NS, "other"]
-
-    async def _nothing(*_a: Any, **_k: Any) -> None:
-        return None
-
-    async def _role(*_a: Any) -> str:
-        return "viewer"
-
-    # the real `_save_mcp_token`; its grant write (mint_env) grants only NS
-    monkeypatch.setattr(me_setup, "save_token", _nothing)
-    monkeypatch.setattr(me_callers, "caller_role_on", _role)
-    # both asked-for names are restricted: only the granted one may get a row
-    monkeypatch.setitem(nc._cache, ORG, (1e12, frozenset({NS, "other"})))
+    async def _delegate(*_a: Any, **_k: Any) -> _Star:
+        return _Star()
 
     async def _no_default(*_a: Any) -> str:
         return ""
 
-    monkeypatch.setattr(me_setup, "_validate_restricted_request", _restricted)
-    monkeypatch.setattr(me_setup, "default_namespace", _no_default)
-    monkeypatch.setattr(
-        "server.auth.public_url.public_base_url", lambda request: "https://loom.example.com"
-    )
-    async with _client(me_setup) as c:
+    monkeypatch.setattr(me_service_accounts, "delegate", _delegate)
+    monkeypatch.setattr(me_service_accounts, "default_namespace", _no_default)
+    # both names are restricted; the grant write (mint_env) grants only NS
+    monkeypatch.setitem(nc._cache, ORG, (1e12, frozenset({NS, "other"})))
+    async with _client(me_service_accounts) as c:
         r = await c.post(
-            "/v1/me/setup/mcp_config",
-            json={"client": "cursor", "restricted_namespaces": [NS, "other"]},
+            "/v1/me/service_accounts.create",
+            json={"namespaces": ["*", NS, "other"]},
             headers=BEARER,
         )
     assert r.status_code == 200, r.text
-    _assert_one_row(audit_rows, "me.setup.mcp_config")
+    _assert_one_row(audit_rows, "me.service_accounts.create")
     assert audit_rows[0][1]["subject"]["granted_to"] == r.json()["sa_subject"]
 
 
@@ -516,7 +512,7 @@ async def test_a_mint_from_a_cold_snapshot_writes_the_audit_row(
     the row reads."""
     from server.identity.store import grants as grants_repo
 
-    me_service_accounts, _ = mint_env
+    me_service_accounts = mint_env
 
     async def _written(rows: list[dict[str, Any]]) -> None:
         return None
@@ -579,7 +575,7 @@ async def test_the_mcp_primer_profile_read_of_a_standard_namespace_writes_no_row
 async def test_a_mint_of_two_restricted_namespaces_writes_a_row_for_each(
     monkeypatch: pytest.MonkeyPatch, mint_env: Any, audit_rows: list[Any]
 ) -> None:
-    me_service_accounts, _ = mint_env
+    me_service_accounts = mint_env
 
     async def _both(org: str, sa_subject: str, creator: str, ns_roles: Any) -> list[str]:
         return [NS, "vault-2"]

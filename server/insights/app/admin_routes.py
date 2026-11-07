@@ -901,9 +901,7 @@ async def admin_token_mint(
             name, sa_subject, delegated, created_by=creator, now=naive_utc_now_seconds()
         )
     # A restricted namespace is read only by a subject with a direct grant there.
-    granted = await token_grants.grant_restricted_to_token(
-        input.org, sa_subject, creator, roles_on
-    )
+    granted = await token_grants.grant_restricted_to_token(input.org, sa_subject, creator, roles_on)
     await note_restricted_grants(
         info, op="admin.token.mint", org=input.org, namespaces=granted, granted_to=sa_subject
     )
