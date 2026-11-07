@@ -609,14 +609,14 @@ its bookkeeping (attendees, an agenda, action items) included; a stated plan
 (`the plan is to ...`, `we'll enable ...`) is a decision. Notes a meeting tool writes
 from a recording, titled with the meeting's date and clock time and a transcript or
 notes-by mark, as in `Planner sync - 2026/03/04 10:00 CET - Notes by ...`, keep their
-summary and topic sections as content; there only the transcript, its clock-time
-segments and the template around it (the invite header, next steps, action items,
-attendees, the tool's footer) are noise, each unless it records a decision. A notes-by
-mark names a recording only in a title with a meeting word and none of the words listed
-above; otherwise it signs a person's notes, read by the rule above. A person's dated
-meeting notes signed with a clock time (`Storage sync 2026-03-04 10:00 - notes by Ana`)
-read as a recording, so their discussion stays content. The rules leave a section as
-content when unsure.
+summary and topic sections as content; there the transcript, its clock-time segments,
+the template around it (the invite header, next steps, action items, attendees, the
+tool's footer) and unanswered open questions are noise, each unless it records a
+decision. A notes-by mark names a recording only in a title with a meeting word and none
+of the words listed above; otherwise it signs a person's notes, read by the rule above. A
+person's dated meeting notes signed with a clock time, as in
+`Storage sync 2026-03-04 10:00 - notes by Ana`, read as a recording, so their discussion
+stays content. The rules leave a section as content when unsure.
 
 A hit reports `noise`. With `LOOM_KNOWLEDGE_NOISE_FILTER` on (the default), a noise hit
 moves below the last hit close to the query (cosine similarity 0.30 or more, or the

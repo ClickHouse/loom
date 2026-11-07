@@ -33,10 +33,10 @@ a transcript or notes-by mark in their title ("Planner sync - 2026/03/04 10:00 C
 Notes by ..."). A notes-by mark names a recording only beside a meeting word and none of
 the design-document words above; otherwise it signs a person's notes ("Outage 2026-03-04
 14:00 UTC - notes by Ana"), which keep the rule above. A recording's summary and topic
-sections are the tool's account of the meeting and stay content; only the transcript
-(its clock-time segments) and the template around it (the invite header, next steps,
-action items, attendees, the tool's footer) are noise, each unless it records a
-decision.
+sections are the tool's account of the meeting and stay content; the transcript (its
+clock-time segments), the template around it (the invite header, next steps, action
+items, attendees, the tool's footer) and unanswered open questions are noise, each
+unless it records a decision.
 """
 
 from __future__ import annotations
