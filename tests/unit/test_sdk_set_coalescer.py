@@ -825,7 +825,7 @@ async def test_windows_of_many_identities_do_not_pile_up(
 ) -> None:
     # A window with only its first sets ends at its time like any other.
     monkeypatch.setattr(loom.memory, "COALESCE_WINDOW_S", 0.01)
-    sets = [asyncio.ensure_future(agent.memory.set("k", i, session_id=f"s{i}")) for i in range(200)]
+    sets = [asyncio.create_task(agent.memory.set("k", i, session_id=f"s{i}")) for i in range(200)]
     await asyncio.sleep(0)  # every set has opened its window; no timer has run yet
     co: Any = agent.memory._coalescer
     assert len(co._windows) == 200
