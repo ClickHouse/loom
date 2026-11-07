@@ -109,7 +109,9 @@ def test_the_refresh_fills_both_snapshots_from_one_read(monkeypatch: Any) -> Non
         github_token="",
         source="registry",
     )
-    monkeypatch.setattr(repos, "_registry_repos", [branch])
+    monkeypatch.setattr(repos, "_registry_repos", repos._registry_repos)
+    monkeypatch.setattr(repos, "_registry_namespaces", repos._registry_namespaces)
+    repos.set_registry_repos([branch])
     try:
         asyncio.run(binding.refresh_overrides(force=True))
         assert len(ch.calls) == 1

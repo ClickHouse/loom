@@ -91,6 +91,9 @@ _OVERRIDES: dict[tuple[str, str], str] = {}
 BRANCH_OF_KEY = "qa_branch_of"  # storage key
 _BRANCH_OF: dict[tuple[str, str], str] = {}
 _OVERRIDES_AT = 0.0
+# Bumped by `forget_links`: a refresh whose read started before it may hold the rows
+# just emptied, so it keeps nothing.
+_FORGOTTEN = 0
 
 
 async def refresh_overrides(*, force: bool = False) -> dict[tuple[str, str], str]:
@@ -107,7 +110,10 @@ async def refresh_overrides(*, force: bool = False) -> dict[tuple[str, str], str
 
         if getattr(get_client(), "_client", "absent") is None:
             return dict(_OVERRIDES)
+        forgotten = _FORGOTTEN
         rows = await code_index().state_values_for_keys([OVERRIDE_KEY, BRANCH_OF_KEY])
+        if forgotten != _FORGOTTEN:
+            return dict(_OVERRIDES)  # the next call reads again
         _OVERRIDES, _BRANCH_OF = rows[OVERRIDE_KEY], rows[BRANCH_OF_KEY]
         _OVERRIDES_AT = now
     except Exception as e:  # noqa: BLE001 — keep the last snapshot
@@ -117,7 +123,9 @@ async def refresh_overrides(*, force: bool = False) -> dict[tuple[str, str], str
 
 def forget_links(org: str, code_namespace: str) -> None:
     """Drop the org's namespace from this replica's snapshot, whose rows were just
-    emptied: a refresh that failed must not leave the old ones in place."""
+    emptied, and discard any refresh already reading."""
+    global _FORGOTTEN
+    _FORGOTTEN += 1
     _OVERRIDES.pop((org, code_namespace), None)
     _BRANCH_OF.pop((org, code_namespace), None)
 

@@ -84,7 +84,7 @@ def test_the_operator_map_links_only_the_operator_s_repositories(monkeypatch) ->
         github_token="",
         source="registry",
     )
-    monkeypatch.setattr(repos, "_registry_repos", [added])
+    _set_registry(monkeypatch, [added])
     assert binding.tracker_namespaces_for(ORG_X, CODE) == ["tracker-widgets"]
     # a self-service repository whose name matches the glob gets nothing from it
     assert binding.tracker_namespaces_for(ORG_Y, "code-widgets-fork") == []
@@ -114,7 +114,7 @@ def test_an_operator_entry_with_a_maintainer_access_row_keeps_its_glob_link(monk
         classification="restricted",
         source="registry",
     )
-    monkeypatch.setattr(repos, "_registry_repos", [access])
+    _set_registry(monkeypatch, [access])
     (entry,) = repos.configured_repos()
     assert (entry.source, entry.access_source) == ("config", "registry")
     assert binding.tracker_namespaces_for(ORG_X, CODE) == ["tracker-widgets"]
@@ -131,9 +131,7 @@ def test_a_branch_follows_only_an_operator_source_and_its_own_row_wins(monkeypat
     )
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     branch = "code-widgets-26-8"
-    monkeypatch.setattr(
-        repos, "_registry_repos", [_entry(ORG_X, branch), _entry(ORG_X, "code-widgets-fork-1")]
-    )
+    _set_registry(monkeypatch, [_entry(ORG_X, branch), _entry(ORG_X, "code-widgets-fork-1")])
     binding.reset_overrides_for_tests(
         branches={(ORG_X, branch): CODE, (ORG_X, "code-widgets-fork-1"): "code-widgets-fork"}
     )
@@ -144,6 +142,13 @@ def test_a_branch_follows_only_an_operator_source_and_its_own_row_wins(monkeypat
     assert binding.tracker_namespaces_for(ORG_Y, branch) == []
     binding.reset_overrides_for_tests({(ORG_X, branch): "tracker-own"}, {(ORG_X, branch): CODE})
     assert binding.tracker_namespaces_for(ORG_X, branch) == ["tracker-own"]
+
+
+def _set_registry(monkeypatch, entries: list[repos.RepoConfig]) -> None:
+    """Set the registry snapshot through its writer; monkeypatch restores both globals."""
+    monkeypatch.setattr(repos, "_registry_repos", repos._registry_repos)
+    monkeypatch.setattr(repos, "_registry_namespaces", repos._registry_namespaces)
+    repos.set_registry_repos(entries)
 
 
 def _entry(org: str, namespace: str) -> repos.RepoConfig:
@@ -174,20 +179,45 @@ def test_a_branch_row_with_no_repository_entry_is_not_followed(monkeypatch) -> N
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     branch = "code-widgets-26-8"
     binding.reset_overrides_for_tests(branches={(ORG_X, branch): CODE})
-    monkeypatch.setattr(repos, "_registry_repos", [])
+    _set_registry(monkeypatch, [])
     assert binding.tracker_namespaces_for(ORG_X, branch) == []
-    monkeypatch.setattr(repos, "_registry_repos", [_entry(ORG_X, branch)])
+    _set_registry(monkeypatch, [_entry(ORG_X, branch)])
     assert binding.tracker_namespaces_for(ORG_X, branch) == ["tracker-widgets"]
     # self-service switched off: the registry reads empty, and the row is not followed
     monkeypatch.setattr(settings, "code_self_service_enabled", False)
     assert binding.tracker_namespaces_for(ORG_X, branch) == []
 
 
-def test_the_registry_namespaces_are_built_once_per_snapshot(monkeypatch) -> None:
+def test_the_registry_namespaces_follow_each_snapshot(monkeypatch) -> None:
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
-    monkeypatch.setattr(repos, "_registry_repos", [_entry(ORG_X, "code-widgets-26-8")])
-    first = repos.registry_namespaces()
-    assert first == {(ORG_X, "code-widgets-26-8")}
-    assert repos.registry_namespaces() is first
+    _set_registry(monkeypatch, [_entry(ORG_X, "code-widgets-26-8")])
+    assert repos.registry_namespaces() == {(ORG_X, "code-widgets-26-8")}
     repos.set_registry_repos([_entry(ORG_Y, "code-widgets-26-8")])
     assert repos.registry_namespaces() == {(ORG_Y, "code-widgets-26-8")}
+    monkeypatch.setattr(settings, "code_self_service_enabled", False)
+    assert repos.registry_namespaces() == frozenset()
+
+
+def test_a_refresh_read_before_forget_links_keeps_nothing(monkeypatch) -> None:
+    """A refresh whose read started before a registration emptied the rows must not put
+    the old rows back after `forget_links` dropped them."""
+    import server.code.app.reads as reads_mod
+    import server.core.ch as ch_mod
+
+    class _Slow:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            binding.forget_links(ORG_X, CODE)  # the registration lands mid-read
+            return [
+                {
+                    "org": ORG_X,
+                    "namespace": CODE,
+                    "state_key": binding.BRANCH_OF_KEY,
+                    "state_value": "code-root",
+                }
+            ]
+
+    ch = _Slow()
+    monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
+    monkeypatch.setattr(reads_mod, "code_index", lambda: CodeRepo(ch))  # type: ignore[arg-type]
+    asyncio.run(binding.refresh_overrides(force=True))
+    assert (ORG_X, CODE) not in binding._BRANCH_OF

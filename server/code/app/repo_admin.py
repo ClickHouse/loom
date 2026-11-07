@@ -530,9 +530,9 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
 
 async def _empty_tracker_links(org: str, namespace: str, *, detail: str) -> None:
     """Empty the namespace's `qa_branch_of` and `qa_binding` rows that hold a value and
-    drop the name from this replica's snapshot, even when the refresh fails. An absent row
-    stays absent: an empty `qa_binding` reads as cleared, which would hide the operator's
-    map from a namespace that never had links."""
+    drop the name from this replica's snapshot. An absent row stays absent: an empty
+    `qa_binding` reads as cleared, which would hide the operator's map from a namespace
+    that never had links."""
     from server.code.store.index import CodeRepo
     from server.tracker.app import binding
 
@@ -540,7 +540,6 @@ async def _empty_tracker_links(org: str, namespace: str, *, detail: str) -> None
     for key in (binding.BRANCH_OF_KEY, binding.OVERRIDE_KEY):
         if await repo.get_state_or_none(org, namespace, key):
             await repo.set_state(org, namespace, key, "", detail=detail)
-    await binding.refresh_overrides(force=True)
     binding.forget_links(org, namespace)
 
 

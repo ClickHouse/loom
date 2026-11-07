@@ -706,62 +706,27 @@ async def test_a_fresh_name_writes_no_clear(plane, links) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_re_add_after_a_removal_on_another_replica_refreshes_the_snapshot(
-    plane, monkeypatch
+@pytest.mark.parametrize("stored", ["", None])
+async def test_a_re_add_after_a_removal_on_another_replica_drops_the_stale_snapshot_rows(
+    plane, stored
 ) -> None:
-    """Another replica's removal emptied the rows in the store; this replica's snapshot
-    still holds the old branch row, so registering the name refreshes it at once."""
+    """Another replica removed the name: its rows are emptied ("") or already purged
+    (None) in the store, but this replica's snapshot still holds the old link and the
+    operator root. Registering the name drops both from the snapshot."""
     from server.tracker.app import binding
 
-    refreshed: list[bool] = []
-
-    async def _refresh(*, force: bool = False) -> dict[Any, str]:
-        refreshed.append(force)
-        binding.reset_overrides_for_tests(
-            {k[:2]: v for k, v in plane.stored.items() if k[2] == binding.OVERRIDE_KEY},
-            branches={k[:2]: v for k, v in plane.stored.items() if k[2] == binding.BRANCH_OF_KEY},
-        )
-        return {}
-
-    monkeypatch.setattr(binding, "refresh_overrides", _refresh)
-    binding.reset_overrides_for_tests(branches={(ORG, "code-widgets"): "code-clickhouse"})
-    plane.stored[(ORG, "code-widgets", binding.BRANCH_OF_KEY)] = ""
-    try:
-        await admin.handle_code_repo_add(
-            CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main", join_policy="open")
-        )
-        assert refreshed == [True]
-        assert _link_rows(plane) == []  # the rows are empty already
-        assert not binding._BRANCH_OF.get((ORG, "code-widgets"))  # not code-clickhouse
-    finally:
-        binding.reset_overrides_for_tests()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("refresh_fails", [False, True])
-async def test_a_re_add_after_the_purge_drops_the_stale_snapshot_row(
-    plane, monkeypatch, refresh_fails
-) -> None:
-    """Another replica removed the name and its purge deleted the rows: the store holds
-    none, but this replica's snapshot still names the operator root. Registering the
-    name drops it, whether or not the refresh reads the store."""
-    from server.tracker.app import binding
-
-    async def _refresh(*, force: bool = False) -> dict[Any, str]:
-        if not refresh_fails:
-            binding.reset_overrides_for_tests()
-        return {}
-
-    monkeypatch.setattr(binding, "refresh_overrides", _refresh)
     binding.reset_overrides_for_tests(
         {(ORG, "code-widgets"): "tracker-old"},
         branches={(ORG, "code-widgets"): "code-clickhouse"},
     )
+    if stored is not None:
+        plane.stored[(ORG, "code-widgets", binding.BRANCH_OF_KEY)] = stored
+        plane.stored[(ORG, "code-widgets", binding.OVERRIDE_KEY)] = stored
     try:
         await admin.handle_code_repo_add(
             CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main", join_policy="open")
         )
-        assert _link_rows(plane) == []
+        assert _link_rows(plane) == []  # nothing holds a value, so nothing is written
         assert binding.override_for(ORG, "code-widgets") is None
         assert (ORG, "code-widgets") not in binding._BRANCH_OF
     finally:
