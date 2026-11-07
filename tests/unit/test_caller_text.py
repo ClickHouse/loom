@@ -74,6 +74,9 @@ def test_what_caller_text_writes_reads_back_unchanged() -> None:
 def test_a_consolidation_reason_an_older_build_stored_is_cut() -> None:
     from server.memory.app.consolidate import _shown_failure
 
+    assert _shown_failure("a merged row changed since the read") == (
+        "a merged row changed since the read"
+    )
     lossy = "merge lost distinguishing values: 2024-03-01"
     assert _shown_failure(lossy) == lossy
     assert _shown_failure("merge response lacked canonical_key/value") == (

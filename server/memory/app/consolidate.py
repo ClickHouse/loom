@@ -467,7 +467,7 @@ async def _ask_merge(llm: Any, cluster: list[dict[str, Any]]) -> tuple[Any, str,
         verdict = merge_preserves([str(r.get("value") or "") for r in cluster], canonical_value)
         if not verdict.ok:
             refused_lossy = verdict.counts()
-            failure_reason = f"merge lost distinguishing values: {refused_lossy}"[:500]
+            failure_reason = f"{_LOSSY_MERGE}{refused_lossy}"[:500]
             canonical_key = canonical_value = ""
     return llm_result, canonical_key, canonical_value, failure_reason, refused_lossy
 
@@ -1080,6 +1080,7 @@ def _shown_failure(reason: str) -> str:
         return reason
     # A parser reason may be stored after its kind (`ValueError: ...`): the same reason.
     own = reason.removeprefix("ValueError: ")
-    if own.startswith(_OWN_REASONS) or _SUMMARY.fullmatch(reason):
+    unmerged = {c.reason for c in (_HeldSince, _KeyTaken, _EmbedFailed)}
+    if own.startswith(_OWN_REASONS) or own in unmerged or _SUMMARY.fullmatch(reason):
         return own
     return stored_caller_text(reason) or _UNSHOWN_FAILURE
