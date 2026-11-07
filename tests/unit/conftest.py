@@ -611,23 +611,25 @@ def _provider_clients_left_as_found() -> Iterator[None]:
         )
 
 
-def _is_source_file(path: str) -> bool:
-    """Whether `path` is a repository file outside tests/ (whose fakes are the doubles)
-    and outside a dot directory such as .venv."""
+def _is_repo_file(path: str, *, tests: bool) -> bool:
+    """Whether `path` is a repository file outside a dot directory such as .venv, and,
+    unless `tests`, outside tests/ (whose fakes are the doubles)."""
     resolved = Path(path).resolve()
     if not resolved.is_relative_to(_REPO):
         return False
     top = resolved.relative_to(_REPO).parts[0]
-    return top != "tests" and not top.startswith(".")
+    return not top.startswith(".") and (tests or top != "tests")
 
 
-def _source_modules_since(modules_before: set[str]) -> list[str]:
-    """The repository modules outside tests/ imported since `modules_before`, skipping
-    entries without a file: blocked imports (`None`), builtins and namespace packages."""
+def _source_modules_since(modules_before: set[str], *, tests: bool = False) -> list[str]:
+    """The repository modules (tests/ helpers too when `tests`) imported since
+    `modules_before`, skipping entries without a file: blocked imports (`None`), builtins
+    and namespace packages."""
     return [
         name
         for name in sys.modules.keys() - modules_before
-        if (path := getattr(sys.modules.get(name), "__file__", None)) and _is_source_file(path)
+        if (path := getattr(sys.modules.get(name), "__file__", None))
+        and _is_repo_file(path, tests=tests)
     ]
 
 
@@ -649,14 +651,15 @@ def _double_bound_at_import(modules_before: set[str]) -> bool:
 @pytest.fixture(autouse=True)
 def _test_double_bound_at_import_dropped() -> Iterator[None]:
     """After a test that left a test double bound in a source module it first imported,
-    drop every source module first imported during the test, from `sys.modules` and from
-    its package, so the next import binds the real names. Teardown runs after the test's
-    own patches are undone."""
+    drop every repository module first imported during the test (a tests/ helper that
+    bound a name from it too), from `sys.modules` and from its package, so the next import
+    binds the real names. Teardown runs after the test's own patches are undone. A module
+    first imported in a module-, class- or session-scoped fixture is outside the window."""
     before = set(sys.modules)
     yield
     if not _double_bound_at_import(before):
         return
-    for name in _source_modules_since(before):
+    for name in _source_modules_since(before, tests=True):
         module = sys.modules.pop(name)
         # `from package import leaf` returns the package attribute when it is set,
         # without importing again.

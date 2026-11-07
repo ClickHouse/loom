@@ -6,11 +6,12 @@ from __future__ import annotations
 import sys
 import types
 from collections.abc import Iterator
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 
 from server.code.store.index import CodeRepo
+from server.core.ch import get_client
 from tests.unit.conftest import _REPO, _double_bound_at_import
 
 pytest_plugins = ["pytester"]
@@ -49,10 +50,6 @@ class _FakeRepo:
 
 
 def test_an_autospecced_function_is_found(probe) -> None:
-    from unittest.mock import create_autospec
-
-    from server.core.ch import get_client
-
     before = _fake_first_import(probe, get_client=create_autospec(get_client))
     assert _double_bound_at_import(before)
 
