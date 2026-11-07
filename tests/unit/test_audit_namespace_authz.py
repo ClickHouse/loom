@@ -155,6 +155,20 @@ async def test_wildcard_token_is_not_blocked(monkeypatch) -> None:
     assert out.rows == []
 
 
+def _note_access(monkeypatch) -> list[str]:
+    """The namespaces the handler writes a restricted-access audit row for."""
+    from server.identity.app import restricted_access
+
+    noted: list[str] = []
+
+    async def _note(auth, *, op, org, namespace, transport, **_):
+        noted.append(namespace)
+        return True
+
+    monkeypatch.setattr(restricted_access, "note_restricted_access", _note)
+    return noted
+
+
 def _restrict(monkeypatch, *namespaces: str) -> None:
     """Classify `namespaces` restricted in the directory, CH-free."""
     from server.identity.app import namespace_classification as nc
@@ -193,8 +207,10 @@ async def test_restricted_namespace_is_hidden_when_named(monkeypatch, roles) -> 
             raise AssertionError("a hidden restricted namespace must not hit ClickHouse")
 
     monkeypatch.setattr(h, "get_client", lambda: _Raise())
+    noted = _note_access(monkeypatch)
     out = await h.handle_audit_list(AuditListInput(org="dev", namespace="secret-ns"))
     assert out.rows == [] and out.next_cursor is None
+    assert noted == []
 
 
 @pytest.mark.asyncio
@@ -212,10 +228,12 @@ async def test_restricted_namespace_reads_for_a_named_token_with_a_grant(monkeyp
         return Role.VIEWER
 
     monkeypatch.setattr(authz, "grant_role_for", _grant)
+    noted = _note_access(monkeypatch)
     ch = _CH()
     monkeypatch.setattr(h, "get_client", lambda: ch)
     await h.handle_audit_list(AuditListInput(org="dev", namespace="secret-ns"))
     assert ch.queried is True
+    assert noted == ["secret-ns"]  # the access row a read of it writes
 
 
 @pytest.mark.asyncio

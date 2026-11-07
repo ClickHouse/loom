@@ -121,9 +121,18 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
         # (restricted, collections, delegated tokens), and an empty page when it
         # refuses, so the answer confirms nothing.
         from server.auth.authz import row_in_scope
+        from server.auth.context import current_auth
+        from server.identity.app.restricted_access import note_restricted_access
 
         if not await row_in_scope(input.org, input.namespace):
             return AuditListOutput(rows=[], next_cursor=None)
+        await note_restricted_access(
+            current_auth(),
+            op="audit.list",
+            org=input.org,
+            namespace=input.namespace,
+            transport="op",
+        )
         scope_where = " AND namespace = {ns:String}"
         params["ns"] = input.namespace
     else:
