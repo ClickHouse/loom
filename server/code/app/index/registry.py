@@ -30,10 +30,10 @@ def describe(cfg: Any) -> str:
 
 
 async def _sync_maintainers(cfg: Any, client: Any) -> None:
-    """On first sight of a branch namespace each process, bring the repository's
-    maintainer set onto it (an environment-registered or freshly added branch inherits
-    the maintainers of its siblings). Until the self-service registry is first read
-    the sync does nothing, and a later pass syncs the branch again."""
+    """On first sight of a branch namespace each process, bring onto it the admins
+    of the repository's branches that reach it (`maintainers._reaches`). Until
+    the self-service registry is first read the sync does nothing, and a later
+    pass syncs the branch again."""
     from server.code.app.index import maintainers
     from server.code.app.index.repo_registry import registry_read
 

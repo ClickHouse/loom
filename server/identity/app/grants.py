@@ -241,7 +241,7 @@ async def _write_or_lower(
         if input.replace and input.role != "admin":
             row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
         if row is None or not _active_admin(row):
-            return await _write(row)
+            return await _write_grant(input, subject, may_replace)
     return await _taking_admin(input, subject, _write, lowered_to=input.role)
 
 
