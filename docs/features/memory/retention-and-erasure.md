@@ -63,7 +63,7 @@ worker then applies the writer's `on_expire` as a new version:
 `memory.touch` changes only a row's expiry, for one key or up to 1,000 (`memory_keys`): a
 new `ttl_seconds`, `clear_expiry=true`, or a new `on_expire`. `memory.sweep_expired`
 (admin) runs one sweep for a namespace on demand, with `dry_run`. An edit to other fields
-keeps a live expiry.
+keeps a live expiry, and a `read_only` row takes no type retention.
 
 ### Configured retention
 
