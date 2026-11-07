@@ -495,3 +495,25 @@ async def test_the_listing_and_the_decision_break_a_version_tie_alike(
 
     one = await get_by_key(ident, "k", scope=WHOLE_NAMESPACE, ch=_OneCH())  # type: ignore[arg-type]
     assert one is not None and one.agent == "a"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_zero_limit_counts_proposals_without_grading_or_reading_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    insert = _INSERT + (
+        "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-000000000001', 'k', 'semantic', "
+        "'a value', 'proposed', 1, '2026-01-01 00:00:00')"
+    )
+    list_ = _listing(monkeypatch, insert)
+    asked: list[list[str]] = []
+
+    async def _counts(_ch: Any, _o: str, _n: str, keys: list[str]) -> dict[str, Any]:
+        asked.append(keys)
+        return {}
+
+    monkeypatch.setattr(p, "graded_counts", _counts)
+    out = await list_(MemoryProposalsInput(org="o", namespace="n", limit=0))
+    assert (out.total, out.proposals) == (1, [])
+    assert asked == [[]]  # no key asked for, so graded_counts issues no statement

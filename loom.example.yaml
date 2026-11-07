@@ -3319,8 +3319,9 @@ settings:
   # Seconds a namespace's proposal policy is cached; a change applies within it. [live]
   # memory_proposals_policy_ttl_s: 60.0
 
-  # A listing reads at most this many proposed keys before `only` / `limit`; a namespace
-  # holding more on trial than this is a queue nobody is deciding, not a page. [live]
+  # A listing returns at most this many proposed keys before `only` / `limit`; a
+  # namespace holding more on trial than this is a queue nobody is deciding, not a page.
+  # [live]
   # memory_proposals_scan_cap: 2000
 
   # Seconds the entity vocabulary of a namespace's summaries is cached for the summary

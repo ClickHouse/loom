@@ -362,8 +362,8 @@ export function Sidebar() {
       }
       if (canCall("memory.proposals", roleHere, whoami)) {
         tasks.push(
-          // Whether a proposal waits (the Proposals tab); `limit=1` grades one row.
-          listProposals({ org: identity.org, namespace: identity.namespace }, 1)
+          // Whether a proposal waits (the Proposals tab): `limit=0` reads the count alone.
+          listProposals({ org: identity.org, namespace: identity.namespace }, 0)
             .then((r) => {
               if (!cancelled) {
                 next.proposalWaits = (r.total ?? 0) > 0;

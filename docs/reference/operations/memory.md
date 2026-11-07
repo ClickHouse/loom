@@ -1511,7 +1511,7 @@ List facts on trial (written with memory.set proposed=true) with the graded runs
 | `prefix` | `str` | `''` | Narrow the listing: a key prefix (`lesson_`), any-match tags. |
 | `tags` | `list[str]` | *(computed)* | Only proposals carrying any of these tags; empty = no tag filter. |
 | `only` | `Literal['', 'ready']` | `''` | `ready` keeps only proposals the policy thresholds would decide now (accept or reject); "" lists every proposal. |
-| `limit` | `int` | `50` | At most this many proposals returned, newest first. |
+| `limit` | `int` | `50` | At most this many proposals returned, newest first; 0 returns only `total`. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

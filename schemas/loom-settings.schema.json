@@ -4139,7 +4139,7 @@
           "default": 2000,
           "minimum": 1,
           "type": "integer",
-          "description": "A listing reads at most this many proposed keys before `only` / `limit`; a namespace holding more on trial than this is a queue nobody is deciding, not a page."
+          "description": "A listing returns at most this many proposed keys before `only` / `limit`; a namespace holding more on trial than this is a queue nobody is deciding, not a page."
         },
         "memory_quality_actor_names": {
           "default": "",

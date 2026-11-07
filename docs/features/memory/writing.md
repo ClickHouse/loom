@@ -343,7 +343,7 @@ The flow for a fact an agent should not make live on its own:
    `include_proposed` see it; a run that relies on it names it in `memories_used`, and
    its grades (`run.grade`) are its trial.
 2. The dashboard's **Review queue** (`/admin/review_queue`) shows a **Proposals** tab while
-   one waits; for an admin of the namespace the drawer lists the queue then too. Each
+   one waits, and the drawer shows the Review queue to a namespace admin then too. Each
    proposal shows its key, value, the agent that wrote it, how many graded runs passed
    and failed on it and what the policy thresholds would decide.
 3. A writer accepts it (it becomes `active`, or `conflicted` when it was contradicted on

@@ -942,11 +942,11 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
   }, [error]);
 
   const decide = async (key: string, decision: "accept" | "reject") => {
+    const clicked = rowsNow.current?.find((r) => r.memory_key === key);
+    if (!clicked) return;
     const rowBox = rowBoxes.current.get(key);
-    // The proposal clicked, and the keys above it, before a re-read can change either.
-    const clickedAt = rowsNow.current?.findIndex((r) => r.memory_key === key) ?? -1;
-    const clicked = rowsNow.current?.[clickedAt];
-    const above = new Set(rowsNow.current?.slice(0, Math.max(0, clickedAt)).map((r) => r.memory_key));
+    // The keys above the clicked row: another decision out at once may take one off.
+    const above = new Set(rowsNow.current?.slice(0, rowsNow.current.indexOf(clicked)).map((r) => r.memory_key));
     setDeciding((d) => new Set(d).add(key));
     try {
       const out = await decideProposal(
@@ -960,19 +960,17 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
       else if (result?.status === "conflicted")
         toast("Accepted; it contradicts a live fact, which now waits in the Conflicts tab", "ok");
       else toast(decision === "accept" ? "Accepted" : "Rejected", "ok");
-      // Where the decided row is now: below the rows above it that are still listed, so a
-      // decision that took one of them, or a re-read that dropped this row, moves it up.
-      const at = rowsNow.current?.filter((r) => above.has(r.memory_key)).length ?? 0;
-      if (clicked) decided.current.add(proposalId(clicked));
-      // Off the list at once, so its buttons cannot send the decision again.
-      // Only the proposal clicked: a newer one of the key that a re-read brought stays.
-      const shown = rowsNow.current?.some((r) => clicked && proposalId(r) === proposalId(clicked));
-      setRows((rs) => rs?.filter((r) => !clicked || proposalId(r) !== proposalId(clicked)) ?? rs);
+      // Off the list at once, so its buttons cannot send the decision again; only the
+      // version clicked, so a newer proposal of the key a re-read brought stays.
+      decided.current.add(proposalId(clicked));
+      const wasListed = rowsNow.current?.some((r) => proposalId(r) === proposalId(clicked));
+      setRows((rs) => rs?.filter((r) => proposalId(r) !== proposalId(clicked)) ?? rs);
       setReason(({ [key]: _gone, ...rest }) => rest);
-      if (shown) setTotal((t) => Math.max(0, t - 1));
+      if (wasListed) setTotal((t) => Math.max(0, t - 1));
       // Only when focus is still in the decided row or was lost: never pull it away from
       // a field the person moved to while the decision was out.
       const active = document.activeElement;
+      const at = rowsNow.current?.filter((r) => above.has(r.memory_key)).length ?? 0;
       if (!active || active === document.body || rowBox?.contains(active)) focusAt.current = at;
       setReload((n) => n + 1);
     } catch (e) {
@@ -1074,7 +1072,7 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
                     label={`Reason for the decision on ${r.memory_key}`}
                     value={reason[r.memory_key] || ""}
                     onChange={(value) => setReason((m) => ({ ...m, [r.memory_key]: value }))}
-                    placeholder="Optional — its first 200 characters go in the audit trail; a rejection keeps it whole"
+                    placeholder="Optional — recorded in the audit trail"
                     rows={2}
                     maxLength={512}
                   />

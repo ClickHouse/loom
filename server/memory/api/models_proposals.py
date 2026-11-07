@@ -29,8 +29,8 @@ class MemoryProposalsInput(BaseModel):
     # `ready` keeps only proposals the policy thresholds would decide now
     # (accept or reject); "" lists every proposal.
     only: Literal["", "ready"] = ""
-    # At most this many proposals returned, newest first.
-    limit: int = Field(default=50, ge=1, le=500)
+    # At most this many proposals returned, newest first; 0 returns only `total`.
+    limit: int = Field(default=50, ge=0, le=500)
 
 
 class MemoryProposal(BaseModel):
@@ -43,8 +43,7 @@ class MemoryProposal(BaseModel):
     user_id: str = "-"
     session_id: str = "-"
     memory_type: str = ""
-    # The first 400 characters of the value (server.memory.store.proposals.PREVIEW_CHARS);
-    # "" for a high row, read by key (memory.get).
+    # The value's first 400 characters; "" for a high row, read by key (memory.get).
     value_preview: str = ""
     # The value runs past the preview.
     preview_cut: bool = False

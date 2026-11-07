@@ -1183,7 +1183,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_PENDING_DISCLOSURE_TTL_S` | `float` | `5.0` | live | Seconds the pending-extraction count a read discloses is cached. |
 | `LOOM_MEMORY_PROFILE_CAS_MAX_RETRIES` | `int` | `3` | live | Attempts a profile write makes when a concurrent write moved the profile under it. |
 | `LOOM_MEMORY_PROPOSALS_POLICY_TTL_S` | `float` | `60.0` | live | Seconds a namespace's proposal policy is cached; a change applies within it. |
-| `LOOM_MEMORY_PROPOSALS_SCAN_CAP` | `int` | `2000` | live | A listing reads at most this many proposed keys before `only` / `limit`; a namespace holding more on trial than this is a queue nobody is deciding, not a page. |
+| `LOOM_MEMORY_PROPOSALS_SCAN_CAP` | `int` | `2000` | live | A listing returns at most this many proposed keys before `only` / `limit`; a namespace holding more on trial than this is a queue nobody is deciding, not a page. |
 | `LOOM_MEMORY_SUMMARY_ENTITY_TTL_S` | `float` | `60.0` | live | Seconds the entity vocabulary of a namespace's summaries is cached for the summary read leg. |
 | `LOOM_MEMORY_CALIBRATION_NAMESPACE_MISS_TTL_S` | `float` | `60.0` | live | Seconds a namespace with no calibration row (or a failed read) is remembered as having none. |
 | `LOOM_MEMORY_CALIBRATION_NAMESPACE_TTL_S` | `float` | `60.0` | live | Seconds a namespace's calibration row is cached, so a row written on another replica serves here within it. |

@@ -216,7 +216,7 @@ describe("Sidebar admin drawer", () => {
     useStore.setState({ view: "admin:health" });
     render(<Sidebar />);
     await painted();
-    expect(listProposals).toHaveBeenCalledWith({ org: "dev", namespace: "team-a" }, 1);
+    expect(listProposals).toHaveBeenCalledWith({ org: "dev", namespace: "team-a" }, 0);
     expect(screen.getByRole("link", { name: /Review queue/ })).not.toHaveTextContent(/\d/);
     // Proposals alone take the Proposals tab's icon.
     expect(screen.getByRole("link", { name: /Review queue/ }).querySelector("[data-icon]")).toHaveAttribute(
