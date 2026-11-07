@@ -221,7 +221,8 @@ export function Audit() {
   // widens to the whole org only at ORG_ADMIN.
   const isPlatformAdmin = hasOrgAdminClaim(whoami);
   // The tab reads on open, so only a role known to reach the op shows it.
-  const showExposure = canCall("memory.exposure_summary", useNamespaceRole(identity.namespace), whoami);
+  const role = useNamespaceRole(identity.namespace);
+  const showExposure = canCall("memory.exposure_summary", role, whoami);
   // Exposure goes with the role that reaches it: a namespace without it shows Events.
   const shownTab = tab === "exposure" && !showExposure ? "events" : tab;
   const scope = isPlatformAdmin ? { org: identity.org } : { org: identity.org, namespace: identity.namespace };

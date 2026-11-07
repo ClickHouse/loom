@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { clearAgentMemories } from "../api";
+import { LONG_CALL_MS, clearAgentMemories } from "../api";
 import { useIdentity } from "../lib/state";
 import { humanizeError } from "../lib/format";
 import { toast } from "../components/Toast";
@@ -22,7 +22,7 @@ export function ForgetMemoriesDialog({ agent, onClose }: { agent: string; onClos
     setBusy(true);
     setError(null);
     try {
-      const r = await clearAgentMemories(identity, agent);
+      const r = await clearAgentMemories(identity, agent, AbortSignal.timeout(LONG_CALL_MS));
       const locked = r.locked_skipped > 0 ? `; ${r.locked_skipped} locked kept` : "";
       const n = r.rows_affected["loom.memory"] ?? 0;
       toast(`Forgot ${n} memor${n === 1 ? "y" : "ies"} of ${agent}${locked}`, "ok");

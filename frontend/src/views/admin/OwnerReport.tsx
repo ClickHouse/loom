@@ -2,15 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Table } from "@clickhouse/click-ui/Table";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { OWNER_READS, getOwnerReport, type OwnerReport } from "../../api";
+import { OWNER_READS, OWNER_REPORT_HOURS, getOwnerReport, type OwnerReport } from "../../api";
 import { useIdentity } from "../../lib/state";
 import { humanizeError } from "../../lib/format";
 import { AgentBadge, NameBadge } from "../../components/AgentBadge";
 import { ListTime } from "../../components/ui/ListTime";
 import { Alert, SectionHeading } from "../../components/ui";
 
+const WINDOW = `the last ${OWNER_REPORT_HOURS / 24} days`;
+
 /** One user's memory in this namespace (memory.owner_report): how many rows they own and
- *  which readers and agents read them in the last 30 days, the most frequent first. */
+ *  which readers and agents read them over `OWNER_REPORT_HOURS`, the most frequent first. */
 export function OwnerReportSection() {
   const identity = useIdentity();
   const [userId, setUserId] = useState("");
@@ -45,7 +47,7 @@ export function OwnerReportSection() {
       <SectionHeading
         label="One user's memory"
         level={2}
-        caption="Which readers and agents read one user's memories in the last 30 days."
+        caption={`Which readers and agents read one user's memories in ${WINDOW}.`}
       />
       <form
         className="mt-2 flex flex-wrap items-end gap-2"
@@ -67,7 +69,7 @@ export function OwnerReportSection() {
             {report.reads.length >= OWNER_READS && ` The ${OWNER_READS} most frequent readers:`}
           </p>
           {report.reads.length === 0 ? (
-            <p className="text-sm text-text-muted">Nothing read them in the last 30 days.</p>
+            <p className="text-sm text-text-muted">Nothing read them in {WINDOW}.</p>
           ) : (
             <Table
               aria-label={`Reads of ${report.user_id}'s memories`}

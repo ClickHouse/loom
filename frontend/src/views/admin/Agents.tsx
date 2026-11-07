@@ -59,7 +59,8 @@ export function Agents() {
   // as loading.
   const [refreshing, setRefreshing] = useState(false);
   const whoami = useStore((s) => s.whoami);
-  const canForget = canCall("memory.clear", useNamespaceRole(identity?.namespace), whoami);
+  const role = useNamespaceRole(identity?.namespace);
+  const canForget = canCall("memory.clear", role, whoami);
   const [forget, setForget] = useState<string | null>(null);
   const headers = canForget ? [...HEADERS, ACTIONS_HEADER] : HEADERS;
 

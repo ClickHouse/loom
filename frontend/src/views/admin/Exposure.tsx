@@ -29,8 +29,10 @@ const HEADERS = [
 // The widest readers the summary is asked for; the toolbar says when there may be more.
 const LIMIT = 200;
 
-/** A share of the namespace, never rounded to 0% when something was read. */
+/** A share of the namespace, never rounded to 0% when something was read. Keys read
+ *  include memories deleted since, so the fraction can pass 1: that reads as all. */
 function share(fraction: number): string {
+  if (fraction >= 1) return "all";
   return fraction > 0 && fraction < 0.005 ? "<1%" : `${Math.round(fraction * 100)}%`;
 }
 

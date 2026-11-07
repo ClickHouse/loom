@@ -283,6 +283,10 @@ export interface RequestOpts {
  *  after 60 s so a stalled server surfaces as an error instead of a spinner that never
  *  clears. */
 const REQUEST_TIMEOUT_MS = 60_000;
+
+/** The bound for a call that runs a whole erasure or clear inside it: up to the shipped
+ *  proxy's 600 s read timeout. */
+export const LONG_CALL_MS = 10 * 60_000;
 export function boundedSignal(signal?: AbortSignal): AbortSignal | undefined {
   if (signal) return signal;
   try {

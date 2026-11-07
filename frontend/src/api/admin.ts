@@ -543,8 +543,9 @@ export interface MemoryClearResult {
 export async function clearAgentMemories(
   id: Pick<Identity, "org" | "namespace">,
   agent: string,
+  signal?: AbortSignal,
 ): Promise<MemoryClearResult> {
-  return post("/v1/memory.clear", { org: id.org, namespace: id.namespace, agent, confirm_subject: agent });
+  return post("/v1/memory.clear", { org: id.org, namespace: id.namespace, agent, confirm_subject: agent }, signal);
 }
 
 /** One (token, agent) that read the namespace: `server/memory/api/models_exposure.py`. */
@@ -566,10 +567,12 @@ export interface OwnerReport {
   reads: { namespace: string; agent: string; actor: string; calls: number; distinct_keys: number; last_read: string }[];
 }
 
-/** POST /v1/memory.owner_report: one user's memory in this namespace and who read it. */
 /** The readers an owner report lists, the most frequent first. */
 export const OWNER_READS = 50;
+/** The window an owner report reads, in hours: 30 days. */
+export const OWNER_REPORT_HOURS = 720;
 
+/** POST /v1/memory.owner_report: one user's memory in this namespace and who read it. */
 export async function getOwnerReport(
   id: Pick<Identity, "org" | "namespace">,
   userId: string,
@@ -577,7 +580,7 @@ export async function getOwnerReport(
 ): Promise<OwnerReport> {
   return post(
     "/v1/memory.owner_report",
-    { org: id.org, namespace: id.namespace, user_id: userId, since_hours: 720, limit: OWNER_READS },
+    { org: id.org, namespace: id.namespace, user_id: userId, since_hours: OWNER_REPORT_HOURS, limit: OWNER_READS },
     opts.signal,
   );
 }
@@ -628,9 +631,10 @@ export async function exportErasureScope(
   org: string,
   scope: ErasureScope,
   requester: string,
+  sectionLimit: number,
   signal?: AbortSignal,
 ): Promise<ErasureExport> {
-  return post("/v1/erasure.export", { org, ...scope, requester }, signal);
+  return post("/v1/erasure.export", { org, ...scope, requester, section_limit: sectionLimit }, signal);
 }
 
 // ===== Extraction Quality =====

@@ -48,6 +48,27 @@ describe("OwnerReportSection", () => {
     expect(screen.getByText("sa:bot")).toBeInTheDocument();
   });
 
+  it("names the cut when the report lists as many readers as it asks for", async () => {
+    const read = { namespace: "team", agent: "a", actor: "", calls: 1, distinct_keys: 1, last_read: "" };
+    vi.mocked(api.getOwnerReport).mockResolvedValueOnce({
+      user_id: "alice",
+      live_rows: 3,
+      reads: Array.from({ length: api.OWNER_READS }, (_, i) => ({ ...read, actor: `sa:${i}` })),
+    });
+    render(<OwnerReportSection />);
+    await userEvent.type(screen.getByLabelText("User id"), "alice");
+    await userEvent.click(screen.getByRole("button", { name: "Show" }));
+    expect(await screen.findByText(/The 50 most frequent readers:/)).toBeInTheDocument();
+  });
+
+  it("says why the report failed", async () => {
+    vi.mocked(api.getOwnerReport).mockRejectedValueOnce(new Error("offline"));
+    render(<OwnerReportSection />);
+    await userEvent.type(screen.getByLabelText("User id"), "alice");
+    await userEvent.click(screen.getByRole("button", { name: "Show" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
+
   it("drops the report when the namespace changes", async () => {
     render(<OwnerReportSection />);
     await userEvent.type(screen.getByLabelText("User id"), "alice");

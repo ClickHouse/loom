@@ -5,6 +5,7 @@ import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Table } from "@clickhouse/click-ui/Table";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import {
+  LONG_CALL_MS,
   exportErasureScope,
   getErasureStatus,
   listErasures,
@@ -15,7 +16,7 @@ import {
   type ErasureStatus,
 } from "../../api";
 import { useIdentity, useStore } from "../../lib/state";
-import { hasAdminClaim, hasOrgAdminClaim } from "../../lib/role";
+import { hasAdminClaim, hasOrgAdminClaim, hasWriterClaim } from "../../lib/role";
 import { useNamespaceRole } from "../../lib/namespaceRole";
 import { useAbortableEffect } from "../../lib/hooks";
 import { ApiError } from "../../lib/errors";
@@ -33,17 +34,14 @@ const ERASURE_STATE: Record<string, BadgeState> = { completed: "success", failed
 
 type ScopeKind = ErasureScope["scope_type"];
 
-// An erasure and an export each run whole inside their call: past the dashboard's usual
-// bound, up to the shipped proxy's 600 s read timeout.
-const LONG_CALL_MS = 10 * 60_000;
-
 /**
  * The erasure sagas of the org, and the controls to start one or export a scope's data.
  * erasure.list scopes the rows by caller (an org admin sees every one; anyone else the
  * namespace-scoped erasures of the namespaces they reach). Each scope is offered by the
- * rule its handler applies: erasing a namespace needs admin there (a grant counts),
- * exporting one an admin claim (the op is authorized for the org, where only a claim
- * reaches), and either for one user across the org an org admin claim.
+ * rule its handler applies: erasing a namespace needs admin there (a grant counts) and a
+ * flat claim of writer or above (the op is authorized for the org before the handler
+ * reads the grant), exporting one an admin claim (the op is authorized for the org, where
+ * only a claim reaches), and either for one user across the org an org admin claim.
  */
 export function ErasuresPanel() {
   const identity = useIdentity();
@@ -57,7 +55,7 @@ export function ErasuresPanel() {
 
   const orgWide: ScopeKind[] = hasOrgAdminClaim(whoami) ? ["user_id"] : [];
   const eraseScopes: ScopeKind[] = [
-    ...(role === "admin" || hasAdminClaim(whoami) ? ["namespace" as const] : []),
+    ...(role === "admin" && hasWriterClaim(whoami) ? ["namespace" as const] : []),
     ...orgWide,
   ];
   const exportScopes: ScopeKind[] = [...(hasAdminClaim(whoami) ? ["namespace" as const] : []), ...orgWide];
@@ -177,7 +175,7 @@ function ErasuresTable({ rows, onDetails }: { rows: ErasureListRow[] | null; onD
               <Button
                 type="empty"
                 htmlType="button"
-                aria-label={`Details of the erasure requested ${listTime(r.requested_at)}`}
+                aria-label={`Details of the erasure of ${r.scope_type}=${r.scope_value} requested ${listTime(r.requested_at)}`}
                 onClick={() => onDetails(r.erasure_id)}
               >
                 Details
@@ -249,17 +247,17 @@ function ScopeDialog({
         );
         onClose(true);
       } else {
-        const data = await exportErasureScope(identity.org, scope, requester, signal);
+        const data = await exportErasureScope(identity.org, scope, requester, SECTION_LIMIT, signal);
         saveJson(data, `loom-export-${scope.scope_value}.json`);
         const cut = truncatedSections(data);
-        if (cut.length)
-          toast(`The export holds the first ${SECTION_LIMIT.toLocaleString()} rows of ${cut.join(", ")}`, "info");
+        if (cut.length) toast(`The export stopped at its limit in ${cut.join(", ")}`, "info");
         onClose(false);
       }
     } catch (e) {
-      // No answer is not a refusal: the saga may still be running, and a second Erase
-      // would start another. A gateway's 5xx carries no Loom code and is no answer too.
-      if (erase && !(e instanceof ApiError && (e.status < 500 || e.code))) {
+      // Only a 4xx is a refusal. Without an answer, or after a 5xx (Loom's own may come
+      // after the saga was registered), the saga may still be running, and a second Erase
+      // would start another.
+      if (erase && !(e instanceof ApiError && e.status < 500)) {
         toast("The erasure may still be running; it shows below as in progress until it ends", "info");
         onClose(true);
         return;
@@ -272,7 +270,7 @@ function ScopeDialog({
   return (
     <Modal
       open
-      onOpenChange={(v) => !v && onClose(false)}
+      onOpenChange={(v) => !v && !busy && onClose(false)}
       title={erase ? "Erase data" : "Export data"}
       className="w-full max-w-[520px]"
     >
@@ -286,7 +284,7 @@ function ScopeDialog({
           <p className="text-sm text-text-muted leading-relaxed">
             {erase
               ? "Removes every memory, document, conversation and event Loom holds for the scope, then checks that none is left."
-              : `Downloads the memories, documents, conversations and events Loom holds for the scope as one JSON file, up to ${SECTION_LIMIT.toLocaleString()} rows a section.`}
+              : `Downloads the memories, documents, conversations and events Loom holds for the scope as one JSON file, up to ${SECTION_LIMIT.toLocaleString()} rows a section; conversations also stop at a size limit.`}
           </p>
           {scopes.length > 1 && (
             <ChoiceGroup
@@ -321,7 +319,7 @@ function ScopeDialog({
           {error && <Alert role="alert" state="danger" text={error} />}
         </div>
         <ModalFooter>
-          <Button type="secondary" htmlType="button" onClick={() => onClose(false)}>
+          <Button type="secondary" htmlType="button" disabled={busy} onClick={() => onClose(false)}>
             Cancel
           </Button>
           <Button type={erase ? "danger" : "primary"} htmlType="submit" disabled={!ready} loading={busy}>
@@ -340,7 +338,7 @@ const SECTIONS = ["memory", "knowledge", "conversations", "conversation_threads"
 
 /** The sections the export cut at their limit. */
 function truncatedSections(data: ErasureExport): string[] {
-  return SECTIONS.filter((s) => data[s]?.truncated).map((s) => s.replace("_", " "));
+  return SECTIONS.filter((s) => data[s].truncated).map((s) => s.replaceAll("_", " "));
 }
 
 function saveJson(data: unknown, filename: string) {
