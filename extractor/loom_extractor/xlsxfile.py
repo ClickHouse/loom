@@ -1,17 +1,20 @@
-"""An XLSX workbook as tables, read from its XML parts with the standard
-library: each worksheet in the workbook's order is a table, its first row with
-a value its header, the rows under it its values. A cell reads as the workbook
-holds it: a shared or inline string, a number, a bool, an error
-(`{"error": "#DIV/0!"}`), a date when its number format is one (the 1900 date
-system, Excel's 1900-02-29 read as text, or 1904 when the workbook says so), a
-time of day when the format holds a time and no date, or a duration when it is
-an elapsed-time format (`[h]:mm`). A value over MAX_VALUE_CHARS is left out and
-counted. A formula reads its cached value; one with none (a workbook saved
-without calculating) reads empty, and the artifact loses `formula_values`. A
-merged range takes its first cell's value in every cell, so a header merged
-over columns names each of them, as far as the artifact's budget of cells
-allows. A row or cell that names no position (`r`) takes the one after the row
-or cell before it.
+"""An XLSX workbook as tables, read from its XML parts with the standard library:
+each worksheet in the workbook's order is a table, its first row with a value
+its header, the rows under it its values. A cell reads as the workbook holds it:
+a shared or inline string, a number, a bool, an error (`{"error": "#DIV/0!"}`),
+a date when its number format is one (the 1900 date system, Excel's 1900-02-29
+read as text, or 1904 when the workbook says so), a time of day when the format
+holds a time and no date, or a duration when it is an elapsed-time format
+(`[h]:mm`). A value over MAX_VALUE_CHARS is left out and counted. A formula
+reads its cached value; one with none (a workbook saved without calculating)
+reads empty, and the artifact loses `formula_values`. A merged range takes its
+first cell's value in every cell, so a header merged over columns names each of
+them, as far as the artifact's budget of cells allows; a range merged across
+columns of the header row over text cells in the row under it makes a header of
+both rows (`2025 / H1`), as long as no other cell of that row is its own: one
+that is makes the row data, and a title merged over the whole header row heads
+every name. A row or cell that names no position (`r`) takes the one after the
+row or cell before it.
 
 The rows are blocks too, cited by sheet and rows (`tabular`).
 
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 
@@ -46,10 +50,11 @@ from loom_extractor.tabular import (
     counted,
     fail,
     heading,
+    read_name,
     table,
 )
 
-PARSER_VERSION = "1"
+PARSER_VERSION = "2"
 _WORKBOOK = "xl/workbook.xml"
 _CELL_REF = re.compile(r"([A-Z]{1,3})([1-9][0-9]{0,6})")
 _RANGE = re.compile(r"([A-Z]{1,3})([1-9][0-9]{0,6}):([A-Z]{1,3})([1-9][0-9]{0,6})")
@@ -416,8 +421,8 @@ class _Reader:
         # A merge reaches no row past the last one held (nor, in `_spread`, past MAX_ROWS).
         rest = sheet.past
         last = rest.more_from - 1 if rest.more_from else max(sheet.grid, default=0)
-        skipped, clipped = _spread(sheet.grid, sorted(sheet.merges), budget, last)
-        skipped += sheet.merges_dropped
+        unspread, clipped = _spread(sheet.grid, sorted(sheet.merges), budget, last)
+        skipped = len(unspread) + sheet.merges_dropped
         if skipped or clipped or merges_cut:  # one unit for the sheet's merges, its reasons joined
             reasons = (
                 merges_cut,
@@ -444,15 +449,40 @@ class _Reader:
         left = min(col for row in sheet.grid.values() for col in row)
         numbers = sorted(sheet.grid)
         right = max(col for row in sheet.grid.values() for col in row)
-        header = [sheet.grid[numbers[0]].get(col, EMPTY) for col in range(left, right + 1)]
+        top = numbers[0]
+        header = [sheet.grid[top].get(col, EMPTY) for col in range(left, right + 1)]
+        # A header over two rows: a range merged across columns of the first row
+        # groups the names the row under it gives (`2025` over `H1` and `H2`), when
+        # that row holds text under the range and, elsewhere, nothing or only cells
+        # merged down from the first row; a row of anything else is data.
+        above, under = sheet.grid[top], sheet.grid.get(top + 1, {})
+        # A range across the header row alone groups the row under it (one merged down
+        # rows names a column, no group); one the cell budget left unspread groups nothing.
+        spans = [
+            (c, r)
+            for t, c, b, r in sheet.merges
+            if t == b == top and r > c and (t, c, b, r) not in unspread
+        ]
+        # The second row's own cells: those not merged down from the first.
+        own = {col: cell for col, cell in under.items() if cell is not above.get(col)}
+        covered = _covered(spans, left, right)
+        grouped = bool(own) and all(
+            cell.kind == "string" and covered[col - left] for col, cell in own.items()
+        )
+        cut: set[int] = set()
+        if grouped:
+            header, cut = _joined_header(above, under, left, right)
         out = Rows(
             header,
-            header_row=numbers[0],
+            header_row=top,
+            header_rows=2 if grouped else 1,
+            cut_names=frozenset(cut),
             more=rest.more,
             more_from=rest.more_from,
             first_column=left,
         )
-        out.rows = [(n, {col - left: c for col, c in sheet.grid[n].items()}) for n in numbers[1:]]
+        values = numbers[2:] if grouped else numbers[1:]
+        out.rows = [(n, {col - left: c for col, c in sheet.grid[n].items()}) for n in values]
         return out, failed, unread
 
 
@@ -589,7 +619,8 @@ class _SheetStream:
             self.open = False
             if not (self._row or self._filled):
                 return
-            # The header and up to MAX_ROWS rows under it, as the budget allows.
+            # The header and up to MAX_ROWS rows under it, as the budget allows (a
+            # second header row, known only once the sheet is read, counts as one).
             if self._row and not self._full() and self.budget.collect(list(self._row.values())):
                 held = self.grid.setdefault(self.number, {})
                 self.repeated += len(held.keys() & self._row.keys())
@@ -623,17 +654,80 @@ class _SheetStream:
         return over or bool(self.past.more) or len(self.grid) > MAX_ROWS or self.budget.cut
 
 
+def _covered(spans: list[tuple[int, int]], left: int, right: int) -> list[bool]:
+    """For each column from `left` to `right`, whether a span covers it: one pass
+    over the spans and the columns, however many spans a hostile sheet holds."""
+    starts = [0] * (right - left + 2)
+    for c, r in spans:
+        c, r = max(c, left), min(r, right)
+        if c <= r:
+            starts[c - left] += 1
+            starts[r - left + 1] -= 1
+    out, depth = [], 0
+    for n in starts[:-1]:
+        depth += n
+        out.append(depth > 0)
+    return out
+
+
+def _joined_header(
+    above: dict[int, Cell], under: dict[int, Cell], left: int, right: int
+) -> tuple[list[Cell], set[int]]:
+    """A header over two rows, one name per column from `left` to `right`, and the
+    columns whose names were cut. A merged cell spans many columns and may hold a
+    megabyte: each cell is read once, and a pair of cells over many columns shares
+    one joined name, which the names read once too."""
+    names: dict[int, tuple[str, bool]] = {}
+
+    def named(cell: Cell) -> tuple[str, bool]:
+        if id(cell) not in names:
+            names[id(cell)] = read_name(cell)
+        return names[id(cell)]
+
+    pairs: dict[tuple[int, int], tuple[Cell, bool]] = {}
+    joined = []
+    for col in range(left, right + 1):
+        pair = above.get(col, EMPTY), under.get(col, EMPTY)
+        ids = id(pair[0]), id(pair[1])
+        if ids not in pairs:
+            pairs[ids] = _named_over(*pair, named)
+        joined.append(pairs[ids])
+    return [cell for cell, _ in joined], {i for i, (_, cut) in enumerate(joined) if cut}
+
+
+def _named_over(
+    above: Cell, below: Cell, named: Callable[[Cell], tuple[str, bool]]
+) -> tuple[Cell, bool]:
+    """A column's name from a header over two rows, and whether it was cut: the
+    first row's cell and the second's under it, each as a name reads it, joined
+    after ` / `. One merged down both rows (the same cell), or with nothing under
+    it or above it, is the other's name; so is one whose name reads as nothing."""
+    if below is above or below.kind == "empty":
+        return above, False
+    if above.kind == "empty":
+        return below, False
+    a, a_cut = named(above)
+    b, b_cut = named(below)
+    if not a:
+        return below, a_cut
+    if not b:
+        return above, b_cut
+    return Cell(f"{a} / {b}", "string"), a_cut or b_cut
+
+
 def _spread(
     grid: dict[int, dict[int, Cell]],
     boxes: list[tuple[int, int, int, int]],
     budget: Budget,
     last: int,
-) -> tuple[int, int]:
+) -> tuple[set[tuple[int, int, int, int]], int]:
     """Each merged range's first cell's value in each of its cells up to row
     `last`, the cells it adds collected from `budget`; the ranges skipped (past
-    the cells left) and those cut at the MAX_ROWS under the header, counted."""
-    skipped = clipped = 0
-    for top, left, bottom, right in boxes:
+    the cells left), and those cut at the MAX_ROWS under the header counted."""
+    skipped: set[tuple[int, int, int, int]] = set()
+    clipped = 0
+    for box in boxes:
+        top, left, bottom, right = box
         bottom, right = min(bottom, last), min(right, MAX_COLUMNS - 1)
         value = grid.get(top, {}).get(left)
         if value is None or bottom < top or right < left:
@@ -641,7 +735,7 @@ def _spread(
         # One too large for the cells left is skipped, leaving them to the rest.
         area = (bottom - top + 1) * (right - left + 1)
         if area > budget.cells:
-            skipped += 1
+            skipped.add(box)  # as read, so a reader of the merges finds it
             continue
         budget.cells -= area
         for r in range(top, bottom + 1):

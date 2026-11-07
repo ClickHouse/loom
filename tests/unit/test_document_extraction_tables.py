@@ -117,6 +117,292 @@ def _book() -> bytes:
     return workbook([("Sales", sales), ("Notes", hidden)], shared=shared, hidden=("Notes",))
 
 
+def _col(i: int) -> str:
+    """The spreadsheet letters of column `i`, from 0."""
+    out = ""
+    i += 1
+    while i:
+        i, rest = divmod(i - 1, 26)
+        out = chr(65 + rest) + out
+    return out
+
+
+def test_an_xlsx_header_over_two_rows_names_each_column_from_both() -> None:
+    rows = {
+        1: [
+            cell("A1", "Region", t="inlineStr"),
+            cell("B1", "2025", t="inlineStr"),
+            cell("D1", "Note", t="inlineStr"),
+        ],
+        2: [cell("B2", "H1", t="inlineStr"), cell("C2", "H2", t="inlineStr")],
+        3: [
+            cell("A3", "EMEA", t="inlineStr"),
+            cell("B3", 1),
+            cell("C3", 2),
+            cell("D3", "ok", t="inlineStr"),
+        ],
+    }
+    a = extract(workbook([("Plan", sheet(rows, merges=("A1:A2", "B1:C1", "D1:D2")))]), "plan.xlsx")
+    (table,) = a.tables
+    # "2025" over its halves names both; a name merged down both rows is its own.
+    assert _columns(a) == [
+        ("Region", "string"),
+        ("2025 / H1", "number"),
+        ("2025 / H2", "number"),
+        ("Note", "string"),
+    ]
+    assert table.rows == (("EMEA", 1, 2, "ok"),) and table.header_rows == 2
+    assert table.locator.to_dict() == {"sheet": "Plan", "row_start": 1, "row_end": 3}
+    rows_block = next(b for b in a.blocks if b.attrs.get("table_id") == "t0")
+    assert rows_block.locator.row_start == 3
+
+
+@pytest.mark.parametrize(
+    "first",
+    [cell("A2", "Alice", t="inlineStr"), cell("A2", 17)],
+    ids=["text", "number"],
+)
+def test_a_data_row_under_an_xlsx_merged_header_stays_data(first: str) -> None:
+    rows = {
+        1: [cell("A1", "Name", t="inlineStr"), cell("B1", "Contact", t="inlineStr")],
+        2: [first, cell("B2", "alice@x.io", t="inlineStr"), cell("C2", "Bob", t="inlineStr")],
+    }
+    a = extract(workbook([("S", sheet(rows, merges=("B1:C1",)))]), "s.xlsx")
+    # A cell outside the merge that is not merged down from the header: the row is data.
+    assert [name for name, _ in _columns(a)] == ["Name", "Contact", "Contact (2)"]
+    assert len(a.tables[0].rows) == 1 and a.tables[0].header_rows == 1
+
+
+def test_an_xlsx_header_over_two_rows_with_no_rows_under_it_cites_both() -> None:
+    rows = {
+        1: [cell("B1", "2025", t="inlineStr")],
+        2: [cell("B2", "H1", t="inlineStr"), cell("C2", "H2", t="inlineStr")],
+    }
+    a = extract(workbook([("S", sheet(rows, merges=("B1:C1",)))]), "s.xlsx")
+    (table,) = a.tables
+    assert table.header_rows == 2 and table.rows == ()
+    assert table.locator.to_dict() == {"sheet": "S", "row_start": 1, "row_end": 2}
+    (block,) = [b for b in a.blocks if b.attrs.get("table_id") == "t0"]
+    assert (block.locator.row_start, block.locator.row_end) == (1, 2)
+
+
+def test_an_xlsx_header_over_two_rows_beside_a_column_with_nothing_under_its_name() -> None:
+    rows = {
+        1: [cell("A1", "Region", t="inlineStr"), cell("B1", "2025", t="inlineStr")],
+        2: [cell("B2", "H1", t="inlineStr"), cell("C2", "H2", t="inlineStr")],
+        3: [cell("A3", "EMEA", t="inlineStr"), cell("B3", 1), cell("C3", 2)],
+    }
+    # Region is not merged down; nothing under it leaves it its own name.
+    a = extract(workbook([("S", sheet(rows, merges=("B1:C1",)))]), "s.xlsx")
+    assert [n for n, _ in _columns(a)] == ["Region", "2025 / H1", "2025 / H2"]
+    assert a.tables[0].rows == (("EMEA", 1, 2),)
+
+
+def test_an_xlsx_header_merged_with_no_value_takes_the_names_under_it() -> None:
+    rows = {
+        1: [cell("A1", "Region", t="inlineStr")],
+        2: [cell("B2", "H1", t="inlineStr"), cell("C2", "H2", t="inlineStr")],
+        3: [cell("A3", "EMEA", t="inlineStr"), cell("B3", 1), cell("C3", 2)],
+    }
+    # A merge for its formatting alone, no value in its first cell.
+    a = extract(workbook([("S", sheet(rows, merges=("B1:C1",)))]), "s.xlsx")
+    assert [n for n, _ in _columns(a)] == ["Region", "H1", "H2"]
+
+
+def test_a_long_xlsx_header_over_two_rows_is_cut_counted_and_bounded_per_column() -> None:
+    long = "x" * 1_000_000
+    under = {2: [cell(f"{_col(i)}2", "h", t="inlineStr") for i in range(200)]}
+    rows = {1: [cell("A1", 0, t="s")], **under, 3: [cell("A3", 1)]}
+    a = extract(
+        workbook([("S", sheet(rows, merges=(f"A1:{_col(199)}1",)))], shared=(long,)), "s.xlsx"
+    )
+    (table,) = a.tables
+    # Each name is cut to a column's 500 characters (a repeat numbered within them),
+    # and counted as cut.
+    assert table.header_rows == 2 and all(len(c.name) <= 500 for c in table.columns)
+    assert table.columns[0].name == "x" * 500
+    # A joined name holds no more of a cell than a name reads, whatever the cell's size.
+    joined, cut = xlsxfile._named_over(
+        tabular.Cell(long, "string"), tabular.Cell("h", "string"), tabular.read_name
+    )
+    assert joined.text == "x" * tabular.NAME_READ_CHARS + " / h" and cut
+    assert [f.unit for f in a.coverage.failed] == ["S header"]
+
+
+def test_a_padded_xlsx_header_over_two_rows_reads_as_its_names() -> None:
+    rows = {
+        1: [cell("B1", "Revenue" + " " * 1000, t="inlineStr")],
+        2: [cell("B2", "H1", t="inlineStr"), cell("C2", "H2", t="inlineStr")],
+        3: [cell("B3", 1), cell("C3", 2)],
+    }
+    a = extract(workbook([("S", sheet(rows, merges=("B1:C1",)))]), "s.xlsx")
+    # Spaces padding a cell are no name, and cut nothing.
+    assert [n for n, _ in _columns(a)] == ["Revenue / H1", "Revenue / H2"]
+    assert a.coverage.failed == ()
+
+
+@pytest.mark.parametrize(
+    ("top", "names"),
+    [
+        # Text past what a name reads is cut, and counted.
+        ("Revenue" + " " * 1000 + "Total", ["Revenue / H1", "Revenue / H2"]),
+        # A name that reads as nothing is the other row's, and the text past it is counted.
+        (" " * 1001 + "Revenue", ["H1", "H2"]),
+    ],
+    ids=["text after padding", "padding then text"],
+)
+def test_xlsx_header_text_past_what_a_joined_name_reads_is_counted_as_cut(
+    top: str, names: list[str]
+) -> None:
+    rows = {
+        1: [cell("B1", top, t="inlineStr")],
+        2: [cell("B2", "H1", t="inlineStr"), cell("C2", "H2", t="inlineStr")],
+        3: [cell("B3", 1), cell("C3", 2)],
+    }
+    a = extract(workbook([("S", sheet(rows, merges=("B1:C1",)))]), "s.xlsx")
+    assert [n for n, _ in _columns(a)] == names
+    assert [f.unit for f in a.coverage.failed] == ["S header"]
+
+
+def test_a_merged_xlsx_header_cell_is_read_once_however_many_columns_it_spans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads: list[str] = []
+    read_name = tabular.read_name
+
+    def counted(cell: tabular.Cell) -> tuple[str, bool]:
+        reads.append(cell.text[:8])
+        return read_name(cell)
+
+    monkeypatch.setattr(xlsxfile, "read_name", counted)
+    under = {2: [cell(f"{_col(i)}2", "h", t="inlineStr") for i in range(50)]}
+    rows = {1: [cell("A1", "Revenue", t="inlineStr")], **under}
+    extract(workbook([("S", sheet(rows, merges=(f"A1:{_col(49)}1",)))]), "s.xlsx")
+    # One read of the merged cell, and one of each cell under it.
+    assert reads.count("Revenue") == 1 and len(reads) == 51
+
+
+def test_an_xlsx_merge_whose_last_cell_holds_a_value_still_groups() -> None:
+    rows = {
+        1: [cell("A1", "2025", t="inlineStr"), cell("C1", "x", t="inlineStr")],
+        2: [
+            cell("A2", "H1", t="inlineStr"),
+            cell("B2", "H2", t="inlineStr"),
+            cell("C2", "H3", t="inlineStr"),
+        ],
+        3: [cell("A3", 1), cell("B3", 2), cell("C3", 3)],
+    }
+    # A hidden cell's value kept under a merge: the range is spread all the same.
+    a = extract(workbook([("S", sheet(rows, merges=("A1:C1",)))]), "s.xlsx")
+    assert a.tables[0].header_rows == 2
+    assert [n for n, _ in _columns(a)] == ["2025 / H1", "2025 / H2", "x / H3"]
+
+
+@pytest.mark.parametrize("merge", ["A1:B1", "A1:ZZZ1"], ids=["narrow", "past the last column"])
+def test_an_xlsx_merge_left_unspread_groups_no_header(
+    merge: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows = {
+        1: [cell("A1", "2025", t="inlineStr")],
+        2: [cell("A2", "H1", t="inlineStr"), cell("B2", "H2", t="inlineStr")],
+        3: [cell("A3", 1), cell("B3", 2)],
+    }
+    # A cell budget too small for the merge, which is skipped.
+    # The rows hold five cells; one is left, so the merge is read but too big to spread.
+    monkeypatch.setattr(tabular, "MAX_CELLS", 6)
+    a = extract(workbook([("S", sheet(rows, merges=(merge,)))]), "s.xlsx")
+    assert a.tables[0].header_rows == 1
+    assert "S merges" in [f.unit for f in a.coverage.failed]
+
+
+def test_a_second_xlsx_header_row_counts_against_the_rows_a_table_holds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = {
+        1: [cell("A1", "2025", t="inlineStr")],
+        2: [cell("A2", "H1", t="inlineStr"), cell("B2", "H2", t="inlineStr")],
+        **{n: [cell(f"A{n}", n), cell(f"B{n}", n)] for n in (3, 4, 5)},
+    }
+    monkeypatch.setattr(xlsxfile, "MAX_ROWS", 3)
+    a = extract(workbook([("S", sheet(rows, merges=("A1:B1",)))]), "s.xlsx")
+    (table,) = a.tables
+    # The header and three rows under it are held; the second header row is one of them.
+    assert table.header_rows == 2 and table.rows == ((3, 3), (4, 4))
+    assert "S rows 5-" in [f.unit for f in a.coverage.failed]
+
+
+def test_a_pair_of_merged_xlsx_header_cells_shares_one_joined_name() -> None:
+    # One cell merged over three columns, over another merged over the same three.
+    above = dict.fromkeys(range(3), tabular.Cell("2025", "string"))
+    under = dict.fromkeys(range(3), tabular.Cell("All", "string"))
+    header, cut = xlsxfile._joined_header(above, under, 0, 2)
+    assert [c.text for c in header] == ["2025 / All"] * 3 and not cut
+    assert header[0] is header[1] is header[2]
+
+
+def test_an_xlsx_range_merged_down_rows_groups_no_header() -> None:
+    rows = {
+        1: [cell("A1", "Region", t="inlineStr"), cell("C1", "x", t="inlineStr")],
+        2: [cell("A2", "H1", t="inlineStr"), cell("B2", "H2", t="inlineStr")],
+        3: [cell("A3", 1), cell("B3", 2)],
+    }
+    # Merged across and down: it names its columns, and the row under it is no group's.
+    a = extract(workbook([("S", sheet(rows, merges=("A1:B2",)))]), "s.xlsx")
+    assert a.tables[0].header_rows == 1
+
+
+def test_the_columns_a_header_rows_merges_cover_are_found_in_one_pass() -> None:
+    assert xlsxfile._covered([(1, 3), (2, 2), (6, 9)], 0, 7) == [
+        False,
+        True,
+        True,
+        True,
+        False,
+        False,
+        True,
+        True,
+    ]
+    # A million spans over the sheet's width cost one pass, not one per column.
+    spans = [(0, 16_383)] + [(c, c + 1) for c in range(1_000_000)]
+    assert all(xlsxfile._covered(spans, 0, 16_383))
+
+
+def test_a_text_row_under_merges_over_every_column_it_fills_reads_as_names() -> None:
+    rows = {
+        1: [cell("A1", "Name", t="inlineStr"), cell("C1", "Contact", t="inlineStr")],
+        2: [
+            cell(f"{c}2", v, t="inlineStr")
+            for c, v in zip("ABCD", ("Alice", "Smith", "a@x.io", "Paris"), strict=True)
+        ],
+        3: [
+            cell(f"{c}3", v, t="inlineStr")
+            for c, v in zip("ABCD", ("Bob", "Lee", "b@x.io", "Oslo"), strict=True)
+        ],
+    }
+    a = extract(workbook([("S", sheet(rows, merges=("A1:B1", "C1:D1")))]), "s.xlsx")
+    # Nothing tells such a row from names under the groups: it reads as the second
+    # header row, as the docs say, and the columns keep those names.
+    assert [n for n, _ in _columns(a)] == [
+        "Name / Alice",
+        "Name / Smith",
+        "Contact / a@x.io",
+        "Contact / Paris",
+    ]
+    assert a.tables[0].rows == (("Bob", "Lee", "b@x.io", "Oslo"),)
+
+
+def test_an_xlsx_title_merged_over_its_header_row_heads_each_name() -> None:
+    rows = {
+        1: [cell("A1", "Sales 2025", t="inlineStr")],
+        2: [cell("A2", "Region", t="inlineStr"), cell("B2", "Q1", t="inlineStr")],
+        3: [cell("A3", "EMEA", t="inlineStr"), cell("B3", 10)],
+    }
+    a = extract(workbook([("S", sheet(rows, merges=("A1:B1",)))]), "s.xlsx")
+    # Its text is kept, in each name, rather than read as a row of data.
+    assert _columns(a) == [("Sales 2025 / Region", "string"), ("Sales 2025 / Q1", "number")]
+    assert a.tables[0].rows == (("EMEA", 10),)
+
+
 def test_xlsx_cells_read_as_the_workbook_holds_them() -> None:
     a = extract(_book(), "book.xlsx")
     sales, notes = a.tables

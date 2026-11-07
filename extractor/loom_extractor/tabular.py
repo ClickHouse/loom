@@ -3,7 +3,7 @@ blocks its rows are searched by: one block per run of rows (ROWS_PER_BLOCK,
 BLOCK_CHARS), each row a line of `column: value` pairs, cited by its sheet and
 rows, each block starting and ending at a row with text (a Parquet row whose
 values were all left out has none). A header with no row of text under it is
-one block of the header row, when it names a column, at row 0 when the names
+one block of the header's rows, when it names a column, at row 0 when the names
 are no row of the file, as a Parquet file's schema. A column's type is what
 every value it holds is, over the values that are not empty or errors.
 
@@ -49,6 +49,9 @@ MAX_HELD_BYTES = 256 * 1024 * 1024  # not a setting: the held cells' text, four 
 # stay under the server's default chunk cap (docs/architecture/document-extraction.md).
 MAX_TEXT_CHARS = 12_000_000  # not a setting: what a source indexes
 CHUNK_FLOOR = 760  # not a setting: at most the server's default chunk stride
+# What of a header cell its name is read from: more than a name holds, so text cut
+# off is still seen, and never all of a cell that may hold a megabyte.
+NAME_READ_CHARS = 2 * MAX_COLUMN_CHARS + 1  # not a setting: a bound on hostile input
 _NON_SPACE = re.compile(r"\S")
 # A suffixed column name's stem: room for the longest suffix, ` (16384)`.
 _STEM_CHARS = MAX_COLUMN_CHARS - len(f" ({MAX_COLUMNS})")
@@ -126,6 +129,10 @@ class Rows:
     # The header's row in the source; 0 for a source whose names are no row of it
     # (a Parquet file's schema), whose rows count from 1.
     header_row: int = 1
+    header_rows: int = 1  # the rows the header is read from, from `header_row` on
+    # The header's columns, by their index in it, whose names were cut before they
+    # were read here (an XLSX name joined from two rows).
+    cut_names: frozenset[int] = frozenset()
     more: int = 0
     more_from: int = 0
     first_column: int = 0  # the source's column the table starts at, from 0
@@ -143,10 +150,20 @@ class Rows:
             self.count(number)
 
 
-def _names(header: list[Cell], width: int, first: int = 0) -> tuple[list[str], int]:
+def read_name(cell: Cell) -> tuple[str, bool]:
+    """What a header cell's name is read as: its first NAME_READ_CHARS, spaces
+    folded (a header cell may hold a megabyte), and whether text lies past them."""
+    folded = " ".join(cell.text[:NAME_READ_CHARS].split())
+    return folded, _NON_SPACE.search(cell.text, NAME_READ_CHARS) is not None
+
+
+def _names(
+    header: list[Cell], width: int, first: int = 0, cut_names: frozenset[int] = frozenset()
+) -> tuple[list[str], int]:
     """Column names from the header, one per column, unique and at most
     MAX_COLUMN_CHARS: an empty one is `column N`, a repeated one gets ` (2)`,
-    ` (3)`, ... after it (its text cut to make room)."""
+    ` (3)`, ... after it (its text cut to make room). A column in `cut_names` was
+    cut before it got here (`Rows.cut_names`)."""
     out: list[str] = []
     seen: set[str] = set()
     cut = 0
@@ -157,15 +174,12 @@ def _names(header: list[Cell], width: int, first: int = 0) -> tuple[list[str], i
         cell = header[i] if i < len(header) else EMPTY
         hit = read.get(id(cell))
         if hit is None:
-            # Cut before the spaces are folded: a header cell may hold a megabyte.
-            folded = " ".join(cell.text[: 2 * MAX_COLUMN_CHARS + 1].split())
-            tail = _NON_SPACE.search(cell.text, 2 * MAX_COLUMN_CHARS + 1) is not None
-            hit = read[id(cell)] = folded, tail
+            hit = read[id(cell)] = read_name(cell)
         folded, tail = hit
         base = folded[:MAX_COLUMN_CHARS] or f"column {first + i + 1}"  # as the source counts
         name = base
         # Cut when the folded name is too long, or text lies past what was read of the cell.
-        was_cut = len(folded) > MAX_COLUMN_CHARS or tail
+        was_cut = len(folded) > MAX_COLUMN_CHARS or tail or i in cut_names
         if name in seen:
             stem = base[:_STEM_CHARS]
             was_cut = was_cut or len(base) > _STEM_CHARS  # a suffix cuts the stem
@@ -241,8 +255,9 @@ def table(
     failed units (rows past the budget). A source leaves out the values past
     MAX_COLUMNS itself, and counts them."""
     failed: list[Failure] = []
+    header_end = rows.header_row + rows.header_rows - 1 if rows.header_row else 0
     width = max([len(rows.header), *(max(r) + 1 for _, r in rows.rows if r)], default=0)
-    names, cut = _names(rows.header, width, rows.first_column)
+    names, cut = _names(rows.header, width, rows.first_column, rows.cut_names)
     if cut:  # the header's text past the names a table holds is not in the artifact
         reason = f"{counted(cut, 'column name')} cut to {MAX_COLUMN_CHARS} characters"
         fail(budget, failed, f"{name} header", reason)
@@ -299,18 +314,18 @@ def table(
             fail(budget, failed, name, "its header is past what one artifact holds")
             return None, failed
         budget.text -= len(head) + CHUNK_FLOOR
-        loc = Locator(sheet=sheet, row_start=rows.header_row, row_end=rows.header_row)
+        loc = Locator(sheet=sheet, row_start=rows.header_row, row_end=header_end)
         acc.add("paragraph", head, loc, table_id=tid)
-    # The rows the table came from: its header row, or with none, its first row.
+    # The rows the table came from: its header rows, or with none, its first row.
     first = rows.header_row or (grid[0][0] if grid else 0)
-    last = grid[-1][0] if grid else rows.header_row
+    last = grid[-1][0] if grid else header_end
     return (
         Table(
             id=tid,
             name=name,
             columns=columns,
             rows=tuple(tuple(c.value for c in r) for _, r in grid),
-            header_rows=1 if rows.header_row else 0,
+            header_rows=rows.header_rows if rows.header_row else 0,
             locator=Locator(sheet=sheet, row_start=first, row_end=last),
         ),
         failed,

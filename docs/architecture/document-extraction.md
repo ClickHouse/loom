@@ -341,18 +341,18 @@ read). A table, in either format, is one block, a row per line with its cells jo
 `rows` and `columns`.
 
 **Tables (CSV, XLSX, Parquet).** A tabular source is `tables` in the artifact: each a header (the first row with a
-value; a Parquet file's schema), its columns typed by every value they hold (`string`, `number`, `bool`, `date`,
-`datetime`, `time`, `duration`, or `mixed`; empty cells and errors do not count; a column of dates and date-times is
-`datetime`), and its rows of values. The same rows are blocks, twenty to a block and at most 1,000 characters (a longer
-row is a block alone, under a chunk's default 1,500 characters, so a chunk cites the rows it holds), each row a line of
-`column: value` pairs, cited by sheet and rows, so the lexical and vector legs search them like any passage; a header
-with no row of text under it (no rows, or a Parquet file whose every value was left out) is a block of its own when it
-names a column, and a block starts and ends at a row with text. A column's name is at most 500 characters of its header
-cell (one cut shorter is a failed unit, `<table> header`). A float's row text is what a sheet shows, to 15 significant
-digits (`0.1+0.2` reads `0.3`), and the table keeps its exact value. In CSV and XLSX a number that is no JSON number (an
-integer past signed 64 bits, an infinity, a NaN) is read as a float or as text, and a value no other rule reads (a style
-index of 5,000 digits, a date rounded past year 9999) reads as a number or as text, never failing the file; Parquet
-reads each by its column's type (below).
+value, or two in XLSX, below; a Parquet file's schema), its columns typed by every value they hold (`string`, `number`,
+`bool`, `date`, `datetime`, `time`, `duration`, or `mixed`; empty cells and errors do not count; a column of dates and
+date-times is `datetime`), and its rows of values. The same rows are blocks, twenty to a block and at most 1,000
+characters (a longer row is a block alone, under a chunk's default 1,500 characters, so a chunk cites the rows it
+holds), each row a line of `column: value` pairs, cited by sheet and rows, so the lexical and vector legs search them
+like any passage; a header with no row of text under it (no rows, or a Parquet file whose every value was left out) is a
+block of its own when it names a column, and a block starts and ends at a row with text. A column's name is at most 500
+characters of its header cells (one cut shorter is a failed unit, `<table> header`). A float's row text is what a sheet
+shows, to 15 significant digits (`0.1+0.2` reads `0.3`), and the table keeps its exact value. In CSV and XLSX a number
+that is no JSON number (an integer past signed 64 bits, an infinity, a NaN) is read as a float or as text, and a value
+no other rule reads (a style index of 5,000 digits, a date rounded past year 9999) reads as a number or as text, never
+failing the file; Parquet reads each by its column's type (below).
 
 **CSV.** The delimiter is sniffed from the whole lines of the file's first 64 KiB (a comma, semicolon, tab or pipe; a
 tab, with no quoting, for a `.tsv` name; a tab-separated file sent with no such name is sniffed, so it reads quotes as
@@ -375,7 +375,15 @@ the nearest second. A time-of-day format reads as a `time`, and an elapsed-time 
 A formula reads as its cached value; one with none reads empty, and the artifact loses `formula_values`. A value over a
 megabyte, inline or shared, and one past column 16,384, is left out and counted, as is a cell written twice at one
 position (its earlier value lost). A merged range's first value fills each of its cells, so a header merged over columns
-names each; it fills no row past the last one held, and a merge that would add rows past those a table holds stops there
+names each; a header over two rows, a range merged across columns of the first grouping the text cells of the second
+under it (`2025` over `H1` and `H2`), names each column from both (`2025 / H1`; one with nothing above takes the second
+row's name), and `header_rows` is 2; the second header row counts against the rows a table holds. Any other cell in that
+second row, text or not, that is not merged down from the first makes it data. A range the cell budget left unspread
+groups nothing; numbers or dates under a range (`2024 | 2025` written as numbers) read as data too. A title merged over
+the whole first row meets the rule too, and heads every name (`Sales 2025 / Region`). So does a first row of data that
+is all text under merges covering every column it fills (`Name` over `Alice | Smith`): nothing tells it from names under
+the groups, so it is read as the second header row, and the columns keep those names until the sheet is changed. A
+merged range fills no row past the last one held, and a merge that would add rows past those a table holds stops there
 and is a failed unit. A row or cell that names no position takes the one after the one before it. A hidden sheet is read
 and marked `attrs.hidden`, and a damaged sheet, or one whose root is no worksheet (another namespace), fails alone;
 shared strings or styles that cannot be read to their end keep what was read, and the artifact loses `shared_strings` or
