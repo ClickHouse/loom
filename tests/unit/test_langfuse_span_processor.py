@@ -512,3 +512,18 @@ def test_a_prompt_linked_generation_keeps_its_prompt_tag_after_the_start_stamp(
         "namespace:ns",
         "prompt:loom-p:3",
     ]
+
+
+def test_a_user_without_an_org_is_stamped_with_the_no_org_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ClickStack's user erasure admits a row with no `loom.org`; a user id stamped
+    without one would be erased for any org's user of the same id."""
+    from server.observability import genai
+
+    proc, _inner = _proc(monkeypatch)
+    genai.set_identity(org="-", user_id="u1", operation="code.repos")
+    span = _WritableSpan("code.repos.read")
+    proc.on_start(span, None)
+    assert span.attributes["loom.org"] == "-"
+    assert span.attributes["langfuse.user.id"] == "u1"

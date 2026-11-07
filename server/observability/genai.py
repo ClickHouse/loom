@@ -394,6 +394,10 @@ def stamp_identity(span: Any) -> None:
     ):
         if ident.get(key):
             span.set_attribute(attr, ident[key])
+    if ident.get("user_id") and not ident.get("org"):
+        # A request that resolved no org: name that, as the request span does,
+        # so ClickStack's org guard never matches this user id for a named org.
+        span.set_attribute("loom.org", "-")
     # OTel children do not inherit the root span's attributes.
     if ident.get("session_id"):
         span.set_attribute("langfuse.session.id", ident["session_id"])
