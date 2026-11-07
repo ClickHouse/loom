@@ -342,40 +342,43 @@ for a sign-in with a plain-hash code on an older replica while the write was lan
 audits `auth.agent_claimed`. No lease bound can stop these steps, and they run in a task of
 their own, so a client that disconnects does not stop them either; a shutdown waits for them
 alongside its other drains, for up to 20 s. An insert that reports any failure is read back
-(for at most 5 s): when the row holds the new password the claim goes on
-as written; otherwise it may still land, so the cutoff after it still runs and is waited out,
-the claim is audited with `confirmed: false`, and the page lists the other grant holders and
-asks the person to try their password before submitting again. The account's lease is
-released either way, so an insert that lands after that read can still replace a claim that
-another submit with the same code made meanwhile; both proved the code. A second submit of the
-same form that proved the code too finds the account claimed once it holds it and waits to a
-bound past the first claim's last cutoff, counted from that moment: 5 s for the first claim's
-release to return and 5 s more for a check that its write landed, the read-back's 5 s, the skew
+(for at most 5 s): when the row holds the new password the claim goes on as written; otherwise
+it may still land, so the cutoff after it still runs and is waited out, the claim is audited
+with `confirmed: false`, and the page lists the other grant holders and asks the person to try
+their password before submitting again. The account's lease is released either way, so an
+insert that lands after that read can still replace a claim that another submit with the same
+code made meanwhile; both proved the code. A second submit of the same form that proved the
+code too finds the account claimed once it holds it and waits to a bound past the first claim's
+last cutoff, counted from that moment: 5 s for the first claim's release to return (assumed,
+not enforced) and 5 s more for a check that its write landed, the read-back's 5 s, the skew
 wait, the cutoff's own margin (`CLOCK_SKEW_S` + 1) and `CLOCK_SKEW_S` for the first claim's
 replica clock running ahead, 31 s, then the usual wait for every replica's clock to pass it.
-Only then does it tell the person to sign in. A submit that finds the account busy past the lease's wait
-answers 503 with `Retry-After`, saying an earlier submit may still be claiming it. A failed
-read-back is logged and the wait and the cutoff still run; a failed second cutoff is logged,
-the claim stands, and the page waits past any cutoff the failed call could have stored.
+Only then does it tell the person to sign in. A submit that finds the account busy past the
+lease's wait answers 503 with `Retry-After`, saying an earlier submit may still be claiming it.
+A failed read-back is logged and the wait and the cutoff still run; a failed second cutoff is
+logged, the claim stands, and the page waits past any cutoff the failed call could have stored.
 `namespace.register` carries a `machine:` tag forward from the row and drops one from a form,
 on this build and the one before it, and a trust's name never holds `:`. On this build the
 claim's tag does not bind the namespace's owner as a trust's tag does; the build before binds
 it, which keeps a claimed namespace's owner as the claim left it. The page answers once every
 replica's clock is past the later cutoff, so the claimer's next sign-in is not ended by it. A
 second claim finds no code and is refused, so whoever kept a copy of the code cannot sign in as
-the namespace afterwards, nor keep a session it started with the code. The claim ends no
-grant and no setting: what a session with the code gave another subject, or set on the
-namespace (visibility, join policy, approvals, retention, the classify and rerank endpoints and
-prompts), stays. So the claim page lists every subject with an active grant on it other than the
-namespace's own and the agent's token while that holds the `writer` role sign-up gave it, the
-`auth.agent_claimed` audit row records them (`other_grants`), and the page asks the claimer to
-review the grants and those settings.
-The new password may not be the code. An agent account whose password is a plain hash of its
-code and that has no claim tag is unclaimed, even when a person has signed in with that code:
-whoever holds the code and claims first wins, so its owner claims it at once. An agent account
-with a plain-hash code and an email (one linked to an SSO email) is not unclaimed, and the claim
-page refuses it, while its password is still the code; under SSO no password sign-in is served,
-and an operator who turns SSO off first releases such an account with `loom claim-release`.
+the namespace afterwards, nor keep a session it started with the code. The claim ends no grant
+and no setting: what a session with the code gave another subject, or set on the namespace,
+stays. So, once every replica has refreshed its revocations past the first cutoff
+(`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` after it), the claim lists every subject with an
+active grant on the namespace other than its own and the agent's token while that holds the
+`writer` role sign-up gave it; the `auth.agent_claimed` audit row records them
+(`other_grants`), and the page shows them and asks the claimer to review the grants and every
+namespace setting. A replica whose revocation refreshes keep failing serves its last snapshot
+for up to `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`, so there a code session can act, and a grant
+it makes be missing from the list, for that long. The new password may not be the code. An
+agent account whose password is a plain hash of its code and that has no claim tag is
+unclaimed, even when a person has signed in with that code: whoever holds the code and claims
+first wins, so its owner claims it at once. An agent account with a plain-hash code and an
+email (one linked to an SSO email) is not unclaimed, and the claim page refuses it, while its
+password is still the code; under SSO no password sign-in is served, and an operator who turns
+SSO off first releases such an account with `loom claim-release`.
 
 During a rolling upgrade a replica of the build before still signs in with a plain-hash code,
 and its sign-in reads `loom.namespaces` without sequential consistency. After the wait, the

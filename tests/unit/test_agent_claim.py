@@ -61,6 +61,8 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
     monkeypatch.setattr(settings, "self_signup", "open")
     monkeypatch.setattr(settings, "oauth_login_provider", "password")
     monkeypatch.setattr(settings, "self_signup_org", "dev")
+    # The grant listing waits a revocation refresh past the first cutoff.
+    monkeypatch.setattr(settings, "jwt_revocation_cache_ttl_seconds", 0.0)
     ch = KeptCH(
         tmp_path / "ch", ddl("namespaces"), ddl("namespace_grants"), ddl("service_accounts")
     )
@@ -569,6 +571,33 @@ def test_the_claim_names_every_grant_others_hold(world) -> None:
     [(_, kw)] = world["events"]
     assert len(kw["subject"]["other_grants"]) == 121
     assert "kept@acme.com" in kw["subject"]["other_grants"]
+
+
+def test_the_grants_are_listed_once_every_replica_has_the_first_cutoff(world, monkeypatch) -> None:
+    # Another replica learns of a cutoff at its next revocation refresh: a grant a
+    # code session makes there before that is listed, since the listing waits.
+    import time as _time
+
+    from server.identity.app import account_admin
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "jwt_revocation_cache_ttl_seconds", 0.5)
+    real_end, real_grants, marks = account_admin.end_tokens, agent_claim._other_grants, {}
+
+    async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
+        marks.setdefault("cut", _time.monotonic())
+        return await real_end(subject, by=by, reason=reason)
+
+    async def other_grants(org: str, namespace: str) -> list[str]:
+        marks["listed"] = _time.monotonic()
+        return await real_grants(org, namespace)
+
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+    monkeypatch.setattr(agent_claim, "_other_grants", other_grants)
+    assert (
+        _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY).status_code == 200
+    )
+    assert marks["listed"] - marks["cut"] >= 0.5
 
 
 def test_the_agent_token_is_named_once_it_holds_more_than_writer(world) -> None:

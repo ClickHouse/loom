@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -58,7 +59,13 @@ _BUSY = (GrantBusyError, BackendUnavailableError, BackendTimeoutError, Overloade
 _REASON = "agent namespace claimed"
 
 
-def _form(namespace: str, error: str = "", status_code: int = 200, notice: str = "") -> Response:
+def _form(
+    namespace: str,
+    error: str = "",
+    status_code: int = 200,
+    notice: str = "",
+    retry_after_s: int | None = None,
+) -> Response:
     # `notice` is HTML the caller built; `error` is text.
     message = (f'<p class="error">{html.escape(error)}</p>' if error else "") + notice
     return oauth.html_page(
@@ -77,6 +84,7 @@ Claiming can take up to a minute: submit once and wait for the answer.</p>{messa
 <button type="submit">Claim</button>
 </form>""",
         status_code,
+        headers=None if retry_after_s is None else {"Retry-After": str(retry_after_s)},
     )
 
 
@@ -125,9 +133,7 @@ async def agent_claim(request: Request) -> Response:
             namespace, client_address(request), lambda: _proven(namespace, code)
         )
     except LoginThrottled as e:
-        page = _form(namespace, _throttled_message(e), 429)
-        page.headers["Retry-After"] = str(e.retry_after_s)
-        return page
+        return _form(namespace, _throttled_message(e), 429, retry_after_s=e.retry_after_s)
     except Exception as e:  # noqa: BLE001 — a failed check answers the page, not a bare 500
         _log_unexpected(namespace, e)
         return _retry_later(namespace, "The code could not be checked: submit again in a minute.")
@@ -138,17 +144,20 @@ async def agent_claim(request: Request) -> Response:
     password_hash = await hash_password_off_loop(password)
     try:
         outcome, cutoff, others = await claim_shielded(org, namespace, code_hash, password_hash)
-    except Exception:  # noqa: BLE001 — answered by the page; `_done` logs it
+    except GrantBusyError:
         return _retry_later(namespace, _EARLIER_SUBMIT)
+    except Exception:  # noqa: BLE001 — answered by the page; `_done` logs it
+        # Nothing was written: the code still claims.
+        return _retry_later(namespace, "The claim could not run: submit again in a minute.")
     if cutoff is None:
         return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
     # The person signs in next: past the cutoff on every replica's clock, so the
     # token they get is not one it ends.
     await revocation.wait_out(cutoff)
     if outcome == "unconfirmed":
-        page = _form(namespace, _EARLIER_SUBMIT, 503, notice=_grants_notice(others))
-        page.headers["Retry-After"] = "60"
-        return page
+        return _form(
+            namespace, _EARLIER_SUBMIT, 503, notice=_grants_notice(others), retry_after_s=60
+        )
     if outcome == "taken":
         return _form(
             namespace,
@@ -174,8 +183,8 @@ def _grants_notice(others: list[str] | None) -> str:
     # The claim ends no grant: one made before it, by whoever held the code,
     # is the claimer's to review.
     review = (
-        "<p>Review its grants and settings in the dashboard: visibility, join policy, "
-        "approvals, retention, and the classify and rerank endpoints and prompts.</p>"
+        "<p>Review its grants and all of its settings in the dashboard: whoever held "
+        "the code could change any of them.</p>"
     )
     if others is None:
         return "<p>The other holders of grants on it could not be listed.</p>" + review
@@ -212,9 +221,7 @@ def _throttled_message(e: LoginThrottled) -> str:
 
 
 def _retry_later(namespace: str, error: str) -> Response:
-    page = _form(namespace, error, 503)
-    page.headers["Retry-After"] = "60"
-    return page
+    return _form(namespace, error, 503, retry_after_s=60)
 
 
 async def _proven(namespace: str, code: str) -> tuple[str, str] | None:
@@ -279,7 +286,7 @@ async def _replace_code(
     failed and did not read back, so it may still land; ("refused", None,
     None), the only outcome without a cutoff, when the row changed otherwise
     (a release)."""
-    subject, sent, written = "", False, False
+    subject, sent, written, first_cutoff = "", False, False, 0.0
     # Held from the read to the write, as a release or a password link holds the
     # account; the cutoffs after the write need no lease and run after it.
     try:
@@ -296,7 +303,7 @@ async def _replace_code(
             # never a spent code and live tokens. A subject cutoff also ends every
             # OAuth and device session the code started (`oauth.issue_tokens`).
             await account_admin.end_tokens(subject, by=namespace, reason=_REASON)
-            sent = True
+            sent, first_cutoff = True, time.monotonic()
             await _write(row, password_hash)
             written = True
     except Exception as e:  # once the write is sent, the row decides what it did
@@ -310,13 +317,24 @@ async def _replace_code(
             # password before submitting again.
             log.warning("agent claim of %s/%s: the write did not confirm: %r", org, namespace, e)
             cutoff = await _after_write(org, namespace, subject, password_hash)
+            await _replicas_cut_off(first_cutoff)
             return "unconfirmed", cutoff, await _audit(org, namespace, confirmed=False)
         log.warning(
             "agent claim of %s/%s: the backend failed after the write: %r", org, namespace, e
         )
     cutoff = await _after_write(org, namespace, subject, password_hash)
-    # After the last cutoff, so the audit's time does not delay it.
+    # After the last cutoff, so neither wait below delays it.
+    await _replicas_cut_off(first_cutoff)
     return "claimed", cutoff, await _audit(org, namespace)
+
+
+async def _replicas_cut_off(since: float) -> None:
+    """Wait until every replica has refreshed its revocations past the first
+    cutoff (made at monotonic `since`): until then a code session can still act
+    on another replica, so a grant it makes there is in the listing after this."""
+    left = settings.jwt_revocation_cache_ttl_seconds - (time.monotonic() - since)
+    if left > 0:
+        await asyncio.sleep(left)
 
 
 async def _landed(org: str, namespace: str, password_hash: str) -> bool:
@@ -390,7 +408,9 @@ async def _after_write(org: str, namespace: str, subject: str, password_hash: st
 
 def _past_a_claim_landed_now() -> datetime:
     """A cutoff no earlier than the last one of a claim that released the account
-    by now: `_READ_BACK_S` for the release returning and once more for a check
+    by now, taking its lease release to return within `_READ_BACK_S` (assumed,
+    not enforced: the release runs after the lease's statement bound), and
+    `_READ_BACK_S` once more for a check
     that its write landed, its read-back (`_READ_BACK_S`), its skew wait, its
     cutoff's own margin (`CLOCK_SKEW_S` + 1), and `CLOCK_SKEW_S` more for its
     replica's clock running ahead of this one's."""
