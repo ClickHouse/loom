@@ -10,7 +10,7 @@ import pytest
 
 from server.code.app.index import gitrepo, sandbox
 
-HEADER = "http.https://github.com/.extraheader"
+HEADER = "http.https://github.com/o/.extraheader"
 
 
 def _config(env: dict[str, str]) -> dict[str, str]:
@@ -20,12 +20,26 @@ def _config(env: dict[str, str]) -> dict[str, str]:
 
 
 def test_auth_env_carries_the_token_as_an_extraheader() -> None:
-    env = gitrepo.auth_env("ghp_secret123", "https://github.com/ClickHouse/example-private.git")
+    env = gitrepo.auth_env("ghp_secret123", "https://github.com/o/example-private.git")
     assert env["GIT_TERMINAL_PROMPT"] == "0"
     header = _config(env)[HEADER]
     basic = base64.b64decode(header.split()[-1]).decode()
     assert basic == "x-access-token:ghp_secret123"
     assert "ghp_secret123" not in header  # encoded, not raw
+
+
+@pytest.mark.parametrize(
+    ("remote", "key"),
+    [
+        ("https://github.com/o/r.git", "http.https://github.com/o/.extraheader"),
+        ("https://gitlab.com/group/sub/r.git", "http.https://gitlab.com/group/.extraheader"),
+        ("https://git.example.com/r.git", "http.https://git.example.com/.extraheader"),
+    ],
+)
+def test_the_token_is_sent_only_under_the_remote_owner(remote: str, key: str) -> None:
+    """A submodule URL of another owner on the same host gets no credential."""
+    headers = [k for k in _config(gitrepo.auth_env("tok", remote)) if k.endswith(".extraheader")]
+    assert headers == [key]
 
 
 def test_no_token_sets_no_extraheader() -> None:

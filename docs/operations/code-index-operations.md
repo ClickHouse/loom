@@ -243,8 +243,8 @@ A large C++ tree is the heavy case: a ClickHouse-sized checkout with its submodu
 and build tree is about 30 GB beside the mirror, and scip-clang holds a translation
 unit's AST per job (a few GB each), so `LOOM_CODE_SCIP_CLANG_JOBS` should fit the
 memory the workers process has. The full index of such a tree takes about an hour.
-The compiler tiers fetch submodule pins with the entry's GitHub token, so a private
-submodule on the repository's host needs no other credential.
+The C/C++ tier fetches submodule pins with the entry's access token, so a private
+submodule of the repository's owner needs no other credential.
 
 - **C/C++ delta cap.** The worker indexes changed translation units, including those
   that include a changed header, up to `LOOM_CODE_SCIP_DELTA_MAX_TUS` (200); above the
@@ -365,8 +365,10 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
 
 Every git a repository job runs reads no system or global git config and allows only
 the `https` and `ssh` transports (`protocol.allow=never`); `ext::` and `file://` are
-refused, so are URL rewrites. The entry's access token reaches only its clone and
-fetches, never a build or `go mod download`. Inside the sandbox an `ssh` remote has no
+refused, so are URL rewrites. The entry's access token reaches only its clone, its
+fetches and the C/C++ tier's `git submodule update`, never a build or `go mod
+download`, and git sends it only to URLs under the remote's owner
+(`https://host/owner/`). Inside the sandbox an `ssh` remote has no
 host SSH key: use an HTTPS remote with an access token.
 
 **Which stacks run the sandbox.** The blue/green colours `redeploy.sh` deploys

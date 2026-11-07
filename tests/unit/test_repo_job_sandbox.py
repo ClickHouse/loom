@@ -718,10 +718,10 @@ async def test_a_networked_compiler_tier_git_authenticates_to_the_repository_hos
     envs: list[dict[str, str]] = []
     argvs: list[list[str]] = []
 
-    async def _run_job(argv: list[str], **kw: object) -> object:
+    async def _run_job(argv: list[str], **kw: object) -> sandbox.JobResult:
         argvs.append(argv)
         envs.append(kw["env"])  # type: ignore[arg-type]
-        return type("Done", (), {"returncode": 0, "stdout": b"", "stderr": b""})()
+        return sandbox.JobResult(0, b"", b"")
 
     monkeypatch.setattr(compiler_tier, "run_job", _run_job)
     args = ("submodule", "update", "--init")
@@ -730,10 +730,39 @@ async def test_a_networked_compiler_tier_git_authenticates_to_the_repository_hos
     )
     await compiler_tier.git(tmp_path, *args, network=True)
     with_token, without = envs
-    headers = [v for k, v in with_token.items() if k.startswith("GIT_CONFIG_VALUE_")]
-    assert any(v.startswith("AUTHORIZATION: basic ") for v in headers)
+
+    def config(env: dict[str, str]) -> dict[str, str]:
+        n = int(env.get("GIT_CONFIG_COUNT", "0"))
+        return {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"] for i in range(n)}
+
+    header = config(with_token)["http.https://github.com/o/.extraheader"]
+    assert header.startswith("AUTHORIZATION: basic ")
     assert not any("ghs_test" in a for a in argvs[0])
-    assert not any(v.startswith("AUTHORIZATION") for v in without.values())
+    assert not any(k.endswith(".extraheader") for k in config(without))
+
+
+@pytest.mark.asyncio
+async def test_a_local_remote_entry_keeps_the_file_transport_off_its_submodules(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An entry whose remote is a local mirror path must not open `file://`
+    `.gitmodules` URLs to its networked submodule update."""
+    from server.code.app.index import compiler_tier
+
+    envs: list[dict[str, str]] = []
+
+    async def _run_job(argv: list[str], **kw: object) -> sandbox.JobResult:
+        envs.append(kw["env"])  # type: ignore[arg-type]
+        return sandbox.JobResult(0, b"", b"")
+
+    monkeypatch.setattr(compiler_tier, "run_job", _run_job)
+    await compiler_tier.git(tmp_path, "submodule", "update", network=True, remote="/srv/m.git")
+    await compiler_tier.git(
+        tmp_path, "submodule", "update", network=True, token="t", remote="/srv/m.git"
+    )
+    for env in envs:
+        n = int(env.get("GIT_CONFIG_COUNT", "0"))
+        assert "protocol.file.allow" not in {env[f"GIT_CONFIG_KEY_{i}"] for i in range(n)}
 
 
 @pytest.mark.asyncio

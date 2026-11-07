@@ -94,8 +94,10 @@ def auth_env(token: str = "", remote: str = "https://github.com/") -> dict[str, 
     refused for submodules and redirects too. GIT_TERMINAL_PROMPT=0 makes a
     missing credential a failure, not a hang.
 
-    `token` rides an `http.<remote>.extraheader`, so it appears in no argv, no
-    remote URL, no stored config and no `code_index_state.repo_remote`."""
+    `token` rides an `http.<url>.extraheader` keyed to the remote's owner
+    (`https://host/owner/`), so it appears in no argv, no remote URL, no stored
+    config and no `code_index_state.repo_remote`, and git sends it to that
+    owner's repositories only: a submodule URL elsewhere on the host gets none."""
     env = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "TMPDIR") if k in os.environ}
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_CONFIG_NOSYSTEM"] = "1"
@@ -111,13 +113,15 @@ def auth_env(token: str = "", remote: str = "https://github.com/") -> dict[str, 
     if not token or not remote.startswith(("https://", "http://")):
         return env
     host = remote.split("/")[2]
+    owner = remote.split("/")[3] if len(remote.split("/")) > 4 else ""
     username = {
         "github.com": "x-access-token",
         "gitlab.com": "oauth2",
         "bitbucket.org": "x-token-auth",
     }.get(host.split(":", 1)[0].lower(), "oauth2")
     basic = base64.b64encode(f"{username}:{token}".encode()).decode()
-    add_git_config(env, f"http.https://{host}/.extraheader", f"AUTHORIZATION: basic {basic}")
+    scope = f"https://{host}/{owner}/" if owner else f"https://{host}/"
+    add_git_config(env, f"http.{scope}.extraheader", f"AUTHORIZATION: basic {basic}")
     return env
 
 

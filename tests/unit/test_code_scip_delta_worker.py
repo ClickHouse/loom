@@ -90,9 +90,11 @@ async def test_fetch_does_not_recurse_submodules(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "code_scip_clang_path", str(clang))
 
     git_calls: list[tuple[str, ...]] = []
+    git_kwargs: list[dict[str, Any]] = []
 
     async def fake_git(cwd, *args, **kw):
         git_calls.append(args)
+        git_kwargs.append(kw)
 
     monkeypatch.setattr(w, "git", fake_git)
 
@@ -101,11 +103,18 @@ async def test_fetch_does_not_recurse_submodules(monkeypatch, tmp_path):
     harness = AsyncMock(return_value=JobResult(0, b"", b""))
 
     repo = _repo("a" * 40, "b" * 40)
+    cfg = repo_config(
+        org="clickhouse",
+        namespace="code-clickhouse",
+        scip_producer="clang",
+        github_token="ghs_test",
+        git_remote="https://github.com/o/private",
+    )
     with (
         patch("server.code.store.index.CodeRepo", return_value=repo),
         patch(
             "server.code.domain.index.repos.configured_repos",
-            return_value=[_Cfg()],
+            return_value=[cfg],
         ),
         patch("server.code.app.index.compiler_tier.run_job", harness),
     ):
@@ -115,6 +124,10 @@ async def test_fetch_does_not_recurse_submodules(monkeypatch, tmp_path):
     fetches = [c for c in git_calls if c[0] == "fetch"]
     assert fetches, "the delta path never fetched"
     assert "--recurse-submodules=no" in fetches[0]
+    assert "token" not in git_kwargs[git_calls.index(fetches[0])]
+    # the submodule pins come with the entry's token, so a private submodule is fetched
+    sub = git_kwargs[next(i for i, c in enumerate(git_calls) if c[0] == "submodule")]
+    assert sub["token"] == "ghs_test" and sub["remote"] == "https://github.com/o/private"
 
 
 @pytest.mark.asyncio
