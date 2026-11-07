@@ -158,23 +158,97 @@ def test_a_failing_key_read_never_fails_the_answer(written: list[dict[str, Any]]
     assert written == []
 
 
-def test_each_agent_read_op_records_its_own_answers_keys() -> None:
-    """The ops that recall memory for an agent, each with the extractor for its answer;
-    a key lookup is the agent naming a key it knows, and decision.precedents, memory.apply
-    and the workers search for their own use: none of them records."""
+def _answers() -> dict[str, tuple[Any, Any]]:
+    """Per agent read op: a real input, and a real answer whose recorded key is `k`."""
+    from server.memory.api.models_ask import MemoryAskInput, MemoryAskOutput
+    from server.memory.api.models_context import ContextPackInput, ContextPackOutput
+    from server.memory.api.models_for_file import MemoryForFileInput, MemoryForFileOutput
+    from server.memory.api.models_lifecycle import MemoryStackInput, MemoryStackOutput
+    from server.memory.api.models_loom_search import SearchInput, SearchOutput
+    from server.memory.api.models_procedure import ProcedureMatchInput, ProcedureMatchOutput
+    from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput
+
+    search = MemorySearchOutput(results=[_real_hit("k")], embedding_model="e")
+    pack = ContextPackOutput(rendered="", sections={}, section_count=0, token_budget=1)
+    pack._served_rows = [("n", "k")]
+    for_file = MemoryForFileOutput(path="a.py", total=1, hits=[])
+    for_file._served_rows = [("n", "k")]
+    stack = MemoryStackOutput.model_validate(
+        {
+            "entries": [{"section": "pinned", "memory_key": "k", "tokens": 1}],
+            "tokens_used": 1,
+            "tokens_budget": 10,
+            "truncated": False,
+            "section_counts": {},
+        }
+    )
+    match = ProcedureMatchOutput.model_validate(
+        {
+            "matches": [
+                {
+                    "name": "p",
+                    "situation": "s",
+                    "steps": [],
+                    "similarity": 0.9,
+                    "memory_key": "k",
+                    "namespace": "n",
+                }
+            ]
+        }
+    )
+    ident = {"org": "o", "namespace": "n", "agent": "codex"}
+    return {
+        "memory.search": (MemorySearchInput(**ident, query="q"), search),
+        "search.query": (
+            SearchInput(**ident, query="q"),
+            SearchOutput.model_validate({"memory": search.model_dump(mode="json")}),
+        ),
+        "context.pack": (ContextPackInput(**ident, query="q"), pack),
+        "memory.stack": (MemoryStackInput(**ident), stack),
+        "memory.ask": (
+            MemoryAskInput(**ident, query="q"),
+            MemoryAskOutput(answer="", results=[_real_hit("k")]),
+        ),
+        "procedure.match": (ProcedureMatchInput(**ident, situation="s"), match),
+        "memory.for_file": (MemoryForFileInput(org="o", namespace="n", path="a.py"), for_file),
+    }
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "memory.search",
+        "search.query",
+        "context.pack",
+        "memory.stack",
+        "memory.ask",
+        "procedure.match",
+        "memory.for_file",
+    ],
+)
+def test_each_agent_read_op_records_what_its_answer_returned(
+    monkeypatch: pytest.MonkeyPatch, written: list[dict[str, Any]], name: str
+) -> None:
+    """Through the registered op's own handler, its answer stood in: the op records the
+    key its answer returned (memory.for_file, with no agent, under the consumer)."""
     from server.operations.registry import OPERATIONS_BY_NAME
 
-    expected = {
-        "memory.search": served_reads.search_keys,
-        "search.query": served_reads.search_query_keys,
-        "context.pack": served_reads.rendered_rows,
-        "memory.stack": served_reads.stack_keys,
-        "memory.ask": served_reads.ask_keys,
-        "procedure.match": served_reads.procedure_keys,
-        "memory.for_file": served_reads.rendered_rows,
-    }
-    for name, keys_of in expected.items():
-        assert getattr(OPERATIONS_BY_NAME[name].handler, "served_keys", None) is keys_of, name
+    input, answer = _answers()[name]
+
+    async def _answer(_input: Any) -> Any:
+        return answer
+
+    handler = OPERATIONS_BY_NAME[name].handler
+    monkeypatch.setattr(handler, "__wrapped__", _answer)
+    assert _run(handler, input) is answer
+    assert [w["ns_keys"] for w in written] == [{"n": ["k"]}]
+
+
+def test_key_lookups_and_own_use_searches_record_nothing() -> None:
+    """A key lookup is the agent naming a key it knows; decision.precedents and
+    memory.apply search for their own use: their handlers are not wrapped."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+
     for name in (
         "memory.get",
         "memory.bulk_get",
@@ -182,7 +256,7 @@ def test_each_agent_read_op_records_its_own_answers_keys() -> None:
         "decision.precedents",
         "memory.apply",
     ):
-        assert not hasattr(OPERATIONS_BY_NAME[name].handler, "served_keys"), name
+        assert not hasattr(OPERATIONS_BY_NAME[name].handler, "__wrapped__"), name
 
 
 def test_an_evaluation_ask_records_nothing() -> None:

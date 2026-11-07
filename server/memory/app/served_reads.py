@@ -95,7 +95,9 @@ def records_served[I: _AgentRead, O](
     def wrap(handler: Callable[[I], Awaitable[O]]) -> Callable[[I], Awaitable[O]]:
         @functools.wraps(handler)
         async def handle(input: I) -> O:
-            out = await handler(input)
+            # Through `__wrapped__` (the handler, set by functools.wraps), so a test can
+            # stand in the answer of a registered op and check what the op records.
+            out = await handle.__wrapped__(input)
             try:
                 keys = keys_of(input, out)
                 if keys:
@@ -106,8 +108,6 @@ def records_served[I: _AgentRead, O](
                 log.warning("served keys of %s failed (non-fatal): %s", handler.__name__, e)
             return out
 
-        # which answer keys this op records, for the test that pins each op's extractor
-        handle.served_keys = keys_of  # type: ignore[attr-defined]
         return handle
 
     return wrap

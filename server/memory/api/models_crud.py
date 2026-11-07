@@ -223,11 +223,9 @@ class MemoryGetOutput(ProjectedRow):
     recall_count: int = 0
     # When a credited read last returned the row; None = no credit yet.
     last_recalled_at: datetime | None = None
-    # Agent reads that returned the key, credited or not (memory.search, search.query,
-    # context.pack, memory.stack, memory.ask, procedure.match, memory.for_file; a key lookup
-    # such as memory.get is not one), across the key's live rows inside the reader's scope (a
-    # token narrowed to one user never counts another's copy); never below recall_count. Only
-    # with include_recall_breakdown=True; None otherwise.
+    # Agent reads that recalled the key, credited or not, never below recall_count; only with
+    # include_recall_breakdown=True, else None. Counted over the key's live rows inside the
+    # reader's scope; which ops count: docs/features/observability/cost-and-usage.md.
     served_count: int | None = None
     # When an agent read last returned the key; None = none recorded, or not asked for.
     last_served_at: datetime | None = None

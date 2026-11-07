@@ -189,10 +189,8 @@ class MemoryHealthFootprint(BaseModel):
 class MemoryHealthOutput(BaseModel):
     # Active, untombstoned rows in the namespace, across every agent and user.
     live: int
-    # Live rows with a recall credit of their own, or whose key was returned by an
-    # agent read (memory.search, search.query, context.pack, memory.stack, memory.ask,
-    # procedure.match, memory.for_file) in the last `silent_after_days` days, on any live
-    # copy.
+    # Live rows with their own recall credit, or whose key an agent read recalled in the
+    # last `silent_after_days` days. Which ops count: the usage counters doc.
     recalled_ever: int
     # Live rows with at least one reported use.
     used_ever: int
