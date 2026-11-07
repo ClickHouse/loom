@@ -420,7 +420,7 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     # Files whose stored copy the picture check flags but whose conversion changes
     # nothing (a definition in a code sample): file id -> the revision checked.
     checked = detail.get(_PICTURES_CHECKED)
-    turn.kind_state[_PICTURES_CHECKED] = dict(checked) if isinstance(checked, dict) else {}
+    checked = checked if isinstance(checked, dict) else {}
     credential = unseal("knowledge_sources.credential", src.credential_enc)
     if not credential:
         # Fail closed: a credential that no longer opens is never read as "no auth".
@@ -462,7 +462,7 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     listed_at_revision = {str(f["id"]): str(f.get("modifiedTime") or "") for f in files}
     turn.kind_state[_PICTURES_CHECKED] = {
         k: v
-        for k, v in turn.kind_state[_PICTURES_CHECKED].items()
+        for k, v in checked.items()
         if (rev := listed_at_revision.get(k)) == v or (rev is None and not trusted)
     }
     if trusted:
@@ -731,7 +731,7 @@ async def _sync_file(
         # is tried again.
         return True
     # The stored content's hash, from the full listing's read.
-    stored_content_sha256 = prior["stored_content_sha256"] if reconvert else ""
+    stored_content_sha256 = prior["stored_content_sha256"] if reconvert and prior else ""
     before_fetch = functools.partial(_fetchable, f, run, turn)
     fetch_and_write = functools.partial(
         _fetch_and_write, src, token, f, uri, turn, stored_content_sha256=stored_content_sha256
