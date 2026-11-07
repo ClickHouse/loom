@@ -157,7 +157,9 @@ def test_the_release_warns_when_a_published_bundle_keeps_its_own_release() -> No
     (resolve,) = [
         s for s in _release_workflow()["jobs"]["clickhouse"]["steps"] if s.get("id") == "resolve"
     ]
-    assert "::warning::clickhouse_image=" in resolve["run"]
+    assert "scripts/release/release_clickhouse.sh" in resolve["run"]
+    script = Path(__file__).parents[2] / "scripts" / "release" / "release_clickhouse.sh"
+    assert "::warning::clickhouse_image=" in script.read_text()
 
 
 # `gh` as a release step sees it: v1.1.0 is not published yet, and v1.2.0's
@@ -185,14 +187,21 @@ DOWNGRADES = pytest.mark.parametrize(
 
 
 def _run_step(tmp_path: Path, script: str, **env: str):
-    """Run a release step's script in a checkout whose `gh` is STUB_GH."""
+    """Run a release step's script in a checkout (a git repository with one
+    commit and no tags) whose `gh` is STUB_GH."""
     import os
+    import shutil
     import subprocess
     import sys
 
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
-    (work / "scripts").symlink_to(Path(__file__).parents[2] / "scripts")
+    # A copy, not a link: the scripts find dev/ through their own `..`.
+    shutil.copytree(Path(__file__).parents[2] / "scripts" / "release", work / "scripts" / "release")
+    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "release"]):
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=work, check=True
+        )
     other, _ = _module().build(
         "1.2.0", tmp_path / "other", "clickhouse/clickhouse-server:26.9.18.11"
     )
