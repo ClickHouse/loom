@@ -28,6 +28,7 @@ import { isMemoryNamespace } from "../lib/namespace";
 import { hasPlatformAdminClaim } from "../lib/role";
 import { TokensSection } from "./Tokens";
 import { ModelsSettings } from "./ModelsSettings";
+import { WebhooksSection } from "./WebhooksSection";
 
 /** The URL carries the open settings tab
  *  (`?tab=memory`). */
@@ -259,6 +260,11 @@ const PRIVACY_STARTERS: PrivacyFilterStarter[] = [
  *  document. */
 function MemoryTab() {
   const [importing, setImporting] = useState(false);
+  // The webhook ops are ADMIN on the namespace; the section reads on open, so only a role
+  // known to reach them sees it.
+  const identity = useIdentity();
+  const whoami = useStore((s) => s.whoami);
+  const showWebhooks = canCall("webhook.list", useNamespaceRole(identity.namespace), whoami);
   return (
     <div className="max-w-3xl space-y-8">
       <section aria-labelledby="settings-never-save">
@@ -294,6 +300,8 @@ function MemoryTab() {
           <ImportCuratedPanel />
         </Modal>
       </section>
+
+      {showWebhooks && <WebhooksSection />}
     </div>
   );
 }

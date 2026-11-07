@@ -70,6 +70,9 @@ export const OP_MIN_ROLE = {
   "blacklist.list": VIEWER,
   "blacklist.add": WRITER,
   "blacklist.remove": ADMIN,
+  "blacklist.sweep": WRITER,
+  // Settings → Memory's Webhooks section.
+  "webhook.list": ADMIN,
   "memory.auto_retirements": VIEWER,
   "memory.list": VIEWER,
   // The Memories view's "Usage audit" panel offers the button only to a role that reaches

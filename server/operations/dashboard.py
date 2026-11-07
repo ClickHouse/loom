@@ -230,17 +230,7 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
 DASHBOARD_PENDING: frozenset[str] = frozenset(
     {
         # settings
-        "extraction_policy.clear",
-        "extraction_policy.get",
-        "extraction_policy.set",
-        "org.model_calls",
-        "org.set_model_calls",
-        "webhook.deliveries",
-        "webhook.list",
-        "webhook.register",
-        "webhook.remove",
         # health and maintenance
-        "blacklist.sweep",
         "code.calibrate",
         "code.reindex",
         # schemas, ontology and typed records

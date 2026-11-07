@@ -2,7 +2,17 @@ import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { listBlacklist, addBlacklist, removeBlacklist, type BlacklistRow, type BlacklistScope } from "../../api";
+import {
+  listBlacklist,
+  addBlacklist,
+  removeBlacklist,
+  sweepBlacklistPattern,
+  type BlacklistRow,
+  type BlacklistScope,
+} from "../../api";
+import { hasOrgAdminClaim } from "../../lib/role";
+import { confirmAction } from "../../components/ConfirmDialog";
+import { OrgGuardrails } from "./OrgGuardrails";
 import { useStore, useIdentity } from "../../lib/state";
 import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
@@ -35,12 +45,14 @@ const SCOPE_LABELS: Record<BlacklistScope, string> = { namespace: "Namespace", o
  */
 export function Blacklist() {
   const namespace = useStore((s) => s.identity?.namespace ?? "");
+  const orgAdmin = useStore((s) => hasOrgAdminClaim(s.whoami));
   return (
     <PageContainer>
       <PageHeader title="Guardrails">
         <ScopeBadge kind="namespace" value={namespace} />
       </PageHeader>
       <PrivacyFilters />
+      {orgAdmin && <OrgGuardrails />}
     </PageContainer>
   );
 }
@@ -83,6 +95,11 @@ export function PrivacyFilters({
   const canList = canCall("blacklist.list", role, whoami);
   const canAdd = canCall("blacklist.add", role, whoami);
   const canRemove = canCall("blacklist.remove", role, whoami);
+  // A namespace pattern sweeps its namespace (WRITER there); an org or global one sweeps
+  // the whole org, so it needs an org admin, as the sweep handler asks.
+  const canSweepNamespace = canCall("blacklist.sweep", role, whoami);
+  const orgAdmin = hasOrgAdminClaim(whoami);
+  const canSweep = (r: BlacklistRow) => (r.scope === "namespace" ? canSweepNamespace : orgAdmin);
 
   // A reload after an add or a remove keeps the patterns on screen, marked busy. It runs
   // through the read effect, so an answer for a namespace the page has left is dropped.
@@ -145,6 +162,26 @@ export function PrivacyFilters({
       reload();
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
+    }
+  };
+
+  // A pattern stops new writes; a sweep tombstones what it already matches.
+  const sweep = async (r: BlacklistRow) => {
+    const where = r.scope === "namespace" ? "in this namespace" : `across ${identity.org}`;
+    const ok = await confirmAction({
+      title: `Delete the stored memories "${r.pattern}" matches ${where}?`,
+      message: "They can be restored for 14 days from Memories → Recently deleted.",
+      confirmLabel: "Delete matches",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const s = await sweepBlacklistPattern(identity, r.pattern_id);
+      if (s.error) throw new Error(s.error);
+      const more = s.truncated ? "; more remain, sweep again" : "";
+      toast(`Deleted ${s.tombstoned} of ${s.matched} matching memories${more}`, "ok");
+    } catch (e) {
+      toast(`Sweep failed: ${humanizeError(e)}`, "error");
     }
   };
 
@@ -288,6 +325,15 @@ export function PrivacyFilters({
                     )}
                   </div>
                 </div>
+                {canSweep(r) && (
+                  <IconButton
+                    icon="trash"
+                    size="sm"
+                    label={`Delete stored memories matching ${r.pattern}`}
+                    tooltip="Delete stored matches"
+                    onClick={() => void sweep(r)}
+                  />
+                )}
                 {canRemove && (
                   <IconButton
                     icon="cross"
