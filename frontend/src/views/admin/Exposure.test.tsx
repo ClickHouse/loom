@@ -88,6 +88,26 @@ describe("ExposurePanel", () => {
     expect(await screen.findByText("the 200 widest readers of 2 memories")).toBeInTheDocument();
   });
 
+  it("reads any read of a namespace emptied since as all", async () => {
+    vi.mocked(api.getExposureSummary).mockResolvedValue({
+      namespace_rows: 0,
+      rows: [
+        {
+          actor: "sa:leaked",
+          agent: "a",
+          distinct_keys: 150,
+          calls: 900,
+          fraction: 0,
+          first_hour: "2000-01-01 00:00:00",
+          last_hour: "2000-01-01 00:00:00",
+        },
+      ],
+    });
+    render(<ExposurePanel />);
+    const table = await screen.findByRole("table", { name: "Memory reads by reader" });
+    expect(await within(table).findByText("all")).toBeInTheDocument();
+  });
+
   it("says why the read failed", async () => {
     vi.mocked(api.getExposureSummary).mockRejectedValue(new Error("offline"));
     render(<ExposurePanel />);

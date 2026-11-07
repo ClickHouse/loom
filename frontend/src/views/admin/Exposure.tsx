@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Table } from "@clickhouse/click-ui/Table";
-import { getExposureSummary, type ExposureSummary } from "../../api";
+import { getExposureSummary, type ExposureRow, type ExposureSummary } from "../../api";
 import { useIdentity } from "../../lib/state";
 import { useAbortableEffect } from "../../lib/hooks";
 import { AgentBadge, NameBadge } from "../../components/AgentBadge";
@@ -30,9 +30,10 @@ const HEADERS = [
 const LIMIT = 200;
 
 /** A share of the namespace, never rounded to 0% when something was read. Keys read
- *  include memories deleted since, so the fraction can pass 1: that reads as all. */
-function share(fraction: number): string {
-  if (fraction >= 1) return "all";
+ *  include memories deleted since, so the fraction can pass 1, and a namespace emptied
+ *  since answers 0 for any read: both read as all. */
+function share({ fraction, distinct_keys }: ExposureRow, namespaceRows: number): string {
+  if (fraction >= 1 || (namespaceRows === 0 && distinct_keys > 0)) return "all";
   return fraction > 0 && fraction < 0.005 ? "<1%" : `${Math.round(fraction * 100)}%`;
 }
 
@@ -89,7 +90,7 @@ export function ExposurePanel() {
               { label: <NameBadge name={r.actor} /> },
               { label: <AgentBadge agent={r.agent} /> },
               { label: <span className="tabular">{r.distinct_keys.toLocaleString()}</span> },
-              { label: <span className="tabular">{share(r.fraction)}</span> },
+              { label: <span className="tabular">{share(r, data?.namespace_rows ?? 0)}</span> },
               { label: <span className="tabular">{r.calls.toLocaleString()}</span> },
               { label: <ListTime time={r.last_hour} quiet /> },
             ],

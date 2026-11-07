@@ -77,6 +77,23 @@ describe("Agents: forget an agent's memories", () => {
     expect(toast).toHaveBeenCalledWith("Forgot 7 memories of claude-code; 1 locked kept", "ok");
   });
 
+  it("holds the dialog open while the clear runs", async () => {
+    signIn("admin");
+    let finish: (v: Awaited<ReturnType<typeof clearAgentMemories>>) => void = () => {};
+    clearAgentMemories.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    render(<Agents />);
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for claude-code" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /Forget its memories in team/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Forget memories" });
+    await userEvent.type(within(dialog).getByLabelText("Type claude-code to confirm"), "claude-code");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Forget memories" }));
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled());
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Forget memories" })).toBeInTheDocument();
+    finish({ rows_affected: { "loom.memory": 1, "loom.memory_embeddings": 1 }, total: 2, locked_skipped: 0 });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Forget memories" })).toBeNull());
+  });
+
   it("keeps the dialog open with the reason when the clear is refused", async () => {
     signIn("admin");
     clearAgentMemories.mockRejectedValueOnce(new Error("not admin"));

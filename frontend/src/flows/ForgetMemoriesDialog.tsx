@@ -34,7 +34,7 @@ export function ForgetMemoriesDialog({ agent, onClose }: { agent: string; onClos
   };
 
   return (
-    <Modal open onOpenChange={(v) => !v && onClose()} title="Forget memories" className="w-full max-w-[520px]">
+    <Modal open onOpenChange={(v) => !v && !busy && onClose()} title="Forget memories" className="w-full max-w-[520px]">
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -51,7 +51,7 @@ export function ForgetMemoriesDialog({ agent, onClose }: { agent: string; onClos
           {error && <Alert role="alert" state="danger" text={error} />}
         </div>
         <ModalFooter>
-          <Button type="secondary" htmlType="button" onClick={onClose}>
+          <Button type="secondary" htmlType="button" disabled={busy} onClick={onClose}>
             Cancel
           </Button>
           <Button type="danger" htmlType="submit" disabled={!ready} loading={busy}>
