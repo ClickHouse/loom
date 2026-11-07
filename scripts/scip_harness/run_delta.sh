@@ -50,12 +50,9 @@ if [[ ! -f build/compile_commands.json ]]; then
   CONFIGURED=1
 fi
 
-# reconfigure: the compile database lists the translation units of the tree it
-# was configured on, so a file added since then has no entry and is never
-# indexed. Re-running CMake on the existing cache keeps its compiler and options.
-# A configure that fails writes no compile database, so the last one stays: the
-# translation units it lists keep being indexed, and every run reconfigures and
-# warns again until a configure succeeds.
+# reconfigure: the compile database lists only the TUs of the tree it was
+# configured on; the existing cache keeps the compiler, and a failed configure
+# keeps the last database.
 reconfigure() {
   if [[ -z "${CONFIGURED:-}" ]]; then
     echo ">> cmake reconfigure (compile_commands.json): $1"
@@ -82,8 +79,8 @@ else
   # compile database must list
   git_paths diff --name-only --no-renames --diff-filter=A --end-of-options "$BASE" "$HEAD_SHA" \
     >"$WORK/added.txt"
-  if grep -E '\.(cpp|cc|cxx)$' "$WORK/added.txt" >/dev/null \
-    || grep -E '(^|/)CMakeLists\.txt$|\.cmake$' "$WORK/changed.txt" "$WORK/deleted.txt" >/dev/null; then
+  if grep -qE '\.(cpp|cc|cxx)$' "$WORK/added.txt" \
+    || grep -qE '(^|/)CMakeLists\.txt$|\.cmake$' "$WORK/changed.txt" "$WORK/deleted.txt"; then
     reconfigure "the window adds a translation unit or edits the build"
   elif [[ -f "$STALE" ]]; then
     reconfigure "the last reconfigure failed"

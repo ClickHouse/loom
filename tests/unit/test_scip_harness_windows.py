@@ -374,6 +374,24 @@ def test_a_failed_reconfigure_is_retried_until_one_succeeds(tmp_path: Path) -> N
     assert len(w.cmake_runs) == 3
 
 
+def test_a_full_index_whose_reconfigure_fails_indexes_the_last_compile_database(
+    tmp_path: Path,
+) -> None:
+    w = _CppWindow(tmp_path)
+    w.env["CMAKE_FAIL"] = "1"
+    _write_index(w.index, ["src/a.cpp", "src/b.cpp"])
+    proc = subprocess.run(
+        ["bash", str(_HARNESS / "run_delta.sh"), str(w.repo), "--full", "", "-"],
+        env=w.env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "cmake reconfigure failed" in proc.stderr
+    assert (w.repo / STALE_COMPDB_MARKER).exists()
+    assert w.compdbs == [["a.cpp", "b.cpp"]]
+
+
 def test_a_first_configure_is_not_followed_by_a_reconfigure(tmp_path: Path) -> None:
     w = _CppWindow(tmp_path)
     (w.repo / "build" / "compile_commands.json").unlink()

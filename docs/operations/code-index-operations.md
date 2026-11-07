@@ -242,10 +242,9 @@ translation units of the tree it was configured on. When that configure fails, t
 harness indexes with the last compile database, and the pass records the skip
 `cmake reconfigure failed; compile database stale` for the entry. Every later run
 reconfigures and records the skip again until a configure succeeds; a translation unit
-added meanwhile is indexed by the next full index. A worker whose
-project prerequisites are absent records a skip in `workers.status`; the Tree-sitter
-tier remains available. TypeScript projects have their dependencies installed
-automatically in their checkout.
+added meanwhile is indexed by the next full index. A worker whose project prerequisites
+are absent records a skip in `workers.status`; the Tree-sitter tier remains available.
+TypeScript projects have their dependencies installed automatically in their checkout.
 
 A large C++ tree is the heavy case: a ClickHouse-sized checkout with its submodules
 and build tree is about 30 GB beside the mirror, and scip-clang holds a translation

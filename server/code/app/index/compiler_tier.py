@@ -124,8 +124,6 @@ async def run_tier[R: TierResult](
 
 
 async def _gc_checkout(cfg: RepoConfig, producer: str) -> None:
-    import asyncio
-
     from server.code.app.index.mirrors import gc_if_due
 
     git_dir = Path(checkout_for(cfg, producer)) / ".git"
