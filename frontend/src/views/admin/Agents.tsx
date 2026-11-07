@@ -4,6 +4,10 @@ import { Badge } from "@clickhouse/click-ui/Badge";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Table } from "@clickhouse/click-ui/Table";
 import { useStore } from "../../lib/state";
+import { canCall } from "../../lib/canCall";
+import { useNamespaceRole } from "../../lib/namespaceRole";
+import { ForgetMemoriesDialog } from "../../flows/ForgetMemoriesDialog";
+import { RowMenu } from "../../components/ui/RowMenu";
 import { listConnectedAgents, type ConnectedAgentRow } from "../../api";
 import { parseChTime } from "../../lib/format";
 import { AgentBadge } from "../../components/AgentBadge";
@@ -34,6 +38,7 @@ const HEADERS = [
   { label: "LLM cost" },
   { label: "Last seen" },
 ];
+const ACTIONS_HEADER = { label: <span className="sr-only">Actions</span>, width: "52px" };
 
 const WINDOWS = [
   { value: "1", label: "1 hour" },
@@ -53,6 +58,11 @@ export function Agents() {
   // A refresh keeps the table on screen, marked busy, until it answers; a new window reads
   // as loading.
   const [refreshing, setRefreshing] = useState(false);
+  const whoami = useStore((s) => s.whoami);
+  const role = useNamespaceRole(identity?.namespace);
+  const canForget = canCall("memory.clear", role, whoami);
+  const [forget, setForget] = useState<string | null>(null);
+  const headers = canForget ? [...HEADERS, ACTIONS_HEADER] : HEADERS;
 
   // Refresh and Retry read again through the effect, so a newer read drops an older one.
   const [reads, setReads] = useState(0);
@@ -127,7 +137,7 @@ export function Agents() {
           aria-label="Connected clients"
           aria-busy
           size="sm"
-          headers={HEADERS}
+          headers={headers}
           rows={[]}
           noDataMessage={<TableSkeleton label="Loading connected clients" />}
         />
@@ -149,7 +159,7 @@ export function Agents() {
           <Table
             aria-label="Connected clients"
             size="sm"
-            headers={HEADERS}
+            headers={headers}
             rows={rows.map((r) => {
               const seen = parseChTime(r.last_seen);
               const stale = !seen || Date.now() - seen.getTime() > 24 * 3600 * 1000;
@@ -170,12 +180,33 @@ export function Agents() {
                       </span>
                     ),
                   },
+                  // `-` is no agent: memory.clear refuses it as a confirmation anyone can type.
+                  ...(canForget
+                    ? [
+                        {
+                          label: r.agent !== "-" && (
+                            <RowMenu
+                              name={r.agent}
+                              items={[
+                                {
+                                  label: `Forget its memories in ${identity.namespace}`,
+                                  icon: "trash",
+                                  danger: true,
+                                  onSelect: () => setForget(r.agent),
+                                },
+                              ]}
+                            />
+                          ),
+                        },
+                      ]
+                    : []),
                 ],
               };
             })}
           />
         </div>
       )}
+      {forget && <ForgetMemoriesDialog agent={forget} onClose={() => setForget(null)} />}
     </PageContainer>
   );
 }

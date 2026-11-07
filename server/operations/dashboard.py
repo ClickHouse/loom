@@ -221,13 +221,6 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
 
 DASHBOARD_PENDING: frozenset[str] = frozenset(
     {
-        # erasure, forgetting and exposure
-        "erasure.export",
-        "erasure.request",
-        "erasure.status",
-        "memory.clear",
-        "memory.exposure_summary",
-        "memory.owner_report",
         # the memory drawer
         "memory.backlinks",
         "memory.cross_promote",

@@ -15,6 +15,7 @@ vi.mock("../../api", async (importOriginal) => {
     ...actual,
     listAuditLog: vi.fn(async () => ({ rows: [] })),
     listErasures: vi.fn(async () => ({ rows: [] })),
+    getExposureSummary: vi.fn(async () => ({ namespace_rows: 0, rows: [] })),
   };
 });
 
@@ -170,6 +171,35 @@ describe("Audit failure", () => {
     expect(await screen.findByText("Couldn't load erasures")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("No erasures yet")).toBeInTheDocument();
+  });
+});
+
+describe("Audit exposure tab", () => {
+  afterEach(() => useStore.setState({ whoami: null, myNamespaces: null }));
+  const signIn = (role: "admin" | "writer") =>
+    useStore.setState({
+      whoami: { authenticated: true, subject: "alice", org: "dev", roles: ["writer"] },
+      myNamespaces: [{ namespace: "ns1", role, status: "active" } as never],
+    });
+
+  it("is a tab for the namespace's admin only", async () => {
+    signIn("writer");
+    render(<Audit />);
+    await screen.findByRole("tab", { name: /Erasures/ });
+    expect(screen.queryByRole("tab", { name: /Exposure/ })).toBeNull();
+    cleanup();
+    signIn("admin");
+    render(<Audit />);
+    expect(await screen.findByRole("tab", { name: /Exposure/ })).toBeInTheDocument();
+  });
+
+  it("falls back to Events when the role that shows Exposure goes", async () => {
+    signIn("admin");
+    render(<Audit />);
+    fireEvent.mouseDown(await screen.findByRole("tab", { name: /Exposure/ }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Exposure/ })).toHaveAttribute("aria-selected", "true"));
+    act(() => signIn("writer"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Events/ })).toHaveAttribute("aria-selected", "true"));
   });
 });
 

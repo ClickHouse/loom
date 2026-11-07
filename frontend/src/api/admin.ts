@@ -473,6 +473,170 @@ export async function listErasures(
   return post("/v1/erasure.list", body, opts.signal);
 }
 
+/** What an erasure or an export covers: one namespace, or one user across the org. */
+export interface ErasureScope {
+  scope_type: "namespace" | "user_id";
+  scope_value: string;
+}
+
+export interface ErasureStepResult {
+  step: string;
+  rows_affected: number;
+  notes: string;
+}
+
+/** A saga's state: `server/erasure/api/erasure.py::ErasureStatus`. */
+export type ErasureStatusValue = "in_progress" | "completed" | "failed";
+
+/** Mirrors `server/erasure/api/erasure.py::ErasureRequestOutput` (the parts shown). */
+export interface ErasureRequestResult {
+  erasure_id: string;
+  status: ErasureStatusValue;
+  steps: ErasureStepResult[];
+  residue_count: number;
+  failure_reason: string;
+}
+
+/** POST /v1/erasure.request: runs the delete saga and answers when it ends. `purge`
+ *  hard-deletes instead of tombstoning, with no restore window. */
+export async function requestErasure(
+  org: string,
+  scope: ErasureScope,
+  requester: string,
+  purge: boolean,
+  signal?: AbortSignal,
+): Promise<ErasureRequestResult> {
+  return post("/v1/erasure.request", { org, ...scope, requester, purge }, signal);
+}
+
+/** Mirrors `server/erasure/api/erasure.py::ErasureStatusOutput` (the parts shown). */
+export interface ErasureStatus {
+  found: boolean;
+  erasure_id: string;
+  scope_type: string | null;
+  scope_value: string | null;
+  requester: string | null;
+  status: ErasureStatusValue | null;
+  current_step: number | null;
+  requested_at: string | null;
+  completed_at: string | null;
+  failure_reason: string | null;
+  residue_count: number;
+  residue: Record<string, number>;
+  verified_at: string | null;
+}
+
+export async function getErasureStatus(erasureId: string, opts: RequestOpts = {}): Promise<ErasureStatus> {
+  return post("/v1/erasure.status", { erasure_id: erasureId }, opts.signal);
+}
+
+/** Mirrors `server/memory/api/models_crud.py::MemoryClearOutput`. */
+export interface MemoryClearResult {
+  /** Rows tombstoned per table; `loom.memory` is the memories. */
+  rows_affected: Record<string, number>;
+  total: number;
+  locked_skipped: number;
+}
+
+/** POST /v1/memory.clear: tombstones every memory one agent holds in the namespace
+ *  (restorable for 14 days). The agent is sent again as the server's `confirm_subject`. */
+export async function clearAgentMemories(
+  id: Pick<Identity, "org" | "namespace">,
+  agent: string,
+  signal?: AbortSignal,
+): Promise<MemoryClearResult> {
+  return post("/v1/memory.clear", { org: id.org, namespace: id.namespace, agent, confirm_subject: agent }, signal);
+}
+
+/** One (token, agent) that read the namespace: `server/memory/api/models_exposure.py`. */
+export interface ExposureRow {
+  actor: string;
+  agent: string;
+  distinct_keys: number;
+  calls: number;
+  /** distinct_keys / the namespace's live memories. */
+  fraction: number;
+  first_hour: string;
+  last_hour: string;
+}
+
+/** Mirrors `server/memory/api/models_exposure.py::MemoryOwnerReportOutput` (the parts shown). */
+export interface OwnerReport {
+  user_id: string;
+  live_rows: number;
+  reads: { namespace: string; agent: string; actor: string; calls: number; distinct_keys: number; last_read: string }[];
+}
+
+/** The readers an owner report lists, the most frequent first. */
+export const OWNER_READS = 50;
+/** The window an owner report reads, in hours: 30 days. */
+export const OWNER_REPORT_HOURS = 720;
+
+/** POST /v1/memory.owner_report: one user's memory in this namespace and who read it. */
+export async function getOwnerReport(
+  id: Pick<Identity, "org" | "namespace">,
+  userId: string,
+  opts: RequestOpts = {},
+): Promise<OwnerReport> {
+  return post(
+    "/v1/memory.owner_report",
+    { org: id.org, namespace: id.namespace, user_id: userId, since_hours: OWNER_REPORT_HOURS, limit: OWNER_READS },
+    opts.signal,
+  );
+}
+
+/** Mirrors `server/memory/api/models_exposure.py::ExposureSummaryOutput`. */
+export interface ExposureSummary {
+  /** The namespace's live memories: what `fraction` divides by. */
+  namespace_rows: number;
+  rows: ExposureRow[];
+}
+
+/** POST /v1/memory.exposure_summary: how many distinct memories each reader read, the
+ *  `limit` widest first. */
+export async function getExposureSummary(
+  id: Pick<Identity, "org" | "namespace">,
+  sinceHours: number,
+  limit: number,
+  opts: RequestOpts = {},
+): Promise<ExposureSummary> {
+  return post(
+    "/v1/memory.exposure_summary",
+    { org: id.org, namespace: id.namespace, since_hours: sinceHours, limit },
+    opts.signal,
+  );
+}
+
+/** One section of an export: its rows, and whether `section_limit` cut it. */
+export interface ErasureExportSection {
+  rows: Record<string, unknown>[];
+  count: number;
+  truncated: boolean;
+}
+
+/** Mirrors `server/erasure/api/erasure.py::ErasureExportOutput`. */
+export interface ErasureExport {
+  exported_at: string;
+  counts: Record<string, number>;
+  memory: ErasureExportSection;
+  knowledge: ErasureExportSection;
+  conversations: ErasureExportSection;
+  conversation_threads: ErasureExportSection;
+  agent_events: ErasureExportSection;
+  audit_log: ErasureExportSection;
+}
+
+/** POST /v1/erasure.export: what Loom holds for the scope, as one JSON object. */
+export async function exportErasureScope(
+  org: string,
+  scope: ErasureScope,
+  requester: string,
+  sectionLimit: number,
+  signal?: AbortSignal,
+): Promise<ErasureExport> {
+  return post("/v1/erasure.export", { org, ...scope, requester, section_limit: sectionLimit }, signal);
+}
+
 // ===== Extraction Quality =====
 
 export interface ExtractionQualityRow {

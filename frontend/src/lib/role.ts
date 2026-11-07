@@ -40,6 +40,7 @@ import type { MyNamespaceEntry, NamespaceInfo, WhoAmI } from "../api";
  * vanishing on a transient failure.
  */
 
+const WRITER_CLAIMS = new Set(["writer", "admin", "org_admin", "platform_admin"]);
 const ADMIN_CLAIMS = new Set(["admin", "org_admin", "platform_admin"]);
 const ORG_ADMIN_CLAIMS = new Set(["org_admin", "platform_admin"]);
 const PLATFORM_ADMIN_CLAIMS = new Set(["platform_admin"]);
@@ -48,6 +49,12 @@ function claimIn(whoami: WhoAmI | null, claims: ReadonlySet<string>): boolean {
   if (!whoami) return false;
   if (!whoami.authenticated) return true;
   return (whoami.roles || []).some((r) => claims.has(r.toLowerCase()));
+}
+
+/** The flat claim reaches WRITER: what an op authorized for the org (`skip_namespace_authz`)
+ *  at WRITER checks before its handler reads any grant. */
+export function hasWriterClaim(whoami: WhoAmI | null): boolean {
+  return claimIn(whoami, WRITER_CLAIMS);
 }
 
 export function hasAdminClaim(whoami: WhoAmI | null): boolean {

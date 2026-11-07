@@ -186,10 +186,19 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "plugin_hook",
     ),
-    "erasure.export": ("sdk_method",),
+    "erasure.export": (
+        "sdk_method",
+        "dashboard",
+    ),
     "erasure.list": ("dashboard",),
-    "erasure.request": ("sdk_method",),
-    "erasure.status": ("sdk_method",),
+    "erasure.request": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "erasure.status": (
+        "sdk_method",
+        "dashboard",
+    ),
     "facts.list": (
         "sdk_method",
         "dashboard",
@@ -307,7 +316,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "memory.bulk_set": ("sdk_method",),
-    "memory.clear": ("sdk_method",),
+    "memory.clear": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.copy_to": ("dashboard",),
     "memory.dedup_collapse": ("sdk_method",),
     "memory.dedup_list": ("sdk_method",),
@@ -319,6 +331,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "memory.demonstrate": ("sdk_method",),
     "memory.demote": ("sdk_method",),
+    "memory.exposure_summary": ("dashboard",),
     "memory.extraction_status": ("sdk_method",),
     "memory.for_file": ("plugin_hook",),
     "memory.get": (
@@ -353,6 +366,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.move": ("dashboard",),
     "memory.outcome": ("sdk_method",),
     "memory.outcome_run": ("sdk_method",),
+    "memory.owner_report": ("dashboard",),
     "memory.pin": (
         "sdk_method",
         "dashboard",
