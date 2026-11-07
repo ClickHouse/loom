@@ -289,7 +289,7 @@ async def _loom_primer_text(
             from server.memory.app.profile import handle_profile_render
 
             # fills the snapshot the row reads; no gate classified this default
-            if await is_restricted(defaults["org"], defaults["namespace"]):
+            if auth is not None and await is_restricted(defaults["org"], defaults["namespace"]):
                 bound = current_auth_var.set(auth)  # the row's token_id column
                 try:
                     await note_restricted_access(

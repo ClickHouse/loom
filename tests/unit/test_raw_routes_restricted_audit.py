@@ -62,6 +62,7 @@ def audit_rows(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, dict
         namespaces=(NS, PLAIN),
         roles=(Role.WRITER,),
         is_service_account=False,
+        token_id="tok-alice",
     )
     monkeypatch.setattr("server.auth.bearer.verify_token", lambda token: alice)
     yield rows
@@ -80,6 +81,7 @@ def _assert_one_row(rows: list[tuple[str, dict[str, Any]]], op: str, namespace: 
     assert (kw["org"], kw["namespace"]) == (ORG, namespace)
     assert kw["subject"]["op"] == op and kw["subject"]["transport"] == "http"
     assert kw["actor"] == actor_for("alice", is_service_account=False)  # the caller
+    assert (kw["subject"]["roles"], kw["subject"]["token_id"]) == (["writer"], "tok-alice")
 
 
 class _Directory:
@@ -577,6 +579,28 @@ async def test_the_mcp_primer_profile_read_of_a_standard_namespace_writes_no_row
     )
     await mcp_primer._loom_primer_text(alice, defaults={"org": ORG, "namespace": PLAIN})
     assert audit_rows == []
+
+
+@pytest.mark.asyncio
+async def test_a_mint_of_two_restricted_namespaces_writes_a_row_for_each(
+    monkeypatch: pytest.MonkeyPatch, mint_env: Any, audit_rows: list[Any]
+) -> None:
+    me_service_accounts, _ = mint_env
+
+    async def _both(org: str, sa_subject: str, creator: str, ns_roles: Any) -> list[str]:
+        return [NS, "vault-2"]
+
+    monkeypatch.setattr(token_grants, "grant_restricted_to_token", _both)
+    monkeypatch.setitem(nc._cache, ORG, (1e12, frozenset({NS, "vault-2"})))
+    async with _client(me_service_accounts) as c:
+        r = await c.post(
+            "/v1/me/service_accounts.create",
+            json={"name": "bot", "namespaces": [NS]},
+            headers=BEARER,
+        )
+    assert r.status_code == 200, r.text
+    rows = sorted((kw["namespace"], kw["subject"]["granted_to"]) for _, kw in audit_rows)
+    assert rows == [(NS, r.json()["sa_subject"]), ("vault-2", r.json()["sa_subject"])]
 
 
 # The checks that admit a caller to a namespace outside the op transport.

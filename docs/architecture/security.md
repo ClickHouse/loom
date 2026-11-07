@@ -283,13 +283,14 @@ No org-readable rule, `visibility=public`, `org_admin` or `platform_admin` bypas
 refusal is the generic "cannot access". If the classification cannot be read, access is
 denied.
 
-Every request admitted to the restricted namespace it names, through an op or a raw
-route, writes a `namespace.restricted_access` audit row; an inbox watch writes it for the
-inbox's owner namespace, the MCP primer (audit `op` `mcp.primer`) for the default
-namespace whose profile it renders. A read an op handler admits on a row's own namespace
-(by id) writes none ([tokens and grants](../guides/tokens-and-grants.md)). Code search
-traces keep only the query digest. Neither the audit row nor the digest-only trace can be
-switched off.
+Every request admitted to the restricted namespace it names, through an op or a raw route,
+writes a `namespace.restricted_access` audit row; an inbox watch writes it for the inbox's
+owner namespace, the MCP primer (audit `op` `mcp.primer`) for the default namespace whose
+profile it renders, and a delegated token mint one for each restricted namespace it grants
+the new token (naming it as `granted_to`). A read an op handler admits on a row's own
+namespace (by id) writes none ([tokens and grants](../guides/tokens-and-grants.md)). Code
+search traces keep only the query digest. Neither the audit row nor the digest-only trace
+can be switched off.
 
 | Setting                        | Default | Effect                                                            |
 | ------------------------------ | ------- | ----------------------------------------------------------------- |
