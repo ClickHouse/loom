@@ -7,10 +7,10 @@ boolean setting that loads false. Both tables are generated from the code: each 
 
 ## Operations
 
-- **Stable** ops are [listed under the MCP `all` toolset](./operations.md#mcp-all-listing);
-  one hidden from MCP must be reached by an SDK method, an example, a plugin hook or the
-  dashboard (the reach census fails it otherwise). They are meant to have production
-  callers.
+- **Stable** ops are [listed under the MCP `all` toolset](./operations.md#mcp-all-listing)
+  (the `code.*` ops also need `LOOM_MCP_CODE_TOOLS=true`); one hidden from MCP must be
+  reached by an SDK method, an example, a plugin hook or the dashboard (the reach census
+  fails it otherwise). They are meant to have production callers.
 - **Experimental** ops may have no production callers yet. One not hidden from MCP is still
   callable by name, and one a toolset names is listed on it (on core or atomic, also under
   `all`; [MCP toolsets](./mcp.md#toolsets)).

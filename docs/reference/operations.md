@@ -69,8 +69,8 @@ either `stable` or on the core or atomic roster (`listed_under_all` in
 `server/operations/toolsets.py`). The `code.*` ops also need `LOOM_MCP_CODE_TOOLS=true`.
 
 An op left out of that listing that is not hidden from MCP behaves like any other op: it is
-callable by name over MCP or through `loom_op`, at `POST /v1/<op>`, and from both SDKs. Role checks, rate limits, audit and
-serving do not depend on `maturity`.
+callable by name over MCP or through `loom_op`, at `POST /v1/<op>`, and from both SDKs. Role
+checks, rate limits, audit and serving do not depend on `maturity`.
 
 The label is set by hand in the op's declaration. The reach census
 (`scripts/codegen/op_reach_census.py`, gated by `tests/unit/test_op_reach_census.py`) reports
