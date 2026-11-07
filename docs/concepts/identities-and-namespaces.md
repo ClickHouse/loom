@@ -347,7 +347,8 @@ How a caller gets a token at all is the deployment's identity mode
   laptop only.
 - **`trust-network`**: self-signup with email and password; the first principal to
   claim a namespace name owns it. An agent can sign itself up (`loom init --agent`) and a
-  person claims it later with a one-time code.
+  person claims it later with the code it printed, which works once and is replaced by the
+  person's own password.
 - **`gateway`**: an upstream identity layer authenticates people and mints short-lived
   Loom tokens with the shared secret; Loom only verifies. A subject in
   `LOOM_TRUSTED_CALLERS` may act for an end user with `X-Loom-On-Behalf-Of`, and every

@@ -13731,7 +13731,7 @@
     },
     {
      "dest": "init",
-     "help": "Create an identity on a Loom server. `--agent NAME` signs an agent up by itself (server needs LOOM_SELF_SIGNUP=open): mints a writer token on a fresh agent-<slug> namespace, saves it to ~/.loom/token, and prints the one-time code a person uses in the dashboard to claim the namespace.",
+     "help": "Create an identity on a Loom server. `--agent NAME` signs an agent up by itself (server needs LOOM_SELF_SIGNUP=open): mints a writer token on a fresh agent-<slug> namespace, saves it to ~/.loom/token, and prints the claim code a person enters once, with a password of their own, to claim the namespace.",
      "metavar": "init"
     },
     {

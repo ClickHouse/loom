@@ -461,6 +461,7 @@ from server.auth import login as _login  # noqa: E402
 from server.auth import oauth as _oauth  # noqa: E402
 from server.auth import scim_routes as _scim_routes  # noqa: E402
 from server.auth import self_signup as _self_signup  # noqa: E402
+from server.identity.app import agent_claim as _agent_claim  # noqa: E402
 from server.identity.app import claim_release as _claim_release  # noqa: E402
 from server.identity.app import password_link as _password_link  # noqa: E402
 from server.identity.app import scim_groups as _scim_groups  # noqa: E402
@@ -471,6 +472,7 @@ _claim_release.attach(app)
 # Sign-in (device grant, SSO) wherever auth is on; MCP connect only with LOOM_OAUTH_ENABLED.
 _oauth.attach(app)
 _password_link.attach(app)
+_agent_claim.attach(app)
 # SCIM Groups, pushed per org with an org admin's token; ahead of the Users
 # routes, whose catch-all would answer its paths.
 _scim_groups.attach(app)

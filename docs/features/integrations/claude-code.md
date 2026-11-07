@@ -140,8 +140,8 @@ Every option is optional; Claude Code asks once, and an empty answer falls back 
   when no other token exists (`LOOM_API_KEY`, `config.json`, `~/.loom/token`).
 - **No credential at all.** On a server with `LOOM_SELF_SIGNUP=open`, the first session
   signs the machine up: token to `~/.loom/config.json`, a claim code to
-  `~/.loom/claim-<namespace>.txt`, and the primer says how to claim the namespace in
-  the dashboard. `LOOM_AUTO_SIGNUP=off` disables this. Otherwise the primer says how to get a token.
+  `~/.loom/claim-<namespace>.txt`, and the primer says how to claim the namespace (once,
+  at `/oauth/agent-claim`, with a password of your own). `LOOM_AUTO_SIGNUP=off` disables this. Otherwise the primer says how to get a token.
 - **One MCP entry only.** Do not add a user-scope `loom` entry as well: every tool would
   be listed twice, and that copy carries no code scope.
 

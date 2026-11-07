@@ -318,6 +318,13 @@ in [deployment](../operations/deployment.md). Never expose `single-user` beyond 
 local machine: auth is off. In `trust-network`, passwords are argon2id and there is no
 email verification or password reset. In `gateway`, Loom never sees a password.
 
+**Agent claims.** An agent's sign-up stores its claim code's hash under a `claim:` prefix,
+which no password sign-in accepts: until a person claims the namespace, only the agent's own
+service-account token acts in it. The claim page (`server/identity/app/agent_claim.py`)
+checks the code under the password sign-in limits and, holding the account from read to
+write, replaces it with the claimer's own password. A second claim finds no code and is
+refused, so whoever kept a copy of the code cannot sign in as the namespace afterwards.
+
 **Impersonation.** A subject in `LOOM_TRUSTED_CALLERS` may send `X-Loom-On-Behalf-Of`
 over HTTP to act as another principal. The header's subject becomes the effective
 subject, and `impersonated_by` records the caller on its `agent_events` rows.
