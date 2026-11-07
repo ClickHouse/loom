@@ -103,9 +103,11 @@ export function resumeSsoOnce(now: number = Date.now()): boolean {
  *  provider returns to the page they were on. */
 function SsoGate({ reason }: { reason?: GateReason }) {
   useEffect(() => {
-    // After a sign-out the ask starts nothing: the person chose to leave.
+    // An explicit ask (`?sign_in=sso`, scrubbed here) takes a click on another page each time,
+    // so it cannot loop and needs no loop guard; after a sign-out it starts nothing, since the
+    // person chose to leave. The resume after an expired session is the guarded one.
     const asked = takeSsoRequest() && !signedOut();
-    if ((reason !== "expired" && !asked) || !resumeSsoOnce()) return;
+    if (!asked && (reason !== "expired" || !resumeSsoOnce())) return;
     goToSso(rememberSignInStart());
   }, [reason]);
   return (

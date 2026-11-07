@@ -616,7 +616,8 @@ def _sign_in_unavailable(restart: str) -> Response:
 def _restart_url(pending: dict[str, Any]) -> str:
     """Where the sign-in `pending` carries began, to begin it once more."""
     if pending["kind"] == "dashboard":
-        # The dashboard's gate, which starts the sign-in again with a fresh tab nonce.
+        # The dashboard's gate, which starts the sign-in again with a fresh tab nonce (each
+        # time, since every restart is a click here) unless the person signed out.
         return "/me?sign_in=sso"
     if pending["kind"] == "device":
         return "/oauth/device?" + urlencode({"user_code": pending["user_code"]})

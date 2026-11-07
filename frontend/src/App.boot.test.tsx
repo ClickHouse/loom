@@ -696,13 +696,19 @@ describe("login link", () => {
 
   /** whoami answers for the bearer each call carries: `alice` is accepted; `link` is refused
    *  (`authenticated: false`) or unanswered (a network error). */
-  function serveWhoami(link: string, answer: "accept" | "refuse" | "throw", seen: number[]) {
+  function serveWhoami(link: string, answer: "accept" | "refuse" | "throw" | "busy", seen: number[]) {
     vi.mocked(fetch).mockImplementation(async (input, init) => {
       if (!String(input).includes("/v1/whoami")) return json(GENERIC);
       const bearer = new Headers(init?.headers).get("Authorization");
       if (bearer === `Bearer ${link}`) {
         seen.push(stored.length); // what was stored when the link's token was asked about
         if (answer === "throw") throw new TypeError("Failed to fetch");
+        // A replica whose keys are still loading answers 503 once, then accepts.
+        if (answer === "busy" && seen.length === 1)
+          return new Response(JSON.stringify({ error: "unavailable" }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          });
         if (answer === "refuse") return json({ authenticated: false });
       }
       return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
@@ -727,6 +733,21 @@ describe("login link", () => {
       expect(screen.queryByText(/Sign in from a link/)).toBeNull();
     });
   }
+
+  it("asks again while whoami answers 503 for a same-account link, then stores it", async () => {
+    localStorage.setItem("loom_token_v1", alice);
+    stored = [];
+    const again = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], iat: 4 });
+    const seen: number[] = [];
+    serveWhoami(again, "busy", seen);
+    window.history.replaceState(null, "", `/me#token=${again}`);
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null, 10_000);
+    expect(seen.length).toBeGreaterThanOrEqual(2);
+    expect(seen.slice(0, 2)).toEqual([0, 0]); // both asks before anything was stored
+    expect(stored).toEqual([again]);
+    expect(localStorage.getItem("loom_token_v1")).toBe(again);
+  });
 
   it("stores a same-account link's token without asking, once whoami accepts it", async () => {
     localStorage.setItem("loom_token_v1", alice);

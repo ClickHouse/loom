@@ -18,7 +18,6 @@ import {
   setPageOwner,
   signedOut,
   storedToken,
-  whoami,
   type MyNamespaceEntry,
 } from "./api";
 import {
@@ -337,7 +336,7 @@ export default function App() {
           if (token && (isProxyMode() || isAuthDisabled())) link = { ...link, token: null };
           else if (token && !started) {
             if (sameAccount(token, storedToken())) {
-              const accepted = await whoami(token).then(
+              const accepted = await whoamiWhenReady(token).then(
                 (w) => w.authenticated,
                 () => false,
               );

@@ -229,6 +229,18 @@ describe("TokenGate", () => {
       expect(vi.mocked(goToSso).mock.calls[0][0]).not.toBe(nonce);
     });
 
+    it("starts on an explicit ask though a sign-in started on its own minutes ago", () => {
+      window.__LOOM_SSO = true;
+      resumeSsoOnce(); // the loop guard is set: an expired session would wait for a click
+      expect(sessionStorage.getItem("loom_sso_resumed_v1")).not.toBeNull();
+      history.replaceState(null, "", "/me?sign_in=sso");
+      render(<TokenGate onLogin={() => undefined} reason="expired" />);
+      const { nonce } = JSON.parse(sessionStorage.getItem(SIGN_IN_PENDING) ?? "{}");
+      expect(goToSso).toHaveBeenCalledTimes(1);
+      expect(goToSso).toHaveBeenCalledWith(nonce);
+      history.replaceState(null, "", "/");
+    });
+
     it("after a sign-out the session-expired card's address starts no sign-in", () => {
       window.__LOOM_SSO = true;
       localStorage.setItem("loom_signed_out_v1", "1");

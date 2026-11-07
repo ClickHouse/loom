@@ -40,12 +40,13 @@ export function endSession(lost = storedToken()): void {
 
 /** whoami, asked again while the replica answers 503 (its signing keys still loading, the
  *  token may be fine): up to five more times, a second apart (the server's own Retry-After
- *  is 5 s), before boot gives up. */
-export async function whoamiWhenReady(): Promise<WhoAmI> {
+ *  is 5 s), before boot gives up. With `asToken`, about that token instead of the stored one,
+ *  which stays as it is. */
+export async function whoamiWhenReady(asToken?: string): Promise<WhoAmI> {
   const asked = storedToken();
   for (let attempt = 1; ; attempt++) {
     try {
-      return await whoami();
+      return await whoami(asToken);
     } catch (e) {
       // Only a 503 (an ApiError's status; any other error has none) is asked again.
       if (storedToken() === asked && (attempt >= 6 || (e as ApiError).status !== 503)) throw e;
