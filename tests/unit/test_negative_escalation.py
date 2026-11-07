@@ -1,9 +1,10 @@
 """Unit: negative-outcome escalation in handle_memory_outcome.
 
 Below the threshold, a negative is counted but the memory is untouched. At the
-threshold, it's auto-quarantined: a `rejected` version row on loom.memory and
-on its vector row, no in-place UPDATE. Uses a stub CH; the threshold is a
-settings knob (default 0 = off)."""
+threshold, an unlocked memory is auto-quarantined: a `rejected` version row on
+loom.memory and on its vector row, no in-place UPDATE. A locked one, or a locked copy
+in another session, is left as it is. Uses a stub CH; the threshold is a settings
+knob (default 0 = off)."""
 
 from __future__ import annotations
 
@@ -176,16 +177,18 @@ async def test_a_quarantine_leaves_a_locked_copy_in_another_session(monkeypatch)
 
 
 async def test_a_lock_taken_after_the_outcome_read_still_holds(monkeypatch):
-    # Unlocked when the outcome read it, locked by the time the reject reads it.
+    # Unlocked when the outcome read it, locked by the time the reject reads it; its
+    # unlocked copy in another session is rejected, but the named memory was not.
     ch = _wire_quarantine(
         monkeypatch,
-        {"mid-s1": _session_row("s1", lock_mode="read_only")},
+        {"mid-s1": _session_row("s1", lock_mode="read_only"), "mid-s2": _session_row("s2")},
         outcome_reads={"mid-s1": _session_row("s1")},
     )
 
     out = await ops.handle_memory_outcome(_negative())
     assert out.quarantined is False
-    assert [t for t, _ in ch.inserts] == ["loom.memory_usage_events"]
+    (rows,) = [rows for t, rows in ch.inserts if t == "loom.memory"]
+    assert [(r["session_id"], r["status"]) for r in rows] == [("s2", "rejected")]
 
 
 async def test_negative_below_threshold_does_not_quarantine(monkeypatch):

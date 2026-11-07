@@ -173,7 +173,7 @@ def test_no_delete_and_a_lapsing_lock(writer: httpx.Client, ns: str) -> None:
         lambda: _post(writer, "memory.get", _ident(ns, memory_key=key)).json()["lock_mode"] == "",
         max_wait=15,
         interval=0.25,
-        description="the 3 s lock to lapse",
+        description="the 5 s lock to lapse",
     )
     r = _post(writer, "memory.delete", _ident(ns, memory_key=key))
     assert r.status_code == 200 and r.json()["tombstoned"] is True

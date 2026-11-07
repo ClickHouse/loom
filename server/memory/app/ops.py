@@ -151,6 +151,16 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
                     params={"org": input.org, "ns": input.namespace, "mid": memory_id},
                 )
                 if idr:
+                    # A lock that lands on the named row after the read above leaves it
+                    # too: then the named row was not quarantined, whatever its copies were.
+                    left: set[str] = set()
+
+                    def leave_locked(r: Any) -> bool:
+                        if refuses_retirement(r):
+                            left.add(str(r.memory_id))
+                            return True
+                        return False
+
                     written = await reject_by_identity(
                         input.org,
                         input.namespace,
@@ -158,10 +168,10 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
                         str(idr["user_id"]),
                         str(idr["memory_key"]),
                         f"auto-quarantine: {int((cnt or {}).get('n') or 0)} negative outcomes",
-                        skip=refuses_retirement,
+                        skip=leave_locked,
                         ch=ch,
                     )
-                    quarantined = written > 0
+                    quarantined = written > 0 and memory_id not in left
 
     usage = await ch.query_one(
         """
