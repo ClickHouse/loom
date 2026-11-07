@@ -59,6 +59,8 @@ class _MockServer:
         self.lookup_status = 200
         self.total_pages = 1
         self.omit_total_pages = False
+        # The server version the health probe reports; it picks the lookup.
+        self.langfuse_version = "3.227.0"
 
     async def handler(self, request: httpx.Request) -> httpx.Response:
         body = None
@@ -77,6 +79,13 @@ class _MockServer:
                 "body": body,
             }
         )
+        if request.method == "GET" and "/api/public/health" in str(request.url):
+            return httpx.Response(200, json={"status": "OK", "version": self.langfuse_version})
+        if request.method == "GET" and "/api/public/v2/observations" in str(request.url):
+            if self.lookup_status != 200:
+                return httpx.Response(self.lookup_status, json={})
+            rows = [{"id": f"o-{t}", "traceId": t} for t in self.trace_ids]
+            return httpx.Response(200, json={"data": rows, "meta": {}})
         # Langfuse erasure is query-then-delete, so a GET of /traces must return
         # a page shaped like the real API. `trace_ids` is what the lookup finds.
         if request.method == "GET" and "/api/public/traces" in str(request.url):
@@ -167,7 +176,7 @@ async def test_langfuse_delete_user_finds_then_deletes_traces(mock_server) -> No
     n = await backend.delete_user_id("ch", "alice@x.com")
     assert n == 3
 
-    lookup = next(c for c in mock_server.calls if c["method"] == "GET")
+    lookup = next(c for c in mock_server.calls if "/api/public/traces" in c["url"])
     assert "userId=alice%40x.com" in lookup["url"] or "userId=alice@x.com" in lookup["url"]
     deleted = [c for c in mock_server.calls if c["method"] == "DELETE"]
     assert len(deleted) == 1
@@ -178,17 +187,31 @@ async def test_langfuse_delete_user_finds_then_deletes_traces(mock_server) -> No
 
 
 @pytest.mark.asyncio
-async def test_langfuse_delete_is_idempotent_via_the_lookup(mock_server) -> None:
+async def test_langfuse_4_finds_traces_through_observations(mock_server) -> None:
+    """Langfuse 4 answers 404 to the trace list; the lookup reads the
+    observations list instead, filtered by the org tag and the user id."""
+    mock_server.langfuse_version = "4.76.0"
+    mock_server.trace_ids = ["t1", "t2"]
+    backend = LangfuseBackend("http://lf.local", "tok", 5.0)
+    assert await backend.delete_user_id("ch", "alice@x.com") == 2
+    assert all("/api/public/traces?" not in c["url"] for c in mock_server.calls)
+    lookup = next(c for c in mock_server.calls if "/api/public/v2/observations" in c["url"])
+    assert "alice%40x.com" in lookup["url"] and "org%3Ach" in lookup["url"]
+    deleted = [c for c in mock_server.calls if c["method"] == "DELETE"]
+    assert deleted[0]["body"] == {"traceIds": ["t1", "t2"]}
+
+
+@pytest.mark.asyncio
+async def test_langfuse_rerun_with_nothing_found_issues_no_delete(mock_server) -> None:
     """A re-run must not fail, and must not fake success either.
 
-    `erasure_recovery` re-runs failed sagas, so a repeat pass has to be safe. The
-    idempotency comes from the LOOKUP: the second run finds no matching traces and
-    returns 0 without issuing a delete at all.
+    `erasure_recovery` re-runs failed sagas, so a repeat pass has to be safe. A
+    re-run whose lookup finds no matching traces returns 0 without issuing a
+    delete at all.
 
-    It does NOT come from treating 404 on the delete as success, which would
-    fail open. The bulk endpoint
-    returns 200 even for ids that do not exist, so a 404 means the endpoint is
-    missing and nothing was deleted.
+    Idempotency does NOT come from treating 404 on the delete as success, which
+    would fail open. The bulk endpoint returns 200 even for ids that do not
+    exist, so a 404 means the endpoint is missing and nothing was deleted.
     """
     mock_server.trace_ids = []
     backend = LangfuseBackend("http://lf.local", "tok", 5.0)
@@ -226,7 +249,7 @@ async def test_langfuse_user_erasure_is_scoped_to_the_org(mock_server) -> None:
     mock_server.trace_ids = ["t1"]
     backend = LangfuseBackend("http://lf.local", "tok", 5.0)
     await backend.delete_user_id("clickhouse", "alice@x.com")
-    lookup = next(c for c in mock_server.calls if c["method"] == "GET")
+    lookup = next(c for c in mock_server.calls if "/api/public/traces" in c["url"])
     assert "org%3Aclickhouse" in lookup["url"], (
         f"user erasure must be org-scoped; got {lookup['url']}"
     )
@@ -328,7 +351,7 @@ async def test_langfuse_namespace_deletes_by_tag_scoped_to_the_org(
     n = await backend.delete_namespace("clickhouse", "eng-tooling")
     assert n == 2
 
-    lookup = next(c for c in mock_server.calls if c["method"] == "GET")
+    lookup = next(c for c in mock_server.calls if "/api/public/traces" in c["url"])
     assert "namespace%3Aeng-tooling" in lookup["url"]
     assert "org%3Aclickhouse" in lookup["url"], (
         "namespace erasure must be scoped to the org, or it can delete another "
