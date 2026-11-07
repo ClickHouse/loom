@@ -8,16 +8,17 @@ cross-cutting tables); handlers are dispatch+adapt only.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import urlsplit
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from server.core.ch import set_query_tag
 from server.core.paths import MIGRATIONS_DIR
+from server.erasure.app.backends import ErasureBackendError, LangfuseBackend
 from server.insights.app.admin_models import (
     AuditSummaryInput,
     AuditSummaryOutput,
@@ -681,56 +682,25 @@ async def admin_fleet_cost(input: FleetCostInput) -> FleetCostOutput:
 # ============================================================
 
 
-# The traces and scores one evaluation reads; one page each keeps the gate cheap.
+# The traces one evaluation reads, and the scores it reads per trace.
 _EVAL_TRACES = 200
-
-
-async def _traces_tagged(c: Any, backend: Any, base: str, tag: str, major: int) -> list[str]:
-    """Up to `_EVAL_TRACES` trace ids carrying `tag`.
-
-    Langfuse 3 lists traces by tag; Langfuse 4 has no trace list, so the tag is
-    matched on observations and their trace ids are taken in order."""
-    headers = backend.auth_headers
-    if major >= 4:
-        flt = [{"type": "arrayOptions", "column": "tags", "operator": "all of", "value": [tag]}]
-        r = await c.get(
-            f"{base}/api/public/v2/observations",
-            headers=headers,
-            params={"fields": "core", "limit": 1000, "filter": json.dumps(flt)},
-        )
-        r.raise_for_status()
-        ids = dict.fromkeys(
-            str(o["traceId"]) for o in r.json().get("data") or [] if o.get("traceId")
-        )
-        return list(ids)[:_EVAL_TRACES]
-    r = await c.get(
-        f"{base}/api/public/traces",
-        headers=headers,
-        params={"tags": tag, "limit": _EVAL_TRACES, "fields": "core"},
-    )
-    r.raise_for_status()
-    return [str(t["id"]) for t in r.json().get("data") or [] if t.get("id")]
+_EVAL_SCORES_PER_TRACE = 10
 
 
 async def _rubric_scores(
-    c: Any, backend: Any, base: str, trace_ids: list[str], rubric: str, major: int
+    c: httpx.AsyncClient, backend: LangfuseBackend, trace_ids: list[str], rubric: str
 ) -> list[float]:
     """The numeric `rubric` scores on each trace. Langfuse 4 serves the score
-    list only under `/api/public/v3/scores`."""
-    path = "/api/public/v3/scores" if major >= 4 else "/api/public/scores"
+    list only under `/api/public/v3/scores`. A failed read raises, so the caller
+    answers 502 rather than reporting that no scores exist."""
+    path = "/api/public/v3/scores" if await backend.api_major(c) >= 4 else "/api/public/scores"
     scores: list[float] = []
     for tid in trace_ids:
-        try:
-            r = await c.get(
-                f"{base}{path}",
-                headers=backend.auth_headers,
-                params={"traceId": tid, "name": rubric, "limit": 10},
-            )
-            r.raise_for_status()
-            rows = r.json().get("data") or []
-        except Exception:  # noqa: BLE001 — one trace's score read failing skips that trace
-            continue
-        for row in rows:
+        r = await backend.get_retried(
+            c, path, {"traceId": tid, "name": rubric, "limit": _EVAL_SCORES_PER_TRACE}
+        )
+        r.raise_for_status()
+        for row in r.json().get("data") or []:
             try:
                 scores.append(float(row.get("value")))
             except (TypeError, ValueError):
@@ -746,10 +716,6 @@ async def admin_prompts_evaluate(input: PromptsEvaluateInput) -> PromptsEvaluate
     linked to that prompt version carries the tag) and applies the
     (min_evals, threshold) gate to their `rubric` scores. Never mutates Langfuse.
     """
-    import httpx
-
-    from server.erasure.app.backends import ErasureBackendError, LangfuseBackend
-
     name = input.prompt_name
     version = input.prompt_version
     rubric = input.rubric
@@ -771,13 +737,11 @@ async def admin_prompts_evaluate(input: PromptsEvaluateInput) -> PromptsEvaluate
     backend = LangfuseBackend(
         settings.langfuse_url, settings.langfuse_admin_token, settings.langfuse_timeout_s
     )
-    base = settings.langfuse_url.rstrip("/")
     tag = f"prompt:{name}:{version}"
     try:
         async with httpx.AsyncClient(timeout=settings.langfuse_timeout_s) as c:
-            major = await backend.api_major(c)
-            trace_ids = await _traces_tagged(c, backend, base, tag, major)
-            scores = await _rubric_scores(c, backend, base, trace_ids, rubric, major)
+            trace_ids = await backend.find_trace_ids(c, tags=[tag], first=_EVAL_TRACES)
+            scores = await _rubric_scores(c, backend, trace_ids, rubric)
     except (ErasureBackendError, httpx.HTTPError, ValueError) as e:
         log.exception("prompt eval: Langfuse read failed for %s", tag)
         raise HTTPException(

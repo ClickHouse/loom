@@ -351,6 +351,11 @@ def _may_capture(stage: str) -> bool:
     return _stage_carries(stage) == "query"
 
 
+def _identity_tags(ident: dict[str, str]) -> list[str]:
+    """The `org:` and `namespace:` trace tags; erasure finds a tenant's traces by them."""
+    return [f"{k}:{ident[k]}" for k in ("org", "namespace") if ident.get(k)]
+
+
 def _stamp_identity(span: Any) -> None:
     """Put tenant + Langfuse identity on a provider span."""
     ident = _identity.get()
@@ -372,8 +377,7 @@ def _stamp_identity(span: Any) -> None:
         span.set_attribute("langfuse.session.id", ident["session_id"])
     if ident.get("user_id"):
         span.set_attribute("langfuse.user.id", ident["user_id"])
-    tags = [f"org:{ident[k]}" for k in ("org",) if ident.get(k)]
-    tags += [f"namespace:{ident[k]}" for k in ("namespace",) if ident.get(k)]
+    tags = _identity_tags(ident)
     if tags:
         # Langfuse reads tags as a JSON array of strings. `admin.py` and
         # docs/features/integrations/langfuse.md query by these two tag shapes, so
@@ -527,8 +531,7 @@ class _Generation:
                 # The tag `prompts.evaluate` finds the prompt version's traces by,
                 # on Langfuse 3 and 4 alike. Tags are set whole, so the identity
                 # tags are repeated beside it.
-                ident = _identity.get() or {}
-                tags = [f"{k}:{ident[k]}" for k in ("org", "namespace") if ident.get(k)]
+                tags = _identity_tags(_identity.get() or {})
                 self._span.set_attribute(
                     "langfuse.trace.tags", [*tags, f"prompt:{name}:{int(version)}"]
                 )

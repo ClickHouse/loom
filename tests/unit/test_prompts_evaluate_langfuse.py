@@ -5,75 +5,152 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import httpx
 import pytest
+from fastapi import HTTPException
 
 from server.erasure.app.backends import LangfuseBackend
 from server.insights.app import admin_routes
+from server.insights.app.admin_models import PromptsEvaluateInput
+
+_URL = "http://lf"
 
 
 class _Resp:
-    def __init__(self, body: dict[str, Any]) -> None:
+    def __init__(self, status: int, body: dict[str, Any]) -> None:
+        self.status_code = status
         self._body = body
-
-    def raise_for_status(self) -> None:
-        return None
+        self.text = json.dumps(body)
 
     def json(self) -> dict[str, Any]:
         return self._body
 
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            req = httpx.Request("GET", _URL)
+            raise httpx.HTTPStatusError(
+                "error", request=req, response=httpx.Response(self.status_code)
+            )
 
-class _Client:
-    def __init__(self, routes: dict[str, dict[str, Any]]) -> None:
+
+class _Langfuse:
+    """Answers each path with a fixed response, and records the calls."""
+
+    def __init__(self, routes: dict[str, _Resp]) -> None:
         self.routes = routes
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     async def get(self, url: str, headers: Any = None, params: Any = None) -> _Resp:
-        path = url.removeprefix("http://lf")
+        path = url.removeprefix(_URL)
         self.calls.append((path, params or {}))
-        return _Resp(self.routes[path])
+        return self.routes[path]
+
+    async def __aenter__(self) -> _Langfuse:
+        return self
+
+    async def __aexit__(self, *a: Any) -> None:
+        return None
 
 
-_BACKEND = LangfuseBackend("http://lf", "pk-lf-x:sk-lf-x", 5)
+def _health(version: str) -> _Resp:
+    return _Resp(200, {"status": "OK", "version": version})
+
+
+def _scores(*values: Any) -> _Resp:
+    return _Resp(200, {"data": [{"value": v} for v in values]})
+
+
+@pytest.fixture
+def langfuse(monkeypatch: pytest.MonkeyPatch) -> Any:
+    monkeypatch.setattr(admin_routes.settings, "langfuse_url", _URL)
+    monkeypatch.setattr(admin_routes.settings, "langfuse_admin_token", "pk-lf-x:sk-lf-x")
+
+    def install(routes: dict[str, _Resp]) -> _Langfuse:
+        fake = _Langfuse(routes)
+        monkeypatch.setattr(admin_routes.httpx, "AsyncClient", lambda **kw: fake)
+        return fake
+
+    return install
+
+
+def _input() -> PromptsEvaluateInput:
+    return PromptsEvaluateInput(
+        prompt_name="p", prompt_version=3, rubric="relevance", min_evals=3, threshold=0.8
+    )
 
 
 @pytest.mark.asyncio
-async def test_langfuse_4_finds_traces_by_the_tag_on_observations() -> None:
-    c = _Client(
+async def test_langfuse_4_finds_the_tagged_traces_on_observations_and_scores_on_v3(
+    langfuse: Any,
+) -> None:
+    fake = langfuse(
         {
-            "/api/public/v2/observations": {
-                "data": [
-                    {"traceId": "t1"},
-                    {"traceId": "t1"},
-                    {"traceId": "t2"},
-                    {"id": "no-trace"},
-                ]
-            }
+            "/api/public/health": _health("4.76.0"),
+            "/api/public/v2/observations": _Resp(
+                200, {"data": [{"traceId": "t1"}, {"traceId": "t1"}, {"traceId": "t2"}]}
+            ),
+            "/api/public/v3/scores": _scores(0.8, 0.9, "not a number"),
         }
     )
-    ids = await admin_routes._traces_tagged(c, _BACKEND, "http://lf", "prompt:p:3", 4)
-    assert ids == ["t1", "t2"]
-    ((path, params),) = c.calls
-    assert json.loads(params["filter"]) == [
+    out = await admin_routes.admin_prompts_evaluate(_input())
+    assert (out.should_promote, out.eval_count) == (True, 4)
+    flt = json.loads(dict(fake.calls)["/api/public/v2/observations"]["filter"])
+    assert flt == [
         {"type": "arrayOptions", "column": "tags", "operator": "all of", "value": ["prompt:p:3"]}
     ]
+    assert [p for p, _ in fake.calls].count("/api/public/v3/scores") == 2
 
 
 @pytest.mark.asyncio
-async def test_langfuse_3_lists_traces_by_tag() -> None:
-    c = _Client({"/api/public/traces": {"data": [{"id": "t1"}, {"id": "t2"}]}})
-    ids = await admin_routes._traces_tagged(c, _BACKEND, "http://lf", "prompt:p:3", 3)
-    assert ids == ["t1", "t2"]
-    assert c.calls[0][1]["tags"] == "prompt:p:3"
+async def test_langfuse_3_lists_traces_by_tag_and_reads_the_v1_scores(langfuse: Any) -> None:
+    fake = langfuse(
+        {
+            "/api/public/health": _health("3.227.0"),
+            "/api/public/traces": _Resp(
+                200, {"data": [{"id": "t1"}, {"id": "t2"}], "meta": {"totalPages": 1}}
+            ),
+            "/api/public/scores": _scores(0.9),
+        }
+    )
+    out = await admin_routes.admin_prompts_evaluate(_input())
+    assert (out.should_promote, out.eval_count) == (False, 2)
+    assert dict(fake.calls)["/api/public/traces"]["tags"] == ["prompt:p:3"]
+    assert dict(fake.calls)["/api/public/scores"] == {
+        "traceId": "t2",
+        "name": "relevance",
+        "limit": 10,
+    }
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("major", "path"), [(3, "/api/public/scores"), (4, "/api/public/v3/scores")]
+    "routes",
+    [
+        {"/api/public/health": _health("4.76.0"), "/api/public/v2/observations": _Resp(404, {})},
+        {
+            "/api/public/health": _health("4.76.0"),
+            "/api/public/v2/observations": _Resp(200, {"data": [{"traceId": "t1"}]}),
+            "/api/public/v3/scores": _Resp(401, {}),
+        },
+        {"/api/public/health": _Resp(200, {"status": "OK"})},
+    ],
+    ids=["trace lookup fails", "score read fails", "no server version"],
 )
-async def test_scores_are_read_where_each_version_serves_them(major: int, path: str) -> None:
-    c = _Client({path: {"data": [{"value": 0.75}, {"value": "x"}, {"value": None}]}})
-    got = await admin_routes._rubric_scores(
-        c, _BACKEND, "http://lf", ["t1"], "retrieval_relevance", major
-    )
-    assert got == [0.75]
-    assert c.calls == [(path, {"traceId": "t1", "name": "retrieval_relevance", "limit": 10})]
+async def test_a_failed_langfuse_read_answers_502_not_a_verdict(
+    langfuse: Any, routes: dict[str, _Resp]
+) -> None:
+    langfuse(routes)
+    with pytest.raises(HTTPException) as ei:
+        await admin_routes.admin_prompts_evaluate(_input())
+    assert ei.value.status_code == 502
+    assert ei.value.detail["code"] == "BACKEND_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_a_lookup_for_the_first_traces_stops_paging() -> None:
+    backend = LangfuseBackend(_URL, "pk-lf-x:sk-lf-x", 5)
+    backend._major = 4
+    page = _Resp(200, {"data": [{"traceId": f"t{i}"} for i in range(5)], "meta": {"cursor": "c"}})
+    fake = _Langfuse({"/api/public/v2/observations": page})
+    ids = await backend.find_trace_ids(fake, tags=["prompt:p:3"], first=3)  # type: ignore[arg-type]
+    assert ids == ["t0", "t1", "t2"] and len(fake.calls) == 1

@@ -141,11 +141,6 @@ class LangfuseBackend:
         # namespace-list erasure runs one lookup per namespace.
         self._major: int | None = None
 
-    @property
-    def auth_headers(self) -> dict[str, str]:
-        """The Authorization header for another read of the same project."""
-        return dict(self._headers)
-
     # Langfuse has no bulk-by-filter delete, so erasure is query-then-delete:
     # find the matching trace ids, then delete them in batches. Bounded so a
     # runaway filter cannot loop forever on a GDPR path that must terminate.
@@ -181,7 +176,7 @@ class LangfuseBackend:
         """
         if self._major is not None:
             return self._major
-        r = await self._get_retried(c, "/api/public/health", {})
+        r = await self.get_retried(c, "/api/public/health", {})
         version = ""
         if r.status_code == 200:
             try:
@@ -199,17 +194,23 @@ class LangfuseBackend:
         self._major = int(major)
         return self._major
 
-    async def _find_trace_ids(
+    async def find_trace_ids(
         self,
         c: httpx.AsyncClient,
         *,
         tags: list[str],
         user_id: str = "",
+        first: int = 0,
     ) -> list[str]:
-        """Every trace id carrying all of `tags` (and `user_id`, when given)."""
+        """Every trace id carrying all of `tags` (and `user_id`, when given).
+
+        `first` > 0 stops once that many are found, for a read that wants a
+        sample rather than the whole set; erasure always reads the whole set."""
         if await self.api_major(c) >= 4:
-            return await self._find_trace_ids_v4(c, tags=tags, user_id=user_id)
-        return await self._find_trace_ids_v3(c, tags=tags, user_id=user_id)
+            ids = await self._find_trace_ids_v4(c, tags=tags, user_id=user_id, first=first)
+        else:
+            ids = await self._find_trace_ids_v3(c, tags=tags, user_id=user_id, first=first)
+        return ids[:first] if first else ids
 
     async def _find_trace_ids_v4(
         self,
@@ -217,6 +218,7 @@ class LangfuseBackend:
         *,
         tags: list[str],
         user_id: str,
+        first: int = 0,
     ) -> list[str]:
         """The trace ids of the observations matching the filter, on Langfuse 4.
 
@@ -243,7 +245,7 @@ class LangfuseBackend:
         ids: dict[str, None] = {}
         seen_cursors: set[str] = set()
         for _ in range(self._V4_MAX_PAGES):
-            r = await self._get_retried(c, "/api/public/v2/observations", query)
+            r = await self.get_retried(c, "/api/public/v2/observations", query)
             if r.status_code != 200:
                 raise ErasureBackendError(
                     f"langfuse observation lookup {tags} → HTTP {r.status_code}: "
@@ -259,7 +261,7 @@ class LangfuseBackend:
                     f"{self._MAX_TRACES} traces; refusing to erase a truncated set"
                 )
             cursor = (body.get("meta") or {}).get("cursor")
-            if not cursor:
+            if not cursor or (first and len(ids) >= first):
                 return list(ids)
             if cursor in seen_cursors:
                 raise ErasureBackendError(
@@ -279,6 +281,7 @@ class LangfuseBackend:
         *,
         tags: list[str],
         user_id: str,
+        first: int = 0,
     ) -> list[str]:
         """Collect every trace id matching a filter, following pagination.
 
@@ -301,7 +304,7 @@ class LangfuseBackend:
         ids: list[str] = []
         page = 1
         while True:
-            r = await self._get_retried(
+            r = await self.get_retried(
                 c,
                 "/api/public/traces",
                 {"fields": self._LIST_FIELDS, "page": page, "limit": self._PAGE_SIZE, **params},
@@ -314,7 +317,7 @@ class LangfuseBackend:
             body = r.json()
             rows = body.get("data") or []
             ids.extend(str(t["id"]) for t in rows if t.get("id"))
-            if not rows:
+            if not rows or (first and len(ids) >= first):
                 break
             meta = body.get("meta") or {}
             total_pages = meta.get("totalPages")
@@ -336,7 +339,7 @@ class LangfuseBackend:
             page += 1
         return ids
 
-    async def _get_retried(
+    async def get_retried(
         self, c: httpx.AsyncClient, path: str, query: dict[str, Any]
     ) -> httpx.Response:
         """One GET to Langfuse (a lookup page or the health probe), retried on a
@@ -393,7 +396,7 @@ class LangfuseBackend:
 
         Langfuse has no user-deletion endpoint (`DELETE /api/public/users/{id}`
         answers 404 with an HTML page, which would read as nothing to erase):
-        the traces are found by user id (`_find_trace_ids`, filtered
+        the traces are found by user id (`find_trace_ids`, filtered
         server-side) and deleted with `DELETE /api/public/traces`. Deleting a
         trace removes its observations and scores with it.
         """
@@ -403,7 +406,7 @@ class LangfuseBackend:
                 # is a caller-supplied opaque string and every org writes into
                 # one Langfuse project, so `userId` alone would erase another
                 # tenant's traces for anyone sharing an identifier.
-                ids = await self._find_trace_ids(c, tags=[f"org:{org}"], user_id=user_id)
+                ids = await self.find_trace_ids(c, tags=[f"org:{org}"], user_id=user_id)
                 if not ids:
                     return 0
                 return await self._delete_traces(c, ids)
@@ -426,7 +429,7 @@ class LangfuseBackend:
             async with httpx.AsyncClient(timeout=self._timeout) as c:
                 # Both lookups AND the tags server-side, so a nonexistent org
                 # tag matches nothing.
-                ids = await self._find_trace_ids(c, tags=[f"namespace:{namespace}", f"org:{org}"])
+                ids = await self.find_trace_ids(c, tags=[f"namespace:{namespace}", f"org:{org}"])
                 if not ids:
                     return 0
                 return await self._delete_traces(c, ids)
