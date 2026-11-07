@@ -12,7 +12,8 @@ boolean setting that loads false. Both tables are generated from the code: each 
   dashboard (the reach census fails it otherwise). They are meant to have production
   callers.
 - **Experimental** ops may have no reach path besides a raw HTTP POST, and no production
-  callers yet.
+  callers yet. One on the core or atomic roster is still listed on those toolsets and under
+  `all` ([MCP toolsets](./mcp.md#toolsets)), so an agent may already call it.
 
 The label is set by hand from what the 30-day reach census reports. What it decides is in
 the [operations reference](./operations.md#mcp-all-listing), and which ops each MCP toolset
