@@ -231,3 +231,33 @@ def test_an_upload_or_ingest_answer_out_of_shape_is_not_queued_not_a_crash(
         return ready(request)
 
     assert _main_against(answer, monkeypatch) == 2
+
+
+def test_an_answer_out_of_shape_mid_run_is_counted_and_the_run_still_reports(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A dataset or inspect answer the harness cannot read ends no task: the run
+    reports, and names it."""
+    import json
+
+    import httpx
+
+    ready = _server("ready")
+    inspected: list[int] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("knowledge.dataset_get"):
+            return httpx.Response(200, json={"datasets": [{"no": "id"}]})
+        if path.endswith("knowledge.inspect"):
+            inspected.append(1)
+            if len(inspected) > 1:  # the probe reads well; the samples do not
+                return httpx.Response(200, json={"ingestions": ["not", "totals"]})
+        if path.endswith("knowledge.search"):
+            return httpx.Response(200, json={"results": "x"})
+        return ready(request)
+
+    assert _main_against(answer, monkeypatch, "--json") == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["queue_depth"]["by_sample"] == []  # no sample from an unreadable answer
+    assert out["measures"]["knowledge.search"]["ok"] > 0

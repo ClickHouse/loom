@@ -21,9 +21,11 @@ arrive at their rate whether or not earlier ones have answered (open loop),
 so a slow server meets the same load, and a rejected call is not retried. It
 reports, per op, the calls, p50 / p95 / p99 latency of the successful ones,
 errors by status and the rejected ones (429 and 503); per ingest, the time from
-its job's creation to its end (the server's timestamps); and the queue depth over
-the run. It exits 1 when a measure is past its declared level or has calls that
-failed (not counting rejections), or a small-document ingest did not end ready.
+its job's creation to its end (the server's timestamps, else the time polled); and
+the queue depth over the run. An answer the harness cannot read is counted, not a
+crash. It exits 1 when a measure is past its declared level or has calls that
+failed (not counting rejections), a small-document ingest did not end ready, or
+an answer could not be read.
 It exits 2 when the server cannot run the load: it does not answer, the token
 does not reach every tenant's org, knowledge.inspect reports the ingest worker
 off or no extractor in this server's settings, or a canary document is not
@@ -170,6 +172,7 @@ class Run:
     ) -> None:
         self.c, self.org, self.ns, self.deadline = c, org, ns, deadline
         self.tallies, self.small_states = tallies, small_states
+        self.harness_errors: Counter[str] = Counter()  # answers out of shape, by error
         self.ingests: dict[str, dict[str, Any]] = {}  # large and CSV: their outcome
         self.depth: list[tuple[int, int]] = []  # (sample slot, open jobs)
         self.dataset: dict[str, str] | None = None
@@ -204,9 +207,9 @@ class Run:
         self, data: bytes, filename: str, uri: str, wait_s: float = INGEST_WAIT_S
     ) -> tuple[str, float]:
         """Upload and ingest `data`, then wait for its job to end: its state and the
-        seconds from the job's creation to its end, by the server's own timestamps, so
-        the 1 s poll adds nothing ("not queued" when the upload or the ingest failed,
-        "still open" past `wait_s`)."""
+        seconds from the job's creation to its end, by the server's own timestamps (the
+        time polled when the answer has none), so the 1 s poll adds nothing ("not
+        queued" when the upload or the ingest failed, "still open" past `wait_s`)."""
         t0 = time.perf_counter()
         try:
             up = await self.c.post(
@@ -251,9 +254,10 @@ class Run:
         self.ingests[label] = {"state": state, "seconds": round(seconds, 2), "bytes": len(data)}
         if label == "csv" and state == "ready":
             _, got = await self.op("knowledge.dataset_get", {"source_uri": uri})
-            sets = got.get("datasets") or []
-            if sets:
-                self.dataset = {"source_uri": uri, "dataset_id": str(sets[0]["dataset_id"])}
+            sets = got.get("datasets")
+            first = sets[0] if isinstance(sets, list) and sets else None
+            if isinstance(first, dict) and isinstance(first.get("dataset_id"), str):
+                self.dataset = {"source_uri": uri, "dataset_id": first["dataset_id"]}
 
     async def search(self, n: int) -> None:
         words = ("replica", "request batch", "order", "region owner", "invoice total")
@@ -277,6 +281,14 @@ class Run:
             },
         )
 
+    async def guarded(self, work: Awaitable[None]) -> None:
+        """`work`, an answer it could not read counted as a harness error of the run
+        rather than ending it: the report still comes out, and names the count."""
+        try:
+            await work
+        except (KeyError, TypeError, ValueError, AttributeError, IndexError) as e:
+            self.harness_errors[type(e).__name__] += 1
+
     async def paced(self, rate: float, call: Callable[[int], Awaitable[None]]) -> None:
         """`call(n)` every `1 / rate` seconds until the deadline, each on its own task,
         then waits for the ones still running."""
@@ -286,7 +298,7 @@ class Run:
         start, n = time.monotonic(), 0
         while self.live():
             n += 1
-            task = asyncio.create_task(call(n))
+            task = asyncio.create_task(self.guarded(call(n)))
             running.add(task)
             task.add_done_callback(running.discard)
             await asyncio.sleep(max(0.0, start + n / rate - time.monotonic()))
@@ -297,10 +309,11 @@ class Run:
         depth); a read that failed is no sample, not an empty queue."""
         while self.live():
             status, got = await self.op("knowledge.inspect", {})
-            totals = got.get("ingestions") or {}
-            if status == 200 and totals.get("pending") is not None:
+            totals = got.get("ingestions")
+            open_jobs = [totals.get(k) for k in OPEN] if isinstance(totals, dict) else []
+            if status == 200 and open_jobs and all(isinstance(n, int) for n in open_jobs):
                 at = int((time.monotonic() - start) // every)
-                self.depth.append((at, int(totals["pending"]) + int(totals.get("processing") or 0)))
+                self.depth.append((at, sum(open_jobs)))
             await asyncio.sleep(every)
 
 
@@ -396,12 +409,18 @@ async def main(args: argparse.Namespace) -> int:
         runs = [Run(c, org, ns, deadline, tallies, small_states) for org in orgs]
         tasks = [
             # One large PDF for the whole run; each tenant its own CSV to query.
-            runs[0].one_ingest("large pdf", _pdf(args.pdf_pages), "large.pdf", "repo://large.pdf"),
+            runs[0].guarded(
+                runs[0].one_ingest(
+                    "large pdf", _pdf(args.pdf_pages), "large.pdf", "repo://large.pdf"
+                )
+            ),
         ]
         for run in runs:
             tasks += [
-                run.one_ingest("csv", _csv(args.csv_rows), "orders.csv", "repo://orders.csv"),
-                run.sampler(args.sample_seconds, start),
+                run.guarded(
+                    run.one_ingest("csv", _csv(args.csv_rows), "orders.csv", "repo://orders.csv")
+                ),
+                run.guarded(run.sampler(args.sample_seconds, start)),
                 run.paced(args.ingest_rate, run.small_ingest),
                 run.paced(args.search_rate, run.search),
                 run.paced(args.query_rate, run.query),
@@ -411,6 +430,9 @@ async def main(args: argparse.Namespace) -> int:
     past = verdict(report, levels)
     if small_states.keys() - {"ready"}:
         past.append(f"{INGEST_SMALL}: ended {dict(small_states)}")
+    harness_errors = sum((r.harness_errors for r in runs), Counter())
+    if harness_errors:
+        past.append(f"answers the harness could not read: {dict(harness_errors)}")
     depth = combined_depth([r.depth for r in runs])
     out = {
         "namespace": ns,
@@ -423,6 +445,7 @@ async def main(args: argparse.Namespace) -> int:
         },
         "measures": report,
         "small_ingests": dict(small_states),
+        "harness_errors": dict(harness_errors),
         "ingests": {f"{r.org} {k}": v for r in runs for k, v in r.ingests.items()},
         "queue_depth": {
             "max": max(depth.values(), default=0),
