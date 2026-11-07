@@ -82,8 +82,8 @@ class FactsClient:
         "alice WORKS_AT acme" (acme is object) from "acme EMPLOYS alice"
         (alice is object).
 
-        Returns `{"entity": <echoed>, "related": [{entity, co_occur,
-        role}, ...]}`.
+        Returns `{"entity": <the canonical node matched>, "related":
+        [{entity, co_occur, role}, ...]}`.
         """
         return await self._agent.transport.post(
             "/v1/facts.related",

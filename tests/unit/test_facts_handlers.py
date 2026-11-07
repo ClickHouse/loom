@@ -1036,7 +1036,7 @@ async def test_traverse_rank_by_reads_the_setting_and_the_request_wins(
 async def test_facts_list_and_related_match_the_canonical_and_the_lowered_spelling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A facet row stores the canonical node; one from build N-1 holds the name lowered.
+    # A facet row holds the canonical node, or (stored earlier) the name lowered.
     from server.memory.api.models_facts import FactsListInput, FactsRelatedInput
     from server.memory.app import facts as facts_handlers
     from server.memory.domain.graph_quality import facet_triples
@@ -1058,3 +1058,19 @@ async def test_facts_list_and_related_match_the_canonical_and_the_lowered_spelli
         FactsListInput(org="o", namespace="n", subject="Alice's")
     )
     assert ch.query_all_calls[-1][1]["subj"] == ["alice", "alice's"]
+
+
+@pytest.mark.asyncio
+async def test_a_name_with_no_canonical_form_matches_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_facts import FactsRelatedInput
+    from server.memory.app import facts as facts_handlers
+
+    ch = StubCH()
+    monkeypatch.setattr(facts_handlers, "get_client", lambda: ch)
+    out = await facts_handlers.handle_facts_related(
+        FactsRelatedInput(org="o", namespace="n", entity=" ")
+    )
+    assert out.entity == "" and out.related == []
+    assert ch.query_all_calls[0][1]["ent"] == []
