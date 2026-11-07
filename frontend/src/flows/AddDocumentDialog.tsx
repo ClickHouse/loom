@@ -201,10 +201,11 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
     await (mode === "file" ? submitFile() : submitText());
   };
 
-  // Closing during the upload cancels it (nothing is queued yet); the ingest call and a
-  // text save hold the dialog; once the job is followed it goes on without the dialog.
+  // Closing during the upload cancels it (nothing is queued yet); the ingest call, a text
+  // save and a Stop hold the dialog; once the job is followed it goes on without the dialog.
+  const held = busy === "queue" || busy === "save" || stopping;
   const close = (v: boolean) => {
-    if ((busy === "queue" || busy === "save" || stopping) && !v) return;
+    if (held && !v) return;
     if (!v && busy === "follow") toast(goesOn(sourceUri.trim(), !!replaceMode), "info");
     if (!v) reset();
     onOpenChange(v);
@@ -213,6 +214,8 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
   // and one that published is added like any other.
   const stop = async () => {
     if (!jobId) return;
+    // The Stop's answer decides: the follow no longer finishes the dialog on its own.
+    following.current?.abort();
     setStopping(true);
     try {
       const r = await cancelIngestion(identity, jobId);
@@ -227,7 +230,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
     }
   };
   const holdWhileBusy = (e: Event) => {
-    if (busy === "queue" || busy === "save" || stopping) e.preventDefault();
+    if (held) e.preventDefault();
   };
   const readable = readableFormats(formats);
 
@@ -333,12 +336,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
           {error && <Alert role="alert" state="danger" text={error} />}
         </div>
         <ModalFooter>
-          <Button
-            type="secondary"
-            htmlType="button"
-            disabled={busy === "queue" || busy === "save" || stopping}
-            onClick={() => close(false)}
-          >
+          <Button type="secondary" htmlType="button" disabled={held} onClick={() => close(false)}>
             {busy === "follow" ? "Close" : "Cancel"}
           </Button>
           {busy === "follow" && jobId && (

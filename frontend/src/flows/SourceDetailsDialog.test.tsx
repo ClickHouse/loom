@@ -39,7 +39,7 @@ describe("SourceDetailsDialog", () => {
     expect(await screen.findByText("abc, def")).toBeInTheDocument();
     expect(screen.getByText("http_403")).toBeInTheDocument();
     expect(screen.getByText("Runbook")).toBeInTheDocument();
-    expect(screen.getByText(/never/)).toBeInTheDocument();
+    expect(screen.getByText("Sync failed")).toBeInTheDocument();
   });
 
   it("words the last turn as the source row does, and shows an ok turn's note as a note", async () => {

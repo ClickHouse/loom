@@ -30,6 +30,7 @@ export function SourceDetailsDialog({
     },
     [org, namespace, name],
   );
+  const note = detail?.sync.status === "ok";
   return (
     <Modal open onOpenChange={(v) => !v && onClose()} title={name} className="w-full max-w-[640px]">
       {!!error && <Alert role="alert" state="danger" text={humanizeError(error)} />}
@@ -45,15 +46,17 @@ export function SourceDetailsDialog({
             ))}
             <MetaRow label="Added by">{detail.created_by || "—"}</MetaRow>
             <MetaRow label="Last sync">
-              {detail.sync.last_synced_at ? <ListTime time={detail.sync.last_synced_at} /> : "never"} ·{" "}
+              {detail.sync.last_synced_at && (
+                <>
+                  <ListTime time={detail.sync.last_synced_at} />
+                  {" · "}
+                </>
+              )}
               {syncBadge(detail.sync).text}
             </MetaRow>
             {/* A failed turn's error, or why an ok turn stopped early. */}
             {detail.sync.error && (
-              <MetaRow
-                label={detail.sync.status === "ok" ? "Note" : "Error"}
-                tone={detail.sync.status === "ok" ? undefined : "danger"}
-              >
+              <MetaRow label={note ? "Note" : "Error"} tone={note ? undefined : "danger"}>
                 {detail.sync.error}
               </MetaRow>
             )}

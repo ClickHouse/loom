@@ -4,7 +4,7 @@
  * publishes; a format no extractor reads is refused before anything is sent; a job
  * that fails says why; pasted text is a text write.
  */
-import { cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -224,10 +224,34 @@ describe("AddDocumentDialog", () => {
     await user.click(within(dialog).getByRole("button", { name: "Upload" }));
     await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
     await waitFor(() => expect(cancelIngestion).toHaveBeenCalled());
-    // Neither Close, the modal's own close nor Escape closes it until the Stop answers.
+    // Neither Close, the modal's own close, Escape nor a click outside closes it until the Stop answers.
     for (const close of within(dialog).getAllByRole("button", { name: "Close" })) await user.click(close);
     await user.keyboard("{Escape}");
+    fireEvent.pointerDown(document.body);
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it("a job that publishes while its Stop runs is added once, by the Stop's answer", async () => {
+    let poll = 0;
+    let answer: (r: { found: boolean; state: string; cancelled: boolean }) => void = () => {};
+    let tick: () => void = () => {};
+    ingestClock.sleep = () => new Promise<void>((r) => (tick = r));
+    vi.mocked(knowledgeIngestStatus).mockImplementation(async () =>
+      ++poll === 1 ? status("processing", { stage: "embed" }) : status("ready", { revision: 2 }),
+    );
+    vi.mocked(cancelIngestion).mockImplementation(() => new Promise((r) => (answer = r)));
+    const { dialog, onAdded, onOpenChange } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
+    // The follow's next poll would see the job ready; the Stop has taken over.
+    await act(async () => tick());
+    expect(onAdded).not.toHaveBeenCalled();
+    await act(async () => answer({ found: true, state: "ready", cancelled: false }));
+    expect(onAdded).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toBe("spec.pdf was already added");
+    expect(onOpenChange.mock.calls.filter(([v]) => v === false)).toHaveLength(1);
   });
 
   it("a Stop of a running job says it stops before it publishes", async () => {

@@ -10,7 +10,6 @@ import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, Loading, SectionHeading } from "../components/ui";
 
-// A schema's state in words.
 const SCHEMA_STATE: Record<string, string> = {
   inferred: "types inferred",
   needs_clarification: "needs a decision",

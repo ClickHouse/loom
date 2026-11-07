@@ -400,14 +400,14 @@ export async function approveDataset(
   });
 }
 
-/** POST /v1/knowledge.ingest_cancel: a pending job stops at once, a running one before
- *  it publishes; one that already ended answers `cancelled: false` with its state. */
 export interface IngestCancelResult {
   found: boolean;
   state: string;
   cancelled: boolean;
 }
 
+/** POST /v1/knowledge.ingest_cancel: a pending job stops at once, a running one before
+ *  it publishes; one that already ended answers `cancelled: false` with its state. */
 export async function cancelIngestion(
   id: Pick<Identity, "org" | "namespace">,
   ingestionId: string,
