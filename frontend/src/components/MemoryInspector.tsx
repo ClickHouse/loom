@@ -520,7 +520,11 @@ export function MemoryInspector({
     if (!detail) return;
     try {
       // By id: the op resolves a key in the `-` session only, and an extracted row has its own.
-      const r = await recordMemoryOutcome(identity, detail.memory_id ? { memoryId: detail.memory_id } : { memoryKey }, outcome);
+      const r = await recordMemoryOutcome(
+        identity,
+        detail.memory_id ? { memoryId: detail.memory_id } : { memoryKey },
+        outcome,
+      );
       if (!r.recorded) {
         toast("This memory is no longer live", "error");
         return;
