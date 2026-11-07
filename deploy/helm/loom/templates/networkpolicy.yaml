@@ -2,7 +2,11 @@
 {{- if not (or (kindIs "invalid" $guard) (kindIs "bool" $guard)) }}
 {{- fail "networkPolicy.guardMetadata must be true or false" }}
 {{- end }}
-{{- if .Values.networkPolicy.enabled }}
+{{- /* Off: every pod and every address but `egressExcept`; pods are named apart
+because engines differ on whether an ipBlock matches pod IPs. A missing
+`guardMetadata` counts as on: `helm upgrade --reuse-values` keeps the old values. */}}
+{{- $guarded := and (ne $guard false) .Values.networkPolicy.egressExcept }}
+{{- if or .Values.networkPolicy.enabled $guarded }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -13,6 +17,7 @@ spec:
   podSelector:
     matchLabels:
       {{- include "loom.selectorLabels" . | nindent 6 }}
+{{- if .Values.networkPolicy.enabled }}
   policyTypes: [Ingress, Egress]
   ingress:
     - ports:
@@ -80,23 +85,11 @@ spec:
     {{- with .Values.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-{{- else if and (ne $guard false) .Values.networkPolicy.egressExcept }}
-{{- /* Off: every pod and every address but `egressExcept`; pods are named apart
-because engines differ on whether an ipBlock matches pod IPs. A missing
-`guardMetadata` counts as on: `helm upgrade --reuse-values` keeps the old values. */}}
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: {{ include "loom.fullname" . }}
-  labels:
-    {{- include "loom.labels" . | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels:
-      {{- include "loom.selectorLabels" . | nindent 6 }}
+{{- else }}
   policyTypes: [Egress]
   egress:
     - to:
         - namespaceSelector: {}
         {{- include "loom.anywhereBut" . | nindent 8 }}
+{{- end }}
 {{- end }}
