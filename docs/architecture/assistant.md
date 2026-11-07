@@ -295,7 +295,8 @@ and it cannot run `EXPLAIN`. Every statement that carries the key runs with
 access storage (on disk, or in Keeper when access is replicated), in a backup of the
 access entities, in the distributed DDL queue of a cluster that writes access
 `ON CLUSTER`, in `system.row_policies` and in the server log at `debug` level: all read
-only by whoever administers the ClickHouse host, who can read every row anyway.
+only by whoever administers the ClickHouse host, who can read every row anyway, and by
+Loom's own user where it has `SHOW ROW POLICIES`, which holds the key sealed already.
 
 **Why not ClickHouse credentials in LibreChat.** A ClickHouse login in the agent would
 read every org, skip the request ledger and the exposure records, and keep no link to
@@ -392,19 +393,24 @@ keeps:
 
   `loom doctor` judges a rotation by the time stored with the row, against ClickHouse's
   `now()`, and always by probes: a few dozen signed reads, each on a new connection so
-  that a load balancer spreads them, each reporting the server it reached
-  (`hostName()`); a probe that fails to sign in runs nothing and counts as a server
-  unknown. Where Loom's user can read `clusterAllReplicas(<cluster>, system.row_policies)`
-  (it needs `SHOW ROW POLICIES`), doctor adds each server's policy key beside the stored
-  row's, which names a lagging server even when its probes cannot. Within three settle
-  times of the stored time, failures to sign in and canaries under another key are a
-  server still applying the rotation, and it names a longer settle time. Past that,
-  probes failing from two or more hosts, or on every server by the policy read, are a
-  rotation stopped after the password change with a row a reseal put back, and it names
-  `--live`; one server failing while others pass is that server not applying access
-  changes, an admin's problem, which it names instead of `--live`, since a new rotation
-  would not reach that server either; and all probes failing with no host identified
-  could be either, so it names both.
+  that a load balancer spreads them. A probe that signs in reports the server it reached
+  (`hostName()`); one that fails to sign in runs nothing and names no server. Where
+  Loom's user can read `clusterAllReplicas(<cluster>, system.row_policies)` (it needs the
+  `REMOTE` and `CREATE TEMPORARY TABLE` grants and `SHOW ROW POLICIES`), doctor also
+  reads whether each server's policy carries the stored row's key. Within three settle
+  times of the stored time, any failure is a server still applying the rotation, and it
+  names a longer settle time. Past that:
+
+  - Some probes pass and others fail: some servers are not applying access changes, an
+    admin's problem, which it names (with the servers, where the policy read shows
+    them) instead of `--live`, since a new rotation would not reach them either.
+  - Every probe fails and the policy read shows every server's policy on the stored
+    row's key: the policies match the row but no probe signs in, which is a rotation
+    stopped after the password change with a row a reseal put back, and it names
+    `--live`. If the policy read shows a server on another key, that server is lagging,
+    and it names it as above.
+  - Every probe fails and there is no policy read, on one server or many: the two
+    causes look the same, so it names both.
 
 - **The caps apart.** The caps are deployment settings, kept in a second profile of
   their own: a write holding the lease (a boot, `loom ch-setup`) writes them when the
@@ -600,13 +606,13 @@ viewer token. Each case must be refused or return no canary:
   - within three settle times of the row's stored time, a finished rotation seen through
     a lagging server, for which doctor names a longer settle time and the probe defers
     its canary repair;
-  - past that, every server failing (probes from two or more hosts, or the
-    `clusterAllReplicas` read), for which it names `--live`; one server failing while
-    others pass, which it names as that server's problem; and all probes failing with no
-    host identified, for which it names both;
-  - a rotation stopped after the password change with a row a reseal put back, on the
-    `clusterAllReplicas` path too, where the policies look healthy and only the probes
-    fail, which doctor maps to `--live`.
+  - past that, some probes passing and others failing, which it names as those servers'
+    problem, with the servers where the policy read shows them;
+  - a rotation stopped after the password change with a row a reseal put back, where
+    every probe fails to sign in: with the policy read showing every server on the row's
+    key, doctor names `--live`; without it, it names both causes;
+  - one server, or a load balancer that pins every probe to one server, where every
+    probe fails with no policy read, for which it names both causes.
 
 The same file will show that a revoked token stops new calls and that an erased memory
 is gone from the next statement. A unit test pins the generated grants and policies to
