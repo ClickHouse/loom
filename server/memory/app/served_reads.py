@@ -123,8 +123,8 @@ def procedure_keys(input: Any, out: Any) -> Keys:
 
 
 def pack_keys(input: Any, out: Any) -> Keys:
-    """context.pack: the stored rows whose item lines its answer's section bodies still
-    hold after each section's budget (`context_layout.served_rows`)."""
+    """context.pack: the stored rows whose item lines its `rendered` answer still holds
+    after every section and pack budget (`context_layout.served_rows`)."""
     return list(out._served_rows)
 
 

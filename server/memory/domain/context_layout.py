@@ -271,16 +271,26 @@ STACK_ROW_LAYERS = frozenset({"pinned", "recent_recall", "procedure"})
 
 
 def served_rows(
-    sections: dict[str, str],
+    rendered: str,
+    section_names: list[str],
     item_rows: dict[str, list[tuple[str, str] | None]],
 ) -> list[tuple[str, str]]:
-    """The stored rows the pack's answer shows. Each section's item lines start with `- `
-    (`one_item` indents a continuation), in the order of its `item_rows`; a section trim
-    keeps a prefix, so the first n rows of a section whose body holds n item lines were
-    shown, a cut one included. `sections` are the bodies the answer carries (`sections`
-    and `blocks`; `rendered` joins them, cut to the pack's budget)."""
+    """The stored rows the rendered pack shows: what every caller gets (MCP and the
+    plugins read `rendered` alone; `sections` and `blocks` keep lines the pack's own
+    budget cut). Each section's item lines start with `- ` (`one_item` indents a
+    continuation), in the order of its `item_rows`; a trim keeps a prefix, so the first n
+    rows of a section whose n item lines `rendered` still holds were shown, a cut one
+    included. `section_names` are the present sections in pack order."""
     shown: list[tuple[str, str]] = []
-    for name, body in sections.items():
-        lines = sum(1 for line in body.split("\n") if line.startswith("- "))
+    cursor = 0
+    for name in section_names:
+        start = rendered.find(f"<{name}>\n", cursor)
+        if start < 0:
+            break  # the pack's budget cut it off, and every section after it
+        start += len(name) + 3
+        end = rendered.find(f"\n</{name}>", start)
+        end = len(rendered) if end < 0 else end
+        lines = sum(1 for line in rendered[start:end].split("\n") if line.startswith("- "))
         shown += [row for row in item_rows.get(name, [])[:lines] if row]
+        cursor = end
     return shown

@@ -958,7 +958,7 @@ Knowledge-base health for (org, namespace): how much of what is stored is ever r
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
-| `silent_after_days` | `int` | `30` | A live row older than this with no recall credit and no agent read in this many days is "silent"; also the window of agent reads counted. |
+| `silent_after_days` | `int` | `30` | A live row with no recall credit and no agent read in this many days is silent; `silent_older` also needs the row to be older than this. |
 | `top_k` | `int` | `10` | How many entries `top_recalled` lists. |
 
 | Output field | Type | Meaning |

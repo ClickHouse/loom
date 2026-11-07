@@ -139,8 +139,8 @@ class MemoryHealthInput(_Identity):
 
     agent: str = "-"
     user_id: str = "-"
-    # A live row older than this with no recall credit and no agent read in this many days
-    # is "silent"; also the window of agent reads counted.
+    # A live row with no recall credit and no agent read in this many days is silent;
+    # `silent_older` also needs the row to be older than this.
     silent_after_days: int = Field(default=30, ge=1, le=3650)
     # How many entries `top_recalled` lists.
     top_k: int = Field(default=10, ge=1, le=50)

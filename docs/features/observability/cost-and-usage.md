@@ -170,7 +170,8 @@ the loop (`server/memory/app/recall_credit.py`). How often agents were shown a m
 kept apart, in `loom.memory_served_daily` (`server/memory/app/served_reads.py`): every agent
 read that returns memory, credited or not, adds one row per key its answer returned. That is
 `memory.search`, `search.query`, `context.pack` (the stored rows whose item lines its
-section bodies still hold after each section's budget, the memory stack's included),
+`rendered` answer still holds after every section and pack budget, the memory stack's
+included),
 `memory.stack`, `memory.ask` and `procedure.match`. A hit the op trims before answering is
 not counted. Neither is a `memory.search` sent with `auto_touch: false` or a `memory.ask`
 with `reinforce: false`, a read by the dashboard or the assistant, a measurement read (a
