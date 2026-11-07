@@ -1373,10 +1373,11 @@ const CREDIT_TIP =
   "a context pack, an ask or an uncredited search adds none.";
 
 /** "N× · <when>" from the agent reads that returned the key (`served_count`), else "No
- *  agent read recorded". A server without the served figures answers the recall credits
- *  instead. A missing time or the epoch sentinel (ClickHouse toDateTime(0) → 1970-01-01)
- *  prints the count alone — the sentinel is truthy, so a plain `? :` would print
- *  "01/01/1970". */
+ *  agent read recorded". Without the served figures (an older server, or a lookup that
+ *  failed) only the recall credits are known, so none of them reads "Not available" rather
+ *  than claiming no read. A missing time or the epoch sentinel (ClickHouse toDateTime(0) →
+ *  1970-01-01) prints the count alone — the sentinel is truthy, so a plain `? :` would
+ *  print "01/01/1970". */
 function recalledLabel(detail: {
   recall_count?: number;
   last_recalled_at?: string | null;
@@ -1386,7 +1387,7 @@ function recalledLabel(detail: {
   const served = detail.served_count != null;
   const n = (served ? detail.served_count : detail.recall_count) ?? 0;
   const at = served ? detail.last_served_at : detail.last_recalled_at;
-  if (n === 0) return "No agent read recorded";
+  if (n === 0) return served ? "No agent read recorded" : "Not available";
   const last = parseChTime(at);
   // A count a bulk import seeded can come with no time.
   if (!last || last.getFullYear() <= 1970) return `${n}×`;

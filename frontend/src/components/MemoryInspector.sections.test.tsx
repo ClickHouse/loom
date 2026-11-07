@@ -185,6 +185,13 @@ describe("MemoryInspector reads what is open", () => {
     open();
     await screen.findByText("hello");
     expect(screen.getAllByText("9×")).toHaveLength(2); // Last recalled and Recall credit
+    cleanup();
+    // No served figures (an older server, or a failed lookup) and no credit: unknown.
+    vi.mocked(getMemory).mockResolvedValueOnce({ ...base, recall_count: 0 } as MemoryDetail);
+    open();
+    await screen.findByText("hello");
+    expect(screen.getByText("Not available")).toBeInTheDocument();
+    expect(screen.queryByText("No agent read recorded")).not.toBeInTheDocument();
   });
 
   it("a saved edit re-reads the served figures, so Last recalled keeps its count", async () => {

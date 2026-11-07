@@ -254,8 +254,6 @@ async def newest_key_ids(
     pairs = {(ns, k) for ns, keys in ns_keys.items() for k in keys if ns and k}
     if not pairs:
         return []
-    from server.core.repo_base import _default_client
-
     ch = ch or _default_client()
     params: dict[str, Any] = {
         "org": org,
