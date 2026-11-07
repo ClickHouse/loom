@@ -442,11 +442,6 @@ async def _pack_startup_recall(st: _PackState) -> None:
     )
 
 
-def _hit_ns_key(input: ContextPackInput, h: Any) -> tuple[str, str]:
-    """The (namespace, memory_key) of the stored row a hit came from: a chunk's parent."""
-    return hit_row(h, input.namespace)
-
-
 _KeyWriters = dict[tuple[str, str], list[dict[str, str]]]
 
 
@@ -455,7 +450,7 @@ def _hit_author(actors: _KeyWriters, input: ContextPackInput, h: Any) -> str:
     identity the hit carries (user, session, agent, where the leg read them); when the rows
     left were written by more than one actor the label says `unknown`, never a writer whose
     row this may not be."""
-    rows = actors.get(_hit_ns_key(input, h)) or []
+    rows = actors.get(hit_row(h, input.namespace)) or []
     is_fact_row = names_row(h) and getattr(h, "source", "fact") != "chunk"
     row = hit_row_key(h, input.namespace) if is_fact_row else None
     # A fact hit names its memory row. A chunk's identity is its chunk row's, and a shared
@@ -485,7 +480,7 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
     try:
         return await memory_repo.actors_by_key(
             input.org,
-            [_hit_ns_key(input, h) for h in hits],
+            [hit_row(h, input.namespace) for h in hits],
             scope=request_scope(),
         )
     except Exception as e:  # noqa: BLE001 — authorship labels are best-effort; lines say by=unknown
@@ -625,7 +620,7 @@ async def _pack_memories(st: _PackState) -> None:
             cite = f"memory:{ns}/{h.memory_key}"
             if resource:
                 cite = f"{cite}#{resource}"
-            row_of[cite] = _hit_ns_key(input, h)  # a chunk's parent
+            row_of[cite] = hit_row(h, input.namespace)  # a chunk's parent
             group = resource or f"{source}:{ns}"
             evidence.append(
                 EvidenceItem(

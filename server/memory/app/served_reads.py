@@ -24,7 +24,12 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, Protocol
 
-from server.memory.app import after_write
+from server.identity.app.request_scope import request_scope
+from server.memory.app import after_write, recall_credit
+from server.memory.domain.context_layout import STACK_ROW_LAYERS
+from server.memory.domain.served import hit_row
+from server.memory.store import served
+from server.observability.consumer import INSPECTOR_CONSUMERS
 
 log = logging.getLogger(__name__)
 
@@ -35,9 +40,6 @@ Keys = list[tuple[str, str]]
 def _counted_agent(agent: str) -> bool:
     """False for a reader whose reads are not an agent's: the dashboard, the assistant,
     a bench label, or a sentinel agent with no named consumer."""
-    from server.memory.app import recall_credit
-    from server.observability.consumer import INSPECTOR_CONSUMERS
-
     if recall_credit.current_named_consumer() in INSPECTOR_CONSUMERS:
         return False
     return not recall_credit.is_measurement_read(agent=agent)
@@ -47,9 +49,6 @@ def schedule_served(org: str, agent: str, keys: Iterable[tuple[str, str]]) -> No
     """One served row per (namespace, key), in the background, on the newest live row of
     the key inside the request's read scope: a token narrowed to one user records on its
     own copy, where its reads are read."""
-    from server.identity.app.request_scope import request_scope
-    from server.memory.store import served
-
     ns_keys: dict[str, list[str]] = {}
     for ns, key in dict.fromkeys(keys):
         ns_keys.setdefault(ns, []).append(key)
@@ -75,14 +74,16 @@ class _AgentRead(Protocol):
 
 
 def _reader(input: Any) -> str:
-    """Who read: the input's `agent`, else (memory.for_file names none) the named
-    consumer; '' when neither names one, which records nothing, as a sentinel agent with
-    no consumer records nothing."""
-    from server.memory.app import recall_credit
-
-    if hasattr(input, "agent"):
-        return str(input.agent or "")
-    return recall_credit.current_named_consumer()
+    """Who read: the input's agent when it names one; for a sentinel agent (`*`, `-`: the
+    SDK's and MCP's cross-agent reads, a context pack) or an input with none
+    (memory.for_file), the named consumer behind it. With neither, the sentinel stays and
+    `_counted_agent` refuses it as a measurement read, and an input with no agent records
+    nothing."""
+    # memory.for_file's input has no `agent` field
+    agent = str(getattr(input, "agent", "") or "")
+    if agent and not recall_credit.is_agent_sentinel(agent):
+        return agent
+    return recall_credit.current_named_consumer() or agent
 
 
 def records_served[I: _AgentRead, O](
@@ -111,8 +112,6 @@ def records_served[I: _AgentRead, O](
 
 def _hit_keys(hits: Iterable[Any], namespace: str) -> Keys:
     """The stored row each hit came from (a chunk's is its parent fact's)."""
-    from server.memory.domain.served import hit_row
-
     return [hit_row(h, namespace) for h in hits]
 
 
@@ -145,8 +144,6 @@ def rendered_rows(input: Any, out: Any) -> Keys:
 
 def stack_keys(input: Any, out: Any) -> Keys:
     """memory.stack: the stored rows of its entries (not the profile or knowledge ones)."""
-    from server.memory.domain.context_layout import STACK_ROW_LAYERS
-
     return [
         (input.namespace, e.memory_key)
         for e in out.entries

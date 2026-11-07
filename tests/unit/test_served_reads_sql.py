@@ -90,3 +90,22 @@ def test_health_counts_served_rows_inside_the_silent_window_only(ch: KeptCH) -> 
 
     assert served_count(30) == 0
     assert served_count(60) == 3
+
+
+def test_health_counts_a_read_that_landed_on_a_copy_it_does_not_list(tmp_path: Path) -> None:
+    """A read lands on the newest live copy of the key, which may be one the health rows
+    leave out (a rejected copy written after the active one): the key is still read."""
+    from server.memory.app import health
+
+    db = KeptCH(tmp_path, ddl("memory"), ddl("memory_served_daily"), ddl("memory_usage_totals"))
+    db.create(
+        _memory(M1, "u1", "2026-01-01 00:00:00"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
+        "memory_id, value, version, updated_at, status) VALUES "
+        f"('o', 'n', 'w', 'u1', 's2', 'k', '{M2}', 'v', 1, '2026-02-01 00:00:00', 'rejected')",
+    )
+    _record(db, "codex")  # lands on M2, the newest copy
+    since = naive_utc_now().date() - timedelta(days=30)
+    rows = asyncio.run(db.query_all(health._LIVE, {"org": "o", "ns": "n", "since": since}))
+    assert [(r["memory_id"], int(r["served_count"])) for r in rows] == [(M1, 1)]
+    assert health.summarise([dict(r) for r in rows], silent_after_days=30, top_k=1)["silent"] == 0

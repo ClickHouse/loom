@@ -137,10 +137,14 @@ def test_reads_that_are_not_an_agents_record_nothing(
     assert written == []
 
 
-def test_a_sentinel_agent_with_a_named_consumer_is_counted(written: list[dict[str, Any]]) -> None:
+def test_a_sentinel_agent_with_a_named_consumer_records_the_consumer(
+    written: list[dict[str, Any]],
+) -> None:
+    """`*` is the SDK's and MCP's cross-agent read and a pack's own: the named consumer
+    behind it is who read, so the inspector's "Recalled by" can name it."""
     out = SimpleNamespace(results=[_hit("a")])
     _run(_wrapped(served_reads.ask_keys, out), _search_input(agent="*"), consumer="codex")
-    assert [w["agent"] for w in written] == ["*"]
+    assert [w["agent"] for w in written] == ["codex"]
 
 
 def test_a_failing_key_read_never_fails_the_answer(written: list[dict[str, Any]]) -> None:
@@ -274,11 +278,10 @@ def test_a_narrowed_reader_records_under_its_own_scope(
 ) -> None:
     """The funnel then picks the newest copy inside the reader's scope, the row it could
     have been served, never another user's."""
-    from server.identity.app import request_scope
     from server.identity.domain.read_scope import ReadFilters
 
     own = ReadFilters(scope="own_user", user_id="u1", session_id=None)
-    monkeypatch.setattr(request_scope, "request_scope", lambda: own)
+    monkeypatch.setattr(served_reads, "request_scope", lambda: own)
     out = SimpleNamespace(results=[_hit("a")])
     _run(_wrapped(served_reads.ask_keys, out), _search_input())
     assert [w["scope"] for w in written] == [own]

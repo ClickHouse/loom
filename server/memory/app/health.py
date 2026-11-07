@@ -46,12 +46,19 @@ _LIVE = """
         GROUP BY memory_id
     ) AS u ON u.memory_id = m.memory_id
     LEFT JOIN (
-        SELECT memory_id, sum(served) AS served_count
-        FROM loom.memory_served_daily
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND day > {since:Date}
-        GROUP BY memory_id
-    ) AS s ON s.memory_id = m.memory_id
+        -- per key, over every live copy: a read lands on the newest copy, which may be
+        -- one the active rows above leave out (rejected, a duplicate)
+        SELECT k.memory_key AS memory_key, sum(d.served) AS served_count
+        FROM loom.memory_served_daily AS d
+        INNER JOIN (
+            SELECT memory_id, memory_key
+            FROM loom.memory FINAL
+            WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL
+        ) AS k ON k.memory_id = d.memory_id
+        WHERE d.org = {org:String} AND d.namespace = {ns:String}
+          AND d.day > {since:Date}
+        GROUP BY k.memory_key
+    ) AS s ON s.memory_key = m.memory_key
 """
 
 
@@ -75,6 +82,7 @@ def summarise(rows: list[dict[str, Any]], *, silent_after_days: int, top_k: int)
     cutoff = naive_utc_now() - timedelta(days=silent_after_days)
     live = len(rows)
 
+    # `served_count` is already the key's, over its live copies; a credit is the row's.
     reads_by_key: dict[str, int] = {}
     for r in rows:
         key = str(r.get("memory_key") or "")
