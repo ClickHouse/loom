@@ -801,3 +801,24 @@ async def test_entry_lock_records_the_go_modules_that_would_not_build() -> None:
         assert tier_health.parse("go", repo.state["tier_health:go"]).kind == "harness"
         await code_scip._record_tier("o", "ns", "go", 0, b"done svc\n")
     assert not tier_health.parse("go", repo.state["tier_health:go"]).failing
+
+
+def test_a_credential_fix_says_the_token_goes_only_under_the_remotes_owner() -> None:
+    text = (
+        "fatal: clone of 'https://github.com/other/dep.git' into submodule path "
+        "'/c/contrib/dep' failed\nfatal: could not read Username for 'https://github.com'"
+    )
+    record = tier_health.failed(None, "clang", text, T0)
+    assert record.kind == "credential"
+    assert "(github.com/other/dep, submodule /c/contrib/dep)" in record.fix
+    assert "only under the remote's owner" in record.fix
+
+
+def test_a_relative_submodule_url_names_its_own_fix() -> None:
+    text = (
+        "fatal: transport 'file' not allowed\n"
+        "fatal: clone of '/c/../dep' into submodule path '/c/contrib/dep' failed"
+    )
+    record = tier_health.failed(None, "clang", text, T0)
+    assert record.kind == "submodule_url"
+    assert "absolute https URL" in record.fix

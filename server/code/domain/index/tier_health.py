@@ -161,6 +161,8 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # A Go module the harness skipped because it would not build: its line ends with the
     # module's own last log line, which can read as any other kind.
     ("module", _MODULE_FAILED),
+    # a relative submodule URL: the tier refuses the file transport it resolves to
+    ("submodule_url", re.compile(r"transport 'file' not allowed", re.IGNORECASE)),
     # A full disk also cuts a transfer short ("the remote end hung up"): before network.
     ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
     (
@@ -280,7 +282,14 @@ def fix_for(kind: str, text: str) -> str:
     if kind == "credential":
         return (
             f"No credential with access{at}: set LOOM_CODE_GITHUB_TOKEN, or the entry's "
-            "github_token, to a token that can read the repository and its submodules."
+            "github_token, to a token that can read the repository and its submodules. "
+            "The token is sent only under the remote's owner (https://host/owner/, case as "
+            "written): a submodule elsewhere needs its URL moved under that owner."
+        )
+    if kind == "submodule_url":
+        return (
+            "A relative submodule URL resolves to the checkout, which has no remote: give "
+            "the submodule in .gitmodules an absolute https URL under the remote's owner."
         )
     if kind == "pin_missing":
         return (
