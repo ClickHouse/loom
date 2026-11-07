@@ -274,18 +274,26 @@ test("Stop gates: 401 and a hanging server both let the stop through", async () 
   for (const status of [401, null]) {
     await withServer(status, async (url, seen, arrived) => {
       for (const hook of ["loom-test-gate.mjs", "loom-validate-gate.mjs"]) {
-        const { dir, tmp, transcript } = dirtySession();
-        const r = await run(
-          hook,
-          { cwd: dir, session_id: "s", transcript_path: transcript },
-          { tmp, url, env: { LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" } },
-        );
-        assert.equal(r.code, 0, `${hook} ${status}`);
-        assert.equal(r.out, "", `${hook} ${status}`);
+        const op = hook === "loom-test-gate.mjs" ? "/v1/code.test_gate" : "/v1/namespace.validate";
+        // A run whose own git calls timed out (1.5 s each, on a loaded runner)
+        // ends quietly before it asks, and tests nothing here: run again.
+        let r;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const { dir, tmp, transcript } = dirtySession();
+          arrived.delete(op);
+          r = await run(
+            hook,
+            { cwd: dir, session_id: "s", transcript_path: transcript },
+            { tmp, url, env: { LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" } },
+          );
+          assert.equal(r.code, 0, `${hook} ${status}`);
+          assert.equal(r.out, "", `${hook} ${status}`);
+          if (arrived.has(op)) break;
+        }
         // From the gate's request to the hook's exit: the 500 ms request
         // bound and the 500 ms exit grace, not node's start-up or git, which
         // a loaded runner stretches.
-        const op = hook === "loom-test-gate.mjs" ? "/v1/code.test_gate" : "/v1/namespace.validate";
+        assert.ok(arrived.has(op), `${hook} ${status}: never sent ${op} in three runs`);
         const after = r.closedAt - arrived.get(op);
         assert.ok(after < 1500, `${hook} ${status}: ${after} ms after its request (${r.ms} ms in all)`);
         // And the whole run, start-up and git included: twice the slowest

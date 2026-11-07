@@ -287,7 +287,8 @@ test("grep: a reader that closes the pipe early ends the shim quietly", {
 });
 
 // Windows has no FIFOs; a child's "pipe" stdio there is a named pipe, which
-// gives the writer EPIPE as a FIFO does.
+// gives the writer EPIPE as a FIFO does. Git's grep.exe then dies of SIGPIPE
+// and exits 13 << 8 (3328), which the shim reports as a shell would: 141.
 test("grep: a reader that closes a Windows pipe early ends the shim quietly", {
   skip: (!NATIVE.grep && "no native grep on PATH") || (process.platform !== "win32" && "the FIFO case above"),
 }, async () => {
