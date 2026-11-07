@@ -224,7 +224,7 @@ describe("AddDocumentDialog", () => {
     await user.click(within(dialog).getByRole("button", { name: "Upload" }));
     await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
     await waitFor(() => expect(cancelIngestion).toHaveBeenCalled());
-    // Every way to close the dialog goes through its one guard, held until the Stop answers.
+    // The footer's Close is off and every other close goes through the one guard, held until the Stop answers.
     for (const close of within(dialog).getAllByRole("button", { name: "Close" })) await user.click(close);
     await user.keyboard("{Escape}");
     fireEvent.pointerDown(document.body);
@@ -255,17 +255,21 @@ describe("AddDocumentDialog", () => {
     expect(onOpenChange.mock.calls.filter(([v]) => v === false)).toHaveLength(1);
   });
 
-  it("a Stop that fails says the job goes on and closes", async () => {
+  it("a Stop that fails says the job may still run, adds nothing and closes", async () => {
     ingestClock.sleep = () => new Promise<void>(() => {});
     vi.mocked(knowledgeIngestStatus).mockResolvedValue(status("processing", { stage: "embed" }));
     vi.mocked(cancelIngestion).mockRejectedValue(new Error("down"));
-    const { dialog, onOpenChange } = mount();
+    const { dialog, onAdded, onOpenChange } = mount();
     await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
     const user = await pick("spec.pdf");
     await user.click(within(dialog).getByRole("button", { name: "Upload" }));
     await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-    expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toMatch(/^Stop failed \(down\); spec\.pdf goes on extracting/);
+    expect(vi.mocked(toast).mock.calls.at(-1)).toEqual([
+      "Stop failed (down); spec.pdf may still be extracting",
+      "error",
+    ]);
+    expect(onAdded).not.toHaveBeenCalled();
   });
 
   it("a Stop of a running job says it stops before it publishes", async () => {

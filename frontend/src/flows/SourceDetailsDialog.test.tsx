@@ -60,7 +60,7 @@ describe("SourceDetailsDialog", () => {
       sync: { ...DETAIL.sync, status: "ok", error: "", last_synced_at: "2000-01-01 00:00:00" },
     });
     render(<SourceDetailsDialog org="acme" namespace="code-x" name="design-docs" onClose={() => {}} />);
-    const badge = await screen.findByText(/· Synced/);
-    expect(badge.textContent).toContain("2000");
+    const lastSync = await screen.findByText(/· Synced/);
+    expect(lastSync.textContent).toContain("2000");
   });
 });

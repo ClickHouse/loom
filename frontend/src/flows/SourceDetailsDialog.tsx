@@ -30,7 +30,6 @@ export function SourceDetailsDialog({
     },
     [org, namespace, name],
   );
-  // An ok turn's error says why it stopped early: a note, not an error.
   const okTurn = detail?.sync.status === "ok";
   return (
     <Modal open onOpenChange={(v) => !v && onClose()} title={name} className="w-full max-w-[640px]">

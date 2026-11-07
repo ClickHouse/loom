@@ -221,15 +221,13 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
       const r = await cancelIngestion(identity, jobId);
       if (published(r)) onAdded();
       toast(stopped(sourceUri.trim(), r), "info");
-      reset();
-      onOpenChange(false);
     } catch (e) {
-      // The follow is stopped and the job may still run: say so, as a lost follow does.
-      toast(`Stop failed (${humanizeError(e)}); ${goesOn(sourceUri.trim(), !!replaceMode)}`, "error");
-      reset();
-      onOpenChange(false);
+      // The follow is stopped and the cancel may or may not have landed.
+      toast(`Stop failed (${humanizeError(e)}); ${sourceUri.trim()} may still be extracting`, "error");
     } finally {
       setStopping(false);
+      reset();
+      onOpenChange(false);
     }
   };
   const readable = readableFormats(formats);
