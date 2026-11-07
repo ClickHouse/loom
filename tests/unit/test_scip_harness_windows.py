@@ -380,10 +380,19 @@ def test_a_full_index_whose_reconfigure_fails_fails(tmp_path: Path) -> None:
     assert "cmake configure failed" in proc.stdout
 
 
-def test_a_compile_database_without_its_cache_is_configured_from_scratch(tmp_path: Path) -> None:
-    """The cmake fix's recovery (remove the cache) gets the pinned first configure."""
+@pytest.mark.parametrize("cache", ["missing", "names a compiler the host lacks"])
+def test_a_cache_that_cannot_be_reconfigured_is_configured_from_scratch(
+    tmp_path: Path, cache: str
+) -> None:
+    """No cache, or one naming a compiler the host no longer has: the pinned first
+    configure, not a reconfigure that would fail on every run."""
     w = _CppWindow(tmp_path)
-    (w.repo / "build" / "CMakeCache.txt").unlink()
+    if cache == "missing":
+        (w.repo / "build" / "CMakeCache.txt").unlink()
+    else:
+        (w.repo / "build" / "CMakeCache.txt").write_text(
+            "CMAKE_CXX_COMPILER:FILEPATH=/nonexistent/clang++-18\n"
+        )
     assert (
         w.run_unchecked(index_docs=("src/a.cpp", "src/b.cpp"), CC="cc", CXX="c++").returncode == 0
     )
