@@ -49,11 +49,12 @@ _TARGET_PIECE = r"""(?x:
     [^)\]\n"']++  # the destination and a title's text
   | \](?!\()      # a `]` that opens no target
   | "[^")\]]*+"   # a quoted title, which may span lines; no `]`, so it never reaches the
-  | '[^')\]]*+'   # next `](`: a title holding `]` is read piece by piece, on one line
+  | '[^')\]]*+'   # next `](`: a title holding `]` is read piece by piece, its line ends
+                  # counted with the target's
   | ["']          # a lone quote: `it's.png`, or an unclosed title `"see (a`
 )"""
-# A target: its pieces, with up to three line ends between them, one in each place
-# CommonMark allows one: after `(`, between the destination and the title, before `)`.
+# A target: its pieces, with up to three line ends anywhere, as many as CommonMark allows
+# (after `(`, between the destination and the title, before `)`).
 _PAREN_TARGET = rf"\((?:{_TARGET_PIECE})*+(?:\n(?:{_TARGET_PIECE})*+){{0,3}}+\)"
 _IMAGE_MARKUP = re.compile(
     rf"!\[[^\[\]]*+\]{_PAREN_TARGET}"

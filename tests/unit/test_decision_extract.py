@@ -3091,6 +3091,8 @@ def test_only_tag_shaped_markup_is_removed_from_a_caption() -> None:
         ('![x](f.png\n"t"\n)', ['![x](f.png\n"t"\n)']),
         ('![x](f.png "a\nb")', ['![x](f.png "a\nb")']),
         ("![x](f.png 'a\nb')", ["![x](f.png 'a\nb')"]),
+        ('![x](\nf.png\n"t"\n)', ['![x](\nf.png\n"t"\n)']),
+        # Four line ends outside a title are more than a target holds.
         ("![x](a\nb\nc\nd\ne) done", []),
         # A target never runs into the next one.
         ("![x](a](b)", []),
