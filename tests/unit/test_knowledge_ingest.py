@@ -389,6 +389,10 @@ def _ingest(w: World, upload_id: str, **over: Any) -> str:
 
 
 def _run(w: World, ingestion_id: str) -> str | None:
+    """A worker pass running the job once it is due: a retry delay is taken as passed."""
+    job = w.job(ingestion_id)
+    if job is not None and job["state"] == "pending" and job["next_attempt_at"] > _now():
+        job["next_attempt_at"] = _now() - timedelta(seconds=1)
     return asyncio.run(ingest_run.take_and_run(w.job(ingestion_id)))  # type: ignore[arg-type]
 
 
@@ -733,6 +737,23 @@ def test_the_job_is_read_again_under_its_lease_with_sequential_consistency(
     monkeypatch.setattr(ingestions, "get_ingestion", recording)
     assert _run(world, job_id) == "ready"
     assert consistent and consistent[0] is True  # the re-read under the lease
+
+
+def test_a_job_put_back_to_wait_is_not_run_from_a_due_row_read_before_it(
+    world: World, settings_override: Any
+) -> None:
+    """A due row a lagging replica served names the job as it was; under its lease
+    the job reads as waiting out a retry delay, so it is left for its time."""
+    settings_override(knowledge_ingest_max_attempts=3)
+    world.fail_embed = BackendUnavailableError("provider down")
+    job_id = _ingest(world, _upload(world))
+    stale = dict(world.job(job_id))  # type: ignore[arg-type]  # as due() read it, due now
+    assert _run(world, job_id) == "pending"
+    waiting = world.job(job_id)
+    assert waiting is not None and waiting["next_attempt_at"] > _now()
+    world.fail_embed = None
+    assert asyncio.run(ingest_run.take_and_run(stale)) is None
+    assert world.job(job_id) == waiting  # untouched: no attempt spent, no run
 
 
 def test_by_default_the_worker_takes_the_next_job_at_once_and_waits_only_when_idle() -> None:

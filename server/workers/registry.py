@@ -563,10 +563,18 @@ def pass_deadline_seconds(name: str) -> float:
     return _spec_for(row).deadline_seconds()
 
 
-def worker_meta() -> dict[str, dict[str, float | bool]]:
+def worker_meta() -> dict[str, dict[str, float | bool | None]]:
     """Enable state and cadence of EVERY worker, disabled ones included —
-    what `/v1/admin/workers.status` renders beside the supervised set."""
+    what `/v1/admin/workers.status` renders beside the supervised set. The idle
+    interval, the wait after a pass that found no work, is None for a worker that
+    has none."""
     return {
-        row.name: {"enabled": _is_enabled(row), "interval_seconds": getattr(settings, row.interval)}
+        row.name: {
+            "enabled": _is_enabled(row),
+            "interval_seconds": getattr(settings, row.interval),
+            "idle_interval_seconds": getattr(settings, row.idle_interval)
+            if row.idle_interval
+            else None,
+        }
         for row in _WORKERS
     }

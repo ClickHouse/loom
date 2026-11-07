@@ -161,9 +161,10 @@ _INGEST_CHECKS: dict[str, tuple[RuleContract, str, str]] = {
             1,
             exceptions="An open job whose last attempt failed for the extractor or for "
             "access is that finding's, not this one's.",
-            uncertainty="A job queued seconds ago waits for the next worker pass "
-            "(knowledge_ingest_interval_seconds), and the worker runs one job per pass, one "
-            "source's jobs in order: a young backlog is the queue working.",
+            uncertainty="A job queued seconds ago waits for the worker's next pass (up to "
+            "knowledge_ingest_idle_interval_seconds when it was idle), and the worker runs "
+            "one job at a time, one source's jobs in order: a young backlog is the queue "
+            "working.",
         ),
         "Sources with a knowledge.ingest job pending or processing: queued, running within "
         "its lease, stalled past it (`ingestions.stalled`: the worker stopped; a later pass "

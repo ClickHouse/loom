@@ -590,6 +590,11 @@ async def test_admin_workers_status_returns_the_union_with_its_provenance(
     assert w["embedding_worker"]["reporting_from"] == "deploy:workers:green"
     assert w["embedding_worker"]["last_pass_status"] == "idle"
     assert "interval_seconds" in w["embedding_worker"] and "enabled" in w["embedding_worker"]
+    # A worker that waits otherwise when idle says so: the panel judges a stall by it.
+    assert w["knowledge_ingest"]["idle_interval_seconds"] == 15
+    assert w["embedding_worker"]["idle_interval_seconds"] is None or isinstance(
+        w["embedding_worker"]["idle_interval_seconds"], int
+    )
     assert w["brand_new_worker"]["source"] == "store"
     assert out.store["table"] == store.TABLE and out.store["rows"] == 2
     assert out.store["reporters"] == ["deploy:workers:green"]
