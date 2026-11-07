@@ -461,8 +461,6 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
 
     if not settings.code_intel_enabled or not settings.ch_host:
         return None  # nothing runs a tier, or no ClickHouse to read
-    if not _doctor_ch_reachable(settings, settings.ch_host)[0]:
-        return None  # `clickhouse_reachable` says why
 
     async def read() -> tuple[Any, ...] | None:
         client = get_client()
@@ -478,7 +476,8 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
             await client.disconnect()
 
     try:
-        return asyncio.run(asyncio.wait_for(read(), timeout=15))
+        # ClickHouse down: `clickhouse_reachable` says so, and the connect fails fast
+        return asyncio.run(asyncio.wait_for(read(), timeout=5))
     except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
         return None
 
@@ -486,8 +485,10 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
 def _doctor_problems() -> list[Any]:
     """The shared problem list as the doctor sees it: settings, and the failing
     code-index tiers read once from ClickHouse — no probed dim, breaker, lease or
-    ledger before boot. Empty when settings do not load (the `settings_load` check
-    already says so)."""
+    ledger before boot. When that read reaches ClickHouse it first adopts the
+    deployment's runtime setting overrides, so every problem is graded as the server
+    grades it. Empty when settings do not load (the `settings_load` check already says
+    so)."""
     try:
         from server.code.app.index.sandbox import layout_refusal, sandbox_available
         from server.observability.problems import HealthState, Problem, collect_problems

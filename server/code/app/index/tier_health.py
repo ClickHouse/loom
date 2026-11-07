@@ -91,12 +91,12 @@ _FAILING: tuple[FailingTier, ...] | None = None
 
 async def refresh_failing(ch: Any | None = None) -> None:
     """Re-read the tier-health records of every configured entry and, for the failing
-    ones, how far behind the entry's published status counts each (the count `as_of`
-    reads: -1 once the snapshot no longer matches the clone tip and the watermark). Two
-    small reads; called on the code_repos refresh timer. A record of an entry no longer
-    configured (removed from the config, or retired), or kept while code intelligence is
-    off, is not a problem: nothing runs it.
-    Never raises: a failed read keeps the last snapshot."""
+    ones, how far behind the entry's last published status counted each
+    (`_published_lag`). Two small reads; called on the code_repos refresh timer. A
+    record of an entry no longer configured (removed from the config, or retired), or
+    kept while code intelligence is off, is not a problem: nothing runs it. Until the
+    registry is first read, which entries are configured is unknown, and the snapshot
+    stays as it was. Never raises: a failed read keeps the last snapshot."""
     global _FAILING
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
@@ -105,9 +105,13 @@ async def refresh_failing(ch: Any | None = None) -> None:
     if not settings.code_intel_enabled:
         _FAILING = ()  # nothing runs a tier: no record is a live failure
         return
+    from server.code.app.index import repo_registry
+
+    if not repo_registry.registry_read():
+        return  # which entries are configured is unknown: the snapshot stays as it was
     try:
         store = CodeRepo(ch)
-        configured = {(c.org, c.namespace): c for c in configured_repos()}
+        configured = {(c.org, c.namespace) for c in configured_repos()}
         failing: list[tuple[str, str, tier_health.TierHealth]] = []
         for row in await store.state_rows_with_prefix(tier_health.STATE_PREFIX):
             org, ns = str(row["org"]), str(row["namespace"])
@@ -123,9 +127,7 @@ async def refresh_failing(ch: Any | None = None) -> None:
                 org,
                 ns,
                 health,
-                _published_lag(
-                    states.get((org, ns)) or {}, configured[(org, ns)].git_branch, health.tier
-                ),
+                _published_lag(states.get((org, ns)) or {}, health.tier),
             )
             for org, ns, health in failing
         ]
@@ -134,16 +136,25 @@ async def refresh_failing(ch: Any | None = None) -> None:
         logger.warning("tier health: failing tiers not re-read: %s", e)
 
 
-def _published_lag(state: IndexState, branch: str, tier: str) -> int:
-    """How far the watermark `tier` advances trails the fetched tip, as the entry's
-    published status counts it; -1 for the fetch tier or when unknown."""
-    from server.code.app.index_status import published_clone_head, published_lags
+def _published_lag(state: IndexState, tier: str) -> int:
+    """How far the watermark `tier` advances trailed the fetched tip when the entry's
+    status was last published, while that watermark has not moved since: a lower bound
+    of the lag now (the tip only advances), enough for the error threshold. -1 for the
+    fetch tier or when unknown."""
+    import json
+
+    from server.code.app.index_status import STATUS_SNAPSHOT_KEY, published_lags
 
     key = tier_health.WATERMARK_FOR_TIER.get(tier, "")
     mark = str((state.get(key) or {}).get("value") or "") if key else ""
     if not mark:
         return -1
-    return published_lags(state, {key: mark}, published_clone_head(state, branch))[key]
+    try:
+        snap = json.loads(str((state.get(STATUS_SNAPSHOT_KEY) or {}).get("value") or "{}"))
+    except ValueError:
+        return -1
+    tip = str(snap.get("clone_head") or "") if isinstance(snap, dict) else ""
+    return published_lags(state, {key: mark}, tip)[key]
 
 
 def reset_for_tests() -> None:

@@ -89,11 +89,18 @@ def _state(*, tip: str = TIP) -> dict[str, dict[str, Any]]:
     [("ingest", 7), ("clang", 413), ("clang_full", 413), ("python", -1), ("fetch", -1)],
 )
 def test_the_lag_is_the_one_the_published_status_counts(tier: str, lag: int) -> None:
-    assert recorder._published_lag(_state(), "main", tier) == lag
+    assert recorder._published_lag(_state(), tier) == lag
 
 
-def test_a_snapshot_from_another_tip_gives_no_lag() -> None:
-    assert recorder._published_lag(_state(tip="d" * 40), "main", "clang") == -1
+def test_a_fetch_since_the_snapshot_keeps_its_lag_as_a_lower_bound() -> None:
+    # the tip moved on (it only advances); the watermark did not: still 413 or more behind
+    assert recorder._published_lag(_state(tip="d" * 40), "clang") == 413
+
+
+def test_a_watermark_moved_since_the_snapshot_gives_no_lag() -> None:
+    state = _state()
+    state["scip_commit"] = {"value": "e" * 40}
+    assert recorder._published_lag(state, "clang") == -1
 
 
 class _Cfg:
@@ -141,6 +148,7 @@ async def test_the_snapshot_holds_the_failing_tiers_with_their_lag_and_keeps_it_
         "server.code.domain.index.repos.configured_repos",
         lambda: [_Cfg("code-a"), _Cfg("code-b")],
     )
+    monkeypatch.setattr("server.code.app.index.repo_registry.registry_read", lambda: True)
     assert recorder.problem_rows() is None  # not read yet: unknown, not healthy
     await recorder.refresh_failing()
     snap = recorder._FAILING
@@ -236,7 +244,6 @@ def test_the_doctor_reads_the_failing_tiers_once_and_none_when_clickhouse_is_dow
     calls: list[str] = []
     monkeypatch.setattr(settings, "code_intel_enabled", True)
     monkeypatch.setattr(settings, "ch_host", "localhost")
-    monkeypatch.setattr(doctor, "_doctor_ch_reachable", lambda *_: (True, "ok"))
 
     async def registry(**_: Any) -> list[Any]:
         calls.append("registry")
@@ -306,15 +313,14 @@ async def test_with_code_intelligence_off_no_record_is_a_problem(
 
 
 @pytest.mark.doctor_tier_read
-@pytest.mark.parametrize("why", ["intel_off", "unreachable"])
+@pytest.mark.parametrize("why", ["intel_off", "no_host"])
 def test_the_doctor_skips_the_tier_read_when_nothing_could_answer(
     why: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.cli import doctor
 
     monkeypatch.setattr(settings, "code_intel_enabled", why != "intel_off")
-    monkeypatch.setattr(settings, "ch_host", "localhost")
-    monkeypatch.setattr(doctor, "_doctor_ch_reachable", lambda *_: (False, "refused"))
+    monkeypatch.setattr(settings, "ch_host", "" if why == "no_host" else "localhost")
 
     def never() -> Any:
         raise AssertionError("no client is made")
@@ -371,7 +377,6 @@ def test_the_doctor_says_nothing_when_the_registry_cannot_be_read(
 
     monkeypatch.setattr(settings, "code_intel_enabled", True)
     monkeypatch.setattr(settings, "ch_host", "localhost")
-    monkeypatch.setattr(doctor, "_doctor_ch_reachable", lambda *_: (True, "ok"))
     monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
     monkeypatch.setattr(repo_registry, "refresh_db_repos", registry)
     monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
@@ -391,3 +396,16 @@ def test_a_refused_ssh_key_gets_the_ssh_fix_without_the_repository() -> None:
         )
     (row,) = recorder.problem_rows(T0) or ()
     assert row["fix"].startswith("The ssh key was refused:") and "private" not in row["fix"]
+
+
+@pytest.mark.asyncio
+async def test_before_the_registry_is_read_the_snapshot_stays_unread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.app.index import repo_registry
+
+    store = _Store([_row("code-a", "clang", _failing(4))], {("o", "code-a"): _state()})
+    monkeypatch.setattr("server.code.store.index.CodeRepo", lambda ch=None: store)
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
+    await recorder.refresh_failing()
+    assert recorder.problem_rows() is None  # unknown, not healthy
