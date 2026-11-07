@@ -828,9 +828,9 @@ def _register_code_tier_gauges(meter: Any) -> None:
         callbacks=[_points("failing")],
         description=(
             "Failed passes in a row of a code-index tier the `code_tier_failing` health "
-            "problem reports, per namespace, `tier` (fetch, ingest, clang, typescript, go, "
-            "python, clang_full), error `kind` and the problem's `severity` (warn, error); a "
-            "tier reports from the problem's warn threshold until its next successful pass"
+            "problem reports, per namespace, `tier`, error `kind` and the problem's "
+            "`severity` (warn, error); a tier reports from the problem's warn threshold "
+            "until its next successful pass"
         ),
         # an annotation unit: an OTLP-to-Prometheus export names it loom_code_tier_failing
         unit="{pass}",

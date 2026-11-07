@@ -18,6 +18,7 @@ it on a laptop.
 | Optional `<release>-analytics-export` | A daily CronJob and its own ServiceAccount (`analyticsExport.enabled`, [below](#analytics-export)).                                                           |
 | Optional `<release>-extractor`        | The document extractor's Deployment, Service and NetworkPolicy (`extractor.enabled`, [below](#document-extractor)).                                           |
 | NetworkPolicy `<release>`             | Full policy with `networkPolicy.enabled`; else all egress but [`egressExcept`](#instance-metadata-service), unless it is `[]` or `guardMetadata: false`.      |
+| Optional `<release>-code-tiers`       | A PrometheusRule on the failing code-index tiers (`alerts.prometheusRule.enabled`, [below](#alert-rules)).                                                    |
 | Optional dev ClickHouse               | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                                                                     |
 
 ## Before you install

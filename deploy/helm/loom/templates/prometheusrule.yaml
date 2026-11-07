@@ -32,5 +32,5 @@ spec:
             severity: critical
           annotations:
             summary: {{ "{{ $labels.loom_org }}/{{ $labels.loom_namespace }}: the failing {{ $labels.tier }} tier is far behind ({{ $labels.kind }})" | quote }}
-            description: {{ "The tier is failing and at least LOOM_CODE_TIER_FAILING_ERROR_LAG_COMMITS behind, so compiler-grade answers are far from the branch (loom_code_tier_lag_commits has the count). The fix is in /v1/health (code_tier_failing) and in code.repos tier_health." | quote }}
+            description: {{ "The tier is failing and at least LOOM_CODE_TIER_FAILING_ERROR_LAG_COMMITS behind, so what the tier answers is far from the branch (loom_code_tier_lag_commits has the count). The fix is in /v1/health (code_tier_failing) and in code.repos tier_health." | quote }}
 {{- end }}

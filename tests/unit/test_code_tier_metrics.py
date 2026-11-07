@@ -104,6 +104,9 @@ class _Meter:
         self.units[name] = unit
         self.callbacks[name] = callbacks[0]
 
+    def create_observable_counter(self, **_: Any) -> None:
+        """The other state gauges register counters too."""
+
 
 def test_the_gauges_register_with_the_names_the_alerts_read() -> None:
     meter = _Meter()
@@ -134,3 +137,9 @@ def test_the_dashboard_alert_fires_on_any_reported_tier() -> None:
     tile = next(t for t in spec["tiles"] if t["id"] == "tier_failing")
     assert "MetricName = 'loom.code.tier_failing'" in tile["sql"]
     assert tile["alert"]["condition"] == "max(Value) > 0 for 15m"
+
+
+def test_the_state_gauges_register_the_tier_gauges() -> None:
+    meter = _Meter()
+    metrics_gauges.register_state_gauges(meter, ch_probe=dict)
+    assert {"loom.code.tier_failing", "loom.code.tier_lag_commits"} <= set(meter.units)
