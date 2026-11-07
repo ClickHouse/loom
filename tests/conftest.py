@@ -1,12 +1,11 @@
 """Fixtures shared by the integration and analyzer suites, and the
 LOOM_TEST_SHARD split a run can ask for (`_shards`).
 
-They need a ClickHouse at an explicit $LOOM_CH_HOST (with
-LOOM_CH_PORT/USER/PASSWORD) with the migrations applied (`make migrate`); the
-fixtures that need a control plane at $LOOM_BASE_URL live in
-tests/integration/conftest.py. The unit suite shadows the `.env` loader and
-the token seeding here (tests/unit/conftest.py) and needs no ClickHouse or
-server.
+They need a migrated ClickHouse (`make migrate`) at an explicit $LOOM_CH_HOST
+and LOOM_CH_PORT/USER/PASSWORD; the fixtures that need a control plane at
+$LOOM_BASE_URL live in tests/integration/conftest.py. The unit suite shadows
+the `.env` loader and the token seeding here (tests/unit/conftest.py) and
+needs no ClickHouse or server.
 """
 
 from __future__ import annotations
