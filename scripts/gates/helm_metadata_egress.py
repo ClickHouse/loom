@@ -39,7 +39,7 @@ LOOM_PODS = {
     "CronJob/loom-analytics-export",
     "Pod/loom-test-health",
 }
-# Every optional object that runs the Loom image.
+# Every optional object the policies cover.
 EVERYTHING = (
     "workers.enabled=true",
     "analyticsExport.enabled=true",
