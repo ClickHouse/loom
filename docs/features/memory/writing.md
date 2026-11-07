@@ -329,19 +329,20 @@ listed on no MCP toolset: an MCP client calls `loom_memory_import` by name. Fiel
 only to reads that pass `include_proposed`, and never retires, supersedes or flags an
 established fact. The `relations` it names stay out of the fact graph, and accepting it
 does not add them: state them again once it is established. A key that already holds a fact answers 409 `KEY_HOLDS_FACT`.
-`memory.proposals` lists proposals with the graded runs that relied on each, and
+`memory.proposals` lists proposals with the graded runs that relied on each (a run counts
+toward a proposal's trial when it names the key in `run.complete(memories_used=…)` and is
+graded with `run.grade`), and
 `memory.proposal_decide` accepts or rejects them. Loom decides only when the owner set
 `proposal_policy.mode` to `auto` (`min_passes`, `max_fails`, `reject_after_fails`). See
 [runs](../runs.md).
 
-With the policy left `manual` (the default), a proposal waits for a person: a run counts
-toward its trial when it names the key in `run.complete(memories_used=…)` and is graded with
-`run.grade`, and a writer accepts or rejects it on the dashboard's **Review queue**,
-**Proposals** tab ([dashboard](../dashboard.md)). A decision names a key and decides its
-newest row, so while more than one proposal holds a key the tab leaves it undecided; an
-accept that met a contradiction on trial lands `conflicted` and waits in Conflicts. See also
-the [learnings review queue](./procedures-and-learnings.md#learnings-review-queue) and
-[datasets](../knowledge.md#datasets).
+With the policy left `manual` (the default), a writer accepts or rejects a proposal on the
+**Proposals** tab of the **Review queue** (`/admin/review_queue`;
+[dashboard](../dashboard.md)). A decision names a key and decides its newest row, so the tab
+offers no decision for a key that more than one proposal holds. Accepting a proposal that
+contradicts an established fact stores it `conflicted`, and the pair waits on the
+**Conflicts** tab. Learnings have a review of their own:
+[learnings review queue](./procedures-and-learnings.md#learnings-review-queue).
 
 ## Typed records
 
