@@ -2,7 +2,8 @@
 
 An op that is declared, described, tested and migrated but reachable from no
 listed tool, no SDK method, no example, no plugin hook and no dashboard call
-site is dark, and dark ops go uncalled. This module derives, per op, the set of reach kinds:
+site is dark, and dark ops go uncalled. This module derives, per op, the set
+of reach kinds:
 
 ``mcp_core``     listed on the default ``core`` MCP toolset (or with the code
                  tools flag) — the chat loop sees it.

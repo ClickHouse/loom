@@ -11,9 +11,8 @@ the reason. The census's `--check` (`tests/unit/test_op_reach_census.py`) fails
 on an op with neither, and on an entry for an op the dashboard calls.
 
 `DASHBOARD_PENDING` holds the ops a person needs whose control is not built
-yet. It only shrinks (`tests/unit/test_op_surfaces.py` holds the set it may not
-outgrow): an op leaves it when its control lands, and a new op ships with its
-control instead.
+yet. `tests/unit/test_op_surfaces.py` pins it: an op leaves it when its control
+lands, and a new op ships with its control instead.
 """
 
 from __future__ import annotations

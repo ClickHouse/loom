@@ -26,9 +26,9 @@ from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport import mcp_op, mcp_tools
 from server.transport.http import build_router
 
-# The ops DASHBOARD_PENDING may hold: a control that lands drops its op from
-# both, and nothing joins either.
-PENDING_AT_MOST = frozenset(
+# DASHBOARD_PENDING, pinned: a control that lands drops its op from both, and
+# nothing joins either.
+PENDING_PINNED = frozenset(
     {
         "blacklist.sweep",
         "calibration.get",
@@ -220,10 +220,12 @@ def test_an_op_a_reason_names_is_on_the_dashboard():
     """A reason that says the dashboard does it through another op names one it calls."""
     for name, reason in NOT_IN_DASHBOARD.items():
         for other in re.findall(r"[a-z_]+(?:\.[a-z_]+)+", reason):
-            if other in OPERATIONS_BY_NAME:
-                assert "dashboard" in OPERATIONS_BY_NAME[other].reach, (name, other)
+            assert other in OPERATIONS_BY_NAME, (name, other)
+            assert "dashboard" in OPERATIONS_BY_NAME[other].reach, (name, other)
 
 
-def test_the_pending_set_only_shrinks():
-    joined = sorted(DASHBOARD_PENDING - PENDING_AT_MOST)
+def test_the_pending_set_is_pinned():
+    joined = sorted(DASHBOARD_PENDING - PENDING_PINNED)
     assert not joined, f"{joined}: a new op a person needs ships with its dashboard control"
+    left = sorted(PENDING_PINNED - DASHBOARD_PENDING)
+    assert not left, f"{left} left DASHBOARD_PENDING: drop them from PENDING_PINNED too"

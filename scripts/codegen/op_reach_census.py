@@ -11,10 +11,11 @@ maturity and, with ``--call-counts``, its call count from ``loom.agent_events``.
 ``--call-counts`` is the only mode that opens a connection: the ClickHouse
 the server CLI uses (``LOOM_ENV_FILE=/path/.env`` to name another dotenv).
 
-The gate (also ``tests/unit/test_op_reach_census.py``): every op has a reach path other than a raw
-HTTP POST or is declared experimental; every op is on the dashboard or named in
-``server.operations.dashboard`` with the reason it is not; the committed
-manifest is byte-identical to what ``--write-manifest`` writes. ``--owners``
+The gate (also ``tests/unit/test_op_reach_census.py``): every op has a reach
+path other than a raw HTTP POST or is declared experimental; every op is on the
+dashboard or in ``server.operations.dashboard`` (with the reason it is not, or
+pending); the committed manifest is byte-identical to what ``--write-manifest``
+writes. ``--owners``
 names, for every experimental op, the commit that added its declaration: the
 owner a deletion PR should cite.
 """
@@ -86,9 +87,10 @@ def _files(root: Path, rel: str, suffixes: tuple[str, ...]) -> list[Path]:
     if not base.exists():
         return []
     # Excluded directories are matched below `base` only: a checkout that
-    # itself sits under a `tests` directory still scans every file. `test` is
-    # the dashboard's helpers (`frontend/src/test`); a test kept beside its
-    # source (the dashboard's `*.test.tsx`) is skipped by its name.
+    # itself sits under a `tests` directory still scans every file. A `test`
+    # directory is skipped in every tree (only the dashboard's helpers,
+    # `frontend/src/test`, sit in one); a test kept beside its source (the
+    # dashboard's `*.test.tsx`) is skipped by its name.
     return sorted(
         p
         for p in base.rglob("*")
