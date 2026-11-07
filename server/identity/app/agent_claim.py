@@ -122,7 +122,8 @@ async def agent_claim(request: Request) -> Response:
         page = _form(namespace, e.message, 429)
         page.headers["Retry-After"] = str(e.retry_after_s)
         return page
-    except _BUSY:
+    except Exception as e:  # noqa: BLE001 — a failed check answers the page, not a bare 500
+        _log_unexpected(namespace, e)
         return _retry_later(namespace, "The code could not be checked: submit again in a minute.")
     if proven is None:
         return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
@@ -130,8 +131,8 @@ async def agent_claim(request: Request) -> Response:
     # Hashed only once the code is proven, so a guess costs one hash.
     password_hash = await hash_password_off_loop(password)
     try:
-        outcome, cutoff = await claim_shielded(org, namespace, code_hash, password_hash)
-    except _BUSY:
+        outcome, cutoff, others = await claim_shielded(org, namespace, code_hash, password_hash)
+    except Exception:  # noqa: BLE001 — answered by the page; `_done` logs it
         return _retry_later(
             namespace,
             "An earlier submit may still be claiming this namespace: wait a minute and sign "
@@ -153,19 +154,22 @@ async def agent_claim(request: Request) -> Response:
     return oauth.html_page(
         _TITLE,
         f"<h2>Claimed</h2><p>Sign in as <b>{html.escape(namespace)}</b> with your password.</p>"
-        + await _grants_notice(org, namespace),
+        + _grants_notice(others),
     )
 
 
-async def _grants_notice(org: str, namespace: str) -> str:
+def _log_unexpected(namespace: str, e: Exception) -> None:
+    # A busy account or backend is expected and answered; anything else is logged.
+    if not isinstance(e, _BUSY):
+        log.warning("agent claim of %s: %r", namespace, e)
+
+
+def _grants_notice(others: list[str] | None) -> str:
     # The claim ends no grant: one made before it, by whoever held the code,
     # is the claimer's to review.
-    try:
-        others = await _other_grants(org, namespace)
-    except Exception as e:  # noqa: BLE001 — the claim is done; the page still answers
-        log.warning("agent claim of %s/%s: listing its grants failed: %r", org, namespace, e)
-        others = []
     review = "<p>Review its grants, visibility and join policy in the dashboard.</p>"
+    if others is None:
+        return "<p>The other holders of grants on it could not be listed.</p>" + review
     if not others:
         return review
     names = ", ".join(f"<b>{html.escape(s)}</b>" for s in others)
@@ -225,8 +229,10 @@ _READ_BACK_S = 5.0
 
 
 def _done(task: asyncio.Task[Any]) -> None:
+    # Logged here, not by the request, which a disconnect may have cancelled; a
+    # busy account or backend is expected and answered.
     _running.discard(task)
-    if not task.cancelled() and task.exception() is not None:
+    if not task.cancelled() and not isinstance(task.exception(), (type(None), *_BUSY)):
         log.warning("agent claim: the claim's task failed: %r", task.exception())
 
 
@@ -248,7 +254,7 @@ async def drain(timeout_s: float = DRAIN_S) -> None:
 
 async def claim_shielded(
     org: str, namespace: str, code_hash: str, password_hash: str
-) -> tuple[str, datetime | None]:
+) -> tuple[str, datetime | None, list[str] | None]:
     """`_replace_code` in a task of its own: a client that disconnects cancels
     the request, never the write's cutoffs."""
     task = asyncio.create_task(_replace_code(org, namespace, code_hash, password_hash))
@@ -259,11 +265,12 @@ async def claim_shielded(
 
 async def _replace_code(
     org: str, namespace: str, code_hash: str, password_hash: str
-) -> tuple[str, datetime | None]:
-    """("claimed", the cutoff the claimer waits out) when this call replaced the
-    code with `password_hash`; ("taken", a cutoff past the first claim's last)
-    when a claim landed first, as an earlier submit of the same form does;
-    ("refused", None), the only outcome without a cutoff, when the row changed
+) -> tuple[str, datetime | None, list[str] | None]:
+    """("claimed", the cutoff the claimer waits out, the other grant holders or
+    None when they could not be listed) when this call replaced the code with
+    `password_hash`; ("taken", a cutoff past the first claim's last, None) when a
+    claim landed first, as an earlier submit of the same form does; ("refused",
+    None, None), the only outcome without a cutoff, when the row changed
     otherwise (a release)."""
     subject, sent, written = "", False, False
     # Held from the read to the write, as a release or a password link holds the
@@ -272,11 +279,11 @@ async def _replace_code(
         async with account_change(org, namespace):  # its reads are sequentially consistent
             row = await namespaces.fetch_row(org, namespace)
             if row is None or not row["active"]:
-                return "refused", None
+                return "refused", None, None
             if row["password_hash"] != code_hash:
                 if CLAIMED_TAG not in (row.get("tags") or []):
-                    return "refused", None
-                return "taken", _past_a_claim_landed_now()
+                    return "refused", None, None
+                return "taken", _past_a_claim_landed_now(), None
             subject = str(row["owner_email"])
             # Before the write, so a write that fails leaves the code to retry with,
             # never a spent code and live tokens. A subject cutoff also ends every
@@ -303,8 +310,7 @@ async def _replace_code(
         )
     cutoff = await _after_write(org, namespace, subject, password_hash)
     # After the last cutoff, so the audit's time does not delay it.
-    await _audit(org, namespace)
-    return "claimed", cutoff
+    return "claimed", cutoff, await _audit(org, namespace)
 
 
 async def _landed(org: str, namespace: str, password_hash: str) -> bool:
@@ -335,10 +341,15 @@ async def _write(row: dict[str, Any], password_hash: str) -> None:
     )
 
 
-async def _audit(org: str, namespace: str) -> None:
-    # The grants others hold, which the claim leaves for the claimer to review.
+async def _audit(org: str, namespace: str) -> list[str] | None:
+    """Audit the claim with the grants others hold, which it leaves for the
+    claimer to review; those holders, or None when they could not be listed."""
+    others: list[str] | None = None
     try:
         others = await _other_grants(org, namespace)
+    except Exception as e:  # noqa: BLE001 — the claim is written; it is audited without them
+        log.warning("agent claim of %s/%s: listing its grants failed: %r", org, namespace, e)
+    try:
         await audit.emit(
             "auth.agent_claimed",
             org=org,
@@ -346,8 +357,9 @@ async def _audit(org: str, namespace: str) -> None:
             actor=namespace,
             subject={"other_grants": others},
         )
-    except Exception as e:  # noqa: BLE001 — the claim is written; its cutoffs must still run
+    except Exception as e:  # noqa: BLE001 — the claim is written; the page must still answer
         log.warning("agent claim of %s/%s: the audit row failed: %r", org, namespace, e)
+    return others
 
 
 async def _after_write(org: str, namespace: str, subject: str, password_hash: str) -> datetime:

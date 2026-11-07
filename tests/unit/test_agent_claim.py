@@ -461,7 +461,7 @@ def test_a_second_submit_answers_after_the_first_claims_last_cutoff(world) -> No
         )
         return list(await asyncio.gather(first, second))
 
-    (first, c1), (second, c2) = asyncio.run(both())
+    (first, c1, _), (second, c2, _) = asyncio.run(both())
     assert (first, second) == ("claimed", "taken")
     assert c2 > c1 and int(c2.timestamp()) > world["cutoffs"][_LEGACY]
     # A sign-in once the answer came is issued at or after the bound it waited
@@ -606,6 +606,35 @@ def test_a_write_that_lands_but_reports_a_failure_still_claims(world, monkeypatc
     assert len(cutoffs) == 2 and world["waited"] == cutoffs[1:]
 
 
+def test_a_raw_error_before_the_write_answers_the_page_and_keeps_the_code(
+    world, monkeypatch
+) -> None:
+    from server.identity.app import account_admin
+
+    async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
+        raise RuntimeError("driver")
+
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+    r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
+    assert r.status_code == 503 and r.headers["content-type"].startswith("text/html")
+    assert passwords.verify_password(_row(world, _LEGACY)["password_hash"], world["legacy_code"])
+
+
+def test_grants_that_cannot_be_listed_are_named_as_such(world, monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def failing(org: str, namespace: str) -> list[str]:
+        calls.append(namespace)
+        raise RuntimeError("driver")
+
+    monkeypatch.setattr(agent_claim, "_other_grants", failing)
+    r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
+    assert r.status_code == 200 and "could not be listed" in r.text
+    [(_, kw)] = world["events"]
+    # Listed once, for the audit row and the page alike.
+    assert kw["subject"] == {"other_grants": None} and calls == [_LEGACY]
+
+
 def test_a_write_that_does_not_confirm_still_cuts_off_after_it(world, monkeypatch) -> None:
     # The insert fails before it lands and the read-back cannot find it: the
     # code stays, the cutoff after the write still runs, and the page says wait.
@@ -645,7 +674,7 @@ def test_a_personal_token_named_like_the_agent_is_named(world) -> None:
     assert kw["subject"] == {"other_grants": [lookalike]}
 
 
-@pytest.mark.parametrize("failure", [_unavailable, _timed_out])
+@pytest.mark.parametrize("failure", [_unavailable, _timed_out, lambda: RuntimeError("driver")])
 def test_a_backend_failure_during_the_code_check_answers_the_page(
     world, monkeypatch, failure
 ) -> None:
