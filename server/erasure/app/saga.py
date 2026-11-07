@@ -595,7 +595,7 @@ async def _saga_namespace(
 
     # External backends fail closed — see _saga_user_id. A namespace_list erasure may
     # run loom-only (`external=false`): the backends erase per namespace — Langfuse
-    # lists traces by tag with a 10 s budget, ClickStack counts then mutates each OTel
+    # looks up traces by tag, ClickStack counts then mutates each OTel
     # table — and a 200-namespace GC of throwaway bench namespaces is not what they are
     # for.
     if not external:

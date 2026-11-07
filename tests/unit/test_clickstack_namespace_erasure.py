@@ -119,6 +119,7 @@ async def test_langfuse_list_runs_lookups_concurrently_and_sums(monkeypatch):
     from server.erasure.app.backends import LangfuseBackend
 
     b = LangfuseBackend("https://lf.example", "tok", 5.0)
+    b._major = 3  # already probed: the test covers the fan-out, not the probe
     active = 0
     peak = 0
 

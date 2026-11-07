@@ -179,9 +179,11 @@ class LangfuseBackend:
         version = ""
         if r.status_code == 200:
             try:
-                version = str((r.json() or {}).get("version") or "")
+                body = r.json()
             except ValueError:  # a proxy's HTML page: no version, so fail closed below
-                pass
+                body = None
+            if isinstance(body, dict):
+                version = str(body.get("version") or "")
         major = version.split(".", 1)[0]
         if not major.isdigit():
             raise ErasureBackendError(
@@ -201,6 +203,7 @@ class LangfuseBackend:
         """Every trace id carrying all of `tags` (and `user_id`, when given)."""
         if await self._api_major(c) >= 4:
             return await self._find_trace_ids_v4(c, tags=tags, user_id=user_id)
+        # httpx encodes a list value as repeated params, which the trace list ANDs.
         params: dict[str, str | list[str]] = {"tags": tags}
         if user_id:
             params["userId"] = user_id
@@ -412,9 +415,8 @@ class LangfuseBackend:
         """
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as c:
-                # Repeated `tags` params are ANDed server-side (a nonexistent
-                # org tag matches nothing); httpx encodes a list value as
-                # repeated params.
+                # Both lookups AND the tags server-side, so a nonexistent org
+                # tag matches nothing.
                 ids = await self._find_trace_ids(c, tags=[f"namespace:{namespace}", f"org:{org}"])
                 if not ids:
                     return 0
@@ -425,9 +427,8 @@ class LangfuseBackend:
                 f"langfuse.delete_namespace {org}/{namespace} transport error: {_describe(e)}"
             ) from e
 
-    # Langfuse filters traces by tag one namespace at a time (repeated `tags`
-    # are ANDed, never ORed), so a list is still one lookup per namespace —
-    # but the lookups need not wait on one another.
+    # One lookup per namespace: the trace list ANDs repeated `tags` and cannot
+    # OR them. The lookups need not wait on one another.
     _LIST_CONCURRENCY = 4
 
     async def delete_namespaces(self, org: str, namespaces: Sequence[str]) -> int:

@@ -36,6 +36,16 @@ class _NotJson(_Resp):
         raise ValueError("not json")
 
 
+class _JsonList(_Resp):
+    """A 200 whose JSON body is not an object."""
+
+    def __init__(self) -> None:
+        super().__init__(200)
+
+    def json(self) -> Any:
+        return ["OK"]
+
+
 class _Client:
     """Scripted GET: each entry is a _Resp or an exception to raise."""
 
@@ -194,7 +204,13 @@ async def test_langfuse_4_lookup_refuses_a_truncated_set(backend, monkeypatch) -
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "resp",
-    [_Resp(200, {"status": "OK"}), _Resp(404), _Resp(200, {"version": "dev"}), _NotJson()],
+    [
+        _Resp(200, {"status": "OK"}),
+        _Resp(404),
+        _Resp(200, {"version": "dev"}),
+        _NotJson(),
+        _JsonList(),
+    ],
 )
 async def test_an_unreadable_server_version_fails_closed(backend, resp) -> None:
     c = _Client([resp])
