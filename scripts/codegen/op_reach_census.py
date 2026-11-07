@@ -85,11 +85,9 @@ def _files(root: Path, rel: str, suffixes: tuple[str, ...]) -> list[Path]:
     base = root / rel
     if not base.exists():
         return []
-    # Excluded directories are matched below `base` only: a checkout that
-    # itself sits under a `tests` directory still scans every file. A `test`
-    # directory is skipped in every tree (only the dashboard's helpers,
-    # `frontend/src/test`, sit in one); a test kept beside its source (the
-    # dashboard's `*.test.tsx`) is skipped by its name.
+    # `tests` and `test` directories below `base`, and a test kept beside its
+    # source (`*.test.tsx`), are skipped; a checkout that itself sits under
+    # `tests` still scans every file.
     return sorted(
         p
         for p in base.rglob("*")

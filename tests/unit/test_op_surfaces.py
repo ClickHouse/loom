@@ -26,6 +26,9 @@ from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport import mcp_op, mcp_tools
 
+# The reasons that say only an agent calls the op.
+AGENT_ONLY = {AGENT_STEP, CODE_QUESTION, TRACKER_QUESTION}
+
 # DASHBOARD_PENDING, pinned: a control that lands drops its op from both, and
 # nothing joins either.
 PENDING_PINNED = frozenset(
@@ -189,9 +192,9 @@ def test_each_dashboard_violation_is_named(
     assert census.dashboard_violations([op]) == [expected]
 
 
-def test_an_agent_step_is_one_an_agent_token_may_call():
+def test_an_agent_only_op_is_one_an_agent_token_may_call():
     for name, reason in NOT_IN_DASHBOARD.items():
-        if reason == AGENT_STEP:
+        if reason in AGENT_ONLY:
             assert OPERATIONS_BY_NAME[name].required_role <= Role.WRITER, name
 
 
@@ -199,9 +202,8 @@ def test_an_op_kept_off_mcp_is_never_an_agent_step():
     """An op MCP keeps for people and operators is never classed as an agent's
     own step: an agent cannot call it, so that reason would leave it with no
     caller."""
-    agent_only = {AGENT_STEP, CODE_QUESTION, TRACKER_QUESTION}
     for name in _MCP_HIDDEN_OPS:
-        assert NOT_IN_DASHBOARD.get(name) not in agent_only, name
+        assert NOT_IN_DASHBOARD.get(name) not in AGENT_ONLY, name
 
 
 def test_a_refusal_names_the_dashboard_only_for_an_op_it_calls():

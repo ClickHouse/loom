@@ -212,8 +212,8 @@ DASHBOARD_PENDING: frozenset[str] = frozenset(
         "memory.exposure_summary",
         "memory.owner_report",
         # the memory drawer
-        "memory.cross_promote",
         "memory.backlinks",
+        "memory.cross_promote",
         "memory.demote",
         "memory.evidence",
         "memory.lock",
