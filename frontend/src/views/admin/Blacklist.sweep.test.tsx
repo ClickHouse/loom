@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
+import * as guardrails from "../../api/guardrails";
 import type { BlacklistRow, MyNamespaceEntry, WhoAmI } from "../../api";
 import { useStore } from "../../lib/state";
 import { resetNamespaceRoleCache } from "../../lib/namespaceRole";
@@ -16,9 +17,11 @@ vi.mock("../../api", async (importOriginal) => {
   return {
     ...actual,
     listBlacklist: vi.fn(),
-    sweepBlacklistPattern: vi.fn(async () => ({ matched: 3, tombstoned: 3, truncated: false, error: "" })),
   };
 });
+vi.mock("../../api/guardrails", () => ({
+  sweepBlacklistPattern: vi.fn(async () => ({ matched: 3, tombstoned: 3, truncated: false, error: "" })),
+}));
 
 const row = (pattern_id: string, scope: BlacklistRow["scope"]): BlacklistRow =>
   ({
@@ -57,7 +60,10 @@ describe("PrivacyFilters sweep", () => {
     expect(screen.queryByRole("button", { name: "Delete stored memories matching secret-p2" })).toBeNull();
     await userEvent.click(sweep);
     await waitFor(() =>
-      expect(api.sweepBlacklistPattern).toHaveBeenCalledWith(expect.objectContaining({ namespace: "team" }), "p1"),
+      expect(guardrails.sweepBlacklistPattern).toHaveBeenCalledWith(
+        expect.objectContaining({ namespace: "team" }),
+        "p1",
+      ),
     );
   });
 

@@ -13,7 +13,7 @@ import {
   type ExtractionPolicy,
   type OrgModelCalls,
   type PolicyScope,
-} from "../../api";
+} from "../../api/guardrails";
 import { useIdentity } from "../../lib/state";
 import { useAbortableEffect } from "../../lib/hooks";
 import { humanizeError } from "../../lib/format";

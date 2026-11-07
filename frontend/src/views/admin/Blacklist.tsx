@@ -2,14 +2,8 @@ import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import {
-  listBlacklist,
-  addBlacklist,
-  removeBlacklist,
-  sweepBlacklistPattern,
-  type BlacklistRow,
-  type BlacklistScope,
-} from "../../api";
+import { listBlacklist, addBlacklist, removeBlacklist, type BlacklistRow, type BlacklistScope } from "../../api";
+import { sweepBlacklistPattern } from "../../api/guardrails";
 import { hasOrgAdminClaim } from "../../lib/role";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { OrgGuardrails } from "./OrgGuardrails";

@@ -83,8 +83,8 @@ def test_mcp_reach_derives_from_the_tier_frozensets():
         assert {"mcp_atomic", "mcp_all"} <= op_reach(name), name
     for name in _MCP_HIDDEN_OPS:
         assert not (op_reach(name) & {"mcp_core", "mcp_atomic", "mcp_all"}), name
-    # the shape the eval found: the hidden operator sweep has no SDK wrapper either
-    assert op_reach("blacklist.sweep") == {"http_only"}
+    # the hidden operator sweep has no SDK wrapper either: the Guardrails page is its one caller
+    assert op_reach("blacklist.sweep") == {"dashboard"}
     assert OPERATIONS_BY_NAME["blacklist.sweep"].maturity == "experimental"
 
 

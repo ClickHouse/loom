@@ -1,15 +1,15 @@
 import { cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as api from "../api";
-import type { Webhook } from "../api";
+import * as api from "../api/guardrails";
+import type { Webhook } from "../api/guardrails";
 import { useStore } from "../lib/state";
 import { WebhooksSection } from "./WebhooksSection";
 
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
 vi.mock("../components/Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
-vi.mock("../api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../api")>();
+vi.mock("../api/guardrails", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/guardrails")>();
   return {
     ...actual,
     listWebhooks: vi.fn(),

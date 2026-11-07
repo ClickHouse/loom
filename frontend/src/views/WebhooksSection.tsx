@@ -13,7 +13,7 @@ import {
   type Webhook,
   type WebhookDelivery,
   type WebhookEvent,
-} from "../api";
+} from "../api/guardrails";
 import { useIdentity } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
 import { humanizeError } from "../lib/format";

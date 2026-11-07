@@ -1,16 +1,16 @@
 import { cleanup, render, screen, waitFor } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as api from "../../api";
-import type { ExtractionPolicy, OrgModelCalls } from "../../api";
+import * as api from "../../api/guardrails";
+import type { ExtractionPolicy, OrgModelCalls } from "../../api/guardrails";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { useStore } from "../../lib/state";
 import { OrgGuardrails } from "./OrgGuardrails";
 
 vi.mock("../../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
 vi.mock("../../components/Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
-vi.mock("../../api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../api")>();
+vi.mock("../../api/guardrails", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api/guardrails")>();
   return {
     ...actual,
     getExtractionPolicy: vi.fn(),
