@@ -318,8 +318,10 @@ _real_dns_resolve = dns.asyncresolver.Resolver.resolve
 async def _guarded_dns_resolve(
     self: dns.asyncresolver.Resolver, qname: Any, *a: Any, **kw: Any
 ) -> Any:
-    name = str(qname).rstrip(".")
-    if self.port == 53 and not _is_local(name):  # a test's own nameserver is on another port
+    # Any name, `localhost` too: dnspython reads no /etc/hosts and would ask the system's
+    # nameserver. A test's own nameserver is on another port.
+    if self.port == 53:
+        name = str(qname).rstrip(".")
         _network_attempts.append(f"resolve {name}")
         raise OSError(f"unit tests may not resolve {name}")
     return await _real_dns_resolve(self, qname, *a, **kw)

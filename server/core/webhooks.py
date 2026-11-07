@@ -162,9 +162,10 @@ async def post(
     delivery: the DNS lookup, the connection and the response's status line.
     The body of the answer is never read. A lookup cut by the deadline ends with
     it (`vet_host` looks a host up on the event loop); only an allowlisted host's
-    lookup runs in a thread, which finishes on its own. Each delivery has its own client: a pooled
-    connection is keyed by the pinned address, so a second registration on the
-    same address would reuse a TLS session verified for another name."""
+    lookup runs in a thread, which finishes on its own. Each delivery has its own
+    client: a pooled connection is keyed by the pinned address, so a second
+    registration on the same address would reuse a TLS session verified for
+    another name."""
     try:
         host = urlsplit(url).hostname or ""
     except ValueError:

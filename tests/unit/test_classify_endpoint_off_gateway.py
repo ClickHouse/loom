@@ -639,6 +639,8 @@ def test_the_in_loop_lookup_reads_a_and_aaaa_and_fails_only_when_both_do(
             self.zone = zone
 
         async def resolve(self, host: str, kind: str, *, raise_on_no_answer: bool) -> Any:
+            if (host, kind) == ("slow6.example", "AAAA"):
+                raise dns.resolver.LifetimeTimeout(timeout=1.0, errors=[])
             if not any(name == host for name, _ in self.zone):
                 raise dns.resolver.NXDOMAIN
             records = [_Record(a) for a in self.zone.get((host, kind), [])]
@@ -651,6 +653,8 @@ def test_the_in_loop_lookup_reads_a_and_aaaa_and_fails_only_when_both_do(
         ("both.example", "AAAA"): ["2606:2800:21f:cb07:6820:80da:af6b:8b2c"],
         ("v4.example", "A"): ["93.184.215.14"],
         ("v6.example", "AAAA"): ["2606:2800:21f:cb07:6820:80da:af6b:8b2c"],
+        ("slow6.example", "A"): ["93.184.215.14"],
+        ("slow6.example", "AAAA"): [],  # this kind's query fails: see _Resolver.resolve
     }
     monkeypatch.setattr(hosts, "_async_resolver", lambda: _Resolver(zone))
     assert asyncio.run(hosts._resolve_in_loop("both.example")) == [
@@ -661,6 +665,9 @@ def test_the_in_loop_lookup_reads_a_and_aaaa_and_fails_only_when_both_do(
     assert asyncio.run(hosts._resolve_in_loop("v6.example")) == [
         "2606:2800:21f:cb07:6820:80da:af6b:8b2c"
     ]
+    # one kind's query failing (a timeout, a SERVFAIL) leaves the other's answer
+    assert asyncio.run(hosts._resolve_in_loop("slow6.example")) == ["93.184.215.14"]
+    assert asyncio.run(hosts.vet_host("slow6.example")) == ("", "93.184.215.14")
     assert asyncio.run(hosts._resolve_in_loop("10.0.0.5")) == ["10.0.0.5"]  # a literal
     with pytest.raises(dns.resolver.NXDOMAIN):
         asyncio.run(hosts._resolve_in_loop("none.example"))
@@ -877,3 +884,20 @@ def test_the_in_loop_resolver_is_read_again_when_resolv_conf_changes(
     conf.unlink()
     with pytest.raises(dns.resolver.NoResolverConfiguration):
         hosts._async_resolver()
+
+
+def test_the_unit_network_guard_refuses_a_lookup_at_the_systems_nameserver() -> None:
+    """dnspython at port 53 is the system's resolver, which may be a loopback stub that
+    forwards: refused and recorded, `localhost` too (dnspython reads no /etc/hosts)."""
+    import dns.asyncresolver
+
+    from tests.unit import conftest
+
+    resolver = dns.asyncresolver.Resolver(configure=False)
+    resolver.nameservers = ["127.0.0.53"]
+    for name in ("example.com", "localhost"):
+        with pytest.raises(OSError, match=f"unit tests may not resolve {name}"):
+            asyncio.run(resolver.resolve(name, "A"))
+    recorded = [a for a in conftest._network_attempts if a.startswith("resolve ")]
+    assert recorded == ["resolve example.com", "resolve localhost"]
+    conftest._network_attempts.clear()  # recorded on purpose: not this test's failure

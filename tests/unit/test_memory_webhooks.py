@@ -1902,7 +1902,6 @@ async def test_a_slow_name_lookup_is_inside_the_deadline(monkeypatch: pytest.Mon
 async def test_a_url_resolving_inward_is_refused_without_naming_the_address(
     monkeypatch: pytest.MonkeyPatch, url: str, resolves_to: str
 ) -> None:
-
     resolves(monkeypatch, lambda host: [resolves_to])
     monkeypatch.setattr(settings, "memory_webhook_private_hosts", "")
     refusal = await app.url_refusal(url)
@@ -1933,7 +1932,6 @@ async def test_http_and_userinfo_are_refused_unless_allowed(
 async def test_an_allowlisted_private_host_is_reached_by_its_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-
     resolves(monkeypatch, lambda host: ["127.0.0.1"])
     monkeypatch.setattr(settings, "memory_webhook_private_hosts", "Receiver.Local, 127.0.0.1")
     assert await app.url_refusal("https://receiver.local:8443/h") == ""
