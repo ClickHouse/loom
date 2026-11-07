@@ -386,14 +386,11 @@ def test_the_doctor_says_nothing_when_the_registry_cannot_be_read(
 
 def test_a_refused_ssh_key_gets_the_ssh_fix_without_the_repository() -> None:
     error = "fetch git@github.com:o/private.git: git@github.com: Permission denied (publickey)."
-    recorder._FAILING = (
-        recorder.FailingTier("o", "code-a", tier_health.failed(None, "fetch", error, T0), -1),
-    )
-    for _ in range(3):
-        health = recorder._FAILING[0].health
-        recorder._FAILING = (
-            recorder.FailingTier("o", "code-a", tier_health.failed(health, "fetch", error, T0), -1),
-        )
+    health = None
+    for _ in range(4):
+        health = tier_health.failed(health, "fetch", error, T0)
+    assert health is not None
+    recorder._FAILING = (recorder.FailingTier("o", "code-a", health, -1),)
     (row,) = recorder.problem_rows(T0) or ()
     assert row["fix"].startswith("The ssh key was refused:") and "private" not in row["fix"]
 
