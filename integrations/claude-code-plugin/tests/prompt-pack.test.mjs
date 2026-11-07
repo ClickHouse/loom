@@ -66,6 +66,19 @@ test("the index is asked about the request, not about how to answer it", async (
     searchQuery("<task>\n\n  why does the merge selector skip small parts?  \n\n</task>"),
     "why does the merge selector skip small parts?",
   );
+  // Trimmed, the body is shorter than MIN_PROMPT_CHARS, so the whole prompt is searched.
+  assert.equal(
+    searchQuery("<task>" + " ".repeat(12) + "fix it</task> in the merge selector code"),
+    "<task> fix it</task> in the merge selector code",
+  );
+  const task = "why does the merge selector skip parts?";
+  assert.equal(searchQuery(`<question> see <question> below <task>${task}</task>`), task, "an unclosed tag is skipped");
+  assert.equal(searchQuery(`<Task>${task}</TASK>`), task, "tags pair across case");
+  assert.equal(
+    searchQuery(`<task>x <task>${task}</task> and more</task>`),
+    `x <task>${task}`,
+    "the first open tag pairs with the nearest close",
+  );
 });
 
 test("a wrapper tag followed by a long whitespace run and no close tag is matched in linear time", async () => {

@@ -47,8 +47,7 @@ export function searchQuery(prompt) {
 }
 
 /** The trimmed text of the first wrapper block that has a close tag, or null.
- *  The close tag is found by a plain scan, once per tag name: a single regex
- *  with a lazy body backtracks super-linearly on an unclosed tag. */
+ *  Each tag name's close is searched for once, so an unclosed tag costs one pass. */
 function wrappedBlock(p) {
   const unclosed = new Set();
   for (const open of p.matchAll(WRAPPED_OPEN_RE)) {
