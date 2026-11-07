@@ -5,9 +5,9 @@ turn module (`source_sync_linear`, `source_sync_notion`, `source_sync_recording`
 chosen by `_turn_of`, which builds on the public helpers here: `Pass` and
 `TurnResult`, `start_waits`, `full_due`, `capped`, `stamp_of` and `valid_stamp` for a
 turn's start and stamp, `sync_item` for one listed item, with `give_up`, `wait` and
-`require_current` for its fetch, `write_document`, `retire_absent` and `retire`, and
-`client_error`. A kind's own bookkeeping goes in `TurnResult.kind_state`, which the
-sync state keeps.
+`require_current` for its fetch, `write_document` and `counted` for its write,
+`retire_absent` and `retire`, and `client_error`. A kind's own bookkeeping goes in
+`TurnResult.kind_state`, which the sync state keeps.
 
 A pass reads the active sources and drops those whose namespace is inactive or no
 longer a repository's trunk. Sources a maintainer asked to sync (`sync_now`) go
@@ -39,8 +39,9 @@ changes, once after each completed full listing, and on a full sync request.
 What fails for every file stays the turn's: the token exchange, the listing, a
 401, a rate limit, an extractor whose capabilities cannot be read.
 
-Before each write the source is read again: a source removed or replaced during
-its turn stops the turn, which records nothing.
+Before each write the source and the address are read again: a source removed or
+replaced during its turn stops the turn, which records nothing, and a document
+saved at the address during the fetch is left alone, the file counted `skipped`.
 
 A document is retired only on positive evidence that the source dropped it:
 absence from a complete full listing whose folders the account can still see,
@@ -995,7 +996,9 @@ async def write_document(
         "ingested_format": ingested_format,
         **(extra_metadata or {}),
     }
-    if not await _may_write(src, uri):
+    with sequential_reads():  # a replica behind the person's write would say free
+        free = await _may_write(src, uri)
+    if not free:
         return False
     pass_context.check_stop()  # a stopped pass or a lost lease writes nothing
     await writes.handle_knowledge_upsert(
