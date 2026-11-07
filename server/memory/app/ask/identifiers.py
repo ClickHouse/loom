@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # 2+-hump handle/type, or a zero-padded test id. Each is exact-substring matched
 # in find_by_identifier and additive, so a stray match only mildly dilutes.
 _INJECT_SNAKE_RE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b")
-_INJECT_HANDLE_RE = re.compile(r"\b[A-Z][a-z]+[A-Z][a-zA-Z0-9]+\b")
+_INJECT_HANDLE_RE = re.compile(r"\b[A-Z][a-z]+(?:[A-Z][a-zA-Z0-9]+)+\b")
 # A named account or handle written without its "@" —
 # "the GitHub account octodev", "reporter janedoe" — is the identifier
 # of every row about that account; nothing above caught a bare lowercase name.
@@ -174,7 +174,7 @@ async def _mention_window_chunks(search_input: Any, question: str, ranked: list[
     return out
 
 
-_TECH_PASCAL_RE = re.compile(r"\b[A-Z][a-z0-9]+[A-Z][a-zA-Z0-9]+(?:::\w+)?\b")
+_TECH_PASCAL_RE = re.compile(r"\b[A-Z][a-z0-9]+(?:[A-Z][a-zA-Z0-9]+)+(?:::\w+)?\b")
 _TECH_CAMEL_RE = re.compile(r"\b[a-z]{2,}[A-Z][A-Za-z0-9]+\b")
 _TECH_FILE_RE = re.compile(
     r"\b[\w/.-]+\.(?:cpp|hpp|cc|cxx|h|py|sql|go|rs|cmake|sh|yml|yaml|reference|xml)(?::\d+)?\b"
