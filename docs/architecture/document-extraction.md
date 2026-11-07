@@ -273,12 +273,12 @@ screenshot, a whiteboard photo) has its picture read with OCR, each of its lines
 page's text (`attrs.ocr`), never a table or a heading, or, without OCR, is not complete: the page is read, and a failed
 unit says the picture's text needs OCR. A picture the page's own text already fills a tenth of (a scan's text layer,
 drawn over its image) is not read again. A page with text that draws a smaller picture, which OCR leaves (one under a
-point wide or high is none), is read for its text and named in `attrs.images_unread` (its number) and one warning for
-the file: text drawn only inside such an image is not extracted; a page partial for its pictures is named by its reason
-instead, which names what stopped it, not every picture it holds. A page pypdf cannot read is a failed unit, not the
-file; a failed page's outline headings still open their sections. A character a font's map gives no Unicode character (a
-lone surrogate) is read as U+FFFD, with a warning naming its page. A PDF that opens only with a password is
-`unsupported_format`.
+point wide or high is none, nor one the page's own text fills), is read for its text and named in `attrs.images_unread`
+(its number) and one warning for the file: text drawn only inside such an image is not extracted; a page partial for its
+pictures is named by its reason instead, which names what stopped it, not every picture it holds. A page pypdf cannot
+read is a failed unit, not the file; a failed page's outline headings still open their sections. A character a font's
+map gives no Unicode character (a lone surrogate) is read as U+FFFD, with a warning naming its page. A PDF that opens
+only with a password is `unsupported_format`.
 
 **OCR.** The extractor image installs Tesseract's and Leptonica's libraries and Tesseract's English model
 (`LOOM_EXTRACTOR_OCR_LANGUAGES` names others the image holds; the service refuses to start when one is missing, and says
@@ -330,28 +330,29 @@ Headers, footers and comments are not the body and are not read; footnotes and e
 An embedded document (`altChunk`) is a failed unit, as is a document of pictures, charts, diagrams or embedded objects
 and no text. A document of text warns when it holds what a drawing shows and the reader does not read, in its body, its
 tables or its notes: an image (in a picture, a group or a shape's fill, a VML shape's picture fill, or an alternate
-content's fallback, where a drawing it does not know, such as a 3D model, keeps its picture), drawn text (WordArt, a
-locked canvas's), a chart, a diagram or an embedded object; a page background is not read, nor named. A tracked deletion
-is left out, and a text box (its text is read), a line or a plain shape does not warn. A PPTX deck is read in its slide
-order (the presentation's slide list, not the parts' names): a slide's title is a heading its other blocks sit under,
-each text shape (grouped ones in place, and a shape in alternate content through its first choice) is a block, and the
-speaker notes are a block marked `attrs.notes`; a hidden slide (`show` false) is read and marked `attrs.hidden`. A
-picture that covers a fifth of its slide or more is read with OCR into a paragraph block marked `attrs.ocr` after the
-slide's shapes (an image several slides show is read once, and pictures inflate within a bound of their own, apart from
-the package's parts), and without OCR, or for a picture linked rather than held in the file, the slide is a failed unit
-that says why. A picture's size is its own, scaled by each group it sits in, or else its placeholder's in the slide's
-layout (by index, then by type) and then its master; one stated nowhere is taken as the slide's, and a deck that names
-no slide size has the default 10 by 7.5 inches. A slide whose pictures, charts, diagrams or embedded objects carry all
-it shows, with no text, is a failed unit, unless OCR read its pictures; one whose only text is what OCR read is a failed
-unit too when it holds a chart, diagram or embedded object. So is a slide id whose relationship names no slide part, a
-slide nested deeper than the reader walks, and a slide whose relationships cannot be read, or whose picture takes its
-size from a placeholder of a layout or master that cannot be read (its text is still read). A slide of text with a
-picture OCR does not read (one under a fifth of the slide, a picture-filled shape, group or table cell, a picture as the
-slide's own background, or the fallback picture of a drawing the reader does not know, such as ink, or of an equation,
-whose math it does not read; a background its layout, master or theme gives is not read), a chart, a diagram or an
-embedded object is read for its text and named in `attrs.images_unread` (its number) and one warning for the file,
-unless the slide failed for what it shows: its failure names what stopped it, not all it holds. A table, in either
-format, is one block, a row per line with its cells joined by a pipe, and `attrs.table` its `rows` and `columns`.
+content's fallback, where a drawing it does not know, such as a 3D model, keeps its picture; drawn text there is the
+choice's, read), drawn text (WordArt, a locked canvas's), a chart, a diagram or an embedded object; a page background is
+not read, nor named. A tracked deletion is left out, and a text box (its text is read), a line or a plain shape does not
+warn. A PPTX deck is read in its slide order (the presentation's slide list, not the parts' names): a slide's title is a
+heading its other blocks sit under, each text shape (grouped ones in place, and a shape in alternate content through its
+first choice) is a block, and the speaker notes are a block marked `attrs.notes`; a hidden slide (`show` false) is read
+and marked `attrs.hidden`. A picture that covers a fifth of its slide or more is read with OCR into a paragraph block
+marked `attrs.ocr` after the slide's shapes (an image several slides show is read once, and pictures inflate within a
+bound of their own, apart from the package's parts), and without OCR, or for a picture linked rather than held in the
+file, the slide is a failed unit that says why. A picture's size is its own, scaled by each group it sits in, or else
+its placeholder's in the slide's layout (by index, then by type) and then its master; one stated nowhere is taken as the
+slide's, and a deck that names no slide size has the default 10 by 7.5 inches. A slide whose pictures, charts, diagrams
+or embedded objects carry all it shows, with no text, is a failed unit, unless OCR read its pictures; one whose only
+text is what OCR read is a failed unit too when it holds a chart, diagram or embedded object. So is a slide id whose
+relationship names no slide part, a slide nested deeper than the reader walks, and a slide whose relationships cannot be
+read, or whose picture takes its size from a placeholder of a layout or master that cannot be read (its text is still
+read). A slide of text with a picture OCR does not read (one under a fifth of the slide, a picture-filled shape, group
+or table cell, a picture as the slide's own background, or the fallback picture of a drawing the reader does not know,
+such as ink, or of an equation, whose math it does not read; a background its layout, master or theme gives is not
+read), a chart, a diagram or an embedded object is read for its text and named in `attrs.images_unread` (its number) and
+one warning for the file, unless the slide failed for what it shows: its failure names what stopped it, not all it
+holds. A table, in either format, is one block, a row per line with its cells joined by a pipe, and `attrs.table` its
+`rows` and `columns`.
 
 **Tables (CSV, XLSX, Parquet).** A tabular source is `tables` in the artifact: each a header (the first row with a
 value, or two in XLSX, below; a Parquet file's schema), its columns typed by every value they hold (`string`, `number`,

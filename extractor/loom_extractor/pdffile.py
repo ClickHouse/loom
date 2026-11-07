@@ -12,8 +12,8 @@ picture covering a fifth of a page with text is read into lines of its own;
 where OCR is off, cannot read an image, or the image is drawn inline, the page
 is partial or a failed unit naming why, so a page of images is never reported
 complete when its text was not read. A page of text with a smaller picture,
-which OCR leaves, is listed in `attrs.images_unread`, with one warning for the
-file.
+which OCR leaves (but one its own text fills, a scan's text layer), is listed
+in `attrs.images_unread`, with one warning for the file.
 
 Pure and I/O-free.
 """

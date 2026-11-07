@@ -158,12 +158,13 @@ def _vml_picture_fill(el: Element) -> bool:
     return el.tag == _VML_FILL and names and el.get("type") != "pattern"
 
 
-def _pictures(el: Element) -> bool:
+def _pictures(el: Element, fallback: bool = False) -> bool:
     """Whether `el` holds what a drawing shows and the reader does not read: an
-    image, drawn text (WordArt, a locked canvas's), a chart, a diagram or an embedded
-    object; the same walk fails a document of these and no text. An alternate-content fallback
-    is searched too: a drawing the reader does not know (a 3D model) holds its only
-    picture there."""
+    image, drawn text (WordArt, a locked canvas's), a chart, a diagram or an
+    embedded object; the same walk fails a document of these and no text. An
+    alternate-content fallback is searched for images too: a drawing the reader
+    does not know (a 3D model) holds its only picture there, where its text is the
+    choice's, read already."""
     for child in el:
         tag = child.tag
         if tag in _NOT_READ and tag != _MC_FALLBACK:
@@ -172,11 +173,12 @@ def _pictures(el: Element) -> bool:
             return True
         # WordArt's text (`v:textpath`) and DrawingML's (`a:t`, as a locked canvas holds
         # it) are drawn, not read; a text box's is read (`w:t`).
-        if (tag == _VML_TEXTPATH and child.get("string")) or (tag == q("a:t") and child.text):
+        drawn = (tag == _VML_TEXTPATH and child.get("string")) or (tag == q("a:t") and child.text)
+        if drawn and not fallback:
             return True
         if tag == q("a:graphicData") and child.get("uri", "").endswith(_UNREAD_GRAPHICS):
             return True
-        if _pictures(child):
+        if _pictures(child, fallback or tag == _MC_FALLBACK):
             return True
     return False
 

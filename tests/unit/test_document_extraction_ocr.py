@@ -117,6 +117,16 @@ def test_a_slide_with_a_picture_ocr_read_and_a_small_one_is_listed(engine: FakeE
     assert a.attrs["images_unread"] == [1]
 
 
+def test_a_text_page_with_a_picture_ocr_read_and_a_small_one_is_listed(
+    engine: FakeEngine,
+) -> None:
+    text = text_at(72, 740, "A page of text with a photo and an icon.")
+    pictures = b"q 400 0 0 300 100 300 cm /Im1 Do Q q 40 0 0 30 100 100 cm /Im2 Do Q"
+    a = extract(laid_out_pdf([text + pictures], image=[GRAY, GRAY]), "p.pdf")
+    assert a.coverage.complete and a.attrs["ocr_pages"] == [1]
+    assert a.attrs["images_unread"] == [1]
+
+
 def test_a_small_image_its_own_text_layer_fills_is_not_listed(engine: FakeEngine) -> None:
     # a scan in strips: a small image with its text layer drawn over it
     lines = b"".join(text_at(110, 380 - 14 * k, f"Strip line {k} of text.") for k in range(6))

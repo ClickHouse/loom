@@ -352,6 +352,11 @@ _TEXT_BOX_AS_WORD_WRITES_IT = (
 
 
 # The same box filled with a pattern: its VML copy's fill names the pattern's tile.
+# WordArt as Word writes it now: its text a shape's, read, and a VML copy drawing it
+# in the fallback.
+_WARPED_WORDART = _TEXT_BOX_AS_WORD_WRITES_IT.replace(
+    f"<v:textbox>{_TEXT_BOX}</v:textbox>", '<v:textpath string="Sidebar"/>'
+)
 _PATTERN_FILLED_BOX = _TEXT_BOX_AS_WORD_WRITES_IT.replace(
     "<v:textbox>",
     '<v:fill r:id="rId7" type="pattern" '
@@ -433,6 +438,7 @@ def test_a_docx_of_text_with_a_picture_chart_diagram_or_object_warns_it_is_not_r
         ),
         _TEXT_BOX_AS_WORD_WRITES_IT,
         _PATTERN_FILLED_BOX,
+        _WARPED_WORDART,
     ],
     ids=[
         "none",
@@ -442,6 +448,7 @@ def test_a_docx_of_text_with_a_picture_chart_diagram_or_object_warns_it_is_not_r
         "deleted picture",
         "text box in alternate content",
         "pattern fill",
+        "wordart with its text read",
     ],
 )
 def test_a_docx_of_text_with_no_picture_warns_of_nothing(drawing: str) -> None:

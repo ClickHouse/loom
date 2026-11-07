@@ -333,7 +333,7 @@ def extract_pptx(data: bytes) -> Artifact:
     images = ocr.Images()
     holders = _Holders(pkg)
     ocr_slides: list[int] = []
-    not_read: list[int] = []  # slides of text showing what is not read
+    unread_slides: list[int] = []  # slides of text showing what is not read
     acc = Blocks()
     failed: list[Failure] = []
     incomplete: set[int] = set()  # slides with a failure, their own or their notes'
@@ -357,7 +357,7 @@ def extract_pptx(data: bytes) -> Artifact:
         try:
             rels = pkg.rels(part)
         except (PartError, RecursionError) as e:  # the slide's text is still read
-            seen, unread = 0, f"its relationships could not be read: {e}"
+            seen, picture_failure = 0, f"its relationships could not be read: {e}"
         else:
             try:
                 notes = _notes(pkg, rels)
@@ -366,18 +366,20 @@ def extract_pptx(data: bytes) -> Artifact:
                 incomplete.add(number)
             # a layout or master that cannot be read: the slide's pictures are not read
             try:
-                pictured, seen, unread = _picture_texts(pkg, rels, slide, size, images, holders)
+                pictured, seen, picture_failure = _picture_texts(
+                    pkg, rels, slide, size, images, holders
+                )
             except (PartError, RecursionError) as e:
-                pictured, seen, unread = [], 0, f"its pictures could not be read: {e}"
-        if unread:
-            failed.append(Failure(f"slide {number}", unread))
+                pictured, seen, picture_failure = [], 0, f"its pictures could not be read: {e}"
+        if picture_failure:
+            failed.append(Failure(f"slide {number}", picture_failure))
             incomplete.add(number)
         if seen:
             ocr_slides.append(number)
         # pictures that OCR read every one of, and found no text in, lose nothing
-        shows_unread = slide.charts or slide.unread_picture or seen < slide.picture_count
+        holds_unread = slide.charts or slide.unread_picture or seen < slide.picture_count
         if not (slide.title or slide.shapes or notes or pictured):
-            if not unread and shows_unread:
+            if not picture_failure and holds_unread:
                 failed.append(
                     Failure(
                         f"slide {number}",
@@ -393,8 +395,8 @@ def extract_pptx(data: bytes) -> Artifact:
                 Failure(f"slide {number}", "its charts, diagrams or embedded objects are not read")
             )
             incomplete.add(number)
-        elif shows_unread and not unread:  # a slide failed for what it shows is named there
-            not_read.append(number)
+        elif holds_unread and not picture_failure:  # a slide failed for it is named there
+            unread_slides.append(number)
         if slide.title:
             acc.heading(1, slide.title, loc, **hidden)
         else:
@@ -414,15 +416,15 @@ def extract_pptx(data: bytes) -> Artifact:
         warnings=(
             (
                 "pictures, charts, diagrams or embedded objects on"
-                f" {counted(len(not_read), 'slide')} of text are not read: text inside them is"
-                " not extracted (attrs.images_unread)",
+                f" {counted(len(unread_slides), 'slide')} of text are not read: text inside"
+                " them is not extracted (attrs.images_unread)",
             )
-            if not_read
+            if unread_slides
             else ()
         ),
         attrs={
             "slides": len(parts),
             **({"ocr_slides": ocr_slides} if ocr_slides else {}),
-            **({"images_unread": not_read} if not_read else {}),
+            **({"images_unread": unread_slides} if unread_slides else {}),
         },
     )
