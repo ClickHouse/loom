@@ -95,7 +95,12 @@ def repo_change(org: str, namespace: str, subject: str) -> AbstractAsyncContextM
     from server.auth.grant_claims import grant_change
 
     repo = repo_of(org, namespace)
-    return grant_change(org, f"repo:{repo}", subject) if repo is not None else nullcontext()
+    return grant_change(org, _repo_key(repo), subject) if repo is not None else nullcontext()
+
+
+def _repo_key(repo: str) -> str:
+    """The claim name of a repository: a sync and a revoke serialise on it."""
+    return f"repo:{repo}"
 
 
 @asynccontextmanager
@@ -110,7 +115,7 @@ async def repo_admin_claims(org: str, repo: str | None, subject: str) -> AsyncIt
     if repo is None:
         yield
         return
-    async with grant_change(org, f"repo:{repo}", subject), admins_change(org, f"repo:{repo}"):
+    async with grant_change(org, _repo_key(repo), subject), admins_change(org, _repo_key(repo)):
         yield
 
 
@@ -132,8 +137,8 @@ async def read_repo(org: str, namespace: str, *, ch: Any | None = None) -> str |
     """Before a change that takes admin on `namespace`: the repository it is a
     branch of, from the self-service registry read now (`_read_registry_now`),
     so a branch another process added since this one's last read is seen. It
-    names the claims `repo_admin_claims` takes. Off a code namespace nothing is
-    read and None returned."""
+    names the claims `repo_admin_claims` takes. Off a code namespace only its
+    directory row is read, and None returned."""
     from server.core.ch import get_client
 
     client = ch or get_client()
@@ -390,7 +395,8 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     admins of the branches that reach it (`_reaches`). Returns the number of
     grant rows written; none while the self-service registry has never been
     read, when the branches added from the page are unknown: a grant made then
-    is copied by the next admin change on the repository."""
+    is copied by the next admin grant or approval on a branch of the
+    repository, or by a branch added to it."""
     from server.code.app.index.repo_registry import registry_read
 
     repo = repo_of(org, namespace)

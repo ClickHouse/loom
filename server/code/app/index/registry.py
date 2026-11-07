@@ -37,8 +37,9 @@ async def _sync_maintainers(cfg: Any, client: Any) -> None:
     from server.code.app.index import maintainers
     from server.code.app.index.repo_registry import registry_read
 
+    read = registry_read()  # before the sync: a read landing during it is not this sync's
     await maintainers.sync_quietly(cfg.org, cfg.namespace, ch=client)
-    if registry_read():
+    if read:
         _SYNCED.add((cfg.org, cfg.namespace))
 
 

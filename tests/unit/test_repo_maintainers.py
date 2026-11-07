@@ -593,6 +593,39 @@ async def test_grants_create_admin_fans_out_and_viewer_does_not(
     assert _handler_env["sync"] == [("clickhouse", "code-x")]
 
 
+async def test_lowering_an_admin_fans_out_before_the_write(
+    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _admin_row(*_a: Any, **_k: Any) -> GrantState:
+        return GrantState.from_row(
+            {"subject": "alice", "role": "admin", "status": "active", "granted_by": "ops"}
+        )
+
+    async def _two(*_a: Any, **_k: Any) -> int:
+        return 2
+
+    async def _fan_out(org: str, ns: str, subject: str, **k: Any) -> None:
+        _handler_env["revoke"].append((ns, subject, k["repo"], k["lowered_to"]))
+        _handler_env["events"].append("fan-out")
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _admin_row)
+    monkeypatch.setattr(grants_repo, "find_active_grant", _admin_row)
+    monkeypatch.setattr(grants_repo, "count_active_admins", _two)
+    monkeypatch.setattr(maintainers, "revoke_repo_maintainer", _fan_out)
+    await grants_mod.handle_grants_create(
+        GrantsCreateInput(
+            org="clickhouse",
+            namespace="code-x",
+            subject="alice",
+            role="viewer",
+            granted_by="ops",
+            replace=True,
+        )
+    )
+    assert _handler_env["revoke"] == [("code-x", "alice", "Org/x", "viewer")]
+    assert _handler_env["events"] == ["fan-out", "write"]
+
+
 async def test_a_replace_that_takes_no_admin_needs_no_registry_read(
     _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
