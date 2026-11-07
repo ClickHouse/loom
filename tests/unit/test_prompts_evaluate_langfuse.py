@@ -154,3 +154,13 @@ async def test_a_lookup_for_the_first_traces_stops_paging() -> None:
     fake = _Langfuse({"/api/public/v2/observations": page})
     ids = await backend.find_trace_ids(fake, tags=["prompt:p:3"], first=3)  # type: ignore[arg-type]
     assert ids == ["t0", "t1", "t2"] and len(fake.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_langfuse_3_lookup_for_the_first_traces_stops_paging() -> None:
+    backend = LangfuseBackend(_URL, "pk-lf-x:sk-lf-x", 5)
+    backend._major = 3
+    page = _Resp(200, {"data": [{"id": f"t{i}"} for i in range(5)], "meta": {"totalPages": 4}})
+    fake = _Langfuse({"/api/public/traces": page})
+    ids = await backend.find_trace_ids(fake, tags=["prompt:p:3"], first=3)  # type: ignore[arg-type]
+    assert ids == ["t0", "t1", "t2"] and len(fake.calls) == 1

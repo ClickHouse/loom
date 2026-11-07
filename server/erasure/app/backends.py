@@ -258,7 +258,7 @@ class LangfuseBackend:
             if len(ids) > self._MAX_TRACES:
                 raise ErasureBackendError(
                     f"langfuse observation lookup {tags} matched more than "
-                    f"{self._MAX_TRACES} traces; refusing to erase a truncated set"
+                    f"{self._MAX_TRACES} traces; refusing to return a truncated set"
                 )
             cursor = (body.get("meta") or {}).get("cursor")
             if not cursor or (first and len(ids) >= first):
@@ -266,13 +266,13 @@ class LangfuseBackend:
             if cursor in seen_cursors:
                 raise ErasureBackendError(
                     f"langfuse observation lookup {tags} returned a cursor it had "
-                    f"already returned; refusing to erase a set it cannot finish reading"
+                    f"already returned; refusing to return a set it cannot finish reading"
                 )
             seen_cursors.add(cursor)
             query = {**query, "cursor": cursor}
         raise ErasureBackendError(
             f"langfuse observation lookup {tags} did not finish within "
-            f"{self._V4_MAX_PAGES} pages; refusing to erase a truncated set"
+            f"{self._V4_MAX_PAGES} pages; refusing to return a truncated set"
         )
 
     async def _find_trace_ids_v3(
@@ -330,9 +330,7 @@ class LangfuseBackend:
             if len(ids) > self._MAX_TRACES:
                 raise ErasureBackendError(
                     f"langfuse trace lookup {params} matched more than "
-                    f"{self._MAX_TRACES} traces; refusing to erase a truncated "
-                    f"set, because a partial delete would be recorded as a "
-                    f"completed erasure and never retried"
+                    f"{self._MAX_TRACES} traces; refusing to return a truncated set"
                 )
             if page >= int(total_pages):
                 break
@@ -342,7 +340,7 @@ class LangfuseBackend:
     async def get_retried(
         self, c: httpx.AsyncClient, path: str, query: dict[str, Any]
     ) -> httpx.Response:
-        """One GET to Langfuse (a lookup page or the health probe), retried on a
+        """One GET to Langfuse, retried on a
         timeout, a 429 or a 5xx. Anything else is returned to the caller's status
         check unchanged."""
         last: Exception | None = None

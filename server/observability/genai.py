@@ -379,9 +379,9 @@ def _stamp_identity(span: Any) -> None:
         span.set_attribute("langfuse.user.id", ident["user_id"])
     tags = _identity_tags(ident)
     if tags:
-        # Langfuse reads tags as a JSON array of strings. `admin.py` and
-        # docs/features/integrations/langfuse.md query by these two tag shapes, so
-        # keep the `key:value` form.
+        # Langfuse reads tags as a JSON array of strings. Erasure
+        # (`server/erasure/app/backends.py`) finds a tenant's traces by these two
+        # tag shapes, so keep the `key:value` form.
         span.set_attribute("langfuse.trace.tags", tags)
     if ident.get("operation"):
         # Also on the children: Langfuse names the trace from whichever span it
