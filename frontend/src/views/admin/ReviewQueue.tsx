@@ -861,25 +861,9 @@ function trialLabel(r: MemoryProposal): string {
   return r.ready ? `${graded} · the policy would ${r.ready} it` : graded;
 }
 
-// The characters of a proposal's value `memory.proposals` sends.
+// The characters of a proposal's value `memory.proposals` sends (its store,
+// server/memory/store/proposals.py, cuts the preview there).
 const PREVIEW_CHARS = 400;
-
-// A key's proposals as one row. Several identities may propose the same key, and
-// `memory.proposal_decide` decides the newest version (the listing's first): the row
-// shows that one and counts the older ones behind it.
-type ProposalRow = MemoryProposal & { older: number };
-
-function oneRowPerKey(read: MemoryProposal[]): ProposalRow[] {
-  const rows = new Map<string, ProposalRow>();
-  for (const p of read) {
-    const row = rows.get(p.memory_key);
-    if (row) row.older += 1;
-    else rows.set(p.memory_key, { ...p, older: 0 });
-  }
-  return [...rows.values()];
-}
-
-const proposalsIn = (rows: ProposalRow[]) => rows.reduce((n, r) => n + 1 + r.older, 0);
 
 function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null; onSeedUsed: () => void }) {
   const identity = useIdentity();
@@ -890,7 +874,9 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
   // Proposals this panel decided, by memory id: a re-read from a replica that has not
   // seen the decision yet must not bring them back. Each is kept until a read drops it.
   const decided = useRef(new Set<string>());
-  const [rows, setRows] = useState<ProposalRow[] | null>(initial ? oneRowPerKey(initial.proposals) : null);
+  // No reset on a namespace switch: the switch unmounts this panel (the page's probe is
+  // tagged with its namespace).
+  const [rows, setRows] = useState<MemoryProposal[] | null>(initial?.proposals ?? null);
   const [total, setTotal] = useState(initial?.total ?? 0);
   const [reason, setReason] = useState<Record<string, string>>({});
   // The keys a decision is out for: their buttons wait, so a second click sends nothing.
@@ -910,8 +896,6 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
   const [reload, setReload] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  // A namespace switch unmounts this panel (the page's probe is tagged with its
-  // namespace), so it never holds another namespace's rows.
 
   useAbortableEffect(
     (signal, live) => {
@@ -929,7 +913,7 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
           const read = r.proposals || [];
           const stale = read.filter((p) => decided.current.has(p.memory_id));
           decided.current = new Set(stale.map((p) => p.memory_id));
-          setRows(oneRowPerKey(read.filter((p) => !decided.current.has(p.memory_id))));
+          setRows(read.filter((p) => !decided.current.has(p.memory_id)));
           setTotal(Math.max(0, (r.total ?? 0) - stale.length));
         })
         .catch((e) => {
@@ -999,7 +983,7 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
     }
   };
 
-  const shown = rows ? proposalsIn(rows) : 0;
+  const shown = rows?.length ?? 0;
   return (
     <div>
       <ListToolbar
@@ -1066,11 +1050,6 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
                   {r.created_at && <ListTime time={r.created_at} quiet />}
                 </span>
               </div>
-              {r.older > 0 && (
-                <div className="text-xs text-text-muted mb-2">
-                  {plural(r.older, "older proposal")} of this key; a decision applies to the newest, shown here.
-                </div>
-              )}
               {r.sensitivity === "high" ? (
                 <div className="text-sm text-text-muted mb-2">{SENSITIVE_READ_BY_KEY}</div>
               ) : (

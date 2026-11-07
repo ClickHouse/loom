@@ -20,29 +20,35 @@ async def scan_proposals(
     prefix: str = "",
     tags: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
-    """Keys and (memory_id, version) only, newest version first: the order
-    memory.proposal_decide picks a key's row by, so a key's first row here is the one a
-    decision acts on."""
-    where = [
-        "org = {org:String}",
-        "namespace = {ns:String}",
-        "tombstoned_at IS NULL",
-        "status = 'proposed'",
-    ]
+    """The keys whose newest row is a proposal, with that row's (memory_id, version),
+    newest first. memory.proposal_decide takes a key's newest row of any status, so an
+    older proposal under a decided key is left out: no decision could take it."""
+    where = ["org = {org:String}", "namespace = {ns:String}", "tombstoned_at IS NULL"]
     params: dict[str, Any] = {"org": org, "ns": namespace, "cap": cap}
+    where.extend(scope_where(scope, params))
+    proposed = ["status = 'proposed'"]
     if prefix:
-        where.append("startsWith(memory_key, {p:String})")
+        proposed.append("startsWith(memory_key, {p:String})")
         params["p"] = prefix
     if tags:
-        where.append("hasAny(tags, {tags:Array(String)})")
+        proposed.append("hasAny(tags, {tags:Array(String)})")
         params["tags"] = list(tags)
-    where.extend(scope_where(scope, params))
+    within = " AND ".join(where)
     return await ch.query_all(
         f"""
-        SELECT memory_key, toString(memory_id) AS mid, version
-        FROM loom.memory FINAL
-        WHERE {" AND ".join(where)}
-        ORDER BY version DESC, created_at DESC
+        SELECT memory_key, mid, version FROM (
+            SELECT memory_key, toString(memory_id) AS mid, version, status, tags
+            FROM loom.memory FINAL
+            WHERE {within}
+              AND memory_key IN (
+                  SELECT memory_key FROM loom.memory FINAL
+                  WHERE {within} AND {" AND ".join(proposed)}
+              )
+            ORDER BY memory_key, version DESC, created_at DESC
+            LIMIT 1 BY memory_key
+        )
+        WHERE {" AND ".join(proposed)}
+        ORDER BY version DESC
         LIMIT {{cap:UInt32}}
         """,
         params=params,

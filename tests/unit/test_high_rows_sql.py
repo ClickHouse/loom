@@ -738,7 +738,7 @@ async def test_an_as_of_read_never_serves_a_high_row_past_its_window() -> None:
     assert plain is not None and plain.memory_key == "old"
 
 
-# Here, not in test_proposals.py, for this file's clickhouse-local memory table.
+# Here for this file's `_memory` and `_row` builders.
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("only", "graded", "returned"), [("", 1, 1), ("ready", 2, 0)])
 async def test_proposals_grade_only_the_rows_they_can_return(

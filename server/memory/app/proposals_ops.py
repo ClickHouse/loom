@@ -38,7 +38,7 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
     # `ready` grades every row to choose which to return.
     wanted = rows if input.only == "ready" else rows[: input.limit]
     details = await proposals_repo.proposal_details(ch, input.org, input.namespace, wanted)
-    listed = [{**r, **details[str(r["mid"])]} for r in wanted if str(r["mid"]) in details]
+    listed = [{**r, **details[r["mid"]]} for r in wanted if r["mid"] in details]
     keys = [str(r["memory_key"]) for r in listed]
     counts = await _p.graded_counts(ch, input.org, input.namespace, keys)
     usage = await _usage_counts(ch, input.org, input.namespace, [str(r["mid"]) for r in listed])
