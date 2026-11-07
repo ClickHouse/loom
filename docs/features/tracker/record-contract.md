@@ -95,9 +95,8 @@ mapping is `server/tracker/domain/mapping.py`, and the columns read per table ar
 6. **Link the tracker to a repository** so agents working in that checkout read it:
    `code.repo.set_source` with `tracker_namespaces` (repository `admin`), the repository
    card in the dashboard, or, for the operator's own repositories only,
-   `LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON`. A repository may
-   link several trackers in order; the first is the primary, whose numbers are the
-   repository's issue and PR numbers
+   `LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON`. A repository may link several trackers in
+   order; the first is the primary, whose numbers are the repository's issue and PR numbers
    ([linking a tracker](overview.md#linking-a-tracker-to-a-repository)).
    `tracker.binding` reports what a code namespace resolves to for the caller.
 

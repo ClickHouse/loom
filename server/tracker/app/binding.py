@@ -195,7 +195,7 @@ def tracker_namespaces_for(
 def tracker_namespace_for(
     org: str, code_namespace: str, *, operator: Collection[tuple[str, str]] | None = None
 ) -> str:
-    """The PRIMARY tracker namespace of `code_namespace` — the record whose
+    """The PRIMARY tracker namespace of the org's `code_namespace` — the record whose
     numbers are the repository's — or "" (lookups by number
     read only it)."""
     linked = tracker_namespaces_for(org, code_namespace, operator=operator)

@@ -571,7 +571,7 @@ async def _inherit_tracker_links(
             )
     except Exception as e:  # noqa: BLE001 — the branch is registered; its links can be set by hand
         logger.warning(
-            "code.repo.add_branch: tracker links of %s/%s not copied: %s", org, namespace, e
+            "code.repo.add_branch: tracker links of %s/%s not fully written: %s", org, namespace, e
         )
         return
     await binding.refresh_overrides(force=True)
