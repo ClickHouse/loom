@@ -447,6 +447,29 @@ def _doctor_reader_probe(settings: Any) -> tuple[str, str]:
     return "ok", ""
 
 
+def _doctor_tier_failures() -> tuple[Any, ...] | None:
+    """The failing code-index tiers as `/v1/health` reports them, read once from
+    ClickHouse; None when it cannot be read (`clickhouse_reachable` says why)."""
+    import asyncio
+
+    from server.code.app.index import tier_health
+    from server.core.ch import get_client
+
+    async def read() -> tuple[Any, ...] | None:
+        client = get_client()
+        try:
+            await client.connect()
+            await tier_health.refresh_failing()
+            return tier_health.problem_rows()
+        finally:
+            await client.disconnect()
+
+    try:
+        return asyncio.run(asyncio.wait_for(read(), timeout=15))
+    except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
+        return None
+
+
 def _doctor_problems() -> list[Any]:
     """The shared problem list as the doctor sees it: settings
     only — no probed dim, breaker, lease or ledger before boot. Empty when
@@ -464,6 +487,7 @@ def _doctor_problems() -> list[Any]:
                 repo_sandbox_refusal=layout_refusal(),
                 ch_reader_ok={"ok": True, "failing": False}.get(status),
                 ch_reader_error=detail if status == "failing" else "",
+                code_tier_failures=_doctor_tier_failures(),
             ),
         )
         if status == "not_probed" and detail:

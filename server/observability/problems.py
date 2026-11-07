@@ -97,6 +97,10 @@ class HealthState:
     # Why the dashboard's stored model configuration is not applied
     # (`provider_runtime.refused_configuration()`); '' when it is, or not a server.
     refused_configuration: str = ""
+    # The code-index tiers failing past the warn threshold, one row per entry and
+    # tier (`server.code.app.index.tier_health.problem_rows`): org, namespace, tier,
+    # kind, since, failed_passes, lag_commits, fix, severity. None = not read here.
+    code_tier_failures: tuple[Mapping[str, Any], ...] | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -810,6 +814,43 @@ def _constraint_message(error: str) -> str:
     return m.group(0).strip() if m else error[:200]
 
 
+# How many failing tiers the `code_tier_failing` message names before it counts the rest.
+_TIER_FAILURES_NAMED = 5
+
+
+def _code_tier_problems(st: HealthState) -> list[Problem]:
+    """One `code_tier_failing` problem for every code-index tier that keeps failing:
+    which entry and tier, the error kind, since when, how far behind, and each
+    distinct fix. Its severity is the worst row's."""
+    rows = st.code_tier_failures or ()
+    if not rows:
+        return []
+
+    def named(r: Mapping[str, Any]) -> str:
+        lag = int(r.get("lag_commits", -1))
+        behind = f", {lag} commit{'' if lag == 1 else 's'} behind" if lag >= 0 else ""
+        return (
+            f"{r['org']}/{r['namespace']} {r['tier']} ({r['kind']}, "
+            f"{r['failed_passes']} failed passes since {r['since']}{behind})"
+        )
+
+    shown = [named(r) for r in rows[:_TIER_FAILURES_NAMED]]
+    more = len(rows) - len(shown)
+    tail = f" and {more} more (code.repos lists each)" if more > 0 else ""
+    noun, it = ("tier is", "it answers") if len(rows) == 1 else ("tiers are", "they answer")
+    fixes = list(dict.fromkeys(str(r["fix"]) for r in rows if r.get("fix")))
+    return [
+        Problem(
+            "code_tier_failing",
+            "error" if any(r.get("severity") == "error" for r in rows) else "warn",
+            f"{len(rows)} code-index {noun} failing, so what {it} trails the "
+            f"branch: {'; '.join(shown)}{tail}.",
+            " ".join(fixes) or "See the tier's error in code.repos.",
+            source="workers",
+        )
+    ]
+
+
 def collect_problems(settings: Any, state: HealthState | None = None) -> list[Problem]:
     """Every known problem for this process, worst-first. Pure: reads
     `settings`, `state` and `state.env` only."""
@@ -829,6 +870,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _reader_user_problems(settings, st)
         + _oauth_claim_problems(settings, st)
         + _participant_problems(st)
+        + _code_tier_problems(st)
     )
     return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))
 

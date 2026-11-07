@@ -1,0 +1,60 @@
+/**
+ * A branch's failing code-index tiers, from the `tier_health` rows `code.repos` returns:
+ * each tier's last recorded outcome, with the error kind, since when, how far behind and
+ * the one fix while it fails.
+ */
+
+export interface TierHealth {
+  tier: string;
+  state: "ok" | "failing";
+  kind: string;
+  error: string;
+  fix: string;
+  failing_since: string;
+  last_failed_at: string;
+  failed_passes: number;
+  last_ok_at: string;
+  lag_commits: number;
+}
+
+const TIER_NAME: Record<string, string> = {
+  fetch: "Mirror fetch",
+  ingest: "Parser tier",
+  clang: "C++ compiler tier",
+  typescript: "TypeScript compiler tier",
+  go: "Go compiler tier",
+  python: "Python compiler tier",
+  clang_full: "C++ full re-index",
+};
+
+const KIND_WORD: Record<string, string> = {
+  credential: "no credential",
+  pin_missing: "pinned commit gone",
+  egress: "egress refused",
+  network: "host unreachable",
+  timeout: "timed out",
+  disk: "disk full",
+  harness: "indexer failed",
+  unknown: "error",
+};
+
+export function tierName(tier: string): string {
+  return TIER_NAME[tier] ?? `${tier} tier`;
+}
+
+export function kindWord(kind: string): string {
+  return KIND_WORD[kind] ?? kind;
+}
+
+/** The failing tiers, in the order the server lists them; [] for a row without any. */
+export function failingTiers(rows: TierHealth[] | undefined): TierHealth[] {
+  return (rows ?? []).filter((t) => t.state === "failing");
+}
+
+/** "failing for 12 passes, 413 commits behind (no credential)" — without the since time,
+ *  which the caller renders as a time element. */
+export function failureSummary(t: TierHealth): string {
+  const passes = `${t.failed_passes} failed pass${t.failed_passes === 1 ? "" : "es"}`;
+  const behind = t.lag_commits >= 0 ? `, ${t.lag_commits} commit${t.lag_commits === 1 ? "" : "s"} behind` : "";
+  return `${passes}${behind} (${kindWord(t.kind)})`;
+}

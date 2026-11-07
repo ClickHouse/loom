@@ -162,8 +162,12 @@ def registry_read() -> bool:
 async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
     """Every process loads the registry before it serves and re-reads it every
     ``code_repos_refresh_seconds``, so an added repository or a new restriction
-    reaches every replica within that time, whichever ops it serves."""
+    reaches every replica within that time, whichever ops it serves. The same timer
+    re-reads the failing code-index tiers the health problem reports."""
+    from server.code.app.index import tier_health
+
     await refresh_db_repos(force=True, ch=ch)
+    await tier_health.refresh_failing(ch)
 
     async def _loop() -> None:
         from server.core.ch import set_query_tag
@@ -172,6 +176,7 @@ async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
         while True:
             await asyncio.sleep(max(1.0, float(settings.code_repos_refresh_seconds)))
             await refresh_db_repos(force=True, ch=ch)  # never raises
+            await tier_health.refresh_failing(ch)  # never raises
 
     return asyncio.create_task(_loop(), name="loom-code-repos-refresh")
 

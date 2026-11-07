@@ -1448,6 +1448,7 @@ const CODE_REPOS_FIELDS = [
   "fast_tier_lag",
   "scip_lag",
   "scip_producer",
+  "tier_health",
   "indexed_at",
   "last_refresh_at",
   "counts",

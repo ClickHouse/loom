@@ -9,8 +9,11 @@ left does not read as failing for ever. Recording never fails the pass it descri
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 from server.code.domain.index import tier_health
 from server.core.datetimes import utc_now
@@ -69,3 +72,95 @@ async def forget(repo: CodeRepo, org: str, ns: str, tiers: tuple[str, ...]) -> N
                 await repo.set_state(org, ns, key, "", detail="not run")
         except Exception as e:  # noqa: BLE001 — a health record never fails the pass it describes
             logger.warning("tier health %s/%s %s not dropped: %s", org, ns, tier, e)
+
+
+@dataclass(frozen=True)
+class FailingTier:
+    """One failing tier of one entry, as the health problem reads it."""
+
+    org: str
+    namespace: str
+    health: tier_health.TierHealth
+    lag_commits: int = -1
+
+
+# The failing tiers of every entry, as this process last read them: the health probe
+# reads this snapshot and never ClickHouse. None until the first read.
+_FAILING: tuple[FailingTier, ...] | None = None
+
+
+def failing_snapshot() -> tuple[FailingTier, ...] | None:
+    return _FAILING
+
+
+async def refresh_failing(ch: Any | None = None) -> None:
+    """Re-read every entry's tier-health records and, for the failing ones, the lag
+    their entry's published status counts. Two small reads; called on the
+    code_repos refresh timer. Never raises: a failed read keeps the last snapshot."""
+    global _FAILING
+    from server.code.app.index_status import STATUS_SNAPSHOT_KEY
+    from server.code.store.index import CodeRepo
+
+    try:
+        store = CodeRepo(ch)
+        failing: list[tuple[str, str, tier_health.TierHealth]] = []
+        for row in await store.state_rows_with_prefix(tier_health.STATE_PREFIX):
+            tier = str(row["state_key"])[len(tier_health.STATE_PREFIX) :]
+            health = tier_health.parse(tier, str(row.get("state_value") or ""))
+            if health is not None and health.failing:
+                failing.append((str(row["org"]), str(row["namespace"]), health))
+        pairs = sorted({(o, n) for o, n, _ in failing})
+        snapshots = await store.state_value_for_pairs(pairs, STATUS_SNAPSHOT_KEY)
+        out = []
+        for org, ns, health in failing:
+            try:
+                snap = json.loads(snapshots.get((org, ns)) or "{}")
+            except ValueError:
+                snap = {}
+            lag = tier_health.snapshot_lag(snap if isinstance(snap, dict) else {}, health.tier)
+            out.append(FailingTier(org, ns, health, lag))
+        _FAILING = tuple(sorted(out, key=lambda f: (f.org, f.namespace, f.health.tier)))
+    except Exception as e:  # noqa: BLE001 — the health signal keeps its last reading
+        logger.warning("tier health: failing tiers not re-read: %s", e)
+
+
+def reset_for_tests() -> None:
+    global _FAILING
+    _FAILING = None
+
+
+def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | None:
+    """The failing tiers past the warn threshold, as the `code_tier_failing` health
+    problem reads them (plain rows: the problem collector imports no code plane), worst
+    first. None until this process first read the records."""
+    from server.settings import settings
+
+    snap = failing_snapshot()
+    if snap is None:
+        return None
+    at = now or utc_now()
+    rows = []
+    for f in snap:
+        level = tier_health.severity(
+            f.health,
+            f.lag_commits,
+            at,
+            warn_passes=settings.code_tier_failing_warn_passes,
+            warn_hours=settings.code_tier_failing_warn_hours,
+            error_lag_commits=settings.code_tier_failing_error_lag_commits,
+        )
+        if level:
+            rows.append(
+                {
+                    "org": f.org,
+                    "namespace": f.namespace,
+                    "tier": f.health.tier,
+                    "kind": f.health.kind,
+                    "since": f.health.failing_since,
+                    "failed_passes": f.health.failed_passes,
+                    "lag_commits": f.lag_commits,
+                    "fix": f.health.fix,
+                    "severity": level,
+                }
+            )
+    return tuple(sorted(rows, key=lambda r: (r["severity"] != "error", r["org"], r["namespace"])))

@@ -696,6 +696,30 @@ has a gold question set; it is never run in CI, whose embedder is fake
   also purges the `loom.code_*` tables. An entry that is still configured is re-indexed
   from scratch on the next pass, so retire it first.
 
+## When a tier fails
+
+Each tier that keeps an entry current (the mirror fetch, the parser ingest and every
+compiler tier) records its last outcome on the entry: when it fails, the error with
+credentials redacted, an error kind, the one fix for that kind, `failing_since` and the
+failed passes in a row. The next pass that succeeds clears it. A tier run from cron
+records the same way when it runs under `loom code entry-lock --tier <tier>`;
+`loom code scip-delta` and `scip-full` record by themselves.
+
+The record is read where each reader already looks:
+
+- an agent's code answers carry it in `as_of.failing_tiers`
+  ([freshness](../features/code-index/freshness.md#the-as_of-block));
+- `code.index_status` and `code.repos` return it in `tier_health`, and the dashboard's
+  repository card shows the failing tier, since when, how far behind and the fix;
+- once a tier has failed `LOOM_CODE_TIER_FAILING_WARN_PASSES` passes in a row or for
+  `LOOM_CODE_TIER_FAILING_WARN_HOURS`, it is the `code_tier_failing` problem in
+  `/v1/health`, the dashboard banner and `loom doctor`
+  ([monitoring](./monitoring.md#v1health)).
+
+The kinds and their fixes are defined in one table,
+[`server/code/domain/index/tier_health.py`](../../server/code/domain/index/tier_health.py).
+A failure with kind `unknown` carries the end of the output to read.
+
 ## Failure model
 
 | Failure                                                              | Behaviour                                                                                                                                                                                                                                                                                | Recovery                                                                |

@@ -14,6 +14,36 @@ import re
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_tier_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tier-health read goes through the server's ClickHouse client, not the
+    `httpx` probes these tests stub: it reads nothing here."""
+    monkeypatch.setattr("server.cli.doctor._doctor_tier_failures", lambda: None)
+
+
+def test_a_failing_code_tier_is_a_doctor_problem(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.cli import doctor
+
+    row = {
+        "org": "o",
+        "namespace": "code-x",
+        "tier": "clang",
+        "kind": "credential",
+        "since": "2026-01-01T00:00:00+00:00",
+        "failed_passes": 4,
+        "lag_commits": 12,
+        "fix": "Set the token.",
+        "severity": "warn",
+    }
+    monkeypatch.setattr(doctor, "_doctor_tier_failures", lambda: (row,))
+    lines = doctor._problem_checks(doctor._doctor_problems())
+    name, grade, detail = next(line for line in lines if line[0] == "problem:code_tier_failing")
+    assert grade == doctor.WARN
+    assert (
+        "o/code-x clang (credential, 4 failed passes" in detail and "Fix: Set the token." in detail
+    )
+
+
 def test_doctor_reports_jwt_secret_status(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,

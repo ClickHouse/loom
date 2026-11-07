@@ -313,6 +313,9 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_STALE_AFTER_COMMITS` | `int` | `5` |  | as_of.stale is true when the fast tier is more than this many first-parent commits behind the fetched branch tip (60 s cache). |
 | `LOOM_CODE_FETCH_STALE_AFTER_SECONDS` | `int` | `3600` |  | as_of.stale is also true when the mirror has not fetched for this many seconds (lag is counted against the local mirror). 0 = off. |
+| `LOOM_CODE_TIER_FAILING_WARN_PASSES` | `int` | `3` | live | A code-index tier failing this many passes in a row is a `code_tier_failing` health problem (warn); fewer is a transient failure the next pass retries. |
+| `LOOM_CODE_TIER_FAILING_WARN_HOURS` | `float` | `3.0` | live | ...or failing for this many hours, however few passes ran in that time. |
+| `LOOM_CODE_TIER_FAILING_ERROR_LAG_COMMITS` | `int` | `100` | live | The problem is an error when the failing tier is also this many commits behind the fetched tip. |
 
 ### code.callers
 

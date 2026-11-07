@@ -14,6 +14,7 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from server.code.domain.index.compiler_tiers import TIERS as COMPILER_TIER_SPECS
 from server.code.domain.index.state import IndexState
@@ -320,3 +321,49 @@ def fix_for(kind: str, text: str) -> str:
     if kind == "harness":
         return "The indexer failed: the error holds the tail of its output."
     return "See the error; the tier retries every pass."
+
+
+def severity(
+    health: TierHealth,
+    lag_commits: int,
+    now: datetime,
+    *,
+    warn_passes: int,
+    warn_hours: float,
+    error_lag_commits: int,
+) -> str:
+    """'' while a failing tier may still be transient, `warn` once it has failed
+    `warn_passes` passes in a row or for `warn_hours`, `error` when it is also
+    `error_lag_commits` or more behind (-1 lag is unknown, never an error)."""
+    if not health.failing:
+        return ""
+    since = _parse_iso(health.failing_since)
+    hours = (now - since).total_seconds() / 3600 if since else 0.0
+    if health.failed_passes < warn_passes and hours < warn_hours:
+        return ""
+    return "error" if lag_commits >= error_lag_commits else "warn"
+
+
+def _parse_iso(text: str) -> datetime | None:
+    try:
+        ts = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
+
+
+def snapshot_lag(snapshot: dict[str, Any], tier: str) -> int:
+    """The tier's lag in a published status snapshot (`code.index_status`'s JSON): the
+    fast tier's for ingest, the compiler tier's own for a producer (the C++ tier's for the
+    full run); -1 for the fetch tier (its lag is counted against the mirror it failed to
+    fetch) or when unknown."""
+    try:
+        if tier == "ingest":
+            return int(snapshot.get("fast_tier_lag", -1))
+        producer = "clang" if tier == "clang_full" else tier
+        for t in snapshot.get("compiler_tiers") or []:
+            if isinstance(t, dict) and t.get("producer") == producer:
+                return int(t.get("lag", -1))
+    except (TypeError, ValueError):
+        return -1
+    return -1

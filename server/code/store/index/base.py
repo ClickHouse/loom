@@ -92,6 +92,35 @@ class CodeRepoBase:
             out[str(r["state_key"])][key] = str(r.get("state_value") or "")
         return out
 
+    async def state_rows_with_prefix(self, prefix: str) -> list[dict[str, Any]]:
+        """Every namespace's state rows whose key starts with `prefix`, across orgs:
+        (org, namespace, state_key, state_value) — a family of keys every entry may
+        write (the tier-health records), read as one directory."""
+        return await self._ch.query_all(
+            """
+            SELECT org, namespace, state_key, state_value
+            FROM loom.code_index_state FINAL
+            WHERE startsWith(state_key, {p:String})
+            """,
+            {"p": prefix},
+        )
+
+    async def state_value_for_pairs(
+        self, pairs: list[tuple[str, str]], key: str
+    ) -> dict[tuple[str, str], str]:
+        """(org, namespace) -> the `key` row's value, for the pairs that have one."""
+        if not pairs:
+            return {}
+        rows = await self._ch.query_all(
+            """
+            SELECT org, namespace, state_value FROM loom.code_index_state FINAL
+            WHERE (org, namespace) IN {pairs:Array(Tuple(String, String))}
+              AND state_key = {k:String}
+            """,
+            {"pairs": [(str(o), str(n)) for o, n in pairs], "k": key},
+        )
+        return {(str(r["org"]), str(r["namespace"])): str(r["state_value"] or "") for r in rows}
+
     async def all_state(self, org: str, ns: str) -> IndexState:
         rows = await self._ch.query_all(
             """
