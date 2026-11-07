@@ -9,13 +9,13 @@ export type Scope = Pick<Identity, "org" | "namespace">;
 /** How many clusters each duplicate list asks for: the largest first. */
 export const DUPLICATE_LIST_LIMIT = 50;
 
-/** Mirrors `server/memory/api/models_graph.py::_DedupCluster`. */
+/** The fields of `server/memory/api/models_graph.py::_DedupCluster` the tab reads. */
 export interface MemoryDuplicateCluster {
   canonical_id: string;
   canonical_key: string;
   canonical_agent: string;
   dup_count: number;
-  duplicates: { memory_id: string; memory_key: string; agent: string; created_at: string | null }[];
+  duplicates: { memory_id: string; memory_key: string; agent: string }[];
 }
 
 export async function listMemoryDuplicates(
@@ -49,7 +49,7 @@ export async function resolveMemoryDuplicate(
   });
 }
 
-/** Mirrors `server/memory/api/models_graph.py::MemoryDedupCollapseOutput`. */
+/** The fields of `server/memory/api/models_graph.py::MemoryDedupCollapseOutput` the tab reads. */
 export interface DuplicateCollapse {
   /** Search rows of duplicates still marked as live; a run marks them `duplicate`. */
   mirror_stale: number;
@@ -79,6 +79,9 @@ export async function repairOrphanDuplicates(
 ): Promise<{ candidates: number; reactivated: number }> {
   return post("/v1/memory.resolve_orphan_duplicates", { org: id.org, namespace: id.namespace, dry_run: dryRun });
 }
+
+/** How many of the agent's newest eligible memories `memory.consolidate` reads (its default). */
+export const CONSOLIDATE_READ = 200;
 
 /** POST /v1/memory.consolidate: one model call per cluster of near-duplicate memories of
  *  one agent (those of no user), merged into one each. */
@@ -145,7 +148,7 @@ export async function retireDocumentDuplicate(id: Scope, canonicalUri: string, d
 
 // ===== Proposals (facts on trial) =====
 
-/** Mirrors `server/memory/api/models_proposals.py::MemoryProposal`. */
+/** The fields of `server/memory/api/models_proposals.py::MemoryProposal` the tab reads. */
 export interface MemoryProposal {
   memory_key: string;
   memory_id: string;
@@ -156,8 +159,6 @@ export interface MemoryProposal {
   created_at: string;
   graded_passes: number;
   graded_fails: number;
-  used_count: number;
-  harm_count: number;
   /** What the namespace's policy would decide now; "" when it would not yet. */
   ready: "" | "accept" | "reject";
 }
@@ -188,8 +189,6 @@ export async function decideProposals(
 
 export interface RevisionSuggestion {
   decision: "revise" | "contract" | "allow";
-  target_local_id: number;
-  peer_local_ids: number[];
   rationale: string;
 }
 

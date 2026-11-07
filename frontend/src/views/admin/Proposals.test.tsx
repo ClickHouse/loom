@@ -23,8 +23,6 @@ const P: MemoryProposal = {
   created_at: "2000-01-01 00:00:00",
   graded_passes: 4,
   graded_fails: 0,
-  used_count: 4,
-  harm_count: 0,
   ready: "accept",
 };
 
@@ -80,11 +78,28 @@ describe("ProposalsPanel", () => {
     await waitFor(() => expect(api.listProposals).toHaveBeenCalled());
   });
 
-  it("keeps two agents' proposals of one key apart, shows a high one as sensitive, and says the list is cut", async () => {
+  it("offers no decision on a key two agents proposed, shows a high one as sensitive, and says the list is cut", async () => {
     const other = { ...P, memory_id: "m2", agent: "cursor", value_preview: "", sensitivity: "high" as const };
-    render(<ProposalsPanel initial={{ rows: [P, other], total: 140 }} onSeedUsed={() => {}} />);
+    const lone = { ...P, memory_id: "m3", memory_key: "standup_time" };
+    render(<ProposalsPanel initial={{ rows: [P, other, lone], total: 140 }} onSeedUsed={() => {}} />);
     expect(screen.getAllByText("deploy_window")).toHaveLength(2);
+    // A decision names only the key, so neither of the two is offered one.
+    expect(screen.queryByRole("button", { name: "Accept deploy_window" })).toBeNull();
+    expect(screen.getAllByText("Decide over the API")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Accept standup_time" })).toBeInTheDocument();
     expect(screen.getByText("sensitive")).toBeInTheDocument();
-    expect(screen.getByText("The newest 2 of 140 proposals; decide some to see the rest.")).toBeInTheDocument();
+    expect(screen.getByText("The newest 3 proposals are listed; decide some to see the rest.")).toBeInTheDocument();
+  });
+
+  it("holds every row until the list is read again after a decision", async () => {
+    let answer: (v: { proposals: MemoryProposal[]; total: number }) => void = () => {};
+    vi.mocked(api.listProposals).mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    const lone = { ...P, memory_id: "m3", memory_key: "standup_time" };
+    render(<ProposalsPanel initial={{ rows: [P, lone], total: 2 }} onSeedUsed={() => {}} />);
+    await userEvent.click(screen.getByRole("button", { name: "Accept deploy_window" }));
+    await waitFor(() => expect(api.listProposals).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "Accept standup_time" })).toBeDisabled();
+    answer({ proposals: [lone], total: 1 });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Accept standup_time" })).toBeEnabled());
   });
 });

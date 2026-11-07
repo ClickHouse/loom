@@ -11,6 +11,7 @@ import {
   resolveMemoryDuplicate,
   retireDocumentDuplicate,
   COLLAPSE_PAIRS,
+  CONSOLIDATE_READ,
   DUPLICATE_LIST_LIMIT,
   type Scope,
   type DocumentDuplicateCluster,
@@ -122,7 +123,7 @@ function MemoryCluster({
   held: boolean;
   onDone: () => void;
 }) {
-  const [working, setBusy] = useState(false);
+  const [working, setWorking] = useState(false);
   const busy = working || held;
   // The canonical was deleted: its duplicates point at nothing and no pair can be settled.
   if (!cluster.canonical_key) {
@@ -130,7 +131,8 @@ function MemoryCluster({
       <li>
         <Panel>
           <p className="text-sm">
-            {cluster.duplicates.length} duplicate{cluster.duplicates.length === 1 ? "" : "s"} of a deleted memory:{" "}
+            {cluster.dup_count} duplicate{cluster.dup_count === 1 ? "" : "s"} of a deleted memory
+            {cluster.dup_count > cluster.duplicates.length && `, ${cluster.duplicates.length} listed`}:{" "}
             <span className="font-mono text-xs">{cluster.duplicates.map((d) => d.memory_key).join(", ")}</span>
           </p>
           <p className="mt-1 text-xs text-text-muted">Repair orphaned duplicates brings them back.</p>
@@ -156,7 +158,7 @@ function MemoryCluster({
       });
       if (!ok) return;
     }
-    setBusy(true);
+    setWorking(true);
     try {
       await resolveMemoryDuplicate(scope, cluster, duplicateId, decision);
       toast("Resolved", "ok");
@@ -164,7 +166,7 @@ function MemoryCluster({
     } catch (e) {
       toast(`Resolve failed: ${humanizeError(e)}`, "error");
     } finally {
-      setBusy(false);
+      setWorking(false);
     }
   };
   return (
@@ -267,7 +269,7 @@ function DocumentCluster({
   onDone: () => void;
 }) {
   const { keep, copies } = keptAndCopies(cluster.docs);
-  const [working, setBusy] = useState(false);
+  const [working, setWorking] = useState(false);
   const busy = working || held;
   const retire = async (uri: string) => {
     const ok = await confirmAction({
@@ -277,7 +279,7 @@ function DocumentCluster({
       danger: true,
     });
     if (!ok) return;
-    setBusy(true);
+    setWorking(true);
     try {
       await retireDocumentDuplicate(scope, keep.source_uri, uri);
       toast("Copy retired", "ok");
@@ -285,7 +287,7 @@ function DocumentCluster({
     } catch (e) {
       toast(`Retire failed: ${humanizeError(e)}`, "error");
     } finally {
-      setBusy(false);
+      setWorking(false);
     }
   };
   return (
@@ -296,6 +298,11 @@ function DocumentCluster({
           {cluster.doc_count > cluster.docs.length &&
             `, the oldest of the ${cluster.docs.length} of its ${cluster.doc_count} documents listed`}
         </p>
+        {copies.length === 0 && (
+          <p className="mt-2 text-xs text-text-muted">
+            Every listed copy has the kept document's address: nothing to retire.
+          </p>
+        )}
         <ul className="mt-2 space-y-2">
           {copies.map((d) => (
             <li key={d.doc_id} className="flex flex-wrap items-center gap-2">
@@ -317,6 +324,8 @@ function DocumentCluster({
   );
 }
 
+type Question = { title: string; message?: string; confirmLabel?: string; danger?: boolean };
+
 /** The namespace-wide repairs. Each asks before it writes. */
 function Repairs({ scope, onDone }: { scope: Scope; onDone: () => void }) {
   const [agents, setAgents] = useState<string[]>([]);
@@ -337,8 +346,7 @@ function Repairs({ scope, onDone }: { scope: Scope; onDone: () => void }) {
     [scope.org, scope.namespace],
   );
 
-  /** `ask` answers the confirmation's title, or null after saying there is nothing to do. */
-  type Question = { title: string; message?: string; confirmLabel?: string; danger?: boolean };
+  /** `ask` answers the confirmation to show, or null after saying there is nothing to do. */
   const run = async (ask: () => Promise<Question | null>, apply: () => Promise<string>) => {
     setBusy(true);
     try {
@@ -395,19 +403,19 @@ function Repairs({ scope, onDone }: { scope: Scope; onDone: () => void }) {
   const consolidate = () =>
     run(
       async () => ({
-        title: `Merge near-duplicates among ${agent}'s memories?`,
+        title: `Merge near-duplicates among ${agent}'s newest ${CONSOLIDATE_READ} memories?`,
         message:
-          "Each cluster found becomes one merged memory, and the memories merged into it are deleted. Each cluster costs one model call.",
+          "Memories written in the last hour are left out. Each cluster found becomes one merged memory, and the memories merged into it are deleted. Each cluster costs one model call.",
         confirmLabel: "Merge",
         danger: true,
       }),
       async () => {
         const r = await consolidateMemories(scope, agent);
-        if (r.clusters_found === 0) return `No near-duplicates among ${r.examined} memories of ${agent}.`;
-        const failed = r.clusters_failed
-          ? `; ${r.clusters_failed} left as they were${r.clusters_refused_lossy ? `, ${r.clusters_refused_lossy} because the merge lost a detail` : ""}`
-          : "";
-        return `Merged ${r.consolidated.length} of ${r.clusters_found} clusters${failed}`;
+        if (r.clusters_found === 0) return `No near-duplicates among the ${r.examined} memories of ${agent} read.`;
+        const kept = r.clusters_failed;
+        const why = r.clusters_refused_lossy ? ` (${r.clusters_refused_lossy} because the merge lost a detail)` : "";
+        const failed = kept ? `; ${kept} left as ${kept === 1 ? "it was" : "they were"}${why}` : "";
+        return `Merged ${r.consolidated.length} of ${r.clusters_found} clusters${failed}.`;
       },
     );
 

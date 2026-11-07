@@ -115,6 +115,10 @@ export function ReviewQueue() {
   // they revealed) must not outlive it, or a namespace with neither sub-tab strands the
   // viewer on a hidden panel.
   const [tab, setTab] = useState("conflicts");
+  // A tab whose access went (a role read again) hands the page back to Conflicts.
+  useEffect(() => {
+    if ((tab === "duplicates" && !hasDuplicates) || (tab === "proposals" && !hasProposals)) setTab("conflicts");
+  }, [tab, hasDuplicates, hasProposals]);
   // A probe seeds its panel's first view once: a panel opened again (the tabs unmount an
   // inactive one) reads afresh, so a learning promoted or an exception removed since does
   // not come back from the probe.
@@ -148,7 +152,10 @@ export function ReviewQueue() {
   const proposalsReadable = canCall("memory.proposals", role, whoami);
   useAbortableEffect(
     (signal, live) => {
-      if (!proposalsReadable) return;
+      if (!proposalsReadable) {
+        setProbedProposals(null);
+        return;
+      }
       listProposals({ org: identity.org, namespace: identity.namespace }, { signal })
         .then((r) => {
           if (live()) setProbedProposals({ rows: r.proposals ?? [], total: r.total ?? 0, scope: scopeKey });
@@ -602,14 +609,15 @@ const SUGGESTION_LABEL: Record<RevisionSuggestion["decision"], string> = {
  *  every peer. It changes nothing. */
 function RevisionHint({ memoryId }: { memoryId: string }) {
   const identity = useIdentity();
-  const [hint, setHint] = useState<RevisionSuggestion[] | null>(null);
+  // null until asked; `gone` when the conflict is no longer open.
+  const [hint, setHint] = useState<RevisionSuggestion[] | "gone" | null>(null);
   const [busy, setBusy] = useState(false);
   const region = useRef<HTMLDivElement>(null);
   const ask = async () => {
     setBusy(true);
     try {
       const r = await proposeRevision({ org: identity.org, namespace: identity.namespace }, memoryId);
-      setHint(r.suggestions);
+      setHint(r.found ? r.suggestions : "gone");
       // The link that had focus is gone; the answer takes it.
       region.current?.focus();
     } catch (e) {
@@ -627,12 +635,14 @@ function RevisionHint({ memoryId }: { memoryId: string }) {
       )}
       {/* Mounted empty, so the answer is announced when it fills in. */}
       <div ref={region} role="status" tabIndex={-1} className="outline-none">
-        {hint?.length === 0 && "No suggestion for this conflict."}
-        {hint?.map((s) => (
-          <p key={s.decision}>
-            <strong>{SUGGESTION_LABEL[s.decision]}</strong>: {s.rationale}
-          </p>
-        ))}
+        {hint === "gone" && "This conflict is no longer open."}
+        {Array.isArray(hint) && hint.length === 0 && "No suggestion for this conflict."}
+        {Array.isArray(hint) &&
+          hint.map((s) => (
+            <p key={s.decision}>
+              <strong>{SUGGESTION_LABEL[s.decision]}</strong>: {s.rationale}
+            </p>
+          ))}
       </div>
     </div>
   );

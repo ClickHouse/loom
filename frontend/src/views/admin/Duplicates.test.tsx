@@ -20,7 +20,7 @@ vi.mock("../../api", async (importOriginal) => {
           canonical_key: "home_city",
           canonical_agent: "claude-code",
           dup_count: 1,
-          duplicates: [{ memory_id: "d1", memory_key: "user_city", agent: "cursor", created_at: null }],
+          duplicates: [{ memory_id: "d1", memory_key: "user_city", agent: "cursor" }],
         },
       ],
     })),
@@ -147,7 +147,7 @@ describe("DuplicatesPanel", () => {
           canonical_key: "",
           canonical_agent: "",
           dup_count: 1,
-          duplicates: [{ memory_id: "o1", memory_key: "old_city", agent: "a", created_at: null }],
+          duplicates: [{ memory_id: "o1", memory_key: "old_city", agent: "a" }],
         },
         {
           canonical_id: "c2",
@@ -155,8 +155,8 @@ describe("DuplicatesPanel", () => {
           canonical_agent: "a",
           dup_count: 2,
           duplicates: [
-            { memory_id: "x1", memory_key: "home_1", agent: "a", created_at: null },
-            { memory_id: "x2", memory_key: "home_2", agent: "a", created_at: null },
+            { memory_id: "x1", memory_key: "home_1", agent: "a" },
+            { memory_id: "x2", memory_key: "home_2", agent: "a" },
           ],
         },
       ],
@@ -187,6 +187,24 @@ describe("DuplicatesPanel", () => {
     ]);
     expect(keep.doc_id).toBe("1");
     expect(copies.map((c) => c.doc_id)).toEqual(["3"]);
+  });
+
+  it("says when the agents could not be read", async () => {
+    vi.mocked(api.listMemoryAgents).mockRejectedValueOnce(new Error("boom"));
+    render(<DuplicatesPanel />);
+    expect(await screen.findByText("Couldn't load the agents")).toBeInTheDocument();
+  });
+
+  it("holds a decided pair's buttons until the list is read again", async () => {
+    render(<DuplicatesPanel />);
+    const keep = await screen.findByRole("button", { name: "Keep both: user_city" });
+    let answer: (v: { clusters: never[] }) => void = () => {};
+    vi.mocked(api.listMemoryDuplicates).mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    await userEvent.click(keep);
+    await waitFor(() => expect(api.resolveMemoryDuplicate).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "Keep both: user_city" })).toBeDisabled();
+    answer({ clusters: [] });
+    expect(await screen.findByText("No pair waits for a decision.")).toBeInTheDocument();
   });
 
   it("shows the memory pairs when the document read fails", async () => {
@@ -221,7 +239,7 @@ describe("DuplicatesPanel", () => {
     await waitFor(() => expect(api.consolidateMemories).toHaveBeenCalledWith(scope, "claude-code"));
     expect(api.consolidateMemories).toHaveBeenCalledTimes(1);
     expect(toast).toHaveBeenCalledWith(
-      "Merged 1 of 2 clusters; 1 left as they were, 1 because the merge lost a detail",
+      "Merged 1 of 2 clusters; 1 left as it was (1 because the merge lost a detail).",
       "ok",
     );
     // It deletes the merged memories, so it asks as a deletion does.

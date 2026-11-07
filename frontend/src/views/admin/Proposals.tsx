@@ -13,6 +13,7 @@ import { AgentBadge } from "../../components/AgentBadge";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { RowMenu } from "../../components/ui/RowMenu";
+import { Tip } from "../../components/ui";
 import { TableSkeleton } from "../../components/Skeleton";
 
 const HEADERS = [
@@ -85,6 +86,9 @@ export function ProposalsPanel({
     setReload((n) => n + 1);
   };
   const held = busy || reading;
+  // memory.proposal_decide names a proposal by key and decides the newest row of it, so a
+  // key two agents proposed cannot be decided here for one of them.
+  const shared = new Set((rows ?? []).map((p) => p.memory_key).filter((k, i, all) => all.indexOf(k) !== i));
 
   // One wrapper in every state, so the focus a decision gives it survives an empty answer.
   return (
@@ -99,72 +103,80 @@ export function ProposalsPanel({
           description="A fact an agent writes as proposed waits here until it is accepted or rejected."
         />
       ) : (
-        <Table
-          aria-label="Proposals"
-          aria-busy={rows === null || reading || undefined}
-          noDataMessage={rows === null ? <TableSkeleton label="Loading proposals" /> : undefined}
-          size="sm"
-          headers={HEADERS}
-          rows={(rows ?? []).map((p) => ({
-            id: p.memory_id,
-            items: [
-              {
-                label: (
-                  <div className="min-w-0">
-                    <div className="font-mono text-xs">{p.memory_key}</div>
-                    {p.sensitivity === "high" ? (
-                      <Badge text="sensitive" state="neutral" size="sm" />
+        <>
+          <Table
+            aria-label="Proposals"
+            aria-busy={rows === null || reading || undefined}
+            noDataMessage={rows === null ? <TableSkeleton label="Loading proposals" /> : undefined}
+            size="sm"
+            headers={HEADERS}
+            rows={(rows ?? []).map((p) => ({
+              id: p.memory_id,
+              items: [
+                {
+                  label: (
+                    <div className="min-w-0">
+                      <div className="font-mono text-xs">{p.memory_key}</div>
+                      {p.sensitivity === "high" ? (
+                        <Badge text="sensitive" state="neutral" size="sm" />
+                      ) : (
+                        <div className="text-sm line-clamp-2">{p.value_preview}</div>
+                      )}
+                    </div>
+                  ),
+                  overflowMode: "wrap",
+                },
+                { label: <AgentBadge agent={p.agent} /> },
+                {
+                  label: (
+                    <span className="inline-flex items-center gap-1.5 tabular">
+                      {p.graded_passes} passed · {p.graded_fails} failed
+                      {p.ready && <Badge text={`ready to ${p.ready}`} state="info" size="sm" />}
+                    </span>
+                  ),
+                },
+                { label: <ListTime time={p.created_at} quiet /> },
+                {
+                  label:
+                    canDecide &&
+                    (shared.has(p.memory_key) ? (
+                      <Tip content="Two agents proposed this key, and a decision names only the key.">
+                        <span className="text-xs text-text-muted">Decide over the API</span>
+                      </Tip>
                     ) : (
-                      <div className="text-sm line-clamp-2">{p.value_preview}</div>
-                    )}
-                  </div>
-                ),
-                overflowMode: "wrap",
-              },
-              { label: <AgentBadge agent={p.agent} /> },
-              {
-                label: (
-                  <span className="inline-flex items-center gap-1.5 tabular">
-                    {p.graded_passes} passed · {p.graded_fails} failed
-                    {p.ready && <Badge text={`ready to ${p.ready}`} state="info" size="sm" />}
-                  </span>
-                ),
-              },
-              { label: <ListTime time={p.created_at} quiet /> },
-              {
-                label: canDecide && (
-                  <span className="inline-flex items-center gap-2">
-                    <Button
-                      type="secondary"
-                      htmlType="button"
-                      disabled={held}
-                      aria-label={`Accept ${p.memory_key}`}
-                      onClick={() => void decide(p.memory_key, "accept")}
-                    >
-                      Accept
-                    </Button>
-                    <RowMenu
-                      name={p.memory_key}
-                      items={[
-                        {
-                          label: "Reject",
-                          danger: true,
-                          disabled: held,
-                          onSelect: () => void decide(p.memory_key, "reject"),
-                        },
-                      ]}
-                    />
-                  </span>
-                ),
-              },
-            ],
-          }))}
-        />
-      )}
-      {rows !== null && total > rows.length && (
-        <p className="mt-2 text-xs text-text-muted">
-          The newest {rows.length} of {total} proposals; decide some to see the rest.
-        </p>
+                      <span className="inline-flex items-center gap-2">
+                        <Button
+                          type="secondary"
+                          htmlType="button"
+                          disabled={held}
+                          aria-label={`Accept ${p.memory_key}`}
+                          onClick={() => void decide(p.memory_key, "accept")}
+                        >
+                          Accept
+                        </Button>
+                        <RowMenu
+                          name={p.memory_key}
+                          items={[
+                            {
+                              label: "Reject",
+                              danger: true,
+                              disabled: held,
+                              onSelect: () => void decide(p.memory_key, "reject"),
+                            },
+                          ]}
+                        />
+                      </span>
+                    )),
+                },
+              ],
+            }))}
+          />
+          {rows !== null && total > rows.length && (
+            <p className="mt-2 text-xs text-text-muted">
+              The newest {rows.length} proposals are listed; decide some to see the rest.
+            </p>
+          )}
+        </>
       )}
     </div>
   );

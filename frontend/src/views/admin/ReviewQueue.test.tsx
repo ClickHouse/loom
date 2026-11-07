@@ -216,8 +216,6 @@ describe("ReviewQueue", () => {
       created_at: "2000-01-01 00:00:00",
       graded_passes: 1,
       graded_fails: 0,
-      used_count: 1,
-      harm_count: 0,
       ready: "" as const,
     };
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
@@ -240,7 +238,7 @@ describe("ReviewQueue", () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
     vi.mocked(proposeRevision).mockResolvedValue({
       found: true,
-      suggestions: [{ decision: "contract", target_local_id: 1, peer_local_ids: [2], rationale: "a peer is pinned" }],
+      suggestions: [{ decision: "contract", rationale: "a peer is pinned" }],
     });
     seed("ns-a");
     render(<ReviewQueue />);
@@ -249,6 +247,8 @@ describe("ReviewQueue", () => {
     expect(await within(await screen.findByRole("status")).findByText("Drop A")).toBeInTheDocument();
     expect(screen.getByText(/a peer is pinned/)).toBeInTheDocument();
     expect(vi.mocked(proposeRevision).mock.calls[0]).toHaveLength(2);
+    // The link that was pressed is gone: the answer holds the focus.
+    expect(screen.getByRole("status")).toHaveFocus();
     expect(resolveConflict).not.toHaveBeenCalled();
   });
 
