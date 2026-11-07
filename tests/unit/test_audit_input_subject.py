@@ -25,6 +25,7 @@ from server.identity.api.models import (
 from server.identity.api.models_grants import GrantsShareAgentInput
 from server.memory.api.models_apply import MemoryApplyInput
 from server.memory.api.models_bulk import MemoryImportCuratedInput
+from server.memory.api.models_crud import MemoryDeleteVersionInput, MemoryVerifyInput
 from server.memory.api.models_decision import DecisionRecordInput
 from server.memory.api.models_move import MemoryMoveInput
 from server.memory.api.models_records import MemoryRecordWriteInput
@@ -91,7 +92,8 @@ def test_decision_record_audit_row_holds_no_decision_text(monkeypatch) -> None:
     assert SECRET not in json.dumps(subject)
     assert subject["scenario"] == _digest(SECRET)
     assert subject["alternatives"] == _digest([SECRET])
-    assert subject["decision_maker"] == _digest("cfo")
+    # Who decided names a principal, as `grantee` or `approver` do.
+    assert subject["decision_maker"] == "cfo"
     assert (subject["org"], subject["namespace"], subject["agent"]) == ("o", "n", "a")
     assert subject["confidence"] == 0.75
     # A Literal field is a vocabulary word, not content.
@@ -207,6 +209,29 @@ def test_a_restored_snapshot_keeps_its_ids_and_counts_and_hashes_its_rows(monkey
     assert shaped["memories"] == _digest([row.model_dump(mode="json")])
 
 
+def test_a_verify_audit_row_names_its_attester(monkeypatch) -> None:
+    body = MemoryVerifyInput(org="o", memory_id="m1", actor="human:alice")
+    subject = _audited_subject(monkeypatch, "memory.verify", body)
+    assert (subject["memory_id"], subject["actor"]) == ("m1", "human:alice")
+
+
+def test_a_credential_named_field_is_hashed_whatever_its_suffix() -> None:
+    class Body(BaseModel):
+        api_key: str
+        signing_key: str
+        db_password_id: str
+        secret_name: str
+        item_key: str
+
+    body = Body(
+        api_key=SECRET, signing_key=SECRET, db_password_id=SECRET, secret_name=SECRET, item_key="k"
+    )
+    subject = input_subject(body)
+    assert SECRET not in json.dumps(subject)
+    assert subject["api_key"] == _digest(SECRET)
+    assert subject["item_key"] == "k"
+
+
 def test_an_enum_and_an_optional_nested_model_are_shaped_by_their_type() -> None:
     class Colour(StrEnum):
         RED = "red"
@@ -226,6 +251,47 @@ def test_an_enum_and_an_optional_nested_model_are_shaped_by_their_type() -> None
         "inner": {"item_key": "k", "note": _digest(SECRET)},
         "stages": ["a"],
     }
+
+
+@pytest.mark.parametrize(
+    ("url", "host"),
+    [
+        ("https://hooks.example.com:8443/h/the-token", "https://hooks.example.com:8443"),
+        ("http://[2001:db8::1]:9000/h/the-token", "http://[2001:db8::1]:9000"),
+        ("https://user:the-token@hooks.example.com/h", "https://hooks.example.com"),
+    ],
+)
+def test_a_webhook_host_keeps_its_port_and_ipv6_brackets_and_drops_userinfo(
+    monkeypatch, url: str, host: str
+) -> None:
+    body = WebhookRegisterInput(
+        org="o", namespace="n", url=url, secret_ref="LOOM_WEBHOOK_SECRET_O__CI"
+    )
+    subject = _audited_subject(monkeypatch, "webhook.register", body)
+    assert subject["url_host"] == host
+    assert "the-token" not in json.dumps(subject)
+
+
+def test_a_deferred_delete_version_writes_the_ops_audit_row(monkeypatch) -> None:
+    from server.memory.app import handlers
+    from server.observability import audit
+
+    rows: list[tuple[str, dict[str, Any]]] = []
+
+    async def _emit(event_type: str, **kw: Any) -> None:
+        rows.append((event_type, kw))
+
+    monkeypatch.setattr(audit, "emit", _emit)
+    body = MemoryDeleteVersionInput(
+        org="o", namespace="n", agent="a", memory_key="k", version="1700000000000000001"
+    )
+    asyncio.run(handlers._audit_deferred(body))
+    [(event_type, kw)] = rows
+    assert event_type == "memory.delete_version"
+    assert (kw["org"], kw["namespace"], kw["actor"]) == ("o", "n", "anonymous")
+    assert kw["subject"]["memory_key"] == "k"
+    assert kw["subject"]["version"] == 1700000000000000001
+    assert kw["subject"]["outcome"] == "deferred"
 
 
 def test_a_webhook_registration_names_where_events_go_and_hashes_the_url(monkeypatch) -> None:

@@ -216,7 +216,9 @@ def test_the_audit_row_of_a_real_op_carries_its_subject(monkeypatch: pytest.Monk
 
 
 def test_every_audited_op_with_a_credential_field_declares_its_audit_subject() -> None:
-    # Without one the whole input, credential included, becomes the audit subject.
+    # Without one the subject is `audit.input_subject`'s shape, which hashes a
+    # credential: a hash of a short password can be recovered by guessing, so an op
+    # that takes one must leave it out of its row.
     missing = {}
     for op in ALL_OPERATIONS:
         if op.audit and op.audit_subject is None:

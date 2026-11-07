@@ -362,11 +362,12 @@ async def webhook_tally(org: str, namespace: str) -> tuple[int, datetime | None]
 
 def register_audit_subject(inp: WebhookRegisterInput, _response: object) -> dict[str, object]:
     """`webhook.register`'s audit subject: where the namespace's events now go, as the
-    URL's scheme and host, with the whole URL hashed (a hook URL often carries its token
-    in the path or query) and the secret's variable name as sent."""
+    URL's scheme, host and port, with the whole URL hashed (a hook URL often carries its
+    token in the path, the query or the userinfo, which is dropped) and the secret's
+    variable name as sent."""
     parts = urlsplit(inp.url)
     return {
         **audit.input_subject(inp),
-        "url_host": f"{parts.scheme}://{parts.hostname or ''}",
+        "url_host": f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}",
         "secret_ref": inp.secret_ref,
     }

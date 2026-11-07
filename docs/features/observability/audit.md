@@ -36,10 +36,14 @@ insert is logged and loses the row; the operation still succeeds.
 
 For an `audit=True` op the subject is its `audit_subject` when it declares one, else the
 validated input as `audit.input_subject` shapes it. Fields that name what the call acted
-on or who acted (the identity fields, principals, `version`, and names ending in an id,
-key, URI, name, org, agent, namespace or `_by` suffix) and fields typed as a number, a
-boolean, a Literal or an Enum stay as sent; a field holding one nested model follows the
-same rule, and a list of models is hashed whole. Every other value (a memory value, a
+on or who acted (the identity fields, the principals `subject`, `actor`, `grantee`,
+`owner_email`, `requester`, `approver` and `decision_maker`, `version`, and names ending
+in an id, key, URI, name, org, agent, namespace or `_by` suffix) and fields typed as a
+number, a boolean, a Literal or an Enum stay as sent; a field named as a credential
+(`api_key`, `signing_key`, a password or a secret) is hashed whatever its suffix. A field
+holding one nested model follows the same rule, and a list of models is hashed whole. The
+principals and the `_by` fields kept as sent are personal data that an erasure does not
+remove from `loom.audit_log`. Every other value (a memory value, a
 decision's reasoning, a reason, a record's fields, the rows of a restored snapshot) is
 stored as its SHA-256 and length (the hash a memory's `content_sha256` would carry, so a
 moved value's matches it), since erasure does not reach `loom.audit_log`. A hash of a
