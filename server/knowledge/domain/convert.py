@@ -386,9 +386,6 @@ _IMAGE_REF = re.compile(r"!\[([^\]\n]*)\](?:\[([^\]\n]+)\]|\(<?data:[^)\s>]*>?\)
 # What opens a list item, a quote line or a heading, kept in front of a marker that
 # replaces the line's pictures.
 _ITEM_LEAD = re.compile(r"[ \t]*(?:(?:[-*+]|\d{1,9}[.)]|#{1,6})[ \t]+|>[ \t]?)*")
-# A character no export holds, marking where a picture stood until the spacing is set.
-_PAD = "\ue000"
-_PADDING = re.compile(f"[ \\t]*{_PAD}+[ \\t]*")
 _FENCE_OPEN = re.compile(r" {0,3}(`{3,}|~{3,})")
 
 
@@ -427,17 +424,24 @@ class _Pictures:
         return [m for m in _IMAGE_REF.finditer(line) if self.shown(m)]
 
     def only(self, text: str) -> bool:
-        """Whether `text` holds nothing but pictures."""
-        return not _IMAGE_REF.sub(lambda m: "" if self.shown(m) else m.group(0), text).strip()
+        """Whether `text` holds nothing but pictures (and the emphasis around them)."""
+        rest = _IMAGE_REF.sub(lambda m: "" if self.shown(m) else m.group(0), text)
+        return not rest.strip(" \t*_~")
 
     def drop(self, line: str) -> str:
         """`line` with its pictures out: a picture becomes its alt text, and exactly one
-        space stays between the neighbouring words (none at the line's ends or before
-        punctuation)."""
-        marked = _IMAGE_REF.sub(
-            lambda m: f"{_PAD}{m.group(1).strip()}{_PAD}" if self.shown(m) else m.group(0), line
-        )
-        return _PADDING.sub(lambda m: "" if _edge(marked, m) else " ", marked)
+        space stays between the neighbouring words (none at the line's ends, inside
+        brackets or emphasis, or before punctuation)."""
+        lead = _lead(line)  # a list marker or quote mark is not emphasis
+        out = lead
+        at = len(lead)
+        for m in self.refs(line):
+            out = lead + (out[len(lead) :] + line[at : m.start()]).rstrip(" \t")
+            at = m.end()
+            while line[at : at + 1] in (" ", "\t"):
+                at += 1
+            out = lead + _joined(out[len(lead) :], m.group(1).strip(), line[at:])
+        return out + line[at:]
 
     def add(self, refs: list[re.Match[str]], lead: str) -> None:
         if not self.seen:
@@ -459,15 +463,22 @@ def _lead(line: str) -> str:
     return m.group(0)
 
 
-def _edge(text: str, m: re.Match[str]) -> bool:
-    """Whether a removed picture's padding sits at an end of `text`, after an opening
-    bracket or before punctuation, where no space belongs."""
-    return (
-        m.start() == 0
-        or m.end() == len(text)
-        or text[m.start() - 1] in "([{"
-        or text[m.end()] in ".,;:!?)]}"
-    )
+_EMPHASIS_RUN = re.compile(r"[*_~]+")
+
+
+def _joined(before: str, alt: str, after: str) -> str:
+    """`before` with a removed picture's alt text appended, spaced so the words on both
+    sides of the picture stay one space apart: no space at a line's end, after an
+    opening bracket or emphasis, or before punctuation or a closing one."""
+    head = re.search(r"[*_~]+$", before)
+    opens = head is not None and (head.start() == 0 or before[head.start() - 1] in " \t")
+    left = before[-1:] in ("", "(", "[", "{") or opens
+    tail = _EMPHASIS_RUN.match(after)
+    closes = tail is not None and after[tail.end() : tail.end() + 1] in ("", " ", "\t")
+    right = after[:1] in ("", *".,;:!?)]}") or closes
+    if alt:
+        return before + ("" if left else " ") + alt + ("" if right else " ")
+    return before + ("" if left or right else " ")
 
 
 def _item_marker(lead: str, refs: list[re.Match[str]]) -> str:

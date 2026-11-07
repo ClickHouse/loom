@@ -519,6 +519,10 @@ def test_unchanged_flagged_copies_do_not_hold_a_full_listing_at_the_pass_bound(
         "/drive/v3/files/doc2/export",
     ]
     assert _uri("doc3") in world.docs and _detail(world)["status"] == "ok"
+    # Once a file is listed at another revision, its record goes.
+    world.files[0] = _file("doc1", DOCS, "2026-03-01T00:00:00.000Z")
+    asyncio.run(source_sync.run_sync(full=True))
+    assert "doc1" not in _detail(world)["pictures_checked"]
 
 
 def test_a_document_stored_without_pictures_bytes_is_not_fetched_again(world: _World) -> None:
@@ -630,6 +634,12 @@ def test_a_document_export_keeps_its_text_and_marks_its_inlined_pictures() -> No
     assert convert.exported_markdown(tilde) == "~~~\n![][image1]\n~~~\n``` x ` ```\n"
     prose = "[Step 1]: data: the raw input\n\n[image1]: <data:a>\n"
     assert convert.exported_markdown(prose) == "[Step 1]: data: the raw input\n"
+    emphasis = "*![][image1]*\n\nx **![Flow][image1]** y\n\n[image1]: <data:a>\n"
+    assert convert.exported_markdown(emphasis) == (
+        "> [image-only: 1 picture, rationale not extracted]\n\nx **Flow** y\n"
+    )
+    private = "a \ue000 ![][image1] b\n\n[image1]: <data:a>\n"
+    assert convert.exported_markdown(private) == "a \ue000 b\n"
     bracketed = "see (![Fig][image1]) here\n\n[image1]: <data:a>\n"
     assert convert.exported_markdown(bracketed) == "see (Fig) here\n"
     ended = "The flow is ![][image1]. Then ![Flow][image1], done.\n\n[image1]: <data:a>\n"

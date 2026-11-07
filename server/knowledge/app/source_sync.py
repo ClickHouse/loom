@@ -457,12 +457,17 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     turn.newest = capped(
         max((str(f.get("modifiedTime") or "") for f in files), default=""), listed_at
     )
+    # A record of a file listed at another revision, or (on a trusted listing) not
+    # listed at all, no longer says anything.
+    listed_at_revision = {str(f["id"]): str(f.get("modifiedTime") or "") for f in files}
+    turn.kind_state[_PICTURES_CHECKED] = {
+        k: v
+        for k, v in turn.kind_state[_PICTURES_CHECKED].items()
+        if listed_at_revision.get(k, "" if trusted else v) == v
+    }
     if trusted:
-        listed_ids = {str(f["id"]) for f in files}
+        listed_ids = set(listed_at_revision)
         turn.waits = {k: v for k, v in turn.waits.items() if k in listed_ids}
-        turn.kind_state[_PICTURES_CHECKED] = {
-            k: v for k, v in turn.kind_state[_PICTURES_CHECKED].items() if k in listed_ids
-        }
     # Only a full listing lists an unchanged file, so only it asks for the pictures.
     revisions = await store.source_revisions(src.org, src.namespace, src.name, pictures=turn.full)
     stored = {d["file_id"]: d for d in revisions}
