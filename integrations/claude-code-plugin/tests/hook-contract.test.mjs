@@ -171,10 +171,11 @@ function runHook({ script, event, stdin, env, closeStdin = true }) {
     const started = Date.now();
     const child = spawn(process.execPath, [path.join(root, "hooks", script), event], {
       env,
-      // A payload with no cwd falls back to the hook's own: the sandbox's
-      // home, not the large checkout the suite runs from, whose git calls a
-      // loaded runner stretches past the bound.
-      cwd: env.HOME,
+      // A payload with no cwd falls back to the hook's own: the temp
+      // directory, not the large checkout the suite runs from, whose git
+      // calls a loaded runner stretches past the bound. Not the sandbox: a
+      // detached flusher working there would hold it open on Windows.
+      cwd: os.tmpdir(),
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
