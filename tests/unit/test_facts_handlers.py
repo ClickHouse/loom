@@ -1074,8 +1074,9 @@ async def test_a_name_with_no_canonical_form_matches_nothing(
             FactsRelatedInput(org="o", namespace="n", entity=blank)
         )
         assert out.entity == "" and out.related == []
-        listed = await facts_handlers.handle_facts_list(
-            FactsListInput(org="o", namespace="n", object=blank)
-        )
-        assert listed.rows == []
+        for field in ("entity", "subject", "object"):
+            listed = await facts_handlers.handle_facts_list(
+                FactsListInput(org="o", namespace="n", **{field: blank})
+            )
+            assert listed.rows == [], field
     assert ch.query_all_calls == []  # nothing to match, so nothing is asked
