@@ -322,6 +322,9 @@ export function MemoryInspector({
 
   useEffect(() => {
     setLoading(true);
+    // Another key: an edit or a rename of the one left does not carry over.
+    setEditing(false);
+    setDraft("");
     setRenaming(false);
     setRestoring(false);
     setDetail(null);
@@ -470,9 +473,9 @@ export function MemoryInspector({
   const formOpen = editing || renaming;
   useEffect(() => {
     if (!valueLocked || !formOpen) return;
+    toast(`Locked read only: the open ${editing ? "edit" : "rename"} was closed`, "info");
     setEditing(false);
     setRenaming(false);
-    toast("Locked read only: the open edit was closed", "info");
   }, [valueLocked, formOpen]);
   const deleteLocked = !!detail?.lock_mode;
   const linkCount = links ? links.in.length + links.out.length : 0;

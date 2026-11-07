@@ -284,6 +284,43 @@ describe("MemoryInspector lifecycle actions", () => {
     expect(toast).toHaveBeenCalledWith("Locked read only: the open edit was closed", "info");
   });
 
+  it("closes an open rename when a read only lock lands, and names it", async () => {
+    await open("writer");
+    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Rename" }));
+    expect(await screen.findByTestId("rename-form")).toBeInTheDocument();
+    vi.mocked(api.getMemory).mockResolvedValue({ ...LIVE, lock_mode: "read_only" });
+    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Lock…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Lock memory" });
+    await userEvent.type(within(dialog).getByLabelText("Reason"), "legal hold");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Lock" }));
+    await waitFor(() => expect(screen.queryByTestId("rename-form")).toBeNull());
+    expect(toast).toHaveBeenCalledWith("Locked read only: the open rename was closed", "info");
+  });
+
+  it("drops an open edit when the drawer moves to another key, without a lock toast", async () => {
+    vi.mocked(api.getMemory).mockResolvedValue(LIVE);
+    useStore.setState({ authed: true, whoami: person, myNamespaces: [grant("writer")], identity });
+    const view = render(
+      <MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />,
+    );
+    await screen.findByText("oat milk, no sugar");
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(await screen.findByRole("button", { name: "Save new version" })).toBeInTheDocument();
+    // The next key is locked read only from the start: nothing landed while it was open.
+    vi.mocked(api.getMemory).mockResolvedValue({
+      ...LIVE,
+      memory_id: "m-other",
+      value: "black",
+      lock_mode: "read_only",
+    });
+    view.rerender(
+      <MemoryInspector identity={identity} memoryKey="morning_routine" onClose={() => {}} onChanged={() => {}} />,
+    );
+    await screen.findByText("black");
+    expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
+    expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/^Locked read only/), "info");
+  });
+
   it("holds the reason dialog open while its call runs", async () => {
     let finish: (v: { locked: boolean }) => void = () => {};
     vi.mocked(lc.lockMemory).mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
