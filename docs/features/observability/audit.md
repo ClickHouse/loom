@@ -47,11 +47,12 @@ that an erasure does not remove from `loom.audit_log`. Every other value (a memo
 decision's reasoning, a reason, a record's fields, the rows of a restored snapshot) is
 stored as `{"sha256", "chars"}`, its SHA-256 and length (the hash a memory's
 `content_sha256` would carry, so a moved value's matches it), since erasure does not reach
-`loom.audit_log`. A row a handler writes itself follows the same rule, with its actor from
-the token (`process:loom` for a background run): a promotion's or copy's rationale, a caller's reason for a proposal decision
-and a closed triple's text are stored in that shape under the field's name, and a
-proposal the owner's policy decides records the policy's mode and thresholds. A hash of a
-short value can be recovered by guessing; the rule keeps long text out of the trail, not
+`loom.audit_log`. Three rows a handler writes itself store text in that shape under the
+field's name: `memory.cross_promote`'s and `memory.copy_to`'s `rationale`,
+`memory.proposal_accept`'s and `memory.proposal_reject`'s `reason` (a decision the
+owner's policy makes records the policy's mode and thresholds instead), and
+`triple.follows_row_supersession`'s `closed`, whose actor is the writing principal or
+`process:loom`. A hash of a short value can be recovered by guessing; the rule keeps long text out of the trail, not
 every word. An op whose input carries a credential (a tracker source's password, a
 repository's access token) declares an `audit_subject` that leaves it out. Grant
 `loom.audit_log` like the data it describes.

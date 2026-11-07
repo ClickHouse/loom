@@ -113,6 +113,13 @@ async def test_cross_promote_audits_the_rationale_as_a_hash(
 
 
 @pytest.mark.asyncio
+async def test_an_empty_rationale_is_audited_as_empty(emitted: list[dict[str, Any]]) -> None:
+    await copy_ops.handle_memory_cross_promote(MemoryCrossPromoteInput(**_PROMOTE))
+    (row,) = [r for r in emitted if r["event_type"] == "memory.cross_promote"]
+    assert row["subject"]["rationale"] == ""
+
+
+@pytest.mark.asyncio
 async def test_copy_to_audits_the_rationale_as_a_hash(emitted: list[dict[str, Any]]) -> None:
     body = {"from_org": "o", "from_namespace": "A", "memory_key": "k", "to_namespace": "B"}
     await copy_ops.handle_memory_copy_to(MemoryCopyToInput(**body, rationale=_RATIONALE))

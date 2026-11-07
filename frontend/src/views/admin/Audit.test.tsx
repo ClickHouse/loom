@@ -67,7 +67,7 @@ describe("Audit rows", () => {
     render(<Audit />);
     expect(await screen.findByText('Deleted memory "k1"')).toBeTruthy();
     expect(screen.getByText('Deleted "k2" — stale')).toBeTruthy();
-    expect(screen.getByText('Recorded outcome for "k3":')).toBeTruthy();
+    expect(screen.getByText('Recorded outcome for "k3"')).toBeTruthy();
     expect(screen.queryByText(/object Object/)).toBeNull();
   });
 

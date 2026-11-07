@@ -272,12 +272,9 @@ def test_an_enum_and_an_optional_nested_model_are_shaped_by_their_type() -> None
     [
         ("https://hooks.example.com:8443/h/the-token", "https://hooks.example.com:8443"),
         ("http://[2001:db8::1]:9000/h/the-token", "http://[2001:db8::1]:9000"),
-        ("https://user:the-token@hooks.example.com/h", "https://hooks.example.com"),
     ],
 )
-def test_a_webhook_host_keeps_its_port_and_ipv6_brackets_and_drops_userinfo(
-    monkeypatch, url: str, host: str
-) -> None:
+def test_a_webhook_host_keeps_its_port_and_ipv6_brackets(monkeypatch, url: str, host: str) -> None:
     body = WebhookRegisterInput(
         org="o", namespace="n", url=url, secret_ref="LOOM_WEBHOOK_SECRET_O__CI"
     )

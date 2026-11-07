@@ -439,7 +439,7 @@ Self-service copy of a memory into another namespace.
 | `to_namespace` | `str` | required | Target namespace. |
 | `target_key` | `str \| None` | `None` | Destination memory_key. |
 | `target_agent` | `str` | `'-'` | Attribution in the target; '-' reads as namespace-owned. |
-| `rationale` | `str` | `''` | Human-readable reason. |
+| `rationale` | `str` | `''` | Human-readable reason; the audit row keeps only its SHA-256 and length. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -462,7 +462,7 @@ Cross-namespace promotion with provenance.
 | `to_namespace` | `str` | required | The namespace the copy is written into, in the same org; the caller needs ADMIN on it. |
 | `target_key` | `str \| None` | `None` | Override the destination memory_key. |
 | `target_agent` | `str` | `'-'` | Agent identity to attribute the target row to. |
-| `rationale` | `str` | `''` | Human-readable reason. |
+| `rationale` | `str` | `''` | Human-readable reason; the audit row keeps only its SHA-256 and length. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

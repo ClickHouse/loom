@@ -183,7 +183,10 @@ def test_the_reject_audit_row_holds_the_reasons_hash_not_its_text(repo: dict[str
     assert subject["reason"]["chars"] == len(reason)
 
 
-def test_a_policy_decision_audit_row_records_the_policy(repo: dict[str, Any]) -> None:
+@pytest.mark.parametrize("decision", ["accept", "reject"])
+def test_a_policy_decision_audit_row_records_the_policy(
+    repo: dict[str, Any], decision: p.Decision
+) -> None:
     """Loom's own reason is the owner's policy: configuration, kept readable."""
     policy = pp.ProposalPolicy(mode="auto", reject_after_fails=3)
     asyncio.run(
@@ -191,7 +194,7 @@ def test_a_policy_decision_audit_row_records_the_policy(repo: dict[str, Any]) ->
             "o",
             "n",
             ["p1"],
-            "reject",
+            decision,
             actor="process:proposal_policy",
             reason=f"owner policy: {policy.model_dump_json()}",
             policy=policy,

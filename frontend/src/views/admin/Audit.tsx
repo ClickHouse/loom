@@ -114,8 +114,11 @@ function summarize(event_type: string, subject: Record<string, unknown>): string
       return `Demoted "${s("memory_key")}" back to private`;
     case "memory.cross_promote":
       return `Cross-promoted "${s("memory_key")}" to ${s("target_namespace") || s("namespace")}`;
-    case "memory.outcome":
-      return `Recorded outcome for "${s("memory_key")}": ${s("outcome") || s("result")}`;
+    case "memory.outcome": {
+      const key = s("memory_key");
+      const outcome = s("outcome") || s("result");
+      return outcome ? `Recorded outcome for "${key}": ${outcome}` : `Recorded outcome for "${key}"`;
+    }
     case "memory.touch":
       return `Touched "${s("memory_key")}"`;
     case "memory.auto_supersede": {
