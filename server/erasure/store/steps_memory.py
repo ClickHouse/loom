@@ -31,6 +31,7 @@ from server.erasure.store.predicates import (
     UID,
 )
 from server.erasure.store.scope_reads import hashes, slices_or_one_empty, user_key_pairs
+from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
 from server.settings import settings
@@ -1163,7 +1164,27 @@ async def delete_ingestions_by_namespace(
     return n
 
 
+# A cancel the user asked for on another writer's open job still cancels it: the
+# row is copied without the user's identity before the user's rows go.
+_KEEP_OTHERS_CANCELS = (
+    "INSERT INTO loom.knowledge_ingest_cancels (org, namespace, ingestion_id, requested_at)"
+    " SELECT org, namespace, ingestion_id, requested_at FROM loom.knowledge_ingest_cancels"
+    " WHERE org = {org:String} AND user_id = {uid:String}"
+    " AND (namespace, ingestion_id) IN ("
+    "SELECT namespace, ingestion_id FROM loom.knowledge_ingestions FINAL"
+    " WHERE org = {org:String} AND user_id != {uid:String}"
+    " AND state IN {open:Array(String)})"
+)
+
+
 async def delete_ingestions_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
+    ch = ch or _default_client()
+    # Sequential: a replica behind the cancel or the job would copy nothing, and the
+    # delete below still takes the cancel.
+    with sequential_reads():
+        await ch.execute(
+            _KEEP_OTHERS_CANCELS, params={"org": org, "uid": user_id, "open": list(OPEN_STATES)}
+        )
     n = 0
     for table in _INGESTION_TABLES:
         n += await count_then_mutate(

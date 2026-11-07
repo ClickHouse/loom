@@ -2007,7 +2007,9 @@ async def test_each_write_leaves_the_audit_row_the_transport_would(monkeypatch) 
         ("memory.delete_version", "process:cli:decisions"),
     ]
     record_subject = next(s for e, _, s in world.audits if e == "decision.record")
-    assert record_subject["agent"] == "loom-decisions" and record_subject["category"]
+    assert record_subject["agent"] == "loom-decisions"
+    # The decision's text is hashed, never stored: the audit log is not erased.
+    assert set(record_subject["scenario"]) == {"sha256", "chars"}
     assert len(world.updates) == 1
 
 
@@ -3065,6 +3067,72 @@ def test_a_caption_is_counted_without_its_markup(body: str, image_only: bool) ->
 def test_only_tag_shaped_markup_is_removed_from_a_caption() -> None:
     text = '<p align="center">Returns Option<A>, Map<a, b> when x < 10k and y > 80%.</p>'
     assert dx.caption_text(text) == "Returns Option<A>, Map<a, b> when x < 10k and y > 80%."
+
+
+@pytest.mark.parametrize(
+    ("text", "images"),
+    [
+        ("See ![x](a.png) and ![y](b.png).", ["![x](a.png)", "![y](b.png)"]),
+        ('![t](f.png "a title")', ['![t](f.png "a title")']),
+        ("![a\nwrapped alt](f.png)", ["![a\nwrapped alt](f.png)"]),
+        ("![diagram][fig1]", ["![diagram][fig1]"]),
+        ("[![build](badge.svg)](https://ci.example.com)", ["![build](badge.svg)"]),
+        ('<img\n  src="flow.png"\n  alt="flow"\n/>', ['<img\n  src="flow.png"\n  alt="flow"\n/>']),
+        ("<IMG SRC=c.png>", ["<IMG SRC=c.png>"]),
+        ("[image: the spill path] [Image 3]", ["[image: the spill path]", "[Image 3]"]),
+        # A target ends at its first `)`, whatever `(` it holds.
+        ("![x](diagrams/flow(v2.png)", ["![x](diagrams/flow(v2.png)"]),
+        (r"![x](a\(b.png)", [r"![x](a\(b.png)"]),
+        ('![x](f.png "see (a")', ['![x](f.png "see (a")']),
+        ("![x](a(b.png) and 1) done", ["![x](a(b.png)"]),
+        ("![x](it's.png)", ["![x](it's.png)"]),
+        # A line end after `(`, before the title and before `)`; a quoted title spans more.
+        ("![x](\nf.png)", ["![x](\nf.png)"]),
+        ('![x](f.png\n  "title")', ['![x](f.png\n  "title")']),
+        ('![x](\nf.png\n"t")', ['![x](\nf.png\n"t")']),
+        ('![x](f.png\n"t"\n)', ['![x](f.png\n"t"\n)']),
+        ('![x](f.png "a\nb")', ['![x](f.png "a\nb")']),
+        ("![x](f.png 'a\nb')", ["![x](f.png 'a\nb')"]),
+        ('![x](\nf.png\n"t"\n)', ['![x](\nf.png\n"t"\n)']),
+        # Four line ends outside a title are more than a target holds.
+        ("![x](a\nb\nc\nd\ne) done", []),
+        # A target never runs into the next one.
+        ("![x](a](b)", []),
+        # A placeholder or a tag stops at the next opener; the image is the later span.
+        ("[image: a [b] c]", []),
+        ('<img alt="a<b">', []),
+        ("![a [<img ](x) >", ["<img ](x) >"]),
+        # Unclosed markup is no image.
+        ("![open ![x](a.png) <img ](b", ["![x](a.png)"]),
+    ],
+)
+def test_image_markup_matches(text: str, images: list[str]) -> None:
+    assert [m.group(0) for m in dx._IMAGE_MARKUP.finditer(text)] == images
+
+
+def test_link_targets_are_removed_from_a_caption() -> None:
+    text = "[notes](https://example.com/notes) and [ref][1], ](dangling"
+    assert dx.caption_text(text) == "[notes] and [ref], ](dangling"
+    assert dx.caption_text("![x](a](b) done") == "![x](a] done"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "<img " * 30_000,
+        "![" * 30_000,
+        "![x](a" * 30_000,
+        "[image:" * 6_000,
+        # Words and an image, so the caption is read and its link targets removed.
+        "![x](y)" + "a](" * 40_000,
+    ],
+    ids=["img-tag", "image-alt", "image-target", "placeholder", "link-target"],
+)
+def test_unclosed_image_markup_is_read_in_linear_time(body: str) -> None:
+    # A scan from every unclosed opener to the end of the text costs seconds per document.
+    start = time.process_time()
+    dx.image_only_sections(body)
+    assert time.process_time() - start < 0.5
 
 
 @pytest.mark.asyncio

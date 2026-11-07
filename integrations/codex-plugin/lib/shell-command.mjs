@@ -87,13 +87,14 @@ const GH_SEARCH_FLAGS_WITH_ARG = new Set([
 
 /** Shell words with backslash escapes honoured inside double quotes — a gh
  *  search phrase is often `--search "\\"exact phrase\\" word"`; `tokens()`
- *  (the grep shapes) has no escapes to honour. */
+ *  (the grep shapes) has no escapes to honour. As in sh, a backslash there
+ *  escapes only $ ` " \\ and keeps itself before anything else ("C:\\x"). */
 function shTokens(command) {
   const out = [];
   const re = /"((?:\\.|[^"\\])*)"|'([^']*)'|(\S+)/g;
   let m;
   while ((m = re.exec(command)) !== null) {
-    out.push(m[1] != null ? m[1].replace(/\\(.)/g, "$1") : (m[2] ?? m[3]));
+    out.push(m[1] != null ? m[1].replace(/\\([$`"\\])/g, "$1") : (m[2] ?? m[3]));
   }
   return out;
 }
@@ -422,6 +423,13 @@ export function splitOutsideQuotes(text, separators) {
 // a command reads: `grep -rn X server 2>/dev/null` is still the tree-wide grep.
 const HARMLESS_REDIRECT = /(^|\s)(?:[12]?>\s*\/dev\/null|2>&1)(?=\s|$)/g;
 
+/** On Windows, Git Bash's /c/x spelling of C:/x, which Node resolves as a
+ *  path on the current drive; `p` as given elsewhere. */
+export function gitBashPath(p, platform = process.platform) {
+  const m = platform === "win32" ? /^\/([A-Za-z])(\/.*)?$/.exec(p) : null;
+  return m ? `${m[1].toUpperCase()}:${m[2] || "/"}` : p;
+}
+
 /**
  * `parseBashBulk` over each segment of a compound command — the shape agents
  * actually send: `cd /repo; wc -l a.py; cat a.py`, `sed -n '1,80p' a.py; echo
@@ -450,13 +458,19 @@ export function parseBashBulkSegments(command) {
     const words = tokens(s);
     if (words[0] === "cd") {
       const dir = words.length === 2 ? words[1] : "";
-      if (!dir || /[$~]/.test(dir) || dir === "-") break;
-      cwd = dir.startsWith("/") ? dir : cwd ? `${cwd}/${dir}` : dir;
+      // `~` expands only at the start of a word: C:/Users/RUNNER~1 is literal.
+      if (!dir || dir.includes("$") || dir.startsWith("~") || dir === "-") break;
+      const abs = gitBashPath(dir);
+      cwd = /^(\/|[A-Za-z]:[\\/])/.test(abs) ? abs : cwd ? `${cwd}/${abs}` : abs;
       continue;
     }
     const stages = splitOutsideQuotes(s, ["|"]);
     const bulk = parseBashBulk(stages[0]);
     if (!bulk || (stages.length > 1 && bulk.kind !== "grep")) continue;
+    // A Git Bash /c/... operand names the same file as its cd target would.
+    if (bulk.file) bulk.file = gitBashPath(bulk.file);
+    if (bulk.dir) bulk.dir = gitBashPath(bulk.dir);
+    if (bulk.files) bulk.files = bulk.files.map((f) => gitBashPath(f));
     out.push({ ...bulk, cmd: tokens(stages[0].trim())[0], cwd });
   }
   return out;

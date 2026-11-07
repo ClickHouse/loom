@@ -327,9 +327,112 @@ function commands(file) {
   );
 }
 
-test("every hook and both header helpers start Node through the launcher", () => {
+/** Claude Code's command for hooks/<script> under <event>. Claude Code runs a
+ *  hook with sh (Git Bash on Windows), or with PowerShell when Git Bash is
+ *  absent; the one command serves both. To sh the first line sets $1 (the
+ *  backquotes hold only a comment) and the second execs the launcher, so sh
+ *  reads no further. To PowerShell the first line opens a block comment that
+ *  `#>` closes, and the rest runs the script with the node on PATH, or names
+ *  what is missing; `exit 0`, because without Git Bash only exit 0 or 2
+ *  counts as a hook's verdict and a failing PreToolUse hook blocks the tool
+ *  call (Claude Code's hooks reference). */
+function claudeHookCommand(script, event) {
+  const hook = `hooks/${script}" ${event}`;
+  return [
+    "set x `# <#`",
+    `exec sh "\${CLAUDE_PLUGIN_ROOT}/bin/loom-node" "\${CLAUDE_PLUGIN_ROOT}/${hook}`,
+    "#>",
+    `if (Get-Command node -ErrorAction SilentlyContinue) { node "$env:CLAUDE_PLUGIN_ROOT/${hook} } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }`,
+    "exit 0",
+  ].join("\n");
+}
+
+test("every Claude Code hook command is the two-shell form", () => {
+  const all = commands(path.join(root, "hooks", "hooks.json"));
+  assert.ok(all.length >= 10);
+  for (const [command] of all) {
+    const [, script, event] = command.match(/hooks\/([a-z-]+\.mjs)" (\w+)$/m);
+    assert.equal(command, claudeHookCommand(script, event));
+  }
+});
+
+/** A plugin root holding the real launcher and hooks/echo.mjs, which prints
+ *  its arguments and stdin. The payload and the reply carry non-ASCII text, as
+ *  a prompt and a primer do: no shell may re-encode the bytes. */
+const PAYLOAD = "prompt — é 漢";
+function echoPlugin(f) {
+  const plugin = path.join(f.dir, "plugin");
+  fs.mkdirSync(path.join(plugin, "bin"), { recursive: true });
+  fs.mkdirSync(path.join(plugin, "hooks"));
+  fs.copyFileSync(launcher, path.join(plugin, "bin", "loom-node"));
+  fs.writeFileSync(
+    path.join(plugin, "hooks", "echo.mjs"),
+    'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => process.stdout.write(process.argv.slice(2).join(" ") + "|" + s));\n',
+  );
+  // Claude Code substitutes the placeholder in the text and exports it too.
+  const command = claudeHookCommand("echo.mjs", "Stop").replaceAll("${CLAUDE_PLUGIN_ROOT}", plugin.replace(/\\/g, "/"));
+  return { plugin, command };
+}
+
+test("a Claude Code hook command runs its script through the launcher under every sh", { skip: WINDOWS }, () => {
+  const f = fixture();
+  try {
+    const { plugin, command } = echoPlugin(f);
+    const node = f.node(".nvm/versions/node/v22.1.0/bin");
+    for (const shell of SHELLS) {
+      const argv = shell.endsWith("busybox") ? ["sh", "-c", command] : ["-c", command];
+      const r = spawnSync(shell, argv, {
+        encoding: "utf8",
+        input: PAYLOAD,
+        env: { HOME: f.home, PATH: `${path.dirname(node)}:/usr/bin:/bin`, CLAUDE_PLUGIN_ROOT: plugin },
+      });
+      assert.equal(r.status, 0, `${shell}: ${r.stderr}`);
+      assert.equal(r.stderr, "", shell);
+      assert.equal(r.stdout, `Stop|${PAYLOAD}`, shell);
+    }
+  } finally {
+    f.done();
+  }
+});
+
+// Claude Code without Git Bash runs hooks with PowerShell: Windows PowerShell
+// 5.1 and PowerShell 7 parse the command alike.
+test("a Claude Code hook command runs under PowerShell, and names a missing Node", { skip: !WINDOWS }, () => {
+  const f = fixture();
+  try {
+    const { plugin, command } = echoPlugin(f);
+    const shells = ["powershell.exe", "pwsh.exe"].filter(
+      (s) => spawnSync(s, ["-NoProfile", "-Command", "exit 0"]).status === 0,
+    );
+    assert.ok(shells.length > 0, "no PowerShell found");
+    const withNode = process.env.PATH;
+    const withoutNode = withNode
+      .split(path.delimiter)
+      .filter((d) => !fs.existsSync(path.join(d, "node.exe")))
+      .join(path.delimiter);
+    for (const shell of shells) {
+      const run = (PATH) =>
+        spawnSync(shell, ["-NoProfile", "-NonInteractive", "-Command", command], {
+          encoding: "utf8",
+          input: PAYLOAD,
+          env: { ...process.env, PATH, CLAUDE_PLUGIN_ROOT: plugin },
+        });
+      const r = run(withNode);
+      assert.equal(r.status, 0, `${shell}: ${r.stderr}`);
+      assert.equal(r.stderr, "", shell);
+      assert.equal(r.stdout, `Stop|${PAYLOAD}`, shell);
+      const missing = run(withoutNode);
+      assert.equal(missing.status, 0, `${shell}: a missing Node must not fail the hook`);
+      assert.equal(missing.stdout, "", shell);
+      assert.match(missing.stderr, /^loom: no node on PATH\. Install Node\.js 18\+/, shell);
+    }
+  } finally {
+    f.done();
+  }
+});
+
+test("the generic and Codex hooks start Node through the launcher; each header helper's shells are pinned", () => {
   const wiring = [
-    [path.join(root, "hooks", "hooks.json"), 'sh "${CLAUDE_PLUGIN_ROOT}/bin/loom-node" "${CLAUDE_PLUGIN_ROOT}/hooks/'],
     [path.join(root, "hooks", "hooks.generic.json"), "sh ${LOOM_PLUGIN_DIR}/bin/loom-node ${LOOM_PLUGIN_DIR}/hooks/"],
     [path.join(codexRoot, "hooks", "hooks.json"), 'sh "${PLUGIN_ROOT}/bin/loom-node" "${PLUGIN_ROOT}/hooks/'],
   ];
@@ -344,16 +447,124 @@ test("every hook and both header helpers start Node through the launcher", () =>
     }
   }
   const claude = JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8")).mcpServers.loom;
-  assert.equal(
+  // Claude Code runs it with sh on macOS and Linux and with cmd.exe on
+  // Windows, Git Bash or not: sh runs the launcher, as for the hooks; cmd.exe
+  // cannot, and runs the node on PATH instead.
+  assert.ok(
+    claude.headersHelper.startsWith(
+      'sh "$CLAUDE_PLUGIN_ROOT/bin/loom-node" "$CLAUDE_PLUGIN_ROOT/bin/loom-mcp-headers.mjs" || node -e "',
+    ),
     claude.headersHelper,
-    'sh "$CLAUDE_PLUGIN_ROOT/bin/loom-node" "$CLAUDE_PLUGIN_ROOT/bin/loom-mcp-headers.mjs"',
   );
+  assert.match(claude.headersHelper, / \|\| node -e "[^"$`\\%]+"$/);
   const codex = JSON.parse(fs.readFileSync(path.join(codexRoot, ".mcp.json"), "utf8")).mcpServers.loom;
+  // Codex runs it with `sh -c` on Unix and `cmd.exe /C` on Windows: node
+  // first, which both run; under sh, the launcher when node is missing.
+  assert.match(codex.http_headers_helper, /^node -e "[^"$`\\%]+" \|\| \{ l="\$\(ls -d /);
   assert.match(
     codex.http_headers_helper,
-    /\/bin\/loom-node 2>\/dev\/null \| sort -V \| tail -1\)"; sh "\$l" "\$\{l%\/\*\}\/loom-mcp-headers\.mjs"$/,
+    /\/bin\/loom-node 2>\/dev\/null \| sort -V \| tail -1\)"; sh "\$l" "\$\{l%\/\*\}\/loom-mcp-headers\.mjs"; \}$/,
   );
 });
+
+/** A Claude Code plugin root with the launcher and a header helper that
+ *  prints `out`. */
+function claudePlugin(f, out) {
+  const plugin = path.join(f.dir, "claude-plugin");
+  fs.mkdirSync(path.join(plugin, "bin"), { recursive: true });
+  fs.copyFileSync(launcher, path.join(plugin, "bin", "loom-node"));
+  fs.writeFileSync(path.join(plugin, "bin", "loom-mcp-headers.mjs"), `process.stdout.write(${JSON.stringify(out)});\n`);
+  return plugin;
+}
+
+const claudeHelper = () =>
+  JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8")).mcpServers.loom.headersHelper;
+
+test("the Claude Code header helper runs through the launcher under sh, LOOM_NODE first", { skip: WINDOWS }, () => {
+  const f = fixture();
+  try {
+    const plugin = claudePlugin(f, "{}");
+    const onPath = path.dirname(f.node("path-bin"));
+    const chosen = f.node("chosen");
+    // The launcher's log of which Node ran: a fake Node that notes itself.
+    const log = path.join(f.dir, "ran");
+    fs.writeFileSync(
+      chosen,
+      `#!/bin/sh\nif [ "$1" = --version ]; then echo v22.1.0; exit 0; fi\necho chosen > "${log}"\nexec "${process.execPath}" "$@"\n`,
+      { mode: 0o755 },
+    );
+    const run = (env) =>
+      spawnSync("/bin/sh", ["-c", claudeHelper()], {
+        encoding: "utf8",
+        env: { HOME: f.home, CLAUDE_PLUGIN_ROOT: plugin, LOOM_NODE_SYSTEM_DIRS: "", ...env },
+      });
+    const r = run({ PATH: `${onPath}:/usr/bin:/bin`, LOOM_NODE: chosen });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, "{}");
+    assert.equal(fs.readFileSync(log, "utf8"), "chosen\n", "LOOM_NODE wins over the node on PATH");
+    // No node on PATH: the launcher finds a version manager's.
+    f.node(".nvm/versions/node/v22.1.0/bin");
+    const managed = run({ PATH: "/usr/bin:/bin" });
+    assert.equal(managed.status, 0, managed.stderr);
+    assert.equal(managed.stdout, "{}");
+  } finally {
+    f.done();
+  }
+});
+
+test("the Claude Code header helper falls back to the node on PATH when LOOM_NODE is too old", {
+  skip: WINDOWS,
+}, () => {
+  const f = fixture();
+  try {
+    const plugin = claudePlugin(f, "{}");
+    const old = f.node("old", "v16.20.2");
+    const onPath = path.dirname(f.node("path-bin"));
+    const r = spawnSync("/bin/sh", ["-c", claudeHelper()], {
+      encoding: "utf8",
+      env: {
+        HOME: f.home,
+        PATH: `${onPath}:/usr/bin:/bin`,
+        CLAUDE_PLUGIN_ROOT: plugin,
+        LOOM_NODE: old,
+        LOOM_NODE_SYSTEM_DIRS: "",
+      },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, "{}");
+    assert.match(r.stderr, /^loom: LOOM_NODE=.* is not Node\.js 18\+/, "the launcher still says why");
+  } finally {
+    f.done();
+  }
+});
+
+test("the Claude Code header helper runs under cmd.exe the way Claude Code starts it", { skip: !WINDOWS }, () => {
+  const f = fixture();
+  try {
+    const plugin = claudePlugin(f, "{}");
+    const r = spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${claudeHelper()}"`], {
+      encoding: "utf8",
+      windowsVerbatimArguments: true,
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: plugin },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, "{}");
+  } finally {
+    f.done();
+  }
+});
+
+/** Codex's plugin cache under `home`: loom@loom <v>/bin with a helper that
+ *  prints its version, and the launcher unless `withLauncher` is false. */
+function codexCache(home, marketplace, v, withLauncher = true) {
+  const bin = path.join(home, ".codex", "plugins", "cache", marketplace, "loom", v, "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  if (withLauncher) fs.copyFileSync(launcher, path.join(bin, "loom-node"));
+  fs.writeFileSync(path.join(bin, "loom-mcp-headers.mjs"), `process.stdout.write(${JSON.stringify(v)});\n`);
+}
+
+const codexHelper = () =>
+  JSON.parse(fs.readFileSync(path.join(codexRoot, ".mcp.json"), "utf8")).mcpServers.loom.http_headers_helper;
 
 test("the Codex header helper runs the newest loom@loom launcher and the helper beside it", {
   skip: WINDOWS,
@@ -368,24 +579,86 @@ test("the Codex header helper runs the newest loom@loom launcher and the helper 
       const real = spawnSync("/bin/sh", ["-c", `command -v ${t}`], { encoding: "utf8" }).stdout.trim();
       fs.symlinkSync(real, path.join(tools, t));
     }
-    const cached = (marketplace, v, withLauncher = true) => {
-      const bin = path.join(f.home, ".codex", "plugins", "cache", marketplace, "loom", v, "bin");
-      fs.mkdirSync(bin, { recursive: true });
-      if (withLauncher) fs.copyFileSync(launcher, path.join(bin, "loom-node"));
-      fs.writeFileSync(path.join(bin, "loom-mcp-headers.mjs"), `process.stdout.write(${JSON.stringify(v)});\n`);
-    };
+    const cached = (marketplace, v, withLauncher) => codexCache(f.home, marketplace, v, withLauncher);
     cached("loom", "1.2.9");
     cached("loom", "1.2.10");
     // Not picked: a newer copy without a launcher (an interrupted install), and
     // another marketplace's copy.
     cached("loom", "1.2.11-pre", false);
     cached("zz", "1.3.0");
-    const helper = JSON.parse(fs.readFileSync(path.join(codexRoot, ".mcp.json"), "utf8")).mcpServers.loom
-      .http_headers_helper;
     // Codex's cleared environment: HOME, and a Node only under nvm.
-    const r = spawnSync("/bin/sh", ["-c", helper], {
+    const r = spawnSync("/bin/sh", ["-c", codexHelper()], {
       encoding: "utf8",
       env: { HOME: f.home, PATH: tools, LOOM_NODE_SYSTEM_DIRS: "" },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, "1.2.10");
+  } finally {
+    f.done();
+  }
+});
+
+test("the Codex header helper runs the newest loom@loom helper under the node on PATH", { skip: WINDOWS }, () => {
+  const f = fixture();
+  try {
+    const bin = path.dirname(f.node("bin"));
+    codexCache(f.home, "loom", "1.2.9");
+    codexCache(f.home, "loom", "1.2.10");
+    // Not picked, by either half: an interrupted install without its launcher,
+    // and another marketplace's copy.
+    codexCache(f.home, "loom", "1.2.11", false);
+    codexCache(f.home, "zz", "1.3.0");
+    // PATH holds only node, no ls: only the node -e half can answer.
+    const r = spawnSync("/bin/sh", ["-c", codexHelper()], { encoding: "utf8", env: { HOME: f.home, PATH: bin } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, "1.2.10");
+  } finally {
+    f.done();
+  }
+});
+
+test("the Codex header helper falls back to the launcher when the node on PATH cannot run it", {
+  skip: WINDOWS,
+}, () => {
+  const f = fixture();
+  try {
+    // A node on PATH that refuses `-e` as one older than 18 does (exit 1).
+    const old = path.join(f.dir, "old-bin");
+    fs.mkdirSync(old);
+    fs.writeFileSync(path.join(old, "node"), '#!/bin/sh\n[ "$1" = --version ] && echo v16.20.2\nexit 1\n', {
+      mode: 0o755,
+    });
+    f.node(".nvm/versions/node/v22.1.0/bin");
+    codexCache(f.home, "loom", "1.2.9");
+    const tools = path.join(f.dir, "tools");
+    fs.mkdirSync(tools);
+    for (const t of ["sh", "ls", "sort", "tail"]) {
+      const real = spawnSync("/bin/sh", ["-c", `command -v ${t}`], { encoding: "utf8" }).stdout.trim();
+      fs.symlinkSync(real, path.join(tools, t));
+    }
+    const r = spawnSync("/bin/sh", ["-c", codexHelper()], {
+      encoding: "utf8",
+      env: { HOME: f.home, PATH: `${old}:${tools}`, LOOM_NODE_SYSTEM_DIRS: "" },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, "1.2.9");
+  } finally {
+    f.done();
+  }
+});
+
+// Codex on Windows runs the helper as `%COMSPEC% /Q /D /C "<helper>"` with its
+// core variables only: USERPROFILE, no HOME (codex-rs/rmcp-client).
+test("the Codex header helper runs under cmd.exe the way Codex starts it", { skip: !WINDOWS }, () => {
+  const f = fixture();
+  try {
+    const bin = path.dirname(f.node("bin"));
+    codexCache(f.home, "loom", "1.2.9");
+    codexCache(f.home, "loom", "1.2.10");
+    const r = spawnSync(process.env.ComSpec || "cmd.exe", ["/Q", "/D", "/C", `"${codexHelper()}"`], {
+      encoding: "utf8",
+      windowsVerbatimArguments: true,
+      env: { SystemRoot: process.env.SystemRoot, USERPROFILE: f.home, PATH: bin },
     });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout, "1.2.10");

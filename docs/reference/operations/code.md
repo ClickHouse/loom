@@ -876,6 +876,7 @@ Health of the code index: indexed head commit, compiler-tier commit, row counts,
 | `scip_commit_py` | `str` | The scip-python watermark by name, whatever the entry's primary tier; '' when unset. |
 | `scip_producer` | `str` | The primary compiler tier's producer (clang \| typescript \| go \| python); '' when no tier has a watermark. |
 | `compiler_tiers` | `list[CodeCompilerTier]` | Every compiler tier with a watermark or configured for the entry, the primary first. |
+| `tier_health` | `list[CodeTierHealth]` | The last recorded outcome of each tier that has one (fetch, ingest, the compiler tiers and the weekly C++ full run): a failing tier names its error kind, since when, and the fix. |
 | `pr_cursor` | `str` | The PR-history poller's cursor: the newest `updated_at` (ISO-8601) of the merged PRs it fetched; '' before its first pass. |
 | `commit_coverage` | `CodeCommitCoverage \| None` | Set when the request named a `commit`. |
 | `clone_head` | `str` | Freshness. clone_head is the bare clone's branch tip as of the last poller fetch (<= interval old); *_lag = first-parent commits between a watermark and that tip, -1 when a watermark is unset or the clone is unreadable. 0 everywhere ==… |

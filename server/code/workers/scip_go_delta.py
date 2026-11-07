@@ -18,7 +18,8 @@ touched three of hundreds of modules costs three module builds, not the tree; th
 module cache under `code_scip_go_modcache` makes the second build of a
 module cheap. A module whose `go mod download` fails (a `replace` onto a
 path the checkout lacks) is skipped by the runner and named in the pass
-outcome, never fatal.
+outcome, never fatal to the pass; it fails the tier's health record (kind `module`)
+until a run builds again.
 
 House rule: the SERVER never parses protobuf — scip-go and the
 conversion run in subprocesses; the worker consumes the JSON deltas.
@@ -41,6 +42,7 @@ from typing import TYPE_CHECKING
 
 from server.code.app.index.compiler_tier import (
     BaseUnknown,
+    TierDegraded,
     checkout_fetch_args,
     compiler_target,
     git,
@@ -57,6 +59,7 @@ from server.code.app.index.gitrepo import (
     nul_fields,
 )
 from server.code.app.index.sandbox import tool_mounts
+from server.code.domain.index.tier_health import module_failures, without_module_failures
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -199,18 +202,30 @@ async def _has_commit(checkout: Path, sha: str) -> bool:
     return proc.returncode == 0
 
 
-async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResult) -> None:
+async def _modules_failing(repo: CodeRepo, cfg: RepoConfig) -> bool:
+    """The tier's record holds a module that would not build (kind `module`, classified
+    from the whole error): a pass that builds nothing leaves it as it is."""
+    from server.code.domain.index import tier_health
+
+    raw = await repo.get_state(cfg.org, cfg.namespace, tier_health.state_key(PRODUCER))
+    record = tier_health.parse(PRODUCER, raw or "")
+    return record is not None and record.failing and record.kind == "module"
+
+
+async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResult) -> bool:
+    """False when it built nothing while a module failure is recorded (`run_tier` then
+    keeps the record); True otherwise."""
     target = await compiler_target(repo, cfg)
     if not target:
         result.skipped.append(f"{cfg.namespace}: git_head not seeded")
-        return
+        return False
     scip_commit = await repo.get_state(cfg.org, cfg.namespace, WATERMARK) or ""
     if target == scip_commit:
-        return  # compiler tier is current
+        return not await _modules_failing(repo, cfg)  # compiler tier is current
     checkout, bare, missing = await asyncio.to_thread(_resolve_paths, cfg)
     if missing:
         result.skipped.append(f"{cfg.namespace}: {missing}")
-        return
+        return False
     await git(checkout, *checkout_fetch_args(bare, target), local_remote=bare)
     await git(checkout, "checkout", "--force", target)
 
@@ -220,18 +235,15 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
         if not modules:
             logger.info("code_scip_go_delta: %s no Go change in window", cfg.namespace)
             await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
-            return
+            return not await _modules_failing(repo, cfg)
     else:
         modules = []  # first run: the runner walks every go.mod
 
     with tempfile.TemporaryDirectory(prefix="scip_go_delta_") as tmp:
         out_dir = Path(tmp)
         log = await _run_harness(checkout, scip_commit or "--full", target, out_dir, modules, cfg)
-        result.modules_skipped.extend(
-            f"{cfg.namespace}: {line[5:]}"
-            for line in log.splitlines()
-            if line.startswith("skip ") and "go files)" not in line and "no Go change" not in line
-        )
+        failed = module_failures(log)
+        result.modules_skipped.extend(f"{cfg.namespace}: {line}" for line in failed)
         from server.code.app.index.scip_delta import ScipDelta, apply_delta
 
         paths = sorted(await asyncio.to_thread(lambda: list(out_dir.glob("*.json"))))
@@ -255,6 +267,9 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
         target[:8],
         len(paths),
     )
+    if failed:  # the rest is applied; the modules that would not build fail the tier
+        raise TierDegraded("; ".join(failed))
+    return True
 
 
 def _bin_dirs() -> list[str]:
@@ -338,7 +353,8 @@ async def _run_harness(
         network=True,
     )
     if returncode != 0:
-        raise harness_failure(returncode, text[-2000:])
+        # failed outright: a module it skipped earlier is not the cause
+        raise harness_failure(returncode, without_module_failures(text)[-2000:])
     return text
 
 

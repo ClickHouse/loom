@@ -135,7 +135,7 @@ in undeclared UTF-8 text (behind a byte-order mark or not) is binary; neither is
 | ---------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | Markdown   | a block parser after CommonMark's heading, fence and HTML-block rules | headings, paragraphs, lists, fenced code, front matter                       |
 | Plain text | a paragraph splitter                                                  | one paragraph per run of non-blank lines (a `#` line is text, not a heading) |
-| HTML       | the standard library's parser                                         | headings, paragraphs, list items, table cells, quotes, definitions, `pre`    |
+| HTML       | the standard library's parser                                         | headings, paragraphs, list items, tables, quotes, definitions, `pre`         |
 | SQL        | `sqlglot`, never executed                                             | one block per statement                                                      |
 | TOML       | `tomllib` and a line scanner                                          | one block per table header and per key                                       |
 | PDF        | `pypdf`: its text runs' positions and the lines it draws; OCR         | per page: headings, paragraphs, lists, code, tables; furniture left out      |
@@ -173,9 +173,31 @@ the item's text. A block whose end tag is left out closes at the next block, its
 (a container inside a block leaves it open; `br`, `hr` and a container's start separate words), and an unclosed `head`
 closes at the first body element or text. A block's line span runs from its first text line to its last. `script`,
 `style`, `template`, `noscript`, `svg`, `title` and `head` are dropped from the blocks (the `<title>` text is the
-artifact's `attrs.title`); coverage counts the visible characters outside them and how many the blocks hold, a guard of
-the same kind. Neither counts what a block loses within itself, such as stripped inline tags. A hidden element left open
-hides the rest of the document; the text inside it is counted as not read, with a failure naming the open elements.
+artifact's `attrs.title`); coverage counts the visible characters outside them and how many the blocks hold (the pipes
+joining a table's cells aside), a guard of the same kind. Neither counts what a block loses within itself, such as
+stripped inline tags. A hidden element left open hides the rest of the document; the text inside it is counted as not
+read, with a failure naming the open elements.
+
+**HTML tables.** A `<table>` is one block, a row per line with its cells joined by a pipe and `attrs.table` its `rows`
+and `columns`, as a DOCX table is, but for its rows with no text, which are dropped. A cell after a row's end starts the
+next row, and a row group's start or end (`thead`, `tbody`, `tfoot`) ends the open row. Its captions, with any heading
+or list inside them, and its text in no cell (between rows) are paragraphs before it, in their order, as a browser shows
+them apart; a table inside a caption, like a heading or list there, is read as the caption's text.
+
+Cells are placed in columns as HTML places them: a span (`colspan`, `rowspan`) is read as HTML reads a non-negative
+integer, and a cell a `rowspan` carries down holds its columns in the rows below, as an empty cell there, until its row
+group ends. A column that only empty cells and cells spanning several columns fill is a spacer and is dropped, unless a
+cell with text is carried down into it. Placing counts each row's cells and the cells carried down into it; a table past
+a million of those keeps every cell. A table left with one column holds no grid: its rows are one paragraph without
+`attrs.table`, as a page wrapped in a table (an email) is.
+
+A table whose cell holds a heading, a list, a `pre`, a table or a second paragraph lays out a page instead (an email, a
+page set in a table's cells): its cells, captions and text in no cell are read as the blocks they hold, in order, and a
+table inside one is a table. A heading, list, list item, definition, `pre` or table in no cell ends the table, its
+`</table>` left out or not, and rows after it are read as paragraphs, so a table left open does not hold the rest of the
+page. The end of an element the table is inside is no end of it, as HTML holds a table as a scope of its own: what
+follows in no cell is shown before the table, as a browser shows it, and a caption left open holds it. Each paragraph or
+container's text in no cell is its own.
 
 **SQL statements.** A statement is split on the dialect's tokens, so a `;` in a string or comment does not end it. A
 client's own command lines (`GO`, a lone `/`, `DELIMITER ;;`, backslash commands) are not SQL: a script that holds
@@ -368,11 +390,13 @@ that is no JSON number (an integer past signed 64 bits, an infinity, a NaN) is r
 no other rule reads (a style index of 5,000 digits, a date rounded past year 9999) reads as a number or as text, never
 failing the file; Parquet reads each by its column's type (below).
 
-**CSV.** The delimiter is sniffed from the whole lines of the file's first 64 KiB (a comma, semicolon, tab or pipe; a
-tab, with no quoting, for a `.tsv` name; a tab-separated file sent with no such name is sniffed, so it reads quotes as
-CSV does); a field is quoted with `"`, its quotes doubled, whatever the sniffer guesses, and a value is text unless it
-is written as a plain number, an ISO date or an ISO date and time (its zone kept). A row holds only its non-empty
-fields. A field over a megabyte, a record over 8 MiB, or quoting the reader cannot close, fails the rows from there on.
+**CSV.** For a `.tsv` name the delimiter is a tab, with no quoting. Otherwise it is a comma, semicolon, tab or pipe (a
+tab-separated file sent with no such name is sniffed, so it reads quotes as CSV does), guessed from quoted fields in the
+whole lines of the file's first 4 KiB, or else from delimiter counts over the whole lines of its first 64 KiB (each
+sample is cut mid-line only when its first line runs past it); a field is quoted with `"`, its quotes doubled, whatever
+the sniffer guesses, and a value is text unless it is written as a plain number, an ISO date or an ISO date and time
+(its zone kept). A row holds only its non-empty fields. A field over a megabyte, a record over 8 MiB, or quoting the
+reader cannot close, fails the rows from there on.
 
 **XLSX.** The workbook, its styles, its shared strings and its worksheets are read as they inflate, never held as a
 tree; the workbook's relationships are read whole, from a part of at most 4 MiB (past it, or not XML, the file is
@@ -466,6 +490,88 @@ sheet of 100,000 by 20 numbers (62 MB inflated, 4 MB zipped) extracts in about 9
 characters. A block it cut is marked (`attrs.keys_truncated`, `attrs.section_truncated`) and the artifact's
 `coverage.lost` names what it lost (`exact_keys`, `section_path`); the block's text and locator still hold all of it.
 
+## Qualification
+
+The reference extractor declares a format only when that format passes its floors below, measured separately for each
+format and slice so a good mean cannot hide a failed one. `tests/unit/test_extraction_gates.py` reads this table, scores
+the reference extractor against labelled fixtures and fails a slice under its floor, and fails when the reference
+extractor's capabilities declare a format with no row here or claim anything beyond formats and their options. PDF, DOCX
+and PPTX are scored on the parsing bench's corpus (`bench/docparse/corpus`, its gold labels and
+`bench/docparse/score.py`); the other formats on labelled fixtures built in the test.
+
+| Format   | Slice                   | Metric         | Floor |
+| -------- | ----------------------- | -------------- | ----- |
+| pdf      | text layer, every slice | text recall    | 0.97  |
+| pdf      | text layer, every slice | reading order  | 0.95  |
+| pdf      | text layer, every slice | heading F1     | 0.95  |
+| pdf      | text layer, every slice | heading level  | 0.95  |
+| pdf      | text layer, every slice | table cell F1  | 0.95  |
+| pdf      | text layer, every slice | locator        | 0.90  |
+| pdf      | scanned                 | failed units   | 1.00  |
+| pdf      | every slice             | announced loss | 1.00  |
+| docx     | documents               | text recall    | 0.98  |
+| docx     | documents               | heading F1     | 0.98  |
+| docx     | documents               | heading level  | 0.98  |
+| docx     | documents               | table cell F1  | 0.98  |
+| pptx     | decks                   | text recall    | 0.95  |
+| pptx     | decks                   | heading F1     | 0.98  |
+| pptx     | decks                   | locator        | 0.90  |
+| pptx     | decks                   | notes          | 1.00  |
+| pptx     | decks                   | announced loss | 1.00  |
+| markdown | fixtures                | text recall    | 1.00  |
+| markdown | fixtures                | text precision | 1.00  |
+| markdown | fixtures                | heading F1     | 1.00  |
+| markdown | fixtures                | heading level  | 1.00  |
+| markdown | fixtures                | locator        | 1.00  |
+| html     | fixtures                | text recall    | 1.00  |
+| html     | fixtures                | text precision | 1.00  |
+| html     | fixtures                | heading F1     | 1.00  |
+| html     | fixtures                | heading level  | 1.00  |
+| html     | fixtures                | table rows     | 1.00  |
+| text     | fixtures                | text recall    | 1.00  |
+| text     | fixtures                | text precision | 1.00  |
+| text     | fixtures                | locator        | 1.00  |
+| sql      | fixtures                | statements     | 1.00  |
+| sql      | fixtures                | locator        | 1.00  |
+| sql      | fixtures                | names          | 1.00  |
+| toml     | fixtures                | key paths      | 1.00  |
+| toml     | fixtures                | locator        | 1.00  |
+| csv      | fixtures                | typed cells    | 1.00  |
+| csv      | fixtures                | headers        | 1.00  |
+| xlsx     | fixtures                | typed cells    | 1.00  |
+| xlsx     | fixtures                | headers        | 1.00  |
+| parquet  | fixtures                | typed cells    | 1.00  |
+| parquet  | fixtures                | headers        | 1.00  |
+
+The metrics:
+
+- **text recall**, **text precision**, **reading order**, **heading F1**, **heading level**, **table cell F1** and
+  **locator** are the bench scorer's: the share of the gold's words the parse holds, of the parse's words the gold
+  holds, of the gold's blocks in order, F1 over headings matched by their text, the share of the matched headings at
+  their level (by rank), F1 over table cells, and the share of the gold's blocks cited on their page or slide. Heading
+  level is not gated for decks: every slide title in the corpus is at one level. For Markdown, HTML, text and SQL,
+  locator is the share of gold blocks or statements found with exactly their line span; for TOML, of keys whose block's
+  span holds their line.
+- **failed units**: the share of a scanned file's pages the artifact reads with OCR (`attrs.ocr_pages`) or reports
+  failed, never read as empty; with OCR off, every page is a failed unit.
+- **announced loss**: per bench category, the share of the gold's text drawn inside images whose page or slide the
+  artifact reads with OCR or names as not read, in `coverage.failed` or `attrs.images_unread`.
+- **notes**: the share of speaker notes held as notes, on their slide.
+- **table rows**: the share of an HTML table's rows held as one row, its cells in order.
+- **statements**, **names**, **key paths**: the share of SQL statements found whole, of the objects they define or read
+  among their keys, and of TOML key paths found as keys.
+- **typed cells** and **headers**: the share of a table's cells read with their value and type, and of its columns read
+  with their names, over the gold's count or the extraction's, whichever is larger, so an extra row, column or table
+  counts as a miss.
+
+The gates run with OCR off, so they read the same whether or not the OCR engine is installed.
+
+What is not qualified, and so the reference extractor does not claim: the words OCR reads (it reads a scanned page and a
+large picture where the extractor image carries the engine, and the scanned and announced-loss gates count a page it
+read as read, but no floor measures its text yet), text inside smaller images, charts and diagrams (named in
+`attrs.images_unread` and the artifact's warnings, never read), and a Markdown pipe table as a typed table (its rows
+stay one paragraph, as written).
+
 ## Structural chunks
 
 `chunk_artifact` cuts chunks from blocks instead of fixed windows over flattened text:
@@ -517,6 +623,33 @@ the job, and a job whose own publish is found ends published whatever cancel cam
 `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS`, taking one source's jobs one at a time in the order they were asked (only the
 oldest open job of a source is offered, a stale one before any later one), and namespaces in turn (the one served
 longest ago first), and a run cut off at that deadline or by a stopped process counts toward the job's attempts.
+
+## Faults
+
+Each fault below meets the next revision of a source that already serves one: the job ends in the state shown, its
+`error_code` and `error_message` say why, and the earlier revision's document row and chunks are the ones served. A
+transient fault puts the job back to `pending` with `retrying` until `LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS` is spent, then
+fails it `retries_exhausted`. The cases are
+`tests/unit/test_knowledge_ingest.py::test_a_fault_on_the_next_revision_fails_typed_and_the_earlier_one_keeps_serving`.
+
+| Fault                                                                                           | Job ends                                   |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Extractor unreachable                                                                           | retried, then `failed` `retries_exhausted` |
+| Extractor slower than `LOOM_DOCUMENT_EXTRACTOR_TIMEOUT_S`                                       | retried, then `failed` `retries_exhausted` |
+| Extractor answers compressed (any `Content-Encoding`)                                           | retried, then `failed` `retries_exhausted` |
+| Extractor refuses the source past its own time limit                                            | `failed` `timeout`                         |
+| No extractor configured, or the service has no parser for it                                    | `failed` `format_unavailable`              |
+| Artifact over `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES`                                      | `failed` `resource_limit`                  |
+| Artifact not JSON, out of contract, a block under a missing parent, a locator past the original | `failed` `invalid_artifact`                |
+| Object store fails the original's read or the artifact's write                                  | retried, then `failed` `retries_exhausted` |
+| Embedder down or past its deadline                                                              | retried, then `failed` `retries_exhausted` |
+| Embedder defect (any other error)                                                               | `failed` `internal`                        |
+| The store refuses the document row after the chunks                                             | `failed` `internal`                        |
+
+An original gone from the store fails `original_gone` (in the same file).
+`tests/integration/test_knowledge_ingest_faults_live.py` runs the extractor down, a block under a missing parent, the
+object store's read failing, the embedder down and the document row refused after the chunks against a server and its
+ClickHouse, reading the earlier revision back through `knowledge.get` and `knowledge.search`.
 
 ## Datasets
 

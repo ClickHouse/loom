@@ -606,6 +606,7 @@ def plane(monkeypatch: pytest.MonkeyPatch):
             fast_tier_lag=0,
             scip_lag=0,
             scip_py_lag=0,
+            tier_health=[],
             state={},
             last_refresh_at="",
             counts={},

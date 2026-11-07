@@ -462,6 +462,44 @@ async def test_reject_writes_version_rows_and_updates_no_embeddings_part(
     assert all("select_sequential_consistency = 1" in sql for sql in ch.vector_reads)
 
 
+def _lock_session(monkeypatch: pytest.MonkeyPatch, memory_id: str, mode: str) -> None:
+    """Lock one session's head of the key, as memory.lock leaves it."""
+    real = lifecycle.get_by_id
+
+    async def _get_by_id(mid: str, **kw: Any) -> Any:
+        row = await real(mid, **kw)
+        return (
+            SimpleNamespace(**{**vars(row), "lock_mode": mode, "lock_until": None})
+            if mid == memory_id
+            else row
+        )
+
+    monkeypatch.setattr(lifecycle, "get_by_id", _get_by_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["read_only", "no_delete"])
+async def test_reject_of_a_locked_row_is_refused_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """Both lock modes refuse a retirement: one locked session refuses the whole reject."""
+    from fastapi import HTTPException
+
+    from server.memory.api.models_lifecycle import MemoryRejectInput
+    from server.memory.app.ops import handle_memory_reject
+
+    ch = _RejectCH()
+    _wire_sessions(monkeypatch, ch)
+    _lock_session(monkeypatch, "m2", mode)
+    with pytest.raises(HTTPException) as exc:
+        await handle_memory_reject(
+            MemoryRejectInput(org="o", namespace="n", agent="a", user_id="u", memory_key="home")
+        )
+    assert exc.value.status_code == 423 and exc.value.detail["code"] == "LOCKED"
+    assert "memory.reject refused" in exc.value.detail["message"]
+    assert ch.inserts == []
+
+
 @pytest.mark.asyncio
 async def test_reject_raises_when_the_vector_rows_are_not_written(
     monkeypatch: pytest.MonkeyPatch,

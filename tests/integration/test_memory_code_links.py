@@ -117,10 +117,7 @@ async def env(ch_client, tmp_path, monkeypatch):
     from server.core.ch import get_client
     from server.settings import settings
 
-    try:
-        await get_client().connect()
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"clickhouse unavailable: {e}")
+    await get_client().connect()
     from server.memory.store import code_links as link_store
 
     QUEUE_START = await link_store.queue_tail()

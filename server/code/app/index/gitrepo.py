@@ -193,11 +193,17 @@ async def communicate_or_kill(
     try:
         return await asyncio.wait_for(talk, timeout=timeout_s)
     except BaseException:
-        if group:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(proc.pid, signal.SIGKILL)
-        await _kill(proc)
+        await kill_and_reap(proc, group=group)
         raise
+
+
+async def kill_and_reap(proc: asyncio.subprocess.Process, *, group: bool = False) -> None:
+    """Kill a child that is still running (with `group`, its whole process group first)
+    and wait for it, so it leaves no zombie."""
+    if group:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, signal.SIGKILL)
+    await _kill(proc)
 
 
 async def _kill(proc: asyncio.subprocess.Process) -> None:

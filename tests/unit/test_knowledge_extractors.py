@@ -22,7 +22,12 @@ from starlette.routing import Route
 
 from loom_extractor import service
 from server.knowledge.app import extractors
-from server.knowledge.domain.extract import InvalidArtifact, format_of, parse_artifact
+from server.knowledge.domain.extract import (
+    InvalidArtifact,
+    format_of,
+    parse_artifact,
+    refuse_past_source,
+)
 
 TOKEN = "s" * 24
 
@@ -204,7 +209,7 @@ async def test_a_source_over_the_declared_size_is_not_sent(
         (
             422,
             b'{"error": {"code": "format_unavailable", "message": "m"}}',
-            extractors.ExtractorUnavailable,
+            extractors.FormatUnavailable,
             None,
         ),
     ],
@@ -356,6 +361,45 @@ def test_an_artifact_is_refused_before_it_is_decoded_when_too_large_or_not_json(
     for data in (b"{", b"[" * 100_000, b"[]", nan, *huge):
         with pytest.raises(InvalidArtifact):
             parse_artifact(data, fmt="pdf", max_bytes=1 << 20)
+
+
+@pytest.mark.parametrize(
+    ("locator", "where", "within"),
+    [
+        ({"char_start": 0, "char_end": 8}, "blocks", True),
+        ({"char_start": 0, "char_end": 9}, "blocks", False),
+        ({"line_start": 1, "line_end": 9}, "blocks", True),
+        ({"line_start": 1, "line_end": 10}, "blocks", False),
+        ({"page_start": 1, "page_end": 500}, "blocks", True),
+        ({"line_start": 2, "line_end": 10}, "tables", False),
+    ],
+)
+def test_a_line_or_character_range_past_the_original_is_refused(
+    locator: dict[str, int], where: str, within: bool
+) -> None:
+    """An 8-byte original holds at most 8 characters and 9 lines in any
+    encoding; pages are not bounded, the server not reading the original."""
+    table = {"id": "t0", "name": "t", "columns": [], "rows": []}
+    if where == "tables":
+        table["locator"] = locator
+        a = _parse(_artifact(tables=[table]))
+    else:
+        a = _parse(_artifact(blocks=[_block(locator=locator)]))
+    if within:
+        refuse_past_source(a, 8)
+    else:
+        with pytest.raises(InvalidArtifact, match=rf"{where}\[0\]\.locator: ends past the 8-byte"):
+            refuse_past_source(a, 8)
+
+
+async def test_an_extractor_locator_past_the_original_fails_the_extraction(
+    hosts: _Hosts, settings_override: Any
+) -> None:
+    past = json.dumps(_artifact(blocks=[_block(locator={"line_start": 1, "line_end": 99})]))
+    _with_stub(hosts, settings_override, _stub(lambda r: Response(past.encode())))
+    with pytest.raises(extractors.ExtractionFailed, match="ends past") as e:
+        await extractors.extract(b"%PDF-1.7", name="a.pdf")
+    assert e.value.code == "invalid_artifact"
 
 
 def test_completeness_is_recomputed_and_unknown_fields_are_dropped() -> None:

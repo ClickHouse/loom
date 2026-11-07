@@ -276,7 +276,9 @@ async def fetch_entry(cfg: Any, git_dir: str, repo: Any, result: CodeIngestResul
                 await gitrepo.fetch(git_dir, cfg.git_remote, cfg.git_branch, token=cfg.github_token)
         except gitrepo.GitError as e:
             result.errors.append(f"fetch: {e}")
+            result.tier_failed(cfg, "fetch", f"fetch {cfg.git_remote}: {e}")
             return False
+        result.tier_ok(cfg, "fetch")
         await fetch_extra_branches(cfg, git_dir, result)
         await fetch_missing_merges(cfg, git_dir, repo, result)
         await fetch_pr_heads(cfg, git_dir, repo, result)

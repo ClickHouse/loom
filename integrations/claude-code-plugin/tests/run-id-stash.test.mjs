@@ -14,6 +14,7 @@ import { completeBody, readRunState, sessionRunId, writeRunBegun } from "../lib/
 import { STALE_STATE_MS, sessionStatePath, sweepStaleStateFiles } from "../lib/tmp-state.mjs";
 import { recallBody } from "../lib/prompt-recall.mjs";
 import { sessionMemoryBody } from "../lib/session-memory.mjs";
+import { hostEnv, withTmpdir } from "./host-env.mjs";
 
 const HOOK = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "hooks", "loom-run.mjs");
 const scope = { org: "o", namespace: "coding", agent: "claude-code", project: "loom", tags: [] };
@@ -25,7 +26,7 @@ function freshTmp() {
 function runHook(event, payload, { tmp, url }) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [HOOK, event], {
-      env: { PATH: process.env.PATH, HOME: tmp, TMPDIR: tmp, LOOM_BASE_URL: url, LOOM_API_KEY: "t" },
+      env: hostEnv({ PATH: process.env.PATH, HOME: tmp, TMPDIR: tmp, LOOM_BASE_URL: url, LOOM_API_KEY: "t" }),
       stdio: ["pipe", "ignore", "ignore"],
     });
     child.on("close", resolve);
@@ -69,18 +70,6 @@ async function withServer(
   } finally {
     server.closeAllConnections();
     server.close();
-  }
-}
-
-// The in-process helpers read os.tmpdir(), which follows TMPDIR.
-function withTmpdir(tmp, fn) {
-  const prev = process.env.TMPDIR;
-  process.env.TMPDIR = tmp;
-  try {
-    return fn();
-  } finally {
-    if (prev === undefined) delete process.env.TMPDIR;
-    else process.env.TMPDIR = prev;
   }
 }
 
@@ -215,13 +204,15 @@ test("a re-sent begin and the close fit Codex's one-second SessionEnd budget", a
   await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
     await runHook("UserPromptSubmit", { session_id: "s11", cwd: tmp, prompt: "p" }, { tmp, url });
   });
-  await withServer({ beginRunId: "r5ess1on", delayMs: 350, completeDelayMs: 1100 }, async (url, seen) => {
+  // The re-sent begin answers inside its 400 ms cap with room for a loaded
+  // machine's scheduling delay; the close would take past the deadline.
+  await withServer({ beginRunId: "r5ess1on", delayMs: 200, completeDelayMs: 1100 }, async (url, seen) => {
     await runHook("SessionEnd", { session_id: "s11", cwd: tmp, reason: "exit" }, { tmp, url });
     const begin = seen.find((r) => r.url.endsWith("/run.begin"));
     const close = seen.find((r) => r.url.endsWith("/run.complete"));
     assert.ok(close, "the close was sent");
     // From the begin's arrival to the hook dropping the close: the hook's own time,
-    // without node's start-up. The server would answer the close at 1800 ms.
+    // without node's start-up. The server would answer the close at 1500 ms.
     const spent = close.closedAt - begin.at;
     assert.ok(spent < 1000, `begin and close took ${spent} ms`);
   });

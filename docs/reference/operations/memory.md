@@ -439,7 +439,7 @@ Self-service copy of a memory into another namespace.
 | `to_namespace` | `str` | required | Target namespace. |
 | `target_key` | `str \| None` | `None` | Destination memory_key. |
 | `target_agent` | `str` | `'-'` | Attribution in the target; '-' reads as namespace-owned. |
-| `rationale` | `str` | `''` | Human-readable reason, recorded on the audit row. |
+| `rationale` | `str` | `''` | Human-readable reason; the audit row keeps only its SHA-256 and length. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -462,7 +462,7 @@ Cross-namespace promotion with provenance.
 | `to_namespace` | `str` | required | The namespace the copy is written into, in the same org; the caller needs ADMIN on it. |
 | `target_key` | `str \| None` | `None` | Override the destination memory_key. |
 | `target_agent` | `str` | `'-'` | Agent identity to attribute the target row to. |
-| `rationale` | `str` | `''` | Human-readable reason. |
+| `rationale` | `str` | `''` | Human-readable reason; the audit row keeps only its SHA-256 and length. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1239,7 +1239,7 @@ Lock one row against a class of writes.
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `memory_key` | `str` | required | The key to lock, under this exact identity (a miss answers `locked: false`). |
-| `mode` | `Literal['read_only', 'no_delete']` | `'read_only'` | `read_only` refuses a changed value, a changed expiry and deletion; `no_delete` lets the value change but refuses tombstone, redact, clear and consolidation. |
+| `mode` | `Literal['read_only', 'no_delete']` | `'read_only'` | `read_only` refuses a changed value, a changed expiry and deletion; `no_delete` lets the value change but refuses tombstone, redact, clear, consolidation and reject. |
 | `reason` | `str` | required | Why the row is locked (1..512 chars); a refused write's 423 quotes it. |
 | `until` | `datetime \| None` | `None` | When the lock lapses (must be in the future); None and no `ttl_seconds` = open-ended. |
 | `ttl_seconds` | `int \| None` | `None` | Lock for this many seconds from now; wins over `until` when both are sent. |
@@ -1318,7 +1318,7 @@ External outcome signal for a memory row.
 | --- | --- | --- |
 | `recorded` | `bool` | False when the row was not found or the usage write failed. |
 | `evidence_count_after` | `int` | evidence_count after the bump (0 if unknown) |
-| `quarantined` | `bool` | Set when a negative outcome crossed memory_negative_demote_threshold and the memory was auto-quarantined (status -> 'rejected'). |
+| `quarantined` | `bool` | Set when a negative outcome crossed memory_negative_demote_threshold and the memory was auto-quarantined (status -> 'rejected'); a locked memory is not. |
 
 ## `memory.outcome_run`
 
@@ -1691,7 +1691,7 @@ Scrub the value of a historical memory row, preserving its audit entry.
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `memory_id` | `str` | required | The id every version of the memory shares; `version` picks the historical row. |
 | `version` | `int` | required | target row's version (from memory.set / memory.history) |
-| `reason` | `str` | `''` | short justification recorded in the audit log |
+| `reason` | `str` | `''` | short justification; the audit row keeps its SHA-256 and length |
 | `redacted_by` | `str` | `''` | actor for the audit row (caller-supplied) |
 
 | Output field | Type | Meaning |
@@ -1741,7 +1741,7 @@ Mark a memory as explicitly rejected (extractor / user review decided the candid
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `rejected` | `bool` | Always True, also when no live row matched (nothing is written then). |
+| `rejected` | `bool` | True on every 200 answer, also when no live row matched (nothing is written then); a locked row in any session refuses the whole reject with 423 LOCKED. |
 | `rejected_at` | `datetime \| None` | The server time of the reject. |
 
 ## `memory.related`

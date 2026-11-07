@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import contextlib
 import math
+import signal
 import sys
 import time
 from pathlib import Path
@@ -16,25 +17,33 @@ from server.cli.code_backfill import _record_manual_pass
 from server.cli.code_run import _identity, _note, _repo_cfg
 
 
+async def _read_delta(path: str) -> Any:
+    """The kept delta `--apply-delta` names. A missing or unreadable file is the
+    caller's input, not a failure of the tier: it is read before anything is recorded."""
+    import json as _json
+
+    from server.code.app.index.scip_delta import ScipDelta
+
+    raw = await asyncio.to_thread(Path(path).read_text)
+    return ScipDelta.model_validate(_json.loads(raw))
+
+
 async def _scip_apply_only(
     args: argparse.Namespace,
     repo: Any,
     org: str,
     ns: str,
     git_head: str,
+    delta: Any,
 ) -> int:
     """`scip-full --apply-delta`: apply a delta the harness already produced
     (`--keep-delta`). The apply is idempotent — a re-run key-diffs against
     the live rows and writes only what is missing — so an interrupted first
     apply resumes here without paying the index step again."""
-    import json as _json
-
     from server.code.app.index.entry_lock import check_held
-    from server.code.app.index.scip_delta import ScipDelta, apply_delta
+    from server.code.app.index.scip_delta import apply_delta
     from server.code.workers.scip_apply import watermark_key_for
 
-    raw = await asyncio.to_thread(Path(args.apply_delta).read_text)
-    delta = ScipDelta.model_validate(_json.loads(raw))
     if delta.commit != git_head:
         print(
             f"note: delta is at {delta.commit[:12]}, git_head is {git_head[:12]} — "
@@ -104,16 +113,56 @@ def _write_tail(out: str) -> None:
     sys.stdout.write(tail if not tail or tail.endswith("\n") else tail + "\n")
 
 
+async def _scip_apply_recorded(
+    args: argparse.Namespace, repo: Any, org: str, ns: str, git_head: str
+) -> int:
+    """`--apply-delta`, recording the apply's outcome as the full run's tier."""
+    from server.code.app.index import tier_health
+    from server.code.app.index.entry_lock import EntryLockLost
+
+    delta = await _read_delta(args.apply_delta)
+    try:
+        rc = await _scip_apply_only(args, repo, org, ns, git_head, delta)
+    except EntryLockLost:
+        raise  # the entry is another host's now: no further write
+    except Exception as e:
+        await tier_health.record(repo, org, ns, "clang_full", e)
+        raise
+    await tier_health.record(repo, org, ns, "clang_full")  # the full run's index applied
+    return rc
+
+
+def _scip_full_paths(args: argparse.Namespace, cfg: Any) -> tuple[Path, Path, Path, list[str]]:
+    """The checkout, bare repository and scip-clang binary, and what is missing.
+
+    Absolute, as every path the sandbox mounts must be: bwrap runs the job in
+    another directory. Without --checkout the tier's own tree, made if missing."""
+    from server.code.app.index import scip_full
+    from server.code.app.index.compiler_tier import resolve_binary, resolve_checkout
+    from server.settings import settings
+
+    bare, missing = Path(cfg.git_dir), []
+    if args.checkout:
+        checkout = Path(args.checkout)
+        missing = [str(p) for p in (checkout, bare) if not p.exists()]
+    else:
+        checkout, bare, why = resolve_checkout(cfg, scip_full.PRODUCER)
+        missing = [why] if why else []
+    scip_clang = resolve_binary(settings.code_scip_clang_path)
+    if not scip_clang.exists():
+        missing.append(str(scip_clang))
+    return checkout.resolve(), bare.resolve(), scip_clang.resolve(), missing
+
+
 async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: Any) -> int:
     """One entry's full compiler-tier run; the caller holds the entry lock."""
-    from server.code.app.index import scip_full
+    from server.code.app.index import scip_full, tier_health
     from server.code.app.index.compiler_tier import (
         SANDBOX_REQUIRED_SKIP,
-        resolve_binary,
-        resolve_checkout,
         stale_compdb,
         unsandboxed_skip,
     )
+    from server.code.app.index.entry_lock import EntryLockLost
     from server.code.store.index import CodeRepo
     from server.settings import settings
 
@@ -124,24 +173,9 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
         return 2
 
     if getattr(args, "apply_delta", ""):
-        return await _scip_apply_only(args, repo, org, ns, git_head)
+        return await _scip_apply_recorded(args, repo, org, ns, git_head)
 
-    def _paths() -> tuple[Path, Path, Path, list[str]]:
-        # Absolute, as every path the sandbox mounts must be: bwrap runs the job
-        # in another directory. Without --checkout the tier's own tree, made if missing.
-        bare, missing = Path(cfg.git_dir), []
-        if args.checkout:
-            checkout = Path(args.checkout)
-            missing = [str(p) for p in (checkout, bare) if not p.exists()]
-        else:
-            checkout, bare, why = resolve_checkout(cfg, "clang")
-            missing = [why] if why else []
-        scip_clang = resolve_binary(settings.code_scip_clang_path)
-        if not scip_clang.exists():
-            missing.append(str(scip_clang))
-        return checkout.resolve(), bare.resolve(), scip_clang.resolve(), missing
-
-    checkout, bare, scip_clang, missing = await asyncio.to_thread(_paths)
+    checkout, bare, scip_clang, missing = await asyncio.to_thread(_scip_full_paths, args, cfg)
     if missing:
         print(f"missing: {', '.join(missing)}", file=sys.stderr)
         return 2
@@ -166,10 +200,17 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
             keep_delta=getattr(args, "keep_delta", ""),
         )
     except scip_full.FullIndexFailed as e:
+        await tier_health.record(repo, org, ns, "clang_full", e)
         _write_tail(e.tail)
         print(f"harness failed (exit {e.returncode})", file=sys.stderr)
         _note(head=git_head[:12], harness_exit=e.returncode)
         return 1
+    except EntryLockLost:
+        raise  # the entry is another host's now: no further write
+    except Exception as e:
+        await tier_health.record(repo, org, ns, "clang_full", e)
+        raise
+    await tier_health.record(repo, org, ns, "clang_full")
     _write_tail(out)
     if getattr(args, "keep_delta", ""):
         print(f"delta kept at {args.keep_delta}")
@@ -206,10 +247,18 @@ async def _entry_locked(args: argparse.Namespace) -> int:
         print("entry-lock: no command after --", file=sys.stderr)
         return 2
     org, ns = _identity(args)
+    tier = args.tier
+    tail = bytearray() if tier else None
+    stopped = asyncio.Event()  # set by a SIGTERM to this process: the caller's time limit
     try:
         async with entry_lock(org, ns, wait=False):
             # Its uploads name the holder, so the server refuses them once the lease moved.
-            return await _run_while_held(command, env={HOLDER_ENV: current_holder()})
+            rc = await _run_while_held(
+                command, env={HOLDER_ENV: current_holder()}, tail=tail, stopped=stopped
+            )
+            if tail is not None:  # kept when a tier is recorded
+                await _record_tier(org, ns, tier, rc, bytes(tail), stopped=stopped.is_set())
+            return rc
     except EntryLockHeld:
         print(f"entry-lock {org}/{ns}: held by another pass")
         return ENTRY_HELD_EXIT
@@ -221,20 +270,91 @@ async def _entry_locked(args: argparse.Namespace) -> int:
         return 1
 
 
-async def _run_while_held(command: list[str], *, env: dict[str, str] | None = None) -> int:
+# How much of a command's output `entry-lock --tier` keeps for its health record.
+_TAIL_BYTES = 4096
+
+
+async def _record_tier(
+    org: str, ns: str, tier: str, rc: int, tail: bytes, *, stopped: bool = False
+) -> None:
+    """`entry-lock --tier`: the command's exit as the tier's health record, its error
+    the end of the command's output. The Go harness exits 0 when a module would not
+    build: the module lines in the kept tail fail the record as the worker's do."""
+    from server.code.app.index import tier_health
+    from server.code.app.index.compiler_tier import BASE_UNKNOWN_EXIT
+    from server.code.domain.index.tier_health import module_failures, without_module_failures
+    from server.code.store.index import CodeRepo
+
+    if rc == BASE_UNKNOWN_EXIT:
+        return  # the window's base is gone: the next run indexes in full, as in run_tier
+    error = None
+    if stopped and rc != 0:  # the caller's time limit (`timeout`) stopped it
+        error = f"harness exit {rc}: stopped by signal (the caller's time limit)"
+    else:
+        text = tail.decode("utf-8", "replace").strip()
+        if rc != 0:
+            text = without_module_failures(text)
+            error = f"harness exit {rc}: {text}" if text else f"harness exit {rc}"
+        elif modules := module_failures(text):
+            error = "; ".join(modules)
+    await tier_health.record(CodeRepo(), org, ns, tier, error)
+
+
+def _write_out(chunk: bytes) -> None:
+    sys.stdout.buffer.write(chunk)
+    sys.stdout.buffer.flush()
+
+
+async def _relay(proc: asyncio.subprocess.Process, tail: bytearray) -> int:
+    """Copy the command's output to this process's stdout, keeping its end in `tail`,
+    until the output closes and the command exits (a descendant that keeps the output
+    open keeps this waiting, as `communicate` does); any other exit (a cancellation)
+    kills its process group."""
+    from server.code.app.index.gitrepo import kill_and_reap
+
+    try:
+        assert proc.stdout is not None
+        while chunk := await proc.stdout.read(65536):
+            # off the loop: a stalled reader must not stop the lease renewal beside it
+            await asyncio.to_thread(_write_out, chunk)
+            tail.extend(chunk)
+            del tail[:-_TAIL_BYTES]
+        return await proc.wait()
+    except BaseException:
+        await kill_and_reap(proc, group=True)
+        raise
+
+
+async def _run_while_held(
+    command: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    tail: bytearray | None = None,
+    stopped: asyncio.Event | None = None,
+) -> int:
     """Run `command` in its own process group to its end. A cancellation (the lease
     was lost) kills the whole group at once; SIGTERM to this process (a caller's
-    timeout) sends the group SIGTERM, then SIGKILL after _ENTRY_STOP_GRACE_S."""
+    timeout) sets `stopped` and sends the group SIGTERM, then SIGKILL after
+    _ENTRY_STOP_GRACE_S. With `tail` its output (stdout and stderr) is relayed and its
+    end kept there."""
     import os
-    import signal
 
     from server.code.app.index.gitrepo import communicate_or_kill
 
-    proc = await asyncio.create_subprocess_exec(
-        *command, start_new_session=True, env={**os.environ, **(env or {})}
+    pipes: dict[str, Any] = (
+        {"stdout": asyncio.subprocess.PIPE, "stderr": asyncio.subprocess.STDOUT}
+        if tail is not None
+        else {}
     )
-    run = asyncio.ensure_future(communicate_or_kill(proc, timeout_s=math.inf, group=True))
-    term = asyncio.Event()
+    proc = await asyncio.create_subprocess_exec(
+        *command, start_new_session=True, env={**os.environ, **(env or {})}, **pipes
+    )
+    run = asyncio.ensure_future(
+        _relay(proc, tail)
+        if tail is not None
+        else communicate_or_kill(proc, timeout_s=math.inf, group=True)
+    )
+    term = stopped or asyncio.Event()
     with contextlib.suppress(NotImplementedError):
         asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, term.set)
     stopping = asyncio.ensure_future(term.wait())
@@ -246,7 +366,7 @@ async def _run_while_held(command: list[str], *, env: dict[str, str] | None = No
             await asyncio.wait({run}, timeout=_ENTRY_STOP_GRACE_S)
     finally:
         stopping.cancel()
-        run.cancel()  # still running: communicate_or_kill SIGKILLs the group
+        run.cancel()  # still running: cancelling it SIGKILLs the group
         await asyncio.gather(run, return_exceptions=True)
     return int(proc.returncode or 0)
 

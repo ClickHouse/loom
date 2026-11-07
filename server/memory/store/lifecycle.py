@@ -17,6 +17,7 @@ from typing import Any
 from server.core.datetimes import naive_utc_now, naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.memory.domain.lock import assert_unlocked
 from server.memory.domain.webhook_events import memory_change
 from server.memory.store.embeddings import (
     mirror_status_to_embeddings,
@@ -54,7 +55,8 @@ async def write_versions_by_ids(
 ) -> int:
     """Write a new version of each live row in `memory_ids`: `update(existing)`'s
     overrides on every persisted column carried forward, a fresh `version` unless it
-    sets one. `skip` leaves a row as it is; `strong` reads read-your-writes, the
+    sets one; an `update` that raises writes nothing, since every row is built before
+    any is written. `skip` leaves a row as it is; `strong` reads read-your-writes, the
     status mirror's vector rows included.
     `on_written` / `on_unconfirmed` hear what the re-read confirmed or could not (see
     Lifecycle in memory-architecture.md). `judged`: the rows land a verdict reached
@@ -227,12 +229,14 @@ async def reject_by_identity(
     memory_key: str,
     reason: str,
     *,
+    skip: Callable[[MemoryRow], bool] | None = None,
     ch: _CHClient | None = None,
 ) -> int:
     """Mark the live rows of `memory_key` in every session of the identity
-    `rejected`, by version re-emit on loom.memory and its vector rows. Never a
-    lightweight UPDATE: on loom.memory_embeddings it leaves a patch part, and
-    the fact leg's codes-first read stays off while one exists
+    `rejected`. A locked row raises 423 LOCKED before any row is written, unless
+    `skip` leaves it. Rows are marked by version re-emit on loom.memory and its
+    vector rows. Never a lightweight UPDATE: on loom.memory_embeddings it leaves a
+    patch part, and the fact leg's codes-first read stays off while one exists
     (`server.core.vectors.patch_parts`). The rows land at one version drawn
     before the read: a write drawn after it stays the head, and it sits above
     any vector row an earlier metadata copy left at read + 1 (`reemit_version`).
@@ -251,11 +255,17 @@ async def reject_by_identity(
         """,
         params={"org": org, "ns": namespace, "agent": agent, "uid": user_id, "key": memory_key},
     )
+
+    def reject(row: MemoryRow) -> dict[str, Any]:
+        assert_unlocked(row, "delete", op="memory.reject")
+        return {"status": "rejected", "rejection_reason": reason, "version": version}
+
     return await write_versions_by_ids(
         org,
         [str(r["memory_id"]) for r in rows],
-        lambda row: {"status": "rejected", "rejection_reason": reason, "version": version},
+        reject,
         ch=ch,
+        skip=skip,
         strong=True,
         strict=True,
     )

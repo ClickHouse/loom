@@ -23,13 +23,16 @@ from datetime import date, datetime
 from loom_extractor.artifact import MAX_COLUMNS, Artifact, Blocks, Coverage, Failure, on_python
 from loom_extractor.tabular import EMPTY, Budget, Cell, Rows, counted, fail, table
 
-PARSER_VERSION = "1"
+PARSER_VERSION = "2"
 # A field longer than this is not a value a table holds.
 MAX_FIELD_CHARS = 1 << 20  # not a setting: a bound on hostile input
 MAX_RECORD_CHARS = 8 << 20  # not a setting: a bound on hostile input
 # A line past the record bound is matched only that far, so it is never copied whole.
 _LINE = re.compile(rf"[^\r\n]{{0,{MAX_RECORD_CHARS + 1}}}(?:\r\n|\r|\n)?")
 _SNIFF_CHARS = 64 * 1024
+# The sniffer's quote guess runs regexes that backtrack quadratically on quote-heavy text
+# they never match (`,"a` or `,"` repeated: seconds on 64 KiB), so it reads only this much.
+_QUOTE_SNIFF_CHARS = 4 * 1024
 _MAX_NUMBER_CHARS = 40
 _DELIMITERS = ",;\t|"
 _NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?")
@@ -90,14 +93,34 @@ class _Tsv(csv.excel_tab):
     quoting = csv.QUOTE_NONE
 
 
+def _whole_lines(text: str, chars: int) -> str:
+    """The first `chars` of `text`, cut back to its last line end (a cut line counts too
+    few delimiters); cut at `chars` when no line ends before it."""
+    if len(text) <= chars:
+        return text
+    sample = text[:chars]
+    return sample[: max(sample.rfind("\n"), sample.rfind("\r")) + 1] or sample
+
+
+class _Sniffer(csv.Sniffer):
+    """csv.Sniffer whose quote guess reads only the first `_QUOTE_SNIFF_CHARS`."""
+
+    def _guess_quote_and_delimiter(
+        self, data: str, delimiters: str | None
+    ) -> tuple[str, bool, str | None, bool | int]:
+        # The stdlib method `sniff` calls first (its last item may be 0); typeshed does
+        # not declare it.
+        return super()._guess_quote_and_delimiter(  # type: ignore[misc,no-any-return]
+            _whole_lines(data, _QUOTE_SNIFF_CHARS), delimiters
+        )
+
+
 def _dialect(text: str, filename: str) -> type[csv.Dialect] | csv.Dialect:
     if filename.lower().endswith(".tsv"):
         return _Tsv
-    sample = text[:_SNIFF_CHARS]
-    if len(text) > _SNIFF_CHARS:  # whole lines only: a cut one counts too few delimiters
-        sample = sample[: max(sample.rfind("\n"), sample.rfind("\r")) + 1] or sample
+    sample = _whole_lines(text, _SNIFF_CHARS)
     try:
-        return csv.Sniffer().sniff(sample, delimiters=_DELIMITERS)
+        return _Sniffer().sniff(sample, delimiters=_DELIMITERS)
     except csv.Error:
         return csv.excel  # one column, or nothing the sniffer can tell
 

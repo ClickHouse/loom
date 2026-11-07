@@ -49,14 +49,20 @@ function subjectRecord(raw: unknown): Record<string, unknown> {
 /**
  * Format the audit row into one human-readable line.
  *
- * The raw `subject` blob is the operation's full input payload — useful
- * for debugging but unreadable in a feed. This formatter pulls 1-3
- * load-bearing fields per event type and synthesizes a sentence.
+ * The raw `subject` blob is the event's subject: for an audited op without
+ * its own `audit_subject`, its input with text values hashed
+ * (`audit.input_subject`) — useful for debugging but unreadable in a feed.
+ * This formatter pulls 1-3 load-bearing fields per event type and
+ * synthesizes a sentence.
  *
  * Unknown event types fall through to a generic, readable fallback.
  */
 function summarize(event_type: string, subject: Record<string, unknown>): string {
-  const s = (k: string) => (subject[k] != null ? String(subject[k]) : "");
+  // A hashed text value is `{sha256, chars}`: it reads as no value, never "[object Object]".
+  const s = (k: string) => {
+    const v = subject[k];
+    return typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? String(v) : "";
+  };
 
   switch (event_type) {
     case "namespace.register": {
@@ -111,8 +117,11 @@ function summarize(event_type: string, subject: Record<string, unknown>): string
       return `Demoted "${s("memory_key")}" back to private`;
     case "memory.cross_promote":
       return `Cross-promoted "${s("memory_key")}" to ${s("target_namespace") || s("namespace")}`;
-    case "memory.outcome":
-      return `Recorded outcome for "${s("memory_key")}": ${s("outcome") || s("result")}`;
+    case "memory.outcome": {
+      const key = s("memory_key");
+      const outcome = s("outcome") || s("result");
+      return outcome ? `Recorded outcome for "${key}": ${outcome}` : `Recorded outcome for "${key}"`;
+    }
     case "memory.touch":
       return `Touched "${s("memory_key")}"`;
     case "memory.auto_supersede": {
@@ -512,7 +521,7 @@ function eventRow(row: AuditEntry, i: number): TableRowType {
   };
 }
 
-/** One event's summary and type, and its parsed input behind "Details". */
+/** One event's summary and type, and its parsed subject behind "Details". */
 function AuditEvent({ row }: { row: AuditEntry }) {
   const [expanded, setExpanded] = useState(false);
   // Parsed once, so the summary and the "Details" expansion read the same structured data.

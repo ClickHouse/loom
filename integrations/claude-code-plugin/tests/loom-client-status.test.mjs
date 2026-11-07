@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { hostEnv } from "./host-env.mjs";
 
 process.env.LOOM_HOOK_NO_MAIN = "1";
 const { clientStatus } = await import("../bin/loom-client-status.mjs");
@@ -168,7 +169,7 @@ test("the Codex copy checks the hooks' server and makes no source comparison", a
   try {
     const out = await new Promise((resolve) => {
       const child = spawn(process.execPath, [codexScript], {
-        env: { PATH: process.env.PATH, HOME: home, TMPDIR: home, LOOM_BASE_URL: "http://127.0.0.1:9" },
+        env: hostEnv({ PATH: process.env.PATH, HOME: home, TMPDIR: home, LOOM_BASE_URL: "http://127.0.0.1:9" }),
       });
       let stdout = "";
       child.stdout.on("data", (c) => (stdout += c));

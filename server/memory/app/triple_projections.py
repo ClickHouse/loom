@@ -37,6 +37,7 @@ from server.memory.app.projections import (
     triple_row_link,
     write_entity_triples,
 )
+from server.memory.app.provenance import writer_actor
 from server.memory.domain import triples_follow_rows as tfr
 from server.memory.domain.temporal_sql import (
     HOLDS_VALUE_SQL,
@@ -500,8 +501,10 @@ async def _close_planned(input: Any, plan: tfr.FollowPlan, now: datetime, *, ch:
                 event_type="triple.follows_row_supersession",
                 org=input.org,
                 namespace=input.namespace,
-                actor=str(getattr(input, "agent", "-") or "-"),
-                subject={"closed": f"{s} {r} {o}"},
+                # The resolver and the projection repair run with no auth context.
+                actor=writer_actor("process:loom"),
+                # The closed fact's text is memory content: its hash and length.
+                subject={"closed": _audit.digest(f"{s} {r} {o}")},
             )
     except Exception as e:  # noqa: BLE001 — the closes are in; the trail is best effort
         log.debug("triples follow rows: audit skipped: %s", e)

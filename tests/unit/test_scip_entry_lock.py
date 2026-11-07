@@ -403,6 +403,7 @@ def test_entry_lock_wrapper_runs_the_command_or_reports_the_entry_held(held, tmp
     args = argparse.Namespace(
         org="acme",
         namespace="code-web",
+        tier="",
         command=["--", sys.executable, "-c", f"open({str(marker)!r}, 'w').write('x')"],
     )
     fd = _hold(entry_lock_path("acme", "code-web")) if held else None
@@ -426,17 +427,62 @@ def test_entry_lock_wrapper_runs_nothing_without_the_lease(no_clickhouse, tmp_pa
     args = argparse.Namespace(
         org="acme",
         namespace="code-web",
+        tier="",
         command=[sys.executable, "-c", f"open({str(marker)!r}, 'w').write('x')"],
     )
     assert asyncio.run(code_scip._entry_locked(args)) == 1
     assert not marker.exists()
 
 
+class _Health:
+    """The tier-health rows `entry-lock --tier` writes."""
+
+    writes: list[tuple[str, str]] = []
+
+    async def get_state(self, org: str, ns: str, key: str) -> str:
+        return ""
+
+    async def set_state(self, org: str, ns: str, key: str, value: str, detail: str = "") -> None:
+        self.writes.append((key, value))
+
+
+@pytest.mark.parametrize("held", [False, True])
+def test_entry_lock_with_a_tier_records_the_commands_exit_while_holding_the_entry(
+    held, monkeypatch
+) -> None:
+    import json
+    import sys
+
+    from server.cli import code_scip
+
+    monkeypatch.setattr(_Health, "writes", [])
+    monkeypatch.setattr("server.code.store.index.CodeRepo", _Health)
+    script = "import sys; print('scip-python: Could not resolve host: pypi.example'); sys.exit(2)"
+    args = argparse.Namespace(
+        org="acme", namespace="code-web", tier="python", command=[sys.executable, "-c", script]
+    )
+    fd = _hold(entry_lock_path("acme", "code-web")) if held else None
+    try:
+        rc = asyncio.run(code_scip._entry_locked(args))
+    finally:
+        if fd is not None:
+            os.close(fd)
+    if held:
+        assert rc == code_scip.ENTRY_HELD_EXIT and _Health.writes == []
+        return
+    assert rc == 2
+    ((key, value),) = _Health.writes
+    assert key == "tier_health:python"
+    assert json.loads(value)["kind"] == "network"
+
+
+@pytest.mark.parametrize("tier", ["", "python"])
 def test_entry_lock_wrapper_kills_the_command_group_when_the_lease_is_lost(
-    keeper, monkeypatch, tmp_path
+    keeper, monkeypatch, tmp_path, tier
 ) -> None:
     """The command's own children die with it: a harness's scip-python and its
-    uploader must write nothing after the wrapper reports the loss."""
+    uploader must write nothing after the wrapper reports the loss, its tier record
+    included."""
     import threading
     import time
 
@@ -448,7 +494,11 @@ def test_entry_lock_wrapper_kills_the_command_group_when_the_lease_is_lost(
     pidfile = tmp_path / "child.pid"
     # A grandchild that ignores SIGTERM: killed at once, no grace to write in.
     script = f"trap '' TERM; sleep 60 & echo $! > {pidfile}; wait"
-    args = argparse.Namespace(org="acme", namespace="code-web", command=["sh", "-c", script])
+    args = argparse.Namespace(
+        org="acme", namespace="code-web", tier=tier, command=["sh", "-c", script]
+    )
+    monkeypatch.setattr(_Health, "writes", [])
+    monkeypatch.setattr("server.code.store.index.CodeRepo", _Health)
 
     def take_over() -> None:
         while _NAME not in keeper.keys:
@@ -468,6 +518,7 @@ def test_entry_lock_wrapper_kills_the_command_group_when_the_lease_is_lost(
         time.sleep(0.05)
     else:
         pytest.fail("the command's child outlived the lost lease")
+    assert _Health.writes == []
 
 
 # -- a lost lease publishes nothing ------------------------------------------------
@@ -607,7 +658,7 @@ def test_entry_lock_wrapper_hands_its_command_the_lease_holder(keeper, tmp_path)
 
         with patch.object(code_scip, "_run_while_held", spy):
             args = argparse.Namespace(
-                org="acme", namespace="code-web", command=[sys.executable, "-c", script]
+                org="acme", namespace="code-web", tier="", command=[sys.executable, "-c", script]
             )
             return await code_scip._entry_locked(args)
 

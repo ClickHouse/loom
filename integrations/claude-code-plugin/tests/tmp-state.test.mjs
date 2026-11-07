@@ -11,6 +11,7 @@ import {
   readSessionState,
   sessionStatePath,
   tmpStatePath,
+  touchPrivateFile,
   writeCursor,
   writeJsonFile,
   writeSessionState,
@@ -19,13 +20,16 @@ import {
 const sha12 = (s) => crypto.createHash("sha1").update(s).digest("hex").slice(0, 12);
 
 test("state files keep the names hooks have always used (state survives an upgrade)", () => {
-  assert.equal(sessionStatePath("run", "abc", { tmp: "/t" }), `/t/loom-run-${sha12("abc")}.json`);
-  assert.equal(sessionStatePath("wm", "", { tmp: "/t" }), `/t/loom-wm-${sha12("nosession")}.json`);
+  assert.equal(sessionStatePath("run", "abc", { tmp: "/t" }), path.join("/t", `loom-run-${sha12("abc")}.json`));
+  assert.equal(sessionStatePath("wm", "", { tmp: "/t" }), path.join("/t", `loom-wm-${sha12("nosession")}.json`));
   assert.equal(
     sessionStatePath("prompt-recall-first", "abc", { tmp: "/t", ext: "" }),
-    `/t/loom-prompt-recall-first-${sha12("abc")}`,
+    path.join("/t", `loom-prompt-recall-first-${sha12("abc")}`),
   );
-  assert.equal(tmpStatePath("taskq", "https://x|o|n", { tmp: "/t" }), `/t/loom-taskq-${sha12("https://x|o|n")}.json`);
+  assert.equal(
+    tmpStatePath("taskq", "https://x|o|n", { tmp: "/t" }),
+    path.join("/t", `loom-taskq-${sha12("https://x|o|n")}.json`),
+  );
   assert.ok(!sessionStatePath("x", "../../etc/passwd", { tmp: "/t" }).includes(".."), "the id is hashed, never a path");
 });
 
@@ -61,4 +65,19 @@ test("one session-state file per (hook, session); missing, garbage and non-objec
     assert.deepEqual(readSessionState("blast", "s", { tmp }), {}, junk);
   }
   assert.equal(writeSessionState("blast", "s", { ok: 1 }, { tmp: path.join(tmp, "missing-dir") }), false);
+});
+
+// Windows sets a file's times only through a handle that may write.
+test("touchPrivateFile moves a state file's mtime to now, on every OS", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-tmpstate-"));
+  const f = path.join(dir, "s.json");
+  assert.equal(writeJsonFile(f, { a: 1 }), true);
+  const old = new Date(Date.now() - 3_600_000);
+  fs.utimesSync(f, old, old);
+  assert.equal(touchPrivateFile(f), true);
+  assert.ok(fs.statSync(f).mtimeMs > old.getTime() + 3_000_000);
+  assert.equal(touchPrivateFile(path.join(dir, "missing.json")), false);
+  // A hard link planted at a state name is not ours to keep alive.
+  fs.linkSync(f, path.join(dir, "linked.json"));
+  assert.equal(touchPrivateFile(f), false);
 });

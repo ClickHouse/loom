@@ -4,7 +4,6 @@ side by side (the stage costs the longer of the two, not their sum)."""
 from __future__ import annotations
 
 import asyncio
-import time
 from types import SimpleNamespace as NS
 from typing import Any
 
@@ -19,23 +18,19 @@ async def test_graph_expansion_and_triple_matching_overlap(monkeypatch: pytest.M
 
     async def expansion(ctx: Any) -> None:
         marks.append(("expansion", "start"))
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.01)
         marks.append(("expansion", "end"))
 
     async def triples(ctx: Any) -> None:
         marks.append(("triples", "start"))
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.01)
         marks.append(("triples", "end"))
 
     monkeypatch.setattr(ms, "_run_graph_expansion", expansion)
     monkeypatch.setattr(ms, "_run_triple_matching", triples)
-    t0 = time.perf_counter()
     await ms._run_graph_stages(NS())
-    elapsed = time.perf_counter() - t0
-    # Both started before either finished, and the wall time is one sleep,
-    # not two.
+    # Both started before either finished.
     assert marks[:2] == [("expansion", "start"), ("triples", "start")]
-    assert elapsed < 0.27, elapsed
 
 
 @pytest.mark.asyncio

@@ -83,7 +83,8 @@ class MemoryRejectInput(_Identity):
 
 
 class MemoryRejectOutput(BaseModel):
-    # Always True, also when no live row matched (nothing is written then).
+    # True on every 200 answer, also when no live row matched (nothing is written then);
+    # a locked row in any session refuses the whole reject with 423 LOCKED.
     rejected: bool
     # The server time of the reject.
     rejected_at: datetime | None = None
@@ -122,8 +123,7 @@ class MemoryCrossPromoteInput(BaseModel):
     )
     rationale: str = Field(
         default="",
-        description="Human-readable reason. Recorded on the audit row so "
-        "future operators can answer 'why did this lesson land here?'",
+        description="Human-readable reason; the audit row keeps only its SHA-256 and length.",
     )
 
 
@@ -177,7 +177,7 @@ class MemoryCopyToInput(BaseModel):
     )
     rationale: str = Field(
         default="",
-        description="Human-readable reason, recorded on the audit row.",
+        description="Human-readable reason; the audit row keeps only its SHA-256 and length.",
     )
 
 

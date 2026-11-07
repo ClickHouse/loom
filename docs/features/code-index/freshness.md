@@ -9,20 +9,25 @@ is.
 Every conversational answer (`code.search`, `code.ask`, `code.grep`, `code.symbol`, …)
 carries `as_of`:
 
-| Field          | Meaning                                                                                     |
-| -------------- | ------------------------------------------------------------------------------------------- |
-| `commit`       | the commit the index holds for this namespace (`git_head`)                                  |
-| `branch`       | the branch the namespace tracks                                                             |
-| `indexed_at`   | when that commit landed                                                                     |
-| `lag_commits`  | first-parent commits between `commit` and the mirror's fetched tip; `-1` unknown            |
-| `stale`        | `lag_commits` > `LOOM_CODE_STALE_AFTER_COMMITS` (default 5), or the mirror fetch is overdue |
-| `status`       | `fresh` (at the tip), `behind` (under the stale threshold), `stale`, `unknown` (lag `-1`)   |
-| `stale_reason` | `mirror_not_fetched` when the lag is counted against a mirror that stopped fetching         |
-| `fetched_at`   | with `stale_reason`: when the mirror last fetched                                           |
+| Field           | Meaning                                                                                                                                              |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `commit`        | the commit the index holds for this namespace (`git_head`)                                                                                           |
+| `branch`        | the branch the namespace tracks                                                                                                                      |
+| `indexed_at`    | when that commit landed                                                                                                                              |
+| `lag_commits`   | first-parent commits between `commit` and the mirror's fetched tip; `-1` unknown                                                                     |
+| `stale`         | `lag_commits` > `LOOM_CODE_STALE_AFTER_COMMITS` (default 5), or the mirror fetch is overdue                                                          |
+| `status`        | `fresh` (at the tip), `behind` (under the stale threshold), `stale`, `unknown` (lag `-1`)                                                            |
+| `stale_reason`  | `mirror_not_fetched` when the lag is counted against a mirror that stopped fetching                                                                  |
+| `fetched_at`    | with `stale_reason`: when the mirror last fetched                                                                                                    |
+| `failing_tiers` | present while a tier is failing on the entry: `tier`, `kind`, `failing_since`, `failed_passes`, `fix`, and for a tier with a watermark `lag_commits` |
 
 The block is cached for 30 seconds per namespace; a pass that moves `git_head`
 invalidates it. It is fail-open: when freshness cannot be read, the block is empty and
 the answer still returns. Treat an empty `as_of` as unknown.
+
+A failing tier's facts may trail the head even while `stale` is false:
+with `failing_tiers` naming a compiler tier, treat compiler-grade answers (exact call
+graphs, references) as possibly behind and read the code you rely on.
 
 **Gate on `stale`, not on the build state.** A namespace whose first build finished can
 still be commits behind. When `stale` is true, treat line numbers and spans as
@@ -39,6 +44,9 @@ status ops report the mirror's age:
   `LOOM_CODE_FETCH_STALE_AFTER_SECONDS`, default 3600). Beside them: `git_head`,
   `fast_tier_lag`, `scip_lag` / `scip_py_lag`, the `compiler_tiers` list,
   `last_refresh_at` and `chunks_total` / `chunks_embedded` / `embedding_coverage`.
+- Both return `tier_health`: each tier's last recorded outcome (fetch, ingest, the
+  compiler tiers and the weekly C++ full run), with the error kind, `failing_since`,
+  `failed_passes` and the fix while it fails.
 - `code.repos` rows carry `searchable`: `embedding_coverage` has reached
   `LOOM_CODE_READY_EMBED_COVERAGE`.
 

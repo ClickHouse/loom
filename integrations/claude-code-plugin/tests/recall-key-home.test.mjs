@@ -13,7 +13,7 @@ test("every test file imports temp-home.mjs before anything else", () => {
   for (const n of fs.readdirSync(TESTS).filter((x) => x.endsWith(".test.mjs"))) {
     const first = fs
       .readFileSync(path.join(TESTS, n), "utf8")
-      .split("\n")
+      .split(/\r?\n/) // a Windows checkout has CRLF
       .find((l) => l.startsWith("import "));
     assert.equal(first, 'import "./temp-home.mjs";', n);
   }

@@ -11,6 +11,7 @@ that logs intent and returns 0.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Sequence
 from typing import Any, ClassVar, Protocol
@@ -52,9 +53,9 @@ class ErasureBackendError(Exception):
     (5xx, timeout, network drop, or a confirmed-rows-but-failed delete).
 
     MUST propagate so the saga records the request `failed` instead of falsely
-    `completed`; the recovery worker re-runs failed sagas idempotently (backends
-    404→0 on already-deleted data). NOT raised for "nothing to erase" (404, zero
-    matching rows, unconfigured backend) — those return 0.
+    `completed`; the recovery worker re-runs failed sagas, which each backend
+    makes idempotent. NOT raised for "nothing to erase" (zero matching rows,
+    unconfigured backend) — those return 0.
     """
 
 
@@ -136,6 +137,9 @@ class LangfuseBackend:
         else:
             self._headers = {"Authorization": f"Bearer {admin_token}"}
         self._timeout = timeout_s
+        # The server's major version, cached after the first answer: a
+        # namespace-list erasure runs one lookup per namespace.
+        self._major: int | None = None
 
     # Langfuse has no bulk-by-filter delete, so erasure is query-then-delete:
     # find the matching trace ids, then delete them in batches. Bounded so a
@@ -143,11 +147,17 @@ class LangfuseBackend:
     _PAGE_SIZE: ClassVar[int] = 100
     _DELETE_BATCH: ClassVar[int] = 100
     _MAX_TRACES: ClassVar[int] = 100_000
-    # The trace list is asked for its core fields only: the default payload
-    # carries every trace's input, output and metadata, and on a project with
-    # millions of traces a one-row default list can take tens of seconds or
-    # time out, where `fields=core` answers in seconds. Erasure needs ids and
-    # tags, nothing else.
+    # The observations list (Langfuse 4) returns one row per span, so a trace
+    # spans several rows; its maximum page size (1000 in the API reference)
+    # keeps the page count down.
+    _V4_PAGE_SIZE: ClassVar[int] = 1000
+    # A page may come back empty while a cursor is still present, so the trace
+    # cap alone does not end a lookup that a server keeps paging; this does.
+    _V4_MAX_PAGES: ClassVar[int] = 10_000
+    # Both lookups ask for core fields only: the default payload carries each
+    # row's input, output and metadata, and on a project with millions of
+    # traces a one-row default list can take tens of seconds or time out, where
+    # `fields=core` answers in seconds. Erasure needs ids, nothing else.
     _LIST_FIELDS: ClassVar[str] = "core"
     # A page that times out or returns 5xx/429 is retried this many times with
     # exponential backoff before the step fails closed (the recovery worker
@@ -155,12 +165,115 @@ class LangfuseBackend:
     _PAGE_ATTEMPTS: ClassVar[int] = 3
     _PAGE_BACKOFF_S: ClassVar[float] = 2.0
 
+    async def _api_major(self, c: httpx.AsyncClient) -> int:
+        """The Langfuse server's major version, from `GET /api/public/health`.
+
+        Langfuse 4 removed the trace list (`GET /api/public/traces` answers 404)
+        and Langfuse 3 does not serve the observations list that replaces it,
+        so the lookup has to know which one it is talking to. An answer with no
+        readable version fails closed: guessing would either 404 the lookup or,
+        worse, read an empty list as nothing to erase.
+        """
+        if self._major is not None:
+            return self._major
+        r = await self._get_retried(c, "/api/public/health", {})
+        version = ""
+        if r.status_code == 200:
+            try:
+                body = r.json()
+            except ValueError:  # a proxy's HTML page: no version, so fail closed below
+                body = None
+            if isinstance(body, dict):
+                version = str(body.get("version") or "")
+        major = version.split(".", 1)[0]
+        if not major.isdigit():
+            raise ErasureBackendError(
+                f"langfuse health → HTTP {r.status_code} with no server version "
+                f"({version!r}); cannot tell which trace lookup to use"
+            )
+        self._major = int(major)
+        return self._major
+
     async def _find_trace_ids(
         self,
         c: httpx.AsyncClient,
-        # httpx's own param type: a list value is encoded as repeated params,
-        # which is how the org+namespace tag filter is ANDed server-side.
-        params: dict[str, str | list[str]],
+        *,
+        tags: list[str],
+        user_id: str = "",
+    ) -> list[str]:
+        """Every trace id carrying all of `tags` (and `user_id`, when given)."""
+        if await self._api_major(c) >= 4:
+            return await self._find_trace_ids_v4(c, tags=tags, user_id=user_id)
+        return await self._find_trace_ids_v3(c, tags=tags, user_id=user_id)
+
+    async def _find_trace_ids_v4(
+        self,
+        c: httpx.AsyncClient,
+        *,
+        tags: list[str],
+        user_id: str,
+    ) -> list[str]:
+        """The trace ids of the observations matching the filter, on Langfuse 4.
+
+        Langfuse 4 keeps tags and the user id on each observation, so the filter
+        runs over `GET /api/public/v2/observations` and the distinct `traceId`s
+        are the traces to delete. Pagination follows `meta.cursor` until it is
+        absent; a page may be empty while a cursor is still present. The same
+        fail-closed rules as the Langfuse 3 lookup apply (no truncation).
+        """
+        conditions: list[dict[str, Any]] = [
+            {"type": "arrayOptions", "column": "tags", "operator": "all of", "value": tags}
+        ]
+        if user_id:
+            conditions.append(
+                {"type": "string", "column": "userId", "operator": "=", "value": user_id}
+            )
+        # No start-time bound: the API reference says such a request searches
+        # from 2020-01-01, so no trace is out of range.
+        query: dict[str, Any] = {
+            "fields": self._LIST_FIELDS,
+            "limit": self._V4_PAGE_SIZE,
+            "filter": json.dumps(conditions),
+        }
+        ids: dict[str, None] = {}
+        seen_cursors: set[str] = set()
+        for _ in range(self._V4_MAX_PAGES):
+            r = await self._get_retried(c, "/api/public/v2/observations", query)
+            if r.status_code != 200:
+                raise ErasureBackendError(
+                    f"langfuse observation lookup {tags} → HTTP {r.status_code}: "
+                    f"{r.text[:LOG_ERROR_TEXT_LIMIT]}"
+                )
+            body = r.json()
+            for row in body.get("data") or []:
+                if row.get("traceId"):
+                    ids[str(row["traceId"])] = None
+            if len(ids) > self._MAX_TRACES:
+                raise ErasureBackendError(
+                    f"langfuse observation lookup {tags} matched more than "
+                    f"{self._MAX_TRACES} traces; refusing to erase a truncated set"
+                )
+            cursor = (body.get("meta") or {}).get("cursor")
+            if not cursor:
+                return list(ids)
+            if cursor in seen_cursors:
+                raise ErasureBackendError(
+                    f"langfuse observation lookup {tags} returned a cursor it had "
+                    f"already returned; refusing to erase a set it cannot finish reading"
+                )
+            seen_cursors.add(cursor)
+            query = {**query, "cursor": cursor}
+        raise ErasureBackendError(
+            f"langfuse observation lookup {tags} did not finish within "
+            f"{self._V4_MAX_PAGES} pages; refusing to erase a truncated set"
+        )
+
+    async def _find_trace_ids_v3(
+        self,
+        c: httpx.AsyncClient,
+        *,
+        tags: list[str],
+        user_id: str,
     ) -> list[str]:
         """Collect every trace id matching a filter, following pagination.
 
@@ -176,10 +289,18 @@ class LangfuseBackend:
           to the current page, so a response that omits the field ends pagination
           after page 1 — 100 traces deleted out of any number, reported as done.
         """
+        # httpx encodes a list value as repeated params, which the trace list ANDs.
+        params: dict[str, str | list[str]] = {"tags": tags}
+        if user_id:
+            params["userId"] = user_id
         ids: list[str] = []
         page = 1
         while True:
-            r = await self._get_page(c, {"page": page, "limit": self._PAGE_SIZE, **params})
+            r = await self._get_retried(
+                c,
+                "/api/public/traces",
+                {"fields": self._LIST_FIELDS, "page": page, "limit": self._PAGE_SIZE, **params},
+            )
             if r.status_code != 200:
                 raise ErasureBackendError(
                     f"langfuse trace lookup {params} → HTTP {r.status_code}: "
@@ -210,17 +331,16 @@ class LangfuseBackend:
             page += 1
         return ids
 
-    async def _get_page(self, c: httpx.AsyncClient, params: dict[str, Any]) -> httpx.Response:
-        """One page of the trace list, core fields only, retried on a timeout,
-        a 429 or a 5xx. Anything else is returned to the
-        caller's status check unchanged."""
-        query: dict[str, Any] = {"fields": self._LIST_FIELDS, **params}
+    async def _get_retried(
+        self, c: httpx.AsyncClient, path: str, query: dict[str, Any]
+    ) -> httpx.Response:
+        """One GET to Langfuse (a lookup page or the health probe), retried on a
+        timeout, a 429 or a 5xx. Anything else is returned to the caller's status
+        check unchanged."""
         last: Exception | None = None
         for attempt in range(self._PAGE_ATTEMPTS):
             try:
-                r = await c.get(
-                    f"{self._base_url}/api/public/traces", headers=self._headers, params=query
-                )
+                r = await c.get(f"{self._base_url}{path}", headers=self._headers, params=query)
             except httpx.TimeoutException as e:
                 last = e
             else:
@@ -250,9 +370,10 @@ class LangfuseBackend:
             # older self-hosted build, or a proxy forwarding only GET/POST)
             # and nothing was deleted.
             #
-            # Idempotency for the recovery worker comes from the LOOKUP instead:
-            # a re-run finds no matching traces and returns 0 without ever
-            # issuing a delete.
+            # A re-run by the recovery worker is idempotent because that 200 also
+            # covers ids already deleted: on Langfuse 4, which deletes
+            # asynchronously, the lookup can find them again and they are
+            # deleted again.
             if r.status_code in (200, 202, 204):
                 deleted += len(batch)
                 continue
@@ -267,7 +388,7 @@ class LangfuseBackend:
 
         Langfuse has no user-deletion endpoint (`DELETE /api/public/users/{id}`
         answers 404 with an HTML page, which would read as nothing to erase):
-        the traces are found with `GET /api/public/traces?userId=` (filtered
+        the traces are found by user id (`_find_trace_ids`, filtered
         server-side) and deleted with `DELETE /api/public/traces`. Deleting a
         trace removes its observations and scores with it.
         """
@@ -277,7 +398,7 @@ class LangfuseBackend:
                 # is a caller-supplied opaque string and every org writes into
                 # one Langfuse project, so `userId` alone would erase another
                 # tenant's traces for anyone sharing an identifier.
-                ids = await self._find_trace_ids(c, {"userId": user_id, "tags": f"org:{org}"})
+                ids = await self._find_trace_ids(c, tags=[f"org:{org}"], user_id=user_id)
                 if not ids:
                     return 0
                 return await self._delete_traces(c, ids)
@@ -298,12 +419,9 @@ class LangfuseBackend:
         """
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as c:
-                # Repeated `tags` params are ANDed server-side (a nonexistent
-                # org tag matches nothing); httpx encodes a list value as
-                # repeated params.
-                ids = await self._find_trace_ids(
-                    c, {"tags": [f"namespace:{namespace}", f"org:{org}"]}
-                )
+                # Both lookups AND the tags server-side, so a nonexistent org
+                # tag matches nothing.
+                ids = await self._find_trace_ids(c, tags=[f"namespace:{namespace}", f"org:{org}"])
                 if not ids:
                     return 0
                 return await self._delete_traces(c, ids)
@@ -313,12 +431,20 @@ class LangfuseBackend:
                 f"langfuse.delete_namespace {org}/{namespace} transport error: {_describe(e)}"
             ) from e
 
-    # Langfuse filters traces by tag one namespace at a time (repeated `tags`
-    # are ANDed, never ORed), so a list is still one lookup per namespace —
-    # but the lookups need not wait on one another.
+    # One lookup per namespace on both versions: the Langfuse 3 trace list ANDs
+    # repeated `tags` and cannot OR them, and Langfuse 4 keeps the same path so
+    # both run one lookup shape. The lookups need not wait on one another.
     _LIST_CONCURRENCY = 4
 
     async def delete_namespaces(self, org: str, namespaces: Sequence[str]) -> int:
+        # Probed before the concurrent lookups, so they share one answer.
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as c:
+                await self._api_major(c)
+        except httpx.HTTPError as e:
+            raise ErasureBackendError(
+                f"langfuse.delete_namespaces {org} transport error: {_describe(e)}"
+            ) from e
         sem = asyncio.Semaphore(self._LIST_CONCURRENCY)
 
         async def _one(ns: str) -> int:

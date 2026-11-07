@@ -16,6 +16,7 @@ import {
   readRange,
   readTail,
 } from "../lib/transcript.mjs";
+import { hostEnv } from "./host-env.mjs";
 
 const tmpFile = (text) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-transcript-"));
@@ -155,7 +156,13 @@ test("a Stop with more than fifty new turns sends fifty and leaves the rest for 
   const transcript = path.join(dir, "t.jsonl");
   fs.writeFileSync(transcript, Array.from({ length: 60 }, (_, i) => turn(i)).join("\n") + "\n");
   await withLoom(async (url, appended) => {
-    const env = { PATH: process.env.PATH, HOME: dir, TMPDIR: dir, LOOM_BASE_URL: url, LOOM_API_KEY: fakeToken() };
+    const env = hostEnv({
+      PATH: process.env.PATH,
+      HOME: dir,
+      TMPDIR: dir,
+      LOOM_BASE_URL: url,
+      LOOM_API_KEY: fakeToken(),
+    });
     env.LOOM_CONV_SETTLE_MS = "0";
     const payload = { session_id: "conv-1", transcript_path: transcript, cwd: dir };
     await stop(env, payload);
@@ -175,7 +182,13 @@ test("a turn still being written when Stop fires is sent by the next Stop", asyn
   const last = turn(3);
   fs.writeFileSync(transcript, [turn(0), turn(1), turn(2)].join("\n") + "\n" + last.slice(0, 20));
   await withLoom(async (url, appended) => {
-    const env = { PATH: process.env.PATH, HOME: dir, TMPDIR: dir, LOOM_BASE_URL: url, LOOM_API_KEY: fakeToken() };
+    const env = hostEnv({
+      PATH: process.env.PATH,
+      HOME: dir,
+      TMPDIR: dir,
+      LOOM_BASE_URL: url,
+      LOOM_API_KEY: fakeToken(),
+    });
     env.LOOM_CONV_SETTLE_MS = "0";
     const payload = { session_id: "conv-2", transcript_path: transcript, cwd: dir };
     await stop(env, payload);
@@ -195,7 +208,13 @@ test("a Stop redacts a secret in each turn it sends, from the transcript and fro
   const said = { type: "user", uuid: "u0", message: { content: `my token is ${secret}` } };
   fs.writeFileSync(transcript, JSON.stringify(said) + "\n");
   await withLoom(async (url, appended) => {
-    const env = { PATH: process.env.PATH, HOME: dir, TMPDIR: dir, LOOM_BASE_URL: url, LOOM_API_KEY: fakeToken() };
+    const env = hostEnv({
+      PATH: process.env.PATH,
+      HOME: dir,
+      TMPDIR: dir,
+      LOOM_BASE_URL: url,
+      LOOM_API_KEY: fakeToken(),
+    });
     env.LOOM_CONV_SETTLE_MS = "0";
     await stop(env, { session_id: "conv-r1", transcript_path: transcript, cwd: dir });
     await stop(env, { session_id: "conv-r2", last_assistant_message: `use ${secret} here`, cwd: dir });

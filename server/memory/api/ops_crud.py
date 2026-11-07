@@ -194,7 +194,8 @@ memory_apply = Operation(
     handler=handle_memory_apply,
     idempotent=False,
     required_role=Role.WRITER,
-    # A wide write is exactly what an audit wants to see, with its reason.
+    # A wide write is exactly what an audit wants to see: the keys it named and its
+    # reason's hash.
     audit=True,
 )
 

@@ -6434,6 +6434,7 @@ class CodeIndexStatusOutput(TypedDict, total=False):
     scip_commit_py: NotRequired[str]
     scip_producer: NotRequired[str]
     compiler_tiers: NotRequired[list["CodeCompilerTier"]]
+    tier_health: NotRequired[list["CodeTierHealth"]]
     pr_cursor: NotRequired[str]
     commit_coverage: NotRequired[Optional["CodeCommitCoverage"]]
     clone_head: NotRequired[str]
@@ -6477,6 +6478,21 @@ class CodeCompilerTier(TypedDict, total=False):
     primary: NotRequired[bool]
     workers: NotRequired[list[str]]
     note: NotRequired[str]
+
+
+class CodeTierHealth(TypedDict, total=False):
+    "One tier's last recorded outcome on the entry."
+
+    tier: Required[str]
+    state: NotRequired[str]
+    kind: NotRequired[str]
+    error: NotRequired[str]
+    fix: NotRequired[str]
+    failing_since: NotRequired[str]
+    last_failed_at: NotRequired[str]
+    failed_passes: NotRequired[int]
+    last_ok_at: NotRequired[str]
+    lag_commits: NotRequired[int]
 
 
 class CodeWorkerStatus(TypedDict, total=False):
@@ -7007,6 +7023,7 @@ class CodeRepoSummary(TypedDict, total=False):
     scip_lag: NotRequired[int]
     scip_py_lag: NotRequired[int]
     scip_producer: NotRequired[str]
+    tier_health: NotRequired[list["CodeTierHealth"]]
     indexed_at: NotRequired[str]
     last_refresh_at: NotRequired[str]
     counts: NotRequired[dict[str, int]]

@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / "sdk" / "python"))
 sys.path.insert(0, str(ROOT))
 
 from tests.integration._eventually import eventually  # noqa: E402
+from tests.integration._resources import minted_identity  # noqa: E402
 
 # No flaky marker (fake-provider mode): set_from_messages writes to loom.memory
 # synchronously and the fake extractor is deterministic; the memory.list read-back
@@ -29,36 +30,21 @@ from tests.integration._eventually import eventually  # noqa: E402
 # become provider-dependent — restore reruns for that mode if you run it in CI.
 
 
-def _post(url: str, path: str, body: dict, token: str | None = None) -> httpx.Response:
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    with httpx.Client(base_url=url, timeout=8.0) as c:
+def _post(url: str, path: str, body: dict, token: str) -> httpx.Response:
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
+    with httpx.Client(base_url=url, timeout=20.0) as c:
         return c.post(path, json=body, headers=headers)
-
-
-def _signup_or_skip(url: str, name: str) -> dict:
-    body = {
-        "namespace": name,
-        "email": f"{name}@sfm.local",
-        "password": "test-pass-12345",
-        "ttl_days": 1,
-    }
-    r = _post(url, "/v1/auth/self-signup", body)
-    if r.status_code == 404:
-        pytest.skip("LOOM_SELF_SIGNUP=open not set on the running server")
-    assert r.status_code == 200, r.text
-    return r.json()
 
 
 @pytest.mark.asyncio
 async def test_set_from_messages_writes_extracted_facts(
     control_plane_url,
+    mint_test_token,
 ) -> None:
     """A messages payload runs through the fake extractor and lands as
     one or more memory rows. memory.list then surfaces them by key."""
     suffix = uuid.uuid4().hex[:6]
-    me = _signup_or_skip(control_plane_url, f"sfm-{suffix}")
+    me = minted_identity(mint_test_token, f"sfm-{suffix}")
 
     r = _post(
         control_plane_url,
@@ -119,10 +105,11 @@ async def test_set_from_messages_writes_extracted_facts(
 @pytest.mark.asyncio
 async def test_set_from_messages_empty_returns_no_writes(
     control_plane_url,
+    mint_test_token,
 ) -> None:
     """Empty messages list is a 400 (Pydantic validation): min_length=1."""
     suffix = uuid.uuid4().hex[:6]
-    me = _signup_or_skip(control_plane_url, f"sfm-empty-{suffix}")
+    me = minted_identity(mint_test_token, f"sfm-empty-{suffix}")
 
     r = _post(
         control_plane_url,
@@ -141,10 +128,11 @@ async def test_set_from_messages_empty_returns_no_writes(
 @pytest.mark.asyncio
 async def test_set_from_messages_extra_tags_merge(
     control_plane_url,
+    mint_test_token,
 ) -> None:
     """`extra_tags` are unioned with the per-fact extracted tags."""
     suffix = uuid.uuid4().hex[:6]
-    me = _signup_or_skip(control_plane_url, f"sfm-tags-{suffix}")
+    me = minted_identity(mint_test_token, f"sfm-tags-{suffix}")
 
     r = _post(
         control_plane_url,

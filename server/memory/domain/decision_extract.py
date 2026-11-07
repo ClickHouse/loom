@@ -40,11 +40,27 @@ from server.memory.domain.decision_statement import (
 # Not a placeholder: link text `[image tiles](tiles.md)`, a reference link `[image][1]`,
 # a definition `[image]: x.png`, the label of `[the diagram][image]`, a shortcut link
 # `[image tiles]`, text such as `[images are in the appendix]`, or a word `[imagine]`.
+# Alt text and a placeholder stop at the next `[`, a tag at the next `<`, and a target
+# never runs past the next `](`: a scan from every unclosed opener to the end of the text
+# would cost quadratic time.
+# One piece of a target `(...)`: none crosses a `)`, a line end outside a quoted title,
+# or a `](`. A title holding `]` is read piece by piece, its line ends counted with the
+# target's.
+_TARGET_PIECE = r"""(?x:
+    [^)\]\n"']++  # the destination and a title's text
+  | \](?!\()      # a `]` that opens no target
+  | "[^")\]]*+"   # a quoted title, which may span lines
+  | '[^')\]]*+'   # the same, in single quotes
+  | ["']          # a lone quote: `it's.png`, or an unclosed title `"see (a`
+)"""
+# A target: its pieces, with up to three line ends anywhere, as many as CommonMark allows
+# (after `(`, between the destination and the title, before `)`).
+_PAREN_TARGET = rf"\((?:{_TARGET_PIECE})*+(?:\n(?:{_TARGET_PIECE})*+){{0,3}}+\)"
 _IMAGE_MARKUP = re.compile(
-    r"!\[[^\]]*\]\([^)]*\)"
-    r"|!\[[^\]]*\]\[[^\]]*\]"
-    r"|<img\b[^>]*>"
-    r"|(?<!\])\[(?:image|picture)s?(?:[\s_]?\d+|:[^\]]*)?\](?![(\[:])",
+    rf"!\[[^\[\]]*+\]{_PAREN_TARGET}"
+    r"|!\[[^\[\]]*+\]\[[^\]]*\]"
+    r"|<img\b[^<>]*+>"
+    r"|(?<!\])\[(?:image|picture)s?(?:[\s_]?\d+|:[^\[\]]*+)?\](?![(\[:])",
     re.I,
 )
 _LETTER = re.compile(r"[^\W\d_]")
@@ -163,7 +179,7 @@ def no_words(body: str) -> bool:
 # followed by a space, `/` or `>`: `x < 10k and y > 80%` and `Option<A>` are text. Any
 # name, not only inline ones: a badge often sits in a `<p>` or a `<div>`.
 _HTML_TAG = re.compile(r"</?[a-z][a-z0-9-]*(?=[\s/>])[^<>\n]*>")
-_LINK_TARGET = re.compile(r"\]\([^)]*\)|\]\[[^\]]*\]")
+_LINK_TARGET = re.compile(rf"\]{_PAREN_TARGET}|\]\[[^\]]*\]")
 _URL = re.compile(r"https?://\S+")
 # What a link around an image leaves once the image is gone: `[ ]`.
 _EMPTY_BRACKETS = re.compile(r"\[\s*\]")

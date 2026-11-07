@@ -144,6 +144,7 @@ async def decide(
     *,
     actor: str,
     reason: str = "",
+    policy: ProposalPolicy | None = None,
     ch: Any = None,
 ) -> list[DecideResult]:
     """Accept (→ `active`) or reject (→ `rejected`) the proposals under `keys`.
@@ -152,8 +153,9 @@ async def decide(
     Each decided row is a new version carrying every column
     (`build_memory_version_row` over a whole-row read),
     mirrored onto `memory_embeddings` in the same call, with one audit row
-    per decision. An accepted proposal that recorded a contradiction while on
-    trial enters the ordinary conflict flow now (`mark_peers_conflicted`)."""
+    per decision (`policy`: the owner policy that decided, which the row records).
+    An accepted proposal that recorded a contradiction while on trial enters the
+    ordinary conflict flow now (`mark_peers_conflicted`)."""
     import server.memory.store as memory_repo
 
     if ch is None:
@@ -204,17 +206,34 @@ async def decide(
     # Every decided row, `active` included: write_versions_by_ids mirrors only
     # non-active flips, and an accepted proposal's mirror still says proposed.
     await memory_repo.mirror_status_to_embeddings(to_write, ch=ch)
-    await _audit_decisions(org, namespace, decided, decision, actor=actor, reason=reason)
+    await _audit_decisions(
+        org, namespace, decided, decision, actor=actor, reason=reason, policy=policy
+    )
     if decision == "accept":
         await _surface_conflicts(org, decided)
     return out
 
 
 async def _audit_decisions(
-    org: str, namespace: str, rows: list[Any], decision: Decision, *, actor: str, reason: str
+    org: str,
+    namespace: str,
+    rows: list[Any],
+    decision: Decision,
+    *,
+    actor: str,
+    reason: str,
+    policy: ProposalPolicy | None,
 ) -> None:
     from server.observability import audit as _audit
 
+    # A caller's reason is kept on a rejected row (`rejection_reason`), which erasure
+    # reaches; the audit row, which it does not, holds its hash and length. A policy
+    # decision records the policy's mode and thresholds: configuration, not content.
+    why: dict[str, Any] = (
+        {"policy": policy.model_dump()}
+        if policy is not None
+        else {"reason": _audit.digest(reason) if reason else ""}
+    )
     for row in rows:
         await _audit.emit(
             event_type=f"memory.proposal_{decision}",
@@ -225,7 +244,7 @@ async def _audit_decisions(
                 "memory_key": row.memory_key,
                 "memory_id": str(row.memory_id),
                 "content_sha256": str(getattr(row, "content_sha256", "") or ""),
-                "reason": reason[:200],
+                **why,
             },
         )
 
@@ -291,6 +310,7 @@ async def apply_policy(
             verdict,
             actor="process:proposal_policy",
             reason=f"owner policy: {policy.model_dump_json()}",
+            policy=policy,
             ch=ch,
         )
         decided.extend(

@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -134,11 +135,17 @@ def test_manifests_agree_and_marketplace_points_at_the_plugin() -> None:
 def test_claude_hooks_json_still_passes_no_client_argument() -> None:
     """Claude Code stays the default client: its wiring passes no client
     argument, so the scripts fall back to `claude-code`."""
+    # sh runs each command's second line; PowerShell runs the node call on
+    # its fourth: neither names a client.
     for _, cmd in _commands(_hooks(CLAUDE / "hooks" / "hooks.json")):
+        lines = cmd.split("\n")
         assert re.fullmatch(
-            r'sh "\$\{CLAUDE_PLUGIN_ROOT\}/bin/loom-node" "\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[a-z-]+\.mjs" \w+',
-            cmd,
+            r'exec sh "\$\{CLAUDE_PLUGIN_ROOT\}/bin/loom-node" "\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[a-z-]+\.mjs" \w+',
+            lines[1],
         ), cmd
+        assert re.search(r'node "\$env:CLAUDE_PLUGIN_ROOT/hooks/[a-z-]+\.mjs" \w+ \}', lines[3]), (
+            cmd
+        )
 
 
 # ---- loom install --client codex -------------------------------------------
@@ -215,17 +222,32 @@ def test_codex_plugin_bundles_its_mcp_entry() -> None:
     assert entry["type"] == "http"
     defaults = json.loads((CODEX / "plugin-defaults.json").read_text())
     assert entry["url"] == f"{defaults['server_url']}/mcp?toolset=core,coding,tracker,tasks"
-    # Codex runs the helper through `sh -c` in the session's cwd with a cleared
-    # environment (HOME kept, no PLUGIN_ROOT/CODEX_HOME), so the command finds
-    # the newest installed copy of this plugin's own launcher under $HOME and
-    # runs the helper beside it.
+    # Codex runs the helper through `sh -c` on Unix and `cmd.exe /C` on
+    # Windows, in the session's cwd with a cleared environment (no
+    # PLUGIN_ROOT/CODEX_HOME). `node -e`, which both run, loads the newest
+    # installed helper under the home directory; under sh, the newest
+    # launcher under $HOME is the fallback when that step fails (no node
+    # on PATH, one older than 18, or no installed copy).
     helper = entry["http_headers_helper"]
+    assert helper.startswith('node -e "')
+    assert "'.codex','plugins','cache','loom','loom'" in helper
     assert '"$HOME"/.codex/plugins/cache/loom/loom/*/bin/loom-node' in helper
     assert '"${l%/*}/loom-mcp-headers.mjs"' in helper
     assert "sort -V | tail -1" in helper
     assert "bearer_token_env_var" not in entry  # the token comes from ~/.loom/config.json
     assert (CODEX / "bin" / "loom-mcp-headers.mjs").is_file()
     assert (CODEX / "bin" / "loom-node").is_file()
+
+
+def test_codex_page_override_carries_the_shipped_helper() -> None:
+    """The config.toml override on the Codex page replaces the plugin's entry
+    whole, so its helper must be the one the plugin ships."""
+    page = (ROOT / "docs" / "features" / "integrations" / "codex.md").read_text()
+    block = re.search(r"```toml\n(\[mcp_servers\.loom\]\n.*?)```", page, re.S)
+    assert block, "codex.md has no [mcp_servers.loom] override"
+    override = tomllib.loads(block.group(1))["mcp_servers"]["loom"]
+    entry = json.loads((CODEX / ".mcp.json").read_text())["mcpServers"]["loom"]
+    assert override["http_headers_helper"] == entry["http_headers_helper"]
 
 
 def test_both_plugins_ship_one_version() -> None:
@@ -302,3 +324,17 @@ def test_listing_links_into_the_repository_resolve() -> None:
     assert links
     for path in links:
         assert (ROOT / path).is_file(), path
+
+
+def test_skills_find_the_codex_plugin_root_under_the_loom_marketplace() -> None:
+    """A glob over every marketplace sorts by marketplace name first, so
+    `cache/zz-old/loom/0.8.0/` would beat `cache/loom/loom/0.9.30/`; the skills
+    read versions of this marketplace's copy only, as `.mcp.json` does."""
+    globs = [
+        (path.relative_to(ROOT), glob)
+        for path in sorted((CLAUDE / "skills").rglob("SKILL.md"))
+        for glob in re.findall(r"\.codex/plugins/cache/\S*", path.read_text())
+    ]
+    assert globs, "no skill locates the plugin under Codex"
+    for path, glob in globs:
+        assert glob.startswith(".codex/plugins/cache/loom/loom/*/"), f"{path}: {glob}"

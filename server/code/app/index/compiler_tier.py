@@ -20,7 +20,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from server.code.app.index.entry_lock import EntryLockHeld, check_held, entry_lock
+from server.code.app.index import tier_health
+from server.code.app.index.entry_lock import EntryLockHeld, EntryLockLost, check_held, entry_lock
 from server.code.app.index.gitrepo import is_local_remote, upload_pack_args
 from server.code.app.index.producer_inference import worker_owns
 from server.code.app.index.sandbox import run_job, sandbox_available
@@ -45,6 +46,11 @@ class BaseUnknown(RuntimeError):
     """The window's base commit is gone: the next run must index in full."""
 
 
+class TierDegraded(RuntimeError):
+    """The entry's run finished and moved its watermark, but part of it failed (a Go
+    module that would not build): the tier's record says failing, the pass is no error."""
+
+
 class TierResult(Protocol):
     """What every tier's pass result carries (its own dataclass adds counters)."""
 
@@ -59,12 +65,13 @@ async def run_tier[R: TierResult](
     producer: str,
     watermark: str,
     result: R,
-    run_repo: Callable[[CodeRepo, RepoConfig, R], Awaitable[None]],
+    run_repo: Callable[[CodeRepo, RepoConfig, R], Awaitable[bool | None]],
     *,
     entry_locked: bool = False,
     runs_repo_code: bool = False,
     gc_checkout: bool = False,
     extras: Callable[[R], dict[str, Any]] | None = None,
+    health_tier: str = "",
 ) -> R:
     """One pass of a compiler tier over every configured entry it owns.
 
@@ -78,16 +85,30 @@ async def run_tier[R: TierResult](
     entry with a network remote gets no tier at all (`unsandboxed_skip`). With
     `gc_checkout` each entry's checkout is repacked when due (`gc_if_due`) after its
     work, under the entry lock where the tier takes it; only this tier's worker moves
-    that tree."""
+    that tree. Each entry's outcome is its `health_tier` record (default: `producer`;
+    `tier_health.record`): a failure, or a success unless `run_repo` returned False (it
+    attempted nothing: the entry was not due) or added a skip. An entry the tier does
+    not own drops its record (`tier_health.forget`)."""
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
 
+    tier = health_tier or producer
+    # What an entry this tier does not own drops: the weekly C++ full run goes with it.
+    not_run = (tier, "clang_full") if tier == "clang" else (tier,)
+
     async def run_entry(repo: CodeRepo, cfg: RepoConfig) -> None:
         # The watermark reset is one of the entry's writes: under its lock too.
+        skips = len(result.skipped)
         try:
-            await run_repo(repo, cfg, result)
+            ran = await run_repo(repo, cfg, result) is not False  # False: leave the record
         except BaseUnknown as e:
+            # Not a failure to report: the next run indexes in full.
             await restart_full(repo, cfg, watermark, e, result.errors)
+        except TierDegraded as e:
+            await tier_health.record(repo, cfg.org, cfg.namespace, tier, e)
+        else:
+            if ran and len(result.skipped) == skips:
+                await tier_health.record(repo, cfg.org, cfg.namespace, tier)
         if gc_checkout:
             await _gc_checkout(cfg, producer)
 
@@ -97,6 +118,7 @@ async def run_tier[R: TierResult](
         repo = CodeRepo()
         for cfg in configured_repos():
             if not await worker_owns(repo, cfg, producer):
+                await tier_health.forget(repo, cfg.org, cfg.namespace, not_run)
                 continue
             if skip := unsandboxed_skip(cfg, worker, runs_repo_code=runs_repo_code):
                 result.skipped.append(f"{cfg.namespace}: {skip}")
@@ -118,6 +140,8 @@ async def run_tier[R: TierResult](
                 logger.exception("%s: %s failed", worker, cfg.namespace)
                 result.errors.append(f"{cfg.namespace}: {type(e).__name__}: {e}")
                 pass_context.note_failure(e, cfg.namespace)
+                if not isinstance(e, EntryLockLost):  # the entry is another host's now
+                    await tier_health.record(repo, cfg.org, cfg.namespace, tier, e)
         log_pass_errors(logger, worker, result.errors)
         rec.outcome = tier_outcome(result, **(extras(result) if extras else {}))
     return result

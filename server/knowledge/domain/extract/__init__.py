@@ -7,7 +7,11 @@ parses no original itself (docs/architecture/document-extraction.md).
 
 from server.core.document_formats import KNOWN_FORMATS, format_of
 from server.knowledge.domain.extract.artifact import SCHEMA_VERSION, Artifact
-from server.knowledge.domain.extract.validate import InvalidArtifact, parse_artifact
+from server.knowledge.domain.extract.validate import (
+    InvalidArtifact,
+    parse_artifact,
+    refuse_past_source,
+)
 
 __all__ = [
     "KNOWN_FORMATS",
@@ -16,4 +20,5 @@ __all__ = [
     "InvalidArtifact",
     "format_of",
     "parse_artifact",
+    "refuse_past_source",
 ]

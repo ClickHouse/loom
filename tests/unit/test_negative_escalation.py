@@ -1,11 +1,14 @@
 """Unit: negative-outcome escalation in handle_memory_outcome.
 
 Below the threshold, a negative is counted but the memory is untouched. At the
-threshold, it's auto-quarantined: a `rejected` version row on loom.memory and
-on its vector row, no in-place UPDATE. Uses a stub CH; the threshold is a
-settings knob (default 0 = off)."""
+threshold, an unlocked memory is auto-quarantined: a `rejected` version row on
+loom.memory and on its vector row, no in-place UPDATE. A locked one, or a locked copy
+in another session, is left as it is. Uses a stub CH; the threshold is a settings
+knob (default 0 = off)."""
 
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,8 +19,6 @@ from server.memory.api.models_temporal import MemoryOutcomeInput
 @pytest.fixture(autouse=True)
 def _row(monkeypatch):
     """The outcome resolves its row before it counts anything."""
-    from types import SimpleNamespace
-
     import server.memory.store as memory_repo
 
     async def get_by_id(memory_id, **kw):
@@ -43,11 +44,23 @@ class _StubCH:
 
 
 class _QuarantineCH(_StubCH):
-    """Also answers the reject's reads: the identity's live ids and its vector row."""
+    """A count of 3 rejections, the named row's identity, and the reject's reads: the
+    identity's live ids and their vector rows."""
+
+    def __init__(self, ids):
+        super().__init__([])
+        self.ids = ids
+
+    async def query_one(self, sql, params=None):
+        if "event_type = 'rejection'" in sql:
+            return {"n": 3}
+        if "FROM loom.memory FINAL" in sql:
+            return {"agent": "a", "user_id": "-", "memory_key": "k"}
+        return {"evidence_count": 0}
 
     async def query_all(self, sql, params=None):
         if "FROM loom.memory FINAL" in sql:
-            return [{"memory_id": "mid-1"}]
+            return [{"memory_id": mid} for mid in self.ids]
         if "FROM loom.memory_embeddings FINAL" in sql:
             p = params or {}
             return [
@@ -71,53 +84,63 @@ class _QuarantineCH(_StubCH):
         return []
 
 
-async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
-    from types import SimpleNamespace
-
-    from server.memory.store import lifecycle
-    from server.settings import settings
-
-    monkeypatch.setattr(settings, "memory_negative_demote_threshold", 3)
-    ch = _QuarantineCH(
-        [
-            {"n": 3},  # rejection count reaches threshold
-            {"agent": "a", "user_id": "-", "memory_key": "k"},  # identity lookup
-            {"evidence_count": 0},  # evidence readback
-        ]
-    )
-    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
-    head = SimpleNamespace(
+def _session_row(session_id, lock_mode=""):
+    return SimpleNamespace(
         org="o",
         namespace="n",
         agent="a",
         user_id="-",
-        session_id="s",
+        session_id=session_id,
         memory_key="k",
+        memory_id=f"mid-{session_id}",
         status="active",
         version=1,
         invalid_at=None,
+        lock_mode=lock_mode,
+        lock_until=None,
     )
 
+
+def _wire_quarantine(monkeypatch, heads, outcome_reads=None):
+    """`heads`: the live rows of the identity by memory id, as the reject reads them;
+    `outcome_reads` what the outcome read of them first, when that differs. The
+    threshold is 3, which the count reaches."""
+    import server.memory.store as memory_repo
+    from server.memory.store import lifecycle
+    from server.settings import settings
+
+    ch = _QuarantineCH(ids=list(heads))
+    first = outcome_reads or heads
+
     async def get_by_id(memory_id, **kw):
-        return head
+        return heads[memory_id]
+
+    async def get_first(memory_id, **kw):
+        return first[memory_id]
 
     def build(row, **overrides):
         keys = ("org", "namespace", "agent", "user_id", "session_id", "memory_key", "status")
         return {**{k: getattr(row, k) for k in keys}, "invalid_at": None, **overrides}
 
+    monkeypatch.setattr(settings, "memory_negative_demote_threshold", 3)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(memory_repo, "get_by_id", get_first)
     monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
     monkeypatch.setattr(lifecycle, "build_memory_version_row", build)
     monkeypatch.setattr("server.memory.store.inserts.check_memory_rows", lambda rows: None)
+    return ch
 
-    out = await ops.handle_memory_outcome(
-        MemoryOutcomeInput(
-            org="o",
-            namespace="n",
-            memory_id="mid-1",
-            outcome="negative",
-            weight=1,
-        )
+
+def _negative():
+    return MemoryOutcomeInput(
+        org="o", namespace="n", memory_id="mid-s1", outcome="negative", weight=1
     )
+
+
+async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
+    ch = _wire_quarantine(monkeypatch, {"mid-s1": _session_row("s1")})
+
+    out = await ops.handle_memory_outcome(_negative())
     assert out.quarantined is True
     written = {t: rows for t, rows in ch.inserts if t in ("loom.memory", "loom.memory_embeddings")}
     (mem,) = written["loom.memory"]
@@ -127,6 +150,57 @@ async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
     assert emb["status"] == "rejected" and emb["memory_key"] == "k"
     assert emb["version"] == mem["version"]
     assert ch.executes == []  # no in-place UPDATE
+
+
+@pytest.mark.parametrize("mode", ["read_only", "no_delete"])
+async def test_a_locked_memory_is_not_quarantined(monkeypatch, mode):
+    # Its unlocked copy in another session stays too.
+    heads = {"mid-s1": _session_row("s1", lock_mode=mode), "mid-s2": _session_row("s2")}
+    ch = _wire_quarantine(monkeypatch, heads)
+
+    out = await ops.handle_memory_outcome(_negative())
+    assert out.recorded is True and out.quarantined is False
+    assert [t for t, _ in ch.inserts] == ["loom.memory_usage_events"]
+
+
+async def test_a_quarantine_leaves_a_locked_copy_in_another_session(monkeypatch):
+    heads = {"mid-s1": _session_row("s1"), "mid-s2": _session_row("s2", lock_mode="read_only")}
+    ch = _wire_quarantine(monkeypatch, heads)
+
+    out = await ops.handle_memory_outcome(_negative())
+    assert out.quarantined is True
+    written = {t: rows for t, rows in ch.inserts if t in ("loom.memory", "loom.memory_embeddings")}
+    for table in ("loom.memory", "loom.memory_embeddings"):
+        assert [(r["session_id"], r["status"]) for r in written[table]] == [("s1", "rejected")], (
+            table
+        )
+
+
+async def test_a_lock_taken_after_the_outcome_read_still_holds(monkeypatch):
+    # Unlocked when the outcome read it, locked by the time the reject reads it; its
+    # unlocked copy in another session is rejected, but the named memory was not.
+    ch = _wire_quarantine(
+        monkeypatch,
+        {"mid-s1": _session_row("s1", lock_mode="read_only"), "mid-s2": _session_row("s2")},
+        outcome_reads={"mid-s1": _session_row("s1")},
+    )
+
+    out = await ops.handle_memory_outcome(_negative())
+    assert out.quarantined is False
+    (rows,) = [rows for t, rows in ch.inserts if t == "loom.memory"]
+    assert [(r["session_id"], r["status"]) for r in rows] == [("s2", "rejected")]
+
+
+async def test_a_memory_deleted_after_the_outcome_read_is_not_quarantined(monkeypatch):
+    # Gone by the time the reject reads the identity's rows; its copy is rejected.
+    ch = _wire_quarantine(
+        monkeypatch, {"mid-s2": _session_row("s2")}, outcome_reads={"mid-s1": _session_row("s1")}
+    )
+
+    out = await ops.handle_memory_outcome(_negative())
+    assert out.quarantined is False
+    (rows,) = [rows for t, rows in ch.inserts if t == "loom.memory"]
+    assert [r["session_id"] for r in rows] == ["s2"]
 
 
 async def test_negative_below_threshold_does_not_quarantine(monkeypatch):
@@ -141,15 +215,7 @@ async def test_negative_below_threshold_does_not_quarantine(monkeypatch):
     )
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
 
-    out = await ops.handle_memory_outcome(
-        MemoryOutcomeInput(
-            org="o",
-            namespace="n",
-            memory_id="mid-1",
-            outcome="negative",
-            weight=1,
-        )
-    )
+    out = await ops.handle_memory_outcome(_negative())
     assert out.quarantined is False
     assert ch.executes == []
 
@@ -161,14 +227,6 @@ async def test_threshold_off_by_default_skips_counting(monkeypatch):
     ch = _StubCH([{"evidence_count": 0}])  # only the evidence readback
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
 
-    out = await ops.handle_memory_outcome(
-        MemoryOutcomeInput(
-            org="o",
-            namespace="n",
-            memory_id="mid-1",
-            outcome="negative",
-            weight=1,
-        )
-    )
+    out = await ops.handle_memory_outcome(_negative())
     assert out.quarantined is False
     assert ch.inserts == []  # no rejection event recorded when disabled

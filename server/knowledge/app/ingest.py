@@ -29,6 +29,7 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeIngestStatusOutput,
 )
 from server.knowledge.app.extractors import format_availability
+from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.store import ingestions
 from server.settings import settings
 
@@ -149,7 +150,7 @@ async def handle_knowledge_ingest_cancel(
         job = await ingestions.get_ingestion(input.org, input.namespace, job_id) if job_id else None
         if job is None:
             return KnowledgeIngestCancelOutput(found=False)
-        if job["state"] not in ingestions.OPEN_STATES:
+        if job["state"] not in OPEN_STATES:
             return KnowledgeIngestCancelOutput(found=True, state=job["state"], cancelled=False)
         job_id = job["ingestion_id"]
         author = authorship_of(agent="", session_id="", source_class=None)

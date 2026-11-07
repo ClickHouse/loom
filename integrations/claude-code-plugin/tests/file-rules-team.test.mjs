@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { forFileBody, lookupFileContext, teamRulesLine, teamRulesNamespace } from "../lib/file-context.mjs";
 import { cachePathFor, primaryNamespaceOf, readCache, resolveIndexedRepo } from "../lib/repo-scope.mjs";
+import { hostEnv } from "./host-env.mjs";
 
 const scope = { org: "clickhouse", namespace: "jdoe-ns", tags: ["project:ClickHouse", "repo:gh-1"] };
 const entry = {
@@ -162,7 +163,7 @@ async function runFileContextHook(rendered) {
     const out = await new Promise((resolve) => {
       const child = spawn(process.execPath, [hook], {
         cwd: dir,
-        env: {
+        env: hostEnv({
           PATH: process.env.PATH,
           HOME: tmp,
           TMPDIR: tmp,
@@ -170,7 +171,7 @@ async function runFileContextHook(rendered) {
           LOOM_API_KEY: "t",
           LOOM_ORG: "o",
           LOOM_NAMESPACE: "me",
-        },
+        }),
       });
       let stdout = "";
       child.stdout.on("data", (c) => (stdout += c));

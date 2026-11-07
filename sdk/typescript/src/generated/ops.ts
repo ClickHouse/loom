@@ -985,6 +985,19 @@ export interface CodeCompilerTier {
   note?: string;
 }
 
+export interface CodeTierHealth {
+  tier: string;
+  state?: string;
+  kind?: string;
+  error?: string;
+  fix?: string;
+  failing_since?: string;
+  last_failed_at?: string;
+  failed_passes?: number;
+  last_ok_at?: string;
+  lag_commits?: number;
+}
+
 export interface CodeWorkerStatus {
   enabled?: boolean;
   interval_seconds?: number;
@@ -1009,6 +1022,7 @@ export interface CodeIndexStatusOutput {
   scip_commit_py?: string;
   scip_producer?: string;
   compiler_tiers?: CodeCompilerTier[];
+  tier_health?: CodeTierHealth[];
   pr_cursor?: string;
   commit_coverage?: CodeCommitCoverage | null;
   clone_head?: string;
@@ -1353,6 +1367,7 @@ export interface CodeRepoSummary {
   scip_lag?: number;
   scip_py_lag?: number;
   scip_producer?: string;
+  tier_health?: CodeTierHealth[];
   indexed_at?: string;
   last_refresh_at?: string;
   counts?: Record<string, number>;
@@ -4900,7 +4915,7 @@ export interface MemoryCopyToInput {
   target_key?: string | null;
   /** Attribution in the target; '-' reads as namespace-owned. */
   target_agent?: string;
-  /** Human-readable reason, recorded on the audit row. */
+  /** Human-readable reason; the audit row keeps only its SHA-256 and length. */
   rationale?: string;
 }
 
@@ -4922,7 +4937,7 @@ export interface MemoryCrossPromoteInput {
   target_key?: string | null;
   /** Agent identity to attribute the target row to. Defaults to '-' so the row reads as namespace-owned, not bound to any single agent in the target. */
   target_agent?: string;
-  /** Human-readable reason. Recorded on the audit row so future operators can answer 'why did this lesson land here?' */
+  /** Human-readable reason; the audit row keeps only its SHA-256 and length. */
   rationale?: string;
 }
 

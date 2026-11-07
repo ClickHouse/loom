@@ -21,6 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   git,
+  gitToplevel,
   postBounded,
   readStdinJson,
   DIFF_ARGS,
@@ -64,7 +65,7 @@ async function main() {
   }
 
   const cwd = payload.cwd || process.cwd();
-  const root = git(["rev-parse", "--show-toplevel"], cwd);
+  const root = gitToplevel(cwd);
   if (!root) {
     scheduleExit(0);
     return;

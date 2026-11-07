@@ -1700,3 +1700,182 @@ def test_a_metadata_edit_overtaken_while_it_waited_for_the_claim_is_refused(
     with pytest.raises(PreconditionFailedError):
         asyncio.run(handle_knowledge_update_metadata(edit))
     assert world.documents[-1]["title"] == "Other" and world.catalog == catalog
+
+
+# ---- faults: each one leaves the earlier revision serving ----------------------
+#
+# Revision 1 is published, then revision 2 meets one fault. The job ends in a
+# typed state (with one attempt allowed, a transient fault ends
+# `retries_exhausted`; the retry itself is tested above) and revision 1's
+# document row and chunks are the ones served. The table in
+# docs/architecture/document-extraction.md ("Faults") names each case.
+
+
+def _answer(status: int, body: bytes, **headers: str) -> Any:
+    """An extractor's answer as the network gives one: unread, so the client
+    reads it as a stream (httpx reads a response built from `content` at once)."""
+    import httpx
+
+    return httpx.Response(status, headers=headers, stream=httpx.ByteStream(body))
+
+
+def _extract_answers(monkeypatch: pytest.MonkeyPatch, answer: Any, *, slow_s: float = 0.0) -> None:
+    """The extractor's capabilities as the reference service declares them, and
+    its /v1/extract answered by `answer(reference_response) -> httpx.Response`."""
+    import httpx
+
+    from server.knowledge.app import extractors
+
+    reference = extractors.transport
+    assert reference is not None
+
+    class Answering(httpx.AsyncBaseTransport):
+        # Not httpx.MockTransport: that reads each response, and the client
+        # reads an extractor's answer as a raw stream.
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            response = await reference.handle_async_request(request)
+            if not request.url.path.endswith("/v1/extract"):
+                return response
+            await response.aread()
+            if slow_s:
+                await asyncio.sleep(slow_s)
+            return answer(response)
+
+    monkeypatch.setattr(extractors, "transport", Answering())
+
+
+def _refused(code: str) -> Any:
+    body = json.dumps({"error": {"code": code, "message": f"refused: {code}"}}).encode()
+    return lambda _: _answer(422, body)
+
+
+def _artifact_edited(edit: Any) -> Any:
+    import httpx
+
+    def answer(response: httpx.Response) -> httpx.Response:
+        artifact = response.json()
+        edit(artifact)
+        return _answer(200, json.dumps(artifact).encode())
+
+    return answer
+
+
+def _second_block_parent(artifact: dict[str, Any]) -> None:
+    artifact["blocks"][1]["parent"] = "no-such-block"
+
+
+def _first_block_past_the_source(artifact: dict[str, Any]) -> None:
+    artifact["blocks"][0]["locator"] = {"line_start": 1, "line_end": 10_000}
+
+
+def _gzipped(response: Any) -> Any:
+    import gzip
+
+    return _answer(200, gzip.compress(response.content), **{"Content-Encoding": "gzip"})
+
+
+def _fault(name: str, w: World, monkeypatch: pytest.MonkeyPatch, settings_override: Any) -> None:
+    import httpx
+
+    from server.core.errors import EmbedTimeoutError
+    from server.core.object_store import ObjectStoreError
+    from server.knowledge.app import extractors
+    from server.knowledge.store import blobs
+
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("unreachable", request=request)
+
+    async def bucket_fails(*a: Any, **k: Any) -> bytes:
+        raise ObjectStoreError("get failed: ServiceUnavailable", operation="read")
+
+    async def bucket_refuses_put(*a: Any, **k: Any) -> str:
+        raise ObjectStoreError("put failed: ServiceUnavailable", operation="put")
+
+    if name == "extractor down":
+        monkeypatch.setattr(extractors, "transport", httpx.MockTransport(unreachable))
+    elif name == "extractor past the timeout":
+        settings_override(document_extractor_timeout_s=0.2)
+        _extract_answers(monkeypatch, lambda r: _answer(200, r.content), slow_s=1.0)
+    elif name == "service timed the source out":
+        _extract_answers(monkeypatch, _refused("timeout"))
+    elif name == "service has no parser for the format":
+        _extract_answers(monkeypatch, _refused("format_unavailable"))
+    elif name == "artifact over the bound":
+        settings_override(document_extractor_max_artifact_bytes=1024)
+        _extract_answers(monkeypatch, lambda _: _answer(200, b"{" + b" " * 4096))
+    elif name == "artifact not JSON":
+        _extract_answers(monkeypatch, lambda _: _answer(200, b"<html>proxy</html>"))
+    elif name == "artifact out of contract":
+        _extract_answers(monkeypatch, _artifact_edited(lambda a: a.update(schema_version=99)))
+    elif name == "block under a missing parent":
+        _extract_answers(monkeypatch, _artifact_edited(_second_block_parent))
+    elif name == "locator past the source":
+        _extract_answers(monkeypatch, _artifact_edited(_first_block_past_the_source))
+    elif name == "compressed answer":
+        _extract_answers(monkeypatch, _gzipped)
+    elif name == "no extractor configured":
+        settings_override(document_extractor_url="")
+    elif name == "bucket fails the original's read":
+        monkeypatch.setattr(blobs, "read", bucket_fails)
+    elif name == "bucket refuses the artifact's write":
+        monkeypatch.setattr(blobs, "put", bucket_refuses_put)
+    elif name == "document row refused after the chunks":
+        w.fail_document = ValueError("the document row is refused")
+    elif name == "embedder down":
+        w.fail_embed = BackendUnavailableError("provider down", operation="embed")
+    elif name == "embedder past its deadline":
+        w.fail_embed = EmbedTimeoutError("embedding took past its deadline")
+    elif name == "embedder defect":
+        w.fail_embed = ValueError("the provider answered 3 vectors for 4 inputs")
+    else:
+        raise AssertionError(name)
+
+
+FAULTS = [
+    ("extractor down", "retries_exhausted"),
+    ("extractor past the timeout", "retries_exhausted"),
+    ("service timed the source out", "timeout"),
+    ("service has no parser for the format", "format_unavailable"),
+    ("artifact over the bound", "resource_limit"),
+    ("artifact not JSON", "invalid_artifact"),
+    ("artifact out of contract", "invalid_artifact"),
+    ("block under a missing parent", "invalid_artifact"),
+    ("locator past the source", "invalid_artifact"),
+    ("compressed answer", "retries_exhausted"),
+    ("no extractor configured", "format_unavailable"),
+    ("bucket fails the original's read", "retries_exhausted"),
+    ("bucket refuses the artifact's write", "retries_exhausted"),
+    ("embedder down", "retries_exhausted"),
+    ("embedder past its deadline", "retries_exhausted"),
+    ("embedder defect", "internal"),
+    ("document row refused after the chunks", "internal"),
+]
+
+
+@pytest.mark.parametrize(("fault", "code"), FAULTS, ids=[f for f, _ in FAULTS])
+def test_a_fault_on_the_next_revision_fails_typed_and_the_earlier_one_keeps_serving(
+    world: World,
+    monkeypatch: pytest.MonkeyPatch,
+    settings_override: Any,
+    fault: str,
+    code: str,
+) -> None:
+    assert _run(world, _ingest(world, _upload(world))) == "ready"
+    assert len(world.documents) == 1
+    first = dict(world.documents[0])  # a copy: a change made to the row in place shows
+    served = [(c["doc_version"], c["chunk_idx"]) for c in world.chunks]
+    settings_override(knowledge_ingest_max_attempts=1)
+    _fault(fault, world, monkeypatch, settings_override)
+    job_id = _ingest(world, _upload(world, SQL + b"SELECT 2;\n"))
+    assert _run(world, job_id) == "failed"
+    job = world.job(job_id)
+    assert job is not None and (job["state"], job["error_code"]) == ("failed", code)
+    assert job["error_message"], "a failed job says why"
+    # Revision 1 is the live row, and only its chunks are served.
+    assert world.documents == [first]
+    live = [
+        (c["doc_version"], c["chunk_idx"])
+        for c in world.chunks
+        if c["doc_version"] not in world.dead
+    ]
+    assert live == served

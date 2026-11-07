@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { cachePathFor } from "../lib/repo-scope.mjs";
 import { batchKind } from "../lib/shunt-ledger.mjs";
 import { sessionStatePath, tmpStatePath } from "../lib/tmp-state.mjs";
+import { hostEnv } from "./host-env.mjs";
 
 // The hook's per-user decision log.
 const logPath = (tmp) =>
@@ -66,7 +67,7 @@ function seed(root, { asOf = FAR_BEHIND } = {}) {
 function runHook(payload, { tmp, url = "http://127.0.0.1:9", env = {} }) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [HOOK, "PreToolUse"], {
-      env: {
+      env: hostEnv({
         PATH: process.env.PATH,
         HOME: tmp,
         TMPDIR: tmp,
@@ -74,7 +75,7 @@ function runHook(payload, { tmp, url = "http://127.0.0.1:9", env = {} }) {
         LOOM_API_KEY: "t",
         LOOM_SHUNT_REPORT: "off",
         ...env,
-      },
+      }),
       stdio: ["pipe", "pipe", "ignore"],
     });
     let out = "";
@@ -249,7 +250,9 @@ test("a chained Bash read is judged segment by segment; the first deny wins", as
   const { dir } = checkout({ "src/a.cpp": BIG, "src/small.cpp": "int x;\n" });
   const tmp = seed(dir);
   const bash = (command) => ({ tool_name: "Bash", tool_input: { command }, cwd: dir, session_id: "e2e" });
-  const r = await runHook(bash(`cd ${dir}; wc -l src/a.cpp; cat src/small.cpp; cat src/a.cpp`), { tmp });
+  // As a Git Bash command names it on Windows: forward slashes.
+  const cdDir = dir.replace(/\\/g, "/");
+  const r = await runHook(bash(`cd ${cdDir}; wc -l src/a.cpp; cat src/small.cpp; cat src/a.cpp`), { tmp });
   assert.match(r.deny, /^loom-code-shunt: src\/a\.cpp is 900 lines.*`cat` of a whole file is/);
   const lines = r.log.trim().split("\n");
   assert.equal(lines.length, 2, "the small read passed and was counted, the big one denied");

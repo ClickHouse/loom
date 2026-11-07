@@ -13,7 +13,7 @@ primitive, not a compliance certification.
 
 | Source                                                                | `event_type`                                                                                                                                                                                                      | `subject` holds                                                                                                                                                                                                                                                                                                                                                                                              |
 | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Any operation declared `audit=True`                                   | the op name (`memory.delete`, `grants.create`)                                                                                                                                                                    | the op's `audit_subject` when it declares one (no credential, or a hash for text an erasure must reach), else its validated input body, as JSON                                                                                                                                                                                                                                                              |
+| Any operation declared `audit=True`                                   | the op name (`memory.delete`, `grants.create`)                                                                                                                                                                    | the op's `audit_subject` when it declares one (no credential, or a hash for text an erasure must reach), else its validated input with every non-naming text value hashed, as JSON                                                                                                                                                                                                                           |
 | `memory.set` (point writes)                                           | `memory.set`                                                                                                                                                                                                      | key, memory id, `content_sha256`, `source_class`, verdict, `pinned`. Never the value                                                                                                                                                                                                                                                                                                                         |
 | `memory.update`, `memory.update_by_id`                                | the op name                                                                                                                                                                                                       | key, memory id, `content_sha256`, `source_class`, version, and the conflict check's verdict before post-write marking (`duplicate` for a version written as one, empty when the revised row is not embedded: a type that is not, or a `high` value). Never the value                                                                                                                                         |
 | `memory.bulk_set`                                                     | `memory.bulk_set`                                                                                                                                                                                                 | one hash-only row per write                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -35,11 +35,27 @@ The transport writes the row after the handler succeeds (`emit_op_audit` in
 insert is logged and loses the row; the operation still succeeds.
 
 For an `audit=True` op the subject is its `audit_subject` when it declares one, else the
-input body. An op whose input carries a credential (a tracker source's password, a
-repository's access token) declares one that leaves it out, and an op whose input carries
-text an erasure must reach records a hash. Most audited ops are administrative (grants,
-namespaces, blacklist, code repositories, erasure) and take identifiers; point memory
-writes use the hash-only shape. Grant `loom.audit_log` like the data it describes.
+validated input as `audit.input_subject` shapes it. Fields that name what the call acted
+on or who acted (the identity fields, the principals `subject`, `actor`, `grantee`,
+`owner_email`, `requester`, `approver` and `decision_maker`, `version`, and names ending
+in an id, key, URI, name, org, agent, namespace or `_by` suffix) and fields typed as a
+number, a boolean, a date or time, a Literal or an Enum stay as sent; a field whose name
+marks a credential (`audit.is_credential` in `server/observability/audit.py`) is hashed
+whatever its suffix. A field holding one nested model follows the same rule, and a list of
+models is hashed whole. The principals and the `_by` fields kept as sent are personal data
+that an erasure does not remove from `loom.audit_log`. Every other value (a memory value,
+a decision's reasoning, a reason, a record's fields, the rows of a restored snapshot) is
+stored as `{"sha256", "chars"}`, its SHA-256 and length (the hash a memory's
+`content_sha256` would carry, so a moved value's matches it), since erasure does not reach
+`loom.audit_log`. Three rows a handler writes itself store text in that shape under the
+field's name: `memory.cross_promote`'s and `memory.copy_to`'s `rationale`,
+`memory.proposal_accept`'s and `memory.proposal_reject`'s `reason` (a decision the owner's
+policy makes records the policy's mode and thresholds instead), and
+`triple.follows_row_supersession`'s `closed`, whose actor is the writing principal or
+`process:loom`. A hash of a short value can be recovered by guessing; the rule keeps long
+text out of the trail, not every word. An op whose input carries a credential (a tracker
+source's password, a repository's access token) declares an `audit_subject` that leaves it
+out. Grant `loom.audit_log` like the data it describes.
 
 ## The row
 

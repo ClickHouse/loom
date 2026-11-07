@@ -1389,10 +1389,17 @@ def test_merges_after_a_later_part_of_the_sheet_still_count_a_cut(
     assert [f.unit for f in a.coverage.failed] == ["S merges"]
 
 
+def test_commas_in_a_late_quoted_row_leave_the_semicolon_delimiter() -> None:
+    head = "id;name;city\n" + "".join(f"{i};n{i};c{i}\n" for i in range(600))  # about 8 KB
+    a = extract((head + '700;"a, b";"c, d"\n').encode(), "late.csv")
+    rows = a.tables[0].rows
+    assert len(rows) == 601 and rows[-1] == (700, "a, b", "c, d")
+
+
 @pytest.mark.parametrize("start", [',"a', '"a,', ',"', "'a;"])
 def test_the_delimiter_is_sniffed_in_bounded_time(start: str) -> None:
     data = (start * (70_000 // len(start)) + "\n1\n").encode()
-    _within(5.0, lambda: extract(data, "s.csv"))
+    _within(1.0, lambda: extract(data, "s.csv"))
 
 
 def test_shared_strings_past_their_bound_stop_being_read_and_the_sheets_are_read(
