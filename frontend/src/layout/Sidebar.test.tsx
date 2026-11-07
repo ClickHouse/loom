@@ -208,10 +208,7 @@ describe("Sidebar admin drawer", () => {
   // An agent's proposal waiting for a decision lists the Review queue in the drawer.
   it("shows the Review queue when a proposal waits", async () => {
     sessionStorage.clear();
-    vi.mocked(listProposals).mockResolvedValueOnce({
-      proposals: [{ memory_key: "k", memory_id: "m1", value_preview: "a proposed fact" }],
-      total: 2,
-    });
+    vi.mocked(listProposals).mockResolvedValueOnce({ proposals: [], total: 2 });
     seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
     useStore.setState({ view: "admin:health" });
     render(<Sidebar />);

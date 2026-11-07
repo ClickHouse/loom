@@ -353,8 +353,8 @@ async def test_the_listing_offers_only_the_row_a_decision_takes(
 async def test_proposals_grade_only_the_rows_they_can_return(
     monkeypatch: pytest.MonkeyPatch, only: Literal["", "ready"], graded: int, returned: int
 ) -> None:
-    """A listing without `only` grades just the rows within `limit` (a badge's `limit=1`
-    reads one row's grades); `only="ready"` grades every row to choose."""
+    """A listing without `only` grades just the rows within `limit` (one row for
+    `limit=1`); `only="ready"` grades every row to choose."""
     rows = [
         "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-00000000000a', 'trial/tea', "
         "'semantic', 'likes tea', 'proposed', 1, '2026-01-01 00:00:00')",
@@ -499,21 +499,21 @@ async def test_the_listing_and_the_decision_break_a_version_tie_alike(
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.parametrize("only", ["", "ready"])
 async def test_a_zero_limit_counts_proposals_without_grading_or_reading_them(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, only: Literal["", "ready"]
 ) -> None:
     insert = _INSERT + (
         "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-000000000001', 'k', 'semantic', "
         "'a value', 'proposed', 1, '2026-01-01 00:00:00')"
     )
     list_ = _listing(monkeypatch, insert)
-    asked: list[list[str]] = []
 
-    async def _counts(_ch: Any, _o: str, _n: str, keys: list[str]) -> dict[str, Any]:
-        asked.append(keys)
-        return {}
+    async def _never(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("a zero limit reads no details, grades or usage")
 
-    monkeypatch.setattr(p, "graded_counts", _counts)
-    out = await list_(MemoryProposalsInput(org="o", namespace="n", limit=0))
+    monkeypatch.setattr(proposals_ops.proposals_repo, "proposal_details", _never)
+    monkeypatch.setattr(p, "graded_counts", _never)
+    monkeypatch.setattr(proposals_ops, "_usage_counts", _never)
+    out = await list_(MemoryProposalsInput(org="o", namespace="n", limit=0, only=only))
     assert (out.total, out.proposals) == (1, [])
-    assert asked == [[]]  # no key asked for, so graded_counts issues no statement

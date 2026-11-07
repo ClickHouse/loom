@@ -36,6 +36,8 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
         tags=input.tags,
     )
     policy = await _p.policy_for(input.org, input.namespace, ch=ch)
+    if not input.limit:  # the count alone
+        return MemoryProposalsOutput(total=len(rows), policy=policy)
     # `ready` grades every row to choose which to return.
     to_show = rows if input.only == "ready" else rows[: input.limit]
     details = await proposals_repo.proposal_details(
