@@ -418,6 +418,17 @@ def test_a_recorded_meetings_transcript_and_template_are_noise(
         (_RECORDED, (), "Please rate the new notes tab."),
         (_RECORDED, ("Planner sync",), "Mar 4, 2026\nThe team reviewed the fallback list."),
         (_RECORDED, ("Cache budget",), "Ana shared [the budget sheet](https://x.example)."),
+        (
+            _RECORDED,
+            ("Resources",),
+            "- [Cache design doc](https://x.example)\n- [p99](https://y.example)",
+        ),
+        (
+            _RECORDED,
+            ("Details",),
+            "Invited [Ana](mailto:a@example.com) to walk through the cache budget: p99 is 12 ms.",
+        ),
+        (_RECORDED, ("Details",), "Mar 4, 2026 [cutover] Ana walked through the steps"),
         (_RECORDED, ("Planner sync",), "Invited [Ana](mailto:a@example.com)\n```\nSELECT 1\n```"),
         (
             _RECORDED,
@@ -839,4 +850,5 @@ def test_a_long_line_is_judged_in_linear_time() -> None:
     is_noise(_RECORDED, ("Notes",), "Invited " + "a " * 20_000)
     is_noise(_RECORDED, ("Notes",), "[" * 40_000 + "x")
     is_noise(_RECORDED, ("Notes",), "[a](b)" + "[](" * 20_000)
+    is_noise(_RECORDED, ("Notes",), "Invited " + "[a](b) " * 20_000 + "x")
     assert time.perf_counter() - started < 5.0

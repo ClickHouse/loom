@@ -33,8 +33,8 @@ a transcript or notes-by mark in their title ("Planner sync - 2026/03/04 10:00 C
 Notes by ..."); a notes-by mark beside a design, release or incident word is a person's
 notes and keeps the rule above. Their summary and topic sections are the tool's account
 of the meeting and stay content; only the transcript (its clock-time segments) and the
-template around it (the invite header, next steps, the tool's footer) are noise, each
-unless it records a decision.
+template around it (the invite header, next steps, action items, attendees, the tool's
+footer) are noise, each unless it records a decision.
 """
 
 from __future__ import annotations
@@ -148,25 +148,25 @@ _TRANSCRIPT_HEADING = re.compile(
     r"|^\W*(?:suggested\s+)?(?:next\s+steps|action\s+items|attendees)\b",
     re.IGNORECASE,
 )
-# The template's text: the invite header, the meeting's date alone or before the attendees
-# as links ("Invited [Ana](...)", "Mar 4, 2026 [Ana](...)"), the transcript's preamble,
-# the footer that asks for a rating or a review of the notes. "Invited the vendor to
-# demo" is a topic's text.
-# A line of links, alone or under the invite header's own labels: the attendees,
-# attachments and meeting records ("Attachments [Planner sync](...)").
-# A line with no word in it (an empty heading marker "##") carries nothing.
-_WORD = re.compile(r"\w")
-_LINKS = re.compile(
-    r"^[^\w\[]*(?:(?:invited|attachments|meeting\s+records)\s+)?"
-    r"(?:\[[^\]]*\]\([^)]*\)[^\w\[]*)+$",
-    re.IGNORECASE,
-)
+# Links and the separators between them; a separator never holds a "[", which keeps the
+# match linear.
+_LINK_RUN = r"(?:\[[^\]]*\]\([^)]*\)[^\w\[]*)+"
+_LONG_DATE = rf"{_MONTH}\s+\d{{1,2}},\s+\d{{4}}"
+# A line of the template: the invite header's labelled links ("Invited [Ana](...)",
+# "Attachments [Planner sync](...)", "Mar 4, 2026 [Ana](...)"), the meeting's date alone,
+# the transcript's preamble, the footer that asks for a rating or a review of the notes.
+# "Invited [Ana](...) to walk through the budget" is a topic's text.
 _TEMPLATE_TEXT = re.compile(
-    rf"^\W*(?:invited\s+\[|{_MONTH}\s+\d{{1,2}},\s+\d{{4}}(?:\s+\[|\W*$)|"
-    r"this editable transcript\b|please\W+rate\b[^.]{0,60}\bsurvey\b|"
+    rf"^[^\w\[]*(?:invited|attachments|meeting\s+records|{_LONG_DATE})\s+{_LINK_RUN}$|"
+    rf"^\W*{_LONG_DATE}\W*$|"
+    r"^\W*(?:this editable transcript\b|please\W+rate\b[^.]{0,60}\bsurvey\b|"
     r"you should review\s+\S+'s\s+notes(?:\W*$|\s+(?:to make sure|for accuracy)\b))",
     re.IGNORECASE,
 )
+# A line of links alone, the attendees the header goes on with; a line with no word in it
+# (an empty heading marker "##") carries nothing.
+_LINKS = re.compile(rf"^[^\w\[]*{_LINK_RUN}$")
+_WORD = re.compile(r"\w")
 _DESIGN_TITLE = re.compile(
     r"\b(?:design|rfc|proposal|spec|specification|architecture|adr|plan|runbook|release|"
     r"upgrade|migration|incident|postmortem|changelog)\b",
@@ -230,10 +230,13 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
     if recorded:
         # The title's own heading names the recording, not a part of it.
         own = _below_title(name, headings)
-        # Template text fills its section: a summary after the meeting's date is content.
-        return any(_TRANSCRIPT_HEADING.search(h) for h in own) or bool(
+        # The template fills its section: a summary after the meeting's date is content,
+        # and so is a list of links with no template line.
+        if any(_TRANSCRIPT_HEADING.search(h) for h in own):
+            return True
+        return (
             not code
-            and prose
+            and any(_TEMPLATE_TEXT.match(line) for line in prose)
             and all(
                 _TEMPLATE_TEXT.match(line) or _LINKS.match(line) or not _WORD.search(line)
                 for line in prose
