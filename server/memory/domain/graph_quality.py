@@ -440,10 +440,8 @@ def _normalise(lowered: str) -> str:
     return SELF_SUBJECT if text in _FIRST_PERSON_FORMS else text
 
 
-# A commit or error facet ("commit:<sha>", "error:<name>") names an identifier, so its
-# last segment is never singularised; the rest of the canonical form applies as to any
-# name. A blank (or markup, which becomes one) right after the colon reads as prose
-# ("Error: the build failed").
+# "commit:<sha>" / "error:<name>" is an identifier: never singularised. A blank (or markup,
+# which becomes one) after the colon reads as prose ("Error: the build failed").
 _CODE_FACET_NAME = re.compile(r"(?:commit|error):\S")
 
 

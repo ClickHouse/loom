@@ -83,7 +83,8 @@ class FactsClient:
         (alice is object).
 
         Returns `{"entity": <entity canonicalised like a write>, "related":
-        [{entity, co_occur, role}, ...]}`.
+        [{entity, co_occur, role}, ...]}`; a name with no canonical form returns
+        `entity` `""` and no neighbours.
         """
         return await self._agent.transport.post(
             "/v1/facts.related",

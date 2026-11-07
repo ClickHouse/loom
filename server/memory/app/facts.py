@@ -71,7 +71,7 @@ async def handle_facts_list(input: FactsListInput) -> FactsListOutput:
         if input.object is not None:
             where.append("object IN {obj:Array(String)}")
             params["obj"] = _stored_spellings(input.object)
-    if [] in (params.get("ent"), params.get("subj"), params.get("obj")):
+    if any(params.get(name) == [] for name in ("ent", "subj", "obj")):
         return FactsListOutput(rows=[])  # a name with no canonical form is no node
     if input.relation is not None:
         where.append("relation = {rel:String}")
