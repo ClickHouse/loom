@@ -278,7 +278,8 @@ class AuthSettings(BaseModel):
     # in loom.signing_keys (`loom signing-key rotate` adds those). Required when
     # auth is on. The default is the checked-in DEV secret anyone can mint
     # with: a deployment with auth on refuses to start with it, except the
-    # `make dev` stack (`loom doctor` warns everywhere else).
+    # `make dev` stack (`loom doctor` warns everywhere else). A non-loopback bind
+    # refuses an HMAC secret under 32 bytes or an RSA key under 2048 bits.
     jwt_secret: str = DEV_JWT_SECRET
     # The root secret LOOM_JWT_SECRET replaced, while a rotation is under way:
     # credentials and signing keys sealed under it still open (tokens it signed
@@ -312,7 +313,8 @@ class AuthSettings(BaseModel):
         return {self.jwt_issuer, *(i for i in extra if i)}
 
     # JSON (or base64 JSON) map kid → PEM public key of a gateway whose RS256
-    # tokens this deployment accepts. Loom's own keys live in loom.signing_keys.
+    # tokens this deployment accepts (a non-loopback bind refuses an RSA key under 2048
+    # bits). Loom's own keys live in loom.signing_keys.
     jwt_public_keys_json: str = ""
     # Clock-skew tolerance on iat/exp, seconds; small enough to give replay no
     # useful post-exp window.
@@ -380,7 +382,8 @@ class AuthSettings(BaseModel):
     # (fetched every `jwt_end_user_jwks_refresh_seconds`) and/or `keys`. A key
     # here verifies only its own issuer's tokens, and only as an end user
     # (`sub: user:<id>`, one listed `org`, an optional `agent: agent:<id>`),
-    # never any other token. Empty: no end-user tokens.
+    # never any other token. Empty: no end-user tokens. A non-loopback bind refuses
+    # an inline RSA key under 2048 bits (a key fetched from `jwks_url` is not checked).
     jwt_end_user_issuers_json: str = ""
     # The longest an end-user token may live, from its `iat` to its `exp`.
     jwt_end_user_max_ttl_seconds: int = Field(default=300, ge=60, le=3600)
@@ -2203,7 +2206,7 @@ class McpSettings(BaseModel):
     # anonymous prober could otherwise enumerate every tool):
     #   "required"        — every JSON-RPC method requires a bearer.
     #   "discovery_only"  — initialize/tools/list/ping open; tools/call needs auth.
-    #   "open"            — no auth on any method. Trusted-network only.
+    #   "open"            — no auth on any method; a non-loopback bind refuses it.
     # Any other value fails at load: a mistyped mode must not boot as some mode.
     mcp_auth_mode: Literal["required", "discovery_only", "open"] = "required"
 
@@ -4816,15 +4819,17 @@ class RuntimeSettings(BaseModel):
     # The address Loom is reachable on: `loom serve` and `make server` bind
     # it; in a container (which listens on all its interfaces) it is the
     # address the port is published on. Anything but loopback turns on the
-    # startup checks for the dev secret, auth-off and public_base_url.
+    # startup checks: public_base_url set, and no auth-off, MCP open mode, dev
+    # secret or weak root, gateway or end-user key.
     bind_host: str = "127.0.0.1"
     # Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto
     # headers uvicorn applies; any other peer's are ignored. "*" trusts all.
     # Required behind a load balancer: at the default every client counts as the
     # balancer's address for the sign-in and sign-up limits.
     trusted_proxies: str = "127.0.0.1"
-    # True lets a non-loopback bind start with the dev signing secret or
-    # with auth off. Only for a port that is not actually reachable by others.
+    # True lets a non-loopback bind start with auth off, MCP open mode, the dev
+    # signing secret or a weak root, gateway or end-user key. Only for a port others
+    # cannot reach.
     allow_insecure: bool = False
 
     def workers_mode(self) -> str:

@@ -625,6 +625,10 @@ _EXPOSURE = {
 def test_a_loopback_bind_reports_no_exposure(monkeypatch: pytest.MonkeyPatch) -> None:
     s = _settings(monkeypatch, LOOM_JWT_SECRET=DEV_JWT_SECRET)
     assert not _EXPOSURE & set(_codes(collect_problems(s, HealthState(env={}))))
+    # MCP open mode and a short secret are a reachable server's problems only
+    s = _settings(monkeypatch, LOOM_MCP_AUTH_MODE="open", LOOM_JWT_SECRET="a" * 16)
+    codes = set(_codes(collect_problems(s, HealthState(env={}))))
+    assert not codes & {"insecure_bind_mcp_open", "insecure_bind_weak_key"}
 
 
 def test_a_reachable_bind_without_safeguards_reports_each(monkeypatch: pytest.MonkeyPatch) -> None:

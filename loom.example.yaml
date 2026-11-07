@@ -733,8 +733,9 @@ settings:
   # names, or `prefix*`); its keys come from `jwks_url` (fetched every
   # `jwt_end_user_jwks_refresh_seconds`) and/or `keys`. A key here verifies only its own
   # issuer's tokens, and only as an end user (`sub: user:<id>`, one listed `org`, an
-  # optional `agent: agent:<id>`), never any other token. Empty: no end-user tokens.
-  # [restart]
+  # optional `agent: agent:<id>`), never any other token. Empty: no end-user tokens. A
+  # non-loopback bind refuses an inline RSA key under 2048 bits (a key fetched from
+  # `jwks_url` is not checked). [restart]
   # jwt_end_user_issuers_json: ""
 
   # The longest an end-user token may live, from its `iat` to its `exp`. [restart]
@@ -2590,9 +2591,9 @@ settings:
   # MCP transport auth mode (the endpoint exposes one tool per wire op, so an anonymous
   # prober could otherwise enumerate every tool): "required"        — every JSON-RPC
   # method requires a bearer. "discovery_only"  — initialize/tools/list/ping open;
-  # tools/call needs auth. "open"            — no auth on any method. Trusted-network
-  # only. Any other value fails at load: a mistyped mode must not boot as some mode.
-  # [restart]
+  # tools/call needs auth. "open"            — no auth on any method; a non-loopback
+  # bind refuses it. Any other value fails at load: a mistyped mode must not boot as
+  # some mode. [restart]
   # mcp_auth_mode: "required"
 
   # Which tools `tools/list` shows when a connection names no `?toolset=` (a request
@@ -4598,8 +4599,9 @@ settings:
 
   # The address Loom is reachable on: `loom serve` and `make server` bind it; in a
   # container (which listens on all its interfaces) it is the address the port is
-  # published on. Anything but loopback turns on the startup checks for the dev secret,
-  # auth-off and public_base_url. [restart]
+  # published on. Anything but loopback turns on the startup checks: public_base_url
+  # set, and no auth-off, MCP open mode, dev secret or weak root, gateway or end-user
+  # key. [restart]
   # bind_host: "127.0.0.1"
 
   # Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto headers uvicorn
@@ -4608,8 +4610,9 @@ settings:
   # sign-in and sign-up limits. [restart]
   # trusted_proxies: "127.0.0.1"
 
-  # True lets a non-loopback bind start with the dev signing secret or with auth off.
-  # Only for a port that is not actually reachable by others. [restart]
+  # True lets a non-loopback bind start with auth off, MCP open mode, the dev signing
+  # secret or a weak root, gateway or end-user key. Only for a port others cannot reach.
+  # [restart]
   # allow_insecure: false
 
   # --- outbound HTTP ---

@@ -32,6 +32,7 @@ from typing import Any, TypedDict
 import httpx
 import jwt
 
+from server.auth.keyring import MIN_RSA_BITS
 from server.core.ch import get_client, own_write_reads
 from server.core.versions import next_version
 
@@ -463,7 +464,7 @@ def public_jwks(public_pem: bytes) -> str:
     key = load_pem_public_key(public_pem)
     if isinstance(key, ec.EllipticCurvePublicKey) and key.curve.name == "secp256r1":
         jwk, alg = ECAlgorithm.to_jwk(key, as_dict=True), "ES256"
-    elif isinstance(key, rsa.RSAPublicKey) and key.key_size >= 2048:
+    elif isinstance(key, rsa.RSAPublicKey) and key.key_size >= MIN_RSA_BITS:
         jwk, alg = RSAAlgorithm.to_jwk(key, as_dict=True), "RS256"
     elif isinstance(key, ed25519.Ed25519PublicKey):
         jwk, alg = OKPAlgorithm.to_jwk(key, as_dict=True), "EdDSA"

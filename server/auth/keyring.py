@@ -249,6 +249,57 @@ def _pem_root(secret: str) -> SigningKey | None:
     return SigningKey(ROOT_KID, "RS256", secret, public, datetime.min)
 
 
+# The minimum key sizes of RFC 7518 sections 3.2 and 3.3, for the root, gateway and
+# inline end-user keys: an HMAC secret as long as the hash, an RSA modulus of 2048 bits.
+# Only the length is checked, not the randomness.
+MIN_HMAC_BYTES = 32
+MIN_RSA_BITS = 2048
+
+
+def root_is_weak(cfg: Any = None) -> bool:
+    """Whether LOOM_JWT_SECRET is below the minimum key size: an RSA private key under
+    2048 bits, or any other secret under 32 bytes (it seals stored keys)."""
+    secret = str((cfg or settings).jwt_secret)
+    key = _pem_root(secret)
+    if key is None:
+        return len(secret.encode()) < MIN_HMAC_BYTES
+    return weak_rsa(key.public_pem)
+
+
+def weak_keys(cfg: Any = None) -> list[str]:
+    """What signs or verifies tokens below the minimum key size: `LOOM_JWT_SECRET`, a
+    gateway key (`gateway:<kid>`) or an end-user issuer's inline key
+    (`end_user:<issuer>:<kid>`). A verifying RSA key's modulus is public, so one under
+    2048 bits is as weak as a short root. Each key is loaded as the verifier loads it
+    (PEM or OpenSSH); one it cannot load verifies nothing. A JWKS URL's keys arrive at
+    runtime and are not checked here (end-user or machine-trust); an inline
+    machine-trust key is checked when its trust is registered."""
+    cfg = cfg or settings
+    out = ["LOOM_JWT_SECRET"] if root_is_weak(cfg) else []
+    for kid, pem in sorted(cfg.jwt_public_key_map().items()):
+        if weak_rsa(pem):
+            out.append(f"gateway:{kid}")
+    for issuer, spec in sorted(cfg.end_user_issuers().items()):
+        for kid, pem in sorted(spec.keys.items()):
+            if weak_rsa(pem):
+                out.append(f"end_user:{issuer}:{kid}")
+    return out
+
+
+def weak_rsa(public_key: str) -> bool:
+    """Whether `public_key` is an RSA key under 2048 bits as PyJWT loads it for
+    RS256 (PEM or OpenSSH, as given); anything it cannot load verifies nothing.
+    PyJWT 2.10 returns an EC or Ed25519 key here unchecked, so the type is tested."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jwt.algorithms import RSAAlgorithm
+
+    try:
+        key = RSAAlgorithm(RSAAlgorithm.SHA256).prepare_key(public_key)
+    except Exception:  # noqa: BLE001 — a key PyJWT cannot load verifies nothing
+        return False
+    return isinstance(key, (rsa.RSAPublicKey, rsa.RSAPrivateKey)) and key.key_size < MIN_RSA_BITS
+
+
 def _keys(view: _View) -> dict[str, SigningKey]:
     """The view's keys, plus a PEM root as `default` unless `default` is
     retired."""

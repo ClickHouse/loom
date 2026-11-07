@@ -1,10 +1,8 @@
 """FastAPI application entrypoint.
 
-Run with:
-    uvicorn server.main:app --host 0.0.0.0 --port 7777 --loop asyncio
-
-or:
-    make server
+Run with `make server`, or `scripts/serve.sh` (the image's launcher). A bare
+`uvicorn server.main:app --host 0.0.0.0` leaves LOOM_BIND_HOST at loopback, so the
+startup checks for a reachable server do not run: set LOOM_BIND_HOST to the same address.
 """
 
 from __future__ import annotations
@@ -115,6 +113,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         auth_required=settings.auth_actually_required(),
         dev_secret=settings.jwt_secret_is_dev_default(),
     )
+    from server.auth.keyring import weak_keys
     from server.auth.scim_routes import require_scim_settings
 
     require_scim_settings(
@@ -126,6 +125,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         auth_required=settings.auth_actually_required(),
         dev_secret=settings.jwt_secret_is_dev_default(),
         allow_insecure=settings.allow_insecure,
+        mcp_open=settings.mcp_auth_mode == "open",
+        weak_keys=weak_keys(),
     )
 
     from server.core.object_store import require_client
