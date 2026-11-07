@@ -902,6 +902,30 @@ describe("ReviewQueue", () => {
     await waitFor(() => expect(screen.getByLabelText("Reason for the decision on c")).toHaveFocus(), WAIT);
   });
 
+  it("marks only the clicked proposal decided when a re-read brings a newer one meanwhile", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    const a = { memory_key: "a", memory_id: "m-a", version: 1, value_preview: "value a" };
+    const b = { memory_key: "b", memory_id: "m-b", version: 1, value_preview: "value b" };
+    const newer = { ...b, version: 2, value_preview: "newer b" };
+    vi.mocked(listProposals)
+      .mockResolvedValueOnce({ proposals: [a, b], total: 2 })
+      .mockResolvedValue({ proposals: [newer], total: 1 });
+    const answers: ((v: { decided: number; results: { memory_key: string; decided: boolean }[] }) => void)[] = [];
+    vi.mocked(decideProposal).mockImplementation(() => new Promise((r) => answers.push(r)));
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Reject a" }, WAIT));
+    await userEvent.click(screen.getByRole("button", { name: "Reject b" }));
+    // a's answer re-reads the list, which now holds b's newer proposal.
+    await act(async () => answers[0]({ decided: 1, results: [{ memory_key: "a", decided: true }] }));
+    await screen.findByText("newer b", {}, WAIT);
+    // b's answer is about version 1: the next read keeps showing version 2.
+    await act(async () => answers[1]({ decided: 1, results: [{ memory_key: "b", decided: true }] }));
+    await waitFor(() => expect(listProposals).toHaveBeenCalledTimes(3), WAIT);
+    expect(await screen.findByText("newer b", {}, WAIT)).toBeTruthy();
+  });
+
   it("marks a cut preview and opens the whole value from the key", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     const long = "x".repeat(400);

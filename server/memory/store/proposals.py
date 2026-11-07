@@ -30,14 +30,14 @@ async def scan_proposals(
     params: dict[str, Any] = {"org": org, "ns": namespace, "cap": cap}
     in_namespace = "org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL"
     # A wanted row: a proposal this caller may read, matching the listing's filters.
-    wanted = ["status = 'proposed'", *scope_where(scope, params)]
+    filters = ["status = 'proposed'", *scope_where(scope, params)]
     if prefix:
-        wanted.append("startsWith(memory_key, {p:String})")
+        filters.append("startsWith(memory_key, {p:String})")
         params["p"] = prefix
     if tags:
-        wanted.append("hasAny(tags, {tags:Array(String)})")
+        filters.append("hasAny(tags, {tags:Array(String)})")
         params["tags"] = list(tags)
-    is_wanted = " AND ".join(wanted)
+    is_wanted = " AND ".join(filters)
     return await ch.query_all(
         f"""
         SELECT memory_key, mid, version FROM (

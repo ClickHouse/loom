@@ -1058,8 +1058,8 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
               ) : (
                 <div className="text-sm text-text mb-2 whitespace-pre-wrap break-words">
                   {r.value_preview ?? ""}
-                  {/* The server sends the first 400 characters, so a value of exactly 400 is
-                      marked too: the key opens the whole value. */}
+                  {/* The server sends the first PREVIEW_CHARS characters, so a value of exactly
+                      that length is marked too: the key opens the whole value. */}
                   {[...(r.value_preview ?? "")].length >= PREVIEW_CHARS && "…"}
                 </div>
               )}
