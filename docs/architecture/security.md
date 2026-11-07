@@ -200,13 +200,28 @@ Each op declares `required_role`.
   `writer` or `admin`. An `ns_roles` entry naming anything else confers nothing.
 - A flat `roles` claim may name any role, so a gateway can sign `org_admin`. Loom itself
   never assigns it.
+- Self-signup and agent sign-up make the name the account's subject, so they refuse a
+  trusted caller's subject, a platform-admin handle and any subject holding an unrevoked
+  grant (a pending join request included), a namespace or an unrevoked token in the org,
+  answering as for a taken name, and their tokens carry `writer` only. Other rows that
+  name a subject, such as a task inbox's posters, reserve nothing: name an email subject
+  there. A grant reserves its subject's name whoever wrote it, since a grant to someone
+  who has not signed up yet is the power a stranger typing that name would take. A
+  namespace admin can therefore reserve names by granting them, a self-signup account on
+  its own namespace included, so the names one account holds back are bounded by the op
+  rate limit on its grant writes, not by the sign-up rate; each row names its
+  `granted_by`, and revoking the grant frees the name. The reservation covers the grants
+  that exist when the sign-up reads them; a grant written to a name while its sign-up runs
+  lands on the new account.
 - `platform_admin` is written into the token at login for entries of
   `LOOM_PLATFORM_ADMINS` (`platform_roles` in `server/auth/login.py`). A handle matches a
   password account; an email matches only an OIDC-verified sign-in. Self-signup emails are
-  unverified and never confer a role. An OAuth refresh re-derives the role and never
-  promotes. A bot registered `--platform-admin` gets it in every machine token, as a flat
-  token over every namespace (`_machine_tokens` in `server/auth/oauth.py`); such a bot
-  names no namespace, tells no agents apart and, as a trust, matches every claim exactly.
+  unverified and never confer a role, and self-signup refuses a listed handle as a name, so
+  a handle promotes only an account that existed before it was listed. An OAuth refresh
+  re-derives the role and never promotes. A bot registered `--platform-admin` gets it in
+  every machine token, as a flat token over every namespace (`_machine_tokens` in
+  `server/auth/oauth.py`); such a bot names no namespace, tells no agents apart and, as a
+  trust, matches every claim exactly.
   Only a person signed in as a platform admin, or an operator on the host, registers one:
   `/v1/admin/bots.create` refuses the flag to every service account's token and to a
   third-party client's session, so a token holding the role cannot mint itself a lasting
@@ -397,9 +412,23 @@ Restoring `loom.namespaces` from a backup taken before a claim brings the unclai
 back: the claimer's password is gone and the code claims the namespace again, for whoever holds
 it. Claim it again at once after such a restore.
 
-**Impersonation.** A subject in `LOOM_TRUSTED_CALLERS` may send `X-Loom-On-Behalf-Of`
-over HTTP to act as another principal. The header's subject becomes the effective
-subject, and `impersonated_by` records the caller on its `agent_events` rows.
+**Impersonation.** A subject in `LOOM_TRUSTED_CALLERS` may send `X-Loom-On-Behalf-Of` over
+HTTP to act as another principal. The header's subject becomes the effective subject, and
+`impersonated_by` records the caller on its `agent_events` rows. A subject revoked
+outright or deprovisioned, in any case and under any spelling it holds in the target org
+or the caller's own org (itself, and the handle and email of each active account of it
+whose email is verified), is not acted for (403), nor is a bot that is revoked outright or
+disabled, nor any of its agents (a disable leaves their grants). A request that names no
+org, from a caller whose token is for every org, has no org to read spellings in, so only
+the subject as sent is checked. An unverified email is not held: revoking a stranger's
+account that typed someone's email does not refuse acting for that email. Sign-up refuses
+a trusted caller's own subject as a name (the sign-up rule under roles above). Sign-up
+refuses a handle the caller acts for as a new name only once a row reserves it there (the
+sign-up rule above): a service-account caller, or one acting in another org, provisions
+nothing there, so acting for `carol` alone does not stop a stranger signing up as `carol`
+and sharing that subject. With self-signup open, have a trusted caller act for email
+subjects, which a sign-up name cannot spell, or grant each handle in
+`LOOM_SELF_SIGNUP_ORG` first ([tokens and grants](../guides/tokens-and-grants.md)).
 
 **OIDC and OAuth.** OIDC login trusts only the configured issuer's discovery, verified
 emails and nonce-bound id_tokens, sends PKCE to the provider, and refuses a callback whose

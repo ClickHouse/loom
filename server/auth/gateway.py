@@ -35,9 +35,8 @@ def effective_auth(auth: AuthInfo, on_behalf_of: str) -> AuthInfo:
     subject, never a grant principal (only an end-user issuer signs those)."""
     from server.settings import settings
 
-    trusted = {s.strip() for s in settings.trusted_callers.split(",") if s.strip()}
     on_behalf_of = on_behalf_of.strip()
-    if not on_behalf_of or auth.subject not in trusted:
+    if not on_behalf_of or auth.subject not in settings.trusted_callers_set:
         return auth
     if is_reserved_subject(on_behalf_of):
         raise PermissionError("a trusted caller acts for a Loom subject, not a grant principal")

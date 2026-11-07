@@ -16,7 +16,8 @@ here, once:
   stripped; after authorization an absent code namespace is set to the
   authorized one, so the handler reads and writes where the call was
   authorized.
-- `authorize`: first-contact provisioning, the role + namespace gate
+- `authorize`: the refusal of a revoked subject a trusted caller acts for
+  (`authz.check_acted_for`), first-contact provisioning, the role + namespace gate
   (`authorize_op`, raising PermissionError / IdentityIncompleteError), then
   the restricted-access audit row and the first-write registration.
 - `policy`: the history policy gate on the authorized identity (raises
@@ -168,7 +169,7 @@ async def authorize(
     if auth is None:
         _note_admitted(target)
         return
-    from server.auth.authz import scope_flags
+    from server.auth.authz import check_acted_for, scope_flags
     from server.auth.gateway import is_end_user
     from server.auth.personal_namespace import ensure_personal_namespace_cached
     from server.code.app.member_writes import authorize_op
@@ -184,6 +185,9 @@ async def authorize(
         if org_level and op.name not in END_USER_ORG_OPS:
             raise PermissionError(f"{op.name} is not open to an end user")
     else:
+        # A revoked subject a trusted caller acts for is refused before anything is
+        # provisioned for it (`check_acted_for` admits every other call).
+        await check_acted_for(auth, target.org)
         await ensure_personal_namespace_cached(
             org=auth.org, subject=auth.subject, is_service_account=auth.is_service_account
         )

@@ -251,7 +251,7 @@ LOOM_CH_PASSWORD=...
 LOOM_AUTH_REQUIRED=true
 LOOM_IDENTITY_PROVIDER=trust-network        # or gateway
 LOOM_JWT_SECRET=<32+ random bytes>          # python -c 'import secrets; print(secrets.token_urlsafe(32))'
-LOOM_PLATFORM_ADMINS=alice                  # login handles / SSO emails
+LOOM_PLATFORM_ADMINS=alice                  # SSO emails, or login handles once their account exists
 LOOM_REQUIRE_REAL_PROVIDERS=true            # a fake or keyless provider makes /v1/health degraded
 # providers: see below
 ```
@@ -329,7 +329,8 @@ back.
   `admin` on namespaces. A login handle promotes that password account; an email
   promotes only an OIDC sign-in whose provider verified it (a self-signup email never
   does). `loom set-host <handle-or-email>` writes the variable into `.env` (`--append`
-  extends the list); the person signs in again to pick up the role.
+  extends the list); the person signs in again to pick up the role. Self-signup refuses
+  a listed handle as a new name, so create the account first, then list its handle.
 
 ### Public URL and clients
 

@@ -22,6 +22,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from pydantic import ValidationError
 
+from server.auth.authz import ActedForRevoked
 from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.fail_closed import answered_unverified
 from server.auth.jwt import AuthInfo
@@ -400,9 +401,11 @@ async def _authorize(
         # namespace or org it is for.
         raise _refuse(op, call, 400, error_code="IDENTITY_INCOMPLETE", e=e) from e
     except PermissionError as e:
-        # A code/tracker index says why, as MCP's refusal does.
+        # A code/tracker index says why, as MCP's refusal does; a revoked subject a
+        # trusted caller acts for is not an index's refusal.
         ns = target.namespace
-        why: dict[str, object] = ar.reason_fields(ns) if ns and ar.is_plane_op(op.name) else {}
+        indexed = ar.is_plane_op(op.name) and not isinstance(e, ActedForRevoked)
+        why: dict[str, object] = ar.reason_fields(ns) if ns and indexed else {}
         raise _refuse(op, call, 403, error_code=gates.ROLE_REFUSAL_CODE, e=e, detail=why) from e
     except LoomServerError as e:
         # A read the gate could not make past its cache (a 503): counted

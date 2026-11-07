@@ -107,8 +107,8 @@ class AuthInfo:
     # Empty => flat token: fall back to flat `roles` + grant lookup.
     # Priority/order lives in `namespaces` (a list), not here.
     ns_roles: tuple[tuple[str, str], ...] = ()
-    # Bearer's real subject under X-Loom-On-Behalf-Of impersonation; forensic
-    # trail only (`subject` already holds the impersonated identity).
+    # Bearer's real subject under X-Loom-On-Behalf-Of (`subject` holds the one it acts
+    # for); the gate refuses a revoked subject it acts for (`authz.check_acted_for`).
     impersonated_by: str = ""
     # `read_scope` claim: the widest read this token may make inside a
     # namespace it holds — "" / "namespace" (every row: membership is the read

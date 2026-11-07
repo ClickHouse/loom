@@ -23,7 +23,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from server.auth.authz import check_authorized
+from server.auth.authz import check_acted_for, check_authorized
 from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.context import set_current_auth
 from server.auth.gateway import effective_auth, personal_namespace
@@ -119,6 +119,7 @@ async def knowledge_upload(
             auth = effective_auth(auth, request.headers.get("X-Loom-On-Behalf-Of") or "")
         set_current_auth(auth)  # the upload's author, as an op's transport binds it
         namespace = personal_namespace(auth, org, namespace)
+        await check_acted_for(auth, org)  # what the op gate checks before it authorizes
         await check_authorized(auth, Role.WRITER, org=org, namespace=namespace)
     except ValueError as e:
         raise _refuse(400, "VALIDATION_FAILED", str(e)) from e

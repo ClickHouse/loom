@@ -89,6 +89,8 @@ def revocation_expiry(expires_at: datetime | None) -> datetime:
 # read by `is_revoked` without a lock since frozenset is immutable and
 # the global rebind is atomic on CPython.
 _revoked_jtis: frozenset[str] = frozenset()
+# _revoked_jtis lower-cased, rebound with it (revoked_outright_any_case).
+_revoked_folded: frozenset[str] = frozenset()
 # Keys revoked only for tokens issued before the cutoff (unix seconds);
 # replaced together with `_revoked_jtis` on every refresh.
 _revoked_before: dict[str, int] = {}
@@ -150,6 +152,14 @@ def readiness_check() -> readiness.CheckResult:
     return token_state_ready(loaded(), snapshot_age_seconds(), "revocation snapshot")
 
 
+def revoked_outright_any_case(subject: str) -> bool:
+    """True if `subject` is revoked outright, on its own key or SCIM's, under any
+    case: a subject's grants are read case-folded, so a revocation written as
+    `Bob` covers `bob`. Sync, hot-path safe."""
+    key = subject.lower()
+    return key in _revoked_folded or SCIM_PREFIX + key in _revoked_folded
+
+
 def is_revoked(jti: str, *, issued_at: int | None = None) -> bool:
     """True if `jti` (a jti or a sub) is revoked outright, or revoked for
     tokens issued before a cutoff and `issued_at` (the token's `iat`, unix
@@ -193,7 +203,7 @@ async def refresh() -> None:
     """Re-read the revocation set from CH and replace the in-memory copy."""
     from server.core.ch import get_client
 
-    global _revoked_jtis, _revoked_before, _cut_off, _loaded, _loaded_at
+    global _revoked_jtis, _revoked_folded, _revoked_before, _cut_off, _loaded, _loaded_at
     try:
         ch = get_client()
         # A session whose revocation could not be written gets a
@@ -237,6 +247,7 @@ async def refresh() -> None:
                 full.discard(key)
                 before[key] = cutoff
         _revoked_jtis = frozenset(full)
+        _revoked_folded = frozenset(key.lower() for key in full)
         _revoked_before, _cut_off = before, operator
         _loaded = True
         _loaded_at = time.monotonic()
@@ -465,12 +476,16 @@ def _apply_locally(key: str, cutoff: int | None, version: int | None = None) -> 
     for `_RECENT_S`, unless it reads a newer row). `version` is the row's; one
     written elsewhere (an owed one) counts as written now. `loaded()` is left
     as it is: one known row is not a snapshot."""
-    global _revoked_jtis, _revoked_before
+    global _revoked_jtis, _revoked_folded, _revoked_before
     before = {k: v for k, v in _revoked_before.items() if k != key}
     if cutoff is None:
         _revoked_jtis = _revoked_jtis | {key}
+        _revoked_folded = _revoked_folded | {key.lower()}
     else:
-        _revoked_jtis = _revoked_jtis - {key}
+        if key in _revoked_jtis:
+            _revoked_jtis = _revoked_jtis - {key}
+            # another key may fold to the same spelling
+            _revoked_folded = frozenset(k.lower() for k in _revoked_jtis)
         before[key] = cutoff
     _revoked_before = before
     _remember("revoke", key, cutoff, version or time.time_ns())

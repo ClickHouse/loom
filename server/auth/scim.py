@@ -401,6 +401,8 @@ async def _write_audited(row: dict[str, Any], new: dict[str, Any]) -> None:
     """Write the row, then audit its transition. A write that raised may have
     landed and lost its reply, and a retry would find the row changed and
     audit nothing: so the row is read back, and what landed is audited."""
+    from server.auth.authz import forget_ended
+
     try:
         if new != row or "version" not in row:  # a change, or a user not yet written
             await _write(new)
@@ -412,6 +414,8 @@ async def _write_audited(row: dict[str, Any], new: dict[str, Any]) -> None:
         if landed is not None:
             await _audit_transition(row, landed)
         raise
+    finally:  # this process's acted-for check reads the row afresh
+        forget_ended("scim", row["email"])  # new["email"] is the same: the id derives from it
     await _audit_transition(row, new)
 
 

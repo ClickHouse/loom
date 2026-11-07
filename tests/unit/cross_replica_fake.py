@@ -152,6 +152,29 @@ class FakeReplica:
         if "FROM loom._migration_lock" in sql:
             cur = self.cluster.locks.get(p["name"])
             return [] if cur is None else [{"holder": cur["holder"], "stale": self._stale(cur)}]
+        if "lower(created_by)" in sql:
+            # The sign-up reservation: each grant's latest version, held while unrevoked
+            # (a pending join request included), a namespace it owns or a live token it made.
+            latest: dict[tuple[str, str, str], dict[str, Any]] = {}
+            for r in self._visible("loom.namespace_grants"):
+                key = (r["org"], r["namespace"], r["subject"])
+                if key not in latest or r.get("version", 0) >= latest[key].get("version", 0):
+                    latest[key] = r
+            held = any(
+                (r["org"], r["subject"].lower()) == (p["org"], p["name"])
+                and r.get("revoked_at") is None
+                for r in latest.values()
+            )
+            owned = any(
+                (r["org"], str(r.get("owner_email", "")).lower()) == (p["org"], p["name"])
+                for r in self._visible("loom.namespaces")
+            )
+            made = any(
+                (r["org"], str(r.get("created_by", "")).lower()) == (p["org"], p["name"])
+                and r.get("revoked_at") is None
+                for r in self._visible("loom.service_accounts")
+            )
+            return [{"held": 1}] if held or owned or made else []
         if "FROM loom.namespaces" in sql:
             return self._namespaces(sql, p)
         if "FROM loom.oauth_state" in sql:

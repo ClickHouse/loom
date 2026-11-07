@@ -26,7 +26,7 @@ embedding:
 
 env:
   LOOM_IDENTITY_PROVIDER: trust-network
-  LOOM_PLATFORM_ADMINS: alice
+  LOOM_PLATFORM_ADMINS: alice # a login handle once its account exists, or an SSO email
   LOOM_REQUIRE_REAL_PROVIDERS: "true"
 
 secrets:

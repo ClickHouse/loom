@@ -494,10 +494,14 @@ def _nobody_deactivated_over_scim() -> Iterator[None]:
     async def not_deactivated(email: str) -> bool:
         return False
 
+    from server.auth import authz
+
     before = scim.deactivated
     scim.deactivated = not_deactivated  # type: ignore[assignment]
+    authz._ENDED.clear()  # the acted-for check's memo of the same read
     yield
     scim.deactivated = before
+    authz._ENDED.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -1041,10 +1045,20 @@ def _no_revocations_left_behind() -> Iterator[None]:
     local writes a later refresh would lay over its read."""
     from server.auth import revocation
 
-    saved = (revocation._revoked_jtis, revocation._revoked_before, revocation._cut_off)
+    saved = (
+        revocation._revoked_jtis,
+        revocation._revoked_folded,
+        revocation._revoked_before,
+        revocation._cut_off,
+    )
     revocation._recent.clear()
     yield
-    revocation._revoked_jtis, revocation._revoked_before, revocation._cut_off = saved
+    (
+        revocation._revoked_jtis,
+        revocation._revoked_folded,
+        revocation._revoked_before,
+        revocation._cut_off,
+    ) = saved
     revocation._recent.clear()
 
 
