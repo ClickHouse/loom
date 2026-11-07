@@ -228,7 +228,7 @@ async def _create_grant(
         async with grant_change(input.org, input.namespace, subject):
             now = await _write_grant(input, subject, may_replace)
     if input.role == "admin":
-        # A maintainer maintains every branch of the repository.
+        # The admin grant reaches the repository's branches the sync passes it to.
         from server.code.app.index import maintainers
 
         await maintainers.sync_quietly(input.org, input.namespace)
@@ -593,7 +593,7 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
     async with grant_change(input.org, input.namespace, input.subject):
         out = await _decide_request(input)
     if out.decision == "approve" and out.role == "admin":
-        # An approved maintainer maintains every branch.
+        # An approved admin grant reaches the branches the sync passes it to.
         from server.code.app.index import maintainers
 
         await maintainers.sync_quietly(input.org, input.namespace)

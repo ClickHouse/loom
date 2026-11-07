@@ -1,12 +1,16 @@
-"""A repository's maintainer set is one across its branches.
+"""A repository's maintainers flow across its branches.
 
 Every branch of a repository is its own namespace with its own grant rows, so an admin
 grant on ``code-x`` would say nothing about ``code-x-26-5`` and a maintainer would have
-to ask branch by branch. This module keeps the set of *active admin* subjects identical
-across the configured branch namespaces of one repository:
+to ask branch by branch. This module copies *active admin* grants between the
+configured branch namespaces of one repository, in one direction (``_reaches``): the
+operator's entries pass their admins to every branch, and a branch added from the
+page (``code.repo.add``, open to any org member) passes its admins only to other
+branches added from the page. Registering a branch of a repository the operator
+configures gives no grant on the operator's namespaces.
 
-* ``sync_repo_maintainers`` — the union of active admins over the branches,
-  written to every branch that lacks one (``granted_by =
+* ``sync_repo_maintainers`` — every branch gets the union of the active admins
+  of the branches that reach it, written where it lacks one (``granted_by =
   repo-maintainers:<source namespace>``), from the admin grants given on a
   branch, not mirrored there; a subject whose grant was given on a branch no
   longer configured is mirrored from a mirror of it onto the branches they have
@@ -16,8 +20,10 @@ across the configured branch namespaces of one repository:
   after an admin grant is created or approved on a code namespace, when a branch
   is added, and once per process per namespace by the registrar (so
   environment-registered branches inherit).
-* ``revoke_repo_maintainer`` — a revoked admin leaves every branch, except a
-  branch where they are the only active admin (the handler's own guard).
+* ``revoke_repo_maintainer`` — a revoked admin leaves the branches the revoke
+  reaches, except a branch where they are the only active admin (the handler's
+  own guard). From an operator entry it takes off a branch added from the page
+  only a mirror, and none while the subject holds an admin grant given on one.
 
 Readers stay per branch: the approval fan-out already turns a person's branch requests
 into one decision. Restricted branches also need the token to name them — a person's
@@ -40,20 +46,32 @@ from server.core.grant_sql import LIVE_GRANT
 log = logging.getLogger(__name__)
 
 GRANTED_BY_PREFIX = "repo-maintainers:"
+# The namespaces whose sync waited for the registry read, logged once each per process.
+_UNSYNCED: set[tuple[str, str]] = set()
 _ACTIVE = ("", "active")
 
 
-def branch_namespaces(org: str, namespace: str) -> list[str]:
-    """Every configured branch namespace of the repository `namespace`
-    belongs to, itself included, in configuration order; ``[]`` when
-    `namespace` is not a configured code entry."""
+def _branch_sources(org: str, namespace: str) -> dict[str, str]:
+    """Every configured branch namespace of the repository `namespace` belongs
+    to, itself included, in configuration order, with its source: ``config``
+    for the operator's entries, ``registry`` for a branch added from the page.
+    Empty when `namespace` is not a configured code entry."""
     from server.code.domain.index.repos import configured_repos
 
     repos = configured_repos()
     me = next((c for c in repos if c.org == org and c.namespace == namespace), None)
     if me is None:
-        return []
-    return [c.namespace for c in repos if c.org == org and c.repo == me.repo]
+        return {}
+    return {c.namespace: c.source for c in repos if c.org == org and c.repo == me.repo}
+
+
+def _reaches(source: str, target: str) -> bool:
+    """An admin change on a branch whose source is `source` (``config`` or
+    ``registry``) reaches a branch whose source is `target`. Any
+    org member may add a branch of a repository the operator configures, so a
+    branch added from the page never passes its admins (or a revoke of one) to
+    an operator entry; the operator's admins reach every branch."""
+    return source == "config" or target != "config"
 
 
 def repo_change(org: str, namespace: str, subject: str) -> AbstractAsyncContextManager[None]:
@@ -264,19 +282,19 @@ async def _write_subject(
     return len(wanted)
 
 
-async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = None) -> int:
-    """Bring every branch of `namespace`'s repository to the union of their
-    active admins. Returns the number of grant rows written."""
-    branches = branch_namespaces(org, namespace)
-    if len(branches) < 2:
-        return 0
-    from server.core.ch import get_client
-
-    client = ch or get_client()
-    rows = await _grant_rows(client, org, branches)
+def _plan_mirrors(
+    org: str,
+    rows: list[dict[str, Any]],
+    read: list[str],
+    targets: list[str],
+    all_branches: list[str],
+) -> list[dict[str, Any]]:
+    """The admin rows that bring `targets` to the union of the active admins on
+    the `read` branches. A mirror stands in for its source only when that source
+    is none of the repository's `all_branches`, read or not."""
     # Grant changes are ordered by row version: `granted_at` keeps whole seconds,
     # so a lowering and a promotion within one would compare equal.
-    active: dict[str, set[str]] = {ns: set() for ns in branches}
+    active: dict[str, set[str]] = {ns: set() for ns in read}
     # The newest admin grant per subject that is not itself a mirror, and its branch:
     # a mirror's own version says when the sync wrote it, not when admin was given.
     union: dict[str, tuple[int, datetime, str]] = {}
@@ -297,7 +315,7 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
             if not granted_by.startswith(GRANTED_BY_PREFIX):
                 if subject not in union or version > union[subject][0]:
                     union[subject] = (version, r["granted_at"], ns)
-            elif granted_by.removeprefix(GRANTED_BY_PREFIX) not in active:
+            elif granted_by.removeprefix(GRANTED_BY_PREFIX) not in all_branches:
                 # Its source branch is gone: the mirror stands in for it.
                 if subject not in mirrored or version > mirrored[subject][0]:
                     mirrored[subject] = (version, r["granted_at"], ns)
@@ -307,7 +325,7 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
         mirrored.pop(subject, None)
     now = naive_utc_now()
     inserts: list[dict[str, Any]] = []
-    for ns in branches:
+    for ns in targets:
         for subject, (version, at, src) in (union | mirrored).items():
             if subject in active[ns] or ended.get((ns, subject), 0) > version:
                 continue  # admin there already, or removed, lowered or asked there since
@@ -319,6 +337,41 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
                     org, ns, subject, granted_by=f"{GRANTED_BY_PREFIX}{src}", now=now, granted_at=at
                 )
             )
+    return inserts
+
+
+async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = None) -> int:
+    """Bring every branch of `namespace`'s repository to the union of the active
+    admins of the branches that reach it (`_reaches`). Returns the number of
+    grant rows written; none while the self-service registry has never been
+    read, when the branches added from the page are unknown: a grant made then
+    stays on its branch until it is granted again or the repository's admins
+    change."""
+    from server.code.app.index.repo_registry import registry_read
+
+    sources = _branch_sources(org, namespace)
+    branches = list(sources)
+    if sources and not registry_read():
+        if (org, namespace) not in _UNSYNCED:
+            _UNSYNCED.add((org, namespace))
+            log.warning(
+                "repo maintainers: %s/%s not synced — the self-service registry is not read yet",
+                org,
+                namespace,
+            )
+        return 0
+    if len(branches) < 2:
+        return 0
+    from server.core.ch import get_client
+
+    client = ch or get_client()
+    rows = await _grant_rows(client, org, branches)
+    inserts: list[dict[str, Any]] = []
+    for kind in ("config", "registry"):
+        targets = [ns for ns in branches if sources[ns] == kind]
+        read = [ns for ns in branches if _reaches(sources[ns], kind)]
+        if targets:
+            inserts += _plan_mirrors(org, rows, read, targets, branches)
     written = (
         await _write_under_claims(client, org, inserts, _mirror_wanted, rows, hold_repo=True)
         if inserts
@@ -335,6 +388,31 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     return written
 
 
+def _given_on_added(
+    subject: str, admins: dict[str, dict[str, dict[str, Any]]], sources: dict[str, str]
+) -> bool:
+    """`subject` holds an admin grant given (not mirrored) on a branch added from
+    the page: such a grant reaches every branch added from the page, so an
+    operator revoke leaves them all to it. A mirror whose page-added source was
+    removed holds no such grant and is taken, like a mirror of an operator
+    entry."""
+    return any(
+        sources.get(ns) == "registry"
+        and not str(by_subject[subject].get("granted_by") or "").startswith(GRANTED_BY_PREFIX)
+        for ns, by_subject in admins.items()
+        if subject in by_subject
+    )
+
+
+async def _is_code_namespace(client: Any, org: str, namespace: str) -> bool:
+    """The directory row says `namespace` is a code index: a branch added from
+    the page is one before the registry snapshot lists it."""
+    from server.identity.app.registration import namespace_row
+
+    row = await namespace_row(org, namespace, ch=client)
+    return row is not None and str(row.get("kind") or "") == "code"
+
+
 async def revoke_repo_maintainer(
     org: str,
     namespace: str,
@@ -343,16 +421,33 @@ async def revoke_repo_maintainer(
     ch: Any | None = None,
     lowered_to: str | None = None,
 ) -> int:
-    """Revoke `subject`'s active admin grant on every other branch of the
-    repository, or lower it to `lowered_to`; a branch where they are the only
-    active admin keeps them (the same guard `grants.revoke` applies). The
-    caller holds `repo_change` and `repo_admins_change`. Returns rows written."""
-    branches = [b for b in branch_namespaces(org, namespace) if b != namespace]
-    if not branches:
-        return 0
+    """Revoke `subject`'s active admin grant on the other branches of the
+    repository the revoke reaches, or lower it to `lowered_to`; a branch where
+    they are the only active admin keeps them (the same guard `grants.revoke`
+    applies). The caller holds `repo_change` and `repo_admins_change`.
+
+    A revoke on a branch added from the page leaves the operator entries alone
+    (`_reaches`); one on an operator entry takes off a branch added from the
+    page only a mirror, and none while the subject holds an admin grant given
+    on a branch added from the page.
+
+    A revoke that skipped a branch added from the page would leave its
+    mirrors live, and no later sync removes them. So the registry is read
+    again first (a branch another process added since its last read is then
+    seen), and `GrantBusyError` is raised on a code namespace while it has
+    never been read. Returns rows written."""
+    from server.code.app.index.repo_registry import refresh_db_repos, registry_read
     from server.core.ch import get_client
 
     client = ch or get_client()
+    await refresh_db_repos(force=True, ch=client)  # never raises: a failed read keeps the last
+    sources = _branch_sources(org, namespace)
+    if not registry_read() and (sources or await _is_code_namespace(client, org, namespace)):
+        raise GrantBusyError("the self-service registry is not read yet; retry shortly")
+    own = sources.get(namespace, "")
+    branches = [b for b, source in sources.items() if b != namespace and _reaches(own, source)]
+    if not branches:
+        return 0
     rows = await _grant_rows(client, org, branches)
     admins: dict[str, dict[str, dict[str, Any]]] = {ns: {} for ns in branches}
     for r in rows:
@@ -365,6 +460,12 @@ async def revoke_repo_maintainer(
         mine = admins[ns].get(subject)
         if mine is None:
             continue
+        if (
+            own == "config"
+            and sources[ns] == "registry"
+            and _given_on_added(subject, admins, sources)
+        ):
+            continue  # a grant given on a branch added from the page still reaches it
         if len(admins[ns]) <= 1:
             log.warning(
                 "repo maintainers: %s/%s keeps %r — only admin of that branch",

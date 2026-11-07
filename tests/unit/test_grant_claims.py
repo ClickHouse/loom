@@ -19,7 +19,7 @@ from server.identity.store import grants as grants_repo
 from tests.unit.claims_fake import MemoryClaims
 
 # A revoke reads no directory ties here (`conftest.no_directory_ties`).
-pytestmark = pytest.mark.usefixtures("no_directory_ties")
+pytestmark = pytest.mark.usefixtures("no_directory_ties", "registry_was_read")
 
 
 class _Lease:

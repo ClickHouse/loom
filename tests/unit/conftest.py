@@ -1052,3 +1052,11 @@ def no_directory_ties(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("server.auth.aliases.read_aliases", _alone)
     monkeypatch.setattr("server.auth.aliases.verified_tie", _tie)
     monkeypatch.setattr("server.identity.store.grants.stored_spellings", _as_given)
+
+
+@pytest.fixture
+def registry_was_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The self-service registry counts as read, so an admin revoke off any
+    repository reads no directory row to learn whether its namespace is a code
+    index."""
+    monkeypatch.setattr("server.code.app.index.repo_registry.registry_read", lambda: True)

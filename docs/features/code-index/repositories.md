@@ -70,6 +70,14 @@ Rules:
 - An org holds at most `LOOM_CODE_SELF_SERVICE_MAX_REPOS` (20) active self-service
   entries, branches included (`REPO_QUOTA`). A branch already indexed is refused with
   `REPO_EXISTS`; join that index instead.
+- Admin grants flow between a repository's branches in one direction. The operator's
+  entries pass their admins to every branch of the repository, and a branch added here
+  passes its admins only to other branches added here. A revoke follows the same path,
+  and one made on an operator entry removes from a branch added here only a copied
+  grant, and none while the subject holds a grant given on a branch added here. An
+  operator entry that names a namespace already added here keeps that namespace's
+  admins, who then reach the repository's other operator entries: review its grants
+  before listing it.
 - A restricted repository is never `open`: `code.repo.add` sets `approval`. Widening a
   restricted index to standard needs `confirm` equal to the namespace.
 - A private repository's token is stored encrypted with a key derived from
@@ -155,6 +163,8 @@ and survives restarts. `code.refresh` (writer) and the admin ops always need a g
 | A self-service card stays at `error`              | read `stage_detail` in `code.repos`; a failed clone retries next pass (timeout `LOOM_CODE_BOOTSTRAP_CLONE_TIMEOUT_S`)                                                                                                                                                  |
 | A private self-service repository stops fetching  | `LOOM_JWT_SECRET` was rotated; re-enter the token                                                                                                                                                                                                                      |
 | An entry is missing from `code.repos`             | check `loom.code.repos_config_errors`; `code.repos` also lists only what the caller may read                                                                                                                                                                           |
+| Revoking or lowering an admin answers busy        | this process has not read `loom.code_repos` yet, so it cannot see the branches added here; it re-reads every `LOOM_CODE_REPOS_REFRESH_SECONDS`, so retry                                                                                                               |
+| A new maintainer lacks the other branches         | the admin grant was made before this process read `loom.code_repos` (the log says `not synced`), and nothing copies it later: grant it again                                                                                                                           |
 | Answers are lexical only                          | the entry has not reached `LOOM_CODE_READY_EMBED_COVERAGE` ([freshness](freshness.md))                                                                                                                                                                                 |
 
 ## Related

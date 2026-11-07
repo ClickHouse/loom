@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from server.code.app.index import maintainers
+from server.code.app.index import maintainers, repo_registry
 from server.code.domain.index import repos
 from server.core.repo_base import _default_client
 
@@ -24,7 +24,7 @@ BRANCHES = ("code-ord", "code-ord-26-5")
 
 class _Entry:
     def __init__(self, org: str, namespace: str) -> None:
-        self.org, self.namespace, self.repo = org, namespace, "It/ord"
+        self.org, self.namespace, self.repo, self.source = org, namespace, "It/ord", "config"
 
 
 @pytest.fixture
@@ -34,6 +34,7 @@ async def ch(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[tuple[Any, str]]:
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
     org = f"it-ordering-{uuid.uuid4().hex[:8]}"
     monkeypatch.setattr(repos, "configured_repos", lambda: [_Entry(org, b) for b in BRANCHES])
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: True)
     try:
         yield client, org
     finally:

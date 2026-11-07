@@ -22,11 +22,15 @@ log = logging.getLogger("loom.cli.code")
 async def _register_after_init(cfg: Any) -> None:
     """`init` registers the namespace (loom.namespaces kind=code,
     maintainers synced) the way an ingest pass would, so a branch added to the
-    registry is readable by its maintainers before its first pass. Fail-quiet:
+    registry is readable by its maintainers before its first pass. The
+    self-service registry is read first: the sync needs it to tell the
+    operator's entries from the branches added from the page. Fail-quiet:
     the next ingest pass registers it anyway."""
     try:
         from server.code.app.index.registry import ensure_registered
+        from server.code.app.index.repo_registry import refresh_db_repos
 
+        await refresh_db_repos(force=True)
         await ensure_registered(cfg)
         print(f"registered code namespace {cfg.org}/{cfg.namespace}")
     except Exception as e:  # noqa: BLE001 — registration is also the ingest pass's job

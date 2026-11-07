@@ -1,4 +1,4 @@
-"""A repository's maintainer set is one across its branches."""
+"""A repository's maintainers flow across its branches."""
 
 from __future__ import annotations
 
@@ -8,8 +8,9 @@ from typing import Any
 
 import pytest
 
-from server.code.app.index import maintainers
+from server.code.app.index import maintainers, repo_registry
 from server.code.domain.index import repos
+from server.core.errors import GrantBusyError
 from server.identity.api.models_grants import (
     GrantsApproveInput,
     GrantsCreateInput,
@@ -24,8 +25,8 @@ pytestmark = pytest.mark.usefixtures("no_directory_ties")
 
 
 class _Cfg:
-    def __init__(self, org: str, namespace: str, repo: str) -> None:
-        self.org, self.namespace, self.repo = org, namespace, repo
+    def __init__(self, org: str, namespace: str, repo: str, source: str = "config") -> None:
+        self.org, self.namespace, self.repo, self.source = org, namespace, repo, source
 
 
 REPOS = [
@@ -92,17 +93,24 @@ def _admin(
 @pytest.fixture(autouse=True)
 def _repos(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(repos, "configured_repos", lambda: REPOS)
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: True)
+    monkeypatch.setattr(maintainers, "_UNSYNCED", set())
+
+    async def _refresh(**_k: Any) -> list[Any]:
+        return []
+
+    monkeypatch.setattr(repo_registry, "refresh_db_repos", _refresh)
 
 
-def test_branch_namespaces_groups_by_repository() -> None:
-    assert maintainers.branch_namespaces("clickhouse", "code-x-26-5") == [
+def test_branch_sources_groups_by_repository() -> None:
+    assert list(maintainers._branch_sources("clickhouse", "code-x-26-5")) == [
         "code-x",
         "code-x-26-5",
         "code-x-26-6",
     ]
-    assert maintainers.branch_namespaces("clickhouse", "code-y") == ["code-y"]
-    assert maintainers.branch_namespaces("clickhouse", "not-a-repo") == []
-    assert maintainers.branch_namespaces("other-org", "code-x") == []
+    assert maintainers._branch_sources("clickhouse", "code-y") == {"code-y": "config"}
+    assert maintainers._branch_sources("clickhouse", "not-a-repo") == {}
+    assert maintainers._branch_sources("other-org", "code-x") == {}
 
 
 async def test_sync_writes_the_union_to_every_branch_that_lacks_it() -> None:
@@ -163,6 +171,292 @@ async def test_revoke_leaves_every_branch_except_where_they_are_the_only_admin()
     (row,) = ch.inserted
     assert (row["namespace"], row["subject"], row["role"]) == ("code-x-26-5", "alice", "admin")
     assert row["revoked_at"] is not None
+
+
+# An operator entry and a self-service entry of one repository.
+MIXED = [
+    _Cfg("clickhouse", "code-z", "Org/z"),
+    _Cfg("clickhouse", "code-z-dev", "Org/z", source="registry"),
+    _Cfg("clickhouse", "code-z-26-5", "Org/z", source="registry"),
+]
+
+
+async def test_a_self_service_branch_admin_is_never_mirrored_onto_an_operator_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+    ch = _FakeCH([_admin("code-z", "ops"), _admin("code-z-dev", "mallory")])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z-dev", ch=ch)
+    written = sorted((r["namespace"], r["subject"]) for r in ch.inserted)
+    # The operator's admin reaches the self-service branches; the creator of one
+    # reaches the other self-service branch and never the operator's entry.
+    assert written == [
+        ("code-z-26-5", "mallory"),
+        ("code-z-26-5", "ops"),
+        ("code-z-dev", "ops"),
+    ]
+
+
+async def test_a_mirror_on_a_self_service_branch_never_stands_in_for_an_operator_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+    mirror = _admin("code-z-dev", "mallory") | {"granted_by": "repo-maintainers:code-gone"}
+    ch = _FakeCH([_admin("code-z", "ops"), mirror])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert ("code-z", "mallory") not in {(r["namespace"], r["subject"]) for r in ch.inserted}
+
+
+async def test_a_revoke_on_a_self_service_branch_never_reaches_an_operator_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+    rows = [_admin(ns, s) for ns in ("code-z", "code-z-dev", "code-z-26-5") for s in ("ops", "x")]
+    ch = _FakeCH(rows)
+    await maintainers.revoke_repo_maintainer("clickhouse", "code-z-dev", "ops", ch=ch)
+    assert [r["namespace"] for r in ch.inserted] == ["code-z-26-5"]
+    # From the operator entry, the mirrors of its admin leave both other branches.
+    mirrored = {"granted_by": "repo-maintainers:code-z"}
+    rows = [
+        r | mirrored if r["subject"] == "ops" and r["namespace"] != "code-z" else r for r in rows
+    ]
+    ch = _FakeCH(rows)
+    await maintainers.revoke_repo_maintainer("clickhouse", "code-z", "ops", ch=ch)
+    assert sorted(r["namespace"] for r in ch.inserted) == ["code-z-26-5", "code-z-dev"]
+
+
+async def test_an_operator_revoke_takes_only_its_mirrors_off_a_self_service_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+    leaked = _admin("code-z", "mallory") | {"granted_by": "repo-maintainers:code-z-dev"}
+    ops = [_admin(ns, "ops") for ns in ("code-z", "code-z-dev", "code-z-26-5")]
+    among = _admin("code-z-26-5", "mallory") | {"granted_by": "repo-maintainers:code-z-dev"}
+    ch = _FakeCH([leaked, _admin("code-z-dev", "mallory"), among, *ops])
+    # The grant given on the branch mallory added stays, and so does its mirror
+    # among the branches added from the page.
+    assert await maintainers.revoke_repo_maintainer("clickhouse", "code-z", "mallory", ch=ch) == 0
+    ours = _admin("code-z-26-5", "carol") | {"granted_by": "repo-maintainers:code-z"}
+    mirrored = _admin("code-z-dev", "carol") | {"granted_by": "repo-maintainers:code-z"}
+    ch = _FakeCH([_admin("code-z", "carol"), ours, mirrored, *ops])
+    await maintainers.revoke_repo_maintainer("clickhouse", "code-z", "carol", ch=ch)
+    assert sorted(r["namespace"] for r in ch.inserted) == ["code-z-26-5", "code-z-dev"]
+
+
+async def test_an_operator_revoke_keeps_every_self_service_branch_of_a_page_maintainer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # mallory added code-z-dev; a newer operator grant on code-z was what reached
+    # code-z-26-5. Her own grant still reaches it, so the operator revoke keeps it.
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+    ops = [_admin(ns, "ops") for ns in ("code-z", "code-z-dev", "code-z-26-5")]
+    via_op = _admin("code-z-26-5", "mallory") | {"granted_by": "repo-maintainers:code-z"}
+    ch = _FakeCH([_admin("code-z", "mallory"), _admin("code-z-dev", "mallory"), via_op, *ops])
+    assert await maintainers.revoke_repo_maintainer("clickhouse", "code-z", "mallory", ch=ch) == 0
+
+
+async def test_a_lowering_on_a_self_service_branch_never_reaches_an_operator_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+    rows = [_admin(ns, s) for ns in ("code-z", "code-z-dev", "code-z-26-5") for s in ("ops", "x")]
+    ch = _FakeCH(rows)
+    await maintainers.revoke_repo_maintainer(
+        "clickhouse", "code-z-dev", "ops", ch=ch, lowered_to="writer"
+    )
+    assert [(r["namespace"], r["role"]) for r in ch.inserted] == [("code-z-26-5", "writer")]
+
+
+async def test_no_revoke_fan_out_before_the_self_service_registry_is_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
+    ch = _FakeCH([_admin("code-x-26-5", "alice"), _admin("code-x-26-5", "bob")])
+    with pytest.raises(GrantBusyError):
+        await maintainers.revoke_repo_maintainer("clickhouse", "code-x", "alice", ch=ch)
+    assert ch.inserted == []
+    # One operator entry: the branches added from the page are all it cannot see.
+    with pytest.raises(GrantBusyError):
+        await maintainers.revoke_repo_maintainer("clickhouse", "code-y", "alice", ch=ch)
+    # A branch added from the page that the empty snapshot does not list.
+    from server.identity.app import registration
+
+    async def _row(org: str, ns: str, **_k: Any) -> dict[str, Any] | None:
+        return {"kind": "code"} if ns == "code-y-dev" else {"kind": "memory"}
+
+    monkeypatch.setattr(registration, "namespace_row", _row)
+    with pytest.raises(GrantBusyError):
+        await maintainers.revoke_repo_maintainer("clickhouse", "code-y-dev", "alice", ch=ch)
+    assert await maintainers.revoke_repo_maintainer("clickhouse", "team-kb", "alice", ch=ch) == 0
+
+
+async def test_a_revoke_reads_the_registry_before_it_picks_the_branches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A branch another process added since this one last read the registry.
+    known = [*REPOS]
+
+    async def _refresh(**_k: Any) -> list[Any]:
+        known.append(_Cfg("clickhouse", "code-x-dev", "Org/x", source="registry"))
+        return []
+
+    monkeypatch.setattr(repo_registry, "refresh_db_repos", _refresh)
+    monkeypatch.setattr(repos, "configured_repos", lambda: known)
+    mirror = {"granted_by": "repo-maintainers:code-x"}
+    ch = _FakeCH(
+        [
+            _admin("code-x", "alice"),
+            _admin("code-x-dev", "alice") | mirror,
+            _admin("code-x-dev", "bob"),
+        ]
+    )
+    await maintainers.revoke_repo_maintainer("clickhouse", "code-x", "alice", ch=ch)
+    assert [r["namespace"] for r in ch.inserted] == ["code-x-dev"]
+
+
+async def test_an_operator_revoke_takes_a_mirror_of_an_entry_no_longer_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+    gone = {"granted_by": "repo-maintainers:code-z-old"}
+    ops = [_admin(ns, "ops") for ns in ("code-z", "code-z-dev", "code-z-26-5")]
+    ch = _FakeCH([_admin("code-z", "carol") | gone, _admin("code-z-dev", "carol") | gone, *ops])
+    await maintainers.revoke_repo_maintainer("clickhouse", "code-z", "carol", ch=ch)
+    assert [r["namespace"] for r in ch.inserted] == ["code-z-dev"]
+
+
+async def test_no_sync_before_the_self_service_registry_is_read(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
+    ch = _FakeCH([_admin("code-x", "alice")])
+    assert await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch) == 0
+    assert ch.inserted == []
+    # One operator entry may still have page-added siblings: the skip is logged, once.
+    with caplog.at_level("WARNING", logger=maintainers.log.name):
+        for _ in range(2):
+            assert await maintainers.sync_repo_maintainers("clickhouse", "code-y", ch=ch) == 0
+    assert [r.message for r in caplog.records].count(
+        "repo maintainers: clickhouse/code-y not synced — the self-service registry is not read yet"
+    ) == 1
+
+
+# Two operator entries and a branch added from the page.
+TWO_OPS = [
+    _Cfg("clickhouse", "code-w", "Org/w"),
+    _Cfg("clickhouse", "code-w-26-5", "Org/w"),
+    _Cfg("clickhouse", "code-w-dev", "Org/w", source="registry"),
+]
+
+
+async def test_operator_entries_share_admins_and_never_a_leaked_mirror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: TWO_OPS)
+    # A mirror written onto code-w from the page-added branch before the one-way rule.
+    leaked = _admin("code-w", "mallory") | {"granted_by": "repo-maintainers:code-w-dev"}
+    ch = _FakeCH([_admin("code-w-26-5", "ops"), _admin("code-w-dev", "mallory"), leaked])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-w", ch=ch)
+    written = sorted((r["namespace"], r["subject"]) for r in ch.inserted)
+    assert written == [("code-w", "ops"), ("code-w-dev", "ops")]
+
+
+async def test_an_operator_revoke_takes_a_copy_of_a_copy_of_an_operator_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # carol's grant was given on an operator entry no longer configured; the copy on
+    # code-z-26-5 was made from the stand-in on code-z-dev.
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+    gone = {"granted_by": "repo-maintainers:code-z-old"}
+    via_dev = {"granted_by": "repo-maintainers:code-z-dev"}
+    ops = [_admin(ns, "ops") for ns in ("code-z", "code-z-dev", "code-z-26-5")]
+    ch = _FakeCH(
+        [
+            _admin("code-z", "carol") | gone,
+            _admin("code-z-dev", "carol") | gone,
+            _admin("code-z-26-5", "carol") | via_dev,
+            *ops,
+        ]
+    )
+    await maintainers.revoke_repo_maintainer("clickhouse", "code-z", "carol", ch=ch)
+    assert sorted(r["namespace"] for r in ch.inserted) == ["code-z-26-5", "code-z-dev"]
+
+
+async def test_an_operator_revoke_takes_a_copy_it_cannot_trace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The copy names a page-added branch where carol holds no live grant.
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+    via_dev = {"granted_by": "repo-maintainers:code-z-dev"}
+    ops = [_admin(ns, "ops") for ns in ("code-z", "code-z-dev", "code-z-26-5")]
+    ch = _FakeCH([_admin("code-z", "carol"), _admin("code-z-26-5", "carol") | via_dev, *ops])
+    await maintainers.revoke_repo_maintainer("clickhouse", "code-z", "carol", ch=ch)
+    assert [r["namespace"] for r in ch.inserted] == ["code-z-26-5"]
+
+
+async def test_an_operator_revoke_takes_a_copy_caught_in_a_cycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+    ops = [_admin(ns, "ops") for ns in ("code-z", "code-z-dev", "code-z-26-5")]
+    loop = [
+        _admin("code-z-dev", "carol") | {"granted_by": "repo-maintainers:code-z-26-5"},
+        _admin("code-z-26-5", "carol") | {"granted_by": "repo-maintainers:code-z-dev"},
+    ]
+    ch = _FakeCH([_admin("code-z", "carol"), *loop, *ops])
+    await maintainers.revoke_repo_maintainer("clickhouse", "code-z", "carol", ch=ch)
+    assert sorted(r["namespace"] for r in ch.inserted) == ["code-z-26-5", "code-z-dev"]
+
+
+async def test_the_registrar_syncs_a_branch_once_the_registry_is_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from server.code.app.index import registry
+
+    synced: list[str] = []
+
+    async def _sync(org: str, ns: str, **_k: Any) -> None:
+        synced.append(ns)
+
+    monkeypatch.setattr(maintainers, "sync_quietly", _sync)
+    monkeypatch.setattr(registry, "_DONE", {("clickhouse", "code-x")})
+    monkeypatch.setattr(registry, "_SYNCED", set())
+    cfg = SimpleNamespace(org="clickhouse", namespace="code-x")
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
+    assert await registry.ensure_registered(cfg, ch=object()) is False
+    assert ("clickhouse", "code-x") not in registry._SYNCED  # the sync logged and waited
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: True)
+    await registry.ensure_registered(cfg, ch=object())
+    await registry.ensure_registered(cfg, ch=object())
+    assert synced == ["code-x", "code-x"]  # once while unread, once after, then done
+
+
+async def test_code_init_reads_the_registry_before_it_registers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from server.cli import code_maintenance
+    from server.code.app.index import registry
+
+    read: list[bool] = [False]
+    seen: list[bool] = []
+
+    async def _refresh(**_k: Any) -> list[Any]:
+        read[0] = True
+        return []
+
+    async def _ensure(cfg: Any, **_k: Any) -> bool:
+        seen.append(repo_registry.registry_read())
+        return True
+
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: read[0])
+    monkeypatch.setattr(repo_registry, "refresh_db_repos", _refresh)
+    monkeypatch.setattr(registry, "ensure_registered", _ensure)
+    await code_maintenance._register_after_init(SimpleNamespace(org="o", namespace="code-x"))
+    assert seen == [True]  # the registry was read when the namespace was registered
 
 
 async def test_sync_quietly_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -367,7 +661,6 @@ async def test_a_branch_that_cannot_be_claimed_leaves_every_branch_for_the_retry
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.auth import grant_claims
-    from server.core.errors import GrantBusyError
 
     ch = _FakeCH([_admin(ns, s) for ns in ("code-x-26-5", "code-x-26-6") for s in ("alice", "bob")])
     held = grant_claims.grant_change
@@ -423,8 +716,6 @@ async def test_a_revoke_leaves_a_grant_given_again_after_it_planned() -> None:
 async def test_a_failed_branch_fan_out_leaves_the_grant_live_for_the_retry(
     _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.core.errors import GrantBusyError
-
     async def _any(*_a: Any, **_k: Any) -> GrantState:
         return GrantState.from_row(
             {"subject": "alice", "role": "admin", "status": "active", "granted_by": "ops"}
@@ -602,7 +893,6 @@ async def test_a_subject_that_cannot_be_claimed_does_not_stop_a_sync_for_the_oth
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.auth import grant_claims
-    from server.core.errors import GrantBusyError
 
     held = grant_claims.grant_change
 

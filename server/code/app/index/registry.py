@@ -20,6 +20,9 @@ from typing import Any
 logger = logging.getLogger("loom.code_index.registry")
 
 _DONE: set[tuple[str, str]] = set()
+# The branches whose maintainer sync ran in this process after the self-service
+# registry was read: before that read the sync does nothing, so it runs again.
+_SYNCED: set[tuple[str, str]] = set()
 
 
 def describe(cfg: Any) -> str:
@@ -29,19 +32,25 @@ def describe(cfg: Any) -> str:
 async def _sync_maintainers(cfg: Any, client: Any) -> None:
     """On first sight of a branch namespace each process, bring the repository's
     maintainer set onto it (an environment-registered or freshly added branch inherits
-    the maintainers of its siblings)."""
+    the maintainers of its siblings). Until the self-service registry is first read
+    the sync does nothing, and a later pass syncs the branch again."""
     from server.code.app.index import maintainers
+    from server.code.app.index.repo_registry import registry_read
 
     await maintainers.sync_quietly(cfg.org, cfg.namespace, ch=client)
+    if registry_read():
+        _SYNCED.add((cfg.org, cfg.namespace))
 
 
 async def ensure_registered(cfg: Any, *, ch: Any | None = None) -> bool:
     """Idempotent. Returns True when a row was inserted this call."""
-    key = (cfg.org, cfg.namespace)
-    if key in _DONE:
-        return False
     from server.core.ch import get_client
 
+    key = (cfg.org, cfg.namespace)
+    if key in _DONE:
+        if key not in _SYNCED:
+            await _sync_maintainers(cfg, ch or get_client())
+        return False
     client = ch or get_client()
     restricted = cfg.classification == "restricted"
     public = cfg.public and not restricted
@@ -153,3 +162,4 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None) -> bool:
 
 def reset_for_tests() -> None:
     _DONE.clear()
+    _SYNCED.clear()
