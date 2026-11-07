@@ -124,17 +124,15 @@ _DAY = (
     rf"{_MONTH}\s+\d{{1,2}}(?:,?\s+\d{{4}})?|\d{{1,2}}\s+{_MONTH}(?:\s+\d{{4}})?)"
 )
 _DATE_HEADING = re.compile(rf"^\W*{_DAY}\b\W*$", re.IGNORECASE)
-# Notes a meeting tool writes from a recording: a title with the meeting's date and clock
-# time and a transcript or notes-by mark ("Planner sync - 2026/03/04 10:00 CET - Notes by
-# ...", "Planner sync — Transcript & notes — 2026-03-04 10.00.12 CET"). Their summary and
-# topic sections are the tool's account of the meeting, content; their transcript and
-# the template around it (invitees, next steps, the tool's footer) are noise.
+# A recorded meeting's title: a date with a clock time, and a transcript or notes-by mark.
 _RECORDED_STAMP = re.compile(rf"\b{_DAY}\s+\d{{1,2}}[:.]\d{{2}}\b", re.IGNORECASE)
 _RECORDED_MARK = re.compile(r"\b(?:transcript|notes by)\b", re.IGNORECASE)
 # A transcript's segment (a clock-time heading such as "00:12:30"), the transcript itself
-# and the template's own sections.
+# ("Transcript", "Planner sync - Transcript", "Transcription ended after ...") and the
+# template's own sections; not a topic that names one ("Transcript search latency").
 _TRANSCRIPT_HEADING = re.compile(
-    r"^\W*\d{1,2}:\d{2}(?::\d{2})?\W*$|\btranscript(?:ion)?\b"
+    r"^\W*\d{1,2}:\d{2}(?::\d{2})?\W*$|^\W*transcript\W*$|^\W*transcription ended\b"
+    r"|\btranscript\W*$"
     r"|^\W*(?:suggested\s+)?(?:next\s+steps|action\s+items|attendees)\b",
     re.IGNORECASE,
 )
@@ -201,7 +199,9 @@ def is_noise(title: str, section_path: tuple[str, ...], text: str) -> bool:
     if _unanswered(headings, prose, code):
         return True
     if recorded:
-        return any(_TRANSCRIPT_HEADING.search(h) for h in headings) or bool(
+        # The title's own heading names the recording, not a part of it.
+        own = headings[1:] if headings and headings[0] == name else headings
+        return any(_TRANSCRIPT_HEADING.search(h) for h in own) or bool(
             prose and _TEMPLATE_TEXT.match(prose[0])
         )
     return notes

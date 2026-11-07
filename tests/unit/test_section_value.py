@@ -122,6 +122,7 @@ def test_the_labelled_set_scores_as_measured() -> None:
         ("Session store RFC", ("Open questions",), "- Keep sessions across it?\n- Who owns it?"),
         # a running notes page that dates each meeting with its year
         ("Storage weekly sync", ("Aug 13, 2026", "Cache"), "Talked about the TTL."),
+        ("Storage weekly sync", ("4 March 2026", "Cache"), "Talked about the TTL."),
     ],
 )
 def test_bookkeeping_and_discussion_without_a_decision_are_noise(
@@ -347,6 +348,8 @@ _TRANSCRIPT = "Planner sync — Transcript & notes — 2026-03-04 10.00.12 CET"
         (_RECORDED, (), "Please rate these notes."),
         (_RECORDED, ("Transcription ended after 00:41:12",), "**Ana:** bye"),
         (_TRANSCRIPT, ("Transcript", "00:01:02"), "**Ana:** okay let's start"),
+        (_TRANSCRIPT, (_TRANSCRIPT, "Transcript", "00:01:02"), "**Ana:** okay, next one"),
+        ("", (_TRANSCRIPT, "00:01:02"), "**Ana:** okay, next one"),
     ],
 )
 def test_a_recorded_meetings_transcript_and_template_are_noise(
@@ -366,6 +369,9 @@ def test_a_recorded_meetings_transcript_and_template_are_noise(
         # a decisions heading keeps every section under it
         (_RECORDED, ("Decisions", "Aligned", "Suggested next steps"), "- [ ] [Ana] check it"),
         (_TRANSCRIPT, ("Summary",), "The team reviewed the fallback list."),
+        (_TRANSCRIPT, (_TRANSCRIPT, "Summary"), "The team reviewed the fallback list."),
+        ("", (_TRANSCRIPT, "Summary"), "The team reviewed the fallback list."),
+        (_RECORDED, ("Transcript search latency",), "Ana showed the p99 numbers."),
         # a transcript segment that records a decision or a plan
         (_RECORDED, ("Transcript", "00:14:10"), "**Ana:** so the plan is to drop the cache"),
         (_RECORDED, ("Transcript", "00:15:02"), "**Ana:** I'm going to disallow warning alerts."),
@@ -775,4 +781,6 @@ def test_a_long_line_is_judged_in_linear_time() -> None:
     is_noise("Storage sync 2026-03-04", ("X",), "Decision: deferred to " + "x " * 20_000)
     is_noise(_RECORDED, ("00:12:30",), "we " * 20_000)
     is_noise("Jan 4, " * 20_000 + "notes by", ("X",), "x")
+    is_noise(_RECORDED, ("transcript " * 20_000,), "x")
+    is_noise(_RECORDED, ("Notes",), "Invited " + "a " * 20_000)
     assert time.perf_counter() - started < 5.0
