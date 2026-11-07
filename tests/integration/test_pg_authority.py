@@ -4775,9 +4775,8 @@ async def test_a_finding_never_cites_a_row_the_authority_moved_past(
     call: Any, pg_conn: Any, org: str
 ) -> None:
     """A report cites a sampled row only while the authority serves it: a newer version
-    committed whose delivery ClickHouse keeps refusing (parked, so the report does not
-    wait for it) leaves the finding ClickHouse's row raised, uncited, and memory.get
-    serves the newer version."""
+    committed with its delivery parked (no barrier waits for it) leaves the finding
+    ClickHouse's row raised, uncited, and memory.get serves the newer version."""
     from server.core import pg
     from server.memory.store import pg_memory, rows
     from server.memory.store.pg_publish import audit_row_for
@@ -4795,7 +4794,7 @@ async def test_a_finding_never_cites_a_row_the_authority_moved_past(
         await pg_memory.commit_versions([newer], [audit_row_for(newer, request_id="", writer="")])
     finally:
         await pg.close_pool()
-    # Parked: ClickHouse keeps refusing it, so no barrier waits for it.
+    # Parked by hand: no barrier waits for it and no worker claims it.
     await pg_conn.execute(
         "UPDATE loom.memory_deliveries SET lease_until = 'infinity' "
         "WHERE org = $1 AND namespace = $2 AND targets <> 0",

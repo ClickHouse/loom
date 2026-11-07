@@ -928,3 +928,22 @@ async def test_a_source_a_later_write_replaced_says_so(stubs: Stubs) -> None:
     (_, v2) = (await ki.handle_knowledge_inspect(_inp())).listed
     assert v2.jobs is not None and v2.jobs.replaced
     assert v2.jobs.open_ingestion_id == "" and v2.jobs.current.ingestion_id == "job-3"
+
+
+@pytest.mark.asyncio
+async def test_decisions_are_counted_at_the_projection_wait(
+    stubs: Stubs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The decision rows are memory rows: their tally waits for ClickHouse to publish what
+    the namespace committed, and a wait that runs out still counts them and names the
+    projection in `skipped`."""
+    from server.memory.app.pg_admission import ProjectionBehindError
+    from server.memory.app.search import pg_validation
+
+    async def behind(*_: object) -> bool:
+        raise ProjectionBehindError()
+
+    monkeypatch.setattr(pg_validation, "admit", behind)
+    out = await ki.handle_knowledge_inspect(_inp())
+    assert out.decisions.all_documents is not None and stubs.calls["decisions"]
+    assert [s.split(": ")[:2] for s in out.skipped] == [["projection", "PROJECTION_BEHIND"]]

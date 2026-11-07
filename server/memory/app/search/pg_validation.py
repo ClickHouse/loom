@@ -50,6 +50,18 @@ async def admit(
     return bool(behind)
 
 
+# Set inside `published_reads`.
+_published: ContextVar[bool] = ContextVar("pg_published_reads", default=False)
+
+
+_UNPUBLISHED = {
+    ProjectionBehindError.code: "ClickHouse has not yet published every write the "
+    "namespace committed; the report reads what it holds",
+    pg.PostgresUnavailableError.code: "the Postgres authority did not answer; the report "
+    "reads what ClickHouse holds, which may miss committed writes",
+}
+
+
 @asynccontextmanager
 async def published_reads(
     org: str, namespaces: Sequence[str], skip: Callable[[str], None] | None = None
@@ -76,18 +88,6 @@ async def published_reads(
             yield
     finally:
         _published.reset(token)
-
-
-# Set inside `published_reads`.
-_published: ContextVar[bool] = ContextVar("pg_published_reads", default=False)
-
-
-_UNPUBLISHED = {
-    ProjectionBehindError.code: "ClickHouse has not yet published every write the "
-    "namespace committed; the report reads what it holds",
-    pg.PostgresUnavailableError.code: "the Postgres authority did not answer; the report "
-    "reads what ClickHouse holds, which may miss committed writes",
-}
 
 
 def _judged_by_authority(hit: Any) -> bool:

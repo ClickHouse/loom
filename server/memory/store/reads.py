@@ -1600,7 +1600,7 @@ async def _authority_heads(
     if not pg.enabled():
         return None
     keys = [(r["agent"], r["user_id"], r["session_id"], r["memory_key"]) for r in rows]
-    heads = await pg_memory.heads_by_keys([(org, namespace, *k) for k in keys]) if keys else {}
+    heads = await pg_memory.heads_by_keys([(org, namespace, *k) for k in keys])
     return {k[2:]: h for k, h in heads.items()}
 
 

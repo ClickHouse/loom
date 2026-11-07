@@ -377,3 +377,24 @@ def test_the_time_cue_pattern_is_pinned_to_its_rule_version() -> None:
         r"april|may|june|july|august|september|october|november|december)\b|"
         r"\b(19|20)\d\d)\b"
     )
+
+
+@pytest.mark.asyncio
+async def test_an_unpublished_projection_reads_on_and_marks_the_report_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under Postgres, a wait for ClickHouse to publish the namespace's commits that runs
+    out does not fail the report: it runs every check and names the projection in
+    `skipped` and `coverage`."""
+    from server.memory.app.pg_admission import ProjectionBehindError
+    from server.memory.app.search import pg_validation
+
+    async def behind(*_: object) -> bool:
+        raise ProjectionBehindError()
+
+    monkeypatch.setattr(pg_validation, "admit", behind)
+    monkeypatch.setattr(nv, "get_client", lambda: _CH({}))
+    out = await nv.handle_namespace_validate(_inp())
+    assert {*nv._CHECKS} <= set(out.coverage.rules_run)
+    assert out.coverage.rules_skipped == ["projection"] and not out.coverage.complete
+    assert [s.split(": ")[:2] for s in out.skipped] == [["projection", "PROJECTION_BEHIND"]]

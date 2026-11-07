@@ -14,8 +14,9 @@ guide, categories, grants and extraction policy, and no recall credit. Its one w
 an exposure-ledger row for the rows it lists, as memory.list writes, which inside a run
 can feed the usage fold's `acted` credit. A section that cannot be read lands in
 `skipped`, never raises. Under Postgres the report starts once ClickHouse holds what
-the namespace committed (`pg_validation.published_reads`, 503 PROJECTION_BEHIND past
-its wait), so its counts, tags and categories show every published write.
+the namespace committed (`pg_validation.published_reads`), so its counts, tags and
+categories show every committed write; a wait that runs out is reported as
+`projection` in `skipped`.
 """
 
 from __future__ import annotations

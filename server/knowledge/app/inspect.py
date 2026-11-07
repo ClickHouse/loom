@@ -636,7 +636,7 @@ class _Inspect:
             # Decision rows are memory rows: under Postgres they are counted once
             # ClickHouse holds what the namespace committed.
             published = pg_validation.published_reads(
-                i.org, [i.namespace], lambda reason: self.skipped.append(f"decisions: {reason}")
+                i.org, [i.namespace], lambda reason: self.skipped.append(f"projection: {reason}")
             )
             async with published:
                 return await document_decision_tally(i.org, i.namespace, uris)
