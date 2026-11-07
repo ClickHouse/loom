@@ -4,6 +4,7 @@ it — and every search reads them all, each result naming its tracker."""
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -36,7 +37,7 @@ NAMESPACES = {QA: _Ns(), DESK: _Ns(), PRIV: _Ns(True)}
 
 @pytest.fixture
 def wired(monkeypatch):
-    b.reset_overrides_for_tests({CODE: f"{QA},{DESK},{PRIV}"})
+    b.reset_overrides_for_tests({(ORG, CODE): f"{QA},{DESK},{PRIV}"})
     monkeypatch.setattr(b, "refresh_overrides", _no_refresh)
     monkeypatch.setattr(
         "server.tracker.domain.namespaces.tracker_namespace", lambda org, n: NAMESPACES.get(n)
@@ -76,14 +77,24 @@ def test_the_primary_is_first_and_the_config_may_name_a_list(monkeypatch) -> Non
         "tracker_code_namespace_bindings_json",
         '{"code-widgets*": ["tracker-jira", "tracker-zendesk"], "code-x": "tracker-x"}',
     )
-    assert b.tracker_namespaces_for("code-widgets-release") == [QA, DESK]
-    assert b.tracker_namespace_for("code-widgets-release") == QA
-    assert b.tracker_namespaces_for("code-x") == ["tracker-x"]
-    b.reset_overrides_for_tests({CODE: ""})  # a maintainer cleared the config's binding
-    assert b.tracker_namespaces_for(CODE) == []
-    b.reset_overrides_for_tests({CODE: f"{DESK},{QA}"})
-    assert b.tracker_namespace_for(CODE) == DESK
-    assert b.code_namespaces_linking(QA, [CODE, "code-x"]) == [CODE]
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        json.dumps(
+            [
+                {"org": ORG, "namespace": n, "repo": "Acme/widgets"}
+                for n in (CODE, "code-widgets-release", "code-x")
+            ]
+        ),
+    )
+    assert b.tracker_namespaces_for(ORG, "code-widgets-release") == [QA, DESK]
+    assert b.tracker_namespace_for(ORG, "code-widgets-release") == QA
+    assert b.tracker_namespaces_for(ORG, "code-x") == ["tracker-x"]
+    b.reset_overrides_for_tests({(ORG, CODE): ""})  # a maintainer cleared the config's binding
+    assert b.tracker_namespaces_for(ORG, CODE) == []
+    b.reset_overrides_for_tests({(ORG, CODE): f"{DESK},{QA}"})
+    assert b.tracker_namespace_for(ORG, CODE) == DESK
+    assert b.code_namespaces_linking(ORG, QA, [CODE, "code-x"]) == [CODE]
     b.reset_overrides_for_tests({})
 
 
@@ -178,7 +189,7 @@ async def test_similar_by_number_searches_the_others_by_that_items_text(wired, m
 async def test_similar_on_one_tracker_is_the_single_read(wired, monkeypatch) -> None:
     from server.tracker.api.models import TrackerSimilarInput, TrackerSimilarOutput
 
-    b.reset_overrides_for_tests({CODE: QA})
+    b.reset_overrides_for_tests({(ORG, CODE): QA})
     seen: list[str] = []
 
     async def _one(inp):
@@ -276,16 +287,16 @@ async def test_set_source_writes_the_ordered_list(wired, monkeypatch) -> None:
     import server.code.app.repo_admin as adm
     from server.code.api.models_repos import CodeRepoSetSourceInput
 
-    b.reset_overrides_for_tests({CODE: f"{QA},{DESK}"})
+    b.reset_overrides_for_tests({(ORG, CODE): f"{QA},{DESK}"})
     written: list[str] = []
 
     class _Repo:
         async def get_state(self, org, ns, key):
-            return b.override_for(ns) or ""
+            return b.override_for(org, ns) or ""
 
         async def set_state(self, org, ns, key, value, detail=""):
             written.append(value)
-            b.reset_overrides_for_tests({CODE: value})
+            b.reset_overrides_for_tests({(ORG, CODE): value})
 
     async def _refresh(**_):
         return None
@@ -370,8 +381,22 @@ async def test_set_source_writes_the_ordered_list(wired, monkeypatch) -> None:
                 CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[QA, DESK])
             )
         # a tracker only the operator map links is stored by this call: it needs its admin
+        from server.code.domain.index.repos import RepoConfig
+
         b.reset_overrides_for_tests({})
         monkeypatch.setattr(b, "bindings", lambda: {CODE: DESK})
+        entry = RepoConfig(
+            org=ORG,
+            namespace=CODE,
+            repo="Acme/widgets",
+            git_dir="",
+            git_remote="",
+            git_branch="main",
+            path_prefixes=(),
+            github_token="",
+        )  # an operator entry (source "config"), so the map's link is in force
+        monkeypatch.setattr("server.code.domain.index.repos.configured_repos", lambda: [entry])
+        assert b.tracker_namespaces_for(ORG, CODE) == [DESK]
         with pytest.raises(AuthInsufficientError, match="needs an admin"):
             await adm.handle_code_repo_set_source(
                 CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[DESK])
@@ -459,7 +484,7 @@ async def test_set_source_reads_its_own_stored_links_fail_closed(monkeypatch) ->
         "server.code.domain.index.repos.repo_for_namespace",
         lambda org, ns: SimpleNamespace(repo="Acme/widgets"),
     )
-    b.reset_overrides_for_tests({CODE: QA})  # the deployment-wide snapshot names it
+    b.reset_overrides_for_tests({("other-org", CODE): QA})  # another org's snapshot row names it
     try:
         with pytest.raises(ConnectionError):
             await adm.handle_code_repo_set_source(
@@ -473,3 +498,50 @@ async def test_set_source_reads_its_own_stored_links_fail_closed(monkeypatch) ->
         assert written == []
     finally:
         b.reset_overrides_for_tests({})
+
+
+@pytest.mark.asyncio
+async def test_set_source_says_which_branches_read_the_links_too(wired, monkeypatch) -> None:
+    """A link on an operator repository is read by its `code.repo.add_branch` branches;
+    the tracker admin who sets it is told which."""
+    import server.code.app.repo_admin as adm
+    from server.code.api.models_repos import CodeRepoSetSourceInput
+    from server.core import ch as ch_mod
+
+    sequential: list[bool] = []
+
+    class _Repo:
+        async def get_state(self, org, ns, key):
+            sequential.append(ch_mod.sequential_reads_active())
+            return ""
+
+        async def set_state(self, org, ns, key, value, detail=""):
+            return None
+
+    async def _noop(**_):
+        return None
+
+    async def _scope(org, ns, role=None, *, hides_answer=True):
+        return True
+
+    monkeypatch.setattr("server.code.store.index.CodeRepo", _Repo)
+    monkeypatch.setattr(adm.reg, "refresh_db_repos", _noop)
+    monkeypatch.setattr(b, "refresh_overrides", _noop)
+    monkeypatch.setattr(adm, "_require_same_org", lambda org: None)
+    monkeypatch.setattr(adm, "current_caller", lambda: ("alice", ORG))
+    monkeypatch.setattr(
+        "server.code.domain.index.repos.repo_for_namespace",
+        lambda org, ns: SimpleNamespace(repo="Acme/widgets"),
+    )
+    monkeypatch.setattr(b, "branches_following", lambda org, ns: [f"{CODE}-26-8"])
+    monkeypatch.setattr(authz, "row_in_scope", _scope)
+    out = await adm.handle_code_repo_set_source(
+        CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[QA])
+    )
+    assert f"the readers of {CODE}-26-8 read these links too" in out.warning
+    out = await adm.handle_code_repo_set_source(
+        CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[])
+    )
+    assert "read these links too" not in out.warning  # a clear delegates nothing
+    # the stored links that decide which link is new read their own writes
+    assert sequential == [True, True]

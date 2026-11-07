@@ -164,10 +164,10 @@ async def test_a_binding_rereads_the_registry_before_refusing(monkeypatch) -> No
 
     class _Repo:
         async def get_state(self, org, ns, key):
-            return binding.override_for(ns) or ""
+            return binding.override_for(org, ns) or ""
 
         async def set_state(self, org, ns, key, value, detail=""):
-            binding.reset_overrides_for_tests({ns: value})
+            binding.reset_overrides_for_tests({(org, ns): value})
 
     async def _noop(*a, **k):
         return {}

@@ -5230,10 +5230,9 @@ class TrackerSettings(BaseModel):
     # The loom org the tracker namespaces belong to; empty (default) = none, so no
     # tracker namespace serves and self-service sources are refused until it is set.
     tracker_org: str = ""
-    # Which tracker namespace a code namespace reads its facts from:
-    # glob keys → namespace, e.g. {"code-myrepo*": "tracker-myrepo"}. Numbers are
-    # repository-global, so every branch namespace binds to its repository's one
-    # tracker namespace. '' = no QA facts anywhere.
+    # Which tracker namespace a code namespace reads its facts from: glob keys over the
+    # operator's repositories' namespaces → namespace, e.g. {"code-myrepo*": "tracker-myrepo"};
+    # a code.repo.add_branch branch of one reads that repository's links. '' = no QA facts.
     tracker_code_namespace_bindings_json: Annotated[str, JsonObject] = ""
     # --- tracker sources and the record contract ------------------------------
     # Every tracker source and the namespaces that read them:

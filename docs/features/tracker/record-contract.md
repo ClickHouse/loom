@@ -94,9 +94,9 @@ mapping is `server/tracker/domain/mapping.py`, and the columns read per table ar
 
 6. **Link the tracker to a repository** so agents working in that checkout read it:
    `code.repo.set_source` with `tracker_namespaces` (repository `admin`), the repository
-   card in the dashboard, or `LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON`. A repository may
-   link several trackers in order; the first is the primary, whose numbers are the
-   repository's issue and PR numbers
+   card in the dashboard, or, for the operator's own repositories only,
+   `LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON`. A repository may link several trackers in
+   order; the first is the primary, whose numbers are the repository's issue and PR numbers
    ([linking a tracker](overview.md#linking-a-tracker-to-a-repository)).
    `tracker.binding` reports what a code namespace resolves to for the caller.
 
@@ -121,7 +121,8 @@ LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON='{"code-widgets*": ["tracker-widgets",
 
 Credentials sit in their own variable, apart from the map, so the map can be shown and
 diffed without the secret. A binding value is one tracker namespace or an ordered list,
-primary first; keys are globs over code namespace names. A maintainer's
+primary first; keys are globs over the code namespace names of the operator's
+repositories (a self-service repository is linked by its maintainer). A maintainer's
 `code.repo.set_source` links replace the map for that repository. Tracker namespaces
 belong to `LOOM_TRACKER_ORG`; with it empty no tracker namespace serves.
 

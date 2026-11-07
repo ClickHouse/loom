@@ -68,9 +68,10 @@ async def _bound_tracker_namespace(org: str, ns: str) -> tuple[str, str]:
     """(tracker_namespace, reason): the tracker namespace whose record may feed a fit
     cached under this code namespace, or "" with `not_bound` / `restricted`."""
     from server.identity.app.namespace_classification import is_restricted
-    from server.tracker.app.binding import tracker_namespace_for
+    from server.tracker.app.binding import refresh_overrides, tracker_namespace_for
 
-    tracker_ns = tracker_namespace_for(ns)
+    await refresh_overrides()  # the links as of the refresh interval, branches included
+    tracker_ns = tracker_namespace_for(org, ns)
     if not tracker_ns:
         return "", "not_bound"
     if await is_restricted(org, tracker_ns):

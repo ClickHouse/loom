@@ -13,6 +13,7 @@ taken, an org past its quota.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -30,8 +31,11 @@ from server.code.api.models_repos import (
 from server.code.app.common import require_code_intel
 from server.code.app.index import repo_registry as reg
 from server.code.domain.index.repos import registry_repos
+from server.core.ch import own_write_reads
 from server.core.errors import AuthInsufficientError, ValidationError
 from server.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _require_self_service() -> None:
@@ -116,6 +120,8 @@ async def _register(
     from server.code.store.index import CodeRepo
 
     subject = current_caller()[0] or auth_off_subject()
+    # Rows a removed namespace of this name left (N-1 clears none; the purge is detached).
+    await _empty_tracker_links(org, namespace, detail="stale row of a removed namespace")
     await reg.insert_entry(
         org=org,
         namespace=namespace,
@@ -429,6 +435,8 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
     # a call that fails between the two leaves the repository registered to retry.
     ch = get_client()
     async with sources_lease(input.org, input.namespace):
+        # First, so a failed clear stops the removal while it can be retried.
+        await _empty_tracker_links(input.org, input.namespace, detail="repository removed")
         sources_off = await deactivate_namespace_sources(input.org, input.namespace)
         registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)
     await reg.refresh_db_repos(force=True)
@@ -495,7 +503,7 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
         if src.classification == "restricted"
         else ("open" if getattr(src, "public", False) else "approval")
     )
-    return await _register(
+    out = await _register(
         org=input.org,
         namespace=namespace,
         repo=src.repo,
@@ -511,6 +519,64 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
         exclude_generated=bool(getattr(src, "exclude_generated", True)),
         scip_producer=str(getattr(src, "scip_producer", "") or ""),
     )
+    await _inherit_tracker_links(input.org, input.namespace, namespace)
+    return out
+
+
+async def _empty_tracker_links(org: str, namespace: str, *, detail: str) -> None:
+    """Empty the link rows that hold a value and drop the name from this process's
+    snapshot; an absent row stays absent, since an empty `qa_binding` reads as cleared."""
+    from server.code.store.index import CodeRepo
+    from server.tracker.app import binding
+
+    repo = CodeRepo()
+    with own_write_reads():  # a link written a moment ago on another replica counts
+        for key in (binding.BRANCH_OF_KEY, binding.OVERRIDE_KEY):
+            if await repo.get_state_or_none(org, namespace, key):
+                await repo.set_state(org, namespace, key, "", detail=detail)
+    binding.forget_links(org, namespace)
+
+
+async def _inherit_tracker_links(org: str, source_ns: str, namespace: str) -> None:
+    """Follow an operator root (`qa_branch_of`, written last) or copy the source's own
+    row; see code-index-architecture.md."""
+    from server.code.store.index import CodeRepo
+    from server.tracker.app import binding
+
+    repo = CodeRepo()
+    try:
+        operator = binding.operator_repositories()
+        if (org, source_ns) in operator:
+            # An operator entry is its own root, whatever row a removed namespace left there.
+            root, own = source_ns, None
+        else:
+            # Read-your-writes: a link the source's maintainer cleared a moment ago must
+            # not be copied from a lagging replica.
+            with own_write_reads():
+                root = await repo.get_state(org, source_ns, binding.BRANCH_OF_KEY) or source_ns
+                # As it is, "" included: a source branch whose maintainer cleared it must
+                # not hand its own branch back to the root's links.
+                own = await repo.get_state_or_none(org, source_ns, binding.OVERRIDE_KEY)
+        if own is not None:
+            await repo.set_state(
+                org,
+                namespace,
+                binding.OVERRIDE_KEY,
+                binding.encode_binding(binding.parse_binding(own)),
+                detail=f"tracker links of {source_ns}",
+            )
+        # Only an operator root: a self-service root's branch would start reading the map
+        # if the operator later configured the root's name.
+        if (org, root) in operator:
+            await repo.set_state(
+                org, namespace, binding.BRANCH_OF_KEY, root, detail=f"branch of {root}"
+            )
+    except Exception as e:  # noqa: BLE001 — the branch is registered; its links can be set by hand
+        logger.warning(
+            "code.repo.add_branch: tracker links of %s/%s not fully written: %s", org, namespace, e
+        )
+        return
+    await binding.refresh_overrides(force=True)
 
 
 # ---------------------------------------------------------------------------
@@ -619,11 +685,13 @@ async def handle_code_repo_set_source(input: Any) -> Any:
     if cfg is None:
         raise ValidationError(f"{input.namespace} is not a repository index", code="NOT_A_REPO")
     await binding.refresh_overrides(force=True)
-    previous = binding.tracker_namespaces_for(input.namespace)
-    # This repository's own stored links, read for its org and raising when unread.
-    stored = binding.parse_binding(
-        await CodeRepo().get_state(input.org, input.namespace, binding.OVERRIDE_KEY)
-    )
+    previous = binding.tracker_namespaces_for(input.org, input.namespace)
+    # This repository's own stored links, read for its org and raising when unread, with
+    # read-your-writes: a link cleared a moment ago must count as new again.
+    with own_write_reads():
+        stored = binding.parse_binding(
+            await CodeRepo().get_state(input.org, input.namespace, binding.OVERRIDE_KEY)
+        )
     wanted = binding.parse_binding(input.tracker_namespaces)
     # A link the repository's stored links do not hold needs the tracker's admin; one only
     # the operator map holds counts as new.
@@ -646,6 +714,7 @@ async def handle_code_repo_set_source(input: Any) -> Any:
         detail=f"tracker links set by {subject or 'maintainer'}",
     )
     await binding.refresh_overrides(force=True)
+    following = binding.branches_following(input.org, input.namespace) if wanted else []
     return CodeRepoSetSourceOutput(
         org=input.org,
         namespace=input.namespace,
@@ -654,9 +723,12 @@ async def handle_code_repo_set_source(input: Any) -> Any:
         effective_within_s=int(settings.code_repos_refresh_seconds),
         not_covering=[qa for qa, _ in missing],
         warning="; ".join(
-            f"{qa} names {', '.join(getattr(t, 'repos', ()) or ()) or 'no repository'}, "
-            f"not {repo}: its reads will not return {repo}'s issues and PRs"
-            for qa, t in missing
+            [
+                f"{qa} names {', '.join(getattr(t, 'repos', ()) or ()) or 'no repository'}, "
+                f"not {repo}: its reads will not return {repo}'s issues and PRs"
+                for qa, t in missing
+            ]
+            + ([f"the readers of {', '.join(following)} read these links too"] if following else [])
         ),
     )
 

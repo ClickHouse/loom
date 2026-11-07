@@ -4980,10 +4980,10 @@ settings:
   # namespace serves and self-service sources are refused until it is set. [restart]
   # tracker_org: ""
 
-  # Which tracker namespace a code namespace reads its facts from: glob keys →
-  # namespace, e.g. {"code-myrepo*": "tracker-myrepo"}. Numbers are repository-global,
-  # so every branch namespace binds to its repository's one tracker namespace. '' = no
-  # QA facts anywhere. [restart]
+  # Which tracker namespace a code namespace reads its facts from: glob keys over the
+  # operator's repositories' namespaces → namespace, e.g. {"code-myrepo*":
+  # "tracker-myrepo"}; a code.repo.add_branch branch of one reads that repository's
+  # links. '' = no QA facts. [restart]
   # tracker_code_namespace_bindings_json: ""
 
   # --- tracker sources and the record contract ---

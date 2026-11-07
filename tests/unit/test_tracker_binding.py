@@ -3,11 +3,15 @@ bound namespace passes the gate for the current principal or is not read."""
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 import server.auth.authz as authz
 import server.tracker.app.binding as b
 from server.settings import settings
+
+ORG = "clickhouse"
 
 
 @pytest.fixture
@@ -17,19 +21,26 @@ def bound(monkeypatch):
         "tracker_code_namespace_bindings_json",
         '{"code-clickhouse*": "tracker-clickhouse", "code-example-private": "tracker-priv"}',
     )
+    # the operator's map links only the repositories the operator configured
+    names = ("code-clickhouse", "code-clickhouse-26-4", "code-example-private", "code-other")
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        json.dumps([{"org": ORG, "namespace": n, "repo": "ClickHouse/ClickHouse"} for n in names]),
+    )
 
 
 def test_exact_key_beats_glob(bound) -> None:
-    assert b.tracker_namespace_for("code-example-private") == "tracker-priv"
-    assert b.tracker_namespace_for("code-clickhouse") == "tracker-clickhouse"
-    assert b.tracker_namespace_for("code-clickhouse-26-4") == "tracker-clickhouse"
-    assert b.tracker_namespace_for("code-other") == ""
-    assert b.tracker_namespace_for("") == ""
+    assert b.tracker_namespace_for(ORG, "code-example-private") == "tracker-priv"
+    assert b.tracker_namespace_for(ORG, "code-clickhouse") == "tracker-clickhouse"
+    assert b.tracker_namespace_for(ORG, "code-clickhouse-26-4") == "tracker-clickhouse"
+    assert b.tracker_namespace_for(ORG, "code-other") == ""
+    assert b.tracker_namespace_for(ORG, "") == ""
 
 
 def test_unset_or_bad_json_binds_nothing(monkeypatch) -> None:
     monkeypatch.setattr(settings, "tracker_code_namespace_bindings_json", "")
-    assert b.tracker_namespace_for("code-clickhouse") == ""
+    assert b.tracker_namespace_for(ORG, "code-clickhouse") == ""
     monkeypatch.setattr(settings, "tracker_code_namespace_bindings_json", "{oops")
     assert b.bindings() == {}
 

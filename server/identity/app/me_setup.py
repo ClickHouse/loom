@@ -195,11 +195,17 @@ async def _with_bound_tracker(org: str, subject: str, names: list[str]) -> list[
     A standard record needs nothing: it is read by whoever reads the repository. Order is
     kept; nothing is removed."""
     from server.identity.app.namespace_classification import is_restricted
-    from server.tracker.app.binding import tracker_namespaces_for
+    from server.tracker.app.binding import (
+        operator_repositories,
+        refresh_overrides,
+        tracker_namespaces_for,
+    )
 
     out = list(names)
+    await refresh_overrides()  # the links as of the refresh interval, branches included
+    operator = operator_repositories()  # once for every name
     for ns in names:
-        for qa in tracker_namespaces_for(ns):  # every linked tracker
+        for qa in tracker_namespaces_for(org, ns, operator=operator):  # every linked tracker
             if qa in out:
                 continue
             if not await is_restricted(org, qa):

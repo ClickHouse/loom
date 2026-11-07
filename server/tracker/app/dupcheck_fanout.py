@@ -11,8 +11,8 @@ per-namespace checks.
 
 from __future__ import annotations
 
-import fnmatch
 import logging
+from collections.abc import Collection
 from typing import Any
 
 from server.tracker.api.models import TrackerDuplicateCheckOutput
@@ -23,14 +23,21 @@ _RANK = {"duplicate_of": 2, "related": 1, "none": 0}
 
 
 async def _may_read_tracker(
-    org: str, ns: str, code_kinds: dict[str, str], *, hides_answer: bool
+    org: str,
+    ns: str,
+    code_kinds: dict[str, str],
+    *,
+    hides_answer: bool,
+    operator: Collection[tuple[str, str]] | None = None,
 ) -> bool:
     """Read gate for a tracker namespace the transport did not bind: a restricted one is
     read only with a grant on itself; a standard one by whoever may read it or any code
-    namespace bound to it. `hides_answer`: the caller named it (see `row_in_scope`)."""
+    namespace bound to it. `hides_answer`: the caller named it (see `row_in_scope`).
+    `operator`: the operator's repositories (`binding.operator_repositories`) when the
+    caller read them once for many trackers; None: `code_namespaces_linking` reads them."""
     from server.auth.authz import row_in_scope
     from server.operations.base import Role
-    from server.tracker.app.binding import bindings, code_namespaces_linking, parse_binding
+    from server.tracker.app.binding import code_namespaces_linking
     from server.tracker.domain.namespaces import tracker_namespace
 
     target = tracker_namespace(org, ns)
@@ -40,13 +47,9 @@ async def _may_read_tracker(
         return True
     if target.restricted:
         return False
-    patterns = [p for p, t in bindings().items() if ns in parse_binding(t)]
     code = [c for c, kind in code_kinds.items() if kind == "code"]
-    # A maintainer's links count as much as the configured bindings.
-    linking = set(code_namespaces_linking(ns, code))
-    for code_ns in code:
-        if code_ns not in linking and not any(fnmatch.fnmatchcase(code_ns, p) for p in patterns):
-            continue
+    # The org's links: a maintainer's, else the operator's map for its own repositories.
+    for code_ns in code_namespaces_linking(org, ns, code, operator=operator):
         if await row_in_scope(org, code_ns, Role.VIEWER, hides_answer=hides_answer):
             return True
     return False
@@ -62,7 +65,7 @@ async def readable_tracker_namespaces(
     then every configured tracker namespace the principal may read joins up to
     `cap`. A namespace that fails the gate is left out in silence."""
     from server.identity.app.namespace_kinds import kind_map
-    from server.tracker.app.binding import authorized_tracker_namespace
+    from server.tracker.app.binding import authorized_tracker_namespace, operator_repositories
     from server.tracker.domain.namespaces import configured_namespaces, tracker_namespace
 
     out: list[str] = [bound] if bound else []
@@ -73,24 +76,27 @@ async def readable_tracker_namespaces(
     if cap <= 1 and not requested:
         return out
     if requested:
+        operator = operator_repositories()  # once for every requested name
         for raw in requested:
             ns = str(raw or "").strip()
             if not ns or ns in out:
                 continue
             if tracker_namespace(org, ns) is None:
-                ns = await authorized_tracker_namespace(org, ns)
+                ns = await authorized_tracker_namespace(org, ns, operator=operator)
                 if not ns or ns in out:
                     continue
                 out.append(ns)
                 continue
-            if await _may_read_tracker(org, ns, {}, hides_answer=True):
+            if await _may_read_tracker(org, ns, {}, hides_answer=True, operator=operator):
                 out.append(ns)
         return out[: max(cap, 1)]
     kinds = await kind_map(org)
+    operator = operator_repositories()  # once for every tracker below
     for ns in sorted(configured_namespaces()):
         if ns in out:
             continue
-        if await _may_read_tracker(org, ns, kinds, hides_answer=False):  # one Loom adds
+        # hides_answer=False: Loom adds this tracker, the caller did not name it
+        if await _may_read_tracker(org, ns, kinds, hides_answer=False, operator=operator):
             out.append(ns)
         if len(out) >= cap:
             break

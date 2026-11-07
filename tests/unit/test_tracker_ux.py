@@ -144,13 +144,16 @@ async def test_a_maintainer_row_says_its_binding(monkeypatch) -> None:
     from server.tracker.app import binding
 
     async def refresh(**k):
-        return {}
+        return None
 
     monkeypatch.setattr(binding, "refresh_overrides", refresh)
-    binding.reset_overrides_for_tests({"code-kj": "tracker-kj,tracker-desk", "code-x": ""})
+    binding.reset_overrides_for_tests(
+        {("acme", "code-kj"): "tracker-kj,tracker-desk", ("acme", "code-x"): ""}
+    )
     try:
         lookup = await repos._bound_trackers()
-        assert lookup("code-kj") == ["tracker-kj", "tracker-desk"] and lookup("code-x") == []
+        assert lookup("acme", "code-kj") == ["tracker-kj", "tracker-desk"]
+        assert lookup("acme", "code-x") == [] and lookup("other", "code-kj") == []
     finally:
         binding.reset_overrides_for_tests()
 

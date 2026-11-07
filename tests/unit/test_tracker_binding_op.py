@@ -5,6 +5,8 @@ not-a-QA-namespace are one `none` answer that names nothing."""
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 import server.auth.authz as authz
@@ -38,6 +40,13 @@ def _cfg(monkeypatch):
         "tracker_code_namespace_bindings_json",
         f'{{"code-clickhouse*": "{PUB}", "code-example-private": "{PRIV}",'
         f' "code-orphan": "tracker-nowhere"}}',
+    )
+    # the operator's map links the repositories the operator configured
+    names = ("code-clickhouse", "code-clickhouse-26-4", "code-example-private", "code-orphan")
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        json.dumps([{"org": ORG, "namespace": n, "repo": "ClickHouse/ClickHouse"} for n in names]),
     )
 
 

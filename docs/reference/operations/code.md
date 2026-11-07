@@ -1278,7 +1278,7 @@ A maintainer sets the trackers this repository reads (records of issues, PRs, te
 | `previous_tracker_namespaces` | `list[str]` | The links before this call, primary first ([] = none). |
 | `effective_within_s` | `int` | Seconds within which every process re-reads the links. |
 | `not_covering` | `list[str]` | Linked trackers that do not list this repository (they read only the repositories they name, so they answer nothing here), and the sentence that says so |
-| `warning` | `str` | One clause per `not_covering` tracker naming the repositories it reads; '' when none. |
+| `warning` | `str` | One clause per `not_covering` tracker naming the repositories it reads, and one naming the registered branches that read these links too; '' when neither. |
 
 ## `code.repos`
 

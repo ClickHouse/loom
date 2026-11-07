@@ -535,7 +535,7 @@
   "tests/unit/test_code_sql_objects_edges.py": 0.24,
   "tests/unit/test_code_sql_terminators_directives.py": 0.11,
   "tests/unit/test_code_state_gauges.py": 0.3,
-  "tests/unit/test_code_state_values_for_key.py": 0.02,
+  "tests/unit/test_code_state_values_for_keys.py": 0.02,
   "tests/unit/test_code_status_ops.py": 0.32,
   "tests/unit/test_code_structural_verdicts.py": 0.36,
   "tests/unit/test_code_successor.py": 9.86,

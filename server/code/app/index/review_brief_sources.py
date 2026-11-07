@@ -141,10 +141,11 @@ async def tracker_pr_facts(org: str, ns: str, pr_number: int) -> tuple[str, dict
     PR's title, reviewers, has_test and backport flag — the reviewer facts a ledger row
     would not carry either."""
     from server.identity.app.namespace_classification import is_restricted
-    from server.tracker.app.binding import tracker_namespace_for
+    from server.tracker.app.binding import refresh_overrides, tracker_namespace_for
     from server.tracker.app.source import tracker_source
 
-    tracker_ns = tracker_namespace_for(ns)
+    await refresh_overrides()  # the links as of the refresh interval, branches included
+    tracker_ns = tracker_namespace_for(org, ns)
     if not tracker_ns:
         return NOT_BOUND, {}
     if await is_restricted(org, tracker_ns):

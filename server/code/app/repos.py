@@ -4,6 +4,7 @@ trackers and directory access state."""
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import re
 from typing import Any
@@ -196,7 +197,7 @@ async def _code_repo_rows(input: CodeReposInput, wanted: set[str] | None) -> lis
                     primary_namespace=docs_ns.get((cfg.org, cfg.repo), ""),
                     # The links as they are, said only to the maintainer
                     bound_trackers=(
-                        bound(cfg.namespace) if roles.get(key, "") == "admin" else None
+                        bound(cfg.org, cfg.namespace) if roles.get(key, "") == "admin" else None
                     ),
                 )
             )
@@ -221,18 +222,18 @@ async def _code_repo_rows(input: CodeReposInput, wanted: set[str] | None) -> lis
 
 
 async def _bound_trackers() -> Any:
-    """The trackers each code namespace links, primary
+    """The trackers each (org, code namespace) links, primary
     first — the maintainer's links, else the deployment's map ([] = none) —
     from the snapshot `code.repo.set_source` refreshes; a failed refresh
     keeps the last one. The page shows the binding as it is, not a guess
-    from which record names the repository."""
+    from which record names the repository. The operator's repositories are read
+    once for the whole listing."""
     from server.tracker.app import binding
 
-    try:
-        await binding.refresh_overrides()
-    except Exception as e:  # noqa: BLE001 — the last snapshot answers
-        logger.debug("code.repos: binding refresh failed: %s", e)
-    return binding.tracker_namespaces_for
+    await binding.refresh_overrides()  # never raises: a failed one keeps the last snapshot
+    return functools.partial(
+        binding.tracker_namespaces_for, operator=binding.operator_repositories()
+    )
 
 
 def _unreadable_reason(auth: Any, cfg: Any, restricted: bool, role: str) -> str:

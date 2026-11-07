@@ -141,13 +141,24 @@ def plane(monkeypatch):
         return repos.registry_repos()
 
     monkeypatch.setattr(reg, "refresh_db_repos", _refresh)
-    monkeypatch.setattr(repos, "_registry_repos", [reg.row_to_config(row)])
+    monkeypatch.setattr(repos, "_registry_namespaces", repos._registry_namespaces)
+    monkeypatch.setattr(repos, "_registry_repos", repos._registry_repos)
+    repos.set_registry_repos([reg.row_to_config(row)])
 
     import server.code.store.index as code_repo_mod
 
+    ch.states = []
+    ch.stored = {}  # (org, namespace, key) -> value, what get_state_or_none answers
+
     class _CodeRepo(code_repo_mod.CodeRepo):
-        async def set_state(self, *a: Any, **k: Any) -> None:
-            return None
+        async def set_state(
+            self, org: str, ns: str, key: str, value: str, detail: str = ""
+        ) -> None:
+            ch.states.append((org, ns, key, value))
+            ch.stored[(org, ns, key)] = value
+
+        async def get_state_or_none(self, org: str, ns: str, key: str) -> str | None:
+            return ch.stored.get((org, ns, key))
 
     monkeypatch.setattr(code_repo_mod, "CodeRepo", _CodeRepo)
     import server.erasure.app.saga as erasure_mod
@@ -400,4 +411,110 @@ async def test_remove_refuses_without_the_lease_and_writes_nothing(
         await admin.handle_code_repo_remove(
             CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
         )
+    assert plane.registry_active and plane.inserted == [] and plane.sagas == []
+    assert plane.states == []  # a refused removal leaves the live repository's links
+
+
+@pytest.mark.asyncio
+async def test_remove_empties_the_tracker_links_before_it_deactivates_or_purges(
+    plane, monkeypatch
+) -> None:
+    """The purge is detached: a namespace of the same name registered again before it
+    runs must not follow the removed branch's source or links."""
+    import server.erasure.app.saga as erasure_mod
+    from server.knowledge.app import sources
+    from server.tracker.app import binding
+
+    def _links() -> list[tuple[str, str, str, str]]:
+        keys = (binding.OVERRIDE_KEY, binding.BRANCH_OF_KEY)
+        return sorted(r for r in plane.states if r[2] in keys)
+
+    seen: dict[str, list[Any]] = {}
+    real_sources, real_registry = (
+        sources.deactivate_namespace_sources,
+        retire.deactivate_registry_row,
+    )
+    real_saga = erasure_mod.run_erasure_detached
+
+    async def _sources(*a: Any, **k: Any) -> Any:
+        seen["sources"] = _links()
+        return await real_sources(*a, **k)
+
+    async def _registry(*a: Any, **k: Any) -> Any:
+        seen["registry"] = _links()
+        return await real_registry(*a, **k)
+
+    async def _saga(req: Any) -> Any:
+        seen["saga"] = _links()
+        return await real_saga(req)
+
+    monkeypatch.setattr(sources, "deactivate_namespace_sources", _sources)
+    monkeypatch.setattr(retire, "deactivate_registry_row", _registry)
+    monkeypatch.setattr(erasure_mod, "run_erasure_detached", _saga)
+    plane.stored[(ORG, "code-widgets", binding.OVERRIDE_KEY)] = "tracker-widgets"
+    plane.stored[(ORG, "code-widgets", binding.BRANCH_OF_KEY)] = "code-root"
+    binding.reset_overrides_for_tests(
+        {(ORG, "code-widgets"): "tracker-widgets"},
+        branches={(ORG, "code-widgets"): "code-root"},
+    )
+    try:
+        await admin.handle_code_repo_remove(
+            CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        )
+        # this replica's snapshot drops the name at once
+        assert binding.override_for(ORG, "code-widgets") is None
+        assert (ORG, "code-widgets") not in binding._BRANCH_OF
+    finally:
+        binding.reset_overrides_for_tests()
+    emptied = [
+        (ORG, "code-widgets", binding.OVERRIDE_KEY, ""),
+        (ORG, "code-widgets", binding.BRANCH_OF_KEY, ""),
+    ]
+    assert seen == {"sources": emptied, "registry": emptied, "saga": emptied}
+
+
+@pytest.mark.asyncio
+async def test_remove_writes_no_qa_binding_row_for_a_namespace_that_had_none(
+    plane, monkeypatch
+) -> None:
+    """An empty `qa_binding` reads as cleared: one written for a namespace that never had
+    links would hide the operator's map from a namespace of the same name until the purge."""
+    from server.tracker.app import binding
+
+    plane.stored[(ORG, "code-widgets", binding.BRANCH_OF_KEY)] = "code-root"
+    await admin.handle_code_repo_remove(
+        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+    )
+    keys = (binding.OVERRIDE_KEY, binding.BRANCH_OF_KEY)
+    assert [r for r in plane.states if r[2] in keys] == [
+        (ORG, "code-widgets", binding.BRANCH_OF_KEY, "")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_link_clear_stops_the_removal_before_it_deactivates_anything(
+    plane, monkeypatch
+) -> None:
+    """The clear runs first so a failure leaves the repository registered to retry: no
+    source, registry row or purge is touched."""
+    import server.code.store.index as code_repo_mod
+    from server.knowledge.app import sources
+    from server.tracker.app import binding
+
+    touched: list[str] = []
+
+    async def _boom(self: Any, org: str, ns: str, key: str, value: str, detail: str = "") -> None:
+        raise RuntimeError("store write failed")
+
+    async def _sources(*a: Any, **k: Any) -> Any:
+        touched.append("sources")
+
+    monkeypatch.setattr(code_repo_mod.CodeRepo, "set_state", _boom)
+    monkeypatch.setattr(sources, "deactivate_namespace_sources", _sources)
+    plane.stored[(ORG, "code-widgets", binding.OVERRIDE_KEY)] = "tracker-widgets"
+    with pytest.raises(RuntimeError, match="store write failed"):
+        await admin.handle_code_repo_remove(
+            CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        )
+    assert touched == []
     assert plane.registry_active and plane.inserted == [] and plane.sagas == []

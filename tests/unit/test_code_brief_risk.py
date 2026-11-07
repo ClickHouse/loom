@@ -409,7 +409,7 @@ def _bind(monkeypatch: pytest.MonkeyPatch, *, restricted: bool = False) -> None:
     monkeypatch.setattr(
         binding,
         "tracker_namespace_for",
-        lambda ns: "tracker-clickhouse" if ns.startswith("code-") else "",
+        lambda org, ns: "tracker-clickhouse" if ns.startswith("code-") else "",
     )
 
     async def _restricted(org: str, ns: str) -> bool:
