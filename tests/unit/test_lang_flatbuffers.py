@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from server.code.domain.extract.lang_flatbuffers import (
     fbs_chunks,
     fbs_external_edges,
@@ -100,3 +102,15 @@ def test_chunks_one_per_block_with_header() -> None:
         for ln in range(c.start_line, c.end_line + 1):
             seen[ln] += 1
     assert all(x <= 1 for x in seen)
+
+
+def test_a_union_member_with_a_long_blank_run_is_read_in_linear_time() -> None:
+    """A member that cannot match (`ab`, blanks, `_`) is refused after one pass over the
+    blanks; with a `\\s*` on each side of every optional part it took seconds at 400."""
+    blanks = " " * 5_000
+    schema = f"union Body {{ Record, ab{blanks}_, Ack : Rec{blanks}=  2 , }}\n".encode()
+    start = time.process_time()
+    pf = parse_fbs("src/u.fbs", schema)
+    local, _external = fbs_local_edges(pf)
+    assert time.process_time() - start < 1.0
+    assert {e.to_qualified_name.split("::")[-1] for e in local} <= {"Record", "Rec"}

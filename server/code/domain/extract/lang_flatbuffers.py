@@ -85,8 +85,9 @@ _INCLUDE_RE = re.compile(r'^\s*include\s+"([^"]+)"\s*;')
 _ROOT_RE = re.compile(r"^\s*root_type\s+([A-Za-z_][\w.]*)\s*;")
 _FILEID_RE = re.compile(r'^\s*file_identifier\s+"([^"]+)"\s*;')
 _FIELD_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*:\s*(\[?)([A-Za-z_][\w.]*)(?::\s*\d+)?\]?")
+# Each optional part owns the blanks before it, so a blank run is read one way only.
 _UNION_MEMBER_RE = re.compile(
-    r"^\s*([A-Za-z_][\w.]*)\s*(?::\s*([A-Za-z_][\w.]*))?\s*(?:=\s*\d+)?\s*,?\s*$"
+    r"^\s*([A-Za-z_][\w.]*)(?:\s*:\s*([A-Za-z_][\w.]*))?(?:\s*=\s*\d+)?\s*(?:,\s*)?$"
 )
 _RPC_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*\(\s*([A-Za-z_][\w.]*)\s*\)\s*:\s*([A-Za-z_][\w.]*)")
 
