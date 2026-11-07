@@ -478,3 +478,37 @@ def test_a_span_that_rejects_attributes_still_starts(monkeypatch: pytest.MonkeyP
     genai.set_identity(org="o", namespace="ns")
     proc.on_start(_FakeSpan("x"), None)  # no set_attribute
     assert inner.started == 1 and proc.errors == 1
+
+
+def test_a_prompt_linked_generation_keeps_its_prompt_tag_after_the_start_stamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The processor stamps identity tags when the span starts; `record_content`
+    sets the prompt-version tag later on the same span, and that is the list
+    exported. `prompts.evaluate` finds a version's traces by this tag."""
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from server.observability import genai
+
+    monkeypatch.setattr(otel_langfuse.settings, "langfuse_sample_rate", 1.0)
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(
+        otel_langfuse._langfuse_processor_class()(
+            SimpleSpanProcessor(exporter), otel_langfuse._LangfuseSpanFilter()
+        )
+    )
+    monkeypatch.setattr(trace, "get_tracer", lambda name, *a, **k: provider.get_tracer(name))
+    monkeypatch.setattr(genai, "_prompt_identity", lambda system: ("deadbeefcafe", "loom-p", 3))
+    genai.set_identity(org="o", namespace="ns", user_id="u1", operation="memory.ask")
+    with genai.generation_span(provider="openai", model="gpt-4o-mini") as g:
+        g.record_content(system="registered prompt", user="q", output="a")
+    (span,) = [s for s in exporter.get_finished_spans() if s.name.startswith("llm.")]
+    assert list(span.attributes["langfuse.trace.tags"]) == [
+        "org:o",
+        "namespace:ns",
+        "prompt:loom-p:3",
+    ]

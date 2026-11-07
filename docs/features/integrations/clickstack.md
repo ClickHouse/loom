@@ -84,8 +84,8 @@ so the backend (`ClickStackBackend` in `server/erasure/app/backends.py`) runs li
 - **A user scope** matches any of the keys in `LOOM_CLICKSTACK_USER_ID_KEYS` (default
   `user_id,user.id,enduser.id,loom.user_id,langfuse.user.id`), ORed, since SDKs disagree
   on the key name. Loom's request span carries `enduser.id`; its model-call spans carry
-  `loom.user_id` and `langfuse.user.id`, and with Langfuse configured every other span of
-  the request does too. Each of them also carries `loom.org`, so the org guard below
+  `loom.user_id` and `langfuse.user.id`, and with Langfuse configured so does every other
+  span the request opens once its caller is resolved. Each of them also carries `loom.org`, so the org guard below
   applies.
 - **A namespace scope** matches `loom.namespace` or `service.namespace`. Loom's exporter
   sets `service.namespace` to the constant `loom` and carries the tenant in
