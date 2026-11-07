@@ -13,8 +13,9 @@ For `--duration` seconds it runs, at once:
 - a sampler reading the namespace's open jobs from knowledge.inspect every
   `--sample-seconds`.
 
-With `--tenants K` the same load (but the one large PDF) runs in K namespaces,
-each in an org of its own, so the server carries K times the load while each
+With `--tenants K` the same load, except the one large PDF, runs in K namespaces,
+each in an org of its own (`<org>-0` …, so a token must reach them all: auth off,
+or an org-wide token), so the server carries K times the load while each
 tenant stays within its own rate limits (`server/core/ratelimit.py`). Calls
 arrive at their rate whether or not earlier ones have answered (open loop),
 so a slow server meets the same load, and a rejected call is not retried. It
@@ -184,14 +185,16 @@ class Run:
             status = r.status_code
         except httpx.HTTPError:
             r, status = None, 0
+        out: Any = {}
+        if r is not None and 200 <= status < 300:
+            try:
+                out = r.json()
+            except ValueError:
+                status = 0  # an answer that is not JSON is no answer
         if name in self.tallies:
             self.tallies[name].add((time.perf_counter() - t0) * 1000, status)
-        if r is None or not 200 <= status < 300:
+        if not 200 <= status < 300:
             return status, {}
-        try:
-            out = r.json()
-        except ValueError:
-            return 0, {}
         return status, out if isinstance(out, dict) else {}
 
     async def ingest(
@@ -346,6 +349,10 @@ async def main(args: argparse.Namespace) -> int:
     small_states: Counter[str] = Counter()
     async with httpx.AsyncClient(base_url=args.base_url, timeout=120, headers=headers) as c:
         probe = await c.post("/v1/knowledge.inspect", json={"org": orgs[0], "namespace": ns})
+        if probe.status_code in (401, 403):
+            print(f"the token cannot read {orgs[0]}/{ns}: {probe.status_code} {probe.text[:300]}",
+                  file=sys.stderr)  # fmt: skip
+            return 2
         totals = (probe.json() if probe.status_code == 200 else {}).get("ingestions") or {}
         if not (totals.get("worker_enabled") and totals.get("extractor_configured")):
             print(f"the server cannot run the load: knowledge.inspect said {probe.status_code}"

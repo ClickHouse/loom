@@ -3,6 +3,8 @@ scores a run. No server: the load itself runs against one (its docstring)."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from bench import knowledge_load as load
@@ -101,7 +103,9 @@ def test_an_answer_that_is_not_json_is_a_failed_call_tallied_not_a_crash() -> No
             run = load.Run(c, "o", "ns", 0.0, load._fresh_tallies(), load.Counter())
             out = [await run.op("knowledge.search", {}), await run.op("knowledge.query", {})]
             assert run.tallies["knowledge.search"].errors == {"502": 1}
-            assert run.tallies["knowledge.query"].latencies_ms  # the 200 was timed
+            # A 200 whose body is not JSON is no answer: an error, not a timed success.
+            query = run.tallies["knowledge.query"]
+            assert query.errors == {"0": 1} and not query.latencies_ms
             return out
 
     assert asyncio.run(go()) == [(502, {}), (0, {})]
@@ -126,3 +130,49 @@ def test_calls_start_at_their_rate_whatever_the_earlier_ones_take() -> None:
     starts = asyncio.run(go())
     assert len(starts) >= 5  # open loop: a slow call does not hold back the next
     assert all(b - a < 0.2 for a, b in zip(starts, starts[1:], strict=False))
+
+
+def test_a_jobs_time_is_its_servers_creation_to_its_end() -> None:
+    status = {"created_at": "2026-01-02T03:04:05Z", "updated_at": "2026-01-02T03:04:17.250Z"}
+    assert load._job_seconds(status) == 12.25
+    naive = {"created_at": "2026-01-02T03:04:05", "updated_at": "2026-01-02T03:05:05"}
+    assert load._job_seconds(naive) == 60.0
+
+
+def _main_against(answer: Any, monkeypatch: pytest.MonkeyPatch) -> int:
+    import asyncio
+
+    import httpx
+
+    real = httpx.AsyncClient
+
+    def mocked(*a: Any, **k: Any) -> httpx.AsyncClient:
+        return real(*a, transport=httpx.MockTransport(answer), **k)
+
+    monkeypatch.setattr(load.httpx, "AsyncClient", mocked)
+    monkeypatch.setattr(load, "CANARY_S", 0.3)
+    monkeypatch.setattr(load, "POLL_S", 0.05)
+    return asyncio.run(load.main(load._args(["--base-url", "http://x", "--duration", "1"])))
+
+
+def test_a_canary_no_worker_takes_exits_2(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("knowledge.inspect"):
+            settings = {"worker_enabled": True, "extractor_configured": True}
+            return httpx.Response(200, json={"ingestions": settings})
+        if path.endswith("knowledge.upload"):
+            return httpx.Response(201, json={"upload_id": "u"})
+        if path.endswith("knowledge.ingest"):
+            return httpx.Response(200, json={"ingestion_id": "j"})
+        return httpx.Response(200, json={"state": "pending"})  # nobody takes the job
+
+    assert _main_against(answer, monkeypatch) == 2
+
+
+def test_a_token_that_cannot_read_the_tenant_exits_2(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    assert _main_against(lambda r: httpx.Response(403, json={"error": "no"}), monkeypatch) == 2

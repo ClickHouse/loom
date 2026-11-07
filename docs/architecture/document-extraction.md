@@ -689,7 +689,7 @@ from `knowledge.ingest` to a small document's job ending ready. Each op's p99 is
 | `knowledge.search`    | 150    | 250    |
 | `knowledge.query`     | 1,000  | 1,500  |
 | `knowledge.ingest`    | 40     | 60     |
-| ingest small document | 10,000 | 30,000 |
+| ingest small document | 20,000 | 30,000 |
 
 `bench/knowledge_load.py` runs the mixed load against a server and checks it against this table: small-document ingests,
 a large PDF and a CSV import at once, with searches and structured queries over what is published, and the namespace's
@@ -698,11 +698,13 @@ load in several orgs at once, since a namespace's rate limits (`server/core/rate
 reports p50, p95 and p99 per op, errors and rejected calls (429, 503), and exits non-zero when a measure is past its
 level.
 
-Ingest throughput is bounded for the whole deployment: one process runs the ingest worker (the supervisor that holds
-the workers' lease under `LOOM_BACKGROUND_WORKERS=auto`), it runs one job per pass, and it waits
-`LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` between passes even after one that did work. The deployment therefore finishes
-fewer than one job per interval however many replicas serve, and a job queued behind a large file waits for it. Small
-documents arriving faster than that queue up, and the ingest level is met only below it.
+Ingest is bounded for the whole deployment: one process runs the ingest worker (the supervisor that holds the workers'
+lease under `LOOM_BACKGROUND_WORKERS=auto`), it runs one job per pass, and it waits
+`LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` between passes even after one that did work, so the deployment finishes fewer
+than one job per interval however many replicas serve, and a job queued behind a large file waits for it. A pass that
+found no job waits `LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS` (15 s) instead, so on a quiet deployment a document
+waits up to that long before its job starts. The small-document level allows for that wait, and holds only while small
+documents arrive slower than the worker's interval.
 
 ## Datasets
 
