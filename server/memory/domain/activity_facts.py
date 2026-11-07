@@ -171,8 +171,8 @@ _TOOL_NOUN = (
 _TOOL_SUBJECT_RE = re.compile(
     r"^\W*+(?:the\s+|both\s+|all\s+\w+\s+|each\s+)?(?:[\w-]+\s+){0,3}" + _TOOL_NOUN +
     # "the raw response for loom_memory_set", "the memories returned by loom"
-    # "about <topic>": ends on a non-space (or is one blank of 3+), each blank read once
-    r"(?:\s+(?:for|of|from|returned\s+by|by)\s+\S+(?:\s+about(?:\s[^,.;]*?[^\s,.;]|\s\s(?=\s)))?)?\s+"
+    # "about <topic>": the topic ends on a non-space, so each blank is read once
+    r"(?:\s+(?:for|of|from|returned\s+by|by)\s+\S+(?:\s+about\s[^,.;]*?[^\s,.;])?)?\s+"
     r"(?:returned|found|shows?|showed|stored|saved|added|made|swapped|rated|ranked|came\s+back|"
     r"answered|refused|failed|matched|ran|succeeded|worked|includes?|contains?|lists?|reads|says)\b"
     # "the result of loom_memory_update is …": a named tool's result described
@@ -242,7 +242,8 @@ def is_activity_narration(value: Any) -> bool:
 
 # A token with a path separator, a dotted/hyphenated/underscored identifier,
 # or anything in backticks; read from a token's start, at most 255 characters
-# each side (63 after a backtick), so the search is one pass.
+# each side, so the search is one pass. A start after a backtick is not a token
+# start and can recur inside one token, so it reads at most 63.
 _PATHLIKE_SHAPES = (
     r"\S{{0,{n}}}[/\\]\S{{0,{n}}}"
     r"|\S{{1,{n}}}[._-]\S{{0,{n}}}[._-]\S{{0,{n}}}"

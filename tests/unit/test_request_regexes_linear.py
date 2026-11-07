@@ -284,6 +284,19 @@ def test_an_asset_name_longer_than_a_file_name_is_not_hashed() -> None:
     assert frontend_assets.is_hashed_asset("x" * 1000 + "/index-0123abcd.js")
 
 
+def test_a_forget_sentence_is_read_in_time_linear_in_its_blank_runs() -> None:
+    # the cap bounds each sentence, not how many a message holds, so each
+    # must cost its length: from a quarter of the cap to all of it, about 4x
+    def message(blanks: int) -> str:
+        return ("forget jazz" + " " * blanks + "music. ") * 200
+
+    def read(text: str) -> object:
+        msgs = [{"role": "user", "content": text}]
+        return forget_requests.forget_requests_from_messages(msgs), _forget(text)
+
+    assert _fastest_seconds(read, message(380)) < 8 * _fastest_seconds(read, message(95)) + _FLOOR_S
+
+
 def test_a_deeply_qualified_name_is_retried_under_its_last_qualifiers_only() -> None:
     assert citations_app._shorter("A::B::C") == ["B::C", "C"]
     deep = citations_app._shorter("::".join(["a"] * 60_000))

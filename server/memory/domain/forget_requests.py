@@ -102,7 +102,9 @@ _FORGET_MSG_RE = re.compile(
     + r"\s+"
     + _FORGET_MSG_LINK
     + ")"
-    + r"(?P<what>.+?)\s*$",
+    # the clause up to its last non-blank (a lone blank when it has none),
+    # found in one pass instead of one per character
+    + r"(?P<what>.*\S|\s)\s*$",
     re.IGNORECASE,
 )
 # "forget it", "forget about that, let's move on": no object to resolve.
@@ -118,7 +120,8 @@ _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 # otherwise the replacement rides inside the clause, its words match the new
 # fact, and the write step drops the truth it was asked to keep.
 _REPLACEMENT_CUT_RE = re.compile(
-    r"\s+[—–]\s*|\s+-\s+|\s*;\s*|"
+    # a blank run read from its first blank only
+    r"(?<!\s)\s+[—–]\s*|(?<!\s)\s+-\s+|(?<!\s)\s*;\s*|"
     r",\s*(?=(?:i|i'm|i've|i'd|we|we're|we've|it|it's|its|my|our|now|they|he|she|"
     r"that's|the\s+new|instead|but|and\s+(?:i|we|now))\b)",
     re.IGNORECASE,
