@@ -113,7 +113,10 @@ def test_a_count_only_a_file_names_is_kept(tmp_path: Path, workers: str, started
     [
         ({"LOOM_LISTEN_HOST": "0.0.0.0"}, "0.0.0.0"),  # checked as reachable
         ({"LOOM_LISTEN_HOST": "0.0.0.0", "LOOM_BIND_HOST": "127.0.0.1"}, "127.0.0.1"),
+        ({"LOOM_LISTEN_HOST": "::"}, "::"),  # the IPv6 wildcard
         ({"LOOM_LISTEN_HOST": "127.0.0.1"}, ""),  # the settings decide
+        ({"LOOM_LISTEN_HOST": "::1"}, ""),
+        ({"LOOM_LISTEN_HOST": "localhost"}, ""),
         ({}, ""),
     ],
 )

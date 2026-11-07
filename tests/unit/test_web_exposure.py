@@ -162,11 +162,15 @@ def test_startup_on_a_reachable_bind_refuses_mcp_open_and_a_weak_root_key(
 
 def test_the_dev_stack_publishes_clickhouse_on_loopback_only() -> None:
     """The dev ClickHouse password is the checked-in default: its ports are never
-    published on the address LOOM_BIND_HOST publishes Loom on."""
-    compose = (Path(__file__).resolve().parents[2] / "dev/docker-compose.dev.yml").read_text()
+    published beyond loopback, by the compose file or the per-worktree start script."""
+    root = Path(__file__).resolve().parents[2]
+    compose = (root / "dev/docker-compose.dev.yml").read_text()
     ports = re.findall(r'^\s*- "([^"]*):(\d+)"$', compose, flags=re.M)
     published = [p for p in ports if p[1] in ("8123", "9000")]
     assert published and all(p[0].startswith("127.0.0.1:") for p in published), published
+    script = (root / "dev/ci_start_clickhouse.sh").read_text()
+    flags = re.findall(r'-p "([^"]*)"', script)
+    assert flags and all(f.startswith("127.0.0.1:") for f in flags), flags
 
 
 def test_allow_insecure_lets_either_start() -> None:

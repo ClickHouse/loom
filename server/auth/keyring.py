@@ -265,9 +265,11 @@ def root_is_weak() -> bool:
     if key is None:
         return False
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
 
     public = serialization.load_pem_public_key(key.public_pem.encode())
-    return getattr(public, "key_size", 0) < MIN_RSA_ROOT_BITS
+    assert isinstance(public, rsa.RSAPublicKey)  # _pem_root admits only RSA
+    return public.key_size < MIN_RSA_ROOT_BITS
 
 
 def _keys(view: _View) -> dict[str, SigningKey]:
