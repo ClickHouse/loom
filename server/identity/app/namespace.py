@@ -128,16 +128,13 @@ def registry_row(
     # the namespace as bench, so the namespace gc worker retires it by idleness.
     # Lazy: the auto-register module imports the operation registry, which imports this one.
     from server.auth.agents import TAG_PREFIX as MACHINE_TAG
-    from server.auth.claim_codes import CLAIMED_TAG
     from server.identity.app.namespace_autoregister import classify_kind
 
     # A workload trust's mark is the trust's to give, and an agent claim's mark
-    # the claim's: dropped from the form, carried forward from the row.
-    def server_owned(t: str) -> bool:
-        return t.startswith(MACHINE_TAG) or t == CLAIMED_TAG
-
-    stored = [str(t) for t in (existing or {}).get("tags") or [] if server_owned(str(t))]
-    tags = [t for t in input.tags if not server_owned(str(t))] + stored
+    # (`claim_codes.CLAIMED_TAG`, under the same prefix) the claim's: dropped from
+    # the form, carried forward from the row.
+    stored = [str(t) for t in (existing or {}).get("tags") or [] if str(t).startswith(MACHINE_TAG)]
+    tags = [t for t in input.tags if not str(t).startswith(MACHINE_TAG)] + stored
     kind = input.kind
     if input.traffic_class:
         from server.observability.traffic_class import TAG_PREFIX

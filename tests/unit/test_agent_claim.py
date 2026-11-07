@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import server.auth.self_signup as ss
-from server.auth import claim_codes, device, login, oauth, passwords
+from server.auth import agents, claim_codes, device, login, oauth, passwords, revocation
 from server.identity.app import agent_claim
 from server.identity.store import namespaces
 from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl
@@ -76,7 +76,11 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
     ch.create(
         _account(_LEGACY, _LEGACY, "", passwords.hash_password(legacy_code), "['agent']"),
         _account(
-            "lee", "lee", "lee@acme.com", passwords.hash_password("lee's password"), "['agent']"
+            "agent-lee",
+            "agent-lee",
+            "lee@acme.com",
+            passwords.hash_password("lee's password"),
+            "['agent']",
         ),
     )
     events: list[tuple[str, dict[str, Any]]] = []
@@ -99,7 +103,34 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
     monkeypatch.setattr(agent_claim, "hash_password_off_loop", counted_hash)
     monkeypatch.setattr(login, "widen_with_restricted_grants", no_restricted)
     monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
+    # Subject cutoffs as the revocation table holds them, read by the bearer
+    # check (`is_revoked`) and by every OAuth grant (`subjects_revoked`).
+    monkeypatch.setattr(revocation, "_revoked_before", {})
+    cutoffs: dict[str, int] = {}
+
+    async def cut_off(subject: str, *, issued_before: Any, reason: str, revoked_by: str) -> Any:
+        cutoffs[subject] = int(issued_before.timestamp())
+        revocation._apply_locally(subject, cutoffs[subject])
+        return {}
+
+    async def subjects_revoked(subjects: list[str], *, issued_at: int) -> bool:
+        return any(issued_at < cutoffs.get(s, 0) for s in subjects)
+
+    waited: list[Any] = []
+
+    async def wait_out(cutoff: Any) -> None:
+        waited.append(cutoff)
+
+    async def active(subject: str, org: str, roles: list[str]) -> list[str]:
+        return roles
+
+    monkeypatch.setattr(revocation, "cut_off", cut_off)
+    monkeypatch.setattr(revocation, "subjects_revoked", subjects_revoked)
+    monkeypatch.setattr(revocation, "wait_out", wait_out)
+    monkeypatch.setattr(login, "refreshed_roles", active)
     return {
+        "cutoffs": cutoffs,
+        "waited": waited,
         "ch": ch,
         "code": out.claim_code,
         "legacy_code": legacy_code,
@@ -180,8 +211,105 @@ def test_an_agent_made_before_the_prefix_is_claimed_once_by_its_plain_code(world
 
 
 def test_a_person_with_an_email_is_no_unclaimed_agent(world) -> None:
-    assert _sign_in("lee's password", "lee")[0] == "lee"
-    assert _claim(_app(), "lee's password", "correct horse", namespace="lee").status_code == 400
+    assert _sign_in("lee's password", "agent-lee")[0] == "agent-lee"
+    r = _claim(_app(), "lee's password", "correct horse", namespace="agent-lee")
+    assert r.status_code == 400
+
+
+def test_a_settings_write_keeps_an_old_agent_unclaimed(world) -> None:
+    # A form sends tags=[] by default: the `agent` tag goes, the shape stays.
+    from datetime import datetime
+
+    from server.identity.api.models import NamespaceRegisterInput
+    from server.identity.app.namespace import registry_row
+
+    form = NamespaceRegisterInput(org="dev", namespace=_LEGACY, owner_email=_LEGACY)
+    row = registry_row(form, _row(world, _LEGACY), datetime(2030, 1, 1))
+    assert row["tags"] == [] and row["password_hash"] == _row(world, _LEGACY)["password_hash"]
+    asyncio.run(world["ch"].insert("loom.namespaces", [row]))
+    assert _sign_in(world["legacy_code"], _LEGACY) is None
+    assert (
+        _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY).status_code == 200
+    )
+    assert _sign_in("correct horse", _LEGACY)[0] == _LEGACY
+
+
+def _code_grant(c: TestClient) -> dict[str, Any]:
+    """An OAuth session for the namespace's subject, as a sign-in with the code
+    gave one before the code was stored prefixed: its access and refresh token."""
+    import secrets
+    import time
+
+    verifier = "v" * 43
+    code = f"code-{secrets.token_hex(4)}"
+    grant = {
+        "client_id": "loom-test",
+        "redirect_uri": "http://127.0.0.1:9999/cb",
+        "code_challenge": base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+        .rstrip(b"=")
+        .decode(),
+        "subject": _LEGACY,
+        "org": "dev",
+        "namespaces": [_LEGACY],
+        "roles": ["writer"],
+        "exp": int(time.time()) + 60,
+        "since": int(time.time()),
+        "family": f"f-{secrets.token_hex(4)}",
+        "upstream_refresh": "",
+    }
+    asyncio.run(oauth.store.save_code(code, grant))
+    r = c.post(
+        "/oauth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": grant["redirect_uri"],
+            "client_id": "loom-test",
+            "code_verifier": verifier,
+        },
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _refresh(c: TestClient, refresh_token: str) -> Any:
+    return c.post(
+        "/oauth/token",
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": "loom-test",
+        },
+    )
+
+
+def test_a_claim_ends_the_tokens_and_sessions_the_code_started(world) -> None:
+    from server.auth.jwt import mint_token, verify_token
+
+    c = TestClient(oauth_app())
+    session = _code_grant(c)
+    dashboard = mint_token(subject=_LEGACY, org="dev", namespaces=[_LEGACY], roles=["writer"])
+    issued = verify_token(dashboard).issued_at
+    assert not revocation.is_revoked(_LEGACY, issued_at=issued)
+    # The session refreshes before the claim, and the rotated token is the one held.
+    refreshed = _refresh(c, session["refresh_token"])
+    assert refreshed.status_code == 200, refreshed.text
+
+    assert (
+        _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY).status_code == 200
+    )
+    assert revocation.is_revoked(_LEGACY, issued_at=issued)
+    r = _refresh(c, refreshed.json()["refresh_token"])
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+    # The page answers once every replica is past the cutoff, so the claimer's
+    # own sign-in that follows is not ended by it.
+    assert world["waited"] == [revocation_cutoff(world, _LEGACY)]
+
+
+def revocation_cutoff(world: dict[str, Any], subject: str) -> Any:
+    from datetime import UTC, datetime
+
+    return datetime.fromtimestamp(world["cutoffs"][subject], UTC)
 
 
 def test_a_wrong_code_or_a_bad_password_claims_nothing_and_keeps_the_code(world) -> None:
@@ -221,6 +349,13 @@ def test_a_claim_that_lands_first_is_not_overwritten(world, monkeypatch) -> None
     monkeypatch.setattr(agent_claim, "account_change", claimed_meanwhile)
     assert _claim(_app(), world["code"], "correct horse").status_code == 400
     assert _row(world, _NS)["password_hash"] == "$argon2id$other"
+
+
+def test_the_claimed_mark_is_a_tag_every_build_keeps_and_no_trust_names() -> None:
+    # `machine:` tags are carried forward from the row and dropped from forms by
+    # `namespace.register` on this build and the one before it.
+    trust = claim_codes.CLAIMED_TAG.removeprefix(agents.TAG_PREFIX)
+    assert trust != claim_codes.CLAIMED_TAG and ":" in trust
 
 
 def test_the_claimed_mark_survives_a_settings_write_and_no_form_sets_it(world) -> None:

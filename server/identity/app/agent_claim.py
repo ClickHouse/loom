@@ -4,7 +4,9 @@ No password sign-in takes an unclaimed agent's code (`server.auth.claim_codes`).
 This page checks the code and, while it holds the account, replaces it with a
 password the person chooses and marks the account claimed: the code works once,
 and from then on the person signs in as the namespace (its admin) with their own
-password. The agent's own token is a separate subject and keeps working.
+password. Every token the namespace's subject held before is cut off: an account
+made before the code was stored prefixed could be signed in to with it, by
+whoever held it. The agent's own token is a separate subject and keeps working.
 """
 
 from __future__ import annotations
@@ -16,21 +18,22 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
-from server.auth import oauth
+from server.auth import oauth, revocation
 from server.auth.attempts import client_address
 from server.auth.claim_codes import CLAIMED_TAG, UNCLAIMED_SQL, verify_claim_code_off_loop
 from server.auth.grant_claims import account_change
 from server.auth.login import LoginThrottled, throttled, verify_as_unknown
-from server.auth.passwords import hash_password_off_loop
+from server.auth.passwords import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, hash_password_off_loop
 from server.core.ch import get_client
+from server.identity.app import account_admin
 from server.identity.store import namespaces
 from server.observability import audit
 from server.settings import settings
 
 router = APIRouter()
 
-_MIN_LENGTH, _MAX_LENGTH = 8, 256  # as self-signup asks
 _TITLE = "Claim an agent's namespace"
+_REASON = "agent namespace claimed"
 
 # The active accounts named `ns` that still hold a claim code, in every org.
 _UNCLAIMED = """
@@ -51,7 +54,7 @@ once; afterwards you sign in with the namespace name and this password.</p>{mess
 <input name="namespace" placeholder="agent-…" value="{html.escape(namespace)}" required>
 <input name="code" placeholder="claim code" autocomplete="off" required>
 <input name="password" type="password" placeholder="new password"
-       autocomplete="new-password" minlength="{_MIN_LENGTH}" required>
+       autocomplete="new-password" minlength="{PASSWORD_MIN_LENGTH}" required>
 <input name="repeat" type="password" placeholder="the same again"
        autocomplete="new-password" required>
 <button type="submit">Claim</button>
@@ -85,22 +88,28 @@ async def agent_claim(request: Request) -> Response:
     code, password = f.get("code", "").strip(), f.get("password", "")
     if not namespace or not code:
         return _form(namespace, "Enter the namespace and its claim code.", 400)
-    if not _MIN_LENGTH <= len(password) <= _MAX_LENGTH:
-        return _form(namespace, f"Use {_MIN_LENGTH} to {_MAX_LENGTH} characters.", 400)
+    if not PASSWORD_MIN_LENGTH <= len(password) <= PASSWORD_MAX_LENGTH:
+        return _form(
+            namespace, f"Use {PASSWORD_MIN_LENGTH} to {PASSWORD_MAX_LENGTH} characters.", 400
+        )
     if password != f.get("repeat", ""):
         return _form(namespace, "The two passwords differ.", 400)
     try:
         # A code is a secret like a password: guesses count against the name
         # and the address under the sign-in limits.
-        org = await throttled(
+        claimed = await throttled(
             namespace, client_address(request), lambda: _claim(namespace, code, password)
         )
     except LoginThrottled as e:
         page = _form(namespace, e.message, 429)
         page.headers["Retry-After"] = str(e.retry_after_s)
         return page
-    if org is None:
+    if claimed is None:
         return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
+    org, cutoff = claimed
+    # The person signs in next: past the cutoff on every replica's clock, so the
+    # token they get is not one it ends.
+    await revocation.wait_out(cutoff)
     await audit.emit(
         "auth.agent_claimed", org=org, namespace=namespace, actor=namespace, subject={}
     )
@@ -110,9 +119,10 @@ async def agent_claim(request: Request) -> Response:
     )
 
 
-async def _claim(namespace: str, code: str, password: str) -> str | None:
-    """The org whose `namespace` the code claimed, or None. The first claim
-    replaces the code with the hash of `password`, so a second finds nothing."""
+async def _claim(namespace: str, code: str, password: str) -> tuple[str, datetime] | None:
+    """The org whose `namespace` the code claimed and the cutoff of its earlier
+    tokens, or None. The first claim replaces the code with the hash of
+    `password`, so a second finds nothing."""
     rows = await get_client().query_all(_UNCLAIMED, params={"ns": namespace})
     if not rows:
         await verify_as_unknown(code)  # timed like a wrong code
@@ -125,7 +135,9 @@ async def _claim(namespace: str, code: str, password: str) -> str | None:
     return None
 
 
-async def _replace_code(org: str, namespace: str, code_hash: str, password_hash: str) -> str | None:
+async def _replace_code(
+    org: str, namespace: str, code_hash: str, password_hash: str
+) -> tuple[str, datetime] | None:
     # Held from the read to the write, as a release or a password link holds
     # the account: a claim or release that landed first changed the row, and
     # this one is refused.
@@ -133,6 +145,10 @@ async def _replace_code(org: str, namespace: str, code_hash: str, password_hash:
         row = await namespaces.fetch_row(org, namespace)
         if row is None or not row["active"] or row["password_hash"] != code_hash:
             return None
+        # Before the write, so a write that fails leaves the code to retry with,
+        # never a spent code and live tokens. A subject cutoff also ends every
+        # OAuth and device session the code started (`oauth.issue_tokens`).
+        cutoff = await account_admin.end_tokens(row["owner_email"], by=namespace, reason=_REASON)
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         # Insert-as-replace carrying every other column forward.
         await get_client().insert(
@@ -146,7 +162,7 @@ async def _replace_code(org: str, namespace: str, code_hash: str, password_hash:
                 }
             ],
         )
-    return org
+    return org, cutoff
 
 
 def attach(app: Any) -> None:

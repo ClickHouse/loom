@@ -36,7 +36,11 @@ from server.auth.attempts import Attempts, client_address
 from server.auth.claim_codes import AGENT_TAG, hash_claim_code_off_loop
 from server.auth.jwt import mint_token
 from server.auth.login import platform_roles
-from server.auth.passwords import hash_password_off_loop
+from server.auth.passwords import (
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
+    hash_password_off_loop,
+)
 from server.core import grant_cache, leases
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now_seconds
@@ -119,7 +123,9 @@ class SelfSignupInput(BaseModel):
     org: str | None = None  # defaults to settings.self_signup_org
     email: Annotated[str, Field(min_length=3, max_length=320)]
     # argon2id-hashed before storage; repr=False keeps it out of logs and tracebacks
-    password: Annotated[str, Field(min_length=8, max_length=256, repr=False)]
+    password: Annotated[
+        str, Field(min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH, repr=False)
+    ]
     ttl_days: Annotated[int, Field(ge=1, le=3650)] = 365
 
 

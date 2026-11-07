@@ -2,10 +2,11 @@
 
 Agent self-signup stores the code's hash as `CLAIM_PREFIX` + an argon2id hash,
 which `verify_password` reads as malformed. An agent account made before the
-prefix holds a plain argon2id hash of its code; it is told apart from a person's
-account by its shape (`UNCLAIMED_SQL`). Until the claim, no sign-in takes the
-code; the claim page (`server.identity.app.agent_claim`) takes it once and
-writes the claimer's own password with `CLAIMED_TAG`.
+prefix holds a plain argon2id hash of its code; it is told apart by its shape
+(`UNCLAIMED_SQL`), which only sign-up writes and no settings write changes.
+Until the claim, no sign-in takes the code; the claim page
+(`server.identity.app.agent_claim`) takes it once and writes the claimer's own
+password with `CLAIMED_TAG`.
 """
 
 from __future__ import annotations
@@ -13,18 +14,20 @@ from __future__ import annotations
 from server.auth.passwords import hash_password_off_loop, verify_password_off_loop
 
 CLAIM_PREFIX = "claim:"
-# Agent sign-up's tag, and the server-owned mark a claim adds next to it
-# (`namespace.register` carries it forward and drops it from the form).
-AGENT_TAG = "agent"
-CLAIMED_TAG = "agent-claimed"
+AGENT_TAG = "agent"  # sign-up's tag on the namespace, for people to read
+# The claim's mark rides the workload-trust tag prefix (`agents.TAG_PREFIX`):
+# every build's `namespace.register` carries such a tag forward from the row
+# and drops it from a form. A trust's name never holds ':', so this names none.
+CLAIMED_TAG = "machine:agent-signup:claimed"
 
 # A `loom.namespaces` row whose password is still an agent's claim code: a
-# prefixed hash, or an agent sign-up's shape (tagged, no email, the namespace its
-# own owner) that no claim has marked. Constants only, inlined into the WHERE.
+# prefixed hash, or a plain one on an agent sign-up's shape (an `agent-` name
+# that is its own owner, with no email) that no claim has marked. No other
+# account has a password and no email. Constants only, inlined into the WHERE.
 UNCLAIMED_SQL = (
     f"(password_hash != '' AND (startsWith(password_hash, '{CLAIM_PREFIX}')"
-    f" OR (has(tags, '{AGENT_TAG}') AND NOT has(tags, '{CLAIMED_TAG}')"
-    " AND contact_email = '' AND owner_email = namespace)))"
+    " OR (startsWith(namespace, 'agent-') AND owner_email = namespace"
+    f" AND contact_email = '' AND NOT has(tags, '{CLAIMED_TAG}'))))"
 )
 
 

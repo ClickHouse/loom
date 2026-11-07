@@ -23,6 +23,7 @@ from fastapi.responses import Response
 from server.auth import oauth, sso_links
 from server.auth.grant_claims import account_change
 from server.auth.oauth_store import token_id
+from server.auth.passwords import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH
 from server.core.ch import get_client
 from server.identity.store import namespaces
 from server.observability import audit
@@ -31,7 +32,6 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-_MIN_LENGTH, _MAX_LENGTH = 8, 256  # as self-signup asks
 
 # The SSO accounts (no password) naming an email, active, in one org.
 _SSO_ACCOUNTS = """
@@ -84,7 +84,7 @@ def _form(code: str, error: str = "", status_code: int = 200) -> Response:
 <form method="post" action="/oauth/set-password">
 <input type="hidden" name="code" value="{html.escape(code)}">
 <input name="password" type="password" placeholder="new password"
-       autocomplete="new-password" minlength="{_MIN_LENGTH}" required>
+       autocomplete="new-password" minlength="{PASSWORD_MIN_LENGTH}" required>
 <input name="repeat" type="password" placeholder="the same again"
        autocomplete="new-password" required>
 <button type="submit">Set password</button>
@@ -123,8 +123,8 @@ async def set_password(request: Request) -> Response:
     held = await _held(code)
     if held is None:
         return _closed()
-    if not _MIN_LENGTH <= len(password) <= _MAX_LENGTH:
-        return _form(code, f"Use {_MIN_LENGTH} to {_MAX_LENGTH} characters.", 400)
+    if not PASSWORD_MIN_LENGTH <= len(password) <= PASSWORD_MAX_LENGTH:
+        return _form(code, f"Use {PASSWORD_MIN_LENGTH} to {PASSWORD_MAX_LENGTH} characters.", 400)
     if password != f.get("repeat", ""):
         return _form(code, "The two passwords differ.", 400)
     password_hash = await hash_password_off_loop(password)  # the slow step, before any claim
