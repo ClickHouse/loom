@@ -12,6 +12,7 @@ from bench.bench_namespaces import erase_on_exit_sync
 from bench.knowledge_retrieval import (
     FIXED_FIELDS,
     FIXTURE,
+    SEARCH_FIELDS,
     check_corpus,
     fixture_tag,
     ingest,
@@ -24,6 +25,7 @@ from bench.knowledge_retrieval import (
     score_query,
     search,
 )
+from server.knowledge.api.models_knowledge import KnowledgeSearchInput
 from server.knowledge.app.writes import _chunk_text
 
 
@@ -97,6 +99,12 @@ def test_the_fields_that_define_the_measurement_are_refused(field: str) -> None:
         parse_params([f"{field}=x"])
 
 
+def test_every_search_field_is_either_a_knob_or_fixed() -> None:
+    """A field added to knowledge.search fails this test until it is named in one list."""
+    assert not SEARCH_FIELDS & set(FIXED_FIELDS)
+    assert SEARCH_FIELDS | set(FIXED_FIELDS) == set(KnowledgeSearchInput.model_fields)
+
+
 def test_a_param_without_a_value_is_refused() -> None:
     with pytest.raises(SystemExit, match="needs KEY=VALUE"):
         parse_params(["narrow_spans"])
@@ -104,7 +112,7 @@ def test_a_param_without_a_value_is_refused() -> None:
 
 @pytest.mark.parametrize("field", ["session_id", "explain", "traffic_class"])
 def test_a_key_that_is_no_search_field_is_refused(field: str) -> None:
-    with pytest.raises(SystemExit, match="not a knowledge.search field"):
+    with pytest.raises(SystemExit, match="not a ranking knob an arm may set"):
         parse_params([f"{field}=x"])
 
 

@@ -26,12 +26,13 @@ run's own fresh namespace (`knowledge-retrieval-run-…`) cannot be named. A
 run records the server's embedding model and build (`instrument`) and refuses a
 fake embedder.
 
-`--param KEY=VALUE` (JSON value, or a plain string) sets any `knowledge.search`
-field but the depth, scope and filters the harness fixes (`FIXED_FIELDS`), so
-two arms differ by one flag; any other key is refused, and a search over a
-namespace that does not hold exactly the fixture's documents fails the run. An
-arm that names no reranker runs with `rerank="none"`, whatever the deployment
-default, and an arm whose reranker did not run as it says fails (`check_reranked`).
+`--param KEY=VALUE` (JSON value, or a plain string) sets one of the ranking
+knobs of `knowledge.search` (`SEARCH_FIELDS`), so two arms differ by one flag;
+the depth, scope and filters the harness fixes (`FIXED_FIELDS`) and any other
+key are refused, and a search over a namespace that does not hold exactly the
+fixture's documents fails the run. An arm that names no reranker runs with
+`rerank="none"`, whatever the deployment default, and an arm whose reranker did
+not run as it says fails (`check_reranked`).
 
 Reports recall@1/5/10 (a query counts when any relevant passage is in the top k,
 so a query listing two accepted passages counts either), MRR, all-gold recall@10
@@ -157,8 +158,14 @@ FIXED_FIELDS = (
     "since_seconds",
     "session_ids",
     "source_classes",
+    "formats",
+    "block_types",
 )
-SEARCH_FIELDS = frozenset(KnowledgeSearchInput.model_fields) - set(FIXED_FIELDS)
+# The ranking knobs an arm may set. An allow-list: a field added to knowledge.search later
+# is refused until it is named here, and the unit test fails until it is in one list.
+SEARCH_FIELDS = frozenset(
+    ("search_mode", "lexical_weight", "narrow_spans", "collapse_sections", "rerank")
+)
 
 
 def parse_params(pairs: list[str]) -> dict:
@@ -173,7 +180,7 @@ def parse_params(pairs: list[str]) -> dict:
                 f"--param {key} is refused: the harness fixes depth, scope and filters"
             )
         if key not in SEARCH_FIELDS:
-            raise SystemExit(f"--param {key} is refused: not a knowledge.search field")
+            raise SystemExit(f"--param {key} is refused: not a ranking knob an arm may set")
         try:
             out[key] = json.loads(raw)
         except json.JSONDecodeError:
@@ -346,7 +353,7 @@ def main() -> int:
         "(default: a fresh one per run, erased at its end)",
     )
     ap.add_argument("--phase", choices=("ingest", "search", "both"), default="both")
-    ap.add_argument("--param", action="append", default=[], help="knowledge.search KEY=VALUE")
+    ap.add_argument("--param", action="append", default=[], help="ranking knob KEY=VALUE")
     ap.add_argument("--out", type=Path, help="write the full report (per query) as JSON")
     args = ap.parse_args()
     if args.phase != "both" and not args.namespace:
