@@ -128,8 +128,7 @@ def classify_code_concept(concept: str) -> str:
     'library' for a bare lowercase package-ish token, 'error' for an
     error/exception token, 'commit' for a "commit:<sha>" surface.
     """
-    # Markdown or quotes around a name ("`ConnectError`") do not change its kind.
-    c = str(concept or "").strip().strip("`'\"* ")
+    c = str(concept or "").strip()
     if not c:
         return "function"
     if c.lower().startswith("commit:"):
@@ -443,7 +442,8 @@ def _normalise(lowered: str) -> str:
 
 # A commit or error facet ("commit:<sha>", "error:<name>") names an identifier, so its
 # last segment is never singularised; the rest of the canonical form applies as to any
-# name. A blank right after the colon reads as prose ("Error: the build failed").
+# name. A blank (or markup, which becomes one) right after the colon reads as prose
+# ("Error: the build failed").
 _CODE_FACET_NAME = re.compile(r"(?:commit|error):\S")
 
 
@@ -467,7 +467,7 @@ def canonical_entity(raw: str) -> CanonicalEntity:
     Collapses first-person forms (i / me / user / ...) to "user" to match the
     read side (graph seeds and query triples use `canonical_entity_text`); the original
     surface form is preserved in `aliases` for provenance and recall. A "commit:" or
-    "error:" name keeps its last segment as written. Text longer than
+    "error:" name's last segment is never singularised. Text longer than
     `MAX_ENTITY_CHARS`, as written or once normalised, is no entity: its text is empty."""
 
     original = str(raw or "").strip()

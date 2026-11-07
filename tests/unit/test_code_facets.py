@@ -490,6 +490,7 @@ def test_a_prose_name_that_starts_with_error_is_normalised_as_prose() -> None:
     from server.memory.domain.graph_quality import canonical_entity_text
 
     assert canonical_entity_text("Error: the Thing's") == "error: the thing"
+    assert canonical_entity_text("error:`Timeouts`") == "error: timeout"  # markup is a blank
     assert canonical_entity_text("error:Timeouts") == "error:timeouts"
 
 
@@ -510,12 +511,3 @@ def test_a_wrapped_or_spaced_code_facet_name_is_the_bare_names_node() -> None:
         ):
             assert canonical_entity_text(written) == node, written
     assert canonical_entity("error:a \t b").entity_id == "error:a_b"
-
-
-def test_a_wrapped_error_concept_keeps_its_relation_verb() -> None:
-    from server.memory.domain.graph_quality import facet_triples
-
-    bare = list(facet_triples("a", [], [], ["ConnectError"], []))
-    assert bare[0][1] != "references"
-    for written in ("`ConnectError`", "**ConnectError**", '"ConnectError"'):
-        assert list(facet_triples("a", [], [], [written], [])) == bare, written
