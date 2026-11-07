@@ -136,12 +136,15 @@ agents API key, the two secrets sealed (`server/core/secrets_at_rest.py`) like e
 stored credential, so `loom secrets reseal` covers them when the signing secret is
 replaced and the deployment carries no second secret. The replica whose strict insert of
 the row wins registers the user on LibreChat's internal network, signs in, creates the
-key and seeds the agent definition; a replica whose insert lost uses that row. Signing
-in is needed only to create the key and to write the definition, so answers run on the
-stored key whatever the sign-in does; a sign-in that fails (LibreChat's database
-restored from another deployment, say) is a `loom doctor` problem whose fix is to empty
-LibreChat's database and drop the row, which the next boot recreates. Until the row, its
-key and the agent exist, the assistant answers `ASSISTANT_UNAVAILABLE`.
+key and stores it on the row, and seeds the agent definition; a replica whose insert
+lost uses that row. A boot that finds the row without a key (its maker stopped halfway)
+finishes it: it signs in with the row's password, registering first only when LibreChat
+reports no such user, and creates the key. Signing in is needed only to create the key
+and to write the definition, so answers run on the stored key whatever the sign-in does;
+a sign-in that fails (LibreChat's database restored from another deployment, say) is a
+`loom doctor` problem whose fix is to empty LibreChat's database and drop the row, which
+the next boot recreates. Until the row, its key and the agent exist, the assistant
+answers `ASSISTANT_UNAVAILABLE`.
 
 **Conversations live with the caller.** LibreChat's agents API (the OpenAI-compatible
 `/api/agents/v1/chat/completions`) saves no messages: it runs the agent over the
@@ -263,15 +266,21 @@ in a backup of the access entities, in `system.row_policies` and in the server l
 `debug` level: all read only by whoever administers the ClickHouse host, who can read
 every row anyway.
 
-The key and the analyst's password follow the current signing secret alone, as tokens
-do: Loom does not accept a token signed under `LOOM_JWT_SECRET_PREVIOUS`, so that a
-leaked root mints nothing, and the analyst does not accept that secret's signature
-either. A policy that does not accept the key a replica signs with reads no rows, and an
-aggregate would answer zero instead of failing, so before each statement Loom reads a
-one-row sentinel table, `loom.analysis_sentinel`, whose policy checks the signature
-alone: an empty sentinel answers `ANALYSIS_UNAVAILABLE`. Loom writes the sentinel's
-policy, then the profile's digest, after every table's policy, so a sentinel that
-accepts the signature means every policy does.
+The key and the analyst's password (an HMAC of the signing secret under a label of its
+own, as the key is) follow the current signing secret alone, as tokens do: Loom does not
+accept a token signed under `LOOM_JWT_SECRET_PREVIOUS`, so that a leaked root mints
+nothing, and the analyst does not accept that secret's signature or password either. A
+replica whose password the analyst refuses answers `ANALYSIS_UNAVAILABLE`.
+
+A policy that does not accept the key a replica signs with reads no rows, and an
+aggregate would answer zero instead of failing. So the statement reads a one-row
+sentinel table, `loom.analysis_sentinel`, whose policy checks the signature alone, in
+the same statement: the wrapper adds `(SELECT count() FROM loom.analysis_sentinel)` as a
+last column, which Loom checks on every row and removes, and an answer with no rows
+reads the sentinel once more. A sentinel that does not count one answers
+`ANALYSIS_UNAVAILABLE`. A rewrite first sets the sentinel's policy to `USING 0`, then
+writes every table's policy, then the sentinel's under the new key, then the profile's
+digest, so while policies are being rewritten no statement passes the check.
 
 **Why not ClickHouse credentials in LibreChat.** A ClickHouse login in the agent would
 read every org, skip the request ledger and the exposure records, and keep no link to
@@ -286,15 +295,19 @@ whose ClickHouse user has access management (the bundled ClickHouse's `loom` use
 self-managed admin) writes them at boot. Elsewhere `loom ch-setup` writes them, or
 prints the SQL for an admin, as it does for the reader user.
 
-The analyst's settings profile carries two custom settings: the allowlist's version and
-a digest of what the entities hold, the key's fingerprint included. A build rewrites the
-entities at boot when its version is newer, or the same with another digest; it never
-writes over a newer version. So during a rolling upgrade a build N-1 never narrows N's
-grants, and each build's catalog names only the columns the grants in place allow.
-During a secret rotation the replica that boots last on its secret writes its key, and
-replicas on the other secret answer `ANALYSIS_UNAVAILABLE` until they run the same one:
-a rotation fails closed for as long as the rollout takes, and leaves no retired key
-accepted.
+The analyst's settings profile carries three custom settings: the allowlist's version, a
+digest of the grants, policies and caps with the key left out, and the key's
+fingerprint. A build rewrites the entities at boot when there are none or its version is
+newer; at the same version, when the digest differs, or when the stored key is its
+previous secret's (the first boot of a rotation). It never writes over a newer version,
+so during a rolling upgrade a build N-1 never narrows N's grants, and each build's
+catalog names only the columns the grants in place allow. A stored key that is neither
+its own nor its previous secret's is left alone: that replica answers
+`ANALYSIS_UNAVAILABLE`, and `loom doctor` reports it, with `loom ch-setup` to rewrite
+the key on purpose. So during a rotation the first replica on the new secret moves the
+key, a replica still on the old secret cannot move it back, and a replica given the new
+secret without the previous one waits for the operator: a rotation fails closed and
+leaves no retired key accepted.
 
 At boot Loom probes the analyst user with one signed statement, checks that a `system`
 table is refused, and compares the grants with the allowlist; a missing or older user is
@@ -375,6 +388,9 @@ viewer token. Each case must be refused or return no canary:
 - both orgs' statements running at once;
 - `SETTINGS` that set a scope value to a number, an array or a malformed string: no
   answer quotes the policy or its key;
+- a statement run while the policies are rewritten under another key, and one whose
+  replica's password the analyst refuses: `ANALYSIS_UNAVAILABLE` or the right rows,
+  never a wrong zero;
 - policies written under another key: a `count()` answers `ANALYSIS_UNAVAILABLE`, not
   zero, and neither the statement's text nor the key appears in `system.query_log`.
 
@@ -390,7 +406,8 @@ the allowlist. The bridge's tests will show that:
   it;
 - a revoked caller, an org-wide token, a narrowed `read_scope`, a caller about to expire
   and an org with model calls switched off are refused before LibreChat is called;
-- two replicas booting at once register one service user and keep one key;
+- two replicas booting at once register one service user and keep one key, and a service
+  row its maker left without a key is finished by the next boot;
 - a `sql` citation verifies in a restricted namespace and when its tool call landed on
   another replica.
 
@@ -435,13 +452,13 @@ nothing there.
 
 ## Stored data and erasure
 
-| Where                    | What the assistant leaves                                              | How it is deleted                                     |
-| ------------------------ | ---------------------------------------------------------------------- | ----------------------------------------------------- |
-| `loom.assistant_service` | one row: the service user's sealed agents API key                      | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
-| `loom.agent_events`      | one row per bridge request and per tool call, under the answer's token | as every ledger row                                   |
-| LibreChat `transactions` | token counts per answer and its message id, no content                 | kept, a few hundred bytes per answer                  |
-| LibreChat logs           | the service user's id and request ids, no message text or token        | one file per day, kept 14 days                        |
-| the dashboard            | the current chat, in the tab's memory                                  | gone when the tab closes                              |
+| Where                    | What the assistant leaves                                                     | How it is deleted                                     |
+| ------------------------ | ----------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `loom.assistant_service` | one row: the service user's email, and its sealed password and agents API key | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
+| `loom.agent_events`      | one row per bridge request and per tool call, under the answer's token        | as every ledger row                                   |
+| LibreChat `transactions` | token counts per answer and its message id, no content                        | kept, a few hundred bytes per answer                  |
+| LibreChat logs           | the service user's id and request ids, no message text or token               | one file per day, kept 14 days                        |
+| the dashboard            | the current chat, in the tab's memory                                         | gone when the tab closes                              |
 
 The agents API stores no questions, answers or tool outputs, so LibreChat holds nothing
 an erasure must reach. An answer is computed from the rows the answer's token reads at
