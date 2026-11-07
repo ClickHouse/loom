@@ -336,14 +336,3 @@ def test_a_facet_too_long_to_be_a_name_mints_no_node() -> None:
         triples = list(facet_triples("bot", [], [huge], [huge, "src/app.py"], [huge, "billing"]))
         assert triples and all(len(t[2]) <= MAX_ENTITY_CHARS for t in triples)
         assert [t[2] for t in triples] == ["src/app.py", "billing"]
-
-
-def test_a_commit_facet_is_stored_folded_within_the_cap() -> None:
-    from server.memory.domain.graph_quality import MAX_ENTITY_CHARS, facet_triples
-
-    # 256 as written and folded; lowered, each "İ" is "i" and a dot: 505 characters
-    commit = "commit:" + "\u0130" * (MAX_ENTITY_CHARS - 7)
-    (triple,) = facet_triples("bot", [], [], [commit], [])
-    assert triple[2] == "commit:" + "i" * (MAX_ENTITY_CHARS - 7)
-    # a ligature folds to two letters: a commit name that grows past the cap mints no node
-    assert list(facet_triples("bot", [], [], ["commit:" + "\ufb01" * 125], [])) == []

@@ -29,9 +29,7 @@ from server.memory.app import graph_write_marks
 from server.memory.app.projection_errors import TriplesInsertFailed, TriplesRepairFailed
 from server.memory.domain.graph_quality import (
     MAX_TRIPLES_PER_ROW,
-    code_facet_node,
     ended_verb,
-    fold_case,
     observation_key,
     order_ended_before_dated,
     restates_current,
@@ -133,8 +131,8 @@ def edge_nodes(entry: Any, entity_map: dict[str, str]) -> list[str]:
         *(getattr(entry, "topics", None) or []),
     ]:
         node = (
-            code_facet_node(str(raw))
-            if fold_case(str(raw).strip()).startswith(("commit:", "error:"))
+            str(raw).lower()
+            if str(raw).lower().startswith(("commit:", "error:"))
             else canonical_entity_text(str(raw))
         )
         if (
