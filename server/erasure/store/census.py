@@ -73,7 +73,9 @@ class Substrate:
 
 
 _CENSUS: tuple[Substrate, ...] = (
-    Substrate("loom.memory", LIVE, UID, "memory.tombstone", "memory.tombstone"),
+    # In the user scope `memory.tombstone` only stamps these rows, which the later steps
+    # read the user's keys from; `memory.retire` owns them and, in a purge, deletes them.
+    Substrate("loom.memory", LIVE, UID, "memory.tombstone", "memory.retire"),
     Substrate(
         "loom.memory_embeddings",
         LIVE,
@@ -428,6 +430,8 @@ _CENSUS: tuple[Substrate, ...] = (
 #   consolidated.tombstone           — loom.memory rows under another identity,
 #                                       and their code links; counted by the
 #                                       memory row for the namespace scope only.
+#                                       `memory.retire` (the user-scope owner of
+#                                       loom.memory) runs the same pass again.
 #   procedure_runs / query_nodes / session_outcomes / term_aggregates .delete
 #                                    — derived ledgers without a read path
 #                                       into memory content; not censused.

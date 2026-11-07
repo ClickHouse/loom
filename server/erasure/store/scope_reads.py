@@ -13,7 +13,7 @@ from typing import Any
 
 from server.core.ch_params import chunks
 from server.core.repo_base import _CHClient
-from server.erasure.store.predicates import USER_KEY_LIST, USER_KEYS_SUBQ
+from server.erasure.store.predicates import USER_KEYS_SUBQ, USER_QUOTED_KEY_LIST
 
 
 async def user_key_pairs(org: str, user_id: str, *, ch: _CHClient) -> list[tuple[str, str]]:
@@ -25,10 +25,13 @@ async def user_key_pairs(org: str, user_id: str, *, ch: _CHClient) -> list[tuple
     return sorted((str(r["namespace"]), str(r["memory_key"])) for r in rows)
 
 
-async def user_keys(org: str, user_id: str, *, ch: _CHClient) -> list[str]:
-    """The user's memory keys in any namespace of the org, tombstoned rows included."""
-    row = await ch.query_one(f"SELECT {USER_KEY_LIST} AS keys", params={"org": org, "uid": user_id})
-    return sorted(str(k) for k in (row or {}).get("keys") or [])
+async def user_quoted_keys(org: str, user_id: str, *, ch: _CHClient) -> list[str]:
+    """The keys an answer that quoted the user's memories names: the user's own and
+    those of the summaries built from them, tombstoned rows included."""
+    row = await ch.query_one(
+        f"SELECT {USER_QUOTED_KEY_LIST} AS keys", params={"org": org, "uid": user_id}
+    )
+    return sorted({str(k) for k in (row or {}).get("keys") or []})
 
 
 def slices_or_one_empty[T](values: Sequence[T]) -> list[list[T]]:

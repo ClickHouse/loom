@@ -19,6 +19,7 @@ from server.erasure.store.mutations import (
     delete_scoped,
     namespaces_of,
     purge_mode,
+    purge_scope,
     tombstone_scoped,
 )
 from server.erasure.store.predicates import (
@@ -80,9 +81,15 @@ async def tombstone_memory_by_user(
     *,
     ch: _CHClient | None = None,
 ) -> int:
-    return await tombstone_scoped(
-        "loom.memory", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
-    )
+    """A tombstone even in a purge: the steps after this one find what the user's
+    memories fed by their keys, read from these rows. `memory.retire` purges them
+    after those steps, and counts them then."""
+    purge = purge_mode()
+    with purge_scope(False):
+        n = await tombstone_scoped(
+            "loom.memory", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+        )
+    return 0 if purge else n
 
 
 async def tombstone_embeddings_by_user(

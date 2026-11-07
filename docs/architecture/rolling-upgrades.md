@@ -377,6 +377,14 @@ schema. These rules keep that safe. The operator procedure is in
     later build's Postgres schema with a warning naming the files it does not carry ([Postgres
     migrations](../development/migrations.md#postgres-migrations)). The mixed-version gate
     does not check this rule.
+34. **A user purge deletes the memory rows last** (`memory.retire`): N-1 has no
+    `memory.retire`, and its `loom erasure-re-verify --resume` runs a user saga as a
+    tombstone, so a user saga N started and N-1 resumes can keep the answers that quoted
+    a summary, and a purge can end with the user's rows or the summaries built from them
+    only tombstoned; resume user sagas N started from N. A saga's mutation tag names its
+    step on N, so a step resumed across builds submits its mutation again; the
+    statements are idempotent. No gate holds the rollout, and the mixed-version gate
+    does not check this rule.
 
 ## What checks them
 

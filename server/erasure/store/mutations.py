@@ -67,6 +67,7 @@ class MutationStillRunning(TimeoutError):
 # the CLI after the harness killed it — finds its own still-pending mutation
 # in system.mutations and waits for it instead of submitting another.
 _SAGA_ID: contextvars.ContextVar[str] = contextvars.ContextVar("loom_erasure_saga_id", default="")
+_STEP: contextvars.ContextVar[str] = contextvars.ContextVar("loom_erasure_step", default="")
 
 
 @contextlib.contextmanager
@@ -79,18 +80,30 @@ def saga_scope(erasure_id: str) -> Iterator[None]:
         _SAGA_ID.reset(token)
 
 
+@contextlib.contextmanager
+def step_scope(step: str) -> Iterator[None]:
+    """Name the saga step every mutation inside the block belongs to (its tag)."""
+    token = _STEP.set(step)
+    try:
+        yield
+    finally:
+        _STEP.reset(token)
+
+
 def mutation_tag(
     table: str, mutation: str, where: str, params: dict[str, Any] | None = None
 ) -> str:
-    """Deterministic within a saga: (saga, table, statement, bound values) → one tag.
-    Two statements on one table in one saga differ in `mutation`/`where` or in the
-    values bound to them (the slices of one step), so they get different tags. Without
-    a saga in context the tag is unique per call."""
+    """Deterministic within a saga: (saga, step, table, statement, bound values) → one
+    tag, so a re-run step finds its own mutation. Two statements of one step differ in
+    `mutation`/`where` or in the values bound to them (its slices); two steps may submit
+    the same statement, and the step keeps their tags apart. Without a saga in context
+    the tag is unique per call."""
     saga = _SAGA_ID.get()
     if not saga:
         return f"erasure:{uuid.uuid4().hex}"
     bound = json.dumps(params or {}, sort_keys=True, default=str)
-    digest = hashlib.sha1(f"{table}\n{mutation}\n{where}\n{bound}".encode()).hexdigest()[:12]
+    statement = f"{_STEP.get()}\n{table}\n{mutation}\n{where}\n{bound}"
+    digest = hashlib.sha1(statement.encode()).hexdigest()[:12]
     return f"erasure:{saga}:{digest}"
 
 
@@ -292,9 +305,9 @@ async def wait_for_mutation(
         )
 
 
-# Set by the saga for a namespace_list erasure requested with purge=true; read
-# by count_then_mutate. A ContextVar so the twenty step functions between the
-# saga and the mutation carry nothing new.
+# Set around a saga, and the census that verifies it, for an erasure requested with
+# purge=true; read through purge_mode(). A step may switch it off to stamp rows later
+# steps still read.
 _PURGE: contextvars.ContextVar[bool] = contextvars.ContextVar("loom_erasure_purge", default=False)
 
 

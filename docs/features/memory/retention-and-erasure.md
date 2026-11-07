@@ -116,6 +116,11 @@ stamped with no user (`-`) under one of the user's `(namespace, key)` pairs, who
 memory they belong to: a `-` chunk can hold the user's text, and the write path retires
 those as the writer's too. Chunks stamped with another user stay.
 
+A `user_id` erasure also retires the consolidated summaries built from the user's
+memories, under whatever identity wrote them
+([which ones](../../architecture/memory-architecture.md#background-passes)), and deletes
+the cached `memory.ask` answers and precedents that quoted them.
+
 ### The saga
 
 ```mermaid
@@ -144,7 +149,12 @@ flowchart TD
 - **Tombstone or purge.** By default the soft-delete tables (memory, embeddings, chunks,
   summaries, links) are tombstoned, and `memory.restore` can still revive them inside the
   window; `erasure.list` reports such revivals as `reversals_count`. `purge=true` deletes
-  the rows instead (a lightweight `DELETE FROM` on the wide tables).
+  the rows instead (a lightweight `DELETE FROM` on the wide tables). A user erasure
+  finds what the user's memories fed through their keys, so in a purge its `loom.memory`
+  rows, and the consolidated summaries built from them, are tombstoned first and deleted
+  in `memory.retire`, after every step that reads those keys; until then `memory.restore`
+  can revive them (the user's own rows count as a reversal, the summaries do not), and
+  `memory.retire` deletes what `memory.restore` revived.
 - **Uploaded originals** of knowledge documents: the namespace's rows of
   `loom.document_blobs` are deleted first, and `blob_erased_at` is stamped. A user erasure
   deletes the originals that user uploaded and no other writer's live document shares,

@@ -255,7 +255,9 @@ prompt, `max_tokens`, `response_format` and extra arguments, so one org is never
 another's answer; a client built with no org calls the provider. Only a non-empty answer
 from the requested model is stored, so a fallback answer is never cached. Each row records
 the memory keys whose text the prompt carried (`window_keys`), so erasure and redaction can
-delete it by key.
+delete it by key. A user erasure also deletes the rows that carried a summary of the
+user's memories (tagged `consolidated` and `src:<key>`), since that summary quotes them
+under another identity's key.
 
 | User         | Switch                                                                                                    |
 | ------------ | --------------------------------------------------------------------------------------------------------- |

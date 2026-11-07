@@ -81,12 +81,31 @@ USER_KEY_LIST = (
     "(SELECT groupUniqArray(memory_key) FROM loom.memory "
     "WHERE org = {org:String} AND user_id = {uid:String})"
 )
-USER_WINDOW_KEYS = f"hasAny(window_keys, {USER_KEY_LIST})"
-USER_PRECEDENT_KEYS = f"hasAny(arrayConcat(window_keys, cited_keys), {USER_KEY_LIST})"
+# The summaries built from the user's memories: rows tagged `consolidated` and a
+# `src:<key>` of one of the user's keys in the row's own namespace, under any identity.
+# The read form of `steps_graph._CONSOLIDATED`, which binds the user's pairs.
+_USER_SRC_PAIRS = (
+    "(SELECT groupUniqArray((toString(namespace), concat('src:', memory_key))) "
+    "FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})"
+)
+USER_SUMMARIES = (
+    "has(tags, 'consolidated') AND "
+    f"hasAny(arrayMap(t -> (toString(namespace), t), tags), {_USER_SRC_PAIRS})"
+)
+# A cached answer or a precedent that quoted such a summary quoted the user. The
+# version history too: a summary rebuilt without the user can merge its older row away,
+# so an answer quoting its new version goes too, and one cached mid-saga fails the census.
+USER_SUMMARY_KEY_LIST = (
+    "arrayConcat((SELECT groupUniqArray(memory_key) FROM loom.memory "
+    f"WHERE org = {{org:String}} AND {USER_SUMMARIES}), "
+    "(SELECT groupUniqArray(memory_key) FROM loom.memory_versions "
+    f"WHERE org = {{org:String}} AND {USER_SUMMARIES}))"
+)
+USER_QUOTED_KEY_LIST = f"arrayConcat({USER_KEY_LIST}, {USER_SUMMARY_KEY_LIST})"
+USER_WINDOW_KEYS = f"hasAny(window_keys, {USER_QUOTED_KEY_LIST})"
+USER_PRECEDENT_KEYS = f"hasAny(arrayConcat(window_keys, cited_keys), {USER_QUOTED_KEY_LIST})"
 WINDOW_KEYS_IN = "hasAny(window_keys, {keys:Array(String)})"
 PRECEDENT_KEYS_IN = "hasAny(arrayConcat(window_keys, cited_keys), {keys:Array(String)})"
-# A cached answer belongs to the user when the user asked it
-# (`user_id`, the request's) or when its pool quoted any of the user's keys.
 # A community row names an entity (and a label — the highest-degree member of
 # its community, another entity name). The entity belongs to the user when
 # every memory linking it in the co-occurrence graph is the user's and at

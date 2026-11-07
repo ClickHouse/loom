@@ -132,9 +132,10 @@ WHERE status != 'completed' ORDER BY requested_at DESC LIMIT 20;
 ```
 
 `loom erasure-re-verify --org ORG` prints each failed saga's last reason and a fresh
-census of its scope, read-only (`--id` for one saga). `--resume` re-runs failed sagas
-from their checkpoint, past the recovery worker's attempts budget; a step that owns a
-table the last census found rows in runs again even if the checkpoint lists it as done.
+census of its scope, read-only (`--id` for one saga), a user saga's with the `purge` it
+was requested with. `--resume` re-runs failed sagas from their checkpoint, the same
+way, past the recovery worker's attempts budget; a step that owns a table the last
+census found rows in runs again even if the checkpoint lists it as done.
 `--skip-external` (with `--resume`, failed `namespace_list` sagas only; refused with
 `--completed-since`) finishes the Loom tables when an external backend keeps failing.
 `--completed-since <ISO timestamp>` takes the completed sagas whose census ran at or

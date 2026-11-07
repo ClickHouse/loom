@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from server.erasure.store import census as erasure_census
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store import steps_graph as graph_steps
@@ -323,7 +324,7 @@ async def test_consolidated_dependents_of_an_erased_user_are_tombstoned_in_both_
     assert "namespace, memory_key FROM" in keys_sql
     assert keys_params == {"org": "o", "uid": "alice"}
     tables = [sql.split("ALTER TABLE ")[1].split()[0] for sql, _ in ch.execute_calls]
-    assert tables == ["loom.memory", "loom.memory_embeddings", "loom.memory_code_links"]
+    assert tables == ["loom.memory_embeddings", "loom.memory", "loom.memory_code_links"]
     *tombstones, (links, link_params) = ch.execute_calls
     for sql, params in tombstones:
         assert "has(tags, 'consolidated') AND hasAny(tags, {src:Array(String)})" in sql
@@ -339,6 +340,86 @@ async def test_consolidated_dependents_of_an_erased_user_are_tombstoned_in_both_
     )
     assert link_params["rows"] == [("ns", topic)]
     assert not [sql for sql, _ in ch.execute_calls if "SELECT" in sql]
+
+
+@pytest.mark.asyncio
+async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_their_keys() -> None:
+    """In a purge, `memory.tombstone` and the summaries' tombstone still stamp
+    loom.memory, so the cache steps between can read the keys; `memory.retire`
+    deletes the summaries and then the user's rows."""
+    pairs = ("namespace, memory_key FROM", [{"namespace": "ns", "memory_key": "k1"}])
+    with erasure_mutations.purge_scope(True):
+        ch = StubCH()
+        ch.query_one_returns.append({"n": 1})
+        assert await memory_steps.tombstone_memory_by_user("o", "alice", ch=ch) == 0
+        ((sql, _),) = ch.execute_calls
+        assert " ".join(sql.split()).startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
+
+        ch = StubCH()
+        ch.reads.append(pairs)
+        ch.query_one_returns.extend([{"n": 1}, {"n": 1}])
+        await graph_steps.tombstone_consolidated_dependents_by_user("o", "alice", ch=ch)
+        embeddings, memory = (" ".join(sql.split()) for sql, _ in ch.execute_calls)
+        assert embeddings.startswith("DELETE FROM loom.memory_embeddings")
+        assert memory.startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
+
+        # the summaries' rows are tombstoned and their links go; the answers quoting them
+        # go again, while their keys still find them; the rows are deleted last, so a
+        # step stopped part way still finds the summaries through them
+        topic = "00000000-0000-0000-0000-0000000000c1"
+        ch = StubCH()
+        ch.reads.append(pairs)
+        ch.reads.append(
+            ("toString(memory_id) AS id FROM loom.memory", [{"namespace": "ns", "id": topic}])
+        )
+        keys, one = {"keys": ["t"]}, {"n": 1}
+        ch.query_one_returns.extend([one, one, one, one, keys, one, keys, one, one, {"n": 2}])
+        # each row counts once: the summary's at its tombstone, the user's at their
+        # delete here (memory.tombstone counts none in a purge, the late stamp neither)
+        assert await graph_steps.retire_memory_by_user("o", "alice", ch=ch) == 7
+        calls = [(" ".join(sql.split()), params) for sql, params in ch.execute_calls]
+        embeddings, summaries, (links, link_params), stamp, cache, precedents, *rest = calls
+        assert stamp[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
+        (memory, memory_params), (own, own_params) = rest
+        assert embeddings[0].startswith("DELETE FROM loom.memory_embeddings")
+        assert summaries[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
+        assert "loom.memory_code_links" in links and link_params["rows"] == [("ns", topic)]
+        assert "loom.llm_response_cache" in cache[0] and cache[1]["keys"] == ["t"]
+        assert "loom.memory_ask_precedents" in precedents[0]
+        assert memory.startswith("ALTER TABLE loom.memory DELETE WHERE")
+        assert "{pairs:Array(Tuple(String, String))}" in memory
+        assert memory_params["pairs"] == [("ns", "src:k1")]
+        assert own.startswith("ALTER TABLE loom.memory DELETE WHERE")
+        assert "user_id = {uid:String}" in own and own_params["uid"] == "alice"
+
+    # a census residue on loom.memory reopens it, in either mode
+    assert "memory.retire" in erasure_census.steps_to_reopen({"loom.memory": 1}, "user_id")
+
+
+@pytest.mark.asyncio
+async def test_the_saga_names_the_step_each_mutation_belongs_to(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run through `_do_step`, two steps that submit one statement get two tags, and
+    the step's name does not outlast it."""
+    from server.erasure.app import saga
+
+    args = ("loom.memory", "UPDATE tombstoned_at = {now:DateTime}", "user_id = {uid:String}")
+    tags: list[str] = []
+
+    async def step() -> int:
+        tags.append(erasure_mutations.mutation_tag(*args, {"uid": "alice"}))
+        return 0
+
+    async def no_checkpoint(**_: Any) -> None:
+        return None
+
+    monkeypatch.setattr(saga, "checkpoint", no_checkpoint)
+    with erasure_mutations.saga_scope("s1"):
+        for name in ("memory.tombstone", "memory.retire"):
+            await saga._do_step(step_name=name, step_fn=step, completed=set(), row={})
+        outside = erasure_mutations.mutation_tag(*args, {"uid": "alice"})
+    assert len(set(tags)) == 2 and outside not in tags
 
 
 @pytest.mark.asyncio

@@ -1282,9 +1282,15 @@ returned, bound as an array a slice at a time (`server/erasure/store/scope_reads
 binds the time it stamps. A key that holds stored free text (a triple, an edge, a
 community's entity or label, a document's `source_uri`) is bound as its `cityHash64`,
 computed by ClickHouse on both sides: nothing bounds a stored name, and one name can be
-longer than the form field a bound value travels in. A slice's mutation tag hashes its
-bound values but not the stamp, so each slice waits for its own mutation, and a step
-re-run after a crash re-reads its slices and waits for any of its own still pending.
+longer than the form field a bound value travels in. A slice's mutation tag hashes the
+step that submits it and its bound values but not the stamp, so each slice waits for its
+own mutation, two steps that submit one statement wait for their own, and a step re-run
+after a crash re-reads its slices and waits for any of its own still pending.
+
+The user-scope steps read the user's memory keys from `loom.memory`, so a user purge
+tombstones those rows in `memory.tombstone` and deletes them in `memory.retire`, after the
+last step that reads them; the consolidated summaries built from them are deleted there
+too, after their vectors and code links.
 
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no
