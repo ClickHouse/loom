@@ -162,8 +162,8 @@ def tracker_namespaces_for(
     first: a maintainer's links first ("" there clears the config's); then,
     for a repository the operator configured (`operator`, read when not
     given), the config's exact key, then the first glob that matches; for a
-    branch added from an operator repository, that repository's links, read
-    now; [] when none."""
+    registered branch added from an operator repository, that repository's
+    links, read now; [] when none."""
     if not code_namespace:
         return []
     over = override_for(org, code_namespace)

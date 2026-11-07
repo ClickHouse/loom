@@ -464,7 +464,9 @@ async def test_remove_empties_the_tracker_links_before_it_deactivates_or_purges(
 
 
 @pytest.mark.asyncio
-async def test_remove_writes_no_link_row_for_a_namespace_that_had_none(plane, monkeypatch) -> None:
+async def test_remove_writes_no_qa_binding_row_for_a_namespace_that_had_none(
+    plane, monkeypatch
+) -> None:
     """An empty `qa_binding` reads as cleared: one written for a namespace that never had
     links would hide the operator's map from a namespace of the same name until the purge."""
     from server.tracker.app import binding

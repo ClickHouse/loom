@@ -504,7 +504,7 @@ async def test_a_branch_of_a_self_service_source_ignores_an_operator_entry_of_it
 
 
 @pytest.mark.asyncio
-async def test_a_branch_of_a_cleared_source_writes_no_link(plane, links) -> None:
+async def test_a_branch_of_a_cleared_source_copies_no_qa_binding(plane, links) -> None:
     plane.stored[(ORG, "code-clickhouse", links.OVERRIDE_KEY)] = ""
     await admin.handle_code_repo_add_branch(
         CodeRepoAddBranchInput(org=ORG, namespace="code-clickhouse", branch="26.8")
@@ -588,7 +588,9 @@ async def test_a_cleared_self_service_source_copies_its_empty_row(plane, links) 
 
 
 @pytest.mark.asyncio
-async def test_a_branch_of_an_unlinked_repository_writes_no_link(plane, links, monkeypatch) -> None:
+async def test_a_branch_of_an_unlinked_repository_copies_no_qa_binding(
+    plane, links, monkeypatch
+) -> None:
     from server.settings import settings
 
     monkeypatch.setattr(settings, "tracker_code_namespace_bindings_json", "")
