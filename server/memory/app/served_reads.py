@@ -111,22 +111,20 @@ def procedure_keys(input: Any, out: Any) -> Keys:
     return [(str(m.namespace or input.namespace), str(m.memory_key)) for m in out.matches]
 
 
-# The memory stack's layers that are stored rows; profile and knowledge are not.
-_STACK_ROW_LAYERS = ("pinned", "recent_recall", "procedure")
-
-
 def pack_keys(input: Any, out: Any) -> Keys:
-    """context.pack: the stored rows its kept blocks cite (the pack notes each row's key
-    where it makes the citation), which are the ones within its section budgets."""
+    """context.pack: the stored rows whose item lines its rendered answer still holds,
+    after every section and pack budget (`context_layout.served_rows`)."""
     return list(out._served_rows)
 
 
 def stack_keys(input: Any, out: Any) -> Keys:
     """memory.stack: the stored rows of its entries (not the profile or knowledge ones)."""
+    from server.memory.domain.context_layout import STACK_ROW_LAYERS
+
     return [
         (input.namespace, e.memory_key)
         for e in out.entries
-        if e.section in _STACK_ROW_LAYERS and e.memory_key
+        if e.section in STACK_ROW_LAYERS and e.memory_key
     ]
 
 
