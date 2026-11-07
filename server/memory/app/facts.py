@@ -452,16 +452,16 @@ async def _handle_facts_traverse_uncached(input: FactsTraverseInput) -> FactsTra
     the shortest chain the walk found and a reader can draw the result as
     a tree.
     """
-    from server.memory.domain.graph_quality import graph_node_text
+    from server.memory.domain.graph_quality import canonical_entity_text
 
     ch = get_client()
     # The seed is canonicalised the way the WRITE path stores entities (articles and
     # possessives stripped, head noun singularised, first person -> "user"), exactly as
     # facts.path does: a bare lower() would make "Alice's" and "The user" miss the rows
     # written for "alice" and "user", and memory.ask's expansion step passes seeds in the
-    # question's own words. A "commit:" or "error:" name is kept whole, as written.
+    # question's own words. A "commit:" or "error:" name is kept whole and case-folded.
     raw = input.seed_entity.strip().lower()
-    seed = graph_node_text(input.seed_entity) or raw
+    seed = canonical_entity_text(input.seed_entity) or raw
     params: dict[str, Any] = {
         "org": input.org,
         "ns": input.namespace,
@@ -733,14 +733,14 @@ async def handle_facts_path(input: FactsPathInput) -> FactsPathOutput:
 
     Validity mirrors facts.traverse exactly: `as_of` = interval containment;
     default = edges whose valid_to is open or in the future. Both entities are
-    named the way the write path stores them (graph_node_text), so "Alice's" finds
-    "alice" and "error:Timeouts" finds "error:timeouts".
+    canonicalised the way the write path stores them (canonical_entity_text),
+    so "Alice's" finds "alice" and "error:Timeouts" finds "error:timeouts".
     """
     from server.memory.domain import graph_path as gp
-    from server.memory.domain.graph_quality import graph_node_text
+    from server.memory.domain.graph_quality import canonical_entity_text
 
-    a_text = graph_node_text(input.entity_a) or input.entity_a.strip().lower()
-    b_text = graph_node_text(input.entity_b) or input.entity_b.strip().lower()
+    a_text = canonical_entity_text(input.entity_a) or input.entity_a.strip().lower()
+    b_text = canonical_entity_text(input.entity_b) or input.entity_b.strip().lower()
     if a_text == b_text:
         return FactsPathOutput(
             entity_a=a_text,

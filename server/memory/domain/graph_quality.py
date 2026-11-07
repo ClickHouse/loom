@@ -439,12 +439,18 @@ def _normalise(lowered: str) -> str:
     return SELF_SUBJECT if text in _FIRST_PERSON_FORMS else text
 
 
+# A commit or error facet ("commit:<sha>", "error:<name>") names an identifier: it is
+# case-folded and kept whole, never singularised or stripped of punctuation.
+_CODE_FACET_PREFIXES = ("commit:", "error:")
+
+
 def _capped_normal(original: str) -> str | None:
     """`original` normalised, or None when it or its normal form (NFKC lengthens:
     "\ufb01" is "fi") is longer than `MAX_ENTITY_CHARS`."""
     if len(original) > MAX_ENTITY_CHARS:
         return None
-    text = _normalise(original.lower())
+    folded = fold_case(original)
+    text = folded if folded.startswith(_CODE_FACET_PREFIXES) else _normalise(original.lower())
     return text if len(text) <= MAX_ENTITY_CHARS else None
 
 
@@ -458,8 +464,9 @@ def canonical_entity(raw: str) -> CanonicalEntity:
 
     Collapses first-person forms (i / me / user / ...) to "user" to match the
     read side (graph seeds and query triples use `canonical_entity_text`); the original
-    surface form is preserved in `aliases` for provenance and recall. Text longer than
-    `MAX_ENTITY_CHARS`, as written or once normalised, is no entity: its text is empty."""
+    surface form is preserved in `aliases` for provenance and recall. A "commit:" or
+    "error:" name is only case-folded. Text longer than `MAX_ENTITY_CHARS`, as written or
+    once normalised, is no entity: its text is empty."""
 
     original = str(raw or "").strip()
     text = _capped_normal(original)
@@ -474,31 +481,6 @@ def canonical_entity_text(raw: str) -> str:
     possessives and punctuation and folds first-person forms to "user", so a
     query seed and the stored node land on identical text. Idempotent."""
     return canonical_entity(raw).text
-
-
-_CODE_FACET_PREFIXES = ("commit:", "error:")
-
-
-def is_code_facet_name(raw: str) -> bool:
-    """Whether `raw` names a commit or an error facet ("commit:<sha>", "error:<name>")."""
-    return fold_case(str(raw or "").strip()).startswith(_CODE_FACET_PREFIXES)
-
-
-def code_facet_node(raw: str) -> str:
-    """The node of a "commit:" or "error:" name: the whole name case-folded, with nothing
-    singularised or stripped after the prefix, since a sha or an error name is an
-    identifier. Empty when it is longer than `MAX_ENTITY_CHARS`, as written or folded."""
-    text = str(raw or "").strip()
-    if len(text) > MAX_ENTITY_CHARS:
-        return ""
-    folded = fold_case(text)
-    return folded if len(folded) <= MAX_ENTITY_CHARS else ""
-
-
-def graph_node_text(raw: str) -> str:
-    """The graph node `raw` names, on the write and the read side alike: a code facet name
-    whole (`code_facet_node`), any other name canonical (`canonical_entity_text`)."""
-    return code_facet_node(raw) if is_code_facet_name(raw) else canonical_entity_text(raw)
 
 
 def canonical_entities(values: Iterable[str]) -> list[str]:
@@ -814,20 +796,14 @@ def facet_triples(
     this file"; topics hang off `about`, so a topic never passes for a library. An item too
     long to be a name (`MAX_ENTITY_CHARS`) mints no node."""
     subject = canonical_entity_text(agent or "user") or "user"
-    for path in files:
-        if node := _facet_node(path):
-            yield subject, code_facet_relation("file", fact_verbs), node
-    for concept in concepts:
-        if node := _facet_node(concept):
-            yield subject, code_facet_relation(classify_code_concept(concept), fact_verbs), node
-    for topic in topics:
-        if node := _facet_node(topic):
-            yield subject, "about", node
-
-
-def _facet_node(raw: str) -> str:
-    """The node a file, concept or topic mints (`graph_node_text`), or its lower case when
-    it fits a name but normalises to nothing; empty when it is too long to be a name."""
-    if is_code_facet_name(raw):
-        return code_facet_node(raw)
-    return (canonical_entity_text(raw) or raw.lower()) if fits_entity(raw) else ""
+    for path in names_only(files):
+        yield (
+            subject,
+            code_facet_relation("file", fact_verbs),
+            canonical_entity_text(path) or path.lower(),
+        )
+    for concept in names_only(concepts):
+        node = canonical_entity_text(concept) or concept.lower()
+        yield subject, code_facet_relation(classify_code_concept(concept), fact_verbs), node
+    for topic in names_only(topics):
+        yield subject, "about", canonical_entity_text(topic) or topic.lower()

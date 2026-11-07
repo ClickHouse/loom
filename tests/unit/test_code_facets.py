@@ -406,3 +406,81 @@ async def test_an_error_topic_is_one_node_to_the_triples_the_edges_and_the_graph
         _CH(), org="o", namespace="n", seed_entities=["error:Timeouts"], hub_skip_degree=0
     )
     assert seen and seen[0]["seeds"] == ["error:timeouts"]
+
+
+class _WriteCH:
+    def __init__(self) -> None:
+        self.inserts: dict[str, list[dict[str, Any]]] = {}
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+        return []
+
+    async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
+        self.inserts.setdefault(table, []).extend(rows)
+
+
+@pytest.mark.asyncio
+async def test_an_error_name_in_entities_relations_and_a_facet_is_one_node() -> None:
+    from server.memory.app.projections import write_entity_edges, write_entity_triples
+
+    entry = _BulkSetEntry(
+        memory_key="k1",
+        value="v",
+        entities=["deploy", "error:Timeouts"],
+        relations=[("deploy", "causes", "error:Timeouts")],
+        topics=["error:Timeouts"],
+    )
+    body = MemoryBulkSetInput(org="o", namespace="n", agent="bot", entries=[entry])
+    results = [_BulkSetResult(memory_key="k1", version=0)]
+    ch = _WriteCH()
+    await write_entity_edges(body, results, ch=ch, entity_map={})
+    await write_entity_triples(body, results, ch=ch, entity_map={})
+    edges = {(e["entity_a"], e["entity_b"]) for e in ch.inserts["loom.entity_edges"]}
+    assert edges == {("deploy", "error:timeouts")}
+    triples = {
+        (t["subject"], t["relation"], t["object"]) for t in ch.inserts["loom.entity_triples"]
+    }
+    assert {o for _, _, o in triples} == {"error:timeouts"}
+
+
+@pytest.mark.asyncio
+async def test_memory_search_scope_seeds_an_error_name_at_its_edge_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.search import scope
+
+    monkeypatch.setattr(scope, "get_client", lambda: _WriteCH())
+    done: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+    done.set_result(None)
+    run = scope._SearchRun(
+        rerank_override="", rerank_cfg_task=None, calibration_task=done, fanout_task=None
+    )
+    body = MemorySearchInput(
+        org="o", namespace="n", agent="a", query="q", entity_filter=["error:Timeouts"]
+    )
+    await scope._resolve_entity_scope(body, run, [], {})
+    assert run.effective_entity_filter == _edge_nodes(topics=["error:Timeouts"])
+
+
+@pytest.mark.asyncio
+async def test_a_query_triple_names_an_error_facet_as_it_is_stored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.llm import client as llm_client
+    from server.llm.client import LLMResult
+    from server.memory.app import search_llm
+    from server.memory.domain.graph_quality import facet_triples
+
+    class _LLM:
+        async def complete(self, system: str, user: str, **kw: Any) -> LLMResult:
+            text = '[{"s": "deploy", "v": "causes", "o": "error:Timeouts"}]'
+            return LLMResult(text=text, tokens_in=1, tokens_out=1, provider="fake", model="m")
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _LLM())
+    monkeypatch.setattr(search_llm, "_QUERY_ENTITY_CACHE", {})
+    (triple,) = await search_llm.extract_query_triples_llm("what causes error:Timeouts")
+    (stored,) = facet_triples("bot", [], [], ["error:Timeouts"], [])
+    assert triple[2] == stored[2] == "error:timeouts"

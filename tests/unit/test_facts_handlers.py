@@ -101,7 +101,7 @@ async def test_facts_traverse_defaults_edges_to_current_validity(
 @pytest.mark.asyncio
 async def test_facts_traverse_seeds_an_error_name_whole(monkeypatch: pytest.MonkeyPatch) -> None:
     """The write side stores "error:Timeouts" as the node "error:timeouts"; the walk
-    starts there, not at the singular a canonical entity would make of it."""
+    starts there, not at a singular "error:timeout"."""
     from server.memory.api.models_facts import FactsTraverseInput
     from server.memory.app import facts as facts_handlers
 

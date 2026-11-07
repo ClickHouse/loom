@@ -12,7 +12,7 @@ from typing import Any
 
 from server.memory.app.search_llm import expand_verb_synonyms
 from server.memory.domain.graph_paths import extend_paths
-from server.memory.domain.graph_quality import graph_node_text
+from server.memory.domain.graph_quality import canonical_entity_text
 
 log = logging.getLogger("server.memory.app.retrieval")
 
@@ -138,7 +138,9 @@ async def fetch_graph_neighbors(
     """
     if not seed_entities:
         return []
-    seeds_canon = sorted({node for s in seed_entities if s and (node := graph_node_text(s))})
+    seeds_canon = sorted(
+        {canonical_entity_text(s) for s in seed_entities if s and canonical_entity_text(s)}
+    )
     if not seeds_canon:
         return []
 
