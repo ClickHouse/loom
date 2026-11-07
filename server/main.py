@@ -69,8 +69,8 @@ async def _shutdown_drains(lease: Any, supervisor: Any, emitter: Any) -> None:
     from server.workers import leader as _leader
 
     # An agent claim's last cutoff, which ends what an older replica's sign-in
-    # with the code issued while the claim was landing: alongside the drains
-    # below, so it has the whole budget.
+    # with the code issued while the claim was landing: started first, so it
+    # runs beside the drains below.
     claims = asyncio.create_task(_agent_claim.drain())
     try:
         await _leader.shutdown(lease, supervisor)
@@ -91,7 +91,9 @@ async def _shutdown_drains(lease: Any, supervisor: Any, emitter: Any) -> None:
 
         await retrieval_judge.stop()
         await langfuse_scores.drain(timeout_s=5.0)
-        await claims
+        # Bounded so the emitter and the clients below still close in the budget.
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(claims, 20.0)  # not a setting: one shutdown step
     finally:
         claims.cancel()  # a no-op once it is done
     await emitter.stop()

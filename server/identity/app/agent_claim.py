@@ -314,7 +314,7 @@ async def _landed(org: str, namespace: str, password_hash: str) -> bool:
         async with asyncio.timeout(_READ_BACK_S):
             with own_write_reads():
                 row = await namespaces.fetch_row(org, namespace)
-    except Exception as e:  # noqa: BLE001 — unread, the claim's own error answers
+    except Exception as e:  # noqa: BLE001 — an unread row counts as not landed
         log.warning("agent claim of %s/%s: reading the write failed: %r", org, namespace, e)
         return False
     return (row or {}).get("password_hash") == password_hash
@@ -360,14 +360,9 @@ async def _after_write(org: str, namespace: str, subject: str, password_hash: st
     # A replica of the build before signs in with a plain-hash code, reading
     # without sequential consistency, until its ClickHouse replica has the
     # write, and the first cutoff predates that.
-    try:
-        async with asyncio.timeout(_READ_BACK_S):
-            with own_write_reads():
-                landed = await namespaces.fetch_row(org, namespace)
-        if (landed or {}).get("password_hash") != password_hash:
-            log.warning("agent claim of %s/%s: the write does not read back yet", org, namespace)
-    except Exception as e:  # noqa: BLE001 — the read only times the cutoff below, which still runs
-        log.warning("agent claim of %s/%s: reading the write back failed: %r", org, namespace, e)
+    # The read only times the cutoff below, which runs whatever it finds.
+    if not await _landed(org, namespace, password_hash):
+        log.warning("agent claim of %s/%s: the write does not read back yet", org, namespace)
     # A replica whose clock runs up to CLOCK_SKEW_S ahead stamps later `iat`s:
     # after this wait the cutoff still ends what any replica issues for
     # CLOCK_SKEW_S + 1 seconds after the read back.
