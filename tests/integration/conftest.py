@@ -135,24 +135,12 @@ def require_real_embedder(control_plane_url: str):
 
 @pytest_asyncio.fixture
 async def agent(control_plane_url: str):
-    """A Loom Agent in a unique namespace, JWT-authenticated.
-
-    Mints a writer-scoped token on the fly so the suite runs against a
-    server with `LOOM_AUTH_REQUIRED=true`. Tests don't need to know about
-    auth — they just use `agent` as before.
-    """
+    """A Loom Agent in a unique namespace of `test-org`, authenticated with the
+    `LOOM_API_KEY` the root conftest seeds for every test (or the caller's own)."""
     from loom import Agent
 
-    from server.auth.jwt import mint_token
-
     ns = f"test-{os.urandom(4).hex()}"
-    tok = os.environ.get("LOOM_API_KEY") or mint_token(
-        subject="test-suite",
-        org="test-org",
-        namespaces=["*"],
-        roles=["writer"],
-        ttl_seconds=600,
-    )
+    tok = os.environ["LOOM_API_KEY"]
     async with Agent(
         org="test-org",
         namespace=ns,
