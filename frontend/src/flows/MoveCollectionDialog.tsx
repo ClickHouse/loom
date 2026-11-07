@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { moveCollection, type CollectionEntry } from "../api";
@@ -16,6 +16,7 @@ export function MoveCollectionDialog({
   org,
   collection,
   parents,
+  all,
   onMoved,
   onClose,
 }: {
@@ -23,6 +24,8 @@ export function MoveCollectionDialog({
   collection: CollectionEntry;
   /** The collections it may sit in: those the caller writes. */
   parents: CollectionEntry[];
+  /** Every collection the person sees, so the tree walks through ones they only read. */
+  all: CollectionEntry[];
   onMoved: () => void;
   onClose: () => void;
 }) {
@@ -30,6 +33,7 @@ export function MoveCollectionDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const target = parent === TOP ? "" : parent;
+  const above = useMemo(() => ancestors(all), [all]);
 
   const submit = async () => {
     setBusy(true);
@@ -59,11 +63,11 @@ export function MoveCollectionDialog({
         }}
       >
         <div className="space-y-4">
-          <p className="text-sm text-text-muted">{moveEffect(collection.parent, target)}</p>
+          <p className="text-sm text-text-muted">{moveEffect(collection.parent, target, above)}</p>
           <Select id="move-collection-parent" label="Inside" value={parent} onSelect={setParent} showSearch>
             <Select.Item value={TOP}>Top level</Select.Item>
             {parents
-              .filter((c) => !inside(c, collection.namespace, parents))
+              .filter((c) => c.namespace !== collection.namespace && !above(c.namespace).has(collection.namespace))
               .map((c) => (
                 <Select.Item key={c.namespace} value={c.namespace}>
                   {c.namespace}
@@ -85,18 +89,22 @@ export function MoveCollectionDialog({
   );
 }
 
-/** Whether `c` is `root` or sits under it: a collection cannot move into its own subtree. */
-function inside(c: CollectionEntry, root: string, all: CollectionEntry[]): boolean {
-  const byName = new Map(all.map((e) => [e.namespace, e]));
-  for (let at: CollectionEntry | undefined = c; at; at = at.parent ? byName.get(at.parent) : undefined)
-    if (at.namespace === root) return true;
-  return false;
+/** `above(name)`: the collections `name` sits under, nearest first. */
+function ancestors(all: CollectionEntry[]): (name: string) => Set<string> {
+  const parentOf = new Map(all.map((e) => [e.namespace, e.parent]));
+  return (name) => {
+    const seen = new Set<string>();
+    for (let at = parentOf.get(name); at && !seen.has(at); at = parentOf.get(at)) seen.add(at);
+    return seen;
+  };
 }
 
 /** Who reaches the collection after the move: its own members always, the new parent's
- *  readers when it has one; the old parent's readers lose the access they had through it. */
-function moveEffect(from: string, to: string): string {
-  const lose = from && from !== to ? ` Whoever reached it only through ${from} loses it.` : "";
+ *  readers when it has one. The old parent's readers lose the access they had through it,
+ *  unless the new parent sits under the old one. */
+function moveEffect(from: string, to: string, above: (name: string) => Set<string>): string {
+  const keeps = !from || from === to || above(to).has(from);
+  const lose = keeps ? "" : ` Whoever reached it only through ${from} loses it.`;
   const gain = to ? `Everyone who reaches ${to} reaches it too.` : "At the top, only its own members reach it.";
   return gain + lose;
 }

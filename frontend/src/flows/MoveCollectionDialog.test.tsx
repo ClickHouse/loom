@@ -32,6 +32,7 @@ describe("MoveCollectionDialog", () => {
         org="acme"
         collection={entry("q3", "finance")}
         parents={[entry("finance"), entry("q3", "finance")]}
+        all={[entry("finance"), entry("q3", "finance")]}
         onMoved={onMoved}
         onClose={onClose}
       />,
@@ -60,7 +61,15 @@ describe("MoveCollectionDialog", () => {
       <MoveCollectionDialog
         org="acme"
         collection={entry("finance", "corp")}
-        parents={[entry("corp"), entry("finance", "corp"), entry("q3", "finance"), entry("q3-eu", "q3"), entry("hr")]}
+        parents={[entry("corp"), entry("finance", "corp"), entry("q3-eu", "q3"), entry("hr")]}
+        all={[
+          entry("corp"),
+          entry("finance", "corp"),
+          // q3 is one the person only reads: it is no target, but its child still sits under finance.
+          { ...entry("q3", "finance"), role: "viewer" },
+          entry("q3-eu", "q3"),
+          entry("hr"),
+        ]}
         onMoved={() => {}}
         onClose={() => {}}
       />,
@@ -70,5 +79,26 @@ describe("MoveCollectionDialog", () => {
     await waitFor(() => expect(document.querySelector('[cui-select-item][data-value="hr"]')).not.toBeNull());
     for (const below of ["finance", "q3", "q3-eu"])
       expect(document.querySelector(`[cui-select-item][data-value="${below}"]`)).toBeNull();
+  });
+
+  it("says nobody loses access when the new parent sits under the old one", async () => {
+    render(
+      <MoveCollectionDialog
+        org="acme"
+        collection={entry("q3", "corp")}
+        parents={[entry("corp"), entry("finance", "corp"), entry("q3", "corp")]}
+        all={[entry("corp"), entry("finance", "corp"), entry("q3", "corp")]}
+        onMoved={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    await userEvent.click(screen.getByLabelText("Inside"));
+    const finance = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>('[cui-select-item][data-value="finance"]');
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    await userEvent.click(finance);
+    expect(screen.getByText("Everyone who reaches finance reaches it too.")).toBeInTheDocument();
   });
 });

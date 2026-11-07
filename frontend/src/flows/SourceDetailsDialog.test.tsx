@@ -1,21 +1,36 @@
 import { cleanup, render, screen } from "../test/rtl";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { KnowledgeSourceDetail } from "../lib/knowledgeSources";
 import * as api from "../api/knowledgeSources";
 import { SourceDetailsDialog } from "./SourceDetailsDialog";
 
+const DETAIL: KnowledgeSourceDetail = {
+  name: "design-docs",
+  kind: "gdrive",
+  config: { folder_ids: ["abc", "def"] },
+  created_by: "alice",
+  created_at: "",
+  sync: {
+    requested_at: "",
+    last_synced_at: "",
+    status: "failed",
+    documents_seen: 0,
+    changed: 0,
+    removed: 0,
+    unconverted: 0,
+    unconverted_reasons: {},
+    skipped: 0,
+    error: "http_403",
+  },
+  documents: [{ source_uri: "a.md", title: "Runbook", source_revision: "1", ingested_at: "2000-01-01 00:00:00" }],
+};
+
 vi.mock("../api/knowledgeSources", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/knowledgeSources")>()),
-  inspectKnowledgeSource: vi.fn(async () => ({
-    name: "design-docs",
-    kind: "gdrive",
-    config: { folder_ids: ["abc", "def"] },
-    created_by: "alice",
-    created_at: "",
-    sync: { status: "failed", last_synced_at: "", documents_seen: 0, error: "http_403" },
-    documents: [{ source_uri: "a.md", title: "Runbook", source_revision: "1", ingested_at: "2000-01-01 00:00:00" }],
-  })),
+  inspectKnowledgeSource: vi.fn(),
 }));
 
+beforeEach(() => vi.mocked(api.inspectKnowledgeSource).mockResolvedValue(DETAIL));
 afterEach(() => cleanup());
 
 describe("SourceDetailsDialog", () => {
@@ -27,14 +42,15 @@ describe("SourceDetailsDialog", () => {
     expect(screen.getByText(/never/)).toBeInTheDocument();
   });
 
-  it("keeps an ok turn's note out of the error row", async () => {
-    const detail = await api.inspectKnowledgeSource({ org: "acme", namespace: "code-x" }, "design-docs");
+  it("words the last turn as the source row does, and shows an ok turn's note as a note", async () => {
     vi.mocked(api.inspectKnowledgeSource).mockResolvedValueOnce({
-      ...detail,
-      sync: { ...detail.sync, status: "ok", error: "3 files too large" },
+      ...DETAIL,
+      sync: { ...DETAIL.sync, status: "ok", error: "3 files too large" },
     });
     render(<SourceDetailsDialog org="acme" namespace="code-x" name="design-docs" onClose={() => {}} />);
-    expect(await screen.findByText("Runbook")).toBeInTheDocument();
-    expect(screen.queryByText("3 files too large")).toBeNull();
+    expect(await screen.findByText(/Incomplete/)).toBeInTheDocument();
+    expect(screen.getByText("Note")).toBeInTheDocument();
+    expect(screen.getByText("3 files too large")).toBeInTheDocument();
+    expect(screen.queryByText("Error")).toBeNull();
   });
 });

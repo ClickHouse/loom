@@ -3,23 +3,25 @@ import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { approveDataset, DATASET_TYPES, getDatasets, type Dataset, type DatasetType, type Identity } from "../api";
+import { ApiError } from "../lib/errors";
 import { humanizeError } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, Loading, SectionHeading } from "../components/ui";
 
-/**
- * The typed tables a document's file became (knowledge.dataset_get): each one's columns
- * and types, what the typing asks a person, and an Approve that may retype columns
- * (knowledge.dataset_approve). `canApprove` follows the writer role the op asks.
- */
+// A schema's state in words.
 const SCHEMA_STATE: Record<string, string> = {
   inferred: "types inferred",
   needs_clarification: "needs a decision",
   approved: "approved",
 };
 
+/**
+ * The typed tables a document's file became (knowledge.dataset_get): each one's columns
+ * and types, what the typing asks a person, and an Approve that may retype columns
+ * (knowledge.dataset_approve). `canApprove` follows the writer role the op asks.
+ */
 export function DatasetsDialog({
   identity,
   sourceUri,
@@ -94,10 +96,14 @@ function DatasetCard({
     setBusy(true);
     try {
       const r = await approveDataset(identity, sourceUri, d, retyped);
-      toast(r.found ? `Approved ${d.name}` : `${d.name} changed meanwhile; read it again`, r.found ? "ok" : "info");
+      toast(r.found ? `Approved ${d.name}` : `${d.name} is no longer in this document`, r.found ? "ok" : "info");
       onChanged();
     } catch (e) {
-      toast(`Approve failed: ${humanizeError(e)}`, "error");
+      // A newer revision or approval moved the table on: show it as it is now.
+      if (e instanceof ApiError && e.code === "PRECONDITION_FAILED") {
+        toast(`${d.name} changed meanwhile; here it is as it is now`, "info");
+        onChanged();
+      } else toast(`Approve failed: ${humanizeError(e)}`, "error");
     } finally {
       setBusy(false);
     }

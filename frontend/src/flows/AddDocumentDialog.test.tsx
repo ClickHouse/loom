@@ -214,6 +214,22 @@ describe("AddDocumentDialog", () => {
     expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toBe("spec.pdf was already added");
   });
 
+  it("holds the dialog while a Stop runs", async () => {
+    ingestClock.sleep = () => new Promise<void>(() => {});
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(status("processing", { stage: "embed" }));
+    vi.mocked(cancelIngestion).mockImplementation(() => new Promise(() => {}));
+    const { dialog, onOpenChange } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
+    await waitFor(() => expect(cancelIngestion).toHaveBeenCalled());
+    // Neither Close, the modal's own close nor Escape closes it until the Stop answers.
+    for (const close of within(dialog).getAllByRole("button", { name: "Close" })) await user.click(close);
+    await user.keyboard("{Escape}");
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
   it("a Stop of a running job says it stops before it publishes", async () => {
     ingestClock.sleep = () => new Promise<void>(() => {});
     vi.mocked(knowledgeIngestStatus).mockResolvedValue(status("processing", { stage: "embed" }));

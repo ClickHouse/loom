@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { inspectKnowledgeSource } from "../api/knowledgeSources";
-import { kindLabel, type KnowledgeSourceDetail } from "../lib/knowledgeSources";
+import { kindLabel, syncBadge, type KnowledgeSourceDetail } from "../lib/knowledgeSources";
 import { humanizeError } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { Modal, ModalFooter } from "../components/ui/Modal";
@@ -46,11 +46,14 @@ export function SourceDetailsDialog({
             <MetaRow label="Added by">{detail.created_by || "—"}</MetaRow>
             <MetaRow label="Last sync">
               {detail.sync.last_synced_at ? <ListTime time={detail.sync.last_synced_at} /> : "never"} ·{" "}
-              {detail.sync.status || "—"}
+              {syncBadge(detail.sync).text}
             </MetaRow>
-            {/* An ok turn's error says why it was incomplete, as the source row shows it. */}
-            {detail.sync.error && detail.sync.status !== "ok" && (
-              <MetaRow label="Error" tone="danger">
+            {/* A failed turn's error, or why an ok turn stopped early. */}
+            {detail.sync.error && (
+              <MetaRow
+                label={detail.sync.status === "ok" ? "Note" : "Error"}
+                tone={detail.sync.status === "ok" ? undefined : "danger"}
+              >
                 {detail.sync.error}
               </MetaRow>
             )}

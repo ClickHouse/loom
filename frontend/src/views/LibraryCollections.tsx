@@ -298,6 +298,7 @@ export function LibraryCollections({
           org={org}
           collection={moving}
           parents={parents}
+          all={rows ?? []}
           onMoved={() => reload()}
           onClose={() => setMoving(null)}
         />

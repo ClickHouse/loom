@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api";
 import type { Dataset } from "../api";
 import { toast } from "../components/Toast";
+import { ApiError } from "../lib/errors";
 import { DatasetsDialog } from "./DatasetsDialog";
 
 vi.mock("../components/Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
@@ -73,12 +74,12 @@ describe("DatasetsDialog", () => {
     );
   });
 
-  it("says a table that changed meanwhile was not approved", async () => {
+  it("says a table that is gone was not approved", async () => {
     vi.mocked(api.getDatasets).mockResolvedValue({ found: true, datasets: [SET] });
     vi.mocked(api.approveDataset).mockResolvedValueOnce({ found: false, retyped: false });
     render(<DatasetsDialog identity={identity} sourceUri="q3.xlsx" canApprove onClose={() => {}} />);
     await userEvent.click(await screen.findByRole("button", { name: "Approve schema" }));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Revenue changed meanwhile; read it again", "info"));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Revenue is no longer in this document", "info"));
     expect(api.getDatasets).toHaveBeenCalledTimes(2);
   });
 
@@ -94,5 +95,22 @@ describe("DatasetsDialog", () => {
     vi.mocked(api.getDatasets).mockResolvedValue({ found: false, datasets: [] });
     render(<DatasetsDialog identity={identity} sourceUri="q3.xlsx" canApprove onClose={() => {}} />);
     expect(await screen.findByText("This document is no longer here.")).toBeInTheDocument();
+  });
+
+  it("reads a table again when a newer revision moved it on", async () => {
+    vi.mocked(api.getDatasets).mockResolvedValue({ found: true, datasets: [SET] });
+    vi.mocked(api.approveDataset).mockRejectedValueOnce(
+      new ApiError({
+        status: 409,
+        code: "PRECONDITION_FAILED",
+        message: "snapshot s1 no longer serves the dataset; read it again",
+      }),
+    );
+    render(<DatasetsDialog identity={identity} sourceUri="q3.xlsx" canApprove onClose={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Approve schema" }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith("Revenue changed meanwhile; here it is as it is now", "info"),
+    );
+    expect(api.getDatasets).toHaveBeenCalledTimes(2);
   });
 });
