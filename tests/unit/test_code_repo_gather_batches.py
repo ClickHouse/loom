@@ -19,7 +19,7 @@ def test_batches_read_together_in_order_under_the_limit() -> None:
         nonlocal in_flight, peak
         in_flight += 1
         peak = max(peak, in_flight)
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.01)
         in_flight -= 1
         return [b * 10 for b in batch]
 

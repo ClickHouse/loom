@@ -96,7 +96,7 @@ async def test_search_fallback_appends_every_rendered_unit(code_plane, monkeypat
 
 
 async def test_exact_symbol_leads_and_the_search_fills_concurrently(code_plane) -> None:
-    code_plane.delay = 0.2
+    code_plane.delay = 0.01
     hits = await g._inject_code_context("what does FooBar do", _input(), _settings())
     # One symbol lookup and the search: both started before either finished.
     assert code_plane.symbol_calls == ["FooBar"] and code_plane.search_calls == 1
@@ -127,7 +127,7 @@ async def test_apply_runs_two_concurrent_rounds_in_the_fixed_order(monkeypatch) 
             if pool_arg is not None:
                 seen_pools[name] = [m.memory_key for m in a[pool_arg]]
             timeline.append((name, "start", time.perf_counter()))
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.01)
             timeline.append((name, "end", time.perf_counter()))
             return result(a) if callable(result) else result
 

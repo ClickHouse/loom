@@ -32,8 +32,8 @@ def _vec(cid: str, distance: float) -> dict[str, Any]:
     return {"chunk_id": cid, "distance": distance, "path": f"src/{cid}.cpp", **_UNIT}
 
 
-# Each fake read or embed sleeps this long, so legs that run side by side overlap in
-# the recorded start and end stamps.
+# Each fake read or embed sleeps this long. The vector read starts one sleep (the embed)
+# before the lexical read ends; the sleep is that margin, so it stays long under coverage.
 _SLEEP = 0.2
 
 
@@ -198,6 +198,8 @@ def test_the_fuzzy_symbol_vote_runs_beside_the_legs() -> None:
     starts = {n: t for n, ev, t in repo.span if ev == "start"}
     ends = {n: t for n, ev, t in repo.span if ev == "end"}
     assert starts["fuzzy"] < ends["vector"] and starts["fuzzy"] < ends["lexical"]
+    # ...and a leg starts before the vote ends, so the vote is not awaited first.
+    assert starts["stats"] < ends["fuzzy"]
     assert res.retrieval_work["symbol_queries"] == 1
     assert set(u.unit_id for u in res.units) == {"a", "b", "c"}
 
