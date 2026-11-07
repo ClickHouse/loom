@@ -671,6 +671,12 @@ def test_a_document_export_keeps_its_text_and_marks_its_inlined_pictures() -> No
     assert convert.exported_markdown(tilde) == "~~~\n![][image1]\n~~~\n``` x ` ```\n"
     listed = "- Step\n\n    ```\n    ![][image1]\n    [image2]: <data:a>\n    ```\n"
     assert convert.exported_markdown(listed) == listed
+    on_item = "- ```\n  ![][image1]\n  ```\n\nText ![][image2]\n\n[image1]: <data:a>\n[image2]: <data:b>\n"
+    assert convert.exported_markdown(on_item) == "- ```\n  ![][image1]\n  ```\n\nText\n"
+    quoted = "> ```\n> [image1]: <data:a>\n> ```\n\n![][image2]\n\n[image2]: <data:b>\n"
+    assert convert.exported_markdown(quoted) == (
+        "> ```\n> [image1]: <data:a>\n> ```\n\n> [image-only: 1 picture, rationale not extracted]\n"
+    )
     crlf = "Text.\r\n[image1]: <data:a>\r\n"
     assert convert.exported_markdown(crlf) == crlf
     prose = "[Step 1]: data: the raw input\n\n[image1]: <data:a>\n"

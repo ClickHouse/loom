@@ -389,9 +389,9 @@ _ITEM_LEAD = re.compile(r"[ \t]*(?:(?:[-*+]|\d{1,9}[.)]|#{1,6})[ \t]+|>[ \t]?)*"
 # An emphasis run closing the text before a picture, and one opening the text after it.
 _TRAILING_EMPHASIS = re.compile(r"[*_~]+$")
 _LEADING_EMPHASIS = re.compile(r"[*_~]+")
-# Any indent, so a fence nested in a list item is code too; its close is matched the
-# same way.
-_FENCE_OPEN = re.compile(r"[ \t]*(`{3,}|~{3,})")
+# A fence line: at any indent and after any list-item or quote marks, so a fence
+# nested in a list item is code too; an opening and a closing line match the same way.
+_FENCE = re.compile(r"[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]?)*(`{3,}|~{3,})")
 
 
 def _fenced(lines: list[str]) -> list[bool]:
@@ -399,14 +399,14 @@ def _fenced(lines: list[str]) -> list[bool]:
     out: list[bool] = []
     fence = ""
     for line in lines:
+        m = _FENCE.match(line)
+        rest = line[m.end() :] if m else ""
         if fence:
             out.append(True)
-            stripped = line.strip()
-            if stripped.startswith(fence) and not stripped.strip(fence[0]):
+            if m and m.group(1).startswith(fence) and not rest.strip():
                 fence = ""
             continue
-        m = _FENCE_OPEN.match(line)
-        if m and not (m.group(1)[0] == "`" and "`" in line[m.end() :]):
+        if m and not (m.group(1)[0] == "`" and "`" in rest):
             fence = m.group(1)
         out.append(bool(m) and bool(fence))
     return out
