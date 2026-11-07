@@ -211,12 +211,6 @@ def previous_release(version: str, root: Path = ROOT) -> str:
     return max(older, key=lambda t: parse(_version_of(t)))
 
 
-def candidates_on_head(final: str, root: Path = ROOT) -> list[str]:
-    """The candidate tags of `final` on the checked-out commit, newest first."""
-    head = _sha(root, "HEAD")
-    return [t for t in reversed(candidates(final, root)) if _tag_sha(root, t) == head]
-
-
 def candidates(final: str, root: Path = ROOT) -> list[str]:
     """The candidate tags of `final`, by their number, lowest first."""
     listed = _git(root, "tag", "--list", f"v{final}-rc.*").stdout.split()
@@ -224,6 +218,12 @@ def candidates(final: str, root: Path = ROOT) -> list[str]:
         (t for t in listed if CANDIDATE.fullmatch(_version_of(t))),
         key=lambda t: int(t.rsplit(".", 1)[1]),
     )
+
+
+def candidates_on_head(final: str, root: Path = ROOT) -> list[str]:
+    """The candidate tags of `final` on the checked-out commit, newest first."""
+    head = _sha(root, "HEAD")
+    return [t for t in reversed(candidates(final, root)) if _tag_sha(root, t) == head]
 
 
 def refuse_tagged(version: str, root: Path = ROOT) -> None:

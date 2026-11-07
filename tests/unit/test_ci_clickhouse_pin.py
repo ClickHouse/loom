@@ -80,8 +80,8 @@ def test_the_release_checks_its_clickhouse_before_pinning_it() -> None:
 
 
 def test_the_release_clickhouse_job_sees_the_candidate_tags() -> None:
-    """Without the tags, `git tag --points-at HEAD` finds no candidate and a final
-    resolves `latest` instead of its soaked release."""
+    """Without the tags, `prepare.py candidates-on-head` finds no candidate and a
+    final resolves `latest` instead of its soaked release."""
     job = _jobs("release.yml")["clickhouse"]
     (checkout,) = [s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout@")]
     assert checkout["with"]["fetch-depth"] == 0
