@@ -325,31 +325,27 @@ def test_a_translation_unit_added_after_the_configure_is_indexed(tmp_path: Path,
     assert delta is not None and [f["path"] for f in delta["files"]] == [f"src/{name}"]
 
 
-def _edit_build(repo: Path, edit: str) -> None:
-    if edit == "change CMakeLists.txt":
-        (repo / "CMakeLists.txt").write_text("project(y)\n")
-    elif edit == "delete CMakeLists.txt":
-        _git(repo, "rm", "-q", "CMakeLists.txt")
-    else:
-        path = repo / edit.removeprefix("add ")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("set(X 1)\n")
-
-
 @pytest.mark.parametrize(
-    "edit",
+    ("path", "content"),
     [
-        "change CMakeLists.txt",
-        "delete CMakeLists.txt",
-        "add src/CMakeLists.txt",
-        "add cmake/flags.cmake",
+        ("CMakeLists.txt", "project(y)\n"),
+        ("CMakeLists.txt", None),
+        ("src/CMakeLists.txt", "set(X 1)\n"),
+        ("cmake/flags.cmake", "set(X 1)\n"),
     ],
+    ids=["change CMakeLists.txt", "delete CMakeLists.txt", "add src/CMakeLists.txt", "add .cmake"],
 )
-def test_a_window_that_edits_the_build_reconfigures(tmp_path: Path, edit: str) -> None:
+def test_a_window_that_edits_the_build_reconfigures(
+    tmp_path: Path, path: str, content: str | None
+) -> None:
+    """`content` None deletes the file."""
     w = _CppWindow(tmp_path)
-    _edit_build(w.repo, edit)
-    head = _commit(w.repo, edit)
-    w.run(head, [])
+    if content is None:
+        _git(w.repo, "rm", "-q", path)
+    else:
+        (w.repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (w.repo / path).write_text(content)
+    w.run(_commit(w.repo, f"edit {path}"), [])
     assert w.cmake_runs == ["cmake -B build -S ."]
 
 
@@ -384,24 +380,49 @@ def test_a_full_index_whose_reconfigure_fails_fails(tmp_path: Path) -> None:
     assert "cmake configure failed" in proc.stdout
 
 
-@pytest.mark.parametrize("cache", ["missing", "CMAKE_CXX_COMPILER", "CMAKE_C_COMPILER"])
+@pytest.mark.parametrize(
+    "cache",
+    [
+        None,
+        "CMAKE_C_COMPILER:FILEPATH=/bin/sh\nCMAKE_CXX_COMPILER:FILEPATH=/nonexistent/clang++-18\n",
+        "CMAKE_C_COMPILER:FILEPATH=/nonexistent/clang-18\nCMAKE_CXX_COMPILER:FILEPATH=/bin/sh\n",
+    ],
+    ids=["no cache", "missing C++ compiler", "missing C compiler"],
+)
 def test_a_cache_that_cannot_be_reconfigured_is_configured_from_scratch(
-    tmp_path: Path, cache: str
+    tmp_path: Path, cache: str | None
 ) -> None:
     """No cache, or one naming a compiler the host no longer has: the pinned first
     configure, not a reconfigure that would fail on every run."""
     w = _CppWindow(tmp_path)
-    if cache == "missing":
+    if cache is None:
         (w.repo / "build" / "CMakeCache.txt").unlink()
     else:
-        other = "CMAKE_CXX_COMPILER" if cache == "CMAKE_C_COMPILER" else "CMAKE_C_COMPILER"
-        (w.repo / "build" / "CMakeCache.txt").write_text(
-            f"{other}:FILEPATH=/bin/sh\n{cache}:FILEPATH=/nonexistent/clang-18\n"
-        )
+        (w.repo / "build" / "CMakeCache.txt").write_text(cache)
     assert (
         w.run_unchecked(index_docs=["src/a.cpp", "src/b.cpp"], CC="cc", CXX="c++").returncode == 0
     )
     assert len(w.cmake_runs) == 1 and "-G Ninja" in w.cmake_runs[0]
+
+
+def test_a_first_configure_without_clang_on_path_fails_classified_cmake(tmp_path: Path) -> None:
+    """No CC/CXX and no clang on PATH: the run fails with the configure marker rather than
+    letting CMake fall back to another compiler."""
+    w = _CppWindow(tmp_path)
+    (w.repo / "build" / "CMakeCache.txt").unlink()
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    for d in ("/usr/bin", "/bin"):
+        for exe in Path(d).iterdir():
+            if not exe.name.startswith("clang") and not (tools / exe.name).exists():
+                (tools / exe.name).symlink_to(exe)
+    env = {k: v for k, v in w.env.items() if k not in ("CC", "CXX")}
+    env["PATH"] = f"{w.env['PATH'].split(os.pathsep)[0]}{os.pathsep}{tools}"
+    w.env = env
+    proc = w.run_unchecked()
+    assert proc.returncode == 1 and w.cmake_runs == []
+    assert "no clang on PATH" in proc.stdout
+    assert classify(f"harness exit 1: {proc.stdout[-2000:]}") == "cmake"
 
 
 def test_a_first_configure_is_not_followed_by_a_reconfigure(tmp_path: Path) -> None:
