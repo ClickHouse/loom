@@ -48,6 +48,7 @@ vi.mock("../api", async (importOriginal) => {
     listMemories: vi.fn(async () => ({ entries: [], total: 0 })),
     conflictKeys: vi.fn(async (): Promise<string[]> => []),
     listMine: vi.fn(async () => []),
+    setMemory: vi.fn(async () => ({ version: 2 })),
   };
 });
 import {
@@ -139,6 +140,85 @@ describe("MemoryInspector reads what is open", () => {
     expect(screen.getByText("Code changed since abc1234")).toBeInTheDocument();
     expect(screen.getByText("Suggested: Reader.read returns bytes now")).toBeInTheDocument();
     expect(screen.getByText("docs/b.md")).toBeInTheDocument();
+  });
+
+  it("Last recalled counts every agent read that served the key, apart from the ranking credit", async () => {
+    const base = {
+      found: true,
+      value: "hello",
+      memory_type: "semantic",
+      confidence: 1,
+      pinned: false,
+      tags: [],
+      created_at: new Date().toISOString(),
+      version: 1,
+    };
+    // A context pack served it twice: no ranking credit, yet recalled.
+    vi.mocked(getMemory).mockResolvedValueOnce({
+      ...base,
+      recall_count: 0,
+      last_recalled_at: null,
+      served_count: 2,
+      last_served_at: new Date().toISOString(),
+    } as MemoryDetail);
+    open();
+    await screen.findByText("hello");
+    expect(screen.getByText(/^2× · /)).toBeInTheDocument();
+    expect(screen.getByText("Recall credit")).toBeInTheDocument();
+    expect(screen.getByText("None")).toBeInTheDocument();
+    expect(screen.queryByText("No agent read recorded")).not.toBeInTheDocument();
+    cleanup();
+    // Nothing served it.
+    vi.mocked(getMemory).mockResolvedValueOnce({ ...base, recall_count: 0, served_count: 0 } as MemoryDetail);
+    open();
+    await screen.findByText("hello");
+    expect(screen.getByText("No agent read recorded")).toBeInTheDocument();
+    cleanup();
+    // A bulk import seeded a count with no time and no events.
+    vi.mocked(getMemory).mockResolvedValueOnce({
+      ...base,
+      recall_count: 9,
+      last_recalled_at: null,
+      served_count: 9,
+      last_served_at: null,
+    } as MemoryDetail);
+    open();
+    await screen.findByText("hello");
+    expect(screen.getAllByText("9×")).toHaveLength(2); // Last recalled and Recall credit
+    cleanup();
+    // No served figures (an older server, or a failed lookup) and no credit: unknown.
+    vi.mocked(getMemory).mockResolvedValueOnce({ ...base, recall_count: 0 } as MemoryDetail);
+    open();
+    await screen.findByText("hello");
+    expect(screen.getByText("Not available")).toBeInTheDocument();
+    expect(screen.queryByText("No agent read recorded")).not.toBeInTheDocument();
+  });
+
+  it("a saved edit re-reads the served figures, so Last recalled keeps its count", async () => {
+    useStore.setState({ myNamespaces: [row("ns", "writer")], whoami: { ...viewer, roles: ["WRITER"] } });
+    const served = {
+      found: true,
+      value: "hello",
+      memory_type: "semantic",
+      confidence: 1,
+      pinned: false,
+      tags: [],
+      created_at: new Date().toISOString(),
+      version: 1,
+      recall_count: 0,
+      served_count: 2,
+      last_served_at: new Date().toISOString(),
+    } as MemoryDetail;
+    vi.mocked(getMemory).mockResolvedValueOnce(served).mockResolvedValueOnce(served);
+    open();
+    await screen.findByText(/^2× · /);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit$/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Save new version/ }));
+    await waitFor(() => expect(getMemory).toHaveBeenCalledTimes(2));
+    for (const call of vi.mocked(getMemory).mock.calls) {
+      expect(call[2]).toMatchObject({ include_recall_breakdown: true });
+    }
+    expect(await screen.findByText(/^2× · /)).toBeInTheDocument();
   });
 
   it("opening History reads it once and shows the versions; a second open reads nothing", async () => {

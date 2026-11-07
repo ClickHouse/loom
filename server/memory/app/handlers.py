@@ -50,6 +50,7 @@ from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
 from server.memory.domain.delete_marks import delete_version_trace
+from server.memory.domain.served import served_totals
 from server.memory.domain.webhook_events import memory_change
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
@@ -466,45 +467,26 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     # JSON so the wire shape matches the SDK precondition.
     sha = served_content_sha256(row.value)
     recall_by_agent: list[_RecallByAgent] = []
+    served: dict[str, Any] = {}
     if input.include_recall_breakdown:
-        # Keyed on row.memory_id (resolved against the full identity tuple);
-        # a re-query by memory_key alone could hit a different row under
-        # cross-identity key reuse. Empty/placeholder agents excluded.
+        # Keyed on the key's live rows inside the reader's scope: an agent read puts its
+        # event on the newest copy of the key in its own scope, which need not be the row
+        # this read resolved. A reader narrowed to one user never counts another's copy.
         try:
             from server.memory.api.models_crud import _RecallByAgent
+            from server.memory.store.served import served_by_agent
 
-            agent_rows = await get_client().query_all(
-                """
-                SELECT agent,
-                       sum(event_count) AS n,
-                       max(ts) AS last_at
-                FROM loom.memory_usage_events
-                WHERE org = {org:String}
-                  AND namespace = {ns:String}
-                  AND memory_id = {mid:String}
-                  AND event_type = 'recall'
-                  AND agent != ''
-                  AND agent != '*'
-                  AND agent != '-'
-                  AND ts > now() - INTERVAL 30 DAY
-                GROUP BY agent
-                ORDER BY n DESC
-                """,
-                # The table is sorted (org, namespace, memory_id, ts); a filter on memory_id
-                # alone would scan every row it holds (12 MB and three statements per drawer
-                # open for a list of a few chips).
-                params={"org": row.org, "ns": row.namespace, "mid": str(row.memory_id)},
+            agent_rows = await served_by_agent(
+                row.org, row.namespace, row.memory_key, scope=request_scope()
             )
+            served = served_totals(agent_rows, row.recall_count, row.last_recalled_at)
             recall_by_agent = [
-                _RecallByAgent(
-                    agent=str(r["agent"]),
-                    count=int(r["n"]),
-                    last_at=r["last_at"],
-                )
-                for r in agent_rows
+                _RecallByAgent(agent=str(r["agent"]), count=int(r["n_30d"]), last_at=r["last_at"])
+                for r in sorted(agent_rows, key=lambda r: -int(r["n_30d"]))
+                if int(r["n_30d"]) > 0
             ]
-        except Exception as e:  # noqa: BLE001 — recall_by_agent is optional detail on memory.get
-            log.warning("recall_by_agent lookup failed (non-fatal): %s", e)
+        except Exception as e:  # noqa: BLE001 — the served figures are optional detail on memory.get
+            log.warning("served lookup failed (non-fatal): %s", e)
 
     from server.memory.app.query import _canonical_keys_for_rows
 
@@ -533,6 +515,7 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
         resolved_from=resolved_from,
         conflict_verdict=_verdict_from_status(row.status, duplicate_of),
         recall_by_agent=recall_by_agent,
+        **served,
     )
 
 

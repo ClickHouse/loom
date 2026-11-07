@@ -139,7 +139,8 @@ class MemoryHealthInput(_Identity):
 
     agent: str = "-"
     user_id: str = "-"
-    # A live row older than this and never recalled is "silent".
+    # A live row with no recall credit and no agent read in this many days is silent;
+    # `silent_older` also needs the row to be older than this.
     silent_after_days: int = Field(default=30, ge=1, le=3650)
     # How many entries `top_recalled` lists.
     top_k: int = Field(default=10, ge=1, le=50)
@@ -188,20 +189,22 @@ class MemoryHealthFootprint(BaseModel):
 class MemoryHealthOutput(BaseModel):
     # Active, untombstoned rows in the namespace, across every agent and user.
     live: int
-    # Live rows recalled at least once.
+    # Live rows with their own recall credit, or whose key an agent read recalled in the
+    # last `silent_after_days` days. Which ops count: the usage counters doc.
     recalled_ever: int
     # Live rows with at least one reported use.
     used_ever: int
     harmed_ever: int = 0  # live rows with at least one harm event
-    silent: int  # live and never recalled
+    silent: int  # live, no recall credit, and no agent read in the last silent_after_days
     silent_older: int  # silent AND older than silent_after_days
     # `silent` / `live`, 0..1; 0 when the namespace holds no live row.
     silent_share: float
     # Echo of the request's `silent_after_days`.
     silent_after_days: int
-    # Per memory type: live rows and how many were ever recalled, largest first.
+    # Per memory type: live rows and how many are recalled (as `recalled_ever` counts them),
+    # largest first.
     by_type: list[MemoryHealthTypeRow] = Field(default_factory=list)
-    # The most recalled live rows (by recall count, then use count), at most `top_k`.
+    # The live rows with the most recall credits (then use count), at most `top_k`.
     top_recalled: list[MemoryHealthTopRow] = Field(default_factory=list)
     # Age buckets, validity-end, expiry and pin counts, and days since reinforced.
     staleness: MemoryHealthStaleness = Field(default_factory=MemoryHealthStaleness)

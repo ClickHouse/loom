@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from server.core.naming import SENTINEL
 from server.memory.api.models_common import _Identity
@@ -120,6 +120,10 @@ class ContextBlock(BaseModel):
 
 
 class ContextPackOutput(BaseModel):
+    # The (namespace, memory_key) of each stored row whose item line `rendered` still
+    # holds, which the op records as served to the agent. Private, never on the wire.
+    _served_rows: list[tuple[str, str]] = PrivateAttr(default_factory=list)
+
     # The pack as one text: each non-empty section in a `<name>` tag, in block order,
     # cut to `token_budget`.
     rendered: str

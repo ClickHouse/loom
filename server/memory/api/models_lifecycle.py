@@ -350,6 +350,9 @@ class _StackEntry(BaseModel):
     # The memory's writer (`human:<subject>` / `process:<subject>`); "" for the profile
     # and knowledge entries and for rows with no recorded actor.
     actor: str = ""
+    # The namespace the row lives in, when it is not the request's: a procedure matched
+    # in another of the caller's namespaces. "" = the request's.
+    namespace: str = ""
 
 
 class MemoryStackOutput(BaseModel):

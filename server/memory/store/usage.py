@@ -16,6 +16,7 @@ from typing import Any
 from server.core.ch_writes import async_insert_settings
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, scope_and
 
 log = logging.getLogger(__name__)
 
@@ -218,36 +219,12 @@ async def record_usage_for_keys(
     auto-touch and memory.ask's cited-key `used` credit resolve keys the same
     way, so a tombstoned or unknown key is silently skipped in both rather
     than raising in one."""
-    pairs = {(ns, k) for ns, keys in ns_keys.items() for k in keys if ns and k}
-    if not pairs:
-        return 0
     from server.core.repo_base import _default_client
 
     ch = ch or _default_client()
-    # One credit per (namespace, memory_key). A key is shared by every
-    # session's copy of the same fact (hundreds of rows for a generic key);
-    # crediting each copy would turn one recall into hundreds of events and
-    # saturate the reinforcement term. The newest live row carries the credit.
-    rows = await ch.query_all(
-        """
-        SELECT argMax(toString(memory_id), updated_at) AS memory_id, namespace, memory_key
-        FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND namespace IN {namespaces:Array(String)}
-          AND memory_key IN {keys:Array(String)}
-          AND tombstoned_at IS NULL
-        GROUP BY namespace, memory_key
-        """,
-        params={
-            "org": org,
-            "namespaces": sorted({ns for ns, _k in pairs}),
-            "keys": sorted({k for _ns, k in pairs}),
-        },
-    )
+    rows = await newest_key_ids(org, ns_keys, ch=ch)
     credited = 0
     for r in rows:
-        if (str(r["namespace"]), str(r["memory_key"])) not in pairs:
-            continue  # same key in another namespace: not what was cited
         await record_usage_event(
             memory_id=str(r["memory_id"]),
             org=org,
@@ -260,3 +237,42 @@ async def record_usage_for_keys(
         )
         credited += 1
     return credited
+
+
+async def newest_key_ids(
+    org: str,
+    ns_keys: dict[str, list[str]],
+    *,
+    scope: ReadFilters = WHOLE_NAMESPACE,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """The newest live row of each (namespace, memory_key) pair: `memory_id`, `namespace`,
+    `memory_key`. A key is shared by every session's copy of the same fact (hundreds of
+    rows for a generic key); usage on each copy would turn one read into hundreds of
+    events, so the newest live row carries it. `scope` keeps the pick inside a narrowed
+    reader's rows, the ones it could have been served."""
+    pairs = {(ns, k) for ns, keys in ns_keys.items() for k in keys if ns and k}
+    if not pairs:
+        return []
+    ch = ch or _default_client()
+    params: dict[str, Any] = {
+        "org": org,
+        "namespaces": sorted({ns for ns, _k in pairs}),
+        "keys": sorted({k for _ns, k in pairs}),
+    }
+    rows = await ch.query_all(
+        """
+        SELECT argMax(toString(memory_id), updated_at) AS memory_id, namespace, memory_key
+        FROM loom.memory FINAL
+        WHERE org = {org:String}
+          AND namespace IN {namespaces:Array(String)}
+          AND memory_key IN {keys:Array(String)}
+          AND tombstoned_at IS NULL"""
+        + scope_and(scope, params)
+        + """
+        GROUP BY namespace, memory_key
+        """,
+        params=params,
+    )
+    # the same key in another namespace is not what was read
+    return [r for r in rows if (str(r["namespace"]), str(r["memory_key"])) in pairs]

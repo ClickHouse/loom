@@ -1,9 +1,13 @@
 """memory.health — is the knowledge base earning its keep?
 
-Reports coverage by type, top recalled entries, silent (never recalled) entries and the
-staleness of live rows, so a namespace where most rows are never read shows it. One query
-over loom.memory FINAL joined to the summed loom.memory_usage_totals, scoped to
-(org, namespace).
+Reports coverage by type, top recalled entries, silent entries (no recall credit, and not
+served to an agent in the last `silent_after_days`) and the staleness of live rows, so a
+namespace where most rows are never read shows it. One query over loom.memory FINAL joined
+to the summed loom.memory_usage_totals and to loom.memory_served_daily's last
+`silent_after_days` days, scoped to (org, namespace); the served side maps the rows served
+in that window to their keys. A row counts as read on its own recall credit or a served row
+in that window on any live copy of its key: a read lands on one copy of the key only (the
+newest inside the reader's scope), which may not be an active one.
 """
 
 from __future__ import annotations
@@ -24,7 +28,8 @@ _LIVE = """
            coalesce(u.recall_count, 0) AS recall_count,
            coalesce(u.used_count, 0) AS used_count,
            coalesce(u.harm_count, 0) AS harm_count,
-           u.last_recalled_at AS last_recalled_at
+           u.last_recalled_at AS last_recalled_at,
+           coalesce(s.served_count, 0) AS served_count
     FROM (
         SELECT memory_id, memory_key, memory_type, created_at,
                expires_at, valid_to, invalid_at, pinned, last_reinforced_at,
@@ -41,6 +46,24 @@ _LIVE = """
         WHERE org = {org:String} AND namespace = {ns:String}
         GROUP BY memory_id
     ) AS u ON u.memory_id = m.memory_id
+    LEFT JOIN (
+        -- per key, over every live copy: a read lands on the newest copy, which may be
+        -- one the active rows above leave out (rejected, a duplicate)
+        SELECT k.memory_key AS memory_key, sum(d.served) AS served_count
+        FROM loom.memory_served_daily AS d
+        INNER JOIN (
+            SELECT memory_id, memory_key
+            FROM loom.memory FINAL
+            WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL
+              AND memory_id IN (
+                  SELECT memory_id FROM loom.memory_served_daily
+                  WHERE org = {org:String} AND namespace = {ns:String} AND day > {since:Date}
+              )
+        ) AS k ON k.memory_id = d.memory_id
+        WHERE d.org = {org:String} AND d.namespace = {ns:String}
+          AND d.day > {since:Date}
+        GROUP BY k.memory_key
+    ) AS s ON s.memory_key = m.memory_key
 """
 
 
@@ -63,12 +86,18 @@ def summarise(rows: list[dict[str, Any]], *, silent_after_days: int, top_k: int)
 
     cutoff = naive_utc_now() - timedelta(days=silent_after_days)
     live = len(rows)
+
+    def _read(r: dict[str, Any]) -> bool:
+        """The row's own recall credit, or a served row on any live copy of its
+        key (`served_count` is the key's: a read lands on one copy only)."""
+        return int(r.get("recall_count") or 0) > 0 or int(r.get("served_count") or 0) > 0
+
     recalled = [r for r in rows if int(r.get("recall_count") or 0) > 0]
     used = sum(1 for r in rows if int(r.get("used_count") or 0) > 0)
     # Relied on in a run that ended badly. A row both used and harmed is a candidate for
     # review, not deletion.
     harmed = sum(1 for r in rows if int(r.get("harm_count") or 0) > 0)
-    silent_rows = [r for r in rows if int(r.get("recall_count") or 0) == 0]
+    silent_rows = [r for r in rows if not _read(r)]
     silent_older = sum(
         1
         for r in silent_rows
@@ -80,14 +109,14 @@ def summarise(rows: list[dict[str, Any]], *, silent_after_days: int, top_k: int)
         t = str(r.get("memory_type") or "")
         d = by_type.setdefault(t, {"live": 0, "recalled": 0})
         d["live"] += 1
-        if int(r.get("recall_count") or 0) > 0:
+        if _read(r):
             d["recalled"] += 1
     top = sorted(recalled, key=lambda r: (-int(r["recall_count"]), -int(r.get("used_count") or 0)))
     return {
         "staleness": staleness(rows),
         "footprint": footprint(rows),
         "live": live,
-        "recalled_ever": len(recalled),
+        "recalled_ever": sum(1 for r in rows if _read(r)),
         "used_ever": used,
         "harmed_ever": harmed,
         "silent": len(silent_rows),
@@ -180,7 +209,14 @@ def staleness(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def handle_memory_health(input: MemoryHealthInput) -> MemoryHealthOutput:
-    rows = await get_client().query_all(_LIVE, {"org": input.org, "ns": input.namespace})
+    from datetime import timedelta
+
+    # The served rows' `day` is the UTC date the server wrote; the cutoff is bound in it
+    # too, whatever the ClickHouse server's own zone.
+    since = naive_utc_now().date() - timedelta(days=input.silent_after_days)
+    rows = await get_client().query_all(
+        _LIVE, {"org": input.org, "ns": input.namespace, "since": since}
+    )
     return MemoryHealthOutput(
         **summarise(
             [dict(r) for r in rows],

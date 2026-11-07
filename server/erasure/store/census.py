@@ -627,6 +627,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     # -- counters and aggregates: ids or counts, no text -----------------------
     "loom.memory_usage_events": "usage ledger keyed by memory_id; counts only.",
     "loom.memory_usage_totals": "SummingMergeTree of the usage ledger; counts by memory_id.",
+    "loom.memory_served_daily": "agent reads that returned a memory, per day; counts by memory_id.",
     "loom.memory_exposure_breadth_hourly": "hourly exposure breadth per actor/agent; no keys.",
     "loom.agent_cost_rollup_daily": "cost aggregates per (org, namespace, agent, day, operation).",
     "loom.agent_turn_usage": "token counts and cost per turn; no text.",

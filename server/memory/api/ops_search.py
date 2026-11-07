@@ -18,6 +18,7 @@ from server.memory.app.search import (
     handle_memory_search_trace,
     handle_memory_search_trace_log,
 )
+from server.memory.app.served_reads import records_served, search_keys
 from server.operations.base import Operation, Role
 
 # ============================================================
@@ -28,7 +29,7 @@ memory_search = Operation(
     name="memory.search",
     input_model=MemorySearchInput,
     output_model=MemorySearchOutput,
-    handler=handle_memory_search,
+    handler=records_served(search_keys)(handle_memory_search),
     idempotent=True,
     required_role=Role.VIEWER,
     audit=False,
