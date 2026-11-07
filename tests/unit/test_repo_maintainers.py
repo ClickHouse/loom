@@ -112,15 +112,16 @@ def _revoke(namespace: str, subject: str, **k: Any) -> Any:
     return maintainers.revoke_repo_maintainer("clickhouse", namespace, subject, repo=repo, **k)
 
 
-def test_branch_sources_groups_by_repository() -> None:
-    assert list(maintainers._branch_sources("clickhouse", "code-x-26-5")) == [
+def test_branches_groups_by_repository() -> None:
+    assert list(maintainers._branches("clickhouse", "Org/x")) == [
         "code-x",
         "code-x-26-5",
         "code-x-26-6",
     ]
-    assert maintainers._branch_sources("clickhouse", "code-y") == {"code-y": "config"}
-    assert maintainers._branch_sources("clickhouse", "not-a-repo") == {}
-    assert maintainers._branch_sources("other-org", "code-x") == {}
+    assert maintainers.repo_of("clickhouse", "code-x-26-5") == "Org/x"
+    assert maintainers._branches("clickhouse", "Org/y") == {"code-y": "config"}
+    assert maintainers.repo_of("clickhouse", "not-a-repo") is None
+    assert maintainers.repo_of("other-org", "code-x") is None
 
 
 async def test_sync_writes_the_union_to_every_branch_that_lacks_it() -> None:
@@ -283,6 +284,9 @@ def _code_rows(monkeypatch: pytest.MonkeyPatch, code: set[str]) -> list[str]:
     read: list[str] = []
 
     async def _row(org: str, ns: str, **_k: Any) -> dict[str, Any] | None:
+        from server.core.ch import sequential_reads_active
+
+        assert sequential_reads_active(), "a lagging replica would skip the fan-out"
         read.append(ns)
         return {"kind": "code" if ns in code else "memory"}
 

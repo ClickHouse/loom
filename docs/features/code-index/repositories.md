@@ -76,8 +76,12 @@ Rules:
   and one made on an operator entry removes from a branch added here only a copied
   grant, and none while the subject holds a grant given on a branch added here. An
   operator entry that names a namespace already added here keeps that namespace's
-  admins, who then reach the repository's other operator entries: review its grants
-  before listing it.
+  admins, who then reach the repository's other operator entries, and its access row,
+  whose classification and join policy win over the entry's: review both before
+  listing it.
+- A copy on an operator namespace whose `granted_by` is `repo-maintainers:<namespace>`
+  naming a branch added here, or a namespace no longer configured, stays until revoked:
+  list those grants and revoke the ones that should not stand.
 - A restricted repository is never `open`: `code.repo.add` sets `approval`. Widening a
   restricted index to standard needs `confirm` equal to the namespace.
 - A private repository's token is stored encrypted with a key derived from
@@ -164,7 +168,7 @@ and survives restarts. `code.refresh` (writer) and the admin ops always need a g
 | A private self-service repository stops fetching  | `LOOM_JWT_SECRET` was rotated; re-enter the token                                                                                                                                                                                                                      |
 | An entry is missing from `code.repos`             | check `loom.code.repos_config_errors`; `code.repos` also lists only what the caller may read                                                                                                                                                                           |
 | Revoking or lowering an admin answers busy        | a revoke on a code namespace first re-reads `loom.code_repos`, so it sees the branches added here from another process, and answers busy while that read fails; retry once the read succeeds                                                                           |
-| A new maintainer lacks the other branches         | the admin grant was made before this process read `loom.code_repos` (the log says `not synced`), and nothing copies it later: grant it again                                                                                                                           |
+| A new maintainer lacks the other branches         | the admin grant was made before this process read `loom.code_repos` (the log says `not synced`); the next ingest pass copies it once the registry is read, or grant it again                                                                                           |
 | Answers are lexical only                          | the entry has not reached `LOOM_CODE_READY_EMBED_COVERAGE` ([freshness](freshness.md))                                                                                                                                                                                 |
 
 ## Related

@@ -56,14 +56,6 @@ _UNSYNCED: set[tuple[str, str]] = set()
 _ACTIVE = ("", "active")
 
 
-def _branch_sources(org: str, namespace: str) -> dict[str, str]:
-    """Every configured branch namespace of the repository `namespace` belongs
-    to, itself included (`_branches`). Empty when `namespace` is not a
-    configured code entry."""
-    repo = repo_of(org, namespace)
-    return _branches(org, repo) if repo is not None else {}
-
-
 def _branches(org: str, repo: str) -> dict[str, str]:
     """Every configured branch namespace of `repo`, in configuration order,
     with its source: ``config`` for the operator's entries, ``registry`` for a
@@ -393,11 +385,12 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     admins of the branches that reach it (`_reaches`). Returns the number of
     grant rows written; none while the self-service registry has never been
     read, when the branches added from the page are unknown: a grant made then
-    stays on its branch until it is granted again or the repository's admins
-    change."""
+    is copied by the registrar's next pass once the registry is read, or by
+    the next admin change on the repository."""
     from server.code.app.index.repo_registry import registry_read
 
-    sources = _branch_sources(org, namespace)
+    repo = repo_of(org, namespace)
+    sources = _branches(org, repo) if repo is not None else {}
     branches = list(sources)
     if sources and not registry_read():
         if (org, namespace) not in _UNSYNCED:
@@ -455,9 +448,11 @@ def _given_on_added(
 async def _is_code_namespace(client: Any, org: str, namespace: str) -> bool:
     """The directory row says `namespace` is a code index: a branch added from
     the page is one before the registry snapshot lists it."""
+    from server.core.ch import sequential_reads
     from server.identity.app.registration import namespace_row
 
-    row = await namespace_row(org, namespace, ch=client)
+    with sequential_reads():  # a lagging replica would skip the fan-out
+        row = await namespace_row(org, namespace, ch=client)
     return row is not None and str(row.get("kind") or "") == "code"
 
 

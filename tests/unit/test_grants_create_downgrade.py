@@ -20,7 +20,8 @@ from server.identity.app import grants as grants_mod
 from server.identity.domain.grants import GrantState
 from server.identity.store import grants as grants_repo
 
-# A revoke reads no directory ties here (`conftest.no_directory_ties`).
+# A revoke reads no directory ties (`conftest.no_directory_ties`) nor the code
+# registry (`conftest.off_code_repos`) here.
 pytestmark = pytest.mark.usefixtures("no_directory_ties", "off_code_repos")
 
 
