@@ -282,7 +282,7 @@ test("the shell issues no scrollTo on a fresh boot", async ({ page }) => {
     };
   });
   await page.goto("/runs", { waitUntil: "domcontentloaded" });
-  await expect(page.locator("main").locator("h1, h2").first()).toBeVisible();
+  await expect(page.locator("main").getByRole("heading", { name: "Runs" }).first()).toBeVisible();
   await page.waitForTimeout(600);
   expect(await page.evaluate(() => window.__scrolls), "no scrollTo before or after first paint on a fresh boot").toBe(
     0,
