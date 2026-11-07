@@ -1,6 +1,6 @@
 """Parse every corpus file with the reference extractor, one child process per
 file, and write the normalized parses `score` reads, one JSON line per file:
-`bench.docparse.normalize`'s shape plus `{"file", "seconds", "peak_mb"}`.
+`bench.docparse.normalize`'s shape plus `{"file", "seconds", "wall_seconds", "peak_mb"}`.
 
 Another parser is compared by writing the same shape; the scorer counts a
 table's words from `tables` and leaves a block of type `table` out, so a table

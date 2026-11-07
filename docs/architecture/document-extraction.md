@@ -515,7 +515,6 @@ and PPTX are scored on the parsing bench's corpus (`bench/docparse/corpus`, its 
 | docx     | documents               | table cell F1  | 0.98  |
 | pptx     | decks                   | text recall    | 0.95  |
 | pptx     | decks                   | heading F1     | 0.98  |
-| pptx     | decks                   | heading level  | 0.98  |
 | pptx     | decks                   | locator        | 0.90  |
 | pptx     | decks                   | notes          | 1.00  |
 | pptx     | decks                   | announced loss | 1.00  |
@@ -548,10 +547,11 @@ The metrics:
 
 - **text recall**, **text precision**, **reading order**, **heading F1**, **heading level**, **table cell F1** and
   **locator** are the bench scorer's: the share of the gold's words the parse holds, of the parse's words the gold
-  holds, of the gold's blocks in order, of its headings found (by their text), of the found headings at their level (by
-  rank), of its table cells, and of its blocks cited on their page or slide. For Markdown, HTML, text and SQL, locator
-  is the share of gold blocks or statements found with exactly their line span; for TOML, of keys whose block's span
-  holds their line.
+  holds, of the gold's blocks in order, F1 over headings matched by their text, the share of the matched headings at
+  their level (by rank), F1 over table cells, and the share of the gold's blocks cited on their page or slide. Heading
+  level is not gated for decks: every slide title in the corpus is at one level. For Markdown, HTML, text and SQL,
+  locator is the share of gold blocks or statements found with exactly their line span; for TOML, of keys whose block's
+  span holds their line.
 - **failed units**: the share of a scanned file's pages the artifact reads with OCR (`attrs.ocr_pages`) or reports
   failed, never read as empty; with OCR off, every page is a failed unit.
 - **announced loss**: per bench category, the share of the gold's text drawn inside images whose page or slide the

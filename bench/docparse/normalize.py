@@ -3,7 +3,7 @@ runner (run.py, in its child process) and the qualification gates
 (tests/unit/test_extraction_gates.py), so the two read a parse the same way.
 
 A block is `{"type", "text", "page_start", "page_end", "line_start", "line_end",
-"level", "keys", "key_path", "notes"}` and a table `{"rows", "page_start",
+"level", "keys", "notes"}` and a table `{"rows", "page_start",
 "page_end"}`, its header row first. A table's row blocks count once, as its
 cells, where its first row block sits; a DOCX, PPTX or HTML table block
 (`attrs.table`, cells joined by ` | `) is read as its grid.
@@ -21,7 +21,7 @@ def _grid(t: dict[str, Any]) -> list[list[str]]:
 
 def normalize(art: dict[str, Any]) -> dict[str, Any]:
     """The parse of artifact `art` (`Artifact.to_dict()`): its blocks and tables,
-    whether it is complete, its failed units, lost capabilities and warnings, and
+    whether it is complete, its failed units and lost capabilities, and
     the pages or slides it read with OCR or names as holding unread images."""
     art_tables = {t["id"]: t for t in art.get("tables", [])}
     blocks: list[dict[str, Any]] = []
@@ -38,7 +38,6 @@ def normalize(art: dict[str, Any]) -> dict[str, Any]:
             "line_end": loc.get("line_end", 0),
             "level": b.get("depth", 0),
             "keys": b.get("keys", []),
-            "key_path": loc.get("key_path", ""),
             "notes": bool(attrs.get("notes")),
         }
         tid = attrs.get("table_id")
@@ -70,7 +69,6 @@ def normalize(art: dict[str, Any]) -> dict[str, Any]:
         "tables": tables,
         "failed": cov.get("failed", []),
         "lost": cov.get("lost", []),
-        "warnings": list(art.get("warnings", [])),
         "images_unread": list(facts.get("images_unread", [])),
         "ocr_pages": list(facts.get("ocr_pages", facts.get("ocr_slides", []))),
         "parser_version": art["parser_version"],

@@ -58,12 +58,9 @@ def _floors() -> dict[tuple[str, str, str], float]:
 def extract(data: bytes, name: str, options: Options | None = None) -> Any:
     """The reference extractor with OCR off: the floors are measured without it,
     so the gates read the same wherever the OCR engine is installed or not."""
-    saved = (ocr._config.enabled, ocr._config.languages, ocr._config.max_images)
-    ocr.configure(False, saved[1], saved[2])
-    try:
-        return _extract(data, name, options) if options else _extract(data, name)
-    finally:
-        ocr.configure(*saved)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ocr, "engine", lambda: None)
+        return _extract(data, name, options)
 
 
 def _parse(artifact: dict[str, Any]) -> dict[str, Any]:
@@ -721,9 +718,12 @@ def test_a_floor_row_that_cannot_be_read_is_an_error(row: str, why: str) -> None
     page = f"\n## Qualification\n\n| Format | Slice | Metric | Floor |\n| --- | --- | --- | --- |\n{row}\n"
     with pytest.raises(ValueError, match=why):
         _floors_in(page)
-    good = "| pdf | text layer | text recall | 0.97 |"
-    page = f"\n## Qualification\n\n| Format | Slice | Metric | Floor |\n| --- | --- | --- | --- |\n{good}\n"
-    assert _floors_in(page) == {("pdf", "text layer", "text recall"): 0.97}
+
+
+def test_a_floor_row_is_read_as_its_key_and_floor() -> None:
+    row = "| pdf | text layer | text recall | 0.975 |"
+    page = f"\n## Qualification\n\n| Format | Slice | Metric | Floor |\n| --- | --- | --- | --- |\n{row}\n"
+    assert _floors_in(page) == {("pdf", "text layer", "text recall"): 0.975}
 
 
 async def test_the_reference_extractor_declares_only_formats_with_floors() -> None:
