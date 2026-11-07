@@ -609,6 +609,16 @@ def _provider_clients_left_as_found() -> Iterator[None]:
         )
 
 
+def _server_modules_since(modules_before: set[str]) -> list[str]:
+    """The server modules imported since `modules_before`, skipping the `None` entries
+    a failed or blocked import leaves in `sys.modules`."""
+    return sorted(
+        name
+        for name in sys.modules.keys() - modules_before
+        if name.startswith("server.") and sys.modules.get(name) is not None
+    )
+
+
 def _doubles_bound_at_import(modules_before: set[str]) -> list[str]:
     """`module.name` for each name a server module imported since `modules_before`
     still holds a test double for.
@@ -618,15 +628,12 @@ def _doubles_bound_at_import(modules_before: set[str]) -> list[str]:
     `pkg.Name`, the module keeps the double after the patch ends, and every later
     test that uses it sees the double (an `isinstance(x, Name)` raises TypeError).
     """
-    found = []
-    for name in sorted(sys.modules.keys() - modules_before):
-        module = sys.modules[name]
-        if module is None or not name.startswith("server."):
-            continue
-        found += [
-            f"{name}.{attr}" for attr, value in vars(module).items() if _is_test_double(value)
-        ]
-    return found
+    return [
+        f"{name}.{attr}"
+        for name in _server_modules_since(modules_before)
+        for attr, value in vars(sys.modules[name]).items()
+        if _is_test_double(value)
+    ]
 
 
 @pytest.fixture(autouse=True)
@@ -643,7 +650,7 @@ def _no_test_double_bound_at_import() -> Iterator[None]:
     yield
     bound = _doubles_bound_at_import(before)
     if bound:
-        for name in sorted(n for n in set(sys.modules) - before if n.startswith("server.")):
+        for name in _server_modules_since(before):
             module = sys.modules.pop(name)
             # `from package import leaf` returns the package attribute when it is set,
             # without importing again.

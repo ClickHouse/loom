@@ -27,7 +27,8 @@ def probe() -> Iterator[types.ModuleType]:
     sys.modules.pop(_PROBE, None)
 
 
-def _import(module: types.ModuleType, **names: object) -> set[str]:
+def _fake_first_import(module: types.ModuleType, **names: object) -> set[str]:
+    """Put `module` in `sys.modules` holding `names`, as a first import would."""
     before = set(sys.modules)
     vars(module).update(names)
     sys.modules[_PROBE] = module
@@ -35,45 +36,50 @@ def _import(module: types.ModuleType, **names: object) -> set[str]:
 
 
 def test_a_mock_bound_at_first_import_is_named(probe) -> None:
-    before = _import(probe, CodeRepo=MagicMock(return_value=object()))
+    before = _fake_first_import(probe, CodeRepo=MagicMock(return_value=object()))
     assert _doubles_bound_at_import(before) == [f"{_PROBE}.CodeRepo"]
 
 
 def test_a_lambda_the_test_defined_is_named(probe) -> None:
-    before = _import(probe, CodeRepo=lambda: object())
+    before = _fake_first_import(probe, CodeRepo=lambda: object())
     assert _doubles_bound_at_import(before) == [f"{_PROBE}.CodeRepo"]
 
 
 def test_the_real_class_is_not_named(probe) -> None:
-    before = _import(probe, CodeRepo=CodeRepo)
+    before = _fake_first_import(probe, CodeRepo=CodeRepo)
     assert _doubles_bound_at_import(before) == []
 
 
 def test_a_module_imported_before_the_test_is_not_checked(probe) -> None:
-    before = _import(probe, CodeRepo=MagicMock()) | {_PROBE}
+    before = _fake_first_import(probe, CodeRepo=MagicMock()) | {_PROBE}
     assert _doubles_bound_at_import(before) == []
 
 
-# The fixture itself, in a fresh process: scip_delta binds CodeRepo when first imported.
+# The fixture itself, in a fresh process: scip_delta binds CodeRepo when first imported,
+# and scip_full binds apply_delta from scip_delta, so its copy sees the module's names.
 _INNER_CONFTEST = """
 from tests.unit.conftest import _no_test_double_bound_at_import  # noqa: F401
 """
 _INNER_TESTS = """
+import sys
 from unittest.mock import patch
 
 
 def test_first_import_under_a_patch():
     with patch("server.code.store.index.CodeRepo", lambda: None):
-        import server.code.app.index.scip_delta  # noqa: F401
+        import server.code.app.index.scip_full  # noqa: F401
 
 
 def test_a_patch_on_the_module_itself(monkeypatch):
-    # Runs after the test above: the guard dropped the module, so this import binds
+    # Runs after the test above: the guard dropped both modules, so these imports bind
     # the real class, and the patch below is undone before the guard looks.
+    assert "server.code.app.index.scip_full" not in sys.modules
     import server.code.app.index.scip_delta as sd
+    import server.code.app.index.scip_full as full
     import server.code.store.index as index
 
     assert sd.CodeRepo is index.CodeRepo
+    assert full.apply_delta.__globals__["CodeRepo"] is index.CodeRepo
     monkeypatch.setattr(sd, "CodeRepo", lambda: None)
 """
 
