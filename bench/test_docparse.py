@@ -720,7 +720,7 @@ def test_score_refuses_two_parses_that_share_a_name(capsys: pytest.CaptureFixtur
 
     with pytest.raises(SystemExit):
         main(["score", "a=x.jsonl", "b=z.jsonl", "a=y.jsonl"])
-    assert "two parses share a name: a" in capsys.readouterr().err
+    assert "more than one parse is named: a" in capsys.readouterr().err
 
 
 def test_the_stub_serves_a_systems_artifact_to_the_token_alone(tmp_path: Path) -> None:

@@ -196,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         systems = [(p.split("=", 1)[0], Path(p.split("=", 1)[1])) for p in args.parses]
         names = [name for name, _ in systems]
         if shared := sorted({n for n in names if names.count(n) > 1}):
-            ap.error(f"two parses share a name: {', '.join(shared)}")
+            ap.error(f"more than one parse is named: {', '.join(shared)}")
         score(args.corpus, systems, args.split, args.json)
     else:
         from bench.docparse.corpus import build
