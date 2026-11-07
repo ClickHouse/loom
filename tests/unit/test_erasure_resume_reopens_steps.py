@@ -98,7 +98,9 @@ async def test_the_user_saga_runs_exactly_the_owner_steps_plus_the_documented_st
     owners = set(erasure_census.step_owners("user_id"))
     assert owners <= ran, owners - ran
     # entity_graph.delete owns the graph tables in the namespace census; the user
-    # saga runs it through the link tables, uncounted by user.
+    # saga runs it through the link tables, uncounted by user. memory.tombstone owns
+    # loom.memory in the namespace census; in the user saga it stamps the rows that
+    # memory.retire owns.
     unexplained = (
         ran
         - owners

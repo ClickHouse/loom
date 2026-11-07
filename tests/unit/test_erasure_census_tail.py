@@ -712,6 +712,12 @@ def test_re_verify_input_rewrites_external_only_for_a_namespace_list() -> None:
         False,
         True,
     )
+    # a user saga's purge is its ledger row's column: a resumed purge keeps purging
+    purged = _ledger_row(scope_type="user_id", scope_value="alice", purge=1)
+    assert hygiene._re_verify_scope(purged) == ("user_id", "alice", True, True)
+    assert hygiene._re_verify_input(purged, skip_external=False).purge is True
+    one_ns = _ledger_row(scope_type="namespace", scope_value="ns", purge=1)
+    assert hygiene._re_verify_scope(one_ns) == ("namespace", "ns", False, True)
 
 
 async def test_re_verify_run_lists_censuses_and_resumes_from_the_checkpoint(monkeypatch) -> None:

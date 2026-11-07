@@ -516,7 +516,8 @@ async def _do_step(
     # step: the reason on the ledger says which step stopped the saga, whatever the
     # cause's own message.
     try:
-        n = await step_fn()
+        with erasure_mutations.step_scope(step_name):
+            n = await step_fn()
     except Exception as e:
         raise ErasureStepError(step_name, e) from e
     notes = ""

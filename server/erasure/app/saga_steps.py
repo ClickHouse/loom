@@ -259,14 +259,18 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("entity_communities.delete", graph_steps.delete_entity_communities_by_user),
     ("entity_vectors.delete", graph_steps.delete_entity_vectors_by_user),
     ("graph_links.delete", graph_steps.delete_graph_links_by_user),
-    # The answer text that quoted the user's memories: the exact-prompt cache
-    # and the precedents, by the keys of the window each row rendered.
+    ("consolidated.tombstone", graph_steps.tombstone_consolidated_dependents_by_user),
+    # The answer text that quoted the user's memories or a summary of them: the
+    # exact-prompt cache and the precedents, by the keys of the window each row
+    # rendered. After the summaries' tombstone, so no new answer can quote one.
     ("llm_response_cache.delete", graph_steps.delete_llm_response_cache_by_user),
     ("ask_precedents.delete", graph_steps.delete_ask_precedents_by_user),
-    ("consolidated.tombstone", graph_steps.tombstone_consolidated_dependents_by_user),
     ("summaries.tombstone", graph_steps.tombstone_summaries_by_user),
     ("records.tombstone", graph_steps.tombstone_records_by_user),
     ("session_outcomes.delete", memory_steps.delete_session_outcomes_by_user),
+    # Last of the steps that find rows by the user's memory keys: a purge deletes
+    # the memory rows here, not in `memory.tombstone`, so those steps can read them.
+    ("memory.retire", graph_steps.retire_memory_by_user),
     # The knowledge the user wrote, in any namespace of the org; chunks first, as for a
     # namespace.
     ("chunks.supersede", memory_steps.supersede_chunks_by_user),

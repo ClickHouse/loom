@@ -55,9 +55,20 @@ class _RecCH:
         return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
 
 
-_USER_KEYS = (
-    "(SELECT groupUniqArray(memory_key) FROM loom.memory "
-    "WHERE org = {org:String} AND user_id = {uid:String})"
+# The statement the census and the steps share, as ClickHouse gets it: the user's keys
+# and those of the summaries built from them (`USER_SUMMARIES`).
+# What it matches: tests/integration/test_erasure_consolidated_quotes_live_ch.py.
+_SUMMARY_KEYS = (
+    "WHERE org = {org:String} AND has(tags, 'consolidated') AND "
+    "hasAny(arrayMap(t -> (toString(namespace), t), tags), "
+    "(SELECT groupUniqArray((toString(namespace), concat('src:', memory_key))) "
+    "FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})))"
+)
+_QUOTED_KEYS = (
+    "arrayConcat((SELECT groupUniqArray(memory_key) FROM loom.memory "
+    "WHERE org = {org:String} AND user_id = {uid:String}), "
+    f"arrayConcat((SELECT groupUniqArray(memory_key) FROM loom.memory {_SUMMARY_KEYS}, "
+    f"(SELECT groupUniqArray(memory_key) FROM loom.memory_versions {_SUMMARY_KEYS}))"
 )
 
 
@@ -180,9 +191,9 @@ def test_registry_gives_the_three_tables_a_user_predicate_and_an_owner() -> None
         "entity_communities.delete",
     }
     by_table = {s.table: s for s in erasure_census._CENSUS}
-    assert by_table["loom.llm_response_cache"].user_pred == f"hasAny(window_keys, {_USER_KEYS})"
+    assert by_table["loom.llm_response_cache"].user_pred == f"hasAny(window_keys, {_QUOTED_KEYS})"
     assert by_table["loom.memory_ask_precedents"].user_pred == (
-        f"hasAny(arrayConcat(window_keys, cited_keys), {_USER_KEYS})"
+        f"hasAny(arrayConcat(window_keys, cited_keys), {_QUOTED_KEYS})"
     )
     # the graph tables stay namespace-only: ownership is not re-derivable after the links go
     assert by_table["loom.entity_edges"].user_pred is None
@@ -192,9 +203,9 @@ def test_cache_and_precedent_user_deletes_match_by_window_key_within_the_org() -
     ch = _RecCH(count=3, keys=["k1", "k2"])
     n = asyncio.run(graph_steps.delete_llm_response_cache_by_user("o", "alice", ch=ch))
     assert n == 3
-    # the user's keys are read with the census's own subquery, then bound
+    # the keys are read with the census's own subquery, then bound
     ((read_sql, read_params),) = ch.reads
-    assert read_sql == f"SELECT {_USER_KEYS} AS keys" and read_params == {
+    assert read_sql == f"SELECT {_QUOTED_KEYS} AS keys" and read_params == {
         "org": "o",
         "uid": "alice",
     }
@@ -213,6 +224,7 @@ def test_cache_and_precedent_user_deletes_match_by_window_key_within_the_org() -
 
     ch = _RecCH(count=1, keys=["k1"])
     asyncio.run(graph_steps.delete_ask_precedents_by_user("o", "alice", ch=ch))
+    assert ch.reads == [(f"SELECT {_QUOTED_KEYS} AS keys", {"org": "o", "uid": "alice"})]
     sql, _ = ch.commands[0]
     assert sql.startswith(
         "ALTER TABLE loom.memory_ask_precedents DELETE WHERE (org = {org:String} "

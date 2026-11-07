@@ -70,7 +70,7 @@ def _steps(module: str, suffix: str) -> list[Any]:
         for name, f in inspect.getmembers(mod, inspect.isfunction)
         if f.__module__ == mod.__name__
         and name.endswith(suffix)
-        and name.split("_")[0] in ("tombstone", "delete", "supersede", "scrub")
+        and name.split("_")[0] in ("tombstone", "delete", "supersede", "scrub", "retire")
     ]
 
 

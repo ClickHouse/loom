@@ -1,6 +1,7 @@
 """Erasure steps for the substrates derived from memory: source and graph
 links, the entity graph and its vectors, summaries, records, and the answer
-cache, precedents and communities that quote memory text."""
+cache, precedents and communities that quote memory text; and `memory.retire`, the
+user's loom.memory rows after them."""
 
 from __future__ import annotations
 
@@ -13,6 +14,8 @@ from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.mutations import (
     delete_scoped,
     namespaces_of,
+    purge_mode,
+    purge_scope,
     tombstone_scoped,
 )
 from server.erasure.store.predicates import (
@@ -33,7 +36,7 @@ from server.erasure.store.scope_reads import (
     hashes,
     slices_or_one_empty,
     user_key_pairs,
-    user_keys,
+    user_quoted_keys,
 )
 
 # ---------------------------------------------------------------------------
@@ -370,7 +373,8 @@ async def tombstone_summaries_by_user(
 # reaches it. A `src:` tag names a key of the summary's own namespace, as consolidation
 # writes it (a copy into another namespace keeps the tags, and is not the user's there);
 # the next dense pass rebuilds a retired summary from the surviving sources. The user's
-# tags let the skip index prune; their (namespace, tag) pairs decide.
+# tags let the skip index prune; their (namespace, tag) pairs decide, on each version.
+# `USER_SUMMARIES` is the same match as a read.
 _CONSOLIDATED = (
     "has(tags, 'consolidated') AND hasAny(tags, {src:Array(String)}) "
     "AND hasAny(arrayMap(t -> (namespace, t), tags), {pairs:Array(Tuple(String, String))})"
@@ -383,30 +387,36 @@ def _consolidated_params(pairs: list[tuple[str, str]]) -> dict[str, Any]:
     return {"src": sorted({tag for _, tag in tagged}), "pairs": tagged}
 
 
-async def tombstone_consolidated_dependents_by_user(
-    org: str, user_id: str, *, ch: _CHClient | None = None
-) -> int:
-    """The consolidated rows the user's memories fed, under another identity. Their code
-    links go too: a link's `suggestion` holds a rewrite of the row's text, and this
-    tombstone is a mutation, so the link queue never sees it."""
-    ch = ch or _default_client()
+async def _retire_summaries(
+    org: str, user_id: str, *, ch: _CHClient
+) -> tuple[int, list[dict[str, Any]]]:
+    """The summaries' loom.memory_embeddings and loom.memory rows, and their code links:
+    a link's `suggestion` holds a rewrite of the row's text, and this is a mutation, so
+    the link queue never sees it. The loom.memory rows are only tombstoned, even in a
+    purge, so no new link or read finds them live while the steps that read their keys
+    still can. Returns the count and the bound slices."""
     # Pairs are measured without the `src:` prefix they are bound with: half a field
     # leaves room for it.
-    parts = list(chunks(await user_key_pairs(org, user_id, ch=ch), limit=FIELD_BYTES // 2))
+    pairs = await user_key_pairs(org, user_id, ch=ch)
+    slices = [_consolidated_params(part) for part in chunks(pairs, limit=FIELD_BYTES // 2)]
     total = 0
-    for t in ("loom.memory", "loom.memory_embeddings"):
-        for part in parts:
+    for params in slices:
+        total += await tombstone_scoped(
+            "loom.memory_embeddings", org=org, scope_where=_CONSOLIDATED, params=params, ch=ch
+        )
+    with purge_scope(False):
+        for params in slices:
             total += await tombstone_scoped(
-                t, org=org, scope_where=_CONSOLIDATED, params=_consolidated_params(part), ch=ch
+                "loom.memory", org=org, scope_where=_CONSOLIDATED, params=params, ch=ch
             )
     # after the tombstones, as every link delete: a link written meanwhile for a row read
     # as live goes too
     rows: set[tuple[str, str]] = set()
-    for part in parts:
+    for params in slices:
         found = await ch.query_all(
             "SELECT DISTINCT namespace, toString(memory_id) AS id FROM loom.memory "
             f"WHERE org = {{org:String}} AND {_CONSOLIDATED}",
-            params={"org": org, **_consolidated_params(part)},
+            params={"org": org, **params},
         )
         rows.update((str(r["namespace"]), str(r["id"])) for r in found)
     for part in chunks(sorted(rows)):
@@ -417,6 +427,39 @@ async def tombstone_consolidated_dependents_by_user(
             params={"rows": part},
             ch=ch,
         )
+    return total, slices
+
+
+async def tombstone_consolidated_dependents_by_user(
+    org: str, user_id: str, *, ch: _CHClient | None = None
+) -> int:
+    """The consolidated rows the user's memories fed, under another identity. In a
+    purge their loom.memory rows are only tombstoned: the cache steps read their keys,
+    and `memory.retire` deletes them."""
+    total, _ = await _retire_summaries(org, user_id, ch=ch or _default_client())
+    return total
+
+
+async def retire_memory_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
+    """After every step that finds rows by the user's memory keys: the summaries built
+    from the user's memories, the cached answers and precedents that quote them or the
+    user (one cached since the cache steps), then the user's loom.memory rows. Outside
+    a purge this tombstones the rows a write made live since the first steps; in a
+    purge it deletes what those steps only tombstoned, and counts the user's rows. The
+    summaries go first, while the user's rows still name them."""
+    ch = ch or _default_client()
+    total, slices = await _retire_summaries(org, user_id, ch=ch)
+    total += await delete_llm_response_cache_by_user(org, user_id, ch=ch)
+    total += await delete_ask_precedents_by_user(org, user_id, ch=ch)
+    if purge_mode():
+        for params in slices:
+            # counted at their tombstone in this saga; one tombstoned before it is not
+            await delete_scoped(
+                "loom.memory", org=org, scope_where=_CONSOLIDATED, params=params, ch=ch
+            )
+    total += await tombstone_scoped(
+        "loom.memory", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+    )
     return total
 
 
@@ -525,10 +568,11 @@ async def delete_entity_communities_by_namespace(
 async def delete_llm_response_cache_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
-    """Cached answers whose rendered window held any of the user's memory keys."""
+    """Cached answers whose rendered window held any of the user's memory keys, or the
+    key of a summary built from them."""
     ch = ch or _default_client()
     total = 0
-    for part in chunks(await user_keys(org, user_id, ch=ch)):
+    for part in chunks(await user_quoted_keys(org, user_id, ch=ch)):
         total += await delete_scoped(
             "loom.llm_response_cache",
             org=org,
@@ -542,10 +586,11 @@ async def delete_llm_response_cache_by_user(
 async def delete_ask_precedents_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
-    """Precedent answers whose window or citations held any of the user's keys."""
+    """Precedent answers whose window or citations held any of the user's keys, or the
+    key of a summary built from them."""
     ch = ch or _default_client()
     total = 0
-    for part in chunks(await user_keys(org, user_id, ch=ch)):
+    for part in chunks(await user_quoted_keys(org, user_id, ch=ch)):
         total += await delete_scoped(
             "loom.memory_ask_precedents",
             org=org,

@@ -521,7 +521,10 @@ def _re_verify_scope(row: Mapping[str, Any]) -> tuple[str, str | list[str], bool
             parse_purge_flag(scope_value),
             parse_external_flag(scope_value),
         )
-    return ("user_id" if scope_type == "user_id" else "namespace", scope_value, False, True)
+    # A user saga keeps `purge` in its ledger column (a GDPR deletion); a single
+    # namespace's saga never purges.
+    purge = scope_type == "user_id" and bool(row.get("purge"))
+    return ("user_id" if scope_type == "user_id" else "namespace", scope_value, purge, True)
 
 
 def _re_verify_input(row: Mapping[str, Any], *, skip_external: bool) -> Any:

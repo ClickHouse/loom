@@ -73,12 +73,12 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (D, "loom.entity_edge_memories"),
         ),
     ),
-    ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),
-    ("ask_precedents.delete", ((D, "loom.memory_ask_precedents"),)),
     (
         "consolidated.tombstone",
-        ((U, "loom.memory"), (U, "loom.memory_embeddings"), (D, "loom.memory_code_links")),
+        ((U, "loom.memory_embeddings"), (U, "loom.memory"), (D, "loom.memory_code_links")),
     ),
+    ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),
+    ("ask_precedents.delete", ((D, "loom.memory_ask_precedents"),)),
     ("summaries.tombstone", ((U, "loom.session_summaries"), (U, "loom.entity_summaries"))),
     (
         "records.tombstone",
@@ -90,6 +90,17 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
         ),
     ),
     ("session_outcomes.delete", ((D, "loom.session_outcomes_by_user"),)),
+    (
+        "memory.retire",
+        (
+            (U, "loom.memory_embeddings"),
+            (U, "loom.memory"),
+            (D, "loom.memory_code_links"),
+            (D, "loom.llm_response_cache"),
+            (D, "loom.memory_ask_precedents"),
+            (U, "loom.memory"),
+        ),
+    ),
     ("chunks.supersede", ((U, "loom.chunks"),)),
     (
         "documents.tombstone",
@@ -339,6 +350,160 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
 ]
 
 
+# A user purge: the memory rows the later steps read the user's keys from are stamped
+# first and deleted, with the summaries built from them, in `memory.retire`.
+USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
+    ("memory.tombstone", ((U, "loom.memory"),)),
+    ("memory_embeddings.tombstone", ((L, "loom.memory_embeddings"),)),
+    ("memory_versions.delete", ((D, "loom.memory_versions"),)),
+    ("code_links.delete", _CODE_LINKS),
+    ("working_memory.tombstone", ((D, "loom.working_memory"),)),
+    ("shared.tombstone", ((D, "loom.shared"),)),
+    ("shared_embeddings.tombstone", ((L, "loom.memory_embeddings"),)),
+    ("agent_events.scrub", ((U, "loom.agent_events"),)),
+    ("derived_facts.delete", ((D, "loom.derived_facts"),)),
+    ("memory_reinforcement.delete", ((D, "loom.memory_reinforcement"),)),
+    (
+        "raw_evidence.delete",
+        (
+            (L, "loom.memory_evidence"),
+            (D, "loom.memory_extraction_queue"),
+        ),
+    ),
+    ("memory_chunks.tombstone", ((L, "loom.memory_chunks"),)),
+    (
+        "source_links.tombstone",
+        (
+            (D, "loom.memory_belief_sources"),
+            (D, "loom.memory_chunk_sources"),
+        ),
+    ),
+    (
+        "entity_graph.delete",
+        (
+            (D, "loom.entity_triples"),
+            (D, "loom.entity_edges"),
+        ),
+    ),
+    ("entity_communities.delete", ((D, "loom.entity_communities"),)),
+    ("entity_vectors.delete", ((L, "loom.entity_vectors"),)),
+    (
+        "graph_links.delete",
+        (
+            (D, "loom.entity_triple_rows"),
+            (D, "loom.entity_edge_rows"),
+            (D, "loom.entity_triple_memories"),
+            (D, "loom.entity_edge_memories"),
+        ),
+    ),
+    (
+        "consolidated.tombstone",
+        (
+            (L, "loom.memory_embeddings"),
+            (U, "loom.memory"),
+            (D, "loom.memory_code_links"),
+        ),
+    ),
+    ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),
+    ("ask_precedents.delete", ((D, "loom.memory_ask_precedents"),)),
+    (
+        "summaries.tombstone",
+        (
+            (L, "loom.session_summaries"),
+            (D, "loom.entity_summaries"),
+        ),
+    ),
+    (
+        "records.tombstone",
+        (
+            (D, "loom.memory_record_fields"),
+            (D, "loom.memory_record_conflicts"),
+            (D, "loom.memory_records"),
+            (D, "loom.memory_record_versions"),
+        ),
+    ),
+    ("session_outcomes.delete", ((D, "loom.session_outcomes_by_user"),)),
+    (
+        "memory.retire",
+        (
+            (L, "loom.memory_embeddings"),
+            (U, "loom.memory"),
+            (D, "loom.memory_code_links"),
+            (D, "loom.llm_response_cache"),
+            (D, "loom.memory_ask_precedents"),
+            (D, "loom.memory"),
+            (D, "loom.memory"),
+        ),
+    ),
+    ("chunks.supersede", ((L, "loom.chunks"),)),
+    (
+        "documents.tombstone",
+        (
+            (D, "loom.document_blobs"),
+            (U, "loom.documents"),
+            (D, "loom.blob_uploads"),
+            ("OTHER", "INSERT"),
+            (D, "loom.knowledge_uploads"),
+            (D, "loom.knowledge_ingestions"),
+            (D, "loom.knowledge_ingest_cancels"),
+            (D, "loom.datasets"),
+            (D, "loom.dataset_rows"),
+            (U, "loom.documents"),
+            (D, "loom.documents"),
+        ),
+    ),
+    ("grants.revoke", ((D, "loom.namespace_grants"),)),
+    ("groups.remove_member", (("OTHER", "INSERT"),)),
+    ("personal.retire", (("OTHER", "INSERT"),)),
+    (
+        "collections.forget_owner",
+        (
+            ("OTHER", "INSERT"),
+            ("OTHER", "INSERT"),
+        ),
+    ),
+    ("subject_last_seen.delete", ((D, "loom.subject_last_seen"),)),
+    (
+        "conversations.tombstone",
+        (
+            (D, "loom.conversations"),
+            (D, "loom.conversation_threads"),
+            (L, "loom.conversation_embeddings"),
+        ),
+    ),
+    ("context_blobs.tombstone", ((D, "loom.context_blobs"),)),
+    (
+        "session_briefs.delete",
+        (
+            (D, "loom.session_briefs"),
+            (D, "loom.session_brief_revisions"),
+        ),
+    ),
+    ("memory_exposures.delete", ((D, "loom.memory_exposures"),)),
+    ("code_search_trace.delete", ((D, "loom.code_search_trace"),)),
+    ("events.delete", ((D, "loom.events"),)),
+    ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
+    ("memory_webhook_outbox.delete", ((D, "loom.memory_webhook_outbox"),)),
+    (
+        "agent_runs.delete",
+        (
+            (D, "loom.agent_run_claims"),
+            (D, "loom.agent_runs"),
+        ),
+    ),
+    ("learnings_queue.delete", ((D, "loom.learnings_supporters"),)),
+    ("consolidation_runs.delete", ((D, "loom.consolidation_runs"),)),
+    ("projection_failures.delete", ((D, "loom.memory_projection_failures"),)),
+    (
+        "idempotency.delete",
+        (
+            (D, "loom.idempotency"),
+            (L, "loom.embedding_cache"),
+        ),
+    ),
+]
+
+
 def _with_tail(
     trace: list[tuple[str, tuple[tuple[str, str], ...]]], backends: list[str]
 ) -> list[tuple[str, tuple[tuple[str, str], ...]]]:
@@ -347,6 +512,11 @@ def _with_tail(
 
 async def test_user_saga_trace(run: Any) -> None:
     assert await run("user_id", "alice") == _with_tail(USER_TRACE, USER_BACKENDS)
+
+
+async def test_user_purge_saga_trace(run: Any) -> None:
+    got = await run("user_id", "alice", purge=True)
+    assert got == _with_tail(USER_PURGE_TRACE, USER_BACKENDS)
 
 
 @pytest.mark.parametrize(
