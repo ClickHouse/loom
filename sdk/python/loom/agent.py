@@ -545,6 +545,7 @@ class Agent:
                 # close() was waiting, land too, up to one request's timeout, before the
                 # pool closes under them.
                 with contextlib.suppress(TimeoutError):
+                    # A Transport always has it; a stand-in without it waits unbounded.
                     timeout_s = getattr(self.transport, "_timeout_s", None)
                     await asyncio.wait_for(self.memory.flush_sets(), timeout_s)
             finally:
