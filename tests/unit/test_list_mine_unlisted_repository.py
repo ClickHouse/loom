@@ -141,9 +141,12 @@ def test_a_namespace_without_a_directory_row_is_code_when_a_repository_entry_nam
         "classification": "restricted",
     }
     monkeypatch.setattr(settings, "code_repos_json", json.dumps([entry]))
-    assert membership._kind("acme", "code-acme-private", "") == "code"
-    assert membership._kind("acme", "team-private", "") == "memory"
-    assert membership._kind("acme", "code-acme-private", "qa") == "qa"
+    from server.identity.app.namespace_kinds import configured_kinds
+
+    configured = configured_kinds("acme")
+    assert membership._kind(configured, "code-acme-private", "") == "code"
+    assert membership._kind(configured, "team-private", "") == "memory"
+    assert membership._kind(configured, "code-acme-private", "qa") == "qa"
 
 
 @pytest.mark.asyncio

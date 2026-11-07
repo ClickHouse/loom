@@ -417,12 +417,10 @@ _MEMBERSHIP_SQL = """
 """
 
 
-def _kind(org: str, namespace: str, kind: object) -> str:
-    """A namespace's kind: its directory row's, else a configured repository's (`code`),
-    else `memory`, the directory's own default."""
-    from server.identity.app.namespace_kinds import configured_kinds
-
-    return str(kind) if kind else configured_kinds(org).get(namespace, "memory")
+def _kind(configured: dict[str, str], namespace: str, kind: object) -> str:
+    """A namespace's kind: its directory row's, else a configured repository's (`code`,
+    from `configured_kinds`), else `memory`, the directory's own default."""
+    return str(kind) if kind else configured.get(namespace, "memory")
 
 
 async def _membership_rows(ch: Any, org: str, subjects: list[str]) -> list[dict[str, Any]]:
@@ -517,6 +515,7 @@ async def handle_namespace_list_mine(
     load, so the personal namespace lazily-creates on first visit.
     """
     from server.auth.aliases import subject_aliases
+    from server.identity.app.namespace_kinds import configured_kinds
 
     ch = get_client()
     caller = _registry.resolve_subject(input.subject)
@@ -534,6 +533,7 @@ async def handle_namespace_list_mine(
     # the server serves.
     subjects = await subject_aliases(input.org, caller, ch=ch)
     grant_rows = _one_per_namespace(await _membership_rows(ch, input.org, subjects))
+    configured = configured_kinds(input.org)
     seen = {r["namespace"] for r in grant_rows}
     # Only resolve admins for rows with a pending_role.
     needs_admins = {r["namespace"] for r in grant_rows if r.get("pending_role")}
@@ -550,7 +550,7 @@ async def handle_namespace_list_mine(
             pending_since=r.get("pending_since"),
             pending_admins=admins_by_ns.get(r["namespace"], []),
             visibility=r.get("visibility") or "private",
-            kind=_kind(input.org, r["namespace"], r.get("kind")),
+            kind=_kind(configured, r["namespace"], r.get("kind")),
             description=r.get("description") or "",
             joined_at=r["joined_at"],
             is_new=bool(r.get("is_new")),
@@ -578,7 +578,7 @@ async def handle_namespace_list_mine(
                     namespace=ns,
                     role="jwt",
                     visibility=m.get("visibility") or "private",  # type: ignore[arg-type]
-                    kind=_kind(input.org, ns, m.get("kind")),
+                    kind=_kind(configured, ns, m.get("kind")),
                     description=m.get("description") or "",
                 )
             )
@@ -592,7 +592,7 @@ async def handle_namespace_list_mine(
                 role=r["role"],
                 status="active",
                 visibility=r.get("visibility") or "private",
-                kind=_kind(input.org, r["namespace"], r.get("kind")),
+                kind=_kind(configured, r["namespace"], r.get("kind")),
                 description=r.get("description") or "",
                 joined_at=r.get("joined_at"),
                 is_new=False,

@@ -115,13 +115,13 @@ async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[
 
     out: list[str] = []
     for ns in repos:
-        for qa in tracker_namespaces_for(ns):  # every linked tracker
-            if qa in out or qa in repos or ceiling_role(parent, org, qa) is None:
+        for tracker in tracker_namespaces_for(ns):  # every linked tracker
+            if tracker in out or tracker in repos or ceiling_role(parent, org, tracker) is None:
                 continue
-            if not await namespace_classification.is_restricted(org, qa):
+            if not await namespace_classification.is_restricted(org, tracker):
                 continue
-            if await me_callers.caller_role_on(org, qa, subject):
-                out.append(qa)
+            if await me_callers.caller_role_on(org, tracker, subject):
+                out.append(tracker)
     return out
 
 
@@ -333,8 +333,8 @@ async def me_service_accounts_create(
         for ns in requested_role
         if ns != "*" and await namespace_classification.is_restricted(org, ns)
     ]
-    for qa in await _bound_trackers(org, subject, parent, named):
-        requested_role.setdefault(qa, None if everything else "viewer")
+    for tracker in await _bound_trackers(org, subject, parent, named):
+        requested_role.setdefault(tracker, None if everything else "viewer")
 
     from server.auth.grant_claims import service_account_change
 
