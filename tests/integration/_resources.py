@@ -37,6 +37,15 @@ def unique_org(label: str) -> str:
     return org
 
 
+def minted_identity(mint_test_token: Any, label: str) -> dict[str, str]:
+    """A fresh org (`unique_org`), a namespace named `label` and a token for them minted
+    with the server's own secret, in place of self-signup."""
+    org = unique_org(label)
+    subject = f"{label}@loom.test"
+    token = mint_test_token(org=org, namespaces=["*"], subject=subject)
+    return {"org": org, "namespace": label, "subject": subject, "token": token}
+
+
 def minted_orgs() -> frozenset[str]:
     return frozenset(_minted)
 

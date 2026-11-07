@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "sdk" / "python"))
 sys.path.insert(0, str(ROOT))
 
-from tests.integration._resources import unique_org  # noqa: E402
+from tests.integration._resources import minted_identity  # noqa: E402
 
 
 def _post(url: str, path: str, body: dict, token: str | None = None) -> httpx.Response:
@@ -26,14 +26,6 @@ def _post(url: str, path: str, body: dict, token: str | None = None) -> httpx.Re
         return c.post(path, json=body, headers=headers)
 
 
-def _identity(mint_test_token, label: str) -> dict:
-    """A fresh org and namespace under a token minted with the server's own secret."""
-    org = unique_org(label)
-    subject = f"{label}@bench.local"
-    token = mint_test_token(org=org, namespaces=["*"], subject=subject)
-    return {"org": org, "namespace": label, "subject": subject, "token": token}
-
-
 @pytest.mark.asyncio
 async def test_hybrid_search_lexical_catches_exact_symbol(
     control_plane_url,
@@ -41,7 +33,7 @@ async def test_hybrid_search_lexical_catches_exact_symbol(
 ) -> None:
     """Lexical search returns only rows containing the query substring."""
     suffix = uuid.uuid4().hex[:6]
-    me = _identity(mint_test_token, f"ax-{suffix}")
+    me = minted_identity(mint_test_token, f"ax-{suffix}")
     body = {
         "org": me["org"],
         "namespace": me["namespace"],
@@ -93,7 +85,7 @@ async def test_per_type_retention_materializes_expires_at(
 ) -> None:
     """Per-type retention from tag_registry materializes expires_at on memory.set."""
     suffix = uuid.uuid4().hex[:6]
-    me = _identity(mint_test_token, f"bx-{suffix}")
+    me = minted_identity(mint_test_token, f"bx-{suffix}")
 
     r = _post(
         control_plane_url,
@@ -138,7 +130,7 @@ async def test_memory_outcome_bumps_evidence_count(
 ) -> None:
     """memory.outcome positive bumps evidence_count."""
     suffix = uuid.uuid4().hex[:6]
-    me = _identity(mint_test_token, f"cx-{suffix}")
+    me = minted_identity(mint_test_token, f"cx-{suffix}")
     set_resp = _post(
         control_plane_url,
         "/v1/memory.set",
@@ -205,7 +197,7 @@ async def test_memory_list_sort_by_score(
 ) -> None:
     """memory.list sort_by=score returns usage-signal fields per row."""
     suffix = uuid.uuid4().hex[:6]
-    me = _identity(mint_test_token, f"dx-{suffix}")
+    me = minted_identity(mint_test_token, f"dx-{suffix}")
 
     for i, key in enumerate(["a", "b", "c"]):
         _post(
@@ -250,7 +242,7 @@ async def test_namespace_get_returns_audit_v1_fields(
 ) -> None:
     """namespace.get surfaces the audit v1 config fields."""
     suffix = uuid.uuid4().hex[:6]
-    me = _identity(mint_test_token, f"ex-{suffix}")
+    me = minted_identity(mint_test_token, f"ex-{suffix}")
 
     reg = _post(
         control_plane_url,

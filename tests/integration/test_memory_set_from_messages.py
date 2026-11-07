@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / "sdk" / "python"))
 sys.path.insert(0, str(ROOT))
 
 from tests.integration._eventually import eventually  # noqa: E402
-from tests.integration._resources import unique_org  # noqa: E402
+from tests.integration._resources import minted_identity  # noqa: E402
 
 # No flaky marker (fake-provider mode): set_from_messages writes to loom.memory
 # synchronously and the fake extractor is deterministic; the memory.list read-back
@@ -34,16 +34,8 @@ def _post(url: str, path: str, body: dict, token: str | None = None) -> httpx.Re
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    with httpx.Client(base_url=url, timeout=8.0) as c:
+    with httpx.Client(base_url=url, timeout=20.0) as c:
         return c.post(path, json=body, headers=headers)
-
-
-def _identity(mint_test_token, label: str) -> dict:
-    """A fresh org and namespace under a token minted with the server's own secret."""
-    org = unique_org(label)
-    subject = f"{label}@sfm.local"
-    token = mint_test_token(org=org, namespaces=["*"], subject=subject)
-    return {"org": org, "namespace": label, "subject": subject, "token": token}
 
 
 @pytest.mark.asyncio
@@ -54,7 +46,7 @@ async def test_set_from_messages_writes_extracted_facts(
     """A messages payload runs through the fake extractor and lands as
     one or more memory rows. memory.list then surfaces them by key."""
     suffix = uuid.uuid4().hex[:6]
-    me = _identity(mint_test_token, f"sfm-{suffix}")
+    me = minted_identity(mint_test_token, f"sfm-{suffix}")
 
     r = _post(
         control_plane_url,
@@ -119,7 +111,7 @@ async def test_set_from_messages_empty_returns_no_writes(
 ) -> None:
     """Empty messages list is a 400 (Pydantic validation): min_length=1."""
     suffix = uuid.uuid4().hex[:6]
-    me = _identity(mint_test_token, f"sfm-empty-{suffix}")
+    me = minted_identity(mint_test_token, f"sfm-empty-{suffix}")
 
     r = _post(
         control_plane_url,
@@ -142,7 +134,7 @@ async def test_set_from_messages_extra_tags_merge(
 ) -> None:
     """`extra_tags` are unioned with the per-fact extracted tags."""
     suffix = uuid.uuid4().hex[:6]
-    me = _identity(mint_test_token, f"sfm-tags-{suffix}")
+    me = minted_identity(mint_test_token, f"sfm-tags-{suffix}")
 
     r = _post(
         control_plane_url,
