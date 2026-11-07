@@ -58,12 +58,6 @@ def test_a_reported_tier_is_one_point_each_and_an_unknown_lag_none() -> None:
     assert lag == [(413, attrs)]
 
 
-@pytest.fixture
-def _snapshot() -> Any:
-    yield
-    recorder.reset_for_tests()
-
-
 def _failing(passes: int, hours_ago: float) -> tier_health.TierHealth:
     since = utc_now() - timedelta(hours=hours_ago)
     health = None
@@ -74,22 +68,23 @@ def _failing(passes: int, hours_ago: float) -> tier_health.TierHealth:
 
 
 def test_the_wired_rows_are_the_tiers_the_problem_reports(
-    _snapshot: Any, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "code_tier_failing_warn_passes", 3)
     monkeypatch.setattr(settings, "code_tier_failing_warn_hours", 3.0)
     monkeypatch.setattr(settings, "code_tier_failing_error_lag_commits", 100)
-    recorder._FAILING = (
+    snapshot = (
         recorder.FailingTier("o", "code-new", _failing(1, 0.5), 413),  # transient: none
         recorder.FailingTier("o", "code-slow", _failing(1, 4), 5),  # 4 hours: warn
         recorder.FailingTier("o", "code-far", _failing(3, 2), 413),  # error
     )
+    monkeypatch.setattr(recorder, "_FAILING", snapshot)
     failing, _ = code_tier_series(state_inputs().failing_code_tiers())
     assert sorted((a["loom.namespace"], a["severity"]) for _, a in failing) == [
         ("code-far", "error"),
         ("code-slow", "warn"),
     ]
-    recorder.reset_for_tests()
+    monkeypatch.setattr(recorder, "_FAILING", None)
     assert list(state_inputs().failing_code_tiers()) == []  # not read yet
 
 
@@ -120,10 +115,11 @@ def test_the_gauges_register_with_the_names_the_alerts_read() -> None:
     assert "loom_code_tier_failing)" in rule and 'loom_code_tier_failing{severity="error"}' in rule
 
 
-def test_each_gauge_reads_its_own_series(_snapshot: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_each_gauge_reads_its_own_series(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "code_tier_failing_warn_passes", 3)
     monkeypatch.setattr(settings, "code_tier_failing_error_lag_commits", 100)
-    recorder._FAILING = (recorder.FailingTier("o", "code-far", _failing(3, 2), 413),)
+    far = (recorder.FailingTier("o", "code-far", _failing(3, 2), 413),)
+    monkeypatch.setattr(recorder, "_FAILING", far)
     meter = _Meter()
     metrics_gauges._register_code_tier_gauges(meter)
     (passes,) = meter.callbacks["loom.code.tier_failing"](None)
