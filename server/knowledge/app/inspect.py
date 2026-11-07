@@ -631,17 +631,9 @@ class _Inspect:
                 "with '#'; a listed document may count some of their decisions"
             )
         uris = listed_uris + [u for u in longer if u not in listed_uris]
-
-        async def tally() -> list[dict[str, Any]]:
-            # Decision rows are memory rows: under Postgres they are counted once
-            # ClickHouse holds what the namespace committed.
-            published = pg_validation.published_reads(
-                i.org, [i.namespace], lambda reason: self.skipped.append(f"projection: {reason}")
-            )
-            async with published:
-                return await document_decision_tally(i.org, i.namespace, uris)
-
-        rows = await self.guarded("decisions", tally, None)
+        rows = await self.guarded(
+            "decisions", lambda: document_decision_tally(i.org, i.namespace, uris), None
+        )
         if rows is None:
             return out
         out.all_documents = _decisions(rows)
@@ -734,8 +726,15 @@ async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeIns
     if incomplete is not None:
         ingest_findings.append(incomplete)
     listed = await run.listed(model)
-    decisions = await run.decisions(listed)
-    memory_findings = await run.memory_findings()
+    # The decision rows and the audit's findings are memory rows: under Postgres they are
+    # read once ClickHouse holds what the namespace committed, in one wait the audit
+    # does not repeat.
+    published = pg_validation.published_reads(
+        input.org, [input.namespace], lambda reason: run.skipped.append(f"projection: {reason}")
+    )
+    async with published:
+        decisions = await run.decisions(listed)
+        memory_findings = await run.memory_findings()
     return KnowledgeInspectOutput(
         org=input.org,
         namespace=input.namespace,

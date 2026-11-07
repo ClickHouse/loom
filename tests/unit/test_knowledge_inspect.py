@@ -931,19 +931,34 @@ async def test_a_source_a_later_write_replaced_says_so(stubs: Stubs) -> None:
 
 
 @pytest.mark.asyncio
-async def test_decisions_are_counted_at_the_projection_wait(
+async def test_decisions_and_memory_findings_are_read_at_one_projection_wait(
     stubs: Stubs, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The decision rows are memory rows: their tally waits for ClickHouse to publish what
-    the namespace committed, and a wait that runs out still counts them and names the
-    projection in `skipped`."""
+    """The decision rows and the audit's findings are memory rows: both are read inside one
+    wait for ClickHouse to publish what the namespace committed, the audit run in
+    process waits no second time, and a wait that runs out still reads them and names
+    the projection in `skipped`."""
+    from server.core.ch import sequential_reads_active
     from server.memory.app.pg_admission import ProjectionBehindError
     from server.memory.app.search import pg_validation
 
-    async def behind(*_: object) -> bool:
+    waits: list[str] = []
+
+    async def behind(org: str, namespaces: Any) -> bool:
+        waits.append(org)
         raise ProjectionBehindError()
 
+    audited: list[bool] = []
+
+    async def audit(inp: Any) -> Any:
+        async with pg_validation.published_reads(inp.org, [inp.namespace]):
+            audited.append(sequential_reads_active())
+            return _audit()
+
     monkeypatch.setattr(pg_validation, "admit", behind)
+    monkeypatch.setattr(ki, "handle_namespace_audit", audit)
     out = await ki.handle_knowledge_inspect(_inp())
+    assert waits == ["o"] and audited == [True]
     assert out.decisions.all_documents is not None and stubs.calls["decisions"]
+    assert out.memory_findings
     assert [s.split(": ")[:2] for s in out.skipped] == [["projection", "PROJECTION_BEHIND"]]
