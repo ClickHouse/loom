@@ -48,11 +48,10 @@ fi
 
 image=${CLICKHOUSE_IMAGE:-}
 if [ -z "$image" ] && [[ $version != *-* ]]; then
-  # An assignment, so a failed git stops the script (inside `for` it would not).
-  candidates=$(git tag --points-at HEAD --list "v$version-rc.*" --sort=-v:refname)
+  # An assignment, so a failure stops the script (inside `for` it would not).
+  candidates=$(python3 "$here/prepare.py" candidates "$version")
   # A candidate whose run published no bundle: the next one down.
   for candidate in $candidates; do
-    [[ $candidate =~ ^v${version//./\\.}-rc\.[0-9]+$ ]] || continue
     status=0
     image=$(published "${candidate#v}") || status=$?
     [ "$status" = 0 ] && break

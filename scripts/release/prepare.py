@@ -12,6 +12,7 @@ python3 without the project's environment, need only the standard library:
     python3 scripts/release/prepare.py check-tag 1.2.0-rc.1  # candidate order
     python3 scripts/release/prepare.py check-chart 1.2.0     # the chart moved
     python3 scripts/release/prepare.py previous 1.2.0-rc.1   # the notes' base tag
+    python3 scripts/release/prepare.py candidates 1.2.0      # rc tags on this commit
 
 What each file carries, the chart rule, the release candidates and the notes:
 docs/development/release-process.md.
@@ -195,14 +196,28 @@ def tag_on_head(tag_version: str, root: Path = ROOT) -> bool:
     return bool(own) and own == _sha(root, "HEAD")
 
 
+def _version_of(tag: str) -> str:
+    """`v1.2.0-rc.1` as `1.2.0-rc.1`."""
+    return tag.removeprefix("v")
+
+
 def previous_release(version: str, root: Path = ROOT) -> str:
     """The highest final v* tag below `version`."""
     listed = _git(root, "tag", "--list", "v*")
-    finals = [t for t in listed.stdout.split() if FINAL.fullmatch(t[1:])]
-    older = [t for t in finals if parse(t[1:]) < parse(version)]
+    finals = [t for t in listed.stdout.split() if FINAL.fullmatch(_version_of(t))]
+    older = [t for t in finals if parse(_version_of(t)) < parse(version)]
     if not older:
         raise ValueError(f"no final release tag below {version} (are the tags fetched?)")
-    return max(older, key=lambda t: parse(t[1:]))
+    return max(older, key=lambda t: parse(_version_of(t)))
+
+
+def candidates(final: str, root: Path = ROOT) -> list[str]:
+    """The candidate tags of `final`, by their number, lowest first."""
+    listed = _git(root, "tag", "--list", f"v{final}-rc.*").stdout.split()
+    return sorted(
+        (t for t in listed if CANDIDATE.fullmatch(_version_of(t))),
+        key=lambda t: int(t.rsplit(".", 1)[1]),
+    )
 
 
 def refuse_tagged(version: str, root: Path = ROOT) -> None:
@@ -232,18 +247,13 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
                 f" (git push origin :refs/tags/v{final})"
             )
         return None
-    tags = _git(root, "tag", "--list", f"v{final}-rc.*")
-    listed = tags.stdout.split()
-    candidates = sorted(
-        (t for t in listed if CANDIDATE.fullmatch(t[1:])),
-        key=lambda t: int(t.rsplit(".", 1)[1]),
-    )
-    if candidates and _tag_sha(root, candidates[-1]) != _sha(root, "HEAD"):
+    tags = candidates(final, root)
+    if tags and _tag_sha(root, tags[-1]) != _sha(root, "HEAD"):
         return (
-            f"v{final} is not on {candidates[-1]}'s commit: delete {candidates[-1]}"
-            f" (git push origin :refs/tags/{candidates[-1]}) if it is a stray;"
+            f"v{final} is not on {tags[-1]}'s commit: delete {tags[-1]}"
+            f" (git push origin :refs/tags/{tags[-1]}) if it is a stray;"
             f" if v{final}'s run published nothing, delete v{final}"
-            f" (git push origin :refs/tags/v{final}) and tag it on {candidates[-1]}'s commit"
+            f" (git push origin :refs/tags/v{final}) and tag it on {tags[-1]}'s commit"
         )
     return None
 
@@ -380,10 +390,12 @@ def changelog(body: str) -> tuple[str, str, str]:
 
 
 def squash_merges(previous_tag: str, root: Path = ROOT) -> dict[int, int]:
-    """Pull request number to squash-merge commit time, oldest first, for the
+    """Pull request number to squash-merge author time, oldest first, for the
     merges since `previous_tag`; the release pull request's own merge (the one
     that moves `__version__`) is left out."""
-    log = _git(root, "log", "--reverse", "--format=%H %ct %s", f"{previous_tag}..HEAD")
+    # The author date: a commit cherry-picked onto an older line keeps it, and gets a
+    # new committer date after the pull request's merge.
+    log = _git(root, "log", "--reverse", "--format=%H %at %s", f"{previous_tag}..HEAD")
     bumps = _git(
         root,
         "log",
@@ -397,9 +409,9 @@ def squash_merges(previous_tag: str, root: Path = ROOT) -> dict[int, int]:
     releases = set(bumps.stdout.split())
     merged = {}
     for line in log.stdout.splitlines():
-        sha, committed, subject = line.split(" ", 2)
+        sha, authored, subject = line.split(" ", 2)
         if sha not in releases and (m := re.search(r"\(#(\d+)\)$", subject)):
-            merged[int(m.group(1))] = int(committed)
+            merged[int(m.group(1))] = int(authored)
     return merged
 
 
@@ -488,7 +500,7 @@ def _check_tag(args: argparse.Namespace) -> None:
         return
     tag_error = check_tag(tag_version)
     if tag_error:
-        raise SystemExit(f"::error::{tag_error}")
+        raise ValueError(tag_error)
 
 
 def _check_chart(args: argparse.Namespace) -> None:
@@ -511,26 +523,35 @@ def _check_chart(args: argparse.Namespace) -> None:
         raise SystemExit(f"::error file={CHART.path}::{chart_error}")
 
 
-def _fetch_tags_and_validate(version: str) -> None:
-    # Forced, so a tag moved upstream replaces a stale local one.
+def _fetch_tags() -> None:
+    """The upstream repository's tags, forced, so a tag moved upstream replaces a
+    stale local one."""
     _git(ROOT, "fetch", "--quiet", "--force", "--tags", f"https://github.com/{REPOSITORY}.git")
-    validate(version)
+
+
+def _candidates(args: argparse.Namespace) -> None:
+    head = _sha(ROOT, "HEAD")
+    for tag in reversed(candidates(args.version, ROOT)):
+        if _tag_sha(ROOT, tag) == head:
+            print(tag)
 
 
 def _notes(args: argparse.Namespace) -> None:
     version = args.version
-    _fetch_tags_and_validate(version)
+    _fetch_tags()
+    validate(version)
     print(release_notes(version, previous_release(version)))
 
 
 def _bump(args: argparse.Namespace) -> None:
     version = args.version
-    _fetch_tags_and_validate(version)
+    _fetch_tags()
+    validate(version)
     refuse_tagged(version)
     previous = previous_release(version)
     # Every refusal before the notes' gh call.
     released = released_chart(previous)  # names the tag when its chart is bad
-    chart = planned_chart(version, previous[1:], released)
+    chart = planned_chart(version, _version_of(previous), released)
     NOTES_FILE.write_text(release_notes(version, previous), encoding="utf-8")
     bump(version, chart)
     print(f"Bumped to {version}; the release notes are in {NOTES_FILE}")
@@ -593,6 +614,11 @@ def main() -> None:
     )
     previous_cmd.add_argument("tag_version", type=_tag_version, help=tag_version_help)
     previous_cmd.set_defaults(run=_previous)
+    candidates_cmd = commands.add_parser(
+        "candidates", help="the final's candidate tags on this commit, newest first"
+    )
+    candidates_cmd.add_argument("version", type=_final_version, help="the release, X.Y.Z")
+    candidates_cmd.set_defaults(run=_candidates)
     args = parser.parse_args()
     # A refusal, a failed git or gh call, or a missing gh, git or file is one line;
     # in a check, an ::error:: annotation.

@@ -53,6 +53,7 @@ def repo(tmp_path: Path) -> Path:
     script = repo / "scripts" / "release" / "release_clickhouse.sh"
     script.parent.mkdir(parents=True)
     shutil.copy(ROOT / "scripts" / "release" / "release_clickhouse.sh", script)
+    shutil.copy(ROOT / "scripts" / "release" / "prepare.py", script.parent)  # its candidates
     for path, body in STUBS.items():
         (repo / path).parent.mkdir(parents=True, exist_ok=True)
         (repo / path).write_text(body)
