@@ -1357,6 +1357,17 @@ async def settled_head_versions(keys: Sequence[IdentityKey]) -> dict[IdentityKey
     return {identity_key(r): int(r["version"]) for r in rows}
 
 
+def serves(head: Mapping[str, Any] | None, version: int, redacted: bool) -> bool:
+    """Whether `head` (a key's live head, or None) serves the ClickHouse row of that key at
+    `version`, redacted or not as `redacted` says: the same version in the same redaction
+    state."""
+    return (
+        head is not None
+        and int(head["version"]) == version
+        and (head.get("redacted_at") is not None) == redacted
+    )
+
+
 async def heads_by_keys(
     keys: Sequence[IdentityKey], *, include_tombstoned: bool = False
 ) -> dict[IdentityKey, dict[str, Any]]:

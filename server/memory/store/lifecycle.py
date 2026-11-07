@@ -197,15 +197,20 @@ async def served_rows[R](
         return rows
     keys = [identity_key(r) for r in rows]
     heads = await pg_memory.heads_by_keys(keys)
-    return [
-        r
-        for r, k in zip(rows, keys, strict=True)
-        if (h := heads.get(k)) is not None
-        and (h.get("redacted_at") is None) == (row_field(r, "redacted_at") is None)
-        and (
-            int(h["version"]) == int(row_field(r, "version")) or (still is not None and still(r, h))
-        )
-    ]
+    served = []
+    for r, k in zip(rows, keys, strict=True):
+        h = heads.get(k)
+        redacted = row_field(r, "redacted_at") is not None
+        if pg_memory.serves(h, int(row_field(r, "version")), redacted):
+            served.append(r)
+        elif (
+            still is not None
+            and h is not None
+            and (h.get("redacted_at") is not None) == redacted
+            and still(r, h)
+        ):
+            served.append(r)
+    return served
 
 
 # The columns a recovery listing reads and filters on, besides the delete itself and the

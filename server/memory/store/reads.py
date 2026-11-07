@@ -1572,7 +1572,11 @@ async def live_revisions(
     )
     heads = await _authority_heads(org, namespace, rows)
     if heads is not None:
-        rows = [r for r in rows if _served_head(r, heads) is not None]
+        rows = [
+            r
+            for r in rows
+            if pg_memory.serves(heads.get(_row_key(r)), int(r["version"]), bool(r["redacted"]))
+        ]
     # 0 cites no hash; otherwise every row but a high one or one over the bound.
     hashable = (
         []
@@ -1607,17 +1611,6 @@ async def _authority_heads(
     return {k[2:]: h for k, h in heads.items()}
 
 
-def _served_head(r: dict[str, Any], heads: dict[RowKey, dict[str, Any]]) -> dict[str, Any] | None:
-    """The head that serves the ClickHouse row `r`: its key's live head at the version
-    read, in the same redaction state; else None."""
-    h = heads.get(_row_key(r))
-    if h is None or int(h["version"]) != int(r["version"]):
-        return None
-    if (h.get("redacted_at") is not None) != bool(r["redacted"]):
-        return None
-    return h
-
-
 async def _served_hashes(
     org: str,
     namespace: str,
@@ -1637,7 +1630,7 @@ async def _served_hashes(
         return {}
     if heads is not None:
         # memory.get serves the authority's head, whose value keeps a null field; every
-        # revision here is its head's version (`_served_head`).
+        # revision here is its head's version (`pg_memory.serves`).
         return {
             _revision_key(r): served_content_sha256(
                 parse_memory_value(heads[_row_key(r)].get("value"))
