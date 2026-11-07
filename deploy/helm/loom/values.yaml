@@ -341,12 +341,12 @@ networkPolicy:
   # NetworkPolicy peers allowed to reach the pods (the ALB's subnets, the
   # ingress controller's namespace). [] = any source.
   ingressFrom: []
-  # Denied by every policy the chart renders (a policy engine enforces it, and
-  # extraEgress must not reopen it): the instance metadata service, so repository
+  # Denied by every policy the chart renders (a policy engine enforces it, and an
+  # extraEgress rule can reopen it): the instance metadata service, so repository
   # code a pod builds cannot take the node's cloud role. 169.254.169.254 serves
-  # most clouds; add your provider's address if it differs, and the cluster's
-  # own ranges to keep pods off them.
-  egressExcept: [169.254.169.254/32, fd00:ec2::254/128]
+  # most clouds, the IPv6 entries AWS and GCE; add your provider's address if it
+  # differs, and the cluster's own ranges to keep pods off them.
+  egressExcept: [169.254.169.254/32, fd00:ec2::254/128, fd20:ce::254/128]
   # With enabled: false, render the egress-only policy above. Set false when your
   # own policies limit the pods' egress: NetworkPolicies add up, so this one
   # would let the pods reach everything else. Deny `egressExcept` there instead.

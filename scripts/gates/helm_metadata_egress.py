@@ -22,7 +22,7 @@ from typing import Any
 import yaml
 
 CHART = Path(__file__).resolve().parents[2] / "deploy" / "helm" / "loom"
-METADATA = ("169.254.169.254", "fd00:ec2::254")
+METADATA = ("169.254.169.254", "fd00:ec2::254", "fd20:ce::254")
 REQUIRED = (
     "secrets.jwtSecret=" + "j" * 40,
     "publicBaseUrl=https://loom.example.com",
@@ -73,11 +73,14 @@ def loom_pods(docs: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
             continue
         containers = pod["spec"].get("containers", []) + pod["spec"].get("initContainers", [])
         if any(c.get("image") == image for c in containers):
+            # a host-network pod is outside every NetworkPolicy
+            assert not pod["spec"].get("hostNetwork"), f"{d['metadata']['name']} uses hostNetwork"
             out[f"{d['kind']}/{d['metadata']['name']}"] = pod["metadata"].get("labels", {})
     return out
 
 
 def selects(policy: dict[str, Any], labels: dict[str, str]) -> bool:
+    assert "matchExpressions" not in policy["podSelector"], "read matchLabels only"
     match = policy["podSelector"].get("matchLabels", {})
     return all(labels.get(k) == v for k, v in match.items())
 
@@ -134,11 +137,11 @@ def main() -> None:
             "to": [
                 {"namespaceSelector": {}},
                 {"ipBlock": {"cidr": "0.0.0.0/0", "except": ["169.254.169.254/32"]}},
-                {"ipBlock": {"cidr": "::/0", "except": ["fd00:ec2::254/128"]}},
+                {"ipBlock": {"cidr": "::/0", "except": ["fd00:ec2::254/128", "fd20:ce::254/128"]}},
             ]
         }
     ], policy["egress"]
-    assert not web_policies(render("--set", "networkPolicy.guardMetadata=false"))
+    assert not web_policies(render(*sets("networkPolicy.guardMetadata=false")))
     assert not web_policies(render("--set-json", "networkPolicy.egressExcept=[]"))
     print("metadata egress: denied with the policy on and off; other egress open when off")
 

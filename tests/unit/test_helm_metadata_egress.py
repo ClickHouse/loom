@@ -7,9 +7,9 @@ import shutil
 
 import pytest
 
+from scripts.gates import helm_metadata_egress
+
 
 @pytest.mark.skipif(not shutil.which("helm"), reason="needs helm (the CI helm job runs it)")
 def test_no_loom_pod_reaches_the_metadata_service() -> None:
-    from scripts.gates import helm_metadata_egress
-
     helm_metadata_egress.main()
