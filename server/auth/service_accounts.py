@@ -43,11 +43,11 @@ _creators: dict[tuple[str, str], tuple[float, SACreator]] = {}
 _CREATOR_CACHE_MAX = 4096
 
 
-async def agent_signup_tokens(
-    org: str, namespace: str, name_prefix: str, *, ch: Any | None = None
-) -> set[str]:
+async def agent_signup_tokens(org: str, namespace: str, *, ch: Any | None = None) -> set[str]:
     """The `sa_subject`s agent sign-up stored for `namespace`: made by the
     namespace itself, under the agent name prefix no person's token can take."""
+    from server.auth.self_signup import AGENT_CLIENT, AGENT_NAME_PREFIX
+
     if ch is None:
         from server.core.ch import get_client
 
@@ -55,10 +55,10 @@ async def agent_signup_tokens(
     rows = await ch.query_all(
         """
         SELECT sa_subject FROM loom.service_accounts FINAL
-        WHERE org = {org:String} AND created_by = {ns:String} AND client = 'agent-signup'
+        WHERE org = {org:String} AND created_by = {ns:String} AND client = {client:String}
           AND startsWith(name, {prefix:String})
         """,
-        params={"org": org, "ns": namespace, "prefix": name_prefix},
+        params={"org": org, "ns": namespace, "client": AGENT_CLIENT, "prefix": AGENT_NAME_PREFIX},
     )
     return {str(r["sa_subject"]) for r in rows}
 

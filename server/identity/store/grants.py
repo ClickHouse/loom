@@ -228,7 +228,6 @@ async def active_on(
         SELECT subject, role FROM loom.namespace_grants FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND {live}
-        ORDER BY subject
         """.replace("{live}", LIVE_GRANT),
         params={"org": org, "ns": namespace},
     )

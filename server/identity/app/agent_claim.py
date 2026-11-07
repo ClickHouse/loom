@@ -30,7 +30,6 @@ from server.auth.passwords import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, hash
 from server.auth.self_signup import (
     AGENT_DESCRIPTION,
     AGENT_DESCRIPTION_UNCLAIMED,
-    AGENT_NAME_PREFIX,
 )
 from server.core.background import TaskSet
 from server.core.ch import get_client, own_write_reads
@@ -199,7 +198,7 @@ def _grants_notice(others: list[str] | None) -> str:
 async def _other_grants(org: str, namespace: str) -> list[str]:
     """The subjects with an active grant on the namespace, besides its own
     subject and the agent's token while it holds the writer role sign-up gave it."""
-    agent_tokens = await service_accounts.agent_signup_tokens(org, namespace, AGENT_NAME_PREFIX)
+    agent_tokens = await service_accounts.agent_signup_tokens(org, namespace)
     rows = await grants.active_on(org, namespace)
     return sorted(
         {

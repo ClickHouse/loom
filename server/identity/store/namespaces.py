@@ -6,6 +6,7 @@ must carry every column forward, so the rewrite paths read the whole row here fi
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
@@ -46,7 +47,7 @@ async def unclaimed_rows(
 
 
 def claimed_row(
-    row: dict[str, Any], password_hash: str, tag: str, description: str, now: Any
+    row: dict[str, Any], password_hash: str, tag: str, description: str, now: datetime
 ) -> dict[str, Any]:
     """`row` as a claim leaves it, every other column carried forward: the
     claimer's password, the claim's tag, and `description` in place of the

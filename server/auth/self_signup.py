@@ -338,6 +338,7 @@ AGENT_DESCRIPTION_UNCLAIMED = "Created via agent self-signup; unclaimed."
 # An agent's own token row (`loom.service_accounts`) is named this plus the
 # agent's name; a person's token cannot take such a name.
 AGENT_NAME_PREFIX = "agent · "
+AGENT_CLIENT = "agent-signup"  # the `client` of that row
 AGENT_SIGNUPS_PER_HOUR = 5
 # Humans behind one office NAT share an address; agents rarely do.
 HUMAN_SIGNUPS_PER_HOUR = 20
@@ -576,7 +577,7 @@ async def _provision_agent(
                 "revoked_by": "",
                 "version": time.time_ns(),
                 "kind": "agent",
-                "client": "agent-signup",
+                "client": AGENT_CLIENT,
                 "inherit_creator_grants": False,
                 "ns_roles": json.dumps({namespace: "writer"}),
             }
