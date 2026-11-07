@@ -101,6 +101,45 @@ def test_a_weak_root_key_is_an_hmac_secret_under_32_bytes_or_rsa_under_2048_bits
     assert keyring.root_is_weak() is weak
 
 
+def test_a_gateway_key_under_2048_bits_is_weak(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A gateway's RSA key verifies tokens as the root does and its modulus is public."""
+    import json
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from server.auth import keyring
+
+    def public(bits: int) -> str:
+        key = rsa.generate_private_key(public_exponent=65537, key_size=bits).public_key()
+        return key.public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode()
+
+    keys = {"gw-old": public(1024), "gw": public(2048), "broken": "not a key"}
+    monkeypatch.setattr(settings, "jwt_public_keys_json", json.dumps(keys))
+    assert keyring.weak_gateway_kids() == ["gw-old"]
+
+
+def test_health_reports_mcp_open_and_a_weak_root_key_on_a_reachable_bind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`loom doctor` and /v1/health name what the next start would refuse."""
+    from server.observability import problems
+
+    monkeypatch.setattr(settings, "bind_host", "0.0.0.0")
+    monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
+    monkeypatch.setattr(settings, "allow_insecure", True)
+    monkeypatch.setattr(settings, "mcp_auth_mode", "open")
+    monkeypatch.setattr(settings, "jwt_secret", "a" * 16)
+    found = {p.code: p.severity for p in problems._exposure_problems(settings)}
+    assert found["insecure_bind_mcp_open"] == "warn"
+    assert found["insecure_bind_weak_secret"] == "warn"
+    monkeypatch.setattr(settings, "bind_host", "127.0.0.1")
+    found = {p.code for p in problems._exposure_problems(settings)}
+    assert not found & {"insecure_bind_mcp_open", "insecure_bind_weak_secret"}
+
+
 def test_a_pem_root_that_is_not_rsa_is_not_weak(monkeypatch: pytest.MonkeyPatch) -> None:
     """An EC key cannot sign as kid `default` at all, so the size check passes it."""
     from cryptography.hazmat.primitives import serialization

@@ -272,6 +272,23 @@ def root_is_weak() -> bool:
     return public.key_size < MIN_RSA_ROOT_BITS
 
 
+def weak_gateway_kids() -> list[str]:
+    """The kids of `jwt_public_keys_json` whose RSA key is under 2048 bits: each
+    verifies tokens as the root does, and its modulus is public."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    weak = []
+    for kid, pem in settings.jwt_public_key_map().items():
+        try:
+            key = serialization.load_pem_public_key(pem.strip().encode())
+        except (ValueError, TypeError):
+            continue  # a key that does not parse verifies nothing
+        if isinstance(key, rsa.RSAPublicKey) and key.key_size < MIN_RSA_ROOT_BITS:
+            weak.append(kid)
+    return sorted(weak)
+
+
 def _keys(view: _View) -> dict[str, SigningKey]:
     """The view's keys, plus a PEM root as `default` unless `default` is
     retired."""

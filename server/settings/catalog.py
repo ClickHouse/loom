@@ -278,7 +278,8 @@ class AuthSettings(BaseModel):
     # in loom.signing_keys (`loom signing-key rotate` adds those). Required when
     # auth is on. The default is the checked-in DEV secret anyone can mint
     # with: a deployment with auth on refuses to start with it, except the
-    # `make dev` stack (`loom doctor` warns everywhere else).
+    # `make dev` stack (`loom doctor` warns everywhere else). A non-loopback bind
+    # refuses an HMAC secret under 32 bytes or an RSA key under 2048 bits.
     jwt_secret: str = DEV_JWT_SECRET
     # The root secret LOOM_JWT_SECRET replaced, while a rotation is under way:
     # credentials and signing keys sealed under it still open (tokens it signed
@@ -312,7 +313,8 @@ class AuthSettings(BaseModel):
         return {self.jwt_issuer, *(i for i in extra if i)}
 
     # JSON (or base64 JSON) map kid → PEM public key of a gateway whose RS256
-    # tokens this deployment accepts. Loom's own keys live in loom.signing_keys.
+    # tokens this deployment accepts (a non-loopback bind refuses an RSA key under 2048
+    # bits). Loom's own keys live in loom.signing_keys.
     jwt_public_keys_json: str = ""
     # Clock-skew tolerance on iat/exp, seconds; small enough to give replay no
     # useful post-exp window.
@@ -2200,7 +2202,7 @@ class McpSettings(BaseModel):
     # anonymous prober could otherwise enumerate every tool):
     #   "required"        — every JSON-RPC method requires a bearer.
     #   "discovery_only"  — initialize/tools/list/ping open; tools/call needs auth.
-    #   "open"            — no auth on any method. Trusted-network only.
+    #   "open"            — no auth on any method; a non-loopback bind refuses it.
     # Any other value fails at load: a mistyped mode must not boot as some mode.
     mcp_auth_mode: Literal["required", "discovery_only", "open"] = "required"
 

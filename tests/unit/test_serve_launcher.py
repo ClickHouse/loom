@@ -1,6 +1,6 @@
 """scripts/serve.sh, the image's launcher, with stub `python` and `uvicorn` on
 PATH: how many web processes it starts, which runtime directory they share and
-which event loop they run."""
+which event loop they run, and the bind address the startup checks read."""
 
 from __future__ import annotations
 

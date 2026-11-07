@@ -3097,7 +3097,7 @@
             "open"
           ],
           "type": "string",
-          "description": "MCP transport auth mode (the endpoint exposes one tool per wire op, so an anonymous prober could otherwise enumerate every tool): \"required\"        — every JSON-RPC method requires a bearer. \"discovery_only\"  — initialize/tools/list/ping open; tools/call needs auth. \"open\"            — no auth on any method. Trusted-network only. Any other value fails at load: a mistyped mode must not boot as some mode."
+          "description": "MCP transport auth mode (the endpoint exposes one tool per wire op, so an anonymous prober could otherwise enumerate every tool): \"required\"        — every JSON-RPC method requires a bearer. \"discovery_only\"  — initialize/tools/list/ping open; tools/call needs auth. \"open\"            — no auth on any method; a non-loopback bind refuses it. Any other value fails at load: a mistyped mode must not boot as some mode."
         },
         "mcp_code_tools": {
           "default": false,
