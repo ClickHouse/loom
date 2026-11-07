@@ -576,7 +576,7 @@ def _grant(namespace: str, subject: str, role: str, minutes_ago: int = 0) -> dic
 def test_the_claim_names_every_grant_others_hold(world) -> None:
     # The oldest of more than a page of grants is named too.
     rows = [_grant(_LEGACY, "kept@acme.com", "admin", minutes_ago=600)]
-    rows += [_grant(_LEGACY, f"filler-{i}@acme.com", "reader") for i in range(120)]
+    rows += [_grant(_LEGACY, f"filler-{i}@acme.com", "viewer") for i in range(120)]
     asyncio.run(world["ch"].insert("loom.namespace_grants", rows))
     r = _claim(_app(), world["legacy_code"], "correct horse", namespace=_LEGACY)
     assert r.status_code == 200 and "kept@acme.com" in r.text
