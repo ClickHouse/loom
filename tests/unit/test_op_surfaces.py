@@ -210,12 +210,10 @@ def test_a_refusal_names_the_dashboard_only_for_an_op_it_calls():
 
 
 def test_a_hidden_op_with_no_alternative_sends_the_agent_to_the_dashboard_or_an_operator():
-    """`memory.sweep_expired` has no dashboard control here, `conflicts.list` has one."""
-    assert "memory.sweep_expired" not in mcp_op._INSTEAD
-    assert "dashboard" not in OPERATIONS_BY_NAME["memory.sweep_expired"].reach
-    assert mcp_op.hidden_refusal("memory.sweep_expired")["instead"] == mcp_op._NEEDS_AN_OPERATOR
-    assert "dashboard" in OPERATIONS_BY_NAME["conflicts.list"].reach
-    assert mcp_op.hidden_refusal("conflicts.list")["instead"] == mcp_op._NEEDS_THE_USER
+    for name in _MCP_HIDDEN_OPS - set(mcp_op._INSTEAD):
+        on = "dashboard" in OPERATIONS_BY_NAME[name].reach
+        expected = mcp_op._NEEDS_THE_USER if on else mcp_op._NEEDS_AN_OPERATOR
+        assert mcp_op.hidden_refusal(name)["instead"] == expected, name
 
 
 def test_an_op_a_reason_names_is_on_the_dashboard():

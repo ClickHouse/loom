@@ -178,7 +178,7 @@ _NEEDS_THE_USER = (
     "this needs the user: ask them to do it in the dashboard. Don't look for another "
     "route, token or credential to do it yourself"
 )
-# For an op the dashboard does not call (server/operations/dashboard.py).
+# For an op without the `dashboard` reach kind (server/operations/reach.py).
 _NEEDS_AN_OPERATOR = (
     "this needs the user or an operator, outside this chat. Don't look for another "
     "route, token or credential to do it yourself"

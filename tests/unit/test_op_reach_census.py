@@ -145,6 +145,9 @@ def test_a_dashboard_call_site_is_a_quoted_path(tmp_path):
         'fetch("https://host/v1/x", {}); // `/v1/memory.reject`\n'
         'onClick={() => pin()} // posts "/v1/memory.lock"\n'
         'bar(); /* "/v1/memory.demote" */ baz();\n'
+        "const r = /^spaces\\//; post('/v1/memory.verify');\n"
+        "<p>couldn't</p>\n"
+        '// "/v1/memory.promote"\n'
         'const hint = "**/generated/**, third_party/**";\n'
         'post("/v1/memory.redact", body);\n'
         '{/* the drawer posts\n   post("/v1/memory.unlock") */}\n'
@@ -157,6 +160,7 @@ def test_a_dashboard_call_site_is_a_quoted_path(tmp_path):
         "memory.pin": ("dashboard",),
         "memory.unpin": ("dashboard",),
         "memory.redact": ("dashboard",),
+        "memory.verify": ("dashboard",),
     }
 
 

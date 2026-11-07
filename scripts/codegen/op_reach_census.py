@@ -57,53 +57,37 @@ GROUP BY operation
 _SDK_DIR = "sdk/python/loom"
 _EXAMPLE_DIRS = ("examples", "dev", "scripts")
 _PLUGIN_DIRS = ("integrations",)
+_PLUGIN_SUFFIXES = (".mjs", ".js", ".ts", ".tsx", ".sh", ".py", ".yaml", ".yml", ".json")
 _DASHBOARD_DIR = "frontend/src"
 _DASHBOARD_SUFFIXES = (".ts", ".tsx")
-_PLUGIN_SUFFIXES = (".mjs", ".js", ".ts", ".tsx", ".sh", ".py", ".yaml", ".yml", ".json")
 
 _V1 = re.compile(r"/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b")
 _QUOTED = re.compile(r"""["']([a-z_]+(?:\.[a-z_]+){1,2})["']""")
+_SDK_CALL = re.compile(r"\.([a-z_]+)\.([a-z_]+)\(")
 # A dashboard call site: the path as a string literal (`post("/v1/<op>", …)`), outside
 # a comment. A bare op name there is an audit label, not a call.
 _DASHBOARD_CALL = re.compile(r"""["'`]/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b""")
-
-_SDK_CALL = re.compile(r"\.([a-z_]+)\.([a-z_]+)\(")
+# What a comment scan keeps (group 1: an escaped character, as in a regex literal's
+# `\/`, or a string, `'` and `"` ending at the line) and what it drops (`//` and
+# `/* */` comments). A lone `'` (JSX text's "can't") is code.
+_TS_KEEP_OR_COMMENT = re.compile(
+    r"""(\\.|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)|//[^\n]*|/\*.*?\*/""",
+    re.DOTALL,
+)
 
 
 def _without_comments(code: str) -> str:
-    """TypeScript `code` with its `//` and `/* */` comments dropped and its strings
-    kept. A regex literal is read as code: none in the dashboard holds a comment
-    marker."""
-    out: list[str] = []
-    i, n = 0, len(code)
-    while i < n:
-        c = code[i]
-        if c in "\"'`":
-            end = i + 1
-            while end < n and code[end] != c:
-                end += 2 if code[end] == "\\" else 1
-            out.append(code[i : end + 1])
-            i = end + 1
-        elif code.startswith("//", i):
-            end = code.find("\n", i)
-            i = n if end < 0 else end
-        elif code.startswith("/*", i):
-            end = code.find("*/", i + 2)
-            i = n if end < 0 else end + 2
-        else:
-            out.append(c)
-            i += 1
-    return "".join(out)
+    """TypeScript `code` with its comments dropped and its strings kept."""
+    return _TS_KEEP_OR_COMMENT.sub(lambda m: m.group(1) or "", code)
 
 
 def _files(root: Path, rel: str, suffixes: tuple[str, ...]) -> list[Path]:
     base = root / rel
     if not base.exists():
         return []
-    # Excluded directories (`tests`, `test`, `__pycache__`, in every scanned tree) are
-    # matched below `base` only: a checkout that itself sits under a `tests`
-    # directory still scans every file. A test kept beside its source (the
-    # dashboard's `*.test.tsx`) is skipped by its name.
+    # Excluded directories are matched below `base` only: a checkout that
+    # itself sits under a `tests` directory still scans every file. A test kept
+    # beside its source (the dashboard's `*.test.tsx`) is skipped by its name.
     return sorted(
         p
         for p in base.rglob("*")
