@@ -114,10 +114,9 @@ export function takeSignInStarted(nonce: string | null, now: number = Date.now()
   }
 }
 
-/** Whether a link token names the same subject of the same org as the token held: a session
- *  refreshed, stored without asking once the server accepts it. Anyone
- *  holding a token can send a link; storing any other unasked would sign this browser in as
- *  them. */
+/** Whether a link token names the subject and org of the held token: stored without asking
+ *  once the server accepts it. Any other would sign this browser in as whoever sent the
+ *  link. */
 export function sameAccount(link: string, held: string | null): boolean {
   const a = claimsFromToken(link);
   const b = claimsFromToken(held);

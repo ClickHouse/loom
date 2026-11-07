@@ -555,9 +555,8 @@ def _warn_once_a_minute(kind: str, message: str, *args: object) -> None:
 
 
 # The dashboard tab's own mark for one sign-in (`?n=`), sealed with the sign-in and handed
-# back with the token (`/me?n=<mark>#token=<jwt>`): the tab stores without asking only the
-# token that carries the mark it wrote, so a token another page sends it while it is away
-# at the IdP still asks.
+# back with the token (`/me?n=<mark>#token=<jwt>`): the tab stores a token without asking
+# only when it carries the mark it wrote, or names the account already held.
 _TAB_NONCE = re.compile(r"[A-Za-z0-9_-]{16,64}")
 
 

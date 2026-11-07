@@ -404,6 +404,10 @@ def test_a_restart_begins_each_sign_in_where_it_began() -> None:
     from urllib.parse import parse_qs, urlsplit
 
     assert oauth._restart_url({"kind": "dashboard"}) == "/me?sign_in=sso"
+    # A link on the 503 page, not a redirect: the click is a same-origin load of the gate.
+    page = oauth._sign_in_unavailable(oauth._restart_url({"kind": "dashboard"}))
+    assert page.status_code == 503 and "location" not in page.headers
+    assert b'href="/me?sign_in=sso"' in page.body
     assert oauth._restart_url({"kind": "device", "user_code": "BCDFGHJK"}) == (
         "/oauth/device?user_code=BCDFGHJK"
     )
