@@ -129,7 +129,10 @@ test("teamRulesLine: one primer line naming the namespace, empty when none", () 
   assert.equal(teamRulesLine(null), "");
 });
 
-test("the hook passes the file's path and the team namespace through to the guidance after the block", async () => {
+/** Run loom-file-context on an Edit of src/a.cpp in a checkout whose cached repo
+ *  entry names the team namespace code-x, against a server answering `rendered`.
+ *  Returns the for_file request and the text after the recalled-data block. */
+async function runFileContextHook(rendered) {
   const hook = fileURLToPath(new URL("../hooks/loom-file-context.mjs", import.meta.url));
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-fc-hook-")));
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-fc-tmp-")));
@@ -150,16 +153,7 @@ test("the hook passes the file's path and the team namespace through to the guid
     req.on("end", () => {
       seen.push({ url: req.url, body: raw ? JSON.parse(raw) : {} });
       res.setHeader("content-type", "application/json");
-      res.end(
-        JSON.stringify({
-          total: 2,
-          rendered:
-            "Loom: 2 memories anchored to src/a.cpp — read before editing:\n" +
-            "- Team rule (by alice, 2 days ago): keep the lock order [id: rules/a/lock]\n" +
-            '- … 1 more; memory.for_file(path="src/a.cpp") lists them.\n' +
-            '- A team rule wrong or outdated? memory.delete(namespace="code-x", memory_key=<id>) removes it if you wrote it or are a maintainer; otherwise write a corrected rule for the file and tell its author.',
-        }),
-      );
+      res.end(JSON.stringify({ total: 2, rendered }));
     });
   });
   await new Promise((r) => srv.listen(0, "127.0.0.1", r));
@@ -189,15 +183,57 @@ test("the hook passes the file's path and the team namespace through to the guid
         }),
       );
     });
-    const asked = seen.find((s) => s.url === "/v1/memory.for_file");
-    assert.deepEqual(asked.body.extra_namespaces, ["code-x"]);
     const ctx = JSON.parse(out).hookSpecificOutput.additionalContext;
-    const after = ctx.slice(ctx.lastIndexOf("</loom-recalled-data"));
-    assert.match(after, /memory\.delete\(namespace="code-x", memory_key=<its id>\)/);
-    assert.match(after, /memory\.for_file\(path="src\/a\.cpp"\) with a larger token_budget/);
+    const close = ctx.lastIndexOf("</loom-recalled-data");
+    return {
+      asked: seen.find((x) => x.url === "/v1/memory.for_file"),
+      after: ctx.slice(ctx.indexOf(">", close) + 1),
+    };
   } finally {
     srv.close();
     fs.rmSync(dir, { recursive: true, force: true });
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+const HEAD = "Loom: 4 memories anchored to src/a.cpp — read before editing:";
+const TEAM_ROW = "- Team rule (by alice, 2 days ago): keep the lock order [id: rules/a/lock]";
+const REMOVAL =
+  '- A team rule or decision wrong or outdated? memory.delete(namespace="code-x", memory_key=<id>) removes it if you ' +
+  "wrote it or are a maintainer; otherwise write a corrected rule for the file and tell its author; or ask a " +
+  "maintainer to record the corrected decision with decision.record.";
+
+test("the hook passes the file's path and the team namespace through to the guidance after the block", async () => {
+  const { asked, after } = await runFileContextHook(
+    [HEAD, TEAM_ROW, '- … 1 more; memory.for_file(path="src/a.cpp") lists them.', REMOVAL].join("\n"),
+  );
+  assert.deepEqual(asked.body.extra_namespaces, ["code-x"]);
+  assert.match(after, /^\nA team rule or decision above .*memory\.delete\(namespace="code-x", memory_key=<its id>\)/);
+  assert.match(
+    after,
+    /\nRows left out of the block: memory\.for_file\(path="src\/a\.cpp"\) returns every row in its hits\.$/,
+  );
+});
+
+test("the hook restates a left-out team decision line and a more line of ceiling-hidden rows", async () => {
+  // Ceiling-hidden rows (older rows a left-out decision supersedes) count on the "… more" line,
+  // and the decision line names a team key with its namespace.
+  const { after } = await runFileContextHook(
+    [
+      HEAD,
+      TEAM_ROW,
+      '- … 2 more; memory.for_file(path="src/a.cpp") lists them.',
+      "- … 1 more decision or constraint left out to keep this block short; memory.get on the key reads each, " +
+        'or loom_search: decisions/a/lock-order (namespace "code-x").',
+      REMOVAL,
+    ].join("\n"),
+  );
+  const lines = after.split("\n").slice(1);
+  assert.equal(lines.length, 3, after);
+  assert.match(lines[1], /^Rows left out of the block: memory\.for_file\(path="src\/a\.cpp"\)/);
+  assert.equal(
+    lines[2],
+    "Decisions or constraints left out of the block: memory.get on each key it names, with the namespace it names " +
+      "for a team key; loom_search for the rest.",
+  );
 });

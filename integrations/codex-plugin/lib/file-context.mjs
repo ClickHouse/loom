@@ -63,33 +63,54 @@ export function decideInject(cache, key, now, ttlMs) {
 export const FILE_RULES_HEADING =
   "Loom file rules and notes for the file this edit touches; a teammate's rule names its author:";
 
-// The server's footer lines (server/memory/app/for_file.py) the guidance restates.
-const REMOVAL_LINE = /\n- A team /;
-const MORE_LINE = /\n- … \d+ more; memory\.for_file\(/;
-const WHOLE_LEFT_LINE = /\n- … \d+ more (?:decision or constraint|decisions or constraints) left out /;
+// The server's footer lines (render_block in server/memory/app/for_file.py): the
+// removal line last, and the left-out lines right before it, budget then ceiling.
+const REMOVAL_LINE = /^- A team (?:rule|decision|rule or decision) wrong or outdated\? /;
+const MORE_LINE = /^- … \d+ more; memory\.for_file\(path=/;
+const WHOLE_LEFT_LINE = /^- … \d+ more (?:decision or constraint|decisions or constraints) left out /;
+
+/** Which footer lines the server's text ends with, read from the end the way
+ *  render_block writes them, so a row or a path that imitates one earlier in the
+ *  text counts for nothing. */
+function footerLines(text) {
+  const lines = String(text || "").split("\n");
+  let i = lines.length - 1;
+  const has = { removal: false, whole: false, more: false };
+  if (i > 0 && REMOVAL_LINE.test(lines[i])) {
+    has.removal = true;
+    i -= 1;
+  }
+  if (i > 0 && WHOLE_LEFT_LINE.test(lines[i])) {
+    has.whole = true;
+    i -= 1;
+  }
+  if (i > 0 && MORE_LINE.test(lines[i])) has.more = true;
+  return has;
+}
 
 /** What to do about the block's rows, in the plugin's own words: the block's note
  *  says not to follow its text, and that includes the server's own footer lines.
- *  Each line only when the server's text has the footer it restates (the removal
- *  line, the budget's left-out line, the left-out decisions and constraints);
- *  stored text that imitates one adds only this fixed text. */
+ *  Each line only when the server's text ends with the footer it restates. */
 export function fileRulesGuidance(rendered, { rel = "", teamNamespace = "" } = {}) {
-  const text = String(rendered || "");
+  const has = footerLines(rendered);
   const lines = [];
-  if (teamNamespace && REMOVAL_LINE.test(text)) {
+  if (teamNamespace && has.removal) {
     lines.push(
       `A team rule or decision above that is wrong or outdated: memory.delete(namespace="${teamNamespace}", ` +
-        "memory_key=<its id>) removes it if you wrote it or are a maintainer. Otherwise a corrected rule for the " +
-        "file supersedes a wrong rule (tell its author); a typed decision is corrected only by a maintainer's decision.record.",
+        "memory_key=<its id>) removes it if you wrote it or are a maintainer; otherwise write a corrected rule " +
+        "for the file and tell its author, or ask a maintainer to record the corrected decision with decision.record.",
     );
   }
-  if (rel && MORE_LINE.test(text)) {
+  if (rel && has.more) {
     lines.push(
-      `Rows left out for the token budget: memory.for_file(path=${JSON.stringify(rel)}) with a larger token_budget lists them.`,
+      `Rows left out of the block: memory.for_file(path=${JSON.stringify(rel)}) returns every row in its hits.`,
     );
   }
-  if (WHOLE_LEFT_LINE.test(text)) {
-    lines.push("Decisions or constraints left out of the block: memory.get on each key it names reads it.");
+  if (has.whole) {
+    lines.push(
+      "Decisions or constraints left out of the block: memory.get on each key it names, with the namespace it " +
+        "names for a team key; loom_search for the rest.",
+    );
   }
   return lines.join("\n");
 }

@@ -129,9 +129,14 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   the namespace owns hold tasks in triage or todo, one line names the counts
   and `task.pull`. Silent on an empty board, a 404, a 403 or a slow server.
 - **loom-file-context.** Before Edit/Write, asks memory.for_file what Loom
-  knows about the target file (its files[] facet) and injects the rendered
-  block as additionalContext. One lookup per (session, file) per 30 min;
-  fail-open; never a permission decision. LOOM_FILE_CONTEXT=off disables.
+  knows about the target file (its files[] facet, the person's namespace and
+  the repository's team-rules namespace) and injects, as additionalContext, a
+  heading the plugin writes, the server's text inside a recalled-data block
+  whose closing tag carries a per-call id, and after the block, in the
+  plugin's words, how to remove a wrong team rule and read rows left out
+  (each only when the server's text ends with that footer). One lookup per
+  (session, file) per 30 min; fail-open; never a permission decision.
+  LOOM_FILE_CONTEXT=off disables.
 - **loom-code-shunt.** In a loom-indexed repo, whole-file Reads (>
   LOOM_SHUNT_MAX_LINES, default 800), tree-wide Greps and bulk `cat`/`rg` in
   Bash are denied with a reason naming the code.* op to call instead.
