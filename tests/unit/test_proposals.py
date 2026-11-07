@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from server.memory.app import proposals as p
 from server.memory.domain import proposal_policy as pp
 from server.memory.domain import temporal_sql as ts
+from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl
 
 
 def test_served_statuses_admit_proposed_only_when_asked() -> None:
@@ -263,3 +264,36 @@ def test_a_proposal_supersedes_nothing_on_any_refines_path(monkeypatch: pytest.M
         )
     )
     assert n == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_keys_first_proposal_listed_is_the_one_a_decision_takes(monkeypatch) -> None:
+    """Agent a proposed `k` first and revised it after b proposed: the listing puts a's row
+    first, as memory.proposal_decide's newest-version read picks it."""
+    from server.memory.api.models_proposals import MemoryProposalsInput
+    from server.memory.app import proposals, proposals_ops
+    from server.memory.domain.proposal_policy import ProposalPolicy
+
+    ch = LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, version, created_at) VALUES "
+        "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-00000000000a', 'k', 'semantic', 'a revised', 'proposed', 3, "
+        "'2026-01-01 00:00:00'), "
+        "('o', 'n', 'b', '-', '-', '00000000-0000-0000-0000-00000000000b', 'k', 'semantic', 'b', 'proposed', 2, "
+        "'2026-01-02 00:00:00')",
+    )
+
+    async def _policy(*_a: Any, **_k: Any) -> Any:
+        return ProposalPolicy()
+
+    async def _none(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {}
+
+    monkeypatch.setattr(proposals_ops, "get_client", lambda: ch)
+    monkeypatch.setattr(proposals, "policy_for", _policy)
+    monkeypatch.setattr(proposals, "graded_counts", _none)
+    monkeypatch.setattr(proposals_ops, "_usage_counts", _none)
+    out = await proposals_ops.handle_memory_proposals(MemoryProposalsInput(org="o", namespace="n"))
+    assert [(p.agent, p.value_preview) for p in out.proposals] == [("a", "a revised"), ("b", "b")]

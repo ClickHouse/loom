@@ -975,9 +975,10 @@ function ProposalsPanel({ initial, onSeedUsed }: { initial?: ProposalList | null
       else toast(decision === "accept" ? "Accepted" : "Rejected", "ok");
       // Where the decided row is now, not where it was when clicked: another decision may
       // have taken a row above it off the list meanwhile, or a re-read the row itself.
-      const at = Math.max(0, rowsNow.current?.findIndex((r) => r.memory_key === key) ?? 0);
-      const gone = rowsNow.current?.find((r) => r.memory_key === key);
-      if (gone) decided.current.add(gone.memory_id);
+      const i = rowsNow.current?.findIndex((r) => r.memory_key === key) ?? -1;
+      const at = Math.max(0, i);
+      const decidedRow = rowsNow.current?.[i];
+      if (decidedRow) decided.current.add(decidedRow.memory_id);
       // Off the list at once, so its buttons cannot send the decision again.
       setRows((rs) => rs?.filter((r) => r.memory_key !== key) ?? rs);
       setReason(({ [key]: _gone, ...rest }) => rest);

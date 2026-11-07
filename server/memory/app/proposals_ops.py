@@ -32,18 +32,18 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
         scope=request_scope(),
         cap=settings.memory_proposals_scan_cap,
         prefix=input.prefix,
-        tags=list(input.tags or []),
+        tags=input.tags,
     )
     policy = await _p.policy_for(input.org, input.namespace, ch=ch)
     # `ready` grades every row to choose which to return.
     wanted = rows if input.only == "ready" else rows[: input.limit]
     details = await proposals_repo.proposal_details(ch, input.org, input.namespace, wanted)
-    graded = [{**r, **details[str(r["mid"])]} for r in wanted if str(r["mid"]) in details]
-    keys = [str(r["memory_key"]) for r in graded]
+    listed = [{**r, **details[str(r["mid"])]} for r in wanted if str(r["mid"]) in details]
+    keys = [str(r["memory_key"]) for r in listed]
     counts = await _p.graded_counts(ch, input.org, input.namespace, keys)
-    usage = await _usage_counts(ch, input.org, input.namespace, [str(r["mid"]) for r in graded])
+    usage = await _usage_counts(ch, input.org, input.namespace, [str(r["mid"]) for r in listed])
     out: list[MemoryProposal] = []
-    for r in graded:
+    for r in listed:
         key, mid = str(r["memory_key"]), str(r["mid"])
         c = counts.get(key, _p.GradedCounts())
         ready = _p.policy_verdict(policy, c) or ""

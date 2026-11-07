@@ -3,6 +3,7 @@ what a listed proposal shows."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from server.core.repo_base import _CHClient
@@ -17,8 +18,8 @@ async def scan_proposals(
     scope: ReadFilters,
     cap: int,
     prefix: str = "",
-    tags: list[str] | None = None,
-) -> list[Any]:
+    tags: Sequence[str] = (),
+) -> list[dict[str, Any]]:
     """Keys and (memory_id, version) only, newest version first: the order
     memory.proposal_decide picks a key's row by, so a key's first row here is the one a
     decision acts on."""
@@ -36,7 +37,7 @@ async def scan_proposals(
         where.append("hasAny(tags, {tags:Array(String)})")
         params["tags"] = list(tags)
     where.extend(scope_where(scope, params))
-    rows: list[Any] = await ch.query_all(
+    return await ch.query_all(
         f"""
         SELECT memory_key, toString(memory_id) AS mid, version
         FROM loom.memory FINAL
@@ -46,11 +47,10 @@ async def scan_proposals(
         """,
         params=params,
     )
-    return rows
 
 
 async def proposal_details(
-    ch: _CHClient, org: str, namespace: str, located: list[Any]
+    ch: _CHClient, org: str, namespace: str, located: list[dict[str, Any]]
 ) -> dict[str, dict[str, Any]]:
     """What a listed proposal shows, by memory id, read by the scan's (memory_id, version)
     pairs without FINAL."""
