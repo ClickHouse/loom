@@ -27,9 +27,7 @@ import {
   type ResolveDecision,
   type LearningEntry,
   type LearningStatus,
-  listProposals,
   proposeRevision,
-  type MemoryProposal,
   type RevisionSuggestion,
 } from "../../api";
 import { DuplicatesPanel } from "./Duplicates";
@@ -76,6 +74,15 @@ import { PageContainer } from "../../layout/PageContainer";
 const LONE_PANEL = { role: undefined, "aria-labelledby": undefined, tabIndex: undefined };
 
 type QueueTab = "conflicts" | "learnings" | "auto" | "exceptions" | "proposals" | "duplicates";
+// One name per tab, for its trigger and the document title.
+const QUEUE_TABS: Record<QueueTab, string> = {
+  conflicts: "Conflicts",
+  learnings: "Learnings",
+  auto: "Auto-resolved",
+  exceptions: "Exceptions",
+  proposals: "Proposals",
+  duplicates: "Duplicates",
+};
 
 export function ReviewQueue() {
   const identity = useIdentity();
@@ -106,12 +113,9 @@ export function ReviewQueue() {
   // The duplicate lists are ADMIN; the tab is there for an admin whether or not a pair waits,
   // since its repairs run over the whole namespace.
   const hasDuplicates = canCall("memory.dedup_list", role, whoami) && canCall("knowledge.dedup_list", role, whoami);
-  const [probedProposals, setProbedProposals] = useState<{
-    rows: MemoryProposal[];
-    total: number;
-    scope: string;
-  } | null>(null);
-  const hasProposals = probedProposals?.scope === scopeKey && probedProposals.rows.length > 0;
+  // Proposals are offered to a role that reads them, with no probe: the tab reads when it
+  // opens, so the page costs no read for them.
+  const hasProposals = canCall("memory.proposals", role, whoami);
   const tabbed = hasLearnings || hasExceptions || hasAuto || hasProposals || hasDuplicates;
   const [tab, setTab] = useState<QueueTab>("conflicts");
   // A tab that is no longer offered (its probe found nothing, or its access went) hands the
@@ -131,12 +135,12 @@ export function ReviewQueue() {
   // A probe seeds its panel's first view once: a panel opened again (the tabs unmount an
   // inactive one) reads afresh, so a learning promoted or an exception removed since does
   // not come back from the probe.
-  const [seedsUsed, setSeedsUsed] = useState({ learnings: false, exceptions: false, proposals: false });
+  const [seedsUsed, setSeedsUsed] = useState({ learnings: false, exceptions: false });
   useAbortableEffect(
     (signal, live) => {
       setProbedLearnings(null);
       setProbedExceptions(null);
-      setSeedsUsed({ learnings: false, exceptions: false, proposals: false });
+      setSeedsUsed({ learnings: false, exceptions: false });
       // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
       // they revealed) must not outlive it.
       setTab("conflicts");
@@ -158,23 +162,6 @@ export function ReviewQueue() {
     },
     [identity.org, identity.namespace],
   );
-  // Proposals read once the role is known to reach them; the probe keeps its scope, so a
-  // namespace switch hides the previous namespace's tab.
-  const proposalsReadable = canCall("memory.proposals", role, whoami);
-  useAbortableEffect(
-    (signal, live) => {
-      if (!proposalsReadable) {
-        setProbedProposals(null);
-        return;
-      }
-      listProposals({ org: identity.org, namespace: identity.namespace }, { signal })
-        .then((r) => {
-          if (live()) setProbedProposals({ rows: r.proposals ?? [], total: r.total ?? 0, scope: scopeKey });
-        })
-        .catch(() => {});
-    },
-    [identity.org, identity.namespace, proposalsReadable],
-  );
   useAbortableEffect(
     (_signal, live) => {
       setProbedAuto(null);
@@ -194,7 +181,7 @@ export function ReviewQueue() {
 
   return (
     <PageContainer>
-      <PageHeader title="Review queue">
+      <PageHeader title="Review queue" tab={tabbed ? QUEUE_TABS[tab] : undefined}>
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
       <p className="text-sm text-text-muted mb-5 max-w-2xl">
@@ -213,31 +200,31 @@ export function ReviewQueue() {
         {tabbed && (
           <Tabs.TriggersList className="mb-5" aria-label="Review queue">
             <TabTrigger value="conflicts" icon="warning">
-              Conflicts
+              {QUEUE_TABS.conflicts}
             </TabTrigger>
             {hasLearnings && (
               <TabTrigger value="learnings" icon="sparkle">
-                Learnings
+                {QUEUE_TABS.learnings}
               </TabTrigger>
             )}
             {hasAuto && (
               <TabTrigger value="auto" icon="flash">
-                Auto-resolved
+                {QUEUE_TABS.auto}
               </TabTrigger>
             )}
             {hasExceptions && (
               <TabTrigger value="exceptions" icon="line-in-circle">
-                Exceptions
+                {QUEUE_TABS.exceptions}
               </TabTrigger>
             )}
             {hasProposals && (
               <TabTrigger value="proposals" icon="question">
-                Proposals
+                {QUEUE_TABS.proposals}
               </TabTrigger>
             )}
             {hasDuplicates && (
               <TabTrigger value="duplicates" icon="copy">
-                Duplicates
+                {QUEUE_TABS.duplicates}
               </TabTrigger>
             )}
           </Tabs.TriggersList>
@@ -271,10 +258,7 @@ export function ReviewQueue() {
         )}
         {hasProposals && (
           <Tabs.Content value="proposals">
-            <ProposalsPanel
-              initial={seedsUsed.proposals ? null : probedProposals}
-              onSeedUsed={() => setSeedsUsed((u) => ({ ...u, proposals: true }))}
-            />
+            <ProposalsPanel />
           </Tabs.Content>
         )}
         {hasDuplicates && (

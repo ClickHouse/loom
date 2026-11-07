@@ -43,13 +43,20 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/** Renders the panel over `rows` (of `total`), as its read on open answers them. */
+async function show(rows: MemoryProposal[], total = rows.length) {
+  vi.mocked(api.listProposals).mockResolvedValueOnce({ proposals: rows, total });
+  render(<ProposalsPanel />);
+  await screen.findAllByText(rows[0].memory_key);
+}
+
 describe("ProposalsPanel", () => {
-  it("shows the probe's rows without reading again, and accepts one", async () => {
+  it("reads the proposals when it opens, and accepts one", async () => {
+    await show([P]);
     vi.mocked(api.listProposals).mockResolvedValue({ proposals: [], total: 0 });
-    render(<ProposalsPanel initial={{ rows: [P], total: 1 }} onSeedUsed={() => {}} />);
     expect(screen.getByText("Deploys run on Tuesdays")).toBeInTheDocument();
     expect(screen.getByText("ready to accept")).toBeInTheDocument();
-    expect(api.listProposals).not.toHaveBeenCalled();
+    expect(api.listProposals).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole("button", { name: "Accept deploy_window" }));
     await waitFor(() =>
       expect(api.decideProposals).toHaveBeenCalledWith({ org: "acme", namespace: "team" }, ["deploy_window"], "accept"),
@@ -59,7 +66,7 @@ describe("ProposalsPanel", () => {
 
   it("offers a viewer the proposals and no decision", async () => {
     signIn("viewer");
-    render(<ProposalsPanel initial={{ rows: [P], total: 1 }} onSeedUsed={() => {}} />);
+    await show([P], 1);
     expect(screen.getByText("Deploys run on Tuesdays")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Accept deploy_window" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Actions for deploy_window" })).toBeNull();
@@ -71,17 +78,17 @@ describe("ProposalsPanel", () => {
       results: [{ memory_key: "deploy_window", decided: false, status: "active", reason: "already accepted" }],
     });
     vi.mocked(api.listProposals).mockResolvedValue({ proposals: [], total: 0 });
-    render(<ProposalsPanel initial={{ rows: [P], total: 1 }} onSeedUsed={() => {}} />);
+    await show([P], 1);
     await userEvent.click(screen.getByRole("button", { name: "Actions for deploy_window" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Reject" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Not decided: already accepted", "info"));
-    await waitFor(() => expect(api.listProposals).toHaveBeenCalled());
+    await waitFor(() => expect(api.listProposals).toHaveBeenCalledTimes(2));
   });
 
   it("offers no decision on a key two agents proposed, shows a high one as sensitive, and says the list is cut", async () => {
     const other = { ...P, memory_id: "m2", agent: "cursor", value_preview: "", sensitivity: "high" as const };
     const lone = { ...P, memory_id: "m3", memory_key: "standup_time" };
-    render(<ProposalsPanel initial={{ rows: [P, other, lone], total: 140 }} onSeedUsed={() => {}} />);
+    await show([P, other, lone], 140);
     expect(screen.getAllByText("deploy_window")).toHaveLength(2);
     // A decision names only the key, so neither of the two can take one; each says why.
     for (const accept of screen.getAllByRole("button", { name: "Accept deploy_window" })) {
@@ -100,7 +107,7 @@ describe("ProposalsPanel", () => {
       results: [{ memory_key: "deploy_window", decided: true, status: "conflicted", reason: "" }],
     });
     vi.mocked(api.listProposals).mockResolvedValue({ proposals: [], total: 0 });
-    render(<ProposalsPanel initial={{ rows: [P], total: 1 }} onSeedUsed={() => {}} />);
+    await show([P], 1);
     await userEvent.click(screen.getByRole("button", { name: "Accept deploy_window" }));
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith("Accepted; it contradicts another fact, so it waits in Conflicts", "ok"),
@@ -109,11 +116,11 @@ describe("ProposalsPanel", () => {
 
   it("holds every row until the list is read again after a decision", async () => {
     let answer: (v: { proposals: MemoryProposal[]; total: number }) => void = () => {};
-    vi.mocked(api.listProposals).mockImplementationOnce(() => new Promise((r) => (answer = r)));
     const lone = { ...P, memory_id: "m3", memory_key: "standup_time" };
-    render(<ProposalsPanel initial={{ rows: [P, lone], total: 2 }} onSeedUsed={() => {}} />);
+    await show([P, lone], 2);
+    vi.mocked(api.listProposals).mockImplementationOnce(() => new Promise((r) => (answer = r)));
     await userEvent.click(screen.getByRole("button", { name: "Accept deploy_window" }));
-    await waitFor(() => expect(api.listProposals).toHaveBeenCalled());
+    await waitFor(() => expect(api.listProposals).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("button", { name: "Accept standup_time" })).toBeDisabled();
     answer({ proposals: [lone], total: 1 });
     await waitFor(() => expect(screen.getByRole("button", { name: "Accept standup_time" })).toBeEnabled());

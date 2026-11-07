@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Table } from "@clickhouse/click-ui/Table";
@@ -29,17 +29,11 @@ const SHARED_KEY =
 
 /** Facts on trial (written with `proposed=true`) and how the runs that relied on each
  *  went: accept one to serve it by default, reject it to retire it. */
-export function ProposalsPanel({
-  initial,
-  onSeedUsed,
-}: {
-  initial: { rows: MemoryProposal[]; total: number } | null;
-  onSeedUsed: () => void;
-}) {
+export function ProposalsPanel() {
   const identity = useIdentity();
   const scope = { org: identity.org, namespace: identity.namespace };
-  const [rows, setRows] = useState<MemoryProposal[] | null>(initial?.rows ?? null);
-  const [total, setTotal] = useState(initial?.total ?? 0);
+  const [rows, setRows] = useState<MemoryProposal[] | null>(null);
+  const [total, setTotal] = useState(0);
   const panel = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
@@ -48,15 +42,10 @@ export function ProposalsPanel({
   const role = useNamespaceRole(identity.namespace);
   const canDecide = canCall("memory.proposal_decide", role, whoami);
 
-  // The probe's rows seed the first view only; a panel opened again reads afresh.
-  useEffect(() => {
-    if (initial) onSeedUsed();
-  }, []);
   // A decision holds every row until the list is read again.
   const [reading, setReading] = useState(false);
   useAbortableEffect(
     (signal, live) => {
-      if (reload === 0 && initial) return;
       setError(null);
       setReading(true);
       listProposals(scope, { signal })

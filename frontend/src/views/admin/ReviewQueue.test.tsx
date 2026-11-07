@@ -183,7 +183,7 @@ describe("ReviewQueue", () => {
     useStore.setState({ whoami: null, myNamespaces: null });
   });
 
-  it("shows Duplicates to an admin only, Proposals only when one waits, and reads none for an unknown role", async () => {
+  it("shows Duplicates to an admin only, Proposals to a reader, and reads none for an unknown role", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
     vi.mocked(listProposals).mockClear();
     seed("ns-a");
@@ -195,9 +195,9 @@ describe("ReviewQueue", () => {
 
     seed("ns-a", "writer");
     render(<ReviewQueue />);
-    await screen.findByText("value of city", {}, WAIT);
-    await waitFor(() => expect(listProposals).toHaveBeenCalled());
-    expect(screen.queryByRole("tab", { name: /Proposals/ })).toBeNull();
+    // Proposals are offered to a reader and read only when the tab opens.
+    expect(await screen.findByRole("tab", { name: /Proposals/ }, WAIT)).toBeInTheDocument();
+    expect(listProposals).not.toHaveBeenCalled();
     expect(screen.queryByRole("tab", { name: /Duplicates/ })).toBeNull();
     cleanup();
 
