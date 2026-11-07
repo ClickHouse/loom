@@ -1030,3 +1030,27 @@ async def test_traverse_rank_by_reads_the_setting_and_the_request_wins(
         )
         == "cosine"
     )
+
+
+@pytest.mark.asyncio
+async def test_facts_list_and_related_match_the_canonical_and_the_lowered_spelling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A facet row stores the canonical node; one from build N-1 holds the name lowered.
+    from server.memory.api.models_facts import FactsListInput, FactsRelatedInput
+    from server.memory.app import facts as facts_handlers
+    from server.memory.domain.graph_quality import facet_triples
+
+    ch = StubCH()
+    monkeypatch.setattr(facts_handlers, "get_client", lambda: ch)
+    name = "error:HTTPError(404)"
+    [(_, _, node)] = facet_triples("bot", [], [], [name], [])
+    both = [node, name.lower()]
+
+    await facts_handlers.handle_facts_list(FactsListInput(org="o", namespace="n", object=name))
+    await facts_handlers.handle_facts_list(FactsListInput(org="o", namespace="n", entity=name))
+    await facts_handlers.handle_facts_related(
+        FactsRelatedInput(org="o", namespace="n", entity=name)
+    )
+    assert [p.get("obj") or p.get("ent") for _, p in ch.query_all_calls] == [both, both, both]
+    assert "object IN {obj:Array(String)}" in ch.query_all_calls[0][0]

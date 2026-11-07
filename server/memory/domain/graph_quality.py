@@ -800,12 +800,12 @@ def facet_triples(
     long to be a name (`MAX_ENTITY_CHARS`), or with no canonical form (only punctuation),
     mints no node, as in `edge_nodes`."""
     subject = canonical_entity_text(agent or "user") or "user"
-    for path in names_only(files):
+    for path in files:
         if node := canonical_entity_text(path):
             yield subject, code_facet_relation("file", fact_verbs), node
-    for concept in names_only(concepts):
+    for concept in concepts:
         if node := canonical_entity_text(concept):
             yield subject, code_facet_relation(classify_code_concept(concept), fact_verbs), node
-    for topic in names_only(topics):
+    for topic in topics:
         if node := canonical_entity_text(topic):
             yield subject, "about", node

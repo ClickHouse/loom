@@ -62,15 +62,15 @@ async def handle_facts_list(input: FactsListInput) -> FactsListOutput:
     # When set, it overrides subject/object so the caller can't
     # accidentally write a contradictory filter set.
     if input.entity is not None:
-        where.append("(subject = {ent:String} OR object = {ent:String})")
-        params["ent"] = input.entity.lower()
+        where.append("(subject IN {ent:Array(String)} OR object IN {ent:Array(String)})")
+        params["ent"] = _stored_spellings(input.entity)
     else:
         if input.subject is not None:
-            where.append("subject = {subj:String}")
-            params["subj"] = input.subject.lower()
+            where.append("subject IN {subj:Array(String)}")
+            params["subj"] = _stored_spellings(input.subject)
         if input.object is not None:
-            where.append("object = {obj:String}")
-            params["obj"] = input.object.lower()
+            where.append("object IN {obj:Array(String)}")
+            params["obj"] = _stored_spellings(input.object)
     if input.relation is not None:
         where.append("relation = {rel:String}")
         # Stored relations went through canonicalize_verb + canonical_relation
@@ -263,7 +263,7 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
     params: dict[str, Any] = {
         "org": input.org,
         "ns": input.namespace,
-        "ent": entity,
+        "ent": _stored_spellings(input.entity),
         "lim": input.top_k * 2,  # widen so we can collapse role=both
     }
     if input.as_of is not None:
@@ -284,7 +284,7 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
             FROM loom.entity_triples
             WHERE org = {{org:String}}
               AND namespace = {{ns:String}}
-              AND subject = {{ent:String}}
+              AND subject IN {{ent:Array(String)}}
               {validity_predicate}
             GROUP BY object
             UNION ALL
@@ -292,11 +292,11 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
             FROM loom.entity_triples
             WHERE org = {{org:String}}
               AND namespace = {{ns:String}}
-              AND object = {{ent:String}}
+              AND object IN {{ent:Array(String)}}
               {validity_predicate}
             GROUP BY subject
         )
-        WHERE neighbor != {{ent:String}}
+        WHERE neighbor NOT IN {{ent:Array(String)}}
         GROUP BY neighbor, role
         ORDER BY co_occur DESC
         LIMIT {{lim:UInt32}}
@@ -585,6 +585,14 @@ def _hub_lookup(ch: Any, org: str, namespace: str, hub_degree: int, hub_share: f
         return held, degree_of
 
     return _hubs
+
+
+def _stored_spellings(raw: str) -> list[str]:
+    """The spellings a stored node can have for `raw`: its canonical form, which every
+    writer stores, and `raw` lowered, which a facet row from build N-1 holds."""
+    from server.memory.domain.graph_quality import canonical_entity_text
+
+    return list(dict.fromkeys(v for v in (canonical_entity_text(raw), raw.strip().lower()) if v))
 
 
 def _seed_variants(seed: str, raw: str) -> list[str]:

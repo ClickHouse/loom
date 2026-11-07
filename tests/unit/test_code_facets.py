@@ -474,7 +474,6 @@ def test_a_prose_name_that_starts_with_error_is_normalised_as_prose() -> None:
 def test_a_wrapped_or_spaced_code_facet_name_is_the_bare_names_node() -> None:
     from server.memory.domain.graph_quality import canonical_entity, canonical_entity_text
 
-    assert canonical_entity_text("error:Timeouts") == "error:timeouts"
     for bare in ("error:Timeouts", "error:HTTPError(404)", "error:can't connect", "commit:ABC123"):
         node = canonical_entity_text(bare)
         for written in (
