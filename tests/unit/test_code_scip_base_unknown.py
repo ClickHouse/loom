@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from server.code.app.index import compiler_tier as shared
+from server.code.app.index import scip_delta  # noqa: F401 (bound before CodeRepo is patched)
 from server.code.workers import scip_go_delta as go_w
 from server.code.workers import scip_py_delta as py_w
 from tests.unit.code_fixtures import repo_config
