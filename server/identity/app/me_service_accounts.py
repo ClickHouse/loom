@@ -111,11 +111,19 @@ def _invalid(message: str) -> HTTPException:
 async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[str]) -> list[str]:
     """The restricted tracker records bound to `repos` that the caller holds a grant on and
     the parent token reaches; the history code ops read issues and PRs there."""
-    from server.tracker.app.binding import tracker_namespaces_for
+    from server.tracker.app.binding import (
+        operator_repositories,
+        refresh_overrides,
+        tracker_namespaces_for,
+    )
 
     out: list[str] = []
+    if not repos:
+        return out
+    await refresh_overrides()  # the links as of the refresh interval, branches included
+    operator = operator_repositories()  # once for every name
     for ns in repos:
-        for tracker in tracker_namespaces_for(ns):  # every linked tracker
+        for tracker in tracker_namespaces_for(org, ns, operator=operator):
             if tracker in out or tracker in repos or ceiling_role(parent, org, tracker) is None:
                 continue
             if not await namespace_classification.is_restricted(org, tracker):

@@ -215,7 +215,9 @@ def restricted(monkeypatch: pytest.MonkeyPatch, grants: dict) -> list[tuple[str,
 
     monkeypatch.setattr(nc, "is_restricted", _isr)
     monkeypatch.setattr(
-        binding, "tracker_namespaces_for", lambda ns: ["tracker-secret"] if ns == "secret" else []
+        binding,
+        "tracker_namespaces_for",
+        lambda org, ns, **_: ["tracker-secret"] if ns == "secret" else [],
     )
     monkeypatch.setattr(me_callers, "caller_role_on", _role)
     monkeypatch.setattr(token_grants, "grant_restricted_to_token", _grant)
@@ -296,7 +298,7 @@ async def test_a_standard_repository_brings_no_tracker_record(
     # `a` is standard but bound to the restricted record: a list reads what it ticks.
     import server.tracker.app.binding as binding
 
-    monkeypatch.setattr(binding, "tracker_namespaces_for", lambda ns: ["tracker-secret"])
+    monkeypatch.setattr(binding, "tracker_namespaces_for", lambda org, ns, **_: ["tracker-secret"])
     out = await _setup(monkeypatch, _caller(), {"namespaces": ["a"]})
     assert verify_token(out["token"]).namespaces == ("a",) and restricted == [
         (out["sa_subject"], {})
