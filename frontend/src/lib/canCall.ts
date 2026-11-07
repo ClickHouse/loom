@@ -36,8 +36,8 @@ import type { NamespaceRole } from "./namespaceRole";
 export type MinRole = "viewer" | "writer" | "admin";
 
 export interface OpGate {
-  min: MinRole;
-  by: "namespace" | "claim";
+  readonly min: MinRole;
+  readonly by: "namespace" | "claim";
 }
 
 // One shared object per gate: the table sits in the boot chunk, and a literal per entry
@@ -164,7 +164,7 @@ const RANK: Record<MinRole, number> = { viewer: 1, writer: 2, admin: 3 };
  */
 export function canCall(op: GatedOp, role: NamespaceRole | null, whoami: WhoAmI | null): boolean {
   if (hasAdminClaim(whoami)) return true;
-  const gate: OpGate = OP_MIN_ROLE[op];
+  const gate = OP_MIN_ROLE[op];
   if (gate.by === "claim") return false;
   if (role === null) return false;
   return RANK[role] >= RANK[gate.min];
