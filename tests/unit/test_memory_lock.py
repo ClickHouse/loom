@@ -262,7 +262,9 @@ async def _restate(monkeypatch: pytest.MonkeyPatch, existing: MemoryRow) -> dict
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("expires_in", "kept"), [(None, False), (timedelta(days=-1), False), (timedelta(days=2), True)]
+    ("expires_in", "kept"),
+    [(None, False), (timedelta(days=-1), False), (timedelta(days=2), True)],
+    ids=["no expiry", "lapsed expiry", "live expiry"],
 )
 async def test_a_read_only_restatement_lands_with_the_live_expiry_or_none(
     monkeypatch: pytest.MonkeyPatch, expires_in: timedelta | None, kept: bool
