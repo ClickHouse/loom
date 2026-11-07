@@ -1799,7 +1799,7 @@ class ErasureSettings(BaseModel):
     # `default` database for the exporter, and no erasure cascade.
     clickstack_database: Annotated[str, Field(pattern=r"^(?:[A-Za-z_][A-Za-z0-9_-]*)?$")] = ""
     # Comma-separated OTel Map attribute keys holding user_id, ORed in the delete.
-    clickstack_user_id_keys: str = "user_id,user.id,enduser.id"
+    clickstack_user_id_keys: str = "user_id,user.id,enduser.id,loom.user_id,langfuse.user.id"
     # Per-request seconds for external trace/chat backend lookups and deletes
     # during erasure.
     external_erasure_timeout_s: float = 30.0

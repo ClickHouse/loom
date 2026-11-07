@@ -45,8 +45,13 @@ Loom attaches a second span processor beside the ClickHouse exporter and forward
 OpenTelemetry span tree to Langfuse's OTLP endpoint. The trace carries the real nesting
 (the HTTP span, the handler, each generation), the session id and per-generation cost.
 A chat call is a `GENERATION` observation and an embedding call that reached the provider
-is an `EMBEDDING`; an embedding served from Loom's own cache is a plain span. With OTel
-disabled (`LOOM_OTEL_ENABLED=false`) no traces reach Langfuse.
+is an `EMBEDDING`; an embedding served from Loom's own cache is a plain span. Every span
+a request opens once its caller is resolved carries the request's user id, session id,
+`org:` and `namespace:` tags and trace name, because Langfuse 4 reads them per
+observation rather than from the trace root. These keys reach ClickStack's spans too.
+Each search stage (`search.<stage>`) is a `retriever` observation, one of the types
+Langfuse's agent-graph view is drawn from. With OTel disabled (`LOOM_OTEL_ENABLED=false`)
+no traces reach Langfuse.
 
 | Setting                                                                       | Default                                             | Effect                                                                                                   |
 | ----------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |

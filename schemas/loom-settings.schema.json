@@ -343,7 +343,7 @@
           "description": "The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse service: where `otel_exporter = \"ch\"` writes spans, logs and metrics, and where the erasure cascade deletes a user's rows with ALTER TABLE DELETE. \"\" = the `default` database for the exporter, and no erasure cascade."
         },
         "clickstack_user_id_keys": {
-          "default": "user_id,user.id,enduser.id",
+          "default": "user_id,user.id,enduser.id,loom.user_id,langfuse.user.id",
           "type": "string",
           "description": "Comma-separated OTel Map attribute keys holding user_id, ORed in the delete."
         },

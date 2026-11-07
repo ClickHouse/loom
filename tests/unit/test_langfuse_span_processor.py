@@ -50,6 +50,16 @@ class _RecordingInner:
         self.shut = True
 
 
+@pytest.fixture(autouse=True)
+def _no_request_identity() -> Any:
+    """Each test starts outside a request; another file's identity must not leak in."""
+    from server.observability import genai
+
+    token = genai._identity.set({})
+    yield
+    genai._identity.reset(token)
+
+
 def _proc(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> Any:
     defaults = {
         "langfuse_sample_rate": 1.0,
@@ -424,3 +434,96 @@ def test_a_raising_filter_does_not_stop_export(
     proc.on_end(_FakeSpan("llm.hyde"))
     assert inner.ended == ["llm.hyde"]
     assert proc.errors == 1
+
+
+class _WritableSpan(_FakeSpan):
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.attributes: dict[str, Any] = {}
+
+    def set_attribute(self, key: str, value: Any) -> None:
+        self.attributes[key] = value
+
+
+def test_every_forwarded_span_carries_the_request_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Langfuse 4 reads user, session and tags per observation, not from the root; the
+    tenant keys come along so ClickStack's erasure org guard can read them."""
+    from server.observability import genai
+
+    proc, inner = _proc(monkeypatch)
+    genai.set_identity(
+        org="o", namespace="ns", user_id="u1", session_id="s1", operation="memory.search"
+    )
+    span = _WritableSpan("search.anchor_pool")
+    proc.on_start(span, None)
+    assert span.attributes == {
+        "loom.operation": "memory.search",
+        "loom.org": "o",
+        "loom.namespace": "ns",
+        "loom.user_id": "u1",
+        "langfuse.session.id": "s1",
+        "langfuse.user.id": "u1",
+        "langfuse.trace.tags": ["org:o", "namespace:ns"],
+        "langfuse.trace.name": "memory.search",
+    }
+    assert inner.started == 1
+
+
+def test_a_span_that_rejects_attributes_still_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.observability import genai
+
+    proc, inner = _proc(monkeypatch)
+    genai.set_identity(org="o", namespace="ns")
+    proc.on_start(_FakeSpan("x"), None)  # no set_attribute
+    assert inner.started == 1 and proc.errors == 1
+
+
+def test_a_prompt_linked_generation_keeps_its_prompt_tag_after_the_start_stamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The processor stamps identity tags when the span starts; `record_content`
+    sets the prompt-version tag later on the same span, and that is the list
+    exported. `prompts.evaluate` finds a version's traces by this tag."""
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from server.observability import genai
+
+    monkeypatch.setattr(otel_langfuse.settings, "langfuse_sample_rate", 1.0)
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(
+        otel_langfuse._langfuse_processor_class()(
+            SimpleSpanProcessor(exporter), otel_langfuse._LangfuseSpanFilter()
+        )
+    )
+    monkeypatch.setattr(trace, "get_tracer", lambda name, *a, **k: provider.get_tracer(name))
+    monkeypatch.setattr(genai, "_prompt_identity", lambda system: ("deadbeefcafe", "loom-p", 3))
+    genai.set_identity(org="o", namespace="ns", user_id="u1", operation="memory.ask")
+    with genai.generation_span(provider="openai", model="gpt-4o-mini") as g:
+        g.record_content(system="registered prompt", user="q", output="a")
+    (span,) = [s for s in exporter.get_finished_spans() if s.name.startswith("llm.")]
+    assert list(span.attributes["langfuse.trace.tags"]) == [
+        "org:o",
+        "namespace:ns",
+        "prompt:loom-p:3",
+    ]
+
+
+def test_a_user_without_an_org_is_stamped_with_the_no_org_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ClickStack's user erasure admits a row with no `loom.org`; a user id stamped
+    without one would be erased for any org's user of the same id."""
+    from server.observability import genai
+
+    proc, _inner = _proc(monkeypatch)
+    genai.set_identity(org="-", user_id="u1", operation="code.repos")
+    span = _WritableSpan("code.repos.read")
+    proc.on_start(span, None)
+    assert span.attributes["loom.org"] == "-"
+    assert span.attributes["langfuse.user.id"] == "u1"

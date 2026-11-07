@@ -553,7 +553,8 @@ def set_loom_attributes(
     to filter in HyperDX by tenant or op. No-op when no span is
     active (OTel disabled or exporter unconfigured).
 
-    Also publishes the identity to a ContextVar that the provider spans read.
+    Also publishes the identity to a ContextVar that the spans the request opens
+    read (each model-call span, and with Langfuse configured every span).
     OTel children do NOT inherit a parent's attributes, so without that every
     `llm.*` and `embed.*` span would carry an empty `loom.operation`, and "which
     namespace is burning LLM spend" would be unanswerable from traces.

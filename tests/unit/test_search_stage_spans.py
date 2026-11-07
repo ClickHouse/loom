@@ -52,6 +52,7 @@ async def test_an_active_arm_gets_a_span_with_its_result_count(in_memory_spans: 
     assert span.name == "search.anchor_pool"
     assert dict(span.attributes) == {
         "loom.search.namespaces": 2,
+        "langfuse.observation.type": "retriever",
         "loom.search.added": 3,
         "loom.search.pool": 5,
     }

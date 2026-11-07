@@ -290,6 +290,7 @@ async def _dispatch_batch(
     one's attributes and only the last would survive (a batch whose first
     search abstains would be recorded as not abstaining). A refusal the
     entries repeat is ledgered once (`mcp_ledger.one_refusal_row_each`)."""
+    from server.observability import genai
     from server.observability.otel import traced
     from server.transport.mcp_ledger import one_refusal_row_each
 
@@ -297,6 +298,10 @@ async def _dispatch_batch(
     with one_refusal_row_each():
         for i, req in enumerate(payload):
             method = str(req.get("method", "") or "") if isinstance(req, dict) else ""
+            # The entries share one task, and the Langfuse span processor stamps
+            # the published identity on every span: drop the previous entry's
+            # before this entry's span opens. Each entry publishes its own.
+            genai.set_identity()
             with traced("mcp.batch.entry", rpc_method=method, batch_index=i):
                 resp = await dispatch(req)
             if resp is not None:

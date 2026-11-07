@@ -44,6 +44,7 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 
 | Release | Variable | Was | Is | Why |
 | --- | --- | --- | --- | --- |
+| 1.2.0 | `LOOM_CLICKSTACK_USER_ID_KEYS` | `'user_id,user.id,enduser.id'` | `'user_id,user.id,enduser.id,loom.user_id,langfuse.user.id'` | A user-scoped ClickStack erasure also matches the user-id keys Loom's own child spans carry, so they are erased with the request span. A deployment that sets the variable keeps its own list and should add both keys. |
 | 1.0.0 | `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `3` | `8` | A failed replay now waits 15 s, 1, 5, then 30 minutes before the next attempt, and an unreachable provider spends none: eight attempts span about two hours instead of three back to back. |
 
 ## Auth
@@ -728,7 +729,7 @@ Erasure: saga recovery, reclaim, purge and the external backends it cascades to.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CLICKSTACK_DATABASE` | `str` | `''` |  | The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse service: where `otel_exporter = "ch"` writes spans, logs and metrics, and where the erasure cascade deletes a user's rows with ALTER TABLE DELETE. "" = the `default` database for the exporter, and no erasure cascade. |
-| `LOOM_CLICKSTACK_USER_ID_KEYS` | `str` | `'user_id,user.id,enduser.id'` |  | Comma-separated OTel Map attribute keys holding user_id, ORed in the delete. |
+| `LOOM_CLICKSTACK_USER_ID_KEYS` | `str` | `'user_id,user.id,enduser.id,loom.user_id,langfuse.user.id'` |  | Comma-separated OTel Map attribute keys holding user_id, ORed in the delete. |
 | `LOOM_EXTERNAL_ERASURE_TIMEOUT_S` | `float` | `30.0` |  | Per-request seconds for external trace/chat backend lookups and deletes during erasure. |
 
 ## Extraction

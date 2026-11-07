@@ -55,3 +55,41 @@ def test_a_code_call_resolves_consent_and_spans_under_the_plane(
     assert out["result"]["isError"] is False, out
     assert consent == [("acme", "code-acme")]
     assert spans and all((s["org"], s["namespace"]) == ("acme", "code-acme") for s in spans)
+
+
+def test_a_batch_entry_span_carries_none_of_the_previous_entrys_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A JSON-RPC batch shares one task, and the Langfuse span processor stamps
+    the published identity on every span it starts. Entry 2's span, and anything
+    it opens before publishing its own identity, must carry none of entry 1's."""
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from server.observability import genai, otel_langfuse
+    from server.transport import mcp
+
+    monkeypatch.setattr(otel_langfuse.settings, "langfuse_sample_rate", 1.0)
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(
+        otel_langfuse._langfuse_processor_class()(
+            SimpleSpanProcessor(exporter), otel_langfuse._LangfuseSpanFilter()
+        )
+    )
+    monkeypatch.setattr(trace, "get_tracer", lambda name, *a, **k: provider.get_tracer(name))
+
+    async def _dispatch(req: Any) -> dict[str, Any]:
+        if req["id"] == 1:  # entry 1 publishes its tenant, as a tools/call does
+            genai.set_identity(org="acme", namespace="ns-a", user_id="u-a", session_id="s-a")
+        return {"jsonrpc": "2.0", "id": req["id"], "result": {}}
+
+    batch = [{"id": 1, "method": "tools/call"}, {"id": 2, "method": "resources/read"}]
+    asyncio.run(mcp._dispatch_batch(batch, _dispatch))
+    second = next(
+        sp for sp in exporter.get_finished_spans() if sp.attributes.get("batch_index") == 1
+    )
+    leaked = {k: v for k, v in second.attributes.items() if k.startswith(("loom.", "langfuse."))}
+    assert leaked == {}, leaked
