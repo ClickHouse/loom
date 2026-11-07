@@ -441,23 +441,37 @@ def _normalise(lowered: str) -> str:
 
 # A commit or error facet ("commit:<sha>", "error:<name>") names an identifier: it is
 # case-folded, its blanks collapse to one space and its wrapping is trimmed (a leading
-# article, a closing dot, an outer pair of quotes or brackets), but it is never
+# article, a closing dot, a matched outer pair of quotes or brackets), but it is never
 # singularised and its own punctuation stays ("error:httperror(404)"). A blank right
 # after the colon reads as prose ("Error: the build failed"), normalised as usual.
 _CODE_FACET_NAME = re.compile(r"(?:commit|error):\S")
-_PAIRS = {"(": ")", "[": "]", "{": "}", "<": ">", "`": "`", '"': '"', "'": "'", "“": "”", "‘": "’"}
+_BRACKETS = {"(": ")", "[": "]", "{": "}", "<": ">"}
+_QUOTES = {"`": "`", '"': '"', "'": "'", "“": "”", "‘": "’"}
+
+
+def _wrapped(text: str) -> bool:
+    """Whether `text` is one pair of quotes around something, or a bracket whose match is
+    its last character (`(a(b))` is, `(a) (b)` is not)."""
+    if len(text) < 2:
+        return False
+    if _QUOTES.get(text[0]) == text[-1]:
+        return True
+    closer = _BRACKETS.get(text[0])
+    if closer is None or text[-1] != closer:
+        return False
+    depth = 0
+    for i, char in enumerate(text):
+        depth += (char == text[0]) - (char == closer)
+        if depth == 0:
+            return i == len(text) - 1
+    return False
 
 
 def _code_facet_name(folded: str) -> str | None:
     """`folded` as a commit or error facet name, or None when it is not one."""
-    text = _SPACE_RE.sub(" ", folded)
-    while True:
-        text = _lead(text).rstrip(" .")
-        inner = text[1:-1]
-        closer = _PAIRS.get(text[:1])
-        if closer is None or text[-1] != closer or text[0] in inner or closer in inner:
-            break
-        text = inner
+    text = _lead(_SPACE_RE.sub(" ", folded)).rstrip(" .")
+    while _wrapped(text):
+        text = _lead(text[1:-1]).rstrip(" .")
     return text if _CODE_FACET_NAME.match(text) else None
 
 

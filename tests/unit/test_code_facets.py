@@ -497,11 +497,21 @@ def test_a_wrapped_or_spaced_code_facet_name_is_the_bare_names_node() -> None:
     from server.memory.domain.graph_quality import canonical_entity, canonical_entity_text
 
     for written in (
-        "`error:Timeouts`",
-        '"error:Timeouts"',
-        "the error:Timeouts",
         "error:Timeouts.",
         " error:Timeouts ",
+        "the error:Timeouts",
+        "(`error:Timeouts`).",
     ):
         assert canonical_entity_text(written) == "error:timeouts", written
+    for bare in (
+        "error:HTTPError(404)",
+        "error:List[int]",
+        "error:<lambda>",
+        "error:can't connect",
+    ):
+        assert canonical_entity_text(bare) == bare.lower(), bare
+        for written in (f"`{bare}`", f"({bare})", f"(({bare}))", f"'{bare}'", f"the [{bare}]."):
+            assert canonical_entity_text(written) == bare.lower(), written
+    # Two bracketed parts are not one wrapped name.
+    assert canonical_entity_text("(error:a) or (b)") != "error:a) or (b"
     assert canonical_entity("error:a \t b").entity_id == "error:a_b"
