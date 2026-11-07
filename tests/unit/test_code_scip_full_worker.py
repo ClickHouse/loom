@@ -90,7 +90,11 @@ async def test_a_full_run_on_a_stale_compile_database_fails_the_full_record(tmp_
         )
     assert res.deltas_applied == 1 and not res.errors
     (_, _, ns, tier, err) = record.await_args.args
+    from server.code.app.index.tier_health import error_text
+    from server.code.domain.index.tier_health import classify
+
     assert (ns, tier) == ("code-a", "clang_full") and "a package is missing" in str(err)
+    assert classify(error_text(err)) == "cmake"
 
 
 @pytest.mark.asyncio

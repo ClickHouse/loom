@@ -57,10 +57,8 @@ fi
 reconfigure() {
   if [[ -z "${CONFIGURED:-}" ]]; then
     echo ">> cmake reconfigure (compile_commands.json): $1"
-    if cmake -B build -S . >"$WORK/cmake.log" 2>&1; then
-      rm -f "$STALE"
-    else
-      rm -f "$STALE"
+    rm -f "$STALE"
+    if ! cmake -B build -S . >"$WORK/cmake.log" 2>&1; then
       : >"$STALE"
       tail -n 20 "$WORK/cmake.log" >"$WORK/cmake.tail"
       echo ">> CMake exited non-zero; indexing with the last compile_commands.json" >&2

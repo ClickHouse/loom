@@ -177,7 +177,9 @@ async def test_a_delta_on_a_stale_compile_database_fails_the_tier_record(monkeyp
     assert not res.errors
     (_, _, ns, tier, err) = record.await_args.args
     assert (ns, tier) == ("code-clickhouse", "clang")
-    assert "a package is missing" in str(err) and classify(str(err)) == "cmake"
+    from server.code.app.index.tier_health import error_text
+
+    assert "a package is missing" in str(err) and classify(error_text(err)) == "cmake"
     res, record = await _stale_pass(monkeypatch, tmp_path, out=b">> 3 TUs to index\n")
     assert not res.errors and record.await_args.args[3:] == ("clang",)
 

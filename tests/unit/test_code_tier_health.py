@@ -76,6 +76,12 @@ FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).t
             "cmake: CMake Error: Could not resolve host: h",
             "cmake",
         ),
+        # as a worker's TierDegraded is stored (`error_text`)
+        (
+            "TierDegraded: stale compile database: cmake reconfigure failed\n"
+            "cmake: CMake Error: Could not resolve host: h",
+            "cmake",
+        ),
         # a failed run whose output mentions CMake is classified by its own failure
         (
             "harness exit 1: >> CMake exited non-zero; indexing with the last "

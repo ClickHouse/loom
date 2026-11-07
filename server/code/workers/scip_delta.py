@@ -164,7 +164,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
             check_held()
             await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
             raise_if_stale_compdb(out)
-            return None
+            return
 
         from server.code.app.index.scip_delta import ScipDelta, apply_delta
 
@@ -183,4 +183,3 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
         stats.model_dump(),
     )
     raise_if_stale_compdb(out)
-    return None
