@@ -31,7 +31,7 @@ import { IconButton } from "../components/IconButton";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { RowSkeleton, Skeleton, SkeletonCard } from "../components/Skeleton";
-import { toast } from "../components/Toast";
+import { type ToastKind, toast } from "../components/Toast";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
@@ -353,6 +353,18 @@ function useJoinActions(onChanged: () => void) {
   return { busy, join, cancel, leave, joinAll, leaveAll, applyPlan };
 }
 
+/** The toast that confirms a tracker link; with the server's warning (trackers that do not
+ *  cover the repository, branches that read the links too) it stays long enough to read. */
+export function linkedToast(
+  repo: string,
+  out: { tracker_namespaces: string[]; warning: string },
+): [string, ToastKind, { durationMs?: number }] {
+  const done = out.tracker_namespaces.length
+    ? `${repo} reads ${out.tracker_namespaces.join(" + ")}`
+    : `${repo} unlinked`;
+  return out.warning ? [`${done}. ${out.warning}`, "info", { durationMs: 15000 }] : [done, "ok", {}];
+}
+
 /** How `/v1/health` reports a deployment without the repository-job sandbox, where adding
  *  a repository or branch from the page is refused (`SANDBOX_UNAVAILABLE`): "warn" while
  *  LOOM_CODE_REPOS_JSON entries still index, "error" when LOOM_CODE_SANDBOX_REQUIRED
@@ -467,16 +479,7 @@ function RepositoriesHome({
   const bindSource = async (g: RepoGroup, tracker_namespaces: string[]) => {
     try {
       const out = await setCodeRepoSource(g.primary.org, g.primary.namespace, tracker_namespaces);
-      // the card's tracker lines say what each link means; the toast confirms, with the
-      // server's warning (trackers that do not cover the repository, branches that read the
-      // links too) underneath
-      toast(
-        out.tracker_namespaces.length
-          ? `${g.primary.repo} reads ${out.tracker_namespaces.join(" + ")}`
-          : `${g.primary.repo} unlinked`,
-        "ok",
-        out.warning ? { detail: out.warning } : {},
-      );
+      toast(...linkedToast(g.primary.repo, out));
       onChanged();
     } catch (e) {
       toast(`Couldn't link the tracker: ${humanizeError(e)}`, "error");

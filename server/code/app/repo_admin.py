@@ -530,11 +530,10 @@ async def _empty_tracker_links(org: str, namespace: str, *, detail: str) -> None
     from server.tracker.app import binding
 
     repo = CodeRepo()
-    for key in (binding.BRANCH_OF_KEY, binding.OVERRIDE_KEY):
-        with own_write_reads():  # a link written a moment ago on another replica counts
-            value = await repo.get_state_or_none(org, namespace, key)
-        if value:
-            await repo.set_state(org, namespace, key, "", detail=detail)
+    with own_write_reads():  # a link written a moment ago on another replica counts
+        for key in (binding.BRANCH_OF_KEY, binding.OVERRIDE_KEY):
+            if await repo.get_state_or_none(org, namespace, key):
+                await repo.set_state(org, namespace, key, "", detail=detail)
     binding.forget_links(org, namespace)
 
 

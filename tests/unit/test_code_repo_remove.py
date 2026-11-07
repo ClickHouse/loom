@@ -489,3 +489,32 @@ async def test_remove_writes_no_qa_binding_row_for_a_namespace_that_had_none(
     assert [r for r in plane.states if r[2] in keys] == [
         (ORG, "code-widgets", binding.BRANCH_OF_KEY, "")
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_link_clear_stops_the_removal_before_it_deactivates_anything(
+    plane, monkeypatch
+) -> None:
+    """The clear runs first so a failure leaves the repository registered to retry: no
+    source, registry row or purge is touched."""
+    import server.code.store.index as code_repo_mod
+    from server.knowledge.app import sources
+    from server.tracker.app import binding
+
+    touched: list[str] = []
+
+    async def _boom(self: Any, org: str, ns: str, key: str, value: str, detail: str = "") -> None:
+        raise RuntimeError("store write failed")
+
+    async def _sources(*a: Any, **k: Any) -> Any:
+        touched.append("sources")
+
+    monkeypatch.setattr(code_repo_mod.CodeRepo, "set_state", _boom)
+    monkeypatch.setattr(sources, "deactivate_namespace_sources", _sources)
+    plane.stored[(ORG, "code-widgets", binding.OVERRIDE_KEY)] = "tracker-widgets"
+    with pytest.raises(RuntimeError, match="store write failed"):
+        await admin.handle_code_repo_remove(
+            CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        )
+    assert touched == []
+    assert plane.registry_active and plane.inserted == [] and plane.sagas == []

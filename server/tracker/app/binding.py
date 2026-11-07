@@ -147,22 +147,29 @@ def forget_links(org: str, code_namespace: str) -> None:
 
 def branches_following(org: str, code_namespace: str) -> list[str]:
     """The branches that read the org's operator repository's links too, as of the last
-    refresh: registered, naming it in `qa_branch_of`, with no `qa_binding` of their own
-    and not operator repositories themselves (the same test `tracker_namespaces_for`
-    makes)."""
+    refresh (`_followed_root`, the test `tracker_namespaces_for` makes)."""
     operator = operator_repositories()
     if (org, code_namespace) not in operator:
         return []
-    registered = repos.registry_namespaces()
     return sorted(
-        ns
-        for (o, ns), root in _BRANCH_OF.items()
-        if o == org
-        and (o, ns) not in operator
-        and root == code_namespace
-        and (o, ns) in registered
-        and override_for(o, ns) is None
+        ns for o, ns in _BRANCH_OF if o == org and _followed_root(o, ns, operator) == code_namespace
     )
+
+
+def _followed_root(org: str, code_namespace: str, operator: Collection[tuple[str, str]]) -> str:
+    """The operator repository whose links a branch reads, or "": a registered branch
+    that is not an operator entry, has no `qa_binding` of its own, and whose
+    `qa_branch_of` names an operator entry. One level: the root is an operator entry."""
+    root = _BRANCH_OF.get((org, code_namespace), "")
+    if (
+        not root
+        or (org, code_namespace) in operator
+        or override_for(org, code_namespace) is not None
+        or (org, root) not in operator
+        or (org, code_namespace) not in repos.registry_namespaces()
+    ):
+        return ""
+    return root
 
 
 def override_for(org: str, code_namespace: str) -> str | None:
@@ -203,21 +210,15 @@ def tracker_namespaces_for(
     over = override_for(org, code_namespace)
     if over is not None:
         return parse_binding(over)
-    source = _BRANCH_OF.get((org, code_namespace), "")
     m = bindings()
-    if not m and not source:
+    if not m and (org, code_namespace) not in _BRANCH_OF:
         return []
     if operator is None:
         operator = operator_repositories()
     if (org, code_namespace) not in operator:
-        # A registered branch reads its operator repository's trackers, one level.
-        if (
-            source
-            and (org, source) in operator
-            and (org, code_namespace) in repos.registry_namespaces()
-        ):
-            return tracker_namespaces_for(org, source, operator=operator)
-        return []
+        # A registered branch reads its operator repository's trackers.
+        root = _followed_root(org, code_namespace, operator)
+        return tracker_namespaces_for(org, root, operator=operator) if root else []
     if code_namespace in m:
         return parse_binding(m[code_namespace])
     for pattern, target in m.items():
@@ -384,7 +385,9 @@ __all__ = [
     "encode_binding",
     "forget_links",
     "operator_repositories",
+    "override_for",
     "parse_binding",
+    "refresh_overrides",
     "resolve_binding",
     "tracker_namespace_for",
     "tracker_namespaces_for",
