@@ -142,7 +142,8 @@ async def _resolve_key(
     org: str, inbox: str, posted_by_me: bool, from_subject: str, auth: Any
 ) -> tuple[str, str | None, str | None]:
     """(wake-up key, inbox filter, from_subject filter) for the side asked for,
-    after the handlers' authorization rule."""
+    after the handlers' authorization rule; an admitted inbox watch leaves the
+    restricted-access row for the inbox's owner namespace."""
     from server.auth.authz import may_act_in_org
     from server.identity.app.restricted_access import note_restricted_access
     from server.tasks.app.common import _caller_subject, _in_scope

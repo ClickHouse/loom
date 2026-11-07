@@ -282,20 +282,25 @@ async def _loom_primer_text(
     profile_section = ""
     if include_profile and defaults and defaults["namespace"]:
         try:
+            from server.auth.context import current_auth_var
             from server.identity.app.namespace_classification import is_restricted
             from server.identity.app.restricted_access import note_restricted_access
             from server.memory.api.models_profile import ProfileRenderInput
             from server.memory.app.profile import handle_profile_render
 
-            # outside the op gate, which a single-user default never passed
+            # fills the snapshot the row reads; no gate classified this default
             if await is_restricted(defaults["org"], defaults["namespace"]):
-                await note_restricted_access(
-                    auth,
-                    op="mcp.primer",
-                    org=defaults["org"],
-                    namespace=defaults["namespace"],
-                    transport="mcp",
-                )
+                bound = current_auth_var.set(auth)  # the row's token_id column
+                try:
+                    await note_restricted_access(
+                        auth,
+                        op="mcp.primer",
+                        org=defaults["org"],
+                        namespace=defaults["namespace"],
+                        transport="mcp",
+                    )
+                finally:
+                    current_auth_var.reset(bound)
             rendered_out = await handle_profile_render(
                 ProfileRenderInput(
                     org=defaults["org"],

@@ -43,8 +43,8 @@ def audit_rows(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, dict
     """`NS` is restricted, alice's bearer verifies, and every audit row lands here."""
     from server.settings import settings
 
-    nc.reset()
-    nc._cache[ORG] = (1e12, frozenset({NS}))
+    # restored after the test, whatever the test does to it
+    monkeypatch.setattr(nc, "_cache", {ORG: (1e12, frozenset({NS}))})
     rows: list[tuple[str, dict[str, Any]]] = []
 
     async def _emit(event_type: str, **kw: Any) -> str:
@@ -65,7 +65,6 @@ def audit_rows(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, dict
     )
     monkeypatch.setattr("server.auth.bearer.verify_token", lambda token: alice)
     yield rows
-    nc.reset()
 
 
 def _admit_all(monkeypatch: pytest.MonkeyPatch, module: Any) -> None:
@@ -81,6 +80,42 @@ def _assert_one_row(rows: list[tuple[str, dict[str, Any]]], op: str, namespace: 
     assert (kw["org"], kw["namespace"]) == (ORG, namespace)
     assert kw["subject"]["op"] == op and kw["subject"]["transport"] == "http"
     assert kw["actor"] == actor_for("alice", is_service_account=False)  # the caller
+
+
+class _Directory:
+    """A ClickHouse client that answers the classification read: `NS` is restricted."""
+
+    _client = object()
+
+    async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, str]]:
+        return [{"namespace": NS}]
+
+
+@pytest.fixture
+def cold_directory(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Call to empty the classification cache and answer its read from `_Directory`."""
+    import server.core.ch as ch
+
+    def _install() -> None:
+        monkeypatch.setattr(nc, "_cache", {})
+        monkeypatch.setattr(ch, "get_client", lambda: _Directory())
+
+    return _install
+
+
+async def _no_doc(*_a: Any, **_k: Any) -> None:
+    return None
+
+
+async def _inbox(org: str, inbox: str) -> dict[str, Any]:
+    return {"org": org, "inbox": inbox, "owner_namespace": NS}
+
+
+class _Rendered:
+    """An empty profile render."""
+
+    section_count = 0
+    rendered = ""
 
 
 def _client(module: Any) -> AsyncClient:
@@ -107,9 +142,6 @@ async def test_an_admitted_download_writes_the_audit_row(
     from server.knowledge.store import documents as documents_repo
 
     _admit_all(monkeypatch, download_routes)
-
-    async def _no_doc(*_a: Any, **_k: Any) -> None:
-        return None
 
     monkeypatch.setattr(documents_repo, "get_one", _no_doc)
     async with _client(download_routes) as c:
@@ -175,9 +207,6 @@ async def test_an_admitted_inbox_watch_writes_the_audit_row_for_the_owner_namesp
     from server.tasks.app import watch_routes
     from server.tasks.store import repo
 
-    async def _inbox(org: str, inbox: str) -> dict[str, Any]:
-        return {"org": org, "inbox": inbox, "owner_namespace": NS}
-
     async def _in_scope(
         org: str, namespace: str, *, write: bool, hides_answer: bool = True
     ) -> bool:
@@ -202,30 +231,18 @@ async def test_an_admitted_inbox_watch_writes_the_audit_row_for_the_owner_namesp
 
 @pytest.mark.asyncio
 async def test_the_real_check_fills_the_snapshot_the_audit_row_reads(
-    monkeypatch: pytest.MonkeyPatch, audit_rows: list[Any]
+    monkeypatch: pytest.MonkeyPatch, audit_rows: list[Any], cold_directory: Any
 ) -> None:
     """Cold classification cache, real `check_authorized`: the check reads the
     directory, and the row is written from what it read."""
     import server.auth.authz as authz
-    import server.core.ch as ch
     from server.knowledge.app import download_routes
     from server.knowledge.store import documents as documents_repo
-
-    nc.reset()
-
-    class _Directory:
-        _client = object()
-
-        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, str]]:
-            return [{"namespace": NS}]
 
     async def _direct_grant(org: str, namespace: str, subject: str) -> Role:
         return Role.WRITER
 
-    async def _no_doc(*_a: Any, **_k: Any) -> None:
-        return None
-
-    monkeypatch.setattr(ch, "get_client", lambda: _Directory())
+    cold_directory()
     monkeypatch.setattr(authz, "grant_role_for", _direct_grant)
     monkeypatch.setattr(documents_repo, "get_one", _no_doc)
     async with _client(download_routes) as c:
@@ -240,33 +257,21 @@ async def test_the_real_check_fills_the_snapshot_the_audit_row_reads(
 
 @pytest.mark.asyncio
 async def test_the_real_inbox_check_fills_the_snapshot_the_audit_row_reads(
-    monkeypatch: pytest.MonkeyPatch, audit_rows: list[Any]
+    monkeypatch: pytest.MonkeyPatch, audit_rows: list[Any], cold_directory: Any
 ) -> None:
     """Cold classification cache, real `row_in_scope`: the owner namespace's
     classification is read by the check and the row is written for it."""
     import server.auth.authz as authz
-    import server.core.ch as ch
     from server.tasks.app import watch_routes
     from server.tasks.store import repo
-
-    nc.reset()
-
-    class _Directory:
-        _client = object()
-
-        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, str]]:
-            return [{"namespace": NS}]
 
     async def _direct_grant(org: str, namespace: str, subject: str) -> Role:
         return Role.WRITER
 
-    async def _inbox(org: str, inbox: str) -> dict[str, Any]:
-        return {"org": org, "inbox": inbox, "owner_namespace": NS}
-
     async def _no_events(org: str, **_k: Any) -> list[Any]:
         return []
 
-    monkeypatch.setattr(ch, "get_client", lambda: _Directory())
+    cold_directory()
     monkeypatch.setattr(authz, "grant_role_for", _direct_grant)
     monkeypatch.setattr(repo, "fetch_inbox_row", _inbox)
     monkeypatch.setattr(repo, "events_since", _no_events)
@@ -289,9 +294,6 @@ async def test_a_standard_namespace_writes_no_audit_row(
     from server.knowledge.store import documents as documents_repo
 
     _admit_all(monkeypatch, download_routes)
-
-    async def _no_doc(*_a: Any, **_k: Any) -> None:
-        return None
 
     monkeypatch.setattr(documents_repo, "get_one", _no_doc)
     async with _client(download_routes) as c:
@@ -344,9 +346,6 @@ async def test_a_refused_inbox_watch_writes_no_audit_row(
     from server.tasks.app import common as task_common
     from server.tasks.app import watch_routes
     from server.tasks.store import repo
-
-    async def _inbox(org: str, inbox: str) -> dict[str, Any]:
-        return {"org": org, "inbox": inbox, "owner_namespace": NS}
 
     async def _in_scope(
         org: str, namespace: str, *, write: bool, hides_answer: bool = True
@@ -440,12 +439,12 @@ async def test_a_service_account_mint_onto_a_restricted_namespace_writes_the_aud
 async def test_a_setup_mint_onto_a_restricted_namespace_writes_the_audit_row(
     monkeypatch: pytest.MonkeyPatch, mint_env: Any, audit_rows: list[Any]
 ) -> None:
+    from server.identity.app import me_callers
+
     _, me_setup = mint_env
 
     async def _restricted(org: str, subject: str, raw: object) -> list[str]:
         return [NS, "other"]
-
-    from server.identity.app import me_callers
 
     async def _nothing(*_a: Any, **_k: Any) -> None:
         return None
@@ -486,10 +485,6 @@ async def test_the_mcp_primer_profile_read_writes_the_audit_row(
     from server.memory.app import profile
     from server.transport import mcp_primer
 
-    class _Rendered:
-        section_count = 0
-        rendered = ""
-
     async def _render(_input: Any) -> _Rendered:
         return _Rendered()
 
@@ -499,6 +494,7 @@ async def test_the_mcp_primer_profile_read_writes_the_audit_row(
     )
     await mcp_primer._loom_primer_text(alice, defaults={"org": ORG, "namespace": NS})
     ((event, kw),) = audit_rows
+    assert kw["bound"] is alice
     assert (event, kw["namespace"], kw["subject"]["op"], kw["subject"]["transport"]) == (
         "namespace.restricted_access",
         NS,
@@ -509,28 +505,20 @@ async def test_the_mcp_primer_profile_read_writes_the_audit_row(
 
 @pytest.mark.asyncio
 async def test_a_mint_from_a_cold_snapshot_writes_the_audit_row(
-    monkeypatch: pytest.MonkeyPatch, mint_env: Any, audit_rows: list[Any]
+    monkeypatch: pytest.MonkeyPatch, mint_env: Any, audit_rows: list[Any], cold_directory: Any
 ) -> None:
     """The real grant write reads the classification, which fills the snapshot
     the row reads."""
-    import server.core.ch as ch
     from server.identity.store import grants as grants_repo
 
     me_service_accounts, _ = mint_env
-
-    class _Directory:
-        _client = object()
-
-        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, str]]:
-            return [{"namespace": NS}]
 
     async def _written(rows: list[dict[str, Any]]) -> None:
         return None
 
     monkeypatch.setattr(token_grants, "grant_restricted_to_token", _REAL_GRANT_TO_TOKEN)
     monkeypatch.setattr(grants_repo, "insert_rows", _written)
-    monkeypatch.setattr(ch, "get_client", lambda: _Directory())
-    monkeypatch.setattr(nc, "_cache", {})
+    cold_directory()
     async with _client(me_service_accounts) as c:
         r = await c.post(
             "/v1/me/service_accounts.create",
@@ -575,10 +563,6 @@ async def test_the_mcp_primer_profile_read_of_a_standard_namespace_writes_no_row
 ) -> None:
     from server.memory.app import profile
     from server.transport import mcp_primer
-
-    class _Rendered:
-        section_count = 0
-        rendered = ""
 
     async def _render(_input: Any) -> _Rendered:
         return _Rendered()
