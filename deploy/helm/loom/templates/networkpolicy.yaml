@@ -2,6 +2,9 @@
 {{- if not (or (kindIs "invalid" $guard) (kindIs "bool" $guard)) }}
 {{- fail "networkPolicy.guardMetadata must be true or false" }}
 {{- end }}
+{{- if not (kindIs "slice" (.Values.networkPolicy.egressExcept | default list)) }}
+{{- fail "networkPolicy.egressExcept must be a list of CIDRs" }}
+{{- end }}
 {{- /* Off: every pod and every address but `egressExcept`; pods are named apart
 because engines differ on whether an ipBlock matches pod IPs. A missing
 `guardMetadata` counts as on: `helm upgrade --reuse-values` keeps the old values. */}}

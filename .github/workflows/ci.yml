@@ -431,6 +431,7 @@ jobs:
           refused "networkPolicy.guardMetadata must be true or false" --set-string networkPolicy.guardMetadata=false
           refused "networkPolicy.guardMetadata must be true or false" --set networkPolicy.guardMetadata=0
           refused "networkPolicy.guardMetadata must be true or false" --set networkPolicy.enabled=true --set-string networkPolicy.guardMetadata=true
+          refused "networkPolicy.egressExcept must be a list of CIDRs" --set networkPolicy.egressExcept=169.254.169.254/32
       - name: install PyYAML for the render gates
         run: python3 -m pip install --quiet --user pyyaml==6.0.3
       # What the extractor's pods can be reached by and reach, read off the render.
