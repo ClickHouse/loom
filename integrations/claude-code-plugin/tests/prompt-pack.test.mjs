@@ -62,6 +62,19 @@ test("the index is asked about the request, not about how to answer it", async (
   const plain = "where is the merge selector decided? Do not edit anything.";
   assert.equal(searchQuery(plain), "where is the merge selector decided?");
   assert.equal(searchQuery("why is FINAL slow on ReplacingMergeTree"), "why is FINAL slow on ReplacingMergeTree");
+  assert.equal(
+    searchQuery("<task>\n\n  why does the merge selector skip small parts?  \n\n</task>"),
+    "why does the merge selector skip small parts?",
+  );
+});
+
+test("a wrapper tag followed by a long whitespace run and no close tag is matched in linear time", async () => {
+  const { searchQuery } = await import("../lib/prompt-pack.mjs");
+  const prompt = "please look at this <task>" + " ".repeat(2000) + "why";
+  const start = performance.now();
+  shouldAsk(prompt);
+  searchQuery(prompt);
+  assert.ok(performance.now() - start < 500, "the wrapper match backtracks over the whitespace run");
 });
 
 test("a question about a change in history gets no code pointers", async () => {

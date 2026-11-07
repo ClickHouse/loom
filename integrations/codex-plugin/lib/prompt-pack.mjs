@@ -27,8 +27,8 @@ export function shouldAsk(prompt, minChars = MIN_PROMPT_CHARS) {
 const HISTORY_RE =
   /\b(which|what)\s+(change|commit|pr|pull request|release|version)\b|\bwhen did\b|\bsince (which|what)\b|\b(introduced|regressed) (by|in)\b/i;
 
-// A block the request is wrapped in by a template or another tool.
-const WRAPPED_RE = /<(question|task|issue|request|query|problem)>\s*([\s\S]*?)\s*<\/\1>/i;
+// The open tag of a block the request is wrapped in by a template or another tool.
+const WRAPPED_OPEN_RE = /<(question|task|issue|request|query|problem)>/gi;
 // A sentence that tells the agent how to work or answer, not what to look for.
 const INSTRUCTION_RE =
   /\b(do not|don't|never)\s+(edit|modify|change|write|run|build)\b|\b(end|finish|format)\s+your\s+(reply|answer|response)\b|\breply\s+with\b|\bJSON\s+list\b|\bfor example\s+\[/i;
@@ -39,11 +39,29 @@ const INSTRUCTION_RE =
  *  not the code the request is about. */
 export function searchQuery(prompt) {
   const p = String(prompt || "");
-  const wrapped = p.match(WRAPPED_RE);
-  const body = wrapped && wrapped[2].length >= MIN_PROMPT_CHARS ? wrapped[2] : p;
+  const wrapped = wrappedBlock(p);
+  const body = wrapped !== null && wrapped.length >= MIN_PROMPT_CHARS ? wrapped : p;
   const kept = body.split(/(?<=[.!?])\s+|\n{2,}/).filter((sentence) => !INSTRUCTION_RE.test(sentence));
   const q = kept.join(" ").replace(/\s+/g, " ").trim();
   return q.length >= MIN_PROMPT_CHARS ? q : p.trim();
+}
+
+/** The trimmed text of the first wrapper block that has a close tag, or null.
+ *  The close tag is found by a plain scan, once per tag name: a single regex
+ *  with a lazy body backtracks super-linearly on an unclosed tag. */
+function wrappedBlock(p) {
+  const unclosed = new Set();
+  for (const open of p.matchAll(WRAPPED_OPEN_RE)) {
+    const name = open[1].toLowerCase();
+    if (unclosed.has(name)) continue;
+    const start = open.index + open[0].length;
+    const closeRe = new RegExp(`</${name}>`, "gi");
+    closeRe.lastIndex = start;
+    const close = closeRe.exec(p);
+    if (close) return p.slice(start, close.index).trim();
+    unclosed.add(name);
+  }
+  return null;
 }
 
 /** Body for the per-prompt code.search. The query is redacted: code.search

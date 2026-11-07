@@ -983,6 +983,14 @@ test("a pattern search spelled with awk, sed or git grep is the grep shape", () 
     single: true,
     files: ["src/a.cpp"],
   });
+  assert.deepEqual(parseBashBulk("sed -n '/a\\/b/p' src/a.cpp"), {
+    kind: "grep",
+    pattern: "a/b",
+    dir: "src/a.cpp",
+    single: true,
+    files: ["src/a.cpp"],
+  });
+  assert.equal(parseBashBulk("awk '/a\\/b/' src/a.cpp").pattern, "a/b");
   assert.deepEqual(parseBashBulk("git grep -n renameTempPartAndAdd src/a.cpp src/a.h"), {
     kind: "grep",
     pattern: "renameTempPartAndAdd",
@@ -1177,4 +1185,12 @@ test("the tracker record's answer text and the gh-search denial", () => {
   assert.match(deny, /^loom-code-shunt: this GitHub search is answered by Loom's tracker record/);
   assert.match(deny, /loom_tracker_duplicate_check with title, body and frames \(namespace: "code-example-private"\)/);
   assert.match(deny, /passes on the next try\), or set LOOM_TRACKER_SHUNT=off\./);
+});
+
+test("a sed or awk pattern holding a run of backslashes is parsed in linear time", () => {
+  const run = "\\".repeat(42);
+  const start = performance.now();
+  assert.equal(parseBashBulk(`sed -n '/${run}/d' notes.txt`), null);
+  assert.equal(parseBashBulk(`awk '/${run}' notes.txt`), null);
+  assert.ok(performance.now() - start < 500, "the pattern regex backtracks over the backslash run");
 });
