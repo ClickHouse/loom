@@ -416,7 +416,7 @@ async def test_the_saga_names_the_step_each_mutation_belongs_to(
     monkeypatch.setattr(saga, "checkpoint", no_checkpoint)
     with erasure_mutations.saga_scope("s1"):
         for name in ("memory.tombstone", "memory.retire"):
-            await saga._do_step(step_name=name, step_fn=step, completed=set(), row={})  # type: ignore[arg-type]
+            await saga._do_step(step_name=name, step_fn=step, completed=set(), row={})
         outside = erasure_mutations.mutation_tag(*args, {"uid": "alice"})
     assert len(set(tags)) == 2 and outside not in tags
 

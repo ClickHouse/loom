@@ -158,6 +158,12 @@ async def test_the_answers_that_quoted_a_consolidated_row_leave_with_its_source(
             [["m", "quoted-late", org, "ns", "ask_synthesize", "vegetarian", ["topic-diets"]]],
             column_names=["model", "key", "org", "namespace", "stage", "text", "window_keys"],
         )
+        # a row of alice's written live since memory.tombstone
+        ch_client.insert(
+            "loom.memory",
+            [[org, "ns", "a", "alice", "-", "user_late", "fact", "alice is late", 1, []]],
+            column_names=_MEMORY_COLS,
+        )
         if crash:
             with pytest.raises(RuntimeError):
                 await _run(*_STEPS[-1], org, ch)
@@ -176,7 +182,7 @@ async def test_the_answers_that_quoted_a_consolidated_row_leave_with_its_source(
         "user_diet",
     ]
     # a tombstone keeps the rows; a purge leaves none of alice's or of the summaries'
-    retired = ["topic-diets", "user_diet"]
+    retired = ["topic-diets", "user_diet", "user_late"]
     kept = _column(ch_client, org, f"{memory} AND user_id IN ('alice', '-')")
     stays = ["topic-bob", "topic-carol", "topic-cross", "topic-rebuilt"]
     assert kept == (stays if purge else sorted([*stays, *retired]))
