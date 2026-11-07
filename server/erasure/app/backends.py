@@ -11,6 +11,7 @@ that logs intent and returns 0.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Sequence
 from typing import Any, ClassVar, Protocol
@@ -143,6 +144,9 @@ class LangfuseBackend:
     _PAGE_SIZE: ClassVar[int] = 100
     _DELETE_BATCH: ClassVar[int] = 100
     _MAX_TRACES: ClassVar[int] = 100_000
+    # The observations list (Langfuse 4) returns one row per span, so a trace
+    # spans several rows; its maximum page size keeps the page count down.
+    _V4_PAGE_SIZE: ClassVar[int] = 1000
     # The trace list is asked for its core fields only: the default payload
     # carries every trace's input, output and metadata, and on a project with
     # millions of traces a one-row default list can take tens of seconds or
@@ -155,7 +159,96 @@ class LangfuseBackend:
     _PAGE_ATTEMPTS: ClassVar[int] = 3
     _PAGE_BACKOFF_S: ClassVar[float] = 2.0
 
+    async def _api_major(self, c: httpx.AsyncClient) -> int:
+        """The Langfuse server's major version, from `GET /api/public/health`.
+
+        Langfuse 4 removed the trace list (`GET /api/public/traces` answers 404)
+        and Langfuse 3 does not serve the observations list that replaces it,
+        so the lookup has to know which one it is talking to. An answer with no
+        readable version fails closed: guessing would either 404 the lookup or,
+        worse, read an empty list as nothing to erase.
+        """
+        r = await self._get_page(c, "/api/public/health", {})
+        version = ""
+        if r.status_code == 200:
+            try:
+                version = str((r.json() or {}).get("version") or "")
+            except ValueError:  # a proxy's HTML page: no version, so fail closed below
+                version = ""
+        major = version.split(".", 1)[0]
+        if not major.isdigit():
+            raise ErasureBackendError(
+                f"langfuse health → HTTP {r.status_code} with no server version "
+                f"({version!r}); cannot tell which trace lookup to use"
+            )
+        return int(major)
+
     async def _find_trace_ids(
+        self,
+        c: httpx.AsyncClient,
+        *,
+        tags: list[str],
+        user_id: str = "",
+    ) -> list[str]:
+        """Every trace id carrying all of `tags` (and `user_id`, when given)."""
+        if await self._api_major(c) >= 4:
+            return await self._find_trace_ids_v4(c, tags=tags, user_id=user_id)
+        params: dict[str, str | list[str]] = {"tags": tags}
+        if user_id:
+            params["userId"] = user_id
+        return await self._find_trace_ids_v3(c, params)
+
+    async def _find_trace_ids_v4(
+        self,
+        c: httpx.AsyncClient,
+        *,
+        tags: list[str],
+        user_id: str,
+    ) -> list[str]:
+        """The trace ids of the observations matching the filter, on Langfuse 4.
+
+        Langfuse 4 keeps tags and the user id on each observation, so the filter
+        runs over `GET /api/public/v2/observations` and the distinct `traceId`s
+        are the traces to delete. Pagination follows `meta.cursor` until it is
+        absent; a page may be empty while a cursor is still present. The same
+        fail-closed rules as the Langfuse 3 lookup apply (no truncation).
+        """
+        conditions: list[dict[str, Any]] = [
+            {"type": "arrayOptions", "column": "tags", "operator": "all of", "value": tags}
+        ]
+        if user_id:
+            conditions.append(
+                {"type": "string", "column": "userId", "operator": "=", "value": user_id}
+            )
+        query: dict[str, Any] = {
+            "fields": "core",
+            "limit": self._V4_PAGE_SIZE,
+            "filter": json.dumps(conditions),
+        }
+        ids: dict[str, None] = {}
+        while True:
+            r = await self._get_page(c, "/api/public/v2/observations", query)
+            if r.status_code != 200:
+                raise ErasureBackendError(
+                    f"langfuse observation lookup {tags} → HTTP {r.status_code}: "
+                    f"{r.text[:LOG_ERROR_TEXT_LIMIT]}"
+                )
+            body = r.json()
+            for row in body.get("data") or []:
+                if row.get("traceId"):
+                    ids[str(row["traceId"])] = None
+            if len(ids) > self._MAX_TRACES:
+                raise ErasureBackendError(
+                    f"langfuse observation lookup {tags} matched more than "
+                    f"{self._MAX_TRACES} traces; refusing to erase a truncated set"
+                )
+            cursor = (body.get("meta") or {}).get("cursor")
+            if not cursor:
+                break
+            query = {**query, "cursor": cursor}
+        return list(ids)
+
+    async def _find_trace_ids_v3(
         self,
         c: httpx.AsyncClient,
         # httpx's own param type: a list value is encoded as repeated params,
@@ -179,7 +272,11 @@ class LangfuseBackend:
         ids: list[str] = []
         page = 1
         while True:
-            r = await self._get_page(c, {"page": page, "limit": self._PAGE_SIZE, **params})
+            r = await self._get_page(
+                c,
+                "/api/public/traces",
+                {"fields": self._LIST_FIELDS, "page": page, "limit": self._PAGE_SIZE, **params},
+            )
             if r.status_code != 200:
                 raise ErasureBackendError(
                     f"langfuse trace lookup {params} → HTTP {r.status_code}: "
@@ -210,17 +307,15 @@ class LangfuseBackend:
             page += 1
         return ids
 
-    async def _get_page(self, c: httpx.AsyncClient, params: dict[str, Any]) -> httpx.Response:
-        """One page of the trace list, core fields only, retried on a timeout,
-        a 429 or a 5xx. Anything else is returned to the
-        caller's status check unchanged."""
-        query: dict[str, Any] = {"fields": self._LIST_FIELDS, **params}
+    async def _get_page(
+        self, c: httpx.AsyncClient, path: str, query: dict[str, Any]
+    ) -> httpx.Response:
+        """One page of a lookup, retried on a timeout, a 429 or a 5xx.
+        Anything else is returned to the caller's status check unchanged."""
         last: Exception | None = None
         for attempt in range(self._PAGE_ATTEMPTS):
             try:
-                r = await c.get(
-                    f"{self._base_url}/api/public/traces", headers=self._headers, params=query
-                )
+                r = await c.get(f"{self._base_url}{path}", headers=self._headers, params=query)
             except httpx.TimeoutException as e:
                 last = e
             else:
@@ -267,7 +362,7 @@ class LangfuseBackend:
 
         Langfuse has no user-deletion endpoint (`DELETE /api/public/users/{id}`
         answers 404 with an HTML page, which would read as nothing to erase):
-        the traces are found with `GET /api/public/traces?userId=` (filtered
+        the traces are found by user id (`_find_trace_ids`, filtered
         server-side) and deleted with `DELETE /api/public/traces`. Deleting a
         trace removes its observations and scores with it.
         """
@@ -277,7 +372,7 @@ class LangfuseBackend:
                 # is a caller-supplied opaque string and every org writes into
                 # one Langfuse project, so `userId` alone would erase another
                 # tenant's traces for anyone sharing an identifier.
-                ids = await self._find_trace_ids(c, {"userId": user_id, "tags": f"org:{org}"})
+                ids = await self._find_trace_ids(c, tags=[f"org:{org}"], user_id=user_id)
                 if not ids:
                     return 0
                 return await self._delete_traces(c, ids)
@@ -301,9 +396,7 @@ class LangfuseBackend:
                 # Repeated `tags` params are ANDed server-side (a nonexistent
                 # org tag matches nothing); httpx encodes a list value as
                 # repeated params.
-                ids = await self._find_trace_ids(
-                    c, {"tags": [f"namespace:{namespace}", f"org:{org}"]}
-                )
+                ids = await self._find_trace_ids(c, tags=[f"namespace:{namespace}", f"org:{org}"])
                 if not ids:
                     return 0
                 return await self._delete_traces(c, ids)

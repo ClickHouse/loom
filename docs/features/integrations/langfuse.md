@@ -4,9 +4,8 @@ Needs `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`; nothing is sent until
 are set. Once they are, the OpenTelemetry span tree is forwarded to Langfuse over OTLP.
 Langfuse is optional and is not part of Loom's local Compose stack.
 
-The tested self-hosted compatibility target is **Langfuse 3.225.11**. Langfuse 4.45.1 is
-not compatible with the public trace APIs Loom uses for erasure; do not use an unpinned
-`latest` image. A local Langfuse v3 deployment also runs PostgreSQL, ClickHouse,
+Loom is tested against self-hosted **Langfuse 3.227.0** and **Langfuse 4.76.0**. Langfuse
+Cloud runs Langfuse 4. A local Langfuse deployment also runs PostgreSQL, ClickHouse,
 Redis/Valkey and S3-compatible object storage, so it is substantially larger than the
 two-service Loom profile.
 
@@ -126,19 +125,25 @@ against a minimum count and threshold. It never writes to Langfuse, and answers 
 `erasure.request` runs the Langfuse backend (`LangfuseBackend` in
 `server/erasure/app/backends.py`) as one step of its saga:
 
-- **A user scope** finds the user's traces with `GET /api/public/traces?userId=…` filtered
-  by the `org:<org>` tag, then deletes them in batches with `DELETE /api/public/traces`.
-  Deleting a trace removes its observations and scores. The org filter matters because
-  every org writes into the one Langfuse project the key pair implies, and a `user_id` is
-  only unique within an org.
+- **A user scope** finds the user's traces filtered by `userId` and the `org:<org>` tag,
+  then deletes them in batches with `DELETE /api/public/traces`. Deleting a trace removes
+  its observations and scores. The org filter matters because every org writes into the
+  one Langfuse project the key pair implies, and a `user_id` is only unique within an org.
 - **A namespace scope** deletes the traces carrying both `namespace:<ns>` and `org:<org>`.
 
-The step fails closed. A 5xx, a timeout, or a 404 from the delete endpoint (an older
-self-hosted build, or a proxy that forwards only GET and POST) raises, the saga records
-the request `failed`, and the `erasure_recovery` worker retries it. A re-run is
-idempotent: the lookup finds nothing and issues no delete. With Langfuse unconfigured, a
-stub backend logs the intent and reports 0. `LOOM_EXTERNAL_ERASURE_TIMEOUT_S` (30) bounds
-each call. See [retention and erasure](../memory/retention-and-erasure.md).
+The lookup depends on the server's major version, read from `GET /api/public/health`:
+Langfuse 3 lists traces (`GET /api/public/traces`), and Langfuse 4, which no longer serves
+that list, lists observations (`GET /api/public/v2/observations`) and collects their trace
+ids. Langfuse 4 deletes asynchronously, so a deleted trace can stay visible for a few
+minutes.
+
+The step fails closed. A health answer with no version, a 5xx, a timeout, or a 404 from
+the delete endpoint (an older self-hosted build, or a proxy that forwards only GET and
+POST) raises, the saga records the request `failed`, and the `erasure_recovery` worker
+retries it. A re-run is idempotent: the lookup finds nothing and issues no delete. With
+Langfuse unconfigured, a stub backend logs the intent and reports 0.
+`LOOM_EXTERNAL_ERASURE_TIMEOUT_S` (30) bounds each call. See
+[retention and erasure](../memory/retention-and-erasure.md).
 
 ## Joining a request
 
