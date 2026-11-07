@@ -186,6 +186,12 @@ CASES: list[tuple[str, Callable[[str], object], str, str]] = [
         "no wait ",
     ),
     ("exact_keys._TERM", exact_keys.query_keys, "", "a-"),
+    (
+        "mentor_rules assertion line",
+        mentor_rules.looks_like_stack_trace,
+        "#3 0x55d1 in DB::x\n" + "x" * 80,
+        "Assertion ",
+    ),
     ("transcripts._TAG", _cue, "", "<"),
     ("mentor_rules._TRACE_LINE_RES blanks", mentor_rules.looks_like_stack_trace, "x" * 80, "\n"),
     ("mentor_rules._TRACE_LINE_RES frame", mentor_rules.looks_like_stack_trace, "1. ", "a"),

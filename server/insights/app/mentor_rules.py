@@ -689,8 +689,20 @@ _TRACE_LINE_RES = (
 )
 _TRACE_HEAD_RE = re.compile(
     r"Traceback \(most recent call last\)|Stack trace|Exception:|Error:|panic:|DB::Exception|"
-    r"Segmentation fault|SIGSEGV|Assertion .* failed"
+    r"Segmentation fault|SIGSEGV"
 )
+
+
+def _assertion_failed(text: str) -> bool:
+    """An `Assertion … failed` line. Read once per line: as a pattern, each
+    `Assertion ` on a line rescans the rest of it."""
+    for line in text.split("\n"):
+        at = line.find("Assertion ")
+        if at >= 0 and line.find(" failed", at + len("Assertion ")) >= 0:
+            return True
+    return False
+
+
 _ISSUE_REF_RE = re.compile(r"(?:^|[\s(\[])#(\d{3,7})\b|/(?:pull|issues)/(\d{2,7})\b")
 
 
@@ -713,7 +725,7 @@ def looks_like_stack_trace(value: str) -> bool:
     if len(v) < 80:
         return False
     frames = sum(len(r.findall(v)) for r in _TRACE_LINE_RES)
-    return frames >= 3 or (frames >= 1 and bool(_TRACE_HEAD_RE.search(v)))
+    return frames >= 3 or (frames >= 1 and (bool(_TRACE_HEAD_RE.search(v)) or _assertion_failed(v)))
 
 
 def issue_references(text: str) -> list[str]:
