@@ -40,13 +40,6 @@ echo "$1" >> "$STUB_PUBLISHED/refuse.log"
 }
 
 
-@pytest.fixture(autouse=True)
-def _no_outer_git(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A run from a git hook exports GIT_DIR: the tests' git stays in their own repository."""
-    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
-        monkeypatch.delenv(name, raising=False)
-
-
 Git = Callable[..., None]
 Resolve = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -116,7 +109,9 @@ def test_a_final_keeps_its_last_candidates_release(resolve: Resolve) -> None:
 
 def test_a_stray_candidate_without_a_bundle_is_passed_over(resolve: Resolve) -> None:
     tags = {"v1.2.0-rc.2": "ch:soaked", "v1.2.0-rc.3": "", "v1.2.0-rc.3-x": "ch:other"}
-    assert resolve("1.2.0", tags).stdout == "ch:soaked\n"
+    result = resolve("1.2.0", tags)
+    assert result.stdout == "ch:soaked\n"
+    assert "::notice::v1.2.0-rc.3 published no bundle" in result.stderr  # said in the log
 
 
 def test_a_dispatch_must_name_one_release(resolve: Resolve) -> None:

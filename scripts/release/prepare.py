@@ -3,11 +3,11 @@
 
 Run with the project's environment (the notes import the server's registry):
 
-    .venv/bin/python scripts/release/prepare.py 1.2.0        # notes, then the bump
-    .venv/bin/python scripts/release/prepare.py --check      # one version everywhere
-    .venv/bin/python scripts/release/prepare.py --check-chart 1.2.0  # the chart moved
-    .venv/bin/python scripts/release/prepare.py --notes 1.2.0  # the notes alone
-    .venv/bin/python scripts/release/prepare.py --check-tag 1.2.0-rc.1  # candidate order
+    .venv/bin/python scripts/release/prepare.py bump 1.2.0       # notes, then the bump
+    .venv/bin/python scripts/release/prepare.py notes 1.2.0      # the notes alone
+    .venv/bin/python scripts/release/prepare.py check            # one version everywhere
+    .venv/bin/python scripts/release/prepare.py check-chart 1.2.0       # the chart moved
+    .venv/bin/python scripts/release/prepare.py check-tag 1.2.0-rc.1    # candidate order
 
 One version names the server, the images, the web app, both SDKs, the root
 skills and the chart's `appVersion` (docs/development/release-process.md). The
@@ -32,7 +32,6 @@ import json
 import re
 import subprocess
 import sys
-import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -102,19 +101,12 @@ def read(pin: Pin, root: Path = ROOT) -> str:
     return _match(pin, text).group("v")
 
 
-def write(pin: Pin, version: str, root: Path = ROOT) -> None:
-    path = root / pin.path
-    text = path.read_text(encoding="utf-8")
-    start, end = _match(pin, text).span("v")
-    path.write_text(text[:start] + version + text[end:], encoding="utf-8")
-
-
 def parse(version: str) -> tuple[int, int, int]:
     match = SEMVER.fullmatch(version)
     if not match:
         raise ValueError(f"{version!r} is not a SemVer X.Y.Z[-pre] version")
-    major, minor, patch = (int(part) for part in match.groups())
-    return major, minor, patch
+    major, minor, patch = match.groups()
+    return int(major), int(minor), int(patch)
 
 
 def next_chart_version(version: str, previous_version: str, previous_chart: str) -> str:
@@ -222,9 +214,7 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
     `vX.Y.Z` is out, or a final `vX.Y.Z` on another commit than its last
     candidate."""
     final = final_of(tag_version)
-    if tag_version != final:
-        if not CANDIDATE.fullmatch(tag_version):
-            return f"v{tag_version} is not a candidate: a candidate is vX.Y.Z-rc.N"
+    if tag_version != final:  # a candidate: the version job takes no other prerelease
         released = _sha(root, f"v{final}")
         if released == _sha(root, "HEAD"):
             # No deletion advice: the final's runs may read this tag as the one soaked.
@@ -254,9 +244,10 @@ def check_tag(tag_version: str, root: Path = ROOT) -> str | None:
 
 
 def validate(version: str, root: Path = ROOT) -> None:
-    """Refuse a version the files cannot take, before any `gh` call or write."""
-    require_final(version)
-    read_every_pin(root)
+    """Refuse a final version the files cannot take, before any `gh` call or
+    write: every pin is found once, and the version is not below the current one."""
+    for pin in [*FOLLOWERS, CHART]:
+        read(pin, root)
     current = read(SERVER, root)
     if parse(version) < parse(current):
         raise ValueError(f"{version} is below the current version {current}")
@@ -269,12 +260,6 @@ def refuse_tagged(version: str, root: Path = ROOT) -> None:
         raise ValueError(f"v{version} is already tagged: prepare the next version")
 
 
-def read_every_pin(root: Path = ROOT) -> None:
-    """Fail unless every pin is found once, so a bump writes all of them or none."""
-    for pin in [*PINS, CHART]:
-        read(pin, root)
-
-
 def planned_chart(
     version: str, previous_version: str, previous_chart: str, root: Path = ROOT
 ) -> str:
@@ -285,12 +270,20 @@ def planned_chart(
 
 
 def bump(version: str, chart: str, root: Path = ROOT) -> None:
-    """Every pin to `version` and the chart's own version to `chart`. Every pin is
-    read before the first write, so a bump writes all of them or none."""
-    read_every_pin(root)
-    write(CHART, chart, root)
-    for pin in PINS:
-        write(pin, version, root)
+    """Every pin to `version` and the chart's own version to `chart`. Every file
+    is edited in memory first, so a pin not found writes nothing."""
+    texts: dict[str, str] = {}
+    for pin, value in [(CHART, chart), *((pin, version) for pin in PINS)]:
+        if pin.path not in texts:
+            try:
+                texts[pin.path] = (root / pin.path).read_text(encoding="utf-8")
+            except FileNotFoundError:
+                raise ValueError(f"{pin.path}: missing") from None
+        text = texts[pin.path]
+        start, end = _match(pin, text).span("v")
+        texts[pin.path] = text[:start] + value + text[end:]
+    for path, text in texts.items():
+        (root / path).write_text(text, encoding="utf-8")
 
 
 # The notes.
@@ -330,50 +323,26 @@ def categories() -> tuple[str, ...]:
     )
 
 
-# "- Operator steps:" as the template has it, or bolded, starred or with a note
-# before the colon.
-_OPERATOR = re.compile(r"[-*]\s+(?:\*\*)?operator steps\b[^:]*:(?:\*\*)?\s*(.*)", re.I)
-UNREAD_STEPS = "its description mentions operator steps that could not be read: check them"
+# "- Operator steps:" as the template has it, bolded or not.
+_OPERATOR = re.compile(r"^[-*] +(?:\*\*)?operator steps\b[^:\n]*:(?:\*\*)?(.*)$", re.I | re.M)
 
 
-def _operator_steps(body: str) -> list[str]:
-    """The operator-steps item as written, none when it says none, or
-    UNREAD_STEPS when it cannot be read."""
+def _operator_steps(body: str) -> str:
+    """The operator-steps item as written, up to the section's next item; "" when
+    there is none or it says none."""
     section = _section(body, "Compatibility, rollout and rollback")
-    text = _operator_text(section.splitlines())
-    if text is None:
-        return [UNREAD_STEPS] if "operator step" in section.lower() else []
-    if not text:
-        return [UNREAD_STEPS]
-    if text == _placeholder_steps() or _NO_STEP.fullmatch(text.strip("`\"'* ")):
-        return []
-    return [text]
+    match = _OPERATOR.search(section)
+    if not match:
+        return ""
+    rest = section[match.end() :]
+    next_item = re.search(r"^[-*] ", rest, re.M)
+    # The lines under it keep their indent, so a list given alone stays nested.
+    text = match.group(1).strip() + rest[: next_item.start() if next_item else None].rstrip()
+    bare = text.strip("`\"'* \n")
+    return text if bare and not _NO_STEP.fullmatch(bare) else ""
 
 
-@functools.cache
-def _placeholder_steps() -> str | None:
-    """The template's own operator-steps text."""
-    return _operator_text(_section(_template(), "Compatibility, rollout and rollback").splitlines())
-
-
-def _operator_text(lines: list[str]) -> str | None:
-    """The operator-steps item's text, None when the lines have no such item."""
-    for i, line in enumerate(lines):
-        match = _OPERATOR.fullmatch(line.strip())
-        if match and not line.startswith((" ", "\t")):
-            block: list[str] = []
-            for more in lines[i + 1 :]:
-                if more.startswith(("- ", "* ")):  # the section's next item
-                    break
-                block.append(more)
-            # The lines under it lose their common indent only, so deeper lists
-            # and code keep their shape.
-            body = textwrap.dedent("\n".join(block))
-            return "\n".join([match.group(1).strip(), body]).strip()
-    return None
-
-
-def changelog(body: str) -> tuple[str, str, list[str]]:
+def changelog(body: str) -> tuple[str, str, str]:
     """(category, entry, operator steps) from a pull request body that follows
     .github/PULL_REQUEST_TEMPLATE.md, UNCLASSIFIED as the category when the body
     names no single template category. A category that needs no entry still
@@ -422,15 +391,10 @@ def notes(version: str, previous: str, pulls: list[dict[str, Any]], wire: str) -
     for pull in pulls:
         category, entry, operator = changelog(pull["body"] or "")
         # A pull request that needs no entry can still have a deploy step.
-        for step in operator:
-            first, *rest = step.splitlines()
-            if re.match(r"([-*]|\d+[.)]) ", first):  # a list alone: nest all of it
-                first, rest = "", step.splitlines()
-            head = f"- {first} (#{pull['number']})" if first else f"- (#{pull['number']})"
-            steps += [
-                head,
-                *(f"  {line}" if line else "" for line in rest),
-            ]
+        if operator:
+            first, *rest = operator.splitlines()
+            steps.append(f"- #{pull['number']}: {first}".rstrip())
+            steps += [f"  {line}" if line else "" for line in rest]
         if NO_ENTRY in category:
             continue
         line = f"- {entry or pull['title']} (#{pull['number']})"
@@ -451,15 +415,19 @@ def notes(version: str, previous: str, pulls: list[dict[str, Any]], wire: str) -
 
 
 def release_notes(version: str, previous: str, root: Path = ROOT) -> str:
-    pulls = []
-    for number in merged_pull_requests(previous, root):
-        out = subprocess.run(
-            ["gh", "pr", "view", str(number), "-R", REPOSITORY, "--json", "number,title,body"],
-            check=True,
-            stdout=subprocess.PIPE,  # its error reaches the terminal
-            text=True,
-        ).stdout
-        pulls.append(json.loads(out))
+    numbers = merged_pull_requests(previous, root)
+    listed = subprocess.run(
+        ["gh", "pr", "list", "-R", REPOSITORY, "--state", "merged", "--limit", "5000",
+         "--json", "number,title,body"],
+        check=True,
+        stdout=subprocess.PIPE,  # its error reaches the terminal
+        text=True,
+    ).stdout  # fmt: skip
+    by_number = {pull["number"]: pull for pull in json.loads(listed)}
+    missing = [n for n in numbers if n not in by_number]
+    if missing:
+        raise ValueError(f"gh pr list did not return merged pull requests {missing}")
+    pulls = [by_number[n] for n in numbers]
     wire = subprocess.run(
         [sys.executable, "scripts/codegen/wire_changelog.py", previous, "HEAD"],
         cwd=root,
@@ -504,10 +472,6 @@ def _run_check_chart(tag_version: str) -> None:
         raise SystemExit(f"::error file={CHART.path}::{chart_error}")
 
 
-# Below, a refusal raises ValueError and a failed git or gh call
-# CalledProcessError; main() prints either as one line.
-
-
 def _fetch_tags_and_validate(version: str) -> None:
     require_final(version)  # needs no tags, so before the fetch
     # Forced, so a tag moved upstream replaces a stale local one.
@@ -522,11 +486,11 @@ def _notes(version: str) -> None:
     print(release_notes(version, previous_release(version)))
 
 
-def _prepare(version: str) -> None:
+def _bump(version: str) -> None:
     _fetch_tags_and_validate(version)
     refuse_tagged(version)
     previous = previous_release(version)
-    # Every refusal before the notes' gh calls, which take minutes.
+    # Every refusal before the notes' gh call.
     released = released_chart(previous)  # names the tag when its chart is bad
     try:
         chart = planned_chart(version, previous[1:], released)
@@ -546,43 +510,38 @@ def _one_line(e: Exception) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("version", nargs="?", help="the release, X.Y.Z")
-    modes = parser.add_mutually_exclusive_group()
-    modes.add_argument("--check", action="store_true", help="every file names one version")
-    modes.add_argument(
-        "--check-chart",
-        metavar="TAG_VERSION",
-        help="the chart's version is above the previous release's",
+    commands = parser.add_subparsers(dest="command", required=True)
+    bump_parser = commands.add_parser("bump", help="write the release notes, then bump")
+    notes_parser = commands.add_parser("notes", help="only print the release notes")
+    for command in (bump_parser, notes_parser):
+        command.add_argument("version", help="the release, X.Y.Z")
+    commands.add_parser("check", help="every file names one version")
+    chart_parser = commands.add_parser(
+        "check-chart", help="the chart's version is above the previous release's"
     )
-    modes.add_argument("--notes", action="store_true", help="only print the release notes")
-    modes.add_argument(
-        "--check-tag",
-        metavar="TAG_VERSION",
-        help="a candidate before its final, the final on its last candidate's commit",
+    tag_parser = commands.add_parser(
+        "check-tag", help="a candidate before its final, the final on its last candidate's commit"
     )
+    for command in (chart_parser, tag_parser):
+        command.add_argument("tag_version", help="the tag's version, X.Y.Z or X.Y.Z-rc.N")
     args = parser.parse_args()
-    check_mode = bool(args.check or args.check_tag or args.check_chart)
-    if args.version and check_mode:
-        parser.error("a check takes no release version of its own")
-    if not (check_mode or args.version):
-        parser.error(
-            "name the release (X.Y.Z) to prepare or --notes for,"
-            " or --check / --check-chart / --check-tag"
-        )
     try:
-        if args.check:
-            _run_check()
-        elif args.check_tag:
-            _run_check_tag(args.check_tag)
-        elif args.check_chart:
-            _run_check_chart(args.check_chart)
-        elif args.notes:
+        if args.command == "bump":
+            _bump(args.version)
+        elif args.command == "notes":
             _notes(args.version)
+        elif args.command == "check":
+            _run_check()
+        elif args.command == "check-chart":
+            _run_check_chart(args.tag_version)
         else:
-            _prepare(args.version)
+            _run_check_tag(args.tag_version)
+    # A refusal raises ValueError and a failed git or gh call CalledProcessError;
+    # either is one line, and in a check, which the release workflow runs, an
+    # `::error::` annotation.
     except (ValueError, subprocess.CalledProcessError) as e:
-        # The checks run in the release workflow, which reads `::error::` as an annotation.
-        raise SystemExit(("::error::" if check_mode else "") + _one_line(e)) from None
+        prefix = "::error::" if args.command.startswith("check") else ""
+        raise SystemExit(prefix + _one_line(e)) from None
 
 
 if __name__ == "__main__":

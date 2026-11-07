@@ -147,6 +147,14 @@ def _seed_test_api_key() -> None:
     runs with a minted wildcard-org `LOOM_API_KEY` in its environment."""
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _no_outer_git() -> None:
+    """A run from a git hook exports GIT_DIR: a test's git, and a script's,
+    stay in the repositories the test makes."""
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        os.environ.pop(name, None)
+
+
 @pytest.fixture
 def mirror_here(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every configured mirror counts as present on this host: for tests whose git

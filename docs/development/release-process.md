@@ -4,7 +4,7 @@ Loom follows SemVer. The server, the Python SDK, the TypeScript SDK, the web app
 
 ## Where the version lives
 
-`.venv/bin/python scripts/release/prepare.py X.Y.Z` bumps each of these in the release commit, except the plugins, and writes the [release notes](#release-notes):
+`.venv/bin/python scripts/release/prepare.py bump X.Y.Z` bumps each of these in the release commit, except the plugins, and writes the [release notes](#release-notes):
 
 | Component            | Files                                                                                                                                                                                                                                                                                                                                                               |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -24,7 +24,7 @@ The server reads its version from `server/__init__.py` only; the OpenAPI documen
 | `npm run check:version` (TypeScript SDK) | its four version sources agree                                                                                                                                                                                     |
 | `tests/unit/test_codex_plugin.py`        | both plugin manifests carry one version and one `minServerVersion`, no newer than the server's version                                                                                                             |
 | `tests/unit/test_release_prepare.py`     | every file `prepare.py` bumps names the server's version                                                                                                                                                           |
-| `prepare.py --check-chart X.Y.Z`         | the release's `version` job: the chart's version is above the previous release's; skipped, with a notice, when `vX.Y.Z` is tagged on another commit; fails when no final release tag is below it (no tags fetched) |
+| `prepare.py check-chart X.Y.Z`           | the release's `version` job: the chart's version is above the previous release's; skipped, with a notice, when `vX.Y.Z` is tagged on another commit; fails when no final release tag is below it (no tags fetched) |
 
 Two plugin pull requests that bump to the same number merge without a conflict, and the second ships nothing to clients the first already updated. Check the plugin version on `main` before bumping.
 
@@ -43,14 +43,14 @@ since the highest final tag below the release:
 - each pull request's changelog entry under its category, in the template's order, or its title when
   the entry is empty; one whose description names no single category is listed under "Unclassified"
   for the author to place;
-- each "Operator steps" item but a bare "none", as written, from every pull request, including one
-  in a category that needs no entry; the author prunes the ones that name no step, and one it cannot
-  read is flagged for the author to check;
+- each "Operator steps" item but a bare "none", as written, under its pull request's number, from
+  every pull request, including one in a category that needs no entry; the author prunes the ones
+  that name no step;
 - the wire diff ([code generation](./code-generation.md#wire-changelog)).
 
 It fetches the upstream repository's tags itself, reads the pull requests with `gh` and the wire
 diff through the server's registry, so it needs a signed-in `gh` and the project's environment
-(`uv sync`). `.venv/bin/python scripts/release/prepare.py --notes X.Y.Z` prints the section again
+(`uv sync`). `.venv/bin/python scripts/release/prepare.py notes X.Y.Z` prints the section again
 without bumping anything: run it after rebasing the release pull request just before it merges,
 and again at the last candidate's commit before the final tag, so the notes name every pull request
 the tag ships.
@@ -71,7 +71,7 @@ the tag ships.
    or a lock file) on `main` first. The base image's own packages move only with a new base-image
    digest; a package an `apt-get install` layer adds moves with any uncached build.
 
-2. On a branch from `main`, run `.venv/bin/python scripts/release/prepare.py X.Y.Z`, and open a
+2. On a branch from `main`, run `.venv/bin/python scripts/release/prepare.py bump X.Y.Z`, and open a
    pull request with its changes and `release-notes.md` as the [release notes](#release-notes)
    section of its description; edit the notes where an entry needs it. CI must pass, including
    `make schema-check` and the strict migration dry run.
@@ -93,11 +93,11 @@ the tag ships.
    gh workflow run release.yml --ref vX.Y.Z
    ```
 
-6. Paste the release notes made at the final tag's commit (`--notes X.Y.Z`, above) into the GitHub
+6. Paste the release notes made at the final tag's commit (`prepare.py notes X.Y.Z`, above) into the GitHub
    Release, above the generated notes.
 
-A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release. The first goes on the release pull
-request's merge commit, whose files name `X.Y.Z`, so the candidate's server already reports `X.Y.Z`;
+A release candidate is a `vX.Y.Z-rc.N` tag, and makes a GitHub pre-release; the release refuses any
+other prerelease tag. The first candidate goes on the release pull request's merge commit, whose files name `X.Y.Z`, so the candidate's server already reports `X.Y.Z`;
 a later one, after a fix, goes on a later commit of `main`. The final `vX.Y.Z` tag goes on the last
 candidate's commit after the soak. The final's bundle keeps the ClickHouse release that candidate's
 bundle names (the newest candidate on that commit with a published bundle); its images are built
@@ -126,7 +126,7 @@ from there. The `preflight` job reports each missing [prerequisite](#before-the-
 warning instead of failing. What only a published release exercises, a dry run does not: `docker-tag`
 (joining each image's two digests, the Latest decision, `:latest`), the GitHub Release, the
 registry publishes, the published-images check (`scripts/release/published_images.sh`) with the
-skipped-build path it selects, the candidate-order check (`prepare.py --check-tag`, which a dry run
+skipped-build path it selects, the candidate-order check (`prepare.py check-tag`, which a dry run
 skips with a notice), and the chart check when the version is already tagged on another commit.
 
 ## Before the first release
@@ -158,9 +158,9 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    is not a `v*` tag (unless the run is a [dry run](#rehearsing-a-release)) or not SemVer. It
    fails when any of these is false (for `vX.Y.Z-rc.N`, against `X.Y.Z`):
    - `server/__init__.py` reads `__version__ = "X.Y.Z"`;
-   - `prepare.py --check`: every other version file, `server.json` included, names that version;
-   - `prepare.py --check-chart`: the chart's version is above the previous release's;
-   - `prepare.py --check-tag`: a candidate `vX.Y.Z-rc.N` before `vX.Y.Z` is tagged, and a final
+   - `prepare.py check`: every other version file, `server.json` included, names that version;
+   - `prepare.py check-chart`: the chart's version is above the previous release's;
+   - `prepare.py check-tag`: a candidate `vX.Y.Z-rc.N` before `vX.Y.Z` is tagged, and a final
      `vX.Y.Z` on the commit of its last candidate;
 2. `preflight` fails the run on a missing [prerequisite](#before-the-first-release);
 3. `clickhouse` names the ClickHouse release the Compose bundle runs
@@ -170,25 +170,9 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    a dispatch's `clickhouse_image`, which for a final replaces its candidate's; for a final, the one
    the newest candidate on the same commit with a published bundle was soaked with; the release
    `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`). It migrates a
-   fresh server of that release and runs `make schema-check` before `build` may pin it. When
-   `latest` names a bad release, dispatch the tag with an exact one instead
-   (`gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`);
-   a bundle already published keeps its own, and the run warns that it ignored the input. The
-   dispatch passes only if that release dumps the tag's `schemas/schema.sql`; otherwise regenerate
-   it on that release (the [schema dump](./migrations.md#schema-dump-and-check) commands with
-   `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D`) and commit it. A run that stopped
-   here published nothing. For a candidate, tag the next `-rc.N` on the fix's commit. For a final
-   (one with no soaked candidate on its commit, as only that one resolves `latest`), delete its tag
-   (`git push origin :refs/tags/vX.Y.Z`, and `git tag -d vX.Y.Z` in every clone that fetched it, as
-   a fetch never removes a tag), then tag a new candidate on the fix's commit. Either way dispatch
-   the new candidate with the same `-f clickhouse_image=...`, as its tag push resolves `latest`
-   again; soak it, and tag the final there, which keeps that release. A ClickHouse downgrade (see
-   step 8) is refused here first, so such a run stops before it builds and pushes images. A final
-   carrying its candidate's release is checked too: a patch to an older line published during the
-   soak with a newer release stops it. Then either delete the final's tag (it published nothing),
-   soak a new candidate on that commit dispatched with that newer release, and tag the final there
-   again; or dispatch the final with `-f allow_clickhouse_downgrade=true` and accept the downgrade
-   for that patch's installs;
+   fresh server of that release and runs `make schema-check` before `build` may pin it, and refuses
+   a ClickHouse downgrade (see step 8), so such a run stops before it builds and pushes images
+   ([when it stops](#when-the-clickhouse-job-stops));
 4. `build` writes the version into the Python and TypeScript SDK sources and builds the
    Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),
    and zips of the two plugins (`loom-claude-code-plugin-vX.Y.Z.zip`,
@@ -273,6 +257,28 @@ A re-run after a partial publish is safe: each publish job skips what already ex
 a version twice. Publishing SDKs only on dispatch lets the release files be checked first.
 The server image is automatic because it is a prerequisite of the GitHub Release's
 installer, and creating the signed release tag is its review gate.
+
+### When the clickhouse job stops
+
+A run that stopped in `clickhouse` published nothing.
+
+- **`latest` names a bad release**: dispatch the tag with an exact one,
+  `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`.
+  A bundle already published keeps its own, and the run warns that it ignored the input.
+- **The release does not dump the tag's `schemas/schema.sql`**: regenerate it on that release (the
+  [schema dump](./migrations.md#schema-dump-and-check) commands with
+  `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D`) and commit it. For a candidate, tag
+  the next `-rc.N` on the fix's commit. For a final (one with no soaked candidate on its commit, as
+  only that one resolves `latest`), delete its tag (`git push origin :refs/tags/vX.Y.Z`, and
+  `git tag -d vX.Y.Z` in every clone that fetched it, as a fetch never removes a tag), then tag a
+  new candidate on the fix's commit. Either way dispatch the new candidate with the same
+  `-f clickhouse_image=...`, as its tag push resolves `latest` again; soak it, and tag the final
+  there, which keeps that release.
+- **A downgrade during the soak**: a final carrying its candidate's release is checked too, so a
+  patch to an older line published during the soak with a newer release stops it. Either delete
+  the final's tag (it published nothing), soak a new candidate on that commit dispatched with that
+  newer release, and tag the final there again; or dispatch the final with
+  `-f allow_clickhouse_downgrade=true` and accept the downgrade for that patch's installs.
 
 ## Installing from a GitHub Release
 

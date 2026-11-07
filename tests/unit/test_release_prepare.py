@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -13,6 +14,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -39,14 +41,6 @@ def _copy(tmp_path: Path) -> Path:
         (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / path, tmp_path / path)
     return tmp_path
-
-
-@pytest.fixture(autouse=True)
-def _no_outer_git(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A run from a git hook exports GIT_DIR: the tests' git, and the script's,
-    stay in their own repositories."""
-    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
-        monkeypatch.delenv(name, raising=False)
 
 
 def _git(root: Path, *args: str) -> None:
@@ -152,9 +146,9 @@ def test_a_version_already_tagged_is_refused(tmp_path: Path) -> None:
         ("v1.9.0", "'v1.9.0' is not X.Y.Z"),
     ],
 )
-def test_a_bump_takes_a_final_version_only(tmp_path: Path, version: str, error: str) -> None:
+def test_a_bump_takes_a_final_version_only(version: str, error: str) -> None:
     with pytest.raises(ValueError, match=error):
-        prepare.validate(version, _copy(tmp_path))
+        prepare.require_final(version)
 
 
 def test_a_bump_refuses_an_older_version(tmp_path: Path) -> None:
@@ -272,7 +266,7 @@ def test_a_filled_template_gives_its_category_entry_and_steps() -> None:
     assert parsed == (
         "Bug Fix (user-visible misbehavior in a release)",
         "A search finds more.",
-        ["run X"],
+        "run X",
     )
 
 
@@ -295,16 +289,9 @@ def test_the_categories_are_the_templates() -> None:
     assert "Critical Bug Fix (data loss, cross-tenant read, auth bypass)" in names
 
 
-@pytest.mark.parametrize(
-    "steps",
-    [
-        "set `LOOM_A`,\nthen run the backfill",  # as GitHub's editor wraps it
-        "set `LOOM_A`,\n  then run the backfill",
-    ],
-)
-def test_an_operator_step_keeps_its_wrapped_lines_up_to_the_next_item(steps: str) -> None:
-    parsed = prepare.changelog(_body("New Feature", "x", steps))
-    assert parsed == ("New Feature", "x", ["set `LOOM_A`,\nthen run the backfill"])
+def test_an_operator_step_keeps_its_wrapped_lines_up_to_the_next_item() -> None:
+    steps = "set `LOOM_A`,\nthen run the backfill"  # as GitHub's editor wraps it
+    assert prepare.changelog(_body("New Feature", "x", steps)) == ("New Feature", "x", steps)
 
 
 @pytest.mark.parametrize(
@@ -322,12 +309,12 @@ def test_an_operator_step_keeps_its_wrapped_lines_up_to_the_next_item(steps: str
     ],
 )
 def test_no_step_written_any_way_is_no_step(steps: str) -> None:
-    assert prepare.changelog(_body("New Feature", "x", steps)) == ("New Feature", "x", [])
+    assert prepare.changelog(_body("New Feature", "x", steps)) == ("New Feature", "x", "")
 
 
 def test_a_step_that_begins_with_no_is_a_step() -> None:
     steps = "No downtime, but run `loom knowledge migrate-originals` first"
-    assert prepare.changelog(_body("New Feature", "x", steps)) == ("New Feature", "x", [steps])
+    assert prepare.changelog(_body("New Feature", "x", steps)) == ("New Feature", "x", steps)
 
 
 @pytest.mark.parametrize(
@@ -340,26 +327,13 @@ def test_a_step_that_begins_with_no_is_a_step() -> None:
 )
 def test_an_operator_steps_label_written_another_way_is_read(line: str) -> None:
     body = _body("New Feature", "x").replace("- Operator steps: none", line)
-    assert prepare.changelog(body) == ("New Feature", "x", ["run the backfill"])
+    assert prepare.changelog(body) == ("New Feature", "x", "run the backfill")
 
 
-def test_a_bolded_none_is_no_step() -> None:
-    body = _body("New Feature", "x").replace("- Operator steps: none", "- **Operator steps: none**")
-    assert prepare.changelog(body) == ("New Feature", "x", [])
-
-
-def test_operator_steps_in_a_shape_not_read_are_flagged() -> None:
-    body = _body("New Feature", "x").replace(
-        "- Operator steps: none", "Operator steps follow: run the backfill"
-    )
-    assert prepare.changelog(body) == ("New Feature", "x", [prepare.UNREAD_STEPS])
-
-
-def test_the_templates_own_operator_steps_line_is_no_step() -> None:
-    placeholder = re.search(r"^- Operator steps:.*$", TEMPLATE, re.M)
-    assert placeholder
-    body = _body("New Feature", "x").replace("- Operator steps: none", placeholder.group(0))
-    assert prepare.changelog(body) == ("New Feature", "x", [])
+@pytest.mark.parametrize("item", ["- **Operator steps: none**", "- Operator steps:\n"])
+def test_a_bolded_none_or_an_empty_item_is_no_step(item: str) -> None:
+    body = _body("New Feature", "x").replace("- Operator steps: none", item)
+    assert prepare.changelog(body) == ("New Feature", "x", "")
 
 
 def test_a_category_that_needs_no_entry_keeps_its_operator_steps() -> None:
@@ -367,7 +341,7 @@ def test_a_category_that_needs_no_entry_keeps_its_operator_steps() -> None:
     assert prepare.changelog(_body(category, "x", "set LOOM_X first")) == (
         category,
         "x",
-        ["set LOOM_X first"],
+        "set LOOM_X first",
     )
     text = prepare.notes(
         "1.2.0",
@@ -376,7 +350,7 @@ def test_a_category_that_needs_no_entry_keeps_its_operator_steps() -> None:
         "## What changed for clients: a → b\n\nNothing.\n",
     )
     assert "(#9)" not in text.split("### Operator steps")[0]  # no entry
-    assert "### Operator steps\n\n- set LOOM_X first (#9)\n" in text
+    assert "### Operator steps\n\n- #9: set LOOM_X first\n" in text
 
 
 @pytest.mark.parametrize(
@@ -388,9 +362,7 @@ def test_a_category_that_needs_no_entry_keeps_its_operator_steps() -> None:
     ],
 )
 def test_a_nested_list_under_operator_steps_is_kept_as_written(steps: str) -> None:
-    (category, entry, (step,)) = prepare.changelog(_body("New Feature", "x", steps))
-    assert step.startswith("in this order:\n") and step.endswith("restart the workers")
-    assert "run migrate" in step
+    assert prepare.changelog(_body("New Feature", "x", steps))[2] == steps
     text = prepare.notes(
         "1.2.0",
         "v1.1.0",
@@ -398,12 +370,7 @@ def test_a_nested_list_under_operator_steps_is_kept_as_written(steps: str) -> No
         "## What changed for clients: a → b\n\nNothing.\n",
     )
     # The first line carries the pull request; the rest nests under it.
-    assert "- in this order: (#9)\n" in text and "\n  " in text.split("### Operator steps")[1]
-
-
-def test_an_operator_steps_item_with_nothing_under_it_is_flagged() -> None:
-    body = _body("New Feature", "x").replace("- Operator steps: none", "- Operator steps:\n")
-    assert prepare.changelog(body) == ("New Feature", "x", [prepare.UNREAD_STEPS])
+    assert "- #9: in this order:\n" in text and "\n    " in text.split("### Operator steps")[1]
 
 
 def test_the_notes_group_entries_in_the_templates_order() -> None:
@@ -440,7 +407,7 @@ def test_the_notes_group_entries_in_the_templates_order() -> None:
     assert (
         "### Unclassified\n\n- E (#5): its description names no single changelog category\n"
     ) in text
-    assert "### Operator steps\n\n- set Y (#4)\n" in text
+    assert "### Operator steps\n\n- #4: set Y\n" in text
     assert text.count("What changed for clients") == 1
     # The wire diff's own sections sit under the notes' section.
     assert text.endswith(
@@ -457,28 +424,7 @@ def test_operator_steps_given_only_as_a_list_nest_under_their_pull_request() -> 
         [{"number": 9, "title": "T", "body": _body("New Feature", "x", steps)}],
         "## What changed for clients: a → b\n\nNothing.\n",
     )
-    assert "### Operator steps\n\n- (#9)\n  - run migrate\n  - restart the workers\n" in text
-
-
-@pytest.mark.parametrize("marker", ["- ", "* ", "1. ", "2. ", "1) "])
-def test_a_steps_only_list_with_any_marker_nests_under_its_pull_request(marker: str) -> None:
-    steps = f"\n  {marker}run migrate"
-    text = prepare.notes(
-        "1.2.0",
-        "v1.1.0",
-        [{"number": 9, "title": "T", "body": _body("New Feature", "x", steps)}],
-        "## What changed for clients: a → b\n\nNothing.\n",
-    )
-    assert f"### Operator steps\n\n- (#9)\n  {marker}run migrate\n" in text
-
-
-def test_a_deeper_list_and_code_under_operator_steps_keep_their_shape() -> None:
-    steps = "in this order:\n  - migrate\n    - then check `loom doctor`\n\n        loom doctor --strict"
-    (_, _, (step,)) = prepare.changelog(_body("New Feature", "x", steps))
-    assert (
-        step
-        == "in this order:\n- migrate\n  - then check `loom doctor`\n\n      loom doctor --strict"
-    )
+    assert "### Operator steps\n\n- #9:\n    - run migrate\n    - restart the workers\n" in text
 
 
 def test_the_previous_release_is_the_highest_final_tag_below(tmp_path: Path) -> None:
@@ -511,7 +457,7 @@ def test_the_merged_pull_requests_are_the_squash_merges_since_the_tag(tmp_path: 
 def test_the_notes_are_written_before_the_bump(
     prepared: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "1.2.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "1.2.0"])
     prepare.main()
     assert prepared == [
         ("notes", "1.2.0", "v1.1.0"),
@@ -524,7 +470,7 @@ def test_notes_only_prints_and_writes_nothing(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "--notes", "1.2.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "notes", "1.2.0"])
     prepare.main()
     assert prepared == [("notes", "1.2.0", "v1.1.0")]
     assert capsys.readouterr().out == "## 1.2.0\n\n"
@@ -538,7 +484,7 @@ def test_a_failure_making_the_notes_bumps_nothing(
         raise subprocess.CalledProcessError(1, ["gh", "pr", "view"])
 
     monkeypatch.setattr(prepare, "release_notes", no_gh)
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "1.2.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "1.2.0"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
     assert str(exited.value) == "gh pr view failed"  # a plain line outside CI
@@ -552,7 +498,7 @@ def test_a_chart_that_cannot_be_read_at_the_previous_release_says_so(
         raise subprocess.CalledProcessError(128, ["git", "show"], stderr="fatal: bad object\n")
 
     monkeypatch.setattr(prepare, "released_chart", unreadable)
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "1.2.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "1.2.0"])
     with pytest.raises(SystemExit, match="^git show failed: fatal: bad object$"):
         prepare.main()
     assert prepared == []
@@ -567,7 +513,7 @@ def test_a_refused_version_stops_before_any_gh_call(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(prepare, "release_notes", no_call)
     monkeypatch.setattr(prepare, "_git", no_fetch)  # a non-final version needs no tags
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "9.9.9-rc.1"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "9.9.9-rc.1"])
     with pytest.raises(SystemExit, match="is not a final X.Y.Z: a candidate is a tag"):
         prepare.main()
 
@@ -589,7 +535,7 @@ def test_a_version_tagged_on_the_remote_is_refused_after_the_fetch(
     validate = prepare.validate
     monkeypatch.setattr(prepare, "_git", fetch)
     monkeypatch.setattr(prepare, "validate", lambda version: validate(version, root))
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "98.0.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "98.0.0"])
     with pytest.raises(SystemExit, match="v98.0.0 is already tagged"):
         prepare.main()
 
@@ -599,7 +545,7 @@ def test_the_tags_that_cannot_be_fetched_stop_the_release(monkeypatch: pytest.Mo
     monkeypatch.setattr(
         prepare, "_git", lambda root, *args: subprocess.CompletedProcess(args, 1, "", "no network")
     )
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "1.2.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "1.2.0"])
     with pytest.raises(SystemExit, match="failed: no network$"):
         prepare.main()
 
@@ -611,27 +557,9 @@ def test_a_release_with_no_final_tag_below_is_refused(monkeypatch: pytest.Monkey
     )
     monkeypatch.setattr(prepare, "validate", lambda version: None)
     monkeypatch.setattr(prepare, "refuse_tagged", lambda version: None)
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "1.2.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "1.2.0"])
     with pytest.raises(SystemExit, match="no final release tag below 1.2.0"):
         prepare.main()
-
-
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["--notes", "--check"],
-        ["--check", "--check-chart", "1.2.0"],
-        ["1.2.0", "--check"],
-        ["1.2.0", "--check-chart", "1.2.0"],
-        ["1.2.0", "--check-tag", "1.2.0"],
-        ["--check", "--check-tag", "1.2.0"],
-    ],
-)
-def test_a_check_takes_no_other_mode(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> None:
-    monkeypatch.setattr(sys, "argv", ["prepare.py", *argv])
-    with pytest.raises(SystemExit) as refused:
-        prepare.main()
-    assert refused.value.code == 2
 
 
 def test_a_version_file_the_check_cannot_read_is_an_error_line(
@@ -641,7 +569,7 @@ def test_a_version_file_the_check_cannot_read_is_an_error_line(
         raise ValueError("server/__init__.py: matches 0 times, not once")
 
     monkeypatch.setattr(prepare, "check", unreadable)
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "--check"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "check"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
     # A message exits with status 1.
@@ -653,7 +581,7 @@ def test_a_skipped_chart_check_says_so(
 ) -> None:
     monkeypatch.setattr(prepare, "chart_baseline", lambda version: None)
     for tag_version in ("1.2.0", "1.2.0-rc.3"):  # the final is what is on another commit
-        monkeypatch.setattr(sys, "argv", ["prepare.py", "--check-chart", tag_version])
+        monkeypatch.setattr(sys, "argv", ["prepare.py", "check-chart", tag_version])
         prepare.main()
         assert capsys.readouterr().out == (
             "::notice::no chart check: v1.2.0 is tagged on another commit\n"
@@ -668,7 +596,7 @@ def test_a_chart_the_check_cannot_read_at_the_baseline_is_an_error_line(
 
     monkeypatch.setattr(prepare, "chart_baseline", lambda version: "v1.1.0")
     monkeypatch.setattr(prepare, "check_chart", unreadable)
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "--check-chart", "1.2.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "check-chart", "1.2.0"])
     with pytest.raises(SystemExit, match="could not read the chart at v1.1.0: fatal: bad path"):
         prepare.main()
 
@@ -726,7 +654,7 @@ def test_a_tag_check_off_its_commit_says_it_skipped(
 ) -> None:
     monkeypatch.setattr(prepare, "tag_on_head", lambda version: False)
     monkeypatch.setattr(prepare, "check_tag", lambda version: "never asked")
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "--check-tag", "1.2.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "check-tag", "1.2.0"])
     prepare.main()
     assert (
         "::notice::no candidate-order check: v1.2.0 is not on this commit"
@@ -737,7 +665,7 @@ def test_a_tag_check_off_its_commit_says_it_skipped(
 def test_a_tag_out_of_candidate_order_is_an_error_line(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(prepare, "tag_on_head", lambda tag_version: True)
     monkeypatch.setattr(prepare, "check_tag", lambda tag_version: "out of order")
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "--check-tag", "1.2.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "check-tag", "1.2.0"])
     with pytest.raises(SystemExit, match="::error::out of order"):
         prepare.main()
 
@@ -756,7 +684,7 @@ def test_a_chart_version_that_is_not_x_y_z_is_an_error_line(
     check_chart = prepare.check_chart
     monkeypatch.setattr(prepare, "chart_baseline", lambda version: "v1.1.0")
     monkeypatch.setattr(prepare, "check_chart", lambda baseline: check_chart(baseline, tmp_path))
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "--check-chart", "1.2.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "check-chart", "1.2.0"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
     assert str(exited.value) == (
@@ -772,7 +700,7 @@ def test_a_chart_that_cannot_be_planned_stops_before_the_notes(
     chart.write_text(re.sub(r"^version: .*$", 'version: "0.2.0"', chart.read_text(), flags=re.M))
     # The real planned_chart, on a working tree whose chart version is quoted.
     monkeypatch.setattr(prepare, "planned_chart", lambda *args: PLANNED_CHART(*args, root=root))
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "1.2.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "1.2.0"])
     with pytest.raises(
         SystemExit, match="^deploy/helm/loom/Chart.yaml: '\"0.2.0\"' is not a SemVer"
     ):
@@ -789,7 +717,7 @@ def test_a_tag_list_that_cannot_be_read_fails_the_candidate_check(
         return subprocess.CompletedProcess(["git", *args], 0, "abc\n", "")  # on HEAD
 
     monkeypatch.setattr(prepare, "_git", git)
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "--check-tag", "1.2.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "check-tag", "1.2.0"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()  # an empty list would have passed the final
     assert str(exited.value) == "::error::git tag --list v1.2.0-rc.* failed: fatal: bad repository"
@@ -802,7 +730,7 @@ def test_a_version_file_that_is_missing_is_an_error_line(
     (root / "frontend/package-lock.json").unlink()
     check = prepare.check
     monkeypatch.setattr(prepare, "check", lambda: check(root))
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "--check"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "check"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
     assert exited.value.code == 1
@@ -817,7 +745,7 @@ def test_a_bump_with_a_version_file_missing_is_a_plain_line(
     validate = prepare.validate
     monkeypatch.setattr(prepare, "_git", lambda root, *args: subprocess.CompletedProcess(args, 0))
     monkeypatch.setattr(prepare, "validate", lambda version: validate(version, root))
-    monkeypatch.setattr(sys, "argv", ["prepare.py", "99.0.0"])
+    monkeypatch.setattr(sys, "argv", ["prepare.py", "bump", "99.0.0"])
     with pytest.raises(SystemExit) as exited:
         prepare.main()
     assert str(exited.value) == "frontend/package-lock.json: missing"
@@ -843,12 +771,44 @@ def test_a_chart_missing_its_version_at_a_tag_names_the_tag(tmp_path: Path) -> N
         prepare.released_chart("v1.0.0", tmp_path)
 
 
-def test_a_prerelease_that_is_not_a_candidate_is_refused(tmp_path: Path) -> None:
-    _git(tmp_path, "init", "-q")
-    _commit(tmp_path, "release")
-    _git(tmp_path, "tag", "v1.2.0-beta.1")
-    error = prepare.check_tag("1.2.0-beta.1", tmp_path)
-    assert error == "v1.2.0-beta.1 is not a candidate: a candidate is vX.Y.Z-rc.N"
+def _release_version_job() -> dict:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    return workflow["jobs"]["version"]
+
+
+def test_the_release_runs_every_check_on_the_tag_with_its_tags() -> None:
+    job = _release_version_job()
+    (checkout,) = [s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout@")]
+    assert checkout["with"]["fetch-depth"] == 0  # the candidate order and the chart read tags
+    script = "\n".join(s.get("run", "") for s in job["steps"])
+    for command in ("check", 'check-chart "$VERSION"', 'check-tag "$VERSION"'):
+        assert f"python3 scripts/release/prepare.py {command}\n" in script, command
+
+
+@pytest.mark.parametrize(
+    ("ref", "passes"),
+    [
+        ("refs/tags/v1.2.0", True),
+        ("refs/tags/v1.2.0-rc.1", True),
+        ("refs/tags/v1.2.0-beta.1", False),
+        ("refs/tags/v1.2.0-rc.1.1", False),
+        ("refs/tags/v1.2", False),
+    ],
+)
+def test_the_only_prerelease_the_release_takes_is_a_candidate(
+    tmp_path: Path, ref: str, passes: bool
+) -> None:
+    (parse,) = [s for s in _release_version_job()["steps"] if s.get("id") == "parse"]
+    output = tmp_path / "output"
+    result = subprocess.run(
+        ["bash", "-e", "-c", parse["run"]],
+        env={**os.environ, "REF": ref, "DRY_RUN": "false", "GITHUB_OUTPUT": str(output)},
+        capture_output=True,
+        text=True,
+    )
+    assert (result.returncode == 0) is passes, result.stdout
+    if not passes:
+        assert "is not X.Y.Z or X.Y.Z-rc.N" in result.stdout
 
 
 def test_a_chart_version_unparsable_at_a_tag_names_the_tag(tmp_path: Path) -> None:

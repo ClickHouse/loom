@@ -100,8 +100,9 @@ jobs:
               VERSION=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' server/__init__.py)
               ;;
           esac
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::$VERSION is not a SemVer X.Y.Z[-pre] version"
+          # A prerelease is a release candidate, X.Y.Z-rc.N.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "::error::$VERSION is not X.Y.Z or X.Y.Z-rc.N"
             exit 1
           fi
           PRERELEASE=false
@@ -111,7 +112,7 @@ jobs:
           echo "Releasing v$VERSION (prerelease: $PRERELEASE, dry run: $DRY_RUN)"
       # The server reports its version from server/__init__.py (= pyproject.toml);
       # a tag that disagrees would ship an image that names another release.
-      # prepare.py --check holds every other version file, server.json (which the
+      # prepare.py check holds every other version file, server.json (which the
       # mcp-registry job publishes as committed) included, to that one.
       # A release candidate (vX.Y.Z-rc.N) is tagged on the commit whose files name
       # X.Y.Z, where the final tag goes after the soak.
@@ -130,9 +131,9 @@ jobs:
         env:
           VERSION: ${{ steps.parse.outputs.version }}
         run: |
-          python3 scripts/release/prepare.py --check
-          python3 scripts/release/prepare.py --check-chart "$VERSION"
-          python3 scripts/release/prepare.py --check-tag "$VERSION"
+          python3 scripts/release/prepare.py check
+          python3 scripts/release/prepare.py check-chart "$VERSION"
+          python3 scripts/release/prepare.py check-tag "$VERSION"
 
   # What only an owner can grant (a public repository; ghcr.io packages this
   # workflow can push and anyone can pull), checked before the builds rather
