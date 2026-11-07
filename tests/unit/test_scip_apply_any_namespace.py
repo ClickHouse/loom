@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+# Imported before any patch: scip_delta binds CodeRepo when it is first imported.
+import server.code.app.index.scip_delta as sd
 from server.code.workers import scip_apply as w
 
 
@@ -49,8 +51,6 @@ class _Repo:
 
 def _patch(monkeypatch, repo, *, apply=None) -> None:
     monkeypatch.setattr("server.code.store.index.CodeRepo", lambda: repo)
-    import server.code.app.index.scip_delta as sd
-
     monkeypatch.setattr(
         sd.ScipDelta,
         "model_validate_json",

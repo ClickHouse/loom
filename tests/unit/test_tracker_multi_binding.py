@@ -13,6 +13,11 @@ import server.auth.authz as authz
 import server.tracker.app.binding as b
 import server.tracker.app.dupcheck as hd
 import server.tracker.app.dupcheck_fanout as fo
+
+# Imported before any patch of authz.row_in_scope: both bind it when first imported,
+# and the duplicate check imports them lazily.
+from server.code.app import repo_scope  # noqa: F401
+from server.memory.app import verify  # noqa: F401
 from server.settings import settings
 from server.tracker.app import handlers as h
 from server.tracker.app import similar as tsim

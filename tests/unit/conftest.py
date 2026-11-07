@@ -606,6 +606,55 @@ def _provider_clients_left_as_found() -> Iterator[None]:
         )
 
 
+def _bound_test_double(value: object) -> bool:
+    """A mock, or a function or class a test file defined (a lambda included)."""
+    if type(value).__module__.startswith("unittest.mock"):
+        return True
+    module = getattr(value, "__module__", None)
+    return (
+        isinstance(module, str)
+        and not isinstance(value, type(sys))
+        and module.startswith(("tests.", "test_"))
+    )
+
+
+def _doubles_bound_at_import(modules_before: set[str]) -> list[str]:
+    """`module.name` for each name a server module imported since `modules_before`
+    still holds a test double for.
+
+    A module that runs `from pkg import Name` binds whatever `pkg.Name` is at that
+    moment. When its first import in the process happens while a test patches
+    `pkg.Name`, the module keeps the double after the patch ends, and every later
+    test that uses it sees the double (an `isinstance(x, Name)` raises TypeError).
+    """
+    found = []
+    for name in sorted(sys.modules.keys() - modules_before):
+        module = sys.modules[name]
+        if module is None or not name.startswith("server."):
+            continue
+        found += [
+            f"{name}.{attr}" for attr, value in vars(module).items() if _bound_test_double(value)
+        ]
+    return found
+
+
+@pytest.fixture(autouse=True)
+def _no_test_double_bound_at_import() -> Iterator[None]:
+    """Fail a test during which a server module was first imported with a test double
+    bound to one of its names. Teardown runs after the test's own patches are undone,
+    so only a binding made at import survives to here. Import the module at the top of
+    the test file, before the patch, or patch the name where the module looks it up."""
+    before = set(sys.modules)
+    yield
+    bound = _doubles_bound_at_import(before)
+    if bound:
+        pytest.fail(
+            "a module first imported under a patch kept the test double: "
+            + ", ".join(bound)
+            + " — import it before patching, or patch the name on that module"
+        )
+
+
 @pytest.fixture(autouse=True)
 def _code_caches_cold() -> Iterator[None]:
     """Every code-plane process cache (`server.code.app.ttl_cache.TtlCache`) empty before
