@@ -76,7 +76,7 @@ def test_the_three_rows_go_out_in_one_round(_slow_rows: _Rows) -> None:
     assert _slow_rows.peak == 3, "the three writes were in flight at once, not one by one"
 
 
-def test_under_budget_and_without_a_key_only_the_audit_row(_slow_rows: list[str]) -> None:
+def test_under_budget_and_without_a_key_only_the_audit_row(_slow_rows: _Rows) -> None:
     _call(elapsed_ms=1, idem=(None, None))
     assert _slow_rows == ["audit"]
 
