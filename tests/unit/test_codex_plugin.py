@@ -226,7 +226,8 @@ def test_codex_plugin_bundles_its_mcp_entry() -> None:
     # Windows, in the session's cwd with a cleared environment (no
     # PLUGIN_ROOT/CODEX_HOME). `node -e`, which both run, loads the newest
     # installed helper under the home directory; under sh, the newest
-    # launcher under $HOME is the fallback when no node is on PATH.
+    # launcher under $HOME is the fallback when that step fails (no node
+    # on PATH, one older than 18, or no installed copy).
     helper = entry["http_headers_helper"]
     assert helper.startswith('node -e "')
     assert "'.codex','plugins','cache','loom','loom'" in helper

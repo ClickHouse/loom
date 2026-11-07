@@ -76,8 +76,9 @@ Codex runs the helper through `sh -c` on macOS and Linux and through `cmd.exe` o
 Windows, with a reduced environment (`HOME` or `USERPROFILE`, `PATH`, the locale and a few
 others), and does not expand `${PLUGIN_ROOT}`. So the command starts with `node -e`, which
 both shells run: it loads the header helper of the newest installed `loom@loom` under the
-home directory's `.codex`. Under `sh`, when no `node` is on that `PATH`, it falls back to the
-newest installed launcher (`bin/loom-node`), which also looks in a version manager's default
+home directory's `.codex`. Under `sh`, when that step fails (the `node` on that `PATH` is
+missing or older than 18, or no installed copy is found), it falls back to the newest
+installed launcher (`bin/loom-node`), which also looks in a version manager's default
 directory under `HOME` and in the usual install directories; `LOOM_NODE` and variables such
 as `NVM_DIR` do not reach it. On Windows the `node` on `PATH` is the one that runs. With a
 custom `CODEX_HOME`, spell the path out. A Codex build that rejects `Authorization` from a
