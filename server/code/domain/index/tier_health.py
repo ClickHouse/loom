@@ -217,23 +217,20 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+def _is_module_line(line: str) -> bool:
+    """The Go harness's `skip <dir>: ... failed: ...` line for a module it could not build."""
+    return line.startswith("skip ") and bool(_MODULE_FAILED.search(line))
+
+
 def module_failures(text: str) -> list[str]:
-    """The Go harness's `skip <dir>: ... failed: ...` lines in `text`, without `skip `."""
-    return [
-        line[5:]
-        for line in text.splitlines()
-        if line.startswith("skip ") and _MODULE_FAILED.search(line)
-    ]
+    """The module lines in `text`, without `skip `."""
+    return [line[5:] for line in text.splitlines() if _is_module_line(line)]
 
 
 def without_module_failures(text: str) -> str:
     """`text` without the module lines: for a run that failed outright, an earlier
     module the harness skipped is not the cause."""
-    return "\n".join(
-        line
-        for line in text.splitlines()
-        if not (line.startswith("skip ") and _MODULE_FAILED.search(line))
-    )
+    return "\n".join(line for line in text.splitlines() if not _is_module_line(line))
 
 
 def classify(text: str) -> str:
