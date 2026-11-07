@@ -439,7 +439,7 @@ function TierFailures({ facet }: { facet: CodeFacet }) {
     <ul className="space-y-1.5" data-testid="repo-tier-failures">
       {rows.map(({ b, t }) => (
         <li key={`${b.namespace}:${t.tier}`} className="text-xs">
-          <Badge text={tierName(t.tier)} state="danger" size="sm" className="mr-1.5" />
+          <Badge text={tierName(t.tier)} state="warning" size="sm" className="mr-1.5" />
           <span className="font-mono">{b.branch}</span>: {failureSummary(t)} since{" "}
           <ListTime time={t.failing_since} quiet />. <span className="text-text-muted">Fix: </span>
           <span className="break-words">{t.fix}</span>

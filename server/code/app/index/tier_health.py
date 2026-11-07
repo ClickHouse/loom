@@ -89,21 +89,22 @@ class FailingTier:
 _FAILING: tuple[FailingTier, ...] | None = None
 
 
-def failing_snapshot() -> tuple[FailingTier, ...] | None:
-    return _FAILING
-
-
 async def refresh_failing(ch: Any | None = None) -> None:
     """Re-read the tier-health records of every configured entry and, for the failing
     ones, how far behind the entry's published status counts each (the count `as_of`
     reads: -1 once the snapshot no longer matches the clone tip and the watermark). Two
     small reads; called on the code_repos refresh timer. A record of an entry no longer
-    configured (removed from the config, or retired) is not a problem: nothing runs it.
+    configured (removed from the config, or retired), or kept while code intelligence is
+    off, is not a problem: nothing runs it.
     Never raises: a failed read keeps the last snapshot."""
     global _FAILING
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
+    from server.settings import settings
 
+    if not settings.code_intel_enabled:
+        _FAILING = ()  # nothing runs a tier: no record is a live failure
+        return
     try:
         store = CodeRepo(ch)
         configured = {(c.org, c.namespace): c for c in configured_repos()}
@@ -156,7 +157,7 @@ def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | No
     first. None until this process first read the records."""
     from server.settings import settings
 
-    snap = failing_snapshot()
+    snap = _FAILING
     if snap is None:
         return None
     at = now or utc_now()

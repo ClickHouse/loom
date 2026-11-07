@@ -138,13 +138,13 @@ async def test_the_snapshot_holds_the_failing_tiers_with_their_lag_and_keeps_it_
     )
     assert recorder.problem_rows() is None  # not read yet: unknown, not healthy
     await recorder.refresh_failing()
-    snap = recorder.failing_snapshot()
+    snap = recorder._FAILING
     assert snap is not None and [(f.namespace, f.health.tier, f.lag_commits) for f in snap] == [
         ("code-a", "clang", 413)
     ]
     store.fail = True
     await recorder.refresh_failing()
-    assert recorder.failing_snapshot() == snap
+    assert recorder._FAILING == snap
     rows = recorder.problem_rows(T0 + timedelta(hours=2))
     assert rows is not None and rows[0]["severity"] == "error" and rows[0]["kind"] == "credential"
 
@@ -271,3 +271,13 @@ async def test_the_registry_refresher_re_reads_the_failing_tiers_at_start_and_ea
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
     assert len(reads) >= 2
+
+
+@pytest.mark.asyncio
+async def test_with_code_intelligence_off_no_record_is_a_problem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "code_intel_enabled", False)
+    recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413),)
+    await recorder.refresh_failing()
+    assert recorder.problem_rows() == ()
