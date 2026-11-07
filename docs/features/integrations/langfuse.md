@@ -4,8 +4,8 @@ Needs `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`; nothing is sent until
 are set. Once they are, the OpenTelemetry span tree is forwarded to Langfuse over OTLP.
 Langfuse is optional and is not part of Loom's local Compose stack.
 
-Loom is tested against self-hosted **Langfuse 3.227.0** and **Langfuse 4.76.0**. Langfuse
-Cloud runs Langfuse 4. A local Langfuse deployment also runs PostgreSQL, ClickHouse,
+Span export and erasure are tested against self-hosted **Langfuse 3.227.0** and
+**Langfuse 4.76.0**. Langfuse Cloud runs Langfuse 4. A local Langfuse deployment also runs PostgreSQL, ClickHouse,
 Redis/Valkey and S3-compatible object storage, so it is substantially larger than the
 two-service Loom profile.
 
@@ -147,7 +147,8 @@ Langfuse's historic backfill before an erasure can find them.
 The step fails closed. A health answer with no version, a 5xx, a timeout, or a 404 from
 the delete endpoint (an older self-hosted build, or a proxy that forwards only GET and
 POST) raises, the saga records the request `failed`, and the `erasure_recovery` worker
-retries it. A re-run is idempotent: the lookup finds nothing and issues no delete. With
+retries it. A re-run is idempotent, because deleting a trace already deleted succeeds; on
+Langfuse 4 it can find and delete again the traces still waiting to go. With
 Langfuse unconfigured, a stub backend logs the intent and reports 0.
 `LOOM_EXTERNAL_ERASURE_TIMEOUT_S` (30) bounds each call. See
 [retention and erasure](../memory/retention-and-erasure.md).

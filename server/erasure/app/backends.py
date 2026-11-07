@@ -148,7 +148,8 @@ class LangfuseBackend:
     _DELETE_BATCH: ClassVar[int] = 100
     _MAX_TRACES: ClassVar[int] = 100_000
     # The observations list (Langfuse 4) returns one row per span, so a trace
-    # spans several rows; its maximum page size keeps the page count down.
+    # spans several rows; its maximum page size (1000 in the API reference)
+    # keeps the page count down.
     _V4_PAGE_SIZE: ClassVar[int] = 1000
     # A page may come back empty while a cursor is still present, so the trace
     # cap alone does not end a lookup that a server keeps paging; this does.
@@ -203,11 +204,7 @@ class LangfuseBackend:
         """Every trace id carrying all of `tags` (and `user_id`, when given)."""
         if await self._api_major(c) >= 4:
             return await self._find_trace_ids_v4(c, tags=tags, user_id=user_id)
-        # httpx encodes a list value as repeated params, which the trace list ANDs.
-        params: dict[str, str | list[str]] = {"tags": tags}
-        if user_id:
-            params["userId"] = user_id
-        return await self._find_trace_ids_v3(c, params)
+        return await self._find_trace_ids_v3(c, tags=tags, user_id=user_id)
 
     async def _find_trace_ids_v4(
         self,
@@ -231,6 +228,8 @@ class LangfuseBackend:
             conditions.append(
                 {"type": "string", "column": "userId", "operator": "=", "value": user_id}
             )
+        # No start-time bound: the API reference says such a request searches
+        # from 2020-01-01, so no trace is out of range.
         query: dict[str, Any] = {
             "fields": self._LIST_FIELDS,
             "limit": self._V4_PAGE_SIZE,
@@ -272,9 +271,9 @@ class LangfuseBackend:
     async def _find_trace_ids_v3(
         self,
         c: httpx.AsyncClient,
-        # httpx's own param type: a list value is encoded as repeated params,
-        # which is how the org+namespace tag filter is ANDed server-side.
-        params: dict[str, str | list[str]],
+        *,
+        tags: list[str],
+        user_id: str,
     ) -> list[str]:
         """Collect every trace id matching a filter, following pagination.
 
@@ -290,6 +289,10 @@ class LangfuseBackend:
           to the current page, so a response that omits the field ends pagination
           after page 1 — 100 traces deleted out of any number, reported as done.
         """
+        # httpx encodes a list value as repeated params, which the trace list ANDs.
+        params: dict[str, str | list[str]] = {"tags": tags}
+        if user_id:
+            params["userId"] = user_id
         ids: list[str] = []
         page = 1
         while True:
@@ -367,9 +370,10 @@ class LangfuseBackend:
             # older self-hosted build, or a proxy forwarding only GET/POST)
             # and nothing was deleted.
             #
-            # Idempotency for the recovery worker comes from the LOOKUP instead:
-            # a re-run finds no matching traces and returns 0 without ever
-            # issuing a delete.
+            # A re-run by the recovery worker is idempotent because that 200 also
+            # covers ids already deleted: on Langfuse 4, which deletes
+            # asynchronously, the lookup can find them again and they are
+            # deleted again.
             if r.status_code in (200, 202, 204):
                 deleted += len(batch)
                 continue
@@ -427,8 +431,9 @@ class LangfuseBackend:
                 f"langfuse.delete_namespace {org}/{namespace} transport error: {_describe(e)}"
             ) from e
 
-    # One lookup per namespace: the trace list ANDs repeated `tags` and cannot
-    # OR them. The lookups need not wait on one another.
+    # One lookup per namespace on both versions: the Langfuse 3 trace list ANDs
+    # repeated `tags` and cannot OR them, and Langfuse 4 keeps the same path so
+    # both run one lookup shape. The lookups need not wait on one another.
     _LIST_CONCURRENCY = 4
 
     async def delete_namespaces(self, org: str, namespaces: Sequence[str]) -> int:
