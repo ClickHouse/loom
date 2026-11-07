@@ -842,3 +842,9 @@ def test_a_relative_submodule_url_names_its_own_fix() -> None:
     record = tier_health.failed(None, "clang", text, T0)
     assert record.kind == "submodule_url"
     assert "absolute https URL" in record.fix
+
+
+def test_the_cmake_fix_names_the_cache_to_remove() -> None:
+    """Removing the cache is the recovery the harness honours: no CMakeCache.txt means a
+    configure from scratch (scripts/scip_harness/run_delta.sh)."""
+    assert "build/CMakeCache.txt" in tier_health.fix_for("cmake", "")

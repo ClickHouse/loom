@@ -39,7 +39,8 @@ cmake_configure() {
 }
 
 CONFIGURED=
-if [[ ! -f build/compile_commands.json ]]; then
+# without its cache the compile database cannot be reconfigured: start clean
+if [[ ! -f build/compile_commands.json || ! -f build/CMakeCache.txt ]]; then
   # ClickHouse's CMake refuses GCC ("Compiler GNU is not supported"), and a
   # fresh checkout has no cache to remember the compiler — pin clang
   # explicitly.

@@ -325,8 +325,8 @@ def fix_for(kind: str, text: str) -> str:
             "CMake could not configure the build tree; its last lines are in the error. "
             "The tier retries the run: fix the build, or give the host what the "
             "configure needs. A cache that names a compiler the host no longer has "
-            "keeps failing: remove build/CMakeCache.txt and build/CMakeFiles in the "
-            "entry's checkout, and the next run configures from scratch."
+            "keeps failing: remove build/CMakeCache.txt in the entry's checkout, and "
+            "the next run configures from scratch."
         )
     if kind == "harness":
         return "The indexer failed: the error holds the tail of its output."

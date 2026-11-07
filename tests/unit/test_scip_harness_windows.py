@@ -227,6 +227,7 @@ class _CppWindow:
             for n in ("a.cpp", "b.cpp")
         ]
         (self.repo / "build" / "compile_commands.json").write_text(json.dumps(compdb))
+        (self.repo / "build" / "CMakeCache.txt").write_text("CMAKE_GENERATOR:INTERNAL=Ninja\n")
         _git(tmp_path, "init", "-q", str(self.repo))
         self.base = _commit(self.repo, "init")
         bin_dir = tmp_path / "bin"
@@ -375,6 +376,16 @@ def test_a_full_index_whose_reconfigure_fails_fails(tmp_path: Path) -> None:
     proc = w.run_unchecked(CMAKE_FAIL="1")
     assert proc.returncode == 1 and w.compdbs == []
     assert "cmake configure failed" in proc.stdout
+
+
+def test_a_compile_database_without_its_cache_is_configured_from_scratch(tmp_path: Path) -> None:
+    """The cmake fix's recovery (remove the cache) gets the pinned first configure."""
+    w = _CppWindow(tmp_path)
+    (w.repo / "build" / "CMakeCache.txt").unlink()
+    assert (
+        w.run_unchecked(index_docs=("src/a.cpp", "src/b.cpp"), CC="cc", CXX="c++").returncode == 0
+    )
+    assert len(w.cmake_runs) == 1 and "-G Ninja" in w.cmake_runs[0]
 
 
 def test_a_first_configure_is_not_followed_by_a_reconfigure(tmp_path: Path) -> None:
