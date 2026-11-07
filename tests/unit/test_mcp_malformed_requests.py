@@ -4,7 +4,8 @@ A batch entry (or a whole body) that is not an object is an Invalid
 Request for that entry, and a `params` / `arguments` that is not an object
 is Invalid Params — with and without a bearer (the authenticated
 pre-dispatch screen reads `arguments`), so one bad entry never answers
-HTTP 500 for the whole batch.
+HTTP 500 for the whole batch. A batch outside 1 to 64 entries is one Invalid Request,
+answered after the protocol-version check and before the bearer or any entry.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from server.auth.jwt import mint_token
 from server.settings import settings
+from server.transport.mcp_config import UNSUPPORTED_PROTOCOL_VERSION
 
 INVALID_REQUEST = -32600
 INVALID_PARAMS = -32602
@@ -149,4 +151,4 @@ def test_an_unsupported_protocol_version_answers_400_before_the_batch_cap(
         json=[ping] * (mcp_mod.MAX_BATCH_ENTRIES + 1),
         headers={"MCP-Protocol-Version": "1999-01-01"},
     )
-    assert r.status_code == 400 and r.json()["error"]["code"] == -32022
+    assert r.status_code == 400 and r.json()["error"]["code"] == UNSUPPORTED_PROTOCOL_VERSION
