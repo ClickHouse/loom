@@ -17,7 +17,7 @@ it on a laptop.
 | Optional `<release>-publish`          | A pre-upgrade Job for a change that cannot roll ([below](#changing-what-cannot-roll)).                                                                        |
 | Optional `<release>-analytics-export` | A daily CronJob and its own ServiceAccount (`analyticsExport.enabled`, [below](#analytics-export)).                                                           |
 | Optional `<release>-extractor`        | The document extractor's Deployment, Service and NetworkPolicy (`extractor.enabled`, [below](#document-extractor)).                                           |
-| Optional NetworkPolicy `<release>`    | By default (not with `guardMetadata: false` or `egressExcept: []`), egress to all but the metadata service ([below](#instance-metadata-service)).             |
+| Optional NetworkPolicy `<release>`    | With `networkPolicy.enabled`, the pods' full policy; otherwise egress to all but the metadata service ([below](#instance-metadata-service)).                  |
 | Optional dev ClickHouse               | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                                                                     |
 
 ## Before you install
@@ -365,9 +365,8 @@ that list: set `networkPolicy.egressExcept` again, or upgrade with
 
 - A pod has no cloud credentials from the metadata service: not the node's instance
   role, and not GKE Workload Identity on Dataplane V2. IRSA, and EKS Pod Identity on an
-  engine that matches node addresses by range, work; a client with no region set looks
-  it up there, so set `AWS_REGION` (the identity webhooks inject it). Set
-  `guardMetadata: false` to keep metadata access.
+  engine that matches node addresses by range, work. Set `guardMetadata: false` to keep
+  metadata access.
 - `egressExcept` applies with the policy off too: a range listed there (a VPC range,
   say) cuts the pods off every address in it but other pods, and an entry that is not a
   CIDR fails the upgrade.

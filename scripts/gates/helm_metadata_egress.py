@@ -151,6 +151,14 @@ def main() -> None:
     # a release upgraded with --reuse-values has no such key: the guard stays on
     assert web_policies(render(*sets("networkPolicy.guardMetadata=null"))) == [policy]
     assert not web_policies(render("--set-json", "networkPolicy.egressExcept=[]"))
+    # one address family only: the other family's range carries no except list
+    for only, v4, v6 in (
+        ('["169.254.169.254/32"]', ["169.254.169.254/32"], None),
+        ('["fd00:ec2::254/128"]', None, ["fd00:ec2::254/128"]),
+    ):
+        (one,) = web_policies(render("--set-json", f"networkPolicy.egressExcept={only}"))
+        blocks = [p["ipBlock"] for p in one["egress"][0]["to"] if "ipBlock" in p]
+        assert [b.get("except") for b in blocks] == [v4, v6], blocks
     print("metadata egress: denied with the policy on and off; other egress open when off")
 
 
