@@ -179,8 +179,17 @@ describe("MemoryInspector lifecycle actions", () => {
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Change" })).toBeNull();
-    // No lock gates tags.
-    expect(screen.getByLabelText("Add a tag")).toBeInTheDocument();
+    // No lock gates tags: a tag added here is written to the row.
+    vi.mocked(api.setMemory).mockResolvedValue({ version: 4, pinned: false });
+    await userEvent.type(screen.getByLabelText("Add a tag"), "ops{Enter}");
+    await waitFor(() =>
+      expect(api.setMemory).toHaveBeenCalledWith(
+        row,
+        "coffee_pref",
+        LIVE.value,
+        expect.objectContaining({ tags: ["coffee", "ops"] }),
+      ),
+    );
     const items = within(await menu())
       .getAllByRole("menuitem")
       .map((i) => i.textContent);

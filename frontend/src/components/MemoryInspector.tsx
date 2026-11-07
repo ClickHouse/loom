@@ -139,7 +139,7 @@ interface InspectorProps {
 /**
  * Right-edge drawer showing one memory: value, metadata, tags, provenance,
  * related rows, history and lineage. The footer is one row: Edit and Delete, and a More
- * menu with Pin, Verify, Copy to…, Rename and Copy.
+ * menu with the rest of the row's actions.
  *
  * The shell is a Radix `Dialog`: portal, overlay, focus trap, Escape, body scroll lock;
  * focus returns to the card that opened it on close (captured here — a triggerless Radix
@@ -231,8 +231,7 @@ export function MemoryInspector({
       inspect(key, { agent: identity.agent, userId: identity.user_id, sessionId: identity.session_id }));
   const searchByTag = useStore((s) => s.searchByTag);
   const openConversationThread = useStore((s) => s.openConversationThread);
-  // A dialog over the drawer (Copy to…, the source conversation) owns the keys and the
-  // outside clicks while it is open.
+  // A dialog over the drawer owns the keys and the outside clicks while it is open.
   const dialogOver = copyOpen || sourceThread !== null || reasonDialog !== null || redacting !== null;
   // An entity popover's memory link swaps the drawer in place; the focus goes to the
   // drawer, as on any open, since the chip that had it is about to go.
@@ -282,7 +281,7 @@ export function MemoryInspector({
 
   // Outside pointer-down: a click on a toast (dismissing an error raised
   // from here) is not a dismissal; the expanded backdrop collapses back to
-  // the drawer; an active edit or the Copy-to dialog keep the drawer open;
+  // the drawer; an active edit or a dialog over the drawer keep it open;
   // otherwise it closes.
   const onPointerDownOutside = (e: Event) => {
     if (keepOpenOnToasts(e)) return;
@@ -296,8 +295,8 @@ export function MemoryInspector({
 
   // e/d/p drive edit/delete/pin, ⌘/Ctrl+Enter saves an edit. Bound to the
   // dialog content, so they fire only while the drawer holds focus. Radix
-  // portals bubble React events through the tree, so the Copy-to dialog's
-  // keystrokes are skipped explicitly.
+  // portals bubble React events through the tree, so keystrokes from a dialog
+  // over the drawer are skipped explicitly.
   const onContentKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (dialogOver) return;
     const t = e.target;
@@ -466,6 +465,13 @@ export function MemoryInspector({
   // Both lock modes refuse a delete; read_only also refuses a value or expiry change. No
   // lock gates tags (server/memory/domain/lock.py).
   const valueLocked = detail?.lock_mode === "read_only";
+  // A read_only lock that lands while an edit or a rename is open closes it: both would
+  // answer 423.
+  useEffect(() => {
+    if (!valueLocked) return;
+    setEditing(false);
+    setRenaming(false);
+  }, [valueLocked]);
   const deleteLocked = !!detail?.lock_mode;
   const linkCount = links ? links.in.length + links.out.length : 0;
   const verified = detail?.verification === "human" || detail?.verification === "process";

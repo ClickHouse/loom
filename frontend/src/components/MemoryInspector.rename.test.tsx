@@ -187,6 +187,23 @@ describe("MemoryInspector rename with redirect", () => {
     expect(toast).toHaveBeenCalledWith("Renamed to prefs/coffee — the old key redirects to it", "ok");
   });
 
+  it("holds the redirect on a no_delete row, which a rename without one would delete", async () => {
+    seed("writer");
+    vi.mocked(getMemory).mockResolvedValue({ ...LIVE, lock_mode: "no_delete" });
+    await open();
+    await openRename();
+    const form = screen.getByTestId("rename-form");
+    const redirect = within(form).getByRole("checkbox", { name: "Keep old key readable (redirect)" });
+    expect(redirect).toBeChecked();
+    expect(redirect).toBeDisabled();
+    const input = within(form).getByLabelText("New key");
+    await userEvent.clear(input);
+    await userEvent.type(input, "prefs/coffee");
+    await userEvent.click(within(form).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(moveMemory).toHaveBeenCalled());
+    expect(vi.mocked(moveMemory).mock.calls[0][3]).toEqual({ keepRedirect: true, dryRun: false });
+  });
+
   it("unticking the redirect sends keep_redirect false and follows the new key", async () => {
     seed("admin");
     await open();
