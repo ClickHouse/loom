@@ -952,7 +952,7 @@ async def handle_memory_consolidate(
                     )
 
             if not canonical_key or not canonical_value:
-                failure_reason = failure_reason or "merge response lacked canonical_key/value"
+                failure_reason = failure_reason or _NO_CANONICAL
                 log.warning(
                     "memory.consolidate: merge failed for %s/%s cluster %s: %s",
                     input.org,

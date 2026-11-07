@@ -129,8 +129,9 @@ class ApplyRow(BaseModel):
     session_id: str = ""
     status: Literal["would_apply", "applied", "refused", "noop", "failed"]
     version: int | None = None
-    # Why a row was refused or failed, `""` otherwise: `<CODE>: <message>` for a refusal
-    # or a Loom error, `<Kind>: see the server log, request_id=<id>` for any other error.
+    # Why a row was refused or failed, `""` otherwise: `locked <mode>: <reason>` for a
+    # lock, `<CODE>: <message>` (or `<status>: <message>`) for another refusal or a Loom
+    # error, `<Kind>: see the server log, request_id=<id>` for any other error.
     detail: str = ""
 
 
