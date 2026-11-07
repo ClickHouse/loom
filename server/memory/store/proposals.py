@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from server.core.repo_base import _CHClient
-from server.identity.domain.read_scope import ReadFilters, scope_where
+from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 
 # The characters of a value a listed proposal shows (MemoryProposal.value_preview).
 PREVIEW_CHARS = 400
@@ -60,31 +60,37 @@ async def scan_proposals(
 
 
 async def proposal_details(
-    ch: _CHClient, org: str, namespace: str, located: list[dict[str, Any]]
+    ch: _CHClient,
+    org: str,
+    namespace: str,
+    located: list[dict[str, Any]],
+    *,
+    scope: ReadFilters,
 ) -> dict[str, dict[str, Any]]:
     """What a listed proposal shows, by memory id, read by (memory_id, version) pairs
-    without FINAL. The pairs must come from `scan_proposals`, which applied the read
-    scope: this read applies none."""
+    without FINAL, within `scope`."""
     if not located:
         return {}
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "chars": PREVIEW_CHARS,
+        "pairs": [(str(r["mid"]), int(r["version"])) for r in located],
+    }
+    within = scope_and(scope, params)
     rows = await ch.query_all(
-        """
+        f"""
         SELECT toString(memory_id) AS mid, agent, user_id, session_id, memory_type,
                -- a high value is readable by key only
-               if(sensitivity = 'high', '', substringUTF8(value_preview, 1, {chars:UInt32}))
+               if(sensitivity = 'high', '', substringUTF8(value_preview, 1, {{chars:UInt32}}))
                    AS preview,
                sensitivity, tags, toString(created_at) AS created, conflict_with
         FROM loom.memory
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND (memory_id, version) IN {pairs:Array(Tuple(UUID, UInt64))}
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND (memory_id, version) IN {{pairs:Array(Tuple(UUID, UInt64))}}{within}
         LIMIT 1 BY memory_id, version
         """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "chars": PREVIEW_CHARS,
-            "pairs": [(str(r["mid"]), int(r["version"])) for r in located],
-        },
+        params=params,
     )
     return {str(r["mid"]): r for r in rows}

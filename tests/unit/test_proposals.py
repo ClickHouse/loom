@@ -283,7 +283,6 @@ _INSERT = (
 
 def _listing(monkeypatch: pytest.MonkeyPatch, insert: str) -> Any:
     """`memory.proposals` over the rows `insert` writes, policy and counters stubbed."""
-
     ch = LocalCH(ddl("memory"), insert)
 
     async def _policy(*_a: Any, **_k: Any) -> Any:
@@ -322,7 +321,6 @@ async def test_the_listing_offers_only_the_row_a_decision_takes(
     scope_user: str,
     listed: list[tuple[str, str]],
 ) -> None:
-
     a_user = "u1" if scope_user else "-"
     rows = [
         _ROW.format(agent="a", mid=1, user=a_user, value="a value", status="proposed", version=1),
@@ -356,7 +354,6 @@ async def test_proposals_grade_only_the_rows_they_can_return(
 ) -> None:
     """A listing without `only` grades just the rows within `limit` (a badge's `limit=1`
     reads one row's grades); `only="ready"` grades every row to choose."""
-
     rows = [
         "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-00000000000a', 'trial/tea', "
         "'semantic', 'likes tea', 'proposed', 1, '2026-01-01 00:00:00')",
@@ -389,7 +386,6 @@ async def test_proposals_grade_only_the_rows_they_can_return(
 async def test_the_listing_filters_by_prefix_and_tags_and_cuts_by_character(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-
     insert = _INSERT.replace("created_at)", "created_at, tags)") + (
         "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-000000000001', 'lesson/tea', "
         f"'semantic', '{'é' * 401}', 'proposed', 1, '2026-01-01 00:00:00', []), "
@@ -409,7 +405,6 @@ async def test_the_listing_filters_by_prefix_and_tags_and_cuts_by_character(
 async def test_a_tombstoned_newest_row_leaves_the_proposal_below_it_listed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-
     insert = _INSERT.replace("created_at)", "created_at, tombstoned_at)") + (
         "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-000000000001', 'k', 'semantic', "
         "'a value', 'proposed', 1, '2026-01-01 00:00:00', NULL), "
@@ -423,7 +418,6 @@ async def test_a_tombstoned_newest_row_leaves_the_proposal_below_it_listed(
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 async def test_a_high_proposal_is_listed_without_its_value(monkeypatch: pytest.MonkeyPatch) -> None:
-
     insert = _INSERT.replace("created_at)", "created_at, sensitivity)") + (
         "('o', 'n', 'a', '-', '-', '00000000-0000-0000-0000-000000000001', 'k', 'semantic', "
         "'the vault code', 'proposed', 1, '2026-01-01 00:00:00', 'high')"
@@ -432,3 +426,19 @@ async def test_a_high_proposal_is_listed_without_its_value(monkeypatch: pytest.M
     assert [(r.memory_key, r.sensitivity, r.value_preview) for r in out.proposals] == [
         ("k", "high", "")
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_the_listing_orders_by_version_not_by_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `a` was created first but written last: its newer version lists first.
+    insert = _INSERT + (
+        "('o', 'n', 'x', '-', '-', '00000000-0000-0000-0000-000000000001', 'a', 'semantic', "
+        "'a value', 'proposed', 2, '2026-01-01 00:00:00'), "
+        "('o', 'n', 'x', '-', '-', '00000000-0000-0000-0000-000000000002', 'b', 'semantic', "
+        "'b value', 'proposed', 1, '2026-01-02 00:00:00')"
+    )
+    out = await _listing(monkeypatch, insert)(MemoryProposalsInput(org="o", namespace="n"))
+    assert [r.memory_key for r in out.proposals] == ["a", "b"]

@@ -37,7 +37,9 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
     policy = await _p.policy_for(input.org, input.namespace, ch=ch)
     # `ready` grades every row to choose which to return.
     to_show = rows if input.only == "ready" else rows[: input.limit]
-    details = await proposals_repo.proposal_details(ch, input.org, input.namespace, to_show)
+    details = await proposals_repo.proposal_details(
+        ch, input.org, input.namespace, to_show, scope=request_scope()
+    )
     # A row merged away between the scan and the fetch drops out (`total` still counts it).
     listed = [{**r, **details[r["mid"]]} for r in to_show if r["mid"] in details]
     keys = [str(r["memory_key"]) for r in listed]
