@@ -409,12 +409,10 @@ keeps:
   - Every probe fails and the policy read shows every server on one key, the row's or
     another: no server is behind the others, so the row itself is stale, a rotation
     stopped after the password change with a row a reseal put back, and it names
-    `--live`. If the servers disagree, the row is stale and some servers are also
-    behind, and doctor cannot tell from the policies which key is older: it names both
-    groups of servers, says which carries the row's key, and names `--live` together
-    with the admin's problem. This rests on each server applying access changes in the
-    order they were written, so that a server on the new key also has the new password;
-    the isolation test probes it under Keeper replication.
+    `--live`.
+  - Every probe fails and the servers disagree: some servers are not applying access
+    changes, an admin's problem, which doctor names with both groups of servers, asking
+    to be run again once they agree; the rule above then decides the row.
   - Every probe fails and there is no policy read (Loom's user cannot list the policies,
     or cannot list every server's): the two causes look the same, so it names both.
 
@@ -619,8 +617,9 @@ viewer token. Each case must be refused or return no canary:
     - stopped before the policies, every server on the row's key: with the policy read,
       on a cluster and on a single server, doctor names `--live`;
     - stopped after them, every server on one other key: it names `--live`;
-    - servers that disagree, most of them still on the row's old key: it names both
-      groups, which one carries the row's key, and `--live` with the admin's problem;
+      - servers on two keys, the row's and another, on any split and behind a load
+        balancer that pins every probe to one of them: it names the admin's problem with
+        both groups and asks to be run again once they agree;
     - without the policy read: it names both causes;
   - a load balancer that pins every probe to one server, with no policy read, where
     every probe fails, for which it names both causes.
