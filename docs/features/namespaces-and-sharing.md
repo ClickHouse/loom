@@ -152,7 +152,8 @@ matched. A row revised after the checks ran is cited at its newer revision; its
 seconds). A write that changes only a row's status can keep its `updated_at`, so the
 comparison is a hint, not proof. A sample that names no single row (an `exact_key_store`
 hot key, a `version_churn` key) and a row no longer live (an orphan vector) have no
-entry.
+entry, nor, under the Postgres authority, a row the authority no longer serves at the
+version read ([storage authority](../architecture/storage-authority.md)).
 
 The report's `coverage` lists the rules that ran (`rules_run`) and those that could not
 (`rules_skipped`, also in `skipped` with the reason). Both name the evidence read
