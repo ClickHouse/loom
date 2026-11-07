@@ -125,6 +125,8 @@ jobs:
           context: .
           load: true
           tags: loom:docker-smoke
+          # The weekly or dispatched scan sees the packages a release would build with.
+          no-cache: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
           platforms: linux/${{ matrix.arch }}
           cache-from: type=gha,scope=docker-smoke-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=docker-smoke-${{ matrix.arch }}
@@ -136,6 +138,8 @@ jobs:
           file: extractor/Dockerfile
           load: true
           tags: loom-extractor:docker-smoke
+          # The weekly or dispatched scan sees the packages a release would build with.
+          no-cache: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
           platforms: linux/${{ matrix.arch }}
           cache-from: type=gha,scope=docker-smoke-extractor-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=docker-smoke-extractor-${{ matrix.arch }}
