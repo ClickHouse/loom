@@ -900,13 +900,24 @@ def revocation_cutoff(world: dict[str, Any], subject: str) -> Any:
     return datetime.fromtimestamp(world["cutoffs"][subject], UTC)
 
 
-def test_a_wrong_code_or_a_bad_password_claims_nothing_and_keeps_the_code(world) -> None:
+def test_a_wrong_code_or_a_bad_password_claims_nothing_and_keeps_the_code(
+    world, monkeypatch
+) -> None:
+    real_verify, verified = agent_claim.verify_claim_code_off_loop, []
+
+    async def verify(stored_hash: str, code: str) -> bool:
+        verified.append(code)
+        return await real_verify(stored_hash, code)
+
+    monkeypatch.setattr(agent_claim, "verify_claim_code_off_loop", verify)
     c = _app()
     assert _claim(c, "not-the-code", "correct horse").status_code == 400
+    assert verified == ["not-the-code"]
     assert _claim(c, world["code"], "short").status_code == 400
     assert _claim(c, world["code"], "correct horse", "correct hors").status_code == 400
+    # An over-long code is refused before any check of it.
     assert _claim(c, "x" * 300, "correct horse").status_code == 400
-    assert world["hashed"] == []
+    assert verified == ["not-the-code"] and world["hashed"] == []
     assert _row(world, _NS)["password_hash"].startswith(claim_codes.CLAIM_PREFIX)
     assert _claim(c, world["code"], "correct horse").status_code == 200
 
