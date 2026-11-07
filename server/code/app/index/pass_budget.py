@@ -73,6 +73,19 @@ class CodeIngestResult:
     # Per-file resolution reads the rounds answered from memory / sent on.
     read_hits: int = 0
     read_misses: int = 0
+    # (org, namespace, tier) -> "" when the tier served the entry this pass, else its
+    # error: the tier-health records the pass writes at its end. A failure is never
+    # overwritten by a later success of the same tier.
+    tier_outcomes: dict[tuple[str, str, str], str] = field(default_factory=dict)
+
+    def tier_ok(self, cfg: Any, tier: str) -> None:
+        self.tier_outcomes.setdefault((cfg.org, cfg.namespace, tier), "")
+
+    def tier_failed(self, cfg: Any, tier: str, error: BaseException | str) -> None:
+        text = f"{type(error).__name__}: {error}" if isinstance(error, BaseException) else error
+        key = (cfg.org, cfg.namespace, tier)
+        if not self.tier_outcomes.get(key):
+            self.tier_outcomes[key] = text or "failed"
 
     def cut(self, where: str) -> None:
         """The budget stopped the pass before `where` started. `where` is

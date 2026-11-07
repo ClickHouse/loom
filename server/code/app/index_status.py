@@ -28,6 +28,7 @@ from server.code.api.models_status import (
     CodeRecentCommitsInput,
     CodeRecentCommitsOutput,
     CodeTierCoverage,
+    CodeTierHealth,
     CodeWorkerStatus,
 )
 from server.code.app.common import require_code_intel, resolve_code_identity
@@ -254,6 +255,19 @@ async def _clone_lags(
     return clone_head, lags
 
 
+def tier_health_rows(state: IndexState, lags: dict[str, int]) -> list[CodeTierHealth]:
+    """Each recorded tier's health, with the lag of the watermark the tier advances
+    (`lags` is keyed by state key: `git_head` for ingest, each compiler tier's own)."""
+    from server.code.domain.index import tier_health
+    from server.code.domain.index.compiler_tiers import TIERS
+
+    watermark = {"ingest": "git_head", **{t.producer: t.watermark_key for t in TIERS}}
+    return [
+        CodeTierHealth(**h.public(), lag_commits=lags.get(watermark.get(tier, ""), -1))
+        for tier, h in tier_health.from_state(state).items()
+    ]
+
+
 def published_lags(state: IndexState, marks: dict[str, str], clone_head: str) -> dict[str, int]:
     """The lags another process published in its status snapshot, for each watermark
     whose commit (and the clone tip) are still the ones it counted from: what a host
@@ -381,6 +395,7 @@ async def _repo_status(cfg: Any, *, state: IndexState | None = None) -> CodeInde
         scip_commit_py=val("scip_commit_py"),
         scip_producer=primary["producer"] if primary else "",
         compiler_tiers=[CodeCompilerTier(**t) for t in tiers],
+        tier_health=tier_health_rows(state, lags),
         pr_cursor=val("pr_cursor"),
         clone_head=clone_head,
         clone_fetched_at=clone_fetched_at,

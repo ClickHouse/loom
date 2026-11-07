@@ -47,7 +47,10 @@ async def run_pass(org: str = "", namespace: str = "") -> CodeIngestResult:
     configured repo runs (the poller cadence)."""
     result = CodeIngestResult()
     with record_pass("code_ingest") as rec:
-        await _run(result, org, namespace)
+        try:
+            await _run(result, org, namespace)
+        finally:
+            await _record_tier_health(result)
         log_pass_errors(logger, "code_ingest", result.errors)
         rec.outcome = pass_outcome(result)
     return result
@@ -92,6 +95,16 @@ def pass_outcome(result: CodeIngestResult) -> dict[str, Any]:
         "read_misses": result.read_misses,
         "note": result.note,
     }
+
+
+async def _record_tier_health(result: CodeIngestResult) -> None:
+    """Each entry's fetch and ingest outcome of this pass as its tier-health record."""
+    from server.code.app.index import tier_health
+    from server.code.store.index import CodeRepo
+
+    repo = CodeRepo()
+    for (org, ns, tier), error in result.tier_outcomes.items():
+        await tier_health.record(repo, org, ns, tier, error or None)
 
 
 def selected_repos(org: str = "", namespace: str = "") -> list[Any]:
@@ -165,6 +178,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
             result.errors.append(f"{cfg.label}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: repo %s failed", cfg.label)
             pass_context.note_failure(e, cfg.namespace)
+            result.tier_failed(cfg, "ingest", e)
             continue
         if plan is not None:
             plans.append(plan)
@@ -192,6 +206,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
     for plan in plans:
         pass_context.set_namespace(plan.cfg.namespace)
         await _post_steps(plan, result)
+        result.tier_ok(plan.cfg, "ingest")
     result.elapsed_s = round(budget.elapsed(), 1)
     if result.partial:
         pass_context.set_cursor(result.resume)
@@ -232,6 +247,7 @@ async def _run_leg(
             result.errors.append(f"{plan.cfg.label}: {leg}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: %s of %s failed", leg, plan.cfg.label)
             pass_context.note_failure(e, f"{plan.cfg.namespace}:{leg}")
+            result.tier_failed(plan.cfg, "ingest", f"{leg}: {type(e).__name__}: {e}")
 
 
 async def _bootstrap_leg(plan: RepoPass, result: CodeIngestResult, budget: PassBudget) -> None:
@@ -362,6 +378,7 @@ async def _run_repo(
         present, failed = await clone_in_background(cfg, repo)
         if failed:
             result.errors.append(f"{cfg.label}: clone failed (retrying): {failed}")
+            result.tier_failed(cfg, "fetch", f"clone {cfg.git_remote}: {failed}")
         if not present:
             result.note = f"{cfg.label}: cloning into {git_dir}"
             return None

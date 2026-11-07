@@ -65,6 +65,7 @@ def risk_for(rows: list[Any]) -> str:
 
 if TYPE_CHECKING:
     from server.code.domain.index.repos import RepoConfig
+    from server.code.domain.index.state import IndexState
     from server.code.store.index import CodeRepo
 
 
@@ -253,10 +254,41 @@ async def index_as_of(repo: CodeRepo, org: str, ns: str) -> dict[str, Any]:
         if unfetched:  # the lag above is against a stale mirror
             block["stale_reason"] = "mirror_not_fetched"
             block["fetched_at"] = fetched.isoformat() if isinstance(fetched, datetime) else ""
+        if failing := failing_tiers(state, cfg):
+            # A failing tier stops moving: what it answers may trail the head, and why.
+            block["failing_tiers"] = failing
         _AS_OF_CACHE.put((org, ns), block)
         return dict(block)
     except Exception:  # noqa: BLE001 — unknown freshness, not an error
         return {}
+
+
+def failing_tiers(state: IndexState, cfg: RepoConfig | None) -> list[dict[str, Any]]:
+    """The entry's failing tiers from their health records: tier, kind, since, the
+    failed passes in a row, the fix, and for a compiler tier how many commits its
+    watermark trails the fetched tip by (the published count; -1 unknown)."""
+    from server.code.app.index_status import published_clone_head, published_lags
+    from server.code.domain.index import tier_health
+    from server.code.domain.index.compiler_tiers import TIERS as COMPILER_TIERS
+
+    keys = {t.producer: t.watermark_key for t in COMPILER_TIERS}
+    tip = published_clone_head(state, cfg.git_branch) if cfg else ""
+    out: list[dict[str, Any]] = []
+    for tier, health in tier_health.from_state(state).items():
+        if not health.failing:
+            continue
+        row: dict[str, Any] = {
+            "tier": tier,
+            "kind": health.kind,
+            "since": health.failing_since,
+            "failed_passes": health.failed_passes,
+            "fix": health.fix,
+        }
+        if key := keys.get(tier):
+            mark = str((state.get(key) or {}).get("value") or "")
+            row["lag_commits"] = published_lags(state, {key: mark}, tip)[key] if mark else -1
+        out.append(row)
+    return out
 
 
 def fetch_freshness(fetched_at: Any, now: datetime | None = None) -> tuple[str, bool]:

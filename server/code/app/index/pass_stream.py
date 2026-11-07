@@ -168,6 +168,7 @@ class CommitStream:
             self.result.errors.append(f"{sha[:12]}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: commit %s failed", sha[:12])
             pass_context.note_failure(e, ns)
+            self.result.tier_failed(cfg, "ingest", f"commit {sha[:12]}: {type(e).__name__}: {e}")
             self.index = len(self.commits)
             return False
         finally:
@@ -252,6 +253,7 @@ async def ingest_oldest_first(
                 result.errors.append(f"{stream.cfg.label}: commits: {type(e).__name__}: {e}")
                 logger.exception("code_ingest: commit phase of %s failed", stream.cfg.label)
                 pass_context.note_failure(e, stream.cfg.namespace)
+                result.tier_failed(stream.cfg, "ingest", f"commits: {type(e).__name__}: {e}")
 
     async def lane_step(order: int, stream: CommitStream) -> None:
         files = await stream.next_files()

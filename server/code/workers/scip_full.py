@@ -55,6 +55,7 @@ async def run_pass() -> CodeScipFullResult:
         entry_locked=True,
         runs_repo_code=True,
         gc_checkout=True,
+        records_health=False,  # most entries are not due: full_index records its own runs
     )
 
 

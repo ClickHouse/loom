@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 from server.code.api.models_common import _CodeIdentity
+from server.code.api.models_status import CodeTierHealth
 from server.operations.read_projection import ProjectedRow
 
 # ============================================================
@@ -59,6 +60,8 @@ class CodeRepoSummary(ProjectedRow):
     scip_lag: int = -1  # the entry's own compiler tier
     scip_py_lag: int = -1
     scip_producer: str = ""  # which tier scip_lag is: clang | typescript | go | python
+    # Each tier's last recorded outcome, as code.index_status reports it
+    tier_health: list[CodeTierHealth] = Field(default_factory=list)
     indexed_at: str = ""  # git_head watermark's updated_at
     last_refresh_at: str = ""
     counts: dict[str, int] = Field(default_factory=dict)

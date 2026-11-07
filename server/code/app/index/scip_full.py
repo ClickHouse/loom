@@ -15,8 +15,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from server.code.app.index import compiler_tier
-from server.code.app.index.entry_lock import check_held
+from server.code.app.index import compiler_tier, tier_health
+from server.code.app.index.entry_lock import EntryLockLost, check_held
 from server.code.app.index.gitrepo import git_config_env
 from server.code.app.index.sandbox import tool_mounts
 from server.code.app.index.scip_delta import ScipApplyStats, ScipDelta, apply_delta
@@ -35,6 +35,7 @@ WATERMARK = "scip_commit"
 # failed), and of the last one applied.
 FULL_AT = "scip_full_at"
 FULL_DONE_AT = "scip_full_done_at"
+PRODUCER = "clang"
 
 
 # A run's directory left this long is a crashed run's: past the longest a full run
@@ -149,16 +150,20 @@ async def full_index(
     check_held()
     await repo.set_state(cfg.org, cfg.namespace, FULL_AT, str(int(time.time())))
     try:
-        return await _index_and_apply(
+        done = await _index_and_apply(
             repo, cfg, checkout, bare, scip_clang, target, timeout_s, jobs, keep_delta
         )
-    except Exception:
+    except Exception as failure:
         # the retry window runs from the failure, not from a start hours earlier
         try:
             await repo.set_state(cfg.org, cfg.namespace, FULL_AT, str(int(time.time())))
         except Exception as e:  # noqa: BLE001 — the run's own error is the one to raise
             logger.warning("scip-full %s: failure time not recorded: %s", cfg.namespace, e)
+        if not isinstance(failure, EntryLockLost):
+            await tier_health.record(repo, cfg.org, cfg.namespace, PRODUCER, failure)
         raise
+    await tier_health.record(repo, cfg.org, cfg.namespace, PRODUCER)
+    return done
 
 
 async def _index_and_apply(

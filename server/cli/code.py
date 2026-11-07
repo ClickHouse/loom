@@ -41,6 +41,7 @@ from server.cli.code_prs import (
 )
 from server.cli.code_run import _identity, _run
 from server.cli.code_scip import _entries, _entry_locked, _scip_delta, _scip_full, _scip_retry
+from server.code.domain.index.tier_health import TIERS as TIER_NAMES
 
 
 def _add_common(p: argparse.ArgumentParser) -> None:
@@ -135,6 +136,13 @@ def _add_scip_full_parser(csub: Any) -> None:
         "lease is lost mid-run (the command is stopped).",
     )
     _add_common(p_run)
+    p_run.add_argument(
+        "--tier",
+        choices=TIER_NAMES,
+        default="",
+        help="Record the command's outcome as this tier's health on the entry: "
+        "exit 0 clears a failure, any other exit records one with the end of its output.",
+    )
     p_run.add_argument("command", nargs=argparse.REMAINDER, help="-- <command> [args…]")
     p_run.set_defaults(func=_cmd_entry_lock)
 

@@ -202,10 +202,15 @@ async def _entry_locked(args: argparse.Namespace) -> int:
         print("entry-lock: no command after --", file=sys.stderr)
         return 2
     org, ns = _identity(args)
+    tier = getattr(args, "tier", "") or ""
+    tail = bytearray() if tier else None
     try:
         async with entry_lock(org, ns, wait=False):
             # Its uploads name the holder, so the server refuses them once the lease moved.
-            return await _run_while_held(command, env={HOLDER_ENV: current_holder()})
+            rc = await _run_while_held(command, env={HOLDER_ENV: current_holder()}, tail=tail)
+            if tier:
+                await _record_tier(org, ns, tier, rc, bytes(tail or b""))
+            return rc
     except EntryLockHeld:
         print(f"entry-lock {org}/{ns}: held by another pass")
         return ENTRY_HELD_EXIT
@@ -217,19 +222,72 @@ async def _entry_locked(args: argparse.Namespace) -> int:
         return 1
 
 
-async def _run_while_held(command: list[str], *, env: dict[str, str] | None = None) -> int:
+async def _record_tier(org: str, ns: str, tier: str, rc: int, tail: bytes) -> None:
+    """`entry-lock --tier`: the command's exit as the tier's health record, its error
+    the end of the command's output."""
+    from server.code.app.index import tier_health
+    from server.code.store.index import CodeRepo
+
+    error = None
+    if rc != 0:
+        text = tail.decode("utf-8", "replace").strip()
+        error = f"exit {rc}: {text}" if text else f"exit {rc}"
+    await tier_health.record(CodeRepo(), org, ns, tier, error)
+
+
+# How much of a command's output `entry-lock --tier` keeps for its health record.
+_TAIL_BYTES = 4096
+
+
+async def _relay(proc: asyncio.subprocess.Process, tail: bytearray) -> int:
+    """Copy the command's output to this process's stdout, keeping its end in `tail`,
+    until it exits; any other exit (a cancellation) kills its process group."""
+    import os
+    import signal
+
+    try:
+        assert proc.stdout is not None
+        while chunk := await proc.stdout.read(65536):
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+            tail.extend(chunk)
+            del tail[:-_TAIL_BYTES]
+        return await proc.wait()
+    except BaseException:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            await proc.wait()
+        raise
+
+
+async def _run_while_held(
+    command: list[str], *, env: dict[str, str] | None = None, tail: bytearray | None = None
+) -> int:
     """Run `command` in its own process group to its end. A cancellation (the lease
     was lost) kills the whole group at once; SIGTERM to this process (a caller's
-    timeout) sends the group SIGTERM, then SIGKILL after _ENTRY_STOP_GRACE_S."""
+    timeout) sends the group SIGTERM, then SIGKILL after _ENTRY_STOP_GRACE_S. With
+    `tail` its output (stdout and stderr) is relayed and its end kept there."""
     import os
     import signal
 
     from server.code.app.index.gitrepo import communicate_or_kill
 
-    proc = await asyncio.create_subprocess_exec(
-        *command, start_new_session=True, env={**os.environ, **(env or {})}
+    pipes: dict[str, Any] = (
+        {"stdout": asyncio.subprocess.PIPE, "stderr": asyncio.subprocess.STDOUT}
+        if tail is not None
+        else {}
     )
-    run = asyncio.ensure_future(communicate_or_kill(proc, timeout_s=math.inf, group=True))
+    proc = await asyncio.create_subprocess_exec(
+        *command, start_new_session=True, env={**os.environ, **(env or {})}, **pipes
+    )
+    run = asyncio.ensure_future(
+        _relay(proc, tail)
+        if tail is not None
+        else communicate_or_kill(proc, timeout_s=math.inf, group=True)
+    )
     term = asyncio.Event()
     with contextlib.suppress(NotImplementedError):
         asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, term.set)
