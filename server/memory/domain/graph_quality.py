@@ -440,8 +440,9 @@ def _normalise(lowered: str) -> str:
 
 
 # A commit or error facet ("commit:<sha>", "error:<name>") names an identifier: it is
-# case-folded and kept whole, never singularised or stripped of punctuation.
-_CODE_FACET_PREFIXES = ("commit:", "error:")
+# case-folded and kept whole, never singularised or stripped of punctuation. A blank
+# right after the colon reads as prose ("Error: the build failed"), normalised as usual.
+_CODE_FACET_NAME = re.compile(r"(?:commit|error):\S")
 
 
 def _capped_normal(original: str) -> str | None:
@@ -450,7 +451,7 @@ def _capped_normal(original: str) -> str | None:
     if len(original) > MAX_ENTITY_CHARS:
         return None
     folded = fold_case(original)
-    text = folded if folded.startswith(_CODE_FACET_PREFIXES) else _normalise(original.lower())
+    text = folded if _CODE_FACET_NAME.match(folded) else _normalise(original.lower())
     return text if len(text) <= MAX_ENTITY_CHARS else None
 
 
