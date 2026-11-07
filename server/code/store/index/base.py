@@ -92,6 +92,19 @@ class CodeRepoBase:
             out[str(r["state_key"])][key] = str(r.get("state_value") or "")
         return out
 
+    async def state_rows_with_prefix(self, prefix: str) -> list[dict[str, Any]]:
+        """Every namespace's state rows whose key starts with `prefix`, across orgs:
+        (org, namespace, state_key, state_value) — a family of keys every entry may
+        write (the tier-health records), read as one directory."""
+        return await self._ch.query_all(
+            """
+            SELECT org, namespace, state_key, state_value
+            FROM loom.code_index_state FINAL
+            WHERE startsWith(state_key, {p:String})
+            """,
+            {"p": prefix},
+        )
+
     async def all_state(self, org: str, ns: str) -> IndexState:
         rows = await self._ch.query_all(
             """

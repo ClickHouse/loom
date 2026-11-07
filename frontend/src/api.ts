@@ -1437,7 +1437,8 @@ export async function leaveNamespace(org: string, namespace: string): Promise<{ 
 export type CodeId = { org: string; namespace: string };
 // Every reader of the shared repository list — the Repositories page, its cards, the
 // bell, Setup — reads these; two keys (scip_py_lag, has_maintainer) nothing reads stay on
-// the server.
+// the server. `tier_health` is not named: the server always sends it, and a replica of
+// the build before it, during a rolling upgrade, refuses a field it does not have.
 const CODE_REPOS_FIELDS = [
   "org",
   "namespace",

@@ -48,11 +48,13 @@ def _health_provider_fields(
     observed outcome of real calls (the `provider_health` breaker), because a
     total embedding outage leaves both fakes false. `problems` is the same
     list `loom doctor` prints and the dashboard banner renders, each entry with a
-    fix; `status` is `degraded` when ClickHouse is down or any entry is an
-    error — a configured fake is a warn unless LOOM_REQUIRE_REAL_PROVIDERS.
+    fix; `status` is `degraded` when ClickHouse is down or any entry outside
+    `NOT_DEPLOYMENT_FAULTS` is an error — a configured fake is a warn unless
+    LOOM_REQUIRE_REAL_PROVIDERS.
     """
     from server.auth import claims as signin_claims
     from server.auth import keyring, revocation
+    from server.code.app.index import tier_health
     from server.code.app.index.sandbox import layout_refusal, sandbox_state
     from server.core.ch import reader_user_error, reader_user_state
     from server.core.vectors import codes_state
@@ -96,6 +98,7 @@ def _health_provider_fields(
             stale_participants=provider_barrier.stale_participants(),
             carry_pinned=tuple(rmt_carry.pinned_overdue()),
             refused_configuration=provider_runtime.refused_configuration(),
+            code_tier_failures=tier_health.problem_rows(),
         ),
     )
     return {

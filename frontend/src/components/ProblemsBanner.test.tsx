@@ -48,6 +48,28 @@ describe("ProblemsBanner", () => {
     expect(screen.queryByText("no lease")).not.toBeInTheDocument();
   });
 
+  it("heads with the deployment's status: a failing code-index tier at error is not degraded", async () => {
+    vi.stubGlobal(
+      "fetch",
+      health({
+        status: "ok",
+        problems: [
+          {
+            code: "code_tier_failing",
+            severity: "error",
+            message: "1 code-index tier is failing.",
+            fix: "Set the token.",
+          },
+        ],
+      }),
+    );
+    await act(async () => {
+      render(<ProblemsBanner />);
+    });
+    expect(screen.getByText(/Loom is running with warnings — 1 problem/)).toBeInTheDocument();
+    expect(screen.getByRole("listitem").getAttribute("data-severity")).toBe("error");
+  });
+
   it("renders nothing when the server reports no problems", async () => {
     vi.stubGlobal("fetch", health({ status: "ok", problems: [] }));
     await act(async () => {

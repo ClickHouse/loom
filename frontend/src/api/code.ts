@@ -3,6 +3,7 @@
 // still import from `api.ts`.
 import { post } from "../api";
 import type { CodeId, RequestOpts } from "../api";
+import type { TierHealth } from "../lib/tierHealth";
 
 // ---------------------------------------------------------------------------
 // Code plane (server/code/api/). Every input extends _CodeIdentity:
@@ -29,6 +30,9 @@ export interface CodeRepoSummary {
   scip_lag: number;
   scip_py_lag: number;
   scip_producer?: string;
+  /** Each tier's last recorded outcome (fetch, ingest, the compiler tiers); a failing one
+   *  names its error kind, since when, how far behind and the fix. */
+  tier_health?: TierHealth[];
   indexed_at: string;
   last_refresh_at: string;
   counts: Record<string, number>;

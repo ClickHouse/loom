@@ -97,6 +97,10 @@ class HealthState:
     # Why the dashboard's stored model configuration is not applied
     # (`provider_runtime.refused_configuration()`); '' when it is, or not a server.
     refused_configuration: str = ""
+    # The code-index tiers failing past the warn threshold, one row per entry and
+    # tier (`server.code.app.index.tier_health.problem_rows`): org, namespace, tier,
+    # kind, since, failed_passes, lag_commits, fix, severity. None = not read here.
+    code_tier_failures: tuple[Mapping[str, Any], ...] | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -810,6 +814,53 @@ def _constraint_message(error: str) -> str:
     return m.group(0).strip() if m else error[:200]
 
 
+# How many failing tiers the `code_tier_failing` message names before it counts the rest.
+_TIER_FAILURES_NAMED = 5
+
+
+def _code_tier_problems(st: HealthState) -> list[Problem]:
+    """One `code_tier_failing` problem for all the code-index tiers that keep failing:
+    each tier with its error kind, failed passes, since when and how far behind, and
+    the fix of each kind. It names no entry or repository, because `/v1/health` answers
+    anyone and an entry may be restricted; `code.repos` and the repository page name
+    them to whoever may read them. Its severity is the worst row's."""
+    rows = st.code_tier_failures or ()
+    if not rows:
+        return []
+
+    def named(r: Mapping[str, Any]) -> str:
+        lag, passes = int(r["lag_commits"]), int(r["failed_passes"])
+        # the count the entry's last published status made: a lower bound
+        behind = f", at least {lag} commit{'' if lag == 1 else 's'} behind" if lag >= 0 else ""
+        return (
+            f"{r['tier']} ({r['kind']}, {passes} failed pass{'' if passes == 1 else 'es'} "
+            f"since {r['since']}{behind})"
+        )
+
+    shown = [named(r) for r in rows[:_TIER_FAILURES_NAMED]]
+    more = len(rows) - len(shown)
+    tail = f" and {more} more" if more > 0 else ""
+    noun, it = ("tier is", "it answers") if len(rows) == 1 else ("tiers are", "they answer")
+    fixes = list(dict.fromkeys(str(r["fix"]) for r in rows))
+    return [
+        Problem(
+            "code_tier_failing",
+            "error" if any(r["severity"] == "error" for r in rows) else "warn",
+            f"{len(rows)} code-index {noun} failing, so what {it} trails the "
+            f"branch: {'; '.join(shown)}{tail}. code.repos and the repository page name "
+            "each entry.",
+            " ".join(fixes),
+            source="workers",
+        )
+    ]
+
+
+# Problems about the data a deployment holds, not the deployment: they are listed, and
+# never make `status` degraded (a repository's failing code-index tier would otherwise
+# fail `loom up`, `helm test` and every health gate over a missing token).
+NOT_DEPLOYMENT_FAULTS = frozenset({"code_tier_failing"})
+
+
 def collect_problems(settings: Any, state: HealthState | None = None) -> list[Problem]:
     """Every known problem for this process, worst-first. Pure: reads
     `settings`, `state` and `state.env` only."""
@@ -829,14 +880,21 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _reader_user_problems(settings, st)
         + _oauth_claim_problems(settings, st)
         + _participant_problems(st)
+        + _code_tier_problems(st)
     )
-    return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))
+    # within a severity, the deployment's own problems first
+    return sorted(
+        problems,
+        key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code in NOT_DEPLOYMENT_FAULTS, p.code),
+    )
 
 
 def derive_status(ch_ok: bool, problems: list[Problem]) -> str:
     """`/v1/health` `status`: `degraded` when ClickHouse is down or any
-    error-severity problem exists; configured fakes are `warn` unless
-    `LOOM_REQUIRE_REAL_PROVIDERS=true`, so the stock dev stack stays `ok`."""
-    if not ch_ok or any(p.severity == "error" for p in problems):
+    error-severity problem exists but those in `NOT_DEPLOYMENT_FAULTS`; configured
+    fakes are `warn` unless `LOOM_REQUIRE_REAL_PROVIDERS=true`, so the stock dev stack
+    stays `ok`."""
+    faults = [p for p in problems if p.code not in NOT_DEPLOYMENT_FAULTS]
+    if not ch_ok or any(p.severity == "error" for p in faults):
         return "degraded"
     return "ok"

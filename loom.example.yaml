@@ -1073,6 +1073,19 @@ settings:
   # is counted against the local mirror). 0 = off. [restart]
   # code_fetch_stale_after_seconds: 3600
 
+  # A code-index tier failing this many passes in a row is a `code_tier_failing` health
+  # problem (warn); fewer is a transient failure the next pass retries. [live]
+  # code_tier_failing_warn_passes: 3
+
+  # A code-index tier failing for this many hours is a `code_tier_failing` health
+  # problem (warn), however few passes ran in that time. [live]
+  # code_tier_failing_warn_hours: 3.0
+
+  # A `code_tier_failing` health problem is an error when the failing tier is also this
+  # many commits behind the fetched tip; the fetch tier, whose lag is unknown, stays a
+  # warn. [live]
+  # code_tier_failing_error_lag_commits: 100
+
   # --- code.callers ---
 
   # code.callers/callees: a bare name with more distinct definitions than this returns

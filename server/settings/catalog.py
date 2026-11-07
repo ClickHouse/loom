@@ -946,6 +946,16 @@ class CodeSettings(BaseModel):
     # as_of.stale is also true when the mirror has not fetched for this many
     # seconds (lag is counted against the local mirror). 0 = off.
     code_fetch_stale_after_seconds: int = 3600
+    # A code-index tier failing this many passes in a row is a `code_tier_failing`
+    # health problem (warn); fewer is a transient failure the next pass retries.
+    code_tier_failing_warn_passes: Annotated[int, LIVE] = Field(default=3, ge=1)
+    # A code-index tier failing for this many hours is a `code_tier_failing` health
+    # problem (warn), however few passes ran in that time.
+    code_tier_failing_warn_hours: Annotated[float, LIVE] = Field(default=3.0, gt=0)
+    # A `code_tier_failing` health problem is an error when the failing tier is also
+    # this many commits behind the fetched tip; the fetch tier, whose lag is unknown,
+    # stays a warn.
+    code_tier_failing_error_lag_commits: Annotated[int, LIVE] = Field(default=100, ge=1)
     # --- code.callers ---
     # code.callers/callees: a bare name with more distinct definitions than
     # this returns `ambiguous` + candidates instead of walking them all.

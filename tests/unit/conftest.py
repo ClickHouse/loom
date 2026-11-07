@@ -389,6 +389,23 @@ def _no_copy_head_check(request: pytest.FixtureRequest) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _no_doctor_tier_read(request: pytest.FixtureRequest) -> Iterator[None]:
+    """`loom doctor` reads the failing code-index tiers from ClickHouse with the server's
+    client (`_doctor_tier_failures`): off in unit tests, which would otherwise reach a
+    ClickHouse listening on this host and refresh process-wide snapshots from it, unless
+    a test is marked `doctor_tier_read`."""
+    if request.node.get_closest_marker("doctor_tier_read"):
+        yield
+        return
+    from server.cli import doctor
+
+    original = doctor._doctor_tier_failures
+    doctor._doctor_tier_failures = lambda: None  # type: ignore[assignment]
+    yield
+    doctor._doctor_tier_failures = original
+
+
+@pytest.fixture(autouse=True)
 def _no_grant_rows(request: pytest.FixtureRequest) -> Iterator[None]:
     """The namespace gate caps a token's claim at the grant its subject holds
     there (`authz.claim_cap`), read through the grant cache. Unit fakes answer

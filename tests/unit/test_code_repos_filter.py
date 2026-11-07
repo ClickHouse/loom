@@ -148,3 +148,14 @@ async def test_no_repo_keeps_the_full_listing(plane) -> None:
 
     out = await repos_mod.handle_code_repos(CodeReposInput(org=ORG))
     assert len(out.repos) == 4
+
+
+@pytest.mark.asyncio
+async def test_a_field_list_without_tier_health_still_gets_it(plane) -> None:
+    """The dashboard does not name `tier_health`: a replica of the build before it
+    would refuse the field during a rolling upgrade. The server sends it anyway."""
+    from server.code.api.models_repos import CodeReposInput
+
+    out = await repos_mod.handle_code_repos(CodeReposInput(org=ORG, fields=["org"]))
+    row = out.model_dump()["repos"][0]
+    assert set(row) == {"org", "namespace", "tier_health"}

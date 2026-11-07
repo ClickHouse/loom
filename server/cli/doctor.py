@@ -4,6 +4,7 @@ problem list /v1/health carries, and the report body."""
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import sys
 from typing import Any
@@ -447,15 +448,54 @@ def _doctor_reader_probe(settings: Any) -> tuple[str, str]:
     return "ok", ""
 
 
+@functools.cache  # `--json` builds the problem list twice; read once
+def _doctor_tier_failures() -> tuple[Any, ...] | None:
+    """The failing code-index tiers as `/v1/health` reports them, read once from
+    ClickHouse; None when they cannot be read (ClickHouse down or slow past 5 s, or the
+    registry unread): the doctor then says nothing of them."""
+    import asyncio
+
+    from server.code.app.index import repo_registry, tier_health
+    from server.core import settings_overrides
+    from server.core.ch import get_client
+    from server.settings import settings
+
+    if not settings.code_intel_enabled or not settings.ch_host:
+        return None  # nothing runs a tier, or no ClickHouse to read
+
+    async def read() -> tuple[Any, ...] | None:
+        client = get_client()
+        try:
+            await client.connect()
+            await repo_registry.refresh_db_repos(force=True)  # the self-service entries too
+            if not repo_registry.registry_read():
+                return None  # which entries are configured is unknown: say nothing
+            await settings_overrides.refresh()  # the thresholds `/v1/health` grades with
+            await tier_health.refresh_failing()
+            return tier_health.problem_rows()
+        finally:
+            await client.disconnect()
+
+    try:
+        # bounded: with ClickHouse down, `clickhouse_reachable` already says so
+        return asyncio.run(asyncio.wait_for(read(), timeout=5))
+    except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
+        return None
+
+
 def _doctor_problems() -> list[Any]:
-    """The shared problem list as the doctor sees it: settings
-    only — no probed dim, breaker, lease or ledger before boot. Empty when
-    settings do not load (the `settings_load` check already says so)."""
+    """The shared problem list as the doctor sees it: settings, and the failing
+    code-index tiers read once from ClickHouse — no probed dim, breaker, lease or
+    ledger before boot. When that read runs (code intelligence on, ClickHouse and the
+    registry read) it first adopts the deployment's runtime setting overrides, so every
+    problem is graded as the server grades it; otherwise the environment's values.
+    Empty when settings do not load (the `settings_load` check already says so)."""
     try:
         from server.code.app.index.sandbox import layout_refusal, sandbox_available
         from server.observability.problems import HealthState, Problem, collect_problems
         from server.settings import settings
 
+        tiers = _doctor_tier_failures()  # first: it adopts the runtime overrides
         status, detail = _doctor_reader_probe(settings)
         problems = collect_problems(
             settings,
@@ -464,6 +504,7 @@ def _doctor_problems() -> list[Any]:
                 repo_sandbox_refusal=layout_refusal(),
                 ch_reader_ok={"ok": True, "failing": False}.get(status),
                 ch_reader_error=detail if status == "failing" else "",
+                code_tier_failures=tiers,
             ),
         )
         if status == "not_probed" and detail:
@@ -478,11 +519,16 @@ def _doctor_problems() -> list[Any]:
 def _problem_checks(problems: list[Any]) -> list[tuple[str, str, str]]:
     """Render problems as doctor lines: `problem:<code>`, graded error→FAIL,
     warn→WARN, info→PASS, detail `message Fix: …` — the same list `/v1/health`
-    carries, so the two surfaces cannot disagree."""
-    return [
-        (f"problem:{p.code}", _GRADE_BY_SEVERITY.get(p.severity, WARN), f"{p.message} Fix: {p.fix}")
-        for p in problems
-    ]
+    carries, so the two surfaces cannot disagree. A problem about the data a deployment
+    holds (`NOT_DEPLOYMENT_FAULTS`) is at most WARN, as it never degrades `status`: the
+    doctor's exit code is a deployment gate too."""
+    from server.observability.problems import NOT_DEPLOYMENT_FAULTS
+
+    def grade(p: Any) -> str:
+        g = _GRADE_BY_SEVERITY.get(p.severity, WARN)
+        return WARN if g == FAIL and p.code in NOT_DEPLOYMENT_FAULTS else g
+
+    return [(f"problem:{p.code}", grade(p), f"{p.message} Fix: {p.fix}") for p in problems]
 
 
 def _run_doctor_checks() -> list[tuple[str, str, str]]:

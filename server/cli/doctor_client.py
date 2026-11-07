@@ -105,7 +105,9 @@ def server_check(base_url: str, source: str, get_json: GetJson) -> tuple[Check, 
     errors = [
         p.get("code")
         for p in problems or []
-        if isinstance(p, dict) and p.get("severity") == "error"
+        if isinstance(p, dict)
+        and p.get("severity") == "error"
+        and p.get("code") != "code_tier_failing"
     ]
     build = str(body.get("build_commit") or "?")[:9] if isinstance(body, dict) else "?"
     health = (
@@ -113,7 +115,10 @@ def server_check(base_url: str, source: str, get_json: GetJson) -> tuple[Check, 
         if isinstance(body, dict)
         else str(status)
     )
-    if status >= 500 or errors:
+    # the server's own `status` says whether it is degraded: an error about the data it
+    # holds (a repository's failing code-index tier) does not degrade it
+    degraded = isinstance(body, dict) and body.get("status") == "degraded"
+    if status >= 500 or degraded:
         return (
             (
                 name,

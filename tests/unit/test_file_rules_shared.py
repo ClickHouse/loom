@@ -658,7 +658,11 @@ async def test_code_repos_rows_name_the_repositorys_primary_namespace(plane: Any
     out = await plane.handle_code_repos(
         CodeReposInput(org="clickhouse", repo="ClickHouse/loom", fields=["primary_namespace"])
     )
-    assert out.repos[0].model_dump() == {"namespace": "code-loom", "primary_namespace": "code-loom"}
+    assert out.repos[0].model_dump() == {
+        "namespace": "code-loom",
+        "primary_namespace": "code-loom",
+        "tier_health": [],  # always returned
+    }
 
 
 def test_code_repos_row_field_defaults_empty() -> None:

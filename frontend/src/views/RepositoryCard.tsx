@@ -32,6 +32,7 @@ import type { CodeRepoSummary } from "../api";
 import { absoluteTime, fmtInt, listTime, parseChTime } from "../lib/format";
 import { stageLabel } from "../lib/codeStage";
 import { freshness, type FreshTone } from "../lib/codeFreshness";
+import { failingTiers, failureSummary, tierName } from "../lib/tierHealth";
 import {
   bindableRecords,
   canAdminister,
@@ -104,7 +105,23 @@ export function branchHealth(b: CodeRepoSummary): Health {
   const stage = b.stage || "";
   const building = stageLabel(b);
   if (stage === "error")
-    return { text: "Index failed", state: "danger", rank: 6, detail: building?.title || "The last index failed." };
+    return { text: "Index failed", state: "danger", rank: 7, detail: building?.title || "The last index failed." };
+  const failing = failingTiers(b.tier_health);
+  if (failing.length > 0) {
+    const first = failing[0];
+    return {
+      text: failing.length === 1 ? `${tierName(first.tier)} failing` : `${failing.length} tiers failing`,
+      // warning: the card does not know the thresholds, and a failing tier still serves
+      // what it last indexed
+      state: "warning",
+      rank: 6,
+      detail: failing
+        .map(
+          (t) => `${tierName(t.tier)}: ${failureSummary(t)}, first failed ${listTime(t.failing_since)}. Fix: ${t.fix}`,
+        )
+        .join(" "),
+    };
+  }
   if (BUILDING.has(stage))
     return { text: "Indexing", state: "info", rank: 1, detail: `${building?.label}. ${building?.title}` };
   if (!b.git_head || !b.indexed_at)
@@ -414,6 +431,25 @@ function branchRow(b: CodeRepoSummary, actions: CodeActions, busy: boolean): Tab
       },
     ],
   };
+}
+
+/** Each failing tier of a branch the person reads: which tier, since when, how far behind,
+ *  the error kind and the fix — what an operator needs without opening the API. */
+function TierFailures({ facet }: { facet: CodeFacet }) {
+  const rows = facet.branches.flatMap((b) => failingTiers(b.tier_health).map((t) => ({ b, t })));
+  if (rows.length === 0) return null;
+  return (
+    <ul className="space-y-1.5" data-testid="repo-tier-failures">
+      {rows.map(({ b, t }) => (
+        <li key={`${b.namespace}:${t.tier}`} className="text-xs">
+          <Badge text={tierName(t.tier)} state="warning" size="sm" className="mr-1.5" />
+          <span className="font-mono">{b.branch}</span>: {failureSummary(t)}, first failed{" "}
+          <ListTime time={t.failing_since} quiet />. <span className="text-text-muted">Fix: </span>
+          <span className="break-words">{t.fix}</span>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function BranchTable({ facet, busy, actions }: { facet: CodeFacet; busy: boolean; actions: CodeActions }) {
@@ -828,6 +864,7 @@ export const RepositoryCard = memo(function RepositoryCard({
               </p>
             )}
             {card.code && <BranchTable facet={card.code} busy={anyBusy} actions={code} />}
+            {card.code && <TierFailures facet={card.code} />}
             <TrackerLine card={card} busy={anyBusy} code={code} record={record} trackerNote={trackerNote} />
             {settings && <Settings card={card} busy={anyBusy} code={code} adminOpsPresent={adminOpsPresent} />}
             {docs && (

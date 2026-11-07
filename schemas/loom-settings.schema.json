@@ -2029,6 +2029,24 @@
           "type": "string",
           "description": "code.test_gate run recipes (LOOM_CODE_TEST_GATE_RUN_TEMPLATES): JSON list of {\"pattern\": <regex over the repo-relative test path>, \"run\": <template>}, tried before the built-ins. Templates may use {path} {dir} {stem} {name} {parent}. A path no recipe matches is reported run_unknown, never guessed."
         },
+        "code_tier_failing_error_lag_commits": {
+          "default": 100,
+          "minimum": 1,
+          "type": "integer",
+          "description": "A `code_tier_failing` health problem is an error when the failing tier is also this many commits behind the fetched tip; the fetch tier, whose lag is unknown, stays a warn."
+        },
+        "code_tier_failing_warn_hours": {
+          "default": 3.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "A code-index tier failing for this many hours is a `code_tier_failing` health problem (warn), however few passes ran in that time."
+        },
+        "code_tier_failing_warn_passes": {
+          "default": 3,
+          "minimum": 1,
+          "type": "integer",
+          "description": "A code-index tier failing this many passes in a row is a `code_tier_failing` health problem (warn); fewer is a transient failure the next pass retries."
+        },
         "code_trace_log_enabled": {
           "default": true,
           "type": "boolean",

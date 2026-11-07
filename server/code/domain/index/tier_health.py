@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 
 from server.code.domain.index.compiler_tiers import TIERS as COMPILER_TIER_SPECS
 from server.code.domain.index.state import IndexState
+from server.core.datetimes import parse_iso_dt, to_naive_utc
 
 STATE_PREFIX = "tier_health:"
 # The compiler tiers by producer; `clang_full` is the weekly C++ full re-index, kept apart
@@ -270,9 +271,10 @@ def _where(text: str) -> str:
     return ", ".join(parts)
 
 
-def fix_for(kind: str, text: str) -> str:
-    """The one fix for a failure of `kind`, naming what the error names."""
-    where = _where(text)
+def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
+    """The one fix for a failure of `kind`, naming what the error names; with
+    `name_where=False` the same fix without the host, repository or submodule."""
+    where = _where(text) if name_where else ""
     at = f" ({where})" if where else ""
     if kind == "credential" and "publickey" in text.lower():
         return (
@@ -320,3 +322,25 @@ def fix_for(kind: str, text: str) -> str:
     if kind == "harness":
         return "The indexer failed: the error holds the tail of its output."
     return "See the error; the tier retries every pass."
+
+
+def severity(
+    health: TierHealth,
+    lag_commits: int,
+    now: datetime,
+    *,
+    warn_passes: int,
+    warn_hours: float,
+    error_lag_commits: int,
+) -> str:
+    """'' while a failing tier may still be transient, `warn` once it has failed
+    `warn_passes` passes in a row or for `warn_hours`, `error` when it is also
+    `error_lag_commits` or more behind (-1 lag is unknown, never an error)."""
+    if not health.failing:
+        return ""
+    since = parse_iso_dt(health.failing_since)  # drops the +00:00 `_iso` writes: naive UTC
+    at = to_naive_utc(now)
+    hours = (at - since).total_seconds() / 3600 if since else 0.0
+    if health.failed_passes < warn_passes and hours < warn_hours:
+        return ""
+    return "error" if lag_commits >= error_lag_commits else "warn"

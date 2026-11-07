@@ -54,6 +54,9 @@ function visibleProblems(all: HealthProblem[]): HealthProblem[] {
  */
 export function ProblemsBanner() {
   const [reported, setReported] = useState<HealthProblem[] | null>(null);
+  // The headline is the deployment's `status`: a problem about the data it holds (a
+  // repository's failing code-index tier) can be an error without degrading it.
+  const [degraded, setDegraded] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
@@ -67,7 +70,10 @@ export function ProblemsBanner() {
     }
     sharedHealth()
       .then((d) => {
-        if (d) setReported(healthProblems(d));
+        if (d) {
+          setReported(healthProblems(d));
+          setDegraded(d.status === "degraded");
+        }
       })
       .catch(() => {
         /* swallow; banner is best-effort */
@@ -87,17 +93,15 @@ export function ProblemsBanner() {
     setDismissed(true);
   };
 
-  const hasError = problems.some((p) => p.severity === "error");
-
   return (
     <div className="px-6 xl:px-8 mt-4 relative" role="status" aria-live="polite" data-testid="problems-banner">
       <Alert
-        state={hasError ? "danger" : "warning"}
+        state={degraded ? "danger" : "warning"}
         size="medium"
         text={
           <div className="pr-8">
             <strong>
-              {hasError ? "Loom is degraded" : "Loom is running with warnings"} — {problems.length}{" "}
+              {degraded ? "Loom is degraded" : "Loom is running with warnings"} — {problems.length}{" "}
               {problems.length === 1 ? "problem" : "problems"}.
             </strong>
             <ul className="mt-1.5 space-y-1.5">

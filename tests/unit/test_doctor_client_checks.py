@@ -319,6 +319,7 @@ def test_degraded_server_warns_with_the_error_codes() -> None:
                 "problems": [
                     {"code": "fake_llm", "severity": "error"},
                     {"code": "x", "severity": "warn"},
+                    {"code": "code_tier_failing", "severity": "error"},
                 ],
             },
         )
@@ -328,7 +329,23 @@ def test_degraded_server_warns_with_the_error_codes() -> None:
         grade == "WARN"
         and "fake_llm" in detail
         and "x" not in detail.split("reports")[1].split(".")[0].replace("fake_llm", "")
+        and "code_tier_failing" not in detail
     )
+
+
+def test_a_repositorys_failing_tier_does_not_make_the_server_warn() -> None:
+    get_json, _, _ = _http(
+        health=(
+            200,
+            {
+                "status": "ok",
+                "build_commit": "b",
+                "problems": [{"code": "code_tier_failing", "severity": "error"}],
+            },
+        )
+    )
+    (name, grade, detail), _ = dc.server_check("https://h", "LOOM_BASE_URL", get_json)
+    assert grade == "PASS" and "status ok" in detail
 
 
 # ---- client wiring ----

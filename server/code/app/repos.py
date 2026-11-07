@@ -44,7 +44,9 @@ async def handle_code_repos(input: CodeReposInput) -> CodeReposOutput:
     if slugs and input.repos:
         out = await _resolve_candidates(input, slugs, out)
     set_code_span_attributes(results=len(out), consumer=input.consumer)
-    project_rows(out, CodeRepoSummary, input.fields, always=frozenset({"namespace"}))
+    # tier_health always: a caller asking for it by name would get a 422 from a replica
+    # of the build before it during a rolling upgrade
+    project_rows(out, CodeRepoSummary, input.fields, always=frozenset({"namespace", "tier_health"}))
     return CodeReposOutput(repos=out)
 
 
