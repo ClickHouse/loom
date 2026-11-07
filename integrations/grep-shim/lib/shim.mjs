@@ -70,7 +70,7 @@ export function nativeTool(tool, env = process.env, self = process.argv[1]) {
   }
   // Windows separates PATH with `;` and the tool is grep.exe (Git's usr\bin).
   const name = process.platform === "win32" ? `${tool}.exe` : tool;
-  for (const dir of (env.PATH || env.Path || "").split(delimiter)) {
+  for (const dir of (env.PATH || "").split(delimiter)) {
     if (!dir) continue;
     const cand = join(dir, name);
     try {
