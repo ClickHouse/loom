@@ -280,6 +280,7 @@ def test_a_slides_large_picture_is_read_with_ocr_into_a_block_of_its_own(
         ("paragraph", "Scanned runbook text\nsecond line here", {"ocr": True}),
     ]
     assert a.coverage.complete and a.attrs["ocr_slides"] == [1]
+    assert "images_unread" not in a.attrs and a.warnings == ()  # OCR read it
     assert engine.seen == [(b"\x89PNG fake", pytest.approx(9_000_000 / 914_400))]
     assert a.parser_version.endswith("+tesseract5.0.0")
 
@@ -291,12 +292,14 @@ def test_a_slides_small_picture_is_not_read_and_without_ocr_a_large_one_fails_it
     assert (
         [b.text for b in a.blocks] == ["Whiteboard"] and engine.seen == [] and a.coverage.complete
     )
+    assert a.attrs["images_unread"] == [1]  # OCR leaves the small one, which is said
     monkeypatch.setattr(ocr, "engine", lambda: None)
     b = extract(_deck(9_000_000), "d.pptx")
     assert [b.text for b in b.blocks] == ["Whiteboard"]
     assert [(f.unit, f.reason) for f in b.coverage.failed] == [
         ("slide 1", "a picture covers a fifth of it or more: its text needs OCR, which is not run")
     ]
+    assert "images_unread" not in b.attrs  # its failure names it
 
 
 def test_the_services_ocr_settings_are_checked_when_it_starts() -> None:

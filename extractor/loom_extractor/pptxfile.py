@@ -384,7 +384,7 @@ def extract_pptx(data: bytes) -> Artifact:
                 )
                 incomplete.add(number)
             continue
-        if shows_unread:
+        if shows_unread and not unread:  # a slide failed for its pictures is named there
             not_read.append(number)
         if slide.charts and not (slide.title or slide.shapes or notes):
             # what the slide says of its own is in a chart or diagram, beside the
