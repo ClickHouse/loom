@@ -616,12 +616,17 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
 
     assert [r.resolved for r in results] == [True, True]
     assert retired == [("a", written["a"]), ("d", written["d"])]
+    assert _retire_clients[-2:] == [ch, ch]  # the repair's client, not the default
     assert _DEMOTE_REEMITS == [
         ("b", {"expires_at": None, "confidence": 0.45, "version": written["b"]})
     ]
 
 
+_retire_clients: list[Any] = []
+
+
 async def _retire_many_ok(items, *, ch=None) -> int:
+    _retire_clients.append(ch)
     for (_o, _n, _a, _u, _s, key), version in items:
         retired.append((key, version))
     return len(items)
@@ -708,8 +713,9 @@ async def test_a_malformed_expiry_mirror_failure_is_abandoned(
     from tests.unit.claims_fake import no_erasure
 
     no_erasure(monkeypatch)
-    result = await pf._retry(
-        pf.ProjectionFailureRow(
+
+    def failure(item: list[Any]) -> Any:
+        return pf.ProjectionFailureRow(
             failure_id="f1",
             org="o",
             namespace="n",
@@ -720,8 +726,12 @@ async def test_a_malformed_expiry_mirror_failure_is_abandoned(
             memory_keys=["k"],
             error_type="ConnectionError",
             error_message="insert refused",
-            payload={"items": [[["o", "n", "k"], 200, None]]},
-        ),
-        ch=object(),
-    )
-    assert (result.abandoned, result.reason) == (True, "malformed_payload")
+            payload={"items": [item]},
+        )
+
+    for item in (
+        [["o", "n", "k"], 200, None],  # not an identity key
+        [["o", "n", "a", "-", "-", "k"], 200, [1]],  # not a demote's overrides
+    ):
+        result = await pf._retry(failure(item), ch=object())
+        assert (result.abandoned, result.reason) == (True, "malformed_payload")

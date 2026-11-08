@@ -373,7 +373,7 @@ def _mirror_items(mirrors: list[tuple[str, Any, int]], *, cfg: ExpiryConfig) -> 
     return items
 
 
-async def apply_mirror(items: list[MirrorItem]) -> int:
+async def apply_mirror(items: list[MirrorItem], *, ch: Any | None = None) -> int:
     """Search reads loom.memory_embeddings, so the post-action lands there too:
     tombstone and anonymize retire the keys' vectors (memory_embeddings and
     entity_vectors, at the memory row's version, so an anonymized key keeps no entity
@@ -389,9 +389,9 @@ async def apply_mirror(items: list[MirrorItem]) -> int:
     copies = [
         (key, {**copy, "version": version}) for key, version, copy in items if copy is not None
     ]
-    n = await memory_repo.retire_vectors_for_keys(retires) if retires else 0
+    n = await memory_repo.retire_vectors_for_keys(retires, ch=ch) if retires else 0
     if copies:
-        n += await memory_repo.reemit_embedding_rows_for_keys(copies)
+        n += await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch)
     return n
 
 
@@ -425,5 +425,5 @@ async def _record_mirror_failures(items: list[MirrorItem], error: Exception) -> 
         )
     try:
         await insert_projection_failures(rows)
-    except Exception:  # the pass reports the mirror failure either way
-        log.exception("memory_expiry_sweep: recording %d mirror failures failed", len(rows))
+    except Exception as e:  # noqa: BLE001 — the pass reports the mirror failure either way
+        log.warning("memory_expiry_sweep: recording %d mirror failures failed: %s", len(rows), e)
