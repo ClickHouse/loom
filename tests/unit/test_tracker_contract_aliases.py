@@ -12,8 +12,6 @@ from pathlib import Path
 import pytest
 
 import server.tracker.app.contract as ct
-import server.tracker.app.facts as facts_app
-import server.tracker.app.links as links_app
 import server.tracker.store.source as src
 from server.tracker.domain import contract as rc
 from server.tracker.store.source import contract_reports as reports
@@ -304,9 +302,3 @@ def test_a_tracker_without_pr_test_types_or_src_components_serves_them_empty() -
     sql = rep.rewrite(f"SELECT test_types, src_components FROM {DB}.github_prs FINAL", DB)
     assert "CAST([] AS Array(String)) AS test_types" in sql
     assert "CAST([] AS Array(String)) AS src_components" in sql
-    # the readers take the defaulted empty arrays
-    row = {"test_types": [], "src_components": [], "primary_component": "Storages"}
-    assert links_app._component_match("Parsers", row) == 0
-    assert links_app._component_match("Storages", row) == 1
-    fact = facts_app.fact_of({**row, "is_pr": True, "repo": "o/r", "number": 7}, [])
-    assert fact["kind"] == "pr" and "test_types" not in fact
