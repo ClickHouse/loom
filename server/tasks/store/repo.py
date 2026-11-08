@@ -395,12 +395,16 @@ async def list_tasks(
     statuses: list[str] | None = None,
     kinds: list[str] | None = None,
     from_subject: str | None = None,
+    poster: str | None = None,
     owner: str | None = None,
     limit: int = 100,
     fields: list[str] | None = None,
     newest_first: bool = False,
     ch: _CHClient | None = None,
 ) -> list[TaskRow]:
+    """`from_subject` matches a poster's subject or agent label, inside an inbox the
+    caller may read; `poster` matches the token subject alone, across the org: a label is
+    no identity, so it never answers for one."""
     ch = ch or _default_client()
     where = ["org = {org:String}", "is_deleted = 0"]
     params: dict[str, Any] = {"org": org, "limit": int(limit)}
@@ -419,6 +423,9 @@ async def list_tasks(
     if from_subject:
         where.append("(from_subject = {subj:String} OR from_agent = {subj:String})")
         params["subj"] = from_subject
+    if poster:
+        where.append("from_subject = {poster:String}")
+        params["poster"] = poster
     if owner:
         where.append("owner = {owner:String}")
         params["owner"] = owner

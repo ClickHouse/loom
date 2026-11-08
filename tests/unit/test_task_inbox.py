@@ -196,6 +196,7 @@ class FakeRepo:
         statuses=None,
         kinds=None,
         from_subject=None,
+        poster=None,
         owner=None,
         limit=100,
         fields=None,
@@ -209,7 +210,9 @@ class FakeRepo:
         if kinds:
             rows = [r for r in rows if r["kind"] in kinds]
         if from_subject:
-            rows = [r for r in rows if r["from_subject"] == from_subject]
+            rows = [r for r in rows if from_subject in (r["from_subject"], r.get("from_agent"))]
+        if poster:
+            rows = [r for r in rows if r["from_subject"] == poster]
         if owner:
             rows = [r for r in rows if r["owner"] == owner]
         if newest_first:
@@ -1492,3 +1495,14 @@ async def test_a_stranger_posting_to_an_inbox_is_told_it_does_not_exist(
     with pytest.raises(HTTPException) as absent:
         await _post(fake, inbox="no-such-inbox", from_subject="sa:stranger")
     assert stranger.value.status_code == 404 == absent.value.status_code
+
+
+@pytest.mark.asyncio
+async def test_the_poster_listing_matches_the_token_subject_never_an_agent_label() -> None:
+    """`posted_by_me` reads across the org, so a subject that spells another poster's
+    agent label must not get that poster's tasks."""
+    ch = StubCH()
+    await repo.list_tasks("o", poster="deploy-bot", ch=ch)
+    [(sql, params)] = ch.query_all_calls
+    where = sql.split(" WHERE ", 1)[1]
+    assert "from_agent" not in where and params["poster"] == "deploy-bot"
