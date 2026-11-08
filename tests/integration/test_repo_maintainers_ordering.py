@@ -55,6 +55,8 @@ async def _grant(
     at: datetime,
     status: str = "active",
     subject: str = "alice",
+    granted_by: str = "it",
+    revoked_at: datetime | None = None,
 ) -> None:
     row = {
         "org": org,
@@ -63,8 +65,8 @@ async def _grant(
         "role": role,
         "status": status,
         "granted_at": at,
-        "granted_by": "it",
-        "revoked_at": None,
+        "granted_by": granted_by,
+        "revoked_at": revoked_at,
         "version": time.time_ns(),
     }
     await client.insert(
@@ -164,20 +166,8 @@ async def test_a_restricted_page_branch_drops_a_page_copy_and_takes_an_operator_
     monkeypatch.setattr(repos, "configured_repos", lambda: entries)
     second = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     await _grant(client, org, "code-ord-dev", "admin", second, subject="mallory")
-    copy = {
-        "org": org,
-        "namespace": "code-ord-rc",
-        "subject": "mallory",
-        "role": "admin",
-        "status": "active",
-        "granted_at": second,
-        "granted_by": "repo-maintainers:code-ord-dev",
-        "revoked_at": None,
-        "version": time.time_ns(),
-    }
-    await client.insert(
-        "loom.namespace_grants", [copy], settings={"async_insert": 0, "wait_for_async_insert": 1}
-    )
+    copy = "repo-maintainers:code-ord-dev"
+    await _grant(client, org, "code-ord-rc", "admin", second, subject="mallory", granted_by=copy)
     await maintainers.sync_repo_maintainers(org, "code-ord", ch=client)
     assert await _state(client, org, "code-ord-rc", "mallory") == "admin/active/revoked"
     await _grant(client, org, "code-ord", "admin", second, subject="mallory")
@@ -215,21 +205,9 @@ async def test_a_page_branch_restricted_by_its_directory_row_alone_drops_a_page_
         await maintainers.sync_repo_maintainers(org, "code-ord", ch=client)
         assert await _state(client, org, "code-ord-rc", "mallory") == "none"
         # A copy an earlier build left there, or one made while the branch was standard.
-        copy = {
-            "org": org,
-            "namespace": "code-ord-rc",
-            "subject": "mallory",
-            "role": "admin",
-            "status": "active",
-            "granted_at": second,
-            "granted_by": "repo-maintainers:code-ord-dev",
-            "revoked_at": None,
-            "version": time.time_ns(),
-        }
-        await client.insert(
-            "loom.namespace_grants",
-            [copy],
-            settings={"async_insert": 0, "wait_for_async_insert": 1},
+        copy = "repo-maintainers:code-ord-dev"
+        await _grant(
+            client, org, "code-ord-rc", "admin", second, subject="mallory", granted_by=copy
         )
         await maintainers.sync_repo_maintainers(org, "code-ord", ch=client)
         assert await _state(client, org, "code-ord-rc", "mallory") == "admin/active/revoked"
@@ -266,51 +244,54 @@ async def test_only_a_live_admin_grant_not_from_a_page_branch_counts_as_the_call
         _Entry(org, "code-ord-rc", source="registry", classification="restricted"),
     ]
     monkeypatch.setattr(repos, "configured_repos", lambda: entries)
-    row = {
-        "org": org,
-        "namespace": "code-ord-rc",
-        "subject": "mallory",
-        "role": role,
-        "status": status,
-        "granted_at": datetime.now(UTC).replace(microsecond=0, tzinfo=None),
-        "granted_by": granted_by,
-        "revoked_at": None,
-        "version": time.time_ns(),
-    }
-    await client.insert(
-        "loom.namespace_grants", [row], settings={"async_insert": 0, "wait_for_async_insert": 1}
+    at = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    await _grant(
+        client,
+        org,
+        "code-ord-rc",
+        role,
+        at,
+        status=status,
+        subject="mallory",
+        granted_by=granted_by,
     )
     assert await maintainers.holds_own_admin(client, org, "code-ord-rc", "mallory") is holds
 
 
 @pytest.mark.parametrize(
-    ("namespace", "status", "granted_by", "holds"),
+    ("namespace", "role", "status", "granted_by", "revoked", "holds"),
     [
-        ("code-ord", "active", "alice", True),
-        ("code-ord", "pending", "alice", False),
-        ("code-ord", "active", "repo-maintainers:code-ord-26-5", False),  # a copy
-        ("code-ord-dev", "active", "alice", False),  # not an operator entry
+        ("code-ord", "admin", "active", "alice", False, True),
+        ("code-ord", "admin", "pending", "alice", False, False),
+        ("code-ord", "admin", "active", "alice", True, False),
+        ("code-ord", "writer", "active", "alice", False, False),  # lowered
+        ("code-ord", "admin", "active", "repo-maintainers:code-ord-26-5", False, False),  # a copy
+        ("code-ord-dev", "admin", "active", "alice", False, False),  # not an operator entry
     ],
 )
 async def test_a_refused_rewrite_reads_the_subject_s_given_operator_admin_grants(
-    ch: tuple[Any, str], namespace: str, status: str, granted_by: str, holds: bool
+    ch: tuple[Any, str],
+    namespace: str,
+    role: str,
+    status: str,
+    granted_by: str,
+    revoked: bool,
+    holds: bool,
 ) -> None:
     """On ClickHouse: the statement behind a refused rewrite counts only live admin
     grants given on the operator entries it is passed."""
     client, org = ch
-    row = {
-        "org": org,
-        "namespace": namespace,
-        "subject": "ops",
-        "role": "admin",
-        "status": status,
-        "granted_at": datetime.now(UTC).replace(microsecond=0, tzinfo=None),
-        "granted_by": granted_by,
-        "revoked_at": None,
-        "version": time.time_ns(),
-    }
-    await client.insert(
-        "loom.namespace_grants", [row], settings={"async_insert": 0, "wait_for_async_insert": 1}
+    at = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    await _grant(
+        client,
+        org,
+        namespace,
+        role,
+        at,
+        status=status,
+        subject="ops",
+        granted_by=granted_by,
+        revoked_at=at if revoked else None,
     )
     config = ["code-ord", "code-ord-26-5"]
     assert await maintainers._holds_operator_admin(client, org, "ops", config) is holds
