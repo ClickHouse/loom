@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 
 import server.tracker.app.contract as ct
+import server.tracker.app.facts as facts_app
+import server.tracker.app.links as links_app
 import server.tracker.store.source as src
 from server.tracker.domain import contract as rc
 from server.tracker.store.source import contract_reports as reports
@@ -286,3 +288,25 @@ def test_a_rename_is_checked_like_the_column_it_serves() -> None:
     described["github_issues"]["repro"] = "UInt8"
     rep = rc.diff("cs", "loom_qa", described, {"github_issues": {"triage_reproduces_on": "repro"}})
     assert "triage_reproduces_on" in rep.type_mismatches.get("github_issues", {})
+
+
+def test_a_tracker_without_pr_test_types_or_src_components_serves_them_empty() -> None:
+    described = _full_schema()
+    del described["github_prs"]["test_types"]
+    del described["github_prs"]["src_components"]
+    rep = rc.diff("qa", DB, described)
+    assert rep.ok, rep.summary()
+    assert rep.defaulted["github_prs"] == {
+        "test_types": "CAST([] AS Array(String))",
+        "src_components": "CAST([] AS Array(String))",
+    }
+    assert "defaulted github_prs.{test_types, src_components}" in rep.summary()
+    sql = rep.rewrite(f"SELECT test_types, src_components FROM {DB}.github_prs FINAL", DB)
+    assert "CAST([] AS Array(String)) AS test_types" in sql
+    assert "CAST([] AS Array(String)) AS src_components" in sql
+    # the readers take the defaulted empty arrays
+    row = {"test_types": [], "src_components": [], "primary_component": "Storages"}
+    assert links_app._component_match("Parsers", row) == 0
+    assert links_app._component_match("Storages", row) == 1
+    fact = facts_app.fact_of({**row, "is_pr": True, "repo": "o/r", "number": 7}, [])
+    assert fact["kind"] == "pr" and "test_types" not in fact

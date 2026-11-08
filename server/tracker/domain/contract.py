@@ -201,6 +201,8 @@ ALIASES: dict[str, dict[str, tuple[Alias, ...]]] = {
             Alias("CAST(NULL AS Nullable(UInt8))", note="not served upstream; unknown"),
         ),
         "severity_level": (Alias("''", note="pull requests carry no severity upstream"),),
+        "test_types": (Alias("CAST([] AS Array(String))", note="no test classification"),),
+        "src_components": (Alias("CAST([] AS Array(String))", note="no src/ component paths"),),
     },
     "core_incidents": {
         "severity_level": (Alias("''", note="incidents carry no severity upstream"),),
