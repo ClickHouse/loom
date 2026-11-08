@@ -49,6 +49,8 @@ from server.erasure.store.scope_reads import (
 from server.erasure.store.steps_memory import (
     delete_memory_versions_by_user,
     tombstone_memory_chunks_by_user,
+    tombstone_shared_by_user,
+    tombstone_shared_embeddings_by_user,
 )
 
 # ---------------------------------------------------------------------------
@@ -453,6 +455,8 @@ async def tombstone_consolidated_dependents_by_user(
 
 
 _SUMMARY_DERIVED_STEPS = (
+    tombstone_shared_embeddings_by_user,
+    tombstone_shared_by_user,
     tombstone_memory_chunks_by_user,
     delete_entity_vectors_by_user,
     delete_graph_links_by_user,

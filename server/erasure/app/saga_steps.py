@@ -249,8 +249,9 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("consolidated.tombstone", graph_steps.tombstone_consolidated_dependents_by_user),
     ("code_links.delete", _step_delete_code_links_by_user),
     ("working_memory.tombstone", memory_steps.tombstone_working_memory_by_user),
-    ("shared.tombstone", memory_steps.tombstone_shared_by_user),
+    # The search rows first: they are found through the shared rows, which a purge deletes.
     ("shared_embeddings.tombstone", memory_steps.tombstone_shared_embeddings_by_user),
+    ("shared.tombstone", memory_steps.tombstone_shared_by_user),
     ("agent_events.scrub", memory_steps.scrub_events_by_user),
     ("derived_facts.delete", memory_steps.delete_derived_facts_by_user),
     ("memory_reinforcement.delete", memory_steps.delete_memory_reinforcement_by_user),

@@ -426,15 +426,16 @@ schema. These rules keep that safe. The operator procedure is in
     ([upgrade procedure](../operations/upgrades.md#upgrade-procedure), step 9); after a
     rollback, clear it once N-1 serves alone and again once N serves again. No gate holds
     the rollout.
-37. **What a summary of the user's memories fed** (its `loom.memory_versions` rows,
-    chunks and graph rows): N-1's user saga and census reach only the user's own, so a
-    user erasure N-1 runs leaves the summary's rows and records `completed`. A saga N-1 left
-    in progress that N resumes fails N's census on those rows, and the recovery worker's
-    next resume runs their steps again; in a purge past `memory.retire` the user's keys
-    are gone and nothing finds them. The ledger does not name the build that ran a
-    saga: once N serves alone, request again each user erasure without `purge` that
-    completed since the rollout began (the `user_id` rows of `loom.erasure_requests`);
-    no gate holds the rollout.
+37. **What a summary of the user's memories fed** (its history, chunks, entity vectors,
+    graph rows and shared copies; [erasure saga](memory-architecture.md#erasure-saga)):
+    N-1's user saga and census reach only the user's own, so a user erasure N-1 runs
+    leaves the summary's rows and records `completed`. A saga N-1 left in progress that
+    N resumes fails N's census on those rows, and the recovery worker's next resume runs
+    their steps again; in a purge past `memory.retire` the user's keys are gone and
+    nothing finds them. The ledger does not name the build that ran a saga: once N
+    serves alone, request again each user erasure without `purge` that completed since
+    the rollout began (the `user_id` rows of `loom.erasure_requests`); no gate holds the
+    rollout.
 
 ## What checks them
 

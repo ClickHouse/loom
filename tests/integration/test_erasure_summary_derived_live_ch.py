@@ -22,6 +22,7 @@ from server.erasure.store import census as erasure_census
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_memory as memory_steps
+from server.memory.store.rows import build_embedding_row
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.asyncio
@@ -46,6 +47,7 @@ _COUNTED = {
 _STEPS = (
     ("memory.tombstone", memory_steps.tombstone_memory_by_user),
     ("consolidated.tombstone", graph_steps.tombstone_consolidated_dependents_by_user),
+    ("shared_embeddings.tombstone", memory_steps.tombstone_shared_embeddings_by_user),
     ("shared.tombstone", memory_steps.tombstone_shared_by_user),
     ("memory_chunks.tombstone", memory_steps.tombstone_memory_chunks_by_user),
     ("entity_graph.delete", graph_steps.delete_entity_graph_by_user),
@@ -198,6 +200,22 @@ def _seed_shared(ch_client: Any, org: str) -> None:
             for i, key in enumerate(("topic-diets", "topic-bob"))
         ],
     )
+    for key in ("topic-diets", "topic-bob"):
+        vector = build_embedding_row(
+            org=org,
+            namespace="ns",
+            agent="_shared",
+            user_id="-",
+            session_id="-",
+            memory_key=key,
+            scope="shared",
+            content_excerpt="text",
+            embedding=_VECTOR,
+            memory_key_embedding=_VECTOR,
+            embedding_dim=3072,
+            version=1,
+        )
+        _insert(ch_client, "loom.memory_embeddings", list(vector), [list(vector.values())])
 
 
 def _column(ch_client: Any, org: str, sql: str) -> list[str]:
@@ -254,6 +272,11 @@ async def test_what_a_summary_of_the_users_memories_fed_leaves_with_it(
     assert _column(ch_client, org, vectors) == ["-:topic-bob", "carol:topic-diets"]
     shared = f"SELECT memory_key FROM loom.shared FINAL{_WHERE} AND tombstoned_at IS NULL"
     assert _column(ch_client, org, shared) == ["topic-bob"]
+    shared = f"SELECT memory_key FROM loom.memory_embeddings FINAL{_WHERE} AND scope = 'shared'"
+    assert _column(ch_client, org, f"{shared} AND tombstoned_at IS NULL") == ["topic-bob"]
+    assert _column(ch_client, org, shared) == (
+        ["topic-bob"] if purge else ["topic-bob", "topic-diets"]
+    )
 
 
 async def test_a_reopened_link_delete_takes_the_triples_its_links_alone_held(ch_client, ch) -> None:
