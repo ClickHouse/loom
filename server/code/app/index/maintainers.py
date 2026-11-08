@@ -45,6 +45,7 @@ next login does that; the rows written here are the direct grants that check rea
 from __future__ import annotations
 
 import logging
+import random
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import (
@@ -820,8 +821,11 @@ async def sync_restricted_page_branches(
     from server.core.ch import get_client
 
     page = [c for c in entries if c.source == "registry"]
+    # A fresh order each pass: a budget spent part way does not leave the same
+    # repositories unserved pass after pass.
+    random.shuffle(page)
     done: set[tuple[str, str]] = set()
-    for org in sorted({c.org for c in page}):
+    for org in dict.fromkeys(c.org for c in page):
         mine = [c for c in page if c.org == org]
         try:
             restricted = await _restricted(get_client(), org, {c.namespace: c.source for c in mine})

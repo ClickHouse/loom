@@ -113,6 +113,11 @@ async def _write_row(cfg: Any, client: Any) -> bool:
     row = await namespace_row(cfg.org, cfg.namespace, ch=client)
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     if row is None:
+        # The registry row read now wins over this process's snapshot of it.
+        access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
+        if access is not None:
+            restricted = restricted or str(access.get("classification")) == "restricted"
+            public = not restricted and str(access.get("join_policy")) == "open"
         join_policy = "open" if public else "approval"
         await insert_first_row(cfg, client, restricted=restricted, join_policy=join_policy)
         if restricted:
@@ -134,14 +139,13 @@ async def _write_row(cfg: Any, client: Any) -> bool:
     # predate a maintainer's change. With no registry row the operator's entry decides.
     access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
     access_restricted = access is not None and str(access.get("classification")) == "restricted"
+    # A standard access row newer than the directory row: a maintainer's decision the
+    # directory has not taken yet.
+    follows_access = access is not None and not access_restricted and _newer(access, row)
     if access is None:
         access_open = str(cfg.source) != "registry"  # the operator's entry alone says public
     else:
-        access_open = (
-            not access_restricted
-            and str(access.get("join_policy")) == "open"
-            and _newer(access, row)
-        )
+        access_open = follows_access and str(access.get("join_policy")) == "open"
     if opening and access_open:
         # The config says the repository is public; the row is brought to open +
         # discoverable. Open means joinable, not readable — the row stays
@@ -168,7 +172,7 @@ async def _write_row(cfg: Any, client: Any) -> bool:
             cfg.namespace,
             row.get("classification"),
         )
-    if widening and access is not None and not access_restricted and _newer(access, row):
+    if widening and follows_access and access is not None:
         # A maintainer opened the repository; the directory follows the access
         # row, not the entry's default
         widened = dict(row)

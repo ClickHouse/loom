@@ -200,7 +200,7 @@ async def test_the_registrar_reads_and_writes_the_row_under_the_admins_claim(
     client = _Fresh(existing=existing)
     held = _hold_admins(monkeypatch, client)
     await registry.ensure_registered(dataclasses.replace(_cfg("standard"), public=True), ch=client)
-    assert reads == ([True] if existing is None else [True, True])
+    assert reads == [True, True]  # the directory row, then the registry row
     assert [r["join_policy"] for _, rows in client.inserted for r in rows] == ["open"]
     assert held == ["code-p"]
 
@@ -253,3 +253,21 @@ async def test_a_narrowing_reaches_the_row_only_while_the_registry_row_says_rest
     await registry.ensure_registered(_cfg("restricted"), ch=client)
     narrowed = [r["classification"] for _, rows in client.inserted for r in rows]
     assert narrowed == (["restricted"] if access == "restricted" else [])
+
+
+@pytest.mark.asyncio
+async def test_a_first_row_follows_a_registry_row_newer_than_the_snapshot() -> None:
+    """A maintainer restricted the entry before it had a directory row; this process's
+    snapshot still says standard and public."""
+
+    class _Restricted(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": "restricted", "join_policy": "approval"}
+            return None
+
+    client = _Restricted()
+    cfg = dataclasses.replace(_cfg("standard"), public=True)
+    assert await registry.ensure_registered(cfg, ch=client)
+    ((_table, (row,)),) = client.inserted
+    assert (row["classification"], row["join_policy"]) == ("restricted", "approval")
