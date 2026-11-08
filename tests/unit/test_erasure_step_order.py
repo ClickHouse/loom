@@ -452,7 +452,14 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (D, "loom.llm_response_cache"),
             (D, "loom.memory_ask_precedents"),
             (L, "loom.code_answers"),
-            # what a summary written since fed, before the rows that name it go
+            # a summary written since: retired, the answers that quoted it, what it fed,
+            # before the rows that name it go
+            (L, "loom.memory_embeddings"),
+            (U, "loom.memory"),
+            (D, "loom.memory_code_links"),
+            (D, "loom.llm_response_cache"),
+            (D, "loom.memory_ask_precedents"),
+            (L, "loom.code_answers"),
             (L, "loom.memory_chunks"),
             (L, "loom.memory_chunks"),
             (L, "loom.entity_vectors"),
@@ -468,7 +475,6 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (D, "loom.entity_edge_memories"),
             (D, "loom.memory_versions"),
             (D, "loom.memory_versions"),
-            (L, "loom.memory_embeddings"),
             (D, "loom.memory"),
             (D, "loom.memory"),
         ),

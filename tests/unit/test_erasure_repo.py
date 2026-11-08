@@ -356,8 +356,12 @@ async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_th
     """In a purge, `memory.tombstone` and the summaries' tombstone still stamp
     loom.memory, so the cache steps between can read the keys; `memory.retire`
     deletes the summaries and then the user's rows."""
+
     # what a late summary fed is run again first (test_erasure_step_order pins it)
-    monkeypatch.setattr(graph_steps, "_SUMMARY_DERIVED_STEPS", ())
+    async def no_late_summaries(org: str, user_id: str, *, ch: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(graph_steps, "_retire_late_summaries", no_late_summaries)
     pairs = ("namespace, memory_key FROM", [{"namespace": "ns", "memory_key": "k1"}])
     with erasure_mutations.purge_scope(True):
         ch = StubCH()
@@ -385,17 +389,15 @@ async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_th
         )
         keys, one = {"keys": ["t"]}, {"n": 1}
         ch.query_one_returns.extend(
-            [one, one, one, one, keys, one, keys, one, keys, one, one, one, {"n": 2}]
+            [one, one, one, one, keys, one, keys, one, keys, one, one, {"n": 2}]
         )
         # each row counts once: the summary's at its tombstone, the user's at their
-        # delete here (memory.tombstone counts none in a purge, the late stamp neither);
-        # a late summary's vectors count at their second tombstone
-        assert await graph_steps.retire_memory_by_user("o", "alice", ch=ch) == 9
+        # delete here (memory.tombstone counts none in a purge, the late stamp neither)
+        assert await graph_steps.retire_memory_by_user("o", "alice", ch=ch) == 8
         calls = [(" ".join(sql.split()), params) for sql, params in ch.execute_calls]
         embeddings, summaries, (links, link_params), stamp, cache, precedents, code, *rest = calls
         assert stamp[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
-        (late_vectors, _), (memory, memory_params), (own, own_params) = rest
-        assert late_vectors.startswith("DELETE FROM loom.memory_embeddings")
+        (memory, memory_params), (own, own_params) = rest
         assert embeddings[0].startswith("DELETE FROM loom.memory_embeddings")
         assert summaries[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
         assert "loom.memory_code_links" in links and link_params["rows"] == [("ns", topic)]

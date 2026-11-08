@@ -428,7 +428,7 @@ schema. These rules keep that safe. The operator procedure is in
     the rollout.
 37. **What a summary of the user's memories fed** (its `loom.memory_versions` rows,
     chunks and graph rows): N-1's user saga and census reach only the user's own, so a
-    user erasure N-1 runs leaves the summary's and records `completed`. A saga N-1 left
+    user erasure N-1 runs leaves the summary's rows and records `completed`. A saga N-1 left
     in progress that N resumes fails N's census on those rows, and the recovery worker's
     next resume runs their steps again; in a purge past `memory.retire` the user's keys
     are gone and nothing finds them. The ledger does not name the build that ran a
