@@ -607,8 +607,8 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
         "user_id": "-",
     }
 
-    # The repair replays each at the memory row's version: a later write's vectors,
-    # at or above it, are left alone.
+    # The repair retires each tombstone at the memory row's version and copies the
+    # demoted key's head.
     retired.clear()
     _DEMOTE_REEMITS.clear()
     _retire_clients.clear()
