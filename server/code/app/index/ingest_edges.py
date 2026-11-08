@@ -211,7 +211,10 @@ async def _derive_edges(
             name_table,
             lane_context,
         )
-        edges, misses = extract_edges_and_misses(
+        # CPU work that may parse an imported module: in a thread, so the event loop
+        # runs at the parser's reads
+        edges, misses = await asyncio.to_thread(
+            extract_edges_and_misses,
             pf,
             name_table,
             header,

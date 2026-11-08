@@ -705,7 +705,7 @@ async def _parse_post_image(
                 deadline,
                 functools.partial(_FILE_EDGES.put, key),
                 _file_edges,
-                pf,
+                None,
                 p,
                 source,
                 table,

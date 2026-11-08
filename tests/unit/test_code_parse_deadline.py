@@ -219,3 +219,17 @@ def test_the_headers_of_one_source_stop_at_one_deadline(
         )
     )
     assert len(read) == 2  # 0.15, then 0.30 > 0.2: no third
+
+
+def test_an_imported_module_whose_parse_stops_reads_as_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.domain.extract import lang_python
+
+    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.05)
+    lang_python._reexport_facts.cache_clear()
+    slow = "def g():\n    pass\n" + "x = 1\n" * 400_000  # names `g` when parsed whole
+    try:
+        assert lang_python._reexport_facts("pkg/__init__.py", slow) == (frozenset(), {}, ())
+    finally:
+        lang_python._reexport_facts.cache_clear()

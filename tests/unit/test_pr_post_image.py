@@ -599,7 +599,7 @@ def test_another_namespace_does_not_wait_for_its_turn(monkeypatch: pytest.Monkey
     assert first is not None and second is not None
 
 
-def test_a_started_parse_is_waited_for_one_deadline_past_the_window(
+def test_a_started_parse_is_not_waited_for_past_one_deadline_after_the_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.1)
@@ -610,7 +610,7 @@ def test_a_started_parse_is_waited_for_one_deadline_past_the_window(
         asyncio.ensure_future(po._file_facts(scope, "a.go", b"", "a", time.monotonic() + 60))
         await asyncio.sleep(0.02)
         start = time.monotonic()
-        # the window has passed: the running parse is waited for one deadline at most
+        # the window and one deadline after it have passed: no wait
         got = await po._file_facts(scope, "a.go", b"", "a", time.monotonic() - 1)
         waited = time.monotonic() - start
         await asyncio.sleep(0.6)
