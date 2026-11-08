@@ -431,8 +431,8 @@ schema. These rules keep that safe. The operator procedure is in
     N-1's user saga and census reach only the user's own, so a user erasure N-1 runs
     leaves the summary's rows and records `completed`. A saga N-1 left in progress that
     N resumes fails N's census outside a purge when N-1 ran those rows' steps, and the
-    recovery worker's next resume runs them again, all but the shared copies, which the
-    census does not count; in a purge N's `memory.retire` runs them again, except for
+    recovery worker's next resume runs them again, all but the shared copies when N-1
+    passed `memory.retire`, which the census does not count; in a purge N's `memory.retire` runs them again, except for
     the search rows of shared copies of the user's own memories when N-1 ran its
     `shared.tombstone`, which deleted the rows they are found by.
     After a purge that passed `memory.retire`, including one N-1 completed, the user's
