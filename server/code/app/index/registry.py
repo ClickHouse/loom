@@ -167,7 +167,7 @@ async def _write_row(cfg: Any, client: Any) -> bool:
         # row, not the entry's default
         widened = dict(row)
         widened["classification"] = "standard"
-        widened["join_policy"] = "open" if public else "approval"
+        widened["join_policy"] = str(access.get("join_policy") or "approval")
         widened["updated_at"] = now
         await client.insert("loom.namespaces", [widened])
         logger.warning(

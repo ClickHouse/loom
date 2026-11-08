@@ -363,6 +363,7 @@ async def _still_admin(
 
 
 # (client, org, planned row, current row, the plan's rows) -> the row to write, or None.
+# Some checks read nothing more and are async only to share this signature.
 _Wanted = Callable[
     [Any, str, dict[str, Any], dict[str, Any] | None, _Seen], Awaitable[dict[str, Any] | None]
 ]
@@ -531,7 +532,11 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     from server.core.ch import get_client
 
     client = ch or get_client()
-    rows = await _grant_rows(client, org, branches)
+    from server.core.ch import sequential_reads
+
+    # A lagging replica could miss a grant just made and plan a revoke newer than it.
+    with sequential_reads():
+        rows = await _grant_rows(client, org, branches)
     restricted = await _restricted(client, org, sources)
     config = [ns for ns in branches if sources[ns] == "config"]
     inserts: list[dict[str, Any]] = []

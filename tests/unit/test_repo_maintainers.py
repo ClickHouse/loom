@@ -417,6 +417,25 @@ async def test_a_stray_whose_rewrite_is_refused_is_revoked(
     ]
 
 
+async def test_a_sync_plans_from_sequentially_consistent_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lagging replica could miss an operator grant just made, and the stray's revoke
+    planned from it would be newer than that grant."""
+    from server.core.ch import sequential_reads_active
+
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    reads: list[bool] = []
+
+    class _Recorded(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            reads.append(sequential_reads_active())
+            return await super().query_all(sql, params)
+
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=_Recorded([]))
+    assert reads and all(reads)
+
+
 async def test_a_stray_whose_operator_grant_was_only_given_again_is_left_for_the_next_sync(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

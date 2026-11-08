@@ -140,7 +140,7 @@ async def test_a_maintainer_s_widening_reaches_the_row_only_while_its_access_row
     class _Access(_Client):
         async def query_one(self, sql, params=None):
             if "loom.code_repos" in sql:
-                return {"classification": access, "updated_at": at}
+                return {"classification": access, "updated_at": at, "join_policy": "closed"}
             return self.existing
 
     client = _Access(existing=existing)
@@ -148,8 +148,8 @@ async def test_a_maintainer_s_widening_reaches_the_row_only_while_its_access_row
     held = _hold_admins(monkeypatch, client)
     await registry.ensure_registered(cfg, ch=client)
     widens = access == "standard" and written == "after"
-    widened = [r["classification"] for _, rows in client.inserted for r in rows]
-    assert widened == (["standard"] if widens else [])
+    widened = [(r["classification"], r["join_policy"]) for _, rows in client.inserted for r in rows]
+    assert widened == ([("standard", "closed")] if widens else [])  # the access row's policy
     assert held == (["code-p"] if widens else [])
 
 
