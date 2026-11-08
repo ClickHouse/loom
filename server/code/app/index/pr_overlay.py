@@ -624,12 +624,12 @@ def _file_edges(
 
     if pf is None:
         pf, err = parse_for_ingest(path, source)
-        if parse_timed_out(err):
-            return _Edges((), True)
+        if pf is None or parse_timed_out(err):
+            return _Edges((), parse_timed_out(err))
     try:
         edges, _misses = extract_edges_and_misses(pf, table, None)
     except Exception as e:  # noqa: BLE001 — per file, never the overlay
-        logger.debug("pr_overlay: edges of %s failed: %s", pf.path, e)
+        logger.debug("pr_overlay: edges of %s failed: %s", path, e)
         return _Edges((), False)
     found = tuple(
         OverlayEdge(
@@ -812,6 +812,7 @@ __all__ = [
     "HEAD_NOT_IN_MIRROR",
     "NO_GIT_MIRROR",
     "NO_MERGE_BASE",
+    "NOT_REACHED",
     "NO_REPO",
     "OVERLAY_TIER",
     "POSTED_PREFIX",

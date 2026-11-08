@@ -364,7 +364,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_INGEST_MAX_COMMITS_PER_PASS` | `int` | `20` |  | Commits past the watermark one pass reads; later ones wait for the next pass. |
 | `LOOM_CODE_INGEST_SECONDS_PER_FILE` | `float` | `2.5` |  | Prior ingest cost per changed file (seconds), refined by observation. A commit predicted to overrun the pass deadline is not started unless it is the first of its pass. |
 | `LOOM_CODE_INGEST_MAX_FILES_PER_COMMIT` | `int` | `500` |  | Changed files indexed per commit; past it the rest are skipped with a warning and heal on the next backfill. |
-| `LOOM_CODE_PARSE_TIMEOUT_SECONDS` | `float` | `3.0` | live | CPU seconds after which a tree-sitter parse stops reading its file; the file then takes its reader's parse-failure path (chunks without symbols, the error recorded). |
+| `LOOM_CODE_PARSE_TIMEOUT_SECONDS` | `float` | `3.0` | live | CPU seconds after which a tree-sitter parse stops reading its file; the file then takes its reader's parse-failure path until it is ingested again (raising it re-reads none: backfill the files `code.index_errors` lists). |
 | `LOOM_CODE_INGEST_MAX_PASS_SECONDS` | `int` | `900` |  | The ingest pass's own deadline (seconds), kept at the supervisor's cap; `code_ingest_pass_budget_fraction` keeps a pass under it. |
 | `LOOM_CODE_INGEST_SLICE_SHARE` | `float` | `0.5` |  | Share of the commit phase one oversized commit may take per pass while other entries wait (it is sliced across passes). |
 | `LOOM_CODE_INGEST_PASS_BUDGET_FRACTION` | `float` | `0.75` |  | Fraction of the deadline after which the pass stops STARTING units, finishes the in-flight round, saves cursors and returns `partial: true`. |

@@ -1352,7 +1352,7 @@
           "default": 3.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "CPU seconds after which a tree-sitter parse stops reading its file; the file then takes its reader's parse-failure path (chunks without symbols, the error recorded)."
+          "description": "CPU seconds after which a tree-sitter parse stops reading its file; the file then takes its reader's parse-failure path until it is ingested again (raising it re-reads none: backfill the files `code.index_errors` lists)."
         },
         "code_path_prefixes": {
           "default": "",

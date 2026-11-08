@@ -249,3 +249,25 @@ def test_helper_parses_that_stop_take_their_fallback(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(bounded_parse, "parse", stops)
     assert detect_shell("tests/queries/tool", shell) == ""
     assert Declarations.parse("x.go", go) is None
+
+
+def test_the_event_loop_runs_while_an_ingest_round_parses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.app.index.round_reads import RoundReads
+    from tests.unit.test_code_ingest_pass_budget import _ReadRepo
+
+    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.5)
+    reads = RoundReads(_ReadRepo(), "o", "code-ns")
+    ticks = 0
+
+    async def run() -> None:
+        nonlocal ticks
+        prefetch = asyncio.ensure_future(reads.prefetch({"slow.go": _SLOW[0][1]}))
+        while not prefetch.done():
+            await asyncio.sleep(0.01)
+            ticks += 1
+        await prefetch
+
+    asyncio.run(run())
+    assert ticks >= 3  # a parse on the event loop would let it tick once
