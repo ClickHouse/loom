@@ -162,15 +162,15 @@ in seconds, before any build, and names the fix for each one it finds missing:
 | A `pypi` environment and a PyPI trusted publisher for `release.yml`              | the `pypi` job                                       |
 | An `npm` environment, and npm trusted publishing or an `NPM_TOKEN` secret        | the `npm` job                                        |
 | An `mcp-registry` environment with the same protection rules as `pypi` and `npm` | the `mcp-registry` job                               |
-| The repository's artifact retention is at least 30 days                          | nothing: a shorter limit shortens the re-run window  |
+| The repository's artifact retention is at least 30 days                          | nothing (Settings > Actions > General)               |
 
 Only a push creates a ghcr.io package, and it creates it private. For an image no release has pushed
 yet, `preflight` warns instead of failing, and that run's `docker-smoke` jobs fail to pull it: set
 the package's visibility to public in its settings, then re-run the failed jobs.
 
-Make the first tag a release candidate (`vX.Y.Z-rc.1`). Its run is the first to sign the images
-and verify them from outside, and a candidate never moves `:latest`, so a fault there costs a
-candidate number, not a final version.
+Until a release has been signed, make the next tag a release candidate (`vX.Y.Z-rc.1`). Its run
+signs the images and verifies them from outside, and a candidate never moves `:latest`, so a fault
+there costs a candidate number, not a final version.
 
 ## What the release workflow does
 
@@ -307,16 +307,19 @@ A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigs
   on a published tag verifies signatures but cannot make them. Release a new version, and if
   `:latest` moved, point it back at the previous release's index for both images, by digest, and
   check that `:latest` names that digest and carries its signature (a previous release published
-  before the workflow signed has none: check the digest only):
+  before the workflow signed has none: drop the `else` branch):
 
   ```bash
   digest=$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<previous X.Y.Z> --format '{{json .Manifest}}' | jq -re .digest)
   docker buildx imagetools create -t ghcr.io/clickhouse/<image>:latest "ghcr.io/clickhouse/<image>@$digest"
-  [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:latest --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ] \
-    && cosign verify "ghcr.io/clickhouse/<image>@$digest" \
+  if [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:latest --format '{{json .Manifest}}' | jq -re .digest)" != "$digest" ]; then
+    echo "latest does not name $digest" >&2
+    false
+  else
+    cosign verify "ghcr.io/clickhouse/<image>@$digest" \
       --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v<previous X.Y.Z> \
-      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    || echo "latest does not name $digest, or its signature does not verify" >&2
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  fi
   ```
 
 ### When the clickhouse job stops
