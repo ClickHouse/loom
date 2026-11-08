@@ -135,14 +135,79 @@ def test_a_header_whose_parse_stops_is_read_as_not_indexed(
     ih._header_cache.pop(("acme", "code", "src/a.h"))
 
 
-def test_parsers_of_one_grammar_share_one_lock() -> None:
+def test_two_threads_never_parse_one_grammar_at_once() -> None:
+    import threading
+
     import tree_sitter
     import tree_sitter_go
 
     from server.code.domain.extract import bounded_parse
 
-    for _ in range(2):
-        parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_go.language()))
-        bounded_parse.parse(parser, b"package x\n")
-    go = tree_sitter.Language(tree_sitter_go.language())
-    assert [lang for lang in bounded_parse._LOCKS if lang == go] == [go]
+    active, most = 0, 0
+    count = threading.Lock()
+
+    class Watched:
+        """A Go parser that records how many threads are inside it."""
+
+        def __init__(self) -> None:
+            self.language = tree_sitter.Language(tree_sitter_go.language())
+            self._parser = tree_sitter.Parser(self.language)
+
+        def parse(self, read: Any) -> Any:
+            nonlocal active, most
+            with count:
+                active += 1
+                most = max(most, active)
+            time.sleep(0.02)
+            try:
+                return self._parser.parse(read)
+            finally:
+                with count:
+                    active -= 1
+
+    threads = [
+        threading.Thread(target=bounded_parse.parse, args=(Watched(), b"package x\n"))
+        for _ in range(4)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert most == 1
+
+
+def test_the_headers_of_one_source_stop_at_one_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.app.index import ingest_headers as ih
+    from server.code.app.index.ingest_stats import FileIngestStats
+    from server.code.domain.extract.treesitter import parse_cpp
+
+    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.2)
+    monkeypatch.setattr(ih, "_needs_header", lambda pf, hd: True)
+    read: list[str] = []
+
+    async def header_text(repo: Any, org: str, ns: str, path: str) -> tuple[str, bool]:
+        read.append(path)
+        return "int f();\n", True
+
+    def costly(hd: Any, path: str, text: str) -> tuple[float, bool]:
+        return 0.15, False  # each header takes most of a deadline
+
+    async def none(*a: Any) -> list[str]:
+        return []
+
+    class Repo:
+        async def live_paths_present(self, org: str, ns: str, paths: list[str]) -> set[str]:
+            return set(paths)
+
+    monkeypatch.setattr(ih, "_header_text", header_text)
+    monkeypatch.setattr(ih, "_add_header", costly)
+    monkeypatch.setattr(ih, "_present_includes", none)
+    pf = parse_cpp("src/a.cpp", b"void f() { g(); }\n")
+    asyncio.run(
+        ih.header_context(
+            Repo(), "acme", "code", pf, "src/a.cpp", FileIngestStats(path="src/a.cpp")
+        )
+    )
+    assert len(read) == 2  # 0.15, then 0.30 > 0.2: no third

@@ -422,7 +422,6 @@ def test_a_file_whose_parse_runs_past_the_deadline_is_counted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.2)
-    monkeypatch.setattr(po, "_overlay_window", lambda: 60.0)
     slow = b"package x\nvar s = " + b"`" * 60_000
     sources = {PATH: POST.encode(), "src/slow.go": slow}
     ov = po.PrOverlay(
@@ -432,7 +431,11 @@ def test_a_file_whose_parse_runs_past_the_deadline_is_counted(
     async def read(path: str) -> bytes:
         return sources[path]
 
-    asyncio.run(po._parse_post_image(_Repo(), "acme", "code-ch", ov, read=read, path_prefixes=()))
+    asyncio.run(
+        po._parse_post_image(
+            _Repo(), "acme", "code-ch", ov, read=read, path_prefixes=(), window=60.0
+        )
+    )
     assert "checkPartsLimit" in {s.name for s in ov.symbols}
     assert any(e.to_qualified_name.endswith("checkPartsLimit") for e in ov.edges)
     assert ov.note == "1 changed file(s) whose parse timed out" and ov.unreached == 0
@@ -474,6 +477,22 @@ def test_an_open_brief_over_a_partial_overlay_is_served_unstored(
         )
     )
     assert repo.inserted == [] and payload["overlay_note"] == note and payload["stored"] is False
+    note = "1 changed file(s) whose parse timed out"  # stable: stored with the note
+    payload = asyncio.run(
+        rbb.build_for_open(
+            repo,
+            "acme",
+            "code-ch",
+            git_dir="",
+            pr_number=7,
+            title="",
+            head_sha="cd" * 20,
+            base_sha="ef" * 20,
+            call=None,
+            diff=DIFF,  # type: ignore[arg-type]
+        )
+    )
+    assert repo.inserted == ["code_review_briefs"] and "stored" not in payload
 
 
 def test_the_event_loop_runs_while_an_overlay_parses(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -492,3 +511,34 @@ def test_the_event_loop_runs_while_an_overlay_parses(monkeypatch: pytest.MonkeyP
 
     asyncio.run(run())
     assert ticks >= 5  # a parse on the event loop would let it tick once
+
+
+def test_one_overlay_parse_runs_at_a_time_in_a_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    active, most = 0, 0
+    lock = threading.Lock()
+
+    def parse(path: str, source: bytes) -> Any:
+        nonlocal active, most
+        with lock:
+            active += 1
+            most = max(most, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        return None, po._Facts((), frozenset(), False)
+
+    monkeypatch.setattr(po, "_parsed_facts", parse)
+
+    async def many() -> None:
+        deadline = time.monotonic() + 60
+        scope = ("acme", "code-ch")
+        await asyncio.gather(
+            *(po._file_facts(scope, f"f{i}.go", b"", f"d{i}", deadline) for i in range(5))
+        )
+
+    asyncio.run(many())
+    assert most == 1

@@ -218,13 +218,9 @@ async def ingest_file(
         chunks, structural_prefixes, facets = (
             ([], {}, [])
             if declared_only
-            else _chunks_for(
-                pf,
-                path,
-                source,
-                max_chunk_chars,
-                (org, ns),
-                stats.error,
+            # chunking is CPU work (a host file's shell may be parsed again): in a thread
+            else await asyncio.to_thread(
+                _chunks_for, pf, path, source, max_chunk_chars, (org, ns), stats.error
             )
         )
     except Exception as chunk_exc:  # noqa: BLE001 — one bad file must not sink the commit

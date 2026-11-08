@@ -30,6 +30,7 @@ import hashlib
 import logging
 import re
 import time
+from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -481,22 +482,22 @@ async def load_posted_overlay(
     return ov
 
 
+class _Facts(NamedTuple):
+    symbols: tuple[Any, ...]
+    names: frozenset[str]  # the names it defines or calls
+    timed_out: bool  # its parse ran past the deadline
+
+
 # Per file, so a push that changes one file of a PR re-parses that file alone, for
 # `code_pr_overlay_file_ttl_s`. Only small results are kept (a parsed file holds its
 # tree and source).
-# (path, content digest) -> (the file's symbols, the names it defines or calls, whether
-# its parse ran past the deadline).
-class _Facts(NamedTuple):
-    symbols: tuple[Any, ...]
-    names: frozenset[str]
-    timed_out: bool
-
-
+# (path, content digest) -> its facts.
 _FILE_FACTS: TtlCache[tuple[str, str], _Facts] = TtlCache(
     lambda: settings.code_pr_overlay_file_ttl_s, maxsize=512
 )
-# (org, ns) -> the overlay parse in progress for it, by its cache key: at most one
-_RUNNING: dict[tuple[str, str], dict[Any, asyncio.Future[Any]]] = {}
+# (org, ns) -> the overlay parse in progress for it, by its cache key: at most one. A
+# namespace's dict is kept once made, so every waiter watches the same one.
+_RUNNING: defaultdict[tuple[str, str], dict[Any, asyncio.Future[Any]]] = defaultdict(dict)
 # (path, content digest, digest of the name-table rows its names bind to) -> edges.
 _FILE_EDGES: TtlCache[tuple[str, str, str], tuple[OverlayEdge, ...]] = TtlCache(
     lambda: settings.code_pr_overlay_file_ttl_s, maxsize=512
@@ -531,10 +532,10 @@ async def _in_turn(
 ) -> Any:
     """`fn(*args)` in a thread, `store`d when it finishes; None when `deadline` passes
     before it can start. Parsing is CPU work: one overlay parse runs at a time per
-    namespace (`scope`), so one namespace's requests never hold another's back (the
-    event loop runs at each of the parser's reads), and a request asking for the key
-    already running awaits that one."""
-    running = _RUNNING.setdefault(scope, {})
+    namespace (`scope`; parses of one grammar also wait for each other across the
+    process, `bounded_parse`), the event loop runs at each of the parser's reads, and
+    a request asking for the key already running awaits that one."""
+    running = _RUNNING[scope]
     while (task := running.get(key)) is None and running:
         left = deadline - time.monotonic()
         if left <= 0:
@@ -548,8 +549,6 @@ async def _in_turn(
 
         def finished(t: asyncio.Future[Any]) -> None:
             running.pop(key, None)
-            if not running:
-                _RUNNING.pop(scope, None)
             if not t.cancelled() and t.exception() is None:
                 store(t.result())  # kept even when every request waiting on it went away
 
@@ -638,16 +637,20 @@ async def _parse_post_image(
     *,
     read: Callable[[str], Awaitable[bytes | None]],
     path_prefixes: tuple[str, ...],
+    window: float | None = None,
 ) -> None:
+    """Parse the post-image into `ov`. An overlay starts no parse once `window` seconds
+    (`code_parse_timeout_seconds` by default) have passed since it began, so a request
+    parses for a few deadlines at most."""
     paths = parsable_paths(ov.changed_paths, path_prefixes, ov.hunks)
     if not paths:
         return
     # path -> (source, digest, parsed file this request already holds, symbols, names)
     files: dict[str, tuple[bytes, str, Any, tuple[Any, ...], frozenset[str]]] = {}
     names: set[str] = set()
-    # An overlay starts no parse once `code_parse_timeout_seconds` have passed since it
-    # began, so a request parses for a few deadlines at most
-    deadline = time.monotonic() + _overlay_window()
+    if window is None:
+        window = settings.code_parse_timeout_seconds
+    deadline = time.monotonic() + window
     timed_out = 0
     for p in paths:
         source = await read(p)
@@ -703,11 +706,6 @@ async def _parse_post_image(
                 continue
         ov.edges.extend(edges)
     _note_left_out(ov, timed_out)
-
-
-def _overlay_window() -> float:
-    """Seconds after an overlay begins past which it starts no parse."""
-    return settings.code_parse_timeout_seconds
 
 
 def _note_left_out(ov: PrOverlay, timed_out: int) -> None:
