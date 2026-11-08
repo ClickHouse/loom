@@ -558,7 +558,8 @@ async def _in_turn[T](
         if time.monotonic() > deadline:
             return None
         # a request waits for its parse until one parse deadline after its own; a job the
-        # full pool starts later than that is dropped unrun
+        # full pool starts later than that is dropped unrun, also for a later request
+        # that joined it (that file then counts as not reached for both)
         late = deadline + settings.code_parse_timeout_s
         context = contextvars.copy_context()
 
