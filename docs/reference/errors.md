@@ -230,7 +230,7 @@ HTTP 503, raised as `server.core.errors.AssistantUnavailableError`. The assistan
 
 #### `ASSISTANT_UPSTREAM_FAILED`
 
-HTTP 503, raised as `server.core.errors.AssistantUpstreamError`. 503 — LibreChat could not give this answer: it was unreachable, refused the request, ended the answer with an error, or ran past the answer's limit. Category `dependency`, retryable: yes for an idempotent op, no for another op once it ran.
+HTTP 503, raised as `server.core.errors.AssistantUpstreamError`. LibreChat could not give this answer: it was unreachable, refused the request, ended the answer with an error, or ran past the answer's limit. Category `dependency`, retryable: yes for an idempotent op, no for another op once it ran.
 
 #### `AUTH_INSUFFICIENT`
 

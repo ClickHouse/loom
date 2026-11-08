@@ -99,6 +99,7 @@ class _Row:
         else:
             code = "INTERNAL_ERROR"
         try:
+            slo_class, budget_ms = _sli()
             emit_agent_event(
                 op_name=bridge.ASSISTANT_OP,
                 identity={
@@ -117,8 +118,8 @@ class _Row:
                 # The caller's own client asked: its tool calls are `loom-assistant`'s.
                 subject=self.auth.subject,
                 transport="http",
-                slo_class=_sli()[0],
-                budget_ms=_sli()[1],
+                slo_class=slo_class,
+                budget_ms=budget_ms,
             )
         except Exception as e:  # noqa: BLE001 — telemetry never fails an answer
             log.debug("assistant answer: ledger row not written: %s", e)

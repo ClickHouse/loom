@@ -384,7 +384,7 @@ class AssistantUnavailableError(LoomServerError):
 
 
 class AssistantUpstreamError(LoomServerError):
-    """503 — LibreChat could not give this answer: it was unreachable, refused the
+    """LibreChat could not give this answer: it was unreachable, refused the
     request, ended the answer with an error, or ran past the answer's limit. The
     message names none of LibreChat's text. Ask again: each answer spends model
     budget, so the SDKs do not resend one on their own."""
