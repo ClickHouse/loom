@@ -7,7 +7,7 @@ ensure_registered() once per process per repo entry: if no directory row exists,
 one with kind='code' and visibility='private' (read access stays grant-driven — see
 docs), from the registry row read then, or the snapshot when there is none. An
 existing row is re-inserted in full in three cases only, each deciding from the registry
-row read again under the namespace's admins claim, as this process's snapshot of it may
+row read again under the namespace's claims, as this process's snapshot of it may
 predate a maintainer's change: a standard row not yet open is opened when an access row
 newer than it says open, or with no access row when the operator's entry says public; a
 row not restricted is narrowed when the entry is restricted and no access row says
@@ -70,9 +70,9 @@ async def ensure_registered(
         return False
     client = ch or get_client()
     try:
-        # Under the claims every writer of the directory row holds (`code.repo.set_access`,
-        # `namespace.register`), whose reads are sequential: a stale read must not open or
-        # widen a restricted row.
+        # Under the account claim every writer of the directory row holds, then the admins
+        # claim `code.repo.set_access` holds; reads are sequential: a stale read must not
+        # open or widen a restricted row.
         async with AsyncExitStack() as held:
             if not account_held:
                 await held.enter_async_context(account_change(cfg.org, cfg.namespace))

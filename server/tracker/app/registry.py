@@ -98,11 +98,13 @@ async def ensure_configured_tracker_namespaces(*, ch: Any | None = None) -> list
         return []
     done: list[str] = []
     for ns, cfg in sorted(configured_namespaces().items()):
-        cls = "restricted" if cfg.restricted else "standard"
+        classification = "restricted" if cfg.restricted else "standard"
         try:
             # The claim every writer of the directory row holds, as `tracker.source.add` does.
             async with account_change(cfg.org, ns):
-                if await ensure_tracker_registered(cfg.org, ns, classification=cls, ch=ch):
+                if await ensure_tracker_registered(
+                    cfg.org, ns, classification=classification, ch=ch
+                ):
                     done.append(ns)
         except Exception as e:  # noqa: BLE001 — the directory is a convenience at boot
             logger.warning("qa namespace registration skipped for %s: %s", ns, e)
