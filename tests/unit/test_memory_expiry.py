@@ -640,38 +640,33 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
     assert _DEMOTE_REEMITS == [("b", {"expires_at": None, "confidence": 0.45})]
 
 
-@pytest.mark.asyncio
-async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A replay runs after the sweep: only vector rows below the memory row's version
-    # are copied or retired, never one a write since then landed.
+def _emb(key: str, version: int) -> dict[str, Any]:
+    return {
+        "org": "o",
+        "namespace": "n",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "scope": "agent",
+        "embedding_model": "m",
+        "memory_key": key,
+        "content_excerpt": "the original text",
+        "embedding": [0.1],
+        "version": version,
+        "created_at": _NOW,
+    }
+
+
+def _key(k: str) -> tuple[str, str, str, str, str, str]:
+    return ("o", "n", "a", "-", "-", k)
+
+
+def _real_embeddings(
+    monkeypatch: pytest.MonkeyPatch, live: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[Any]]:
+    """The embeddings store's own copy and retire code over `live` rows: the rows it
+    inserts, and the entity_vectors cutoffs it passes on."""
     from server.memory.store import embeddings
-
-    def _emb(key: str, version: int) -> dict[str, Any]:
-        return {
-            "org": "o",
-            "namespace": "n",
-            "agent": "a",
-            "user_id": "-",
-            "session_id": "-",
-            "scope": "agent",
-            "embedding_model": "m",
-            "memory_key": key,
-            "content_excerpt": "the original text",
-            "embedding": [0.1],
-            "version": version,
-            "created_at": _NOW,
-        }
-
-    live = [
-        _emb("old", 100),
-        _emb("new", 300),
-        _emb("gone", 100),
-        _emb("kept", 300),
-        _emb("deleted", 100),
-        _emb("superseded", 351),  # an entity heal's copy of a supersede's copy, head + 1
-    ]
 
     async def _live(ch, keys, **_: Any) -> list[dict[str, Any]]:
         wanted = set(keys)
@@ -685,7 +680,7 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
     async def _none(*_a: Any, **_k: Any) -> int:
         return 0
 
-    cutoffs: list[dict[Any, datetime]] = []
+    cutoffs: list[Any] = []
 
     async def _entity_retire(keys, *, ts, ch=None, created_by=None) -> int:
         cutoffs.append(created_by)
@@ -696,9 +691,29 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
     monkeypatch.setattr(embeddings, "retire_copies_under_unembedded_heads", _none)
     monkeypatch.setattr(embeddings, "tombstone_entity_vectors_for_keys", _entity_retire)
     monkeypatch.setattr(embeddings, "_default_client", lambda: object())
+    return inserted, cutoffs
 
-    def key(k: str) -> tuple[str, str, str, str, str, str]:
-        return ("o", "n", "a", "-", "-", k)
+
+@pytest.mark.asyncio
+async def test_the_sweeps_mirror_leaves_a_later_writes_vectors_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The sweep's mirror copies or retires only vector rows below its pin, never one a
+    # write since the read landed at or above it.
+    from server.memory.store import embeddings
+
+    inserted, cutoffs = _real_embeddings(
+        monkeypatch,
+        [
+            _emb("old", 100),
+            _emb("new", 300),
+            _emb("gone", 100),
+            _emb("kept", 300),
+            _emb("deleted", 100),
+            _emb("pinned", 351),  # below a pin of 352
+        ],
+    )
+    key = _key
 
     demote = {"expires_at": None, "confidence": 0.4}
     await X.apply_mirror(
@@ -708,14 +723,14 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
             (key("gone"), 200, "anonymize"),
             (key("kept"), 200, "anonymize"),
             (key("deleted"), 200, "tombstone"),
-            (key("superseded"), 352, "anonymize"),  # a shell's replay pin
+            (key("pinned"), 352, "anonymize"),
         ],
         {key("old"): demote, key("new"): demote},
     )
 
     got = {r["memory_key"]: r for r in inserted}
-    assert set(got) == {"old", "gone", "deleted", "superseded"}
-    assert got["superseded"]["version"] == 352 and not got["superseded"]["content_excerpt"]
+    assert set(got) == {"old", "gone", "deleted", "pinned"}
+    assert got["pinned"]["version"] == 352 and not got["pinned"]["content_excerpt"]
     assert got["old"]["version"] == 200 and got["old"]["confidence"] == 0.4
     assert got["old"]["expires_at"] is None and got["old"]["tombstoned_at"] is None
     assert got["gone"]["version"] == 200 and got["gone"]["tombstoned_at"] is not None
@@ -732,7 +747,7 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
         {
             key("gone"): second,
             key("kept"): second,
-            key("superseded"): embeddings.version_second(352),
+            key("pinned"): embeddings.version_second(352),
         },
     ]
 
@@ -862,3 +877,46 @@ async def test_a_mirror_failure_that_cannot_be_recorded_still_reports(
     monkeypatch.setattr(pf, "insert_projection_failures", _down)
     res = await X.run_pass(X.ExpiryConfig())
     assert (res.tombstoned, res.failures) == (1, ["mirror:1 keys: ConnectionError"])
+
+
+@pytest.mark.asyncio
+async def test_a_replay_retires_bare_and_copies_the_head_unpinned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Through the store's own code: a replayed tombstone leaves no text or vector, an
+    # anonymized shell's copy at head + 1 is retired, and a demote copies the head at
+    # read + 1.
+    inserted, _ = _real_embeddings(
+        monkeypatch,
+        [_emb("deleted", 100), _emb("shell", 351), _emb("demoted", 250)],
+    )
+    later = _REAL_NOW + timedelta(hours=1)
+    heads = {
+        _key("shell"): SimpleNamespace(
+            version=350,
+            content_sha256=X._ANONYMIZED_SHA,
+            redaction_reason="expired:anonymize",
+            sensitivity="",
+        ),
+        _key("demoted"): SimpleNamespace(
+            version=300, expires_at=later, confidence=0.4, sensitivity=""
+        ),
+    }
+
+    async def _heads(keys, *, ch=None) -> dict[Any, Any]:
+        return {k: heads[k] for k in keys if k in heads}
+
+    monkeypatch.setattr("server.memory.store.memory_rows_by_identity_keys", _heads)
+    await X.replay_mirror(
+        [
+            (_key("deleted"), 200, "tombstone"),
+            (_key("shell"), 200, "anonymize"),
+            (_key("demoted"), 200, "demote"),
+        ]
+    )
+    got = {r["memory_key"]: r for r in inserted}
+    assert got["deleted"]["version"] == 200 and got["deleted"]["tombstoned_at"] is not None
+    assert not got["deleted"]["content_excerpt"] and not got["deleted"]["embedding"]
+    assert got["shell"]["version"] == 352 and not got["shell"]["content_excerpt"]
+    assert got["demoted"]["version"] == 251 and got["demoted"]["expires_at"] == later
+    assert got["demoted"]["content_excerpt"] == "the original text"

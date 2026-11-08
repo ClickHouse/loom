@@ -446,7 +446,7 @@ async def replay_mirror(recorded: list[MirrorItem], *, ch: Any | None = None) ->
             elif action == "anonymize":
                 pin = version
                 if head is not None and _is_anonymized_shell(head):
-                    pin = head.version + 2  # the head is the sweep's row or one above it
+                    pin = head.version + 2  # above a vector-only copy of the head
                 retires.append((key, pin))
             elif head is not None and head.sensitivity != "high":
                 copies.append((key, {"expires_at": head.expires_at, "confidence": head.confidence}))
