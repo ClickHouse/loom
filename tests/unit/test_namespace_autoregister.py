@@ -221,11 +221,12 @@ async def test_rows_a_read_left_do_not_take_the_name_from_its_first_writer() -> 
 
         async def query_one(self, sql: str, params: dict[str, Any] | None = None):
             self.statements.append(("query_one", sql, params))
-            found = any(f"FROM {t} WHERE" in sql for t in self.held)
+            found = any(f"FROM {t} " in sql for t in self.held)
             return {"in_use": 1} if "AS in_use" in sql and found else None
 
     assert ar.READ_TRACES <= set(ledger_reads.namespace_tables())
-    for held, owner in ((set(ar.READ_TRACES), "w"), ({"loom.memory"}, "")):
+    cases = ((set(ar.READ_TRACES), "w"), ({"loom.memory"}, ""), ({"loom.namespace_grants"}, ""))
+    for held, owner in cases:
         ar.forget_all()
         ch = _TracedCH(held)
         assert await ar.ensure_registered("o", "n", subject="w", op_name="memory.set", ch=ch)
