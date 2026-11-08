@@ -765,7 +765,8 @@ async def test_a_replayed_demote_copies_the_head_as_it_is_now(
     # Writes since the sweep moved the heads: a touch set a new expiry, a lock changed
     # neither expiry nor confidence, and one key was deleted. Each demote copies its
     # head's expiry and confidence as a metadata copy (read + 1, no pinned version, so a
-    # row the head's writer lands later is newer); the deleted key has nothing to copy. The anonymize runs as recorded.
+    # row a later set or update lands is newer); the deleted key has nothing to copy.
+    # The anonymize runs as recorded.
     applied: list[Any] = []
     copied: list[Any] = []
 

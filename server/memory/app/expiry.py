@@ -413,8 +413,9 @@ async def replay_mirror(recorded: list[RecordedMirror], *, ch: Any | None = None
     the version hold the text it took out. A demote copies the key's live head as it is
     now, its expiry and confidence, onto the key's live vectors as a metadata copy at
     read + 1: a write since the sweep (a touch, a verify, a tag edit) keeps what it
-    set, and a row its writer lands after the read is newer than the copy. A key with
-    no live head, or a 'high' one, has nothing to copy."""
+    set, and a row a writer that draws its own version (`memory.set`, `update_by_id`)
+    lands after the read is newer than the copy. A key with no live head, or a 'high'
+    one, has nothing to copy."""
     import server.memory.store as memory_repo
 
     n = await apply_mirror(
@@ -447,9 +448,7 @@ async def _record_mirror_failures(items: list[MirrorItem], error: Exception) -> 
 
     by_writer: dict[tuple[str, ...], list[MirrorItem]] = {}
     for item in items:
-        key = item[0]
-        writer = key[:4]  # org, namespace, agent, user_id
-        by_writer.setdefault(writer, []).append(item)
+        by_writer.setdefault(item[0][:4], []).append(item)  # org, namespace, agent, user_id
     rows = []
     for (org, namespace, agent, user_id), group in by_writer.items():
         rows.append(
