@@ -157,7 +157,7 @@ async def test_a_long_last_line_keeps_its_end(checkout: Path, tmp_path: Path) ->
 
 @pytest.mark.asyncio
 async def test_a_redacted_tail_still_fits_the_record_whole(checkout: Path, tmp_path: Path) -> None:
-    head = deps.ToolOutputError(
+    head = recorder.ToolOutputError(
         "TypeScript dependency installation failed (npm, exit 1) in the checkout root"
     )
     room = tier_health.ERROR_CHARS - len(recorder.error_text(head)) - 1
@@ -169,6 +169,11 @@ async def test_a_redacted_tail_still_fits_the_record_whole(checkout: Path, tmp_p
     (tmp_path / "npm").write_text(f"#!/bin/sh\necho first\necho '{last}'\nexit 1\n")
     with pytest.raises(RuntimeError) as failed:
         await deps.prepare_dependencies(checkout, (), env)
+    first = str(failed.value).partition("\n")[0]
+    # The raw text fills the budget but one character, so the redacted growth must fit too.
+    assert len(recorder.error_text(recorder.ToolOutputError(first))) + 1 + len(last) == (
+        tier_health.ERROR_CHARS - 1
+    )
     record = tier_health.failed(None, "typescript", recorder.error_text(failed.value), NOW)
     assert record.error.startswith("ToolOutputError: TypeScript dependency installation failed")
     assert "token=1 " not in record.error
