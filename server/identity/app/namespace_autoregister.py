@@ -26,7 +26,8 @@ Runs from both transports after authorization, before the handler.
 Best-effort: a registry failure never fails the write, and the process
 cache is filled only on success so the next write retries; a retry that finds
 the earlier write's data records no owner. Two reads per (org, namespace) per
-process, the registry row and the in-use statement; the hot path is a set lookup.
+process, the registry row and the in-use check (one ClickHouse statement, plus a Postgres
+read under the Postgres authority); the hot path is a set lookup.
 """
 
 from __future__ import annotations
@@ -50,15 +51,14 @@ AUTO_REGISTER_TAG = "auto-registered"
 # `updated_at`, the table's version column, of an auto-registered row. Aware: the
 # driver encodes a naive datetime as host-local time.
 AUTO_ROW_VERSION = datetime(1970, 1, 1, 0, 0, 1, tzinfo=UTC)
-# An ownerless auto row's, lower still: a racing first write that found the name free
-# (its owned row) wins over one that already saw that write's data.
+# `updated_at` of an ownerless auto row, below `AUTO_ROW_VERSION`: when two first writes
+# race, the owned row of the one that found the name free wins.
 OWNERLESS_ROW_VERSION = datetime(1970, 1, 1, tzinfo=UTC)
 _MISSING = ("", "-", "*")
 # Rows a read leaves under a name it may read: they are no one's content, so a writer who
 # searched before its first write still owns the name.
 READ_TRACES: Final = frozenset(
     {
-        "loom.context_blobs",  # a paged search's own tail
         "loom.events",
         "loom.memory_exposures",
         "loom.search_trace_log",
@@ -168,9 +168,8 @@ async def ensure_registered(
             None,
             now,
         )
-        # Both versions sit below any explicit row (a register, a restriction), so under
-        # FINAL it wins, even one written a moment earlier on another replica that this
-        # read could not see yet; the ownerless one sits below the owned one.
+        # Both versions sit below any explicit row's (a register, a restriction), so an
+        # explicit row wins under FINAL, even one another replica wrote a moment ago.
         row["updated_at"] = OWNERLESS_ROW_VERSION if in_use else AUTO_ROW_VERSION
         await ch.insert("loom.namespaces", [row])
         _remember(org, namespace)
