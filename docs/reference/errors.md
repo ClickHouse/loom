@@ -219,7 +219,7 @@ Raised in `server/memory/app/update.py`.
 
 #### `ANALYSIS_UNAVAILABLE`
 
-HTTP 503, raised as `server.core.errors.AnalysisUnavailableError`. `insights.query` cannot run on this replica: the analyst ClickHouse user is missing, wider than the allowlist, or failed the probe each process runs on an interval.
+HTTP 503, raised as `server.core.errors.AnalysisUnavailableError`. `insights.query` cannot run on this replica: the analyst ClickHouse user is missing, wider than the allowlist, or failed the probe each process runs on an interval. Category `configuration`, retryable: no.
 
 #### `AUTH_INSUFFICIENT`
 

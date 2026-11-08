@@ -394,6 +394,7 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     "SCHEMA_PENDING": ("configuration", False),
     "OVERRIDE_NOT_STORED": ("configuration", False),
     "CODED_WIDTH_MISMATCH": ("configuration", False),
+    "ANALYSIS_UNAVAILABLE": ("configuration", False),
     "GATEWAY_REQUIRED": ("configuration", False),
     "INTEGRATION_NOT_CONFIGURED": ("configuration", False),
     "MODEL_CALLS_DISABLED": ("configuration", False),
