@@ -339,9 +339,9 @@ memory the workers process has. The full index of such a tree takes about an hou
   (minimal `{"path":""}` files or symbols, which repository code can write) plus about
   6 times the delta's bytes (one long string holding a 4-byte character), on top of the
   process's own 52 MiB. At the defaults that is 52 MiB + 600 B × 6,000,000 +
-  6 × 180 MiB, about 4.5 GiB for the worst delta. A real delta has one counted byte per
-  about 32 bytes and parses at about 9 times its size, so it meets both caps near
-  180 MiB, about 1.6 GiB parsed. Raise both together, to what the worker's memory allows
+  6 × 180 MiB, about 4.5 GiB for the worst delta. A synthetic C++-shaped delta has one
+  counted byte per about 32 bytes and parses at about 9 times its size, so it meets
+  both caps near 180 MiB, about 1.6 GiB parsed; a real one meets them sooner or later. Raise both together, to what the worker's memory allows
   by that formula. To measure the per-value cost on a host (about 3.4 GiB at the default
   count):
 

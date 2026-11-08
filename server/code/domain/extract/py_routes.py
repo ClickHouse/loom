@@ -65,7 +65,7 @@ _PREFIX_DECL_RE = re.compile(
     # The arguments stop at the next constructor: an unclosed one is not searched on to
     # the end of the file from each.
     r"^[^\S\n]*([\w.]+)\s*=\s*(?:[\w.]+\.)?(?:APIRouter|Blueprint)\s*\("
-    r"((?:(?!APIRouter|Blueprint)[^)])*)\)",
+    r"((?:(?!(?:APIRouter|Blueprint)\s*\()[^)])*)\)",
     re.M,
 )
 _PREFIX_KW_RE = re.compile(r"\b(?:url_)?prefix\s*=\s*" + _STR)
