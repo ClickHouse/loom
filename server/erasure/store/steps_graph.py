@@ -17,6 +17,7 @@ from server.erasure.store.mutations import (
     namespaces_of,
     purge_mode,
     purge_scope,
+    step_scope,
     tombstone_scoped,
 )
 from server.erasure.store.predicates import (
@@ -480,15 +481,21 @@ async def retire_memory_by_user(org: str, user_id: str, *, ch: _CHClient | None 
     total += await delete_code_answers_by_user(org, user_id, ch=ch)
     if not purge_mode():
         return total + stamped
-    # What a summary written since the steps that delete it fed: once the rows below
-    # go, nothing names it, the census included.
-    for step in _SUMMARY_DERIVED_STEPS:
-        total += await step(org, user_id, ch=ch)
+    # A summary written after the derived-row steps: they run again before its row goes,
+    # since after the purge nothing, not even the census, finds what it fed. Under a
+    # scope of their own, so no statement shares a tag with one this step sent already.
+    with step_scope("memory.retire:late"):
+        for step in _SUMMARY_DERIVED_STEPS:
+            total += await step(org, user_id, ch=ch)
+        for params in slices:
+            await tombstone_scoped(
+                "loom.memory_embeddings",
+                org=org,
+                scope_where=CONSOLIDATED_IN,
+                params=params,
+                ch=ch,
+            )
     for params in slices:
-        # the vectors of a summary written during those steps, before its row goes
-        await tombstone_scoped(
-            "loom.memory_embeddings", org=org, scope_where=CONSOLIDATED_IN, params=params, ch=ch
-        )
         # counted at their tombstone in this saga; one tombstoned before it is not
         await delete_scoped(
             "loom.memory", org=org, scope_where=CONSOLIDATED_IN, params=params, ch=ch
