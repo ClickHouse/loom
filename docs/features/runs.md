@@ -132,8 +132,8 @@ nothing. Active runs are skipped.
 Every memory in a graded run's `memories_used` is counted against the grade. Those
 counts are what `memory.proposals` shows beside each fact on trial (a
 `memory.set(proposed=true)` row). Loom decides a proposal on them only when the
-namespace owner set `proposal_policy.mode` to `auto`; otherwise a person decides with
-`memory.proposal_decide`. See [writing memory](memory/writing.md).
+namespace owner set `proposal_policy.mode` to `auto`; any writer decides with
+`memory.proposal_decide` under either mode. See [writing memory](memory/writing.md).
 
 `run.list(grade="ungraded")` lists the closed runs still owed a verdict.
 

@@ -325,14 +325,25 @@ listed on no MCP toolset: an MCP client calls `loom_memory_import` by name. Fiel
 
 ## Proposals
 
-`memory.set(proposed=true)` writes a fact on trial (`status='proposed'`). It is served
-only to reads that pass `include_proposed`, and never retires, supersedes or flags an
-established fact. The `relations` it names stay out of the fact graph, and accepting it
-does not add them: state them again once it is established. A key that already holds a fact answers 409 `KEY_HOLDS_FACT`.
-`memory.proposals` lists proposals with the graded runs that relied on each, and
-`memory.proposal_decide` accepts or rejects them. Loom decides only when the owner set
-`proposal_policy.mode` to `auto` (`min_passes`, `max_fails`, `reject_after_fails`). See
-[runs](../runs.md).
+`memory.set(proposed=true)` writes a fact on trial (`status='proposed'`). It is served only
+to reads that pass `include_proposed`, and never retires, supersedes or flags an established
+fact. The `relations` it names stay out of the fact graph, and accepting it does not add
+them: state them again once it is established. A key that already holds a fact answers 409
+`KEY_HOLDS_FACT`. `memory.proposals` lists proposals with the graded runs that relied on
+each. A run in the proposal's namespace counts toward its trial when it names the key in
+`run.complete(memories_used=…)` and is graded with `run.grade`. Loom decides only when the
+owner set `proposal_policy.mode` to `auto` (`min_passes`, `max_fails`,
+`reject_after_fails`). See [runs](../runs.md).
+
+Any writer, the proposing agent's own token included, accepts or rejects a proposal under
+either policy mode, with `memory.proposal_decide` or on the **Proposals** tab of the
+**Review queue** at `/admin/review_queue`. The admin drawer never lists the Review queue for
+a proposal ([dashboard](../dashboard.md#the-admin-drawer)): open `/admin/review_queue`
+directly. A decision names a key and decides its newest row, so the tab offers no decision
+for a key that more than one listed proposal holds. Accepting a proposal that recorded a
+contradiction while on trial stores it `conflicted`, and it waits on the **Conflicts** tab.
+Learnings have a review of their own:
+[learnings review queue](./procedures-and-learnings.md#learnings-review-queue).
 
 ## Typed records
 
