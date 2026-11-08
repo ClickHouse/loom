@@ -374,29 +374,52 @@ async def reprobe() -> None:
     """Probe the analyst user again. It also re-reads the secrets row: a
     replica moves to a new key only once the canary reads under it. A failure
     a write repairs is written again under the lease, by a replica that
-    writes the entities itself."""
+    writes the entities itself. Until the probe has an answer, an error means
+    it did not run and the last answer stands; once it has found a problem, a
+    repair that fails keeps the finding, so a security check never passes for
+    want of a write."""
     global _loaded
-    detail = ""
     try:
         stored = _opened(await store.sealed_secrets())
         if stored is not None and stored != _loaded and await _canary_reads(stored):
             _loaded = stored
         problem, repairable, detail = await _probe()
         manages = await store.can_manage_access()
+    except SetupRefused as e:
+        _set_problem(f"probing {boundary.ANALYST_USER} failed: {e}")
+        return
+    except Exception as e:  # noqa: BLE001 — an unreached probe keeps the last answer
+        _probe_unreached(e)
+        return
+    try:
         if problem and repairable and manages:
-            problem, detail = await _write_under_lease()
-            if not problem:
+            blocked, blocked_detail = await _write_under_lease()
+            if blocked:
+                problem, detail = blocked, blocked_detail
+            else:
                 problem, _, detail = await _probe()
         elif not problem and manages:
             # A policy added since the last write widens other users, not the
             # analyst, so only this check sees it.
             problem, detail = await _foreign_problem()
-    except SetupRefused as e:
-        problem, detail = f"probing {boundary.ANALYST_USER} failed: {e}", ""
-    except Exception as e:  # noqa: BLE001 — an unreached probe keeps the last answer
-        _probe_unreached(e)
-        return
+    except Exception as e:  # noqa: BLE001 — a failed repair keeps the finding it was for
+        if not problem:
+            _probe_unreached(e)
+            return
+        detail = f"{detail}; the repair failed: {_scrubbed(error_line(e))}".lstrip("; ")
     _set_problem(problem, detail)
+
+
+def _transient(e: BaseException) -> bool:
+    """An error that says nothing about the analyst user: no ClickHouse answer
+    at all (a dropped or refused connection), or one about the server's load
+    or reach rather than the statement."""
+    return error_code(e) in _TRANSIENT_CODES
+
+
+# No code (no ClickHouse answer), a timeout, too many queries, a network
+# error, a server short of memory.
+_TRANSIENT_CODES = frozenset({None, 159, 160, 202, 209, 210, 241, 1000})
 
 
 _unreached_kind = ""
@@ -440,15 +463,18 @@ async def _canary_reads(secrets_: tuple[bytes, str]) -> bool:
     extra = _scope_extra(boundary.CANARY_ORG, [boundary.CANARY_NAMESPACE], key)
     try:
         return await store.count_rows(boundary.CANARY_TABLE, password=password, extra=extra) == 1
-    except Exception:  # noqa: BLE001 — a refused login or read means the key is not in force
-        return False
+    except Exception as e:
+        if _transient(e):
+            raise  # no answer about the key: the probe did not run
+        return False  # a refused login or read: the key is not in force
 
 
 def _set_problem(problem: str, detail: str = "") -> None:
     """Record the probe's answer. `problem` is Loom's own text, which
     `/v1/health` shows without a token; `detail` (a driver's text, the names
     of policies or databases) goes only to the log."""
-    global _ready, _problem
+    global _ready, _problem, _unreached_kind
+    _unreached_kind = ""  # the probe ran: an unreached one logs again
     scrubbed = _scrubbed(problem)
     changed = scrubbed != _problem
     _problem = scrubbed
@@ -513,9 +539,11 @@ async def _probe() -> tuple[str, bool, str]:
     for shown in store.REFUSED_READS:
         try:
             await store.read_refused(shown, password=_password(), extra=reserved())
-        except Exception as e:  # noqa: BLE001 — a refusal is the expected answer
+        except Exception as e:  # a refusal (497) is the expected answer
             if error_code(e) == _ACCESS_DENIED:
                 continue
+            if _transient(e):
+                raise  # no answer about the grant: the probe did not run
             return f"{boundary.ANALYST_USER} was not refused {shown} ({error_kind(e)})", False, ""
         return f"{boundary.ANALYST_USER} may read {shown}: its grants are too wide", True, ""
     if await store.own_version(password=_password(), extra={}) > boundary.ENTITY_VERSION:

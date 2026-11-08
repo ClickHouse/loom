@@ -546,7 +546,8 @@ def test_an_unavailable_answer_names_no_cause(monkeypatch: pytest.MonkeyPatch, r
     [
         (None, f"{boundary.ANALYST_USER} may read memory.value: its grants are too wide", True),
         (
-            "Code: 159. DB::Exception: Timeout exceeded",
+            # An answer that is neither a refusal nor a passing fault.
+            "Code: 60. DB::Exception: Unknown table",
             f"{boundary.ANALYST_USER} was not refused memory.value (RuntimeError)",
             False,
         ),
@@ -727,3 +728,41 @@ def test_a_replica_still_starting_is_retried_and_a_failed_probe_is_not(
     with pytest.raises(LoomServerError) as caught:
         asyncio.run(app.handle_insights_query(_query()))
     assert error_class(caught.value.code, caught.value.status_code) == (category, retryable)
+
+
+def test_a_finding_whose_repair_fails_is_kept(monkeypatch: pytest.MonkeyPatch, ready: None) -> None:
+    # A grant outside the allowlist that the write cannot revoke: the replica
+    # must stop answering, not pass for want of a write.
+    async def write() -> tuple[str, str]:
+        raise RuntimeError("Code: 497. DB::Exception: Not enough privileges to revoke")
+
+    monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
+    monkeypatch.setattr(
+        app, "_probe", _returns(("loom_analyst holds grants outside the allowlist", True, "g"))
+    )
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
+    monkeypatch.setattr(app, "_write_under_lease", write)
+    asyncio.run(app.reprobe())
+    ready_now, problem = app.analysis_state()
+    assert ready_now is False and problem == "loom_analyst holds grants outside the allowlist"
+
+
+def test_a_canary_read_that_times_out_is_no_finding(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    # No answer about the key: the last answer stands.
+    monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
+    monkeypatch.setattr(app.store, "run_statement", _failing("timed out reading from ClickHouse"))
+    monkeypatch.setattr(app, "_unreached_kind", "")
+    asyncio.run(app.reprobe())
+    assert app.analysis_state() == (True, "")
+
+
+def test_an_unreached_probe_after_one_that_ran_logs_again(
+    monkeypatch: pytest.MonkeyPatch, ready: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(app, "_unreached_kind", "")
+    app._probe_unreached(RuntimeError("Code: 210. Connection refused"))
+    app._set_problem("")  # a probe that ran
+    app._probe_unreached(RuntimeError("Code: 210. Connection refused"))
+    assert sum("could not run" in r.message for r in caplog.records) == 2
