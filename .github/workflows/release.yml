@@ -604,7 +604,7 @@ jobs:
           done
 
   # Every run except a dry run signs what is out, so a run after one that did not
-  # sign repairs it. Nothing publishes unsigned: with Sigstore down, the release waits.
+  # sign repairs it. The GitHub Release and the SDK registries wait for it.
   sign:
     name: Sign both images
     if: ${{ !cancelled() && !inputs.dry_run && (needs.docker-tag.result == 'success' || needs.preflight.outputs.images_published == 'true') }}
