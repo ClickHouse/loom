@@ -105,3 +105,24 @@ def test_a_failed_read_says_so_after_an_earlier_one_succeeded(
         assert [c.namespace for c in registry_repos()] == ["code-widgets"]
     finally:
         repo_registry.reset_for_tests()
+
+
+def test_the_snapshot_keeps_the_namespace_of_a_removed_page_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.code.store.index as store
+    from server.code.domain.index import repos
+
+    class _Removed(_Repo):
+        async def registry_rows(self) -> list[dict[str, Any]]:
+            return [_row("standard") | {"active": False, "row_kind": "page"}]
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    repo_registry.reset_for_tests()
+    try:
+        monkeypatch.setattr(store, "CodeRepo", _Removed)
+        assert asyncio.run(repo_registry.read_registry())
+        assert repos.registry_repos() == []
+        assert repos.page_namespaces() == {("acme", "code-widgets")}
+    finally:
+        repo_registry.reset_for_tests()

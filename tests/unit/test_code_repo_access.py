@@ -105,8 +105,8 @@ def test_an_access_row_whose_entry_is_gone_is_not_a_branch(monkeypatch) -> None:
     assert [c.namespace for c in repos._with_registry([])] == ["code-added"]
 
 
-# The registry row of a branch added from the page, as a live one reads.
-_LIVE = {"active": True, "row_kind": "page"}
+# A live registry row, as the namespace's read answers.
+_LIVE = {"active": True, "row_kind": ""}
 
 
 class _CH:
@@ -391,12 +391,13 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
         "row_kind": "page",
     }
     ch = _CH2(existing)
+    page = _cfg("code-x", source="registry")
     await reg.upsert_access(
-        _cfg("code-x"),
+        page,
         classification="standard",
         join_policy="open",
         created_by="alice",
-        current=await reg.live_row(_cfg("code-x"), ch),
+        current=await reg.live_row(page, ch),
         ch=ch,
     )
     ((table, rows),) = ch.inserts
@@ -442,8 +443,9 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
     )
     row = ch3.inserts[0][1][0]
     assert row["row_kind"] == "access" and row["repo"] == "ClickHouse/weave"
-    with pytest.raises(ValidationError):  # a member's removed branch keeps its namespace
-        await reg.live_row(_cfg("code-x"), _CH2(existing | {"active": False}))
+    for active in (False, True):  # a member's branch, removed or not, keeps its namespace
+        with pytest.raises(ValidationError):
+            await reg.live_row(_cfg("code-x"), _CH2(existing | {"active": active}))
     with pytest.raises(ValidationError):  # a removed branch added from the page
         await reg.live_row(_cfg("code-x", source="registry"), _CH2(existing | {"active": False}))
 

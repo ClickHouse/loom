@@ -272,22 +272,22 @@ async def insert_entry(
 async def live_row(cfg: Any, ch: Any | None = None) -> dict[str, Any] | None:
     """`cfg`'s registry row read now, when active; None for an operator entry with no
     active row. NOT_A_REPO for a branch added from the page whose row is gone or
-    inactive."""
+    inactive, and for an operator entry whose namespace holds a member's row."""
     from server.code.store.index import CodeRepo
     from server.core.ch import sequential_reads
     from server.core.errors import ValidationError
 
     with sequential_reads():  # a lagging read must not replace a row with a new one
         current = await CodeRepo(ch).code_repo_row(cfg.org, cfg.namespace)
-    if current and current.get("active"):
-        return current
-    if cfg.source != "config":
-        raise ValidationError(f"{cfg.namespace} was removed", code="NOT_A_REPO")
-    if (current or {}).get("row_kind") == "page":
+    if cfg.source == "config" and (current or {}).get("row_kind") == "page":
         raise ValidationError(
             f"a member added {cfg.namespace} from the page; list the entry under another namespace",
             code="NOT_A_REPO",
         )
+    if current and current.get("active"):
+        return current
+    if cfg.source != "config":
+        raise ValidationError(f"{cfg.namespace} was removed", code="NOT_A_REPO")
     return None
 
 
