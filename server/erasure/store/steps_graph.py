@@ -44,6 +44,10 @@ from server.erasure.store.scope_reads import (
     user_quoted_keys,
     user_summary_rows,
 )
+from server.erasure.store.steps_memory import (
+    delete_memory_versions_by_user,
+    tombstone_memory_chunks_by_user,
+)
 
 # ---------------------------------------------------------------------------
 # Derived substrates that outlive the memory step. Each helper mutates in
@@ -327,8 +331,9 @@ _GRAPH_LINKS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 async def delete_entity_graph_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
-    """Delete the triples and edges only this user's memories carried. Must
-    run BEFORE `graph_links.delete`: ownership is read from the link tables.
+    """Delete the triples and edges only this user's memories (or summaries of them)
+    carried. Must run BEFORE `graph_links.delete` (which runs it again first):
+    ownership is read from the link tables.
 
     The mutation names each key by its hash, computed by ClickHouse on both sides:
     nothing bounds a stored entity name, and one name can outgrow a form field."""
@@ -349,8 +354,8 @@ async def delete_entity_graph_by_user(
 async def delete_graph_links_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
     """The user's links, and those of the summaries of the user's memories: by key, and
     by the summary's id for a row link, which carries the summary writer's user. First
-    the graph rows and communities those links alone hold, again: a run reopened by the
-    census would otherwise leave them with no link that names them."""
+    the graph rows and communities those links alone hold, read from the links, so a
+    run the census reopens leaves none of them with no link that names it."""
     ch = ch or _default_client()
     total = await delete_entity_graph_by_user(org, user_id, ch=ch)
     total += await delete_entity_communities_by_user(org, user_id, ch=ch)
@@ -442,6 +447,14 @@ async def tombstone_consolidated_dependents_by_user(
     return total
 
 
+_SUMMARY_DERIVED_STEPS = (
+    tombstone_memory_chunks_by_user,
+    delete_entity_vectors_by_user,
+    delete_graph_links_by_user,
+    delete_memory_versions_by_user,
+)
+
+
 async def retire_memory_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
     """After every step that finds rows by the user's memory keys: the summaries built
     from the user's memories, the cached answers and precedents that quote them or the
@@ -462,6 +475,10 @@ async def retire_memory_by_user(org: str, user_id: str, *, ch: _CHClient | None 
     total += await delete_code_answers_by_user(org, user_id, ch=ch)
     if not purge_mode():
         return total + stamped
+    # What a summary written since the steps that delete it fed: once the rows below
+    # go, nothing names it, the census included.
+    for step in _SUMMARY_DERIVED_STEPS:
+        total += await step(org, user_id, ch=ch)
     for params in slices:
         # counted at their tombstone in this saga; one tombstoned before it is not
         await delete_scoped(
@@ -654,9 +671,9 @@ async def delete_code_answers_by_user(
 async def delete_entity_communities_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
-    """Community rows for (or labelled by) the entities only this user's
-    memories carried. Must run BEFORE `graph_links.delete`: ownership is read
-    from `entity_edge_memories`."""
+    """Community rows for (or labelled by) the entities only this user's memories (or
+    summaries of them) carried. Must run BEFORE `graph_links.delete` (which runs it
+    again first): ownership is read from `entity_edge_memories`."""
     ch = ch or _default_client()
     rows = await ch.query_all(
         f"SELECT cityHash64(namespace, entity) AS h FROM {USER_COMMUNITY_ENTITIES}",

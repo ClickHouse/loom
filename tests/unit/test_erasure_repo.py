@@ -350,10 +350,20 @@ async def test_consolidated_dependents_of_an_erased_user_are_tombstoned_in_both_
 
 
 @pytest.mark.asyncio
-async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_their_keys() -> None:
+async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_their_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """In a purge, `memory.tombstone` and the summaries' tombstone still stamp
     loom.memory, so the cache steps between can read the keys; `memory.retire`
     deletes the summaries and then the user's rows."""
+    # what a late summary fed, run again before the rows go: the four steps that delete it
+    assert graph_steps._SUMMARY_DERIVED_STEPS == (
+        memory_steps.tombstone_memory_chunks_by_user,
+        graph_steps.delete_entity_vectors_by_user,
+        graph_steps.delete_graph_links_by_user,
+        memory_steps.delete_memory_versions_by_user,
+    )
+    monkeypatch.setattr(graph_steps, "_SUMMARY_DERIVED_STEPS", ())
     pairs = ("namespace, memory_key FROM", [{"namespace": "ns", "memory_key": "k1"}])
     with erasure_mutations.purge_scope(True):
         ch = StubCH()

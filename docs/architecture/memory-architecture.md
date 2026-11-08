@@ -1304,9 +1304,15 @@ last step that reads them; the consolidated summaries built from them are delete
 too, after their vectors and code links. Those summaries are tombstoned right after the
 user's rows (`consolidated.tombstone`), and the steps that reach the user's chunks, graph
 rows and version history treat them as the user's rows; the census counts them the same
-way. `graph_links.delete` first deletes again the graph rows its links alone hold, so a
-run the census reopens leaves none unlinked. `memory_versions.delete` runs after the
-cache steps, which find an answer that quoted a summary by its history.
+way; a purge's `memory.retire` runs those steps again before it deletes the rows that
+name a summary written since. `graph_links.delete` deletes the graph rows its links
+alone hold first, so a run the census reopens leaves none unlinked.
+`memory_versions.delete` runs after the cache steps, which find an answer that quoted a
+summary by its history. A `src:` tag names a key, not its writer: where two users of a
+namespace hold the same key, erasing one deletes the history of a summary built from
+the other's row too. The erasure takes the summary that may quote the user; the
+summary's current row is only tombstoned outside a purge, and consolidation rebuilds it
+from the rows that remain.
 
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no

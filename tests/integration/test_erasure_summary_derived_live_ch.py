@@ -32,7 +32,8 @@ _VECTOR = [0.0] * 3072
 _COUNTED = {
     "loom.memory_versions": 3,  # alice's row, the summary's, the rebuilt one's first
     "loom.memory_chunks": 1,
-    "loom.entity_triple_memories": 4,  # alice's link and the summary's three
+    # alice's link, the summary's three, the rebuilt summary's from its old text
+    "loom.entity_triple_memories": 5,
     "loom.entity_triple_rows": 1,
     "loom.entity_edge_memories": 3,  # alice's link and the summary's two
     "loom.entity_edge_rows": 1,
@@ -102,6 +103,7 @@ def _seed(ch_client: Any, org: str) -> None:
         ("diets", "differ", "by person", "topic-diets"),
         ("bob", "eats", "fish", "bob-diet"),
         ("bob", "eats", "fish", "topic-diets"),
+        ("alice", "likes", "salad", "topic-rebuilt"),
     ]
     triple_cols = ["org", "namespace", "subject", "relation", "object"]
     _insert(
@@ -222,9 +224,9 @@ async def test_what_a_summary_of_the_users_memories_fed_leaves_with_it(
 
 
 async def test_a_reopened_link_delete_takes_the_triples_its_links_alone_held(ch_client, ch) -> None:
-    """The saga ran `entity_graph.delete` and `graph_links.delete` without the
-    summary's links (a build without this change, or a summary linked since): the
-    census reopens only `graph_links.delete`, which must not leave the triple unlinked."""
+    """The saga ran `graph_links.delete` without the summary's links (a build without
+    this change, or a summary linked since): the census reopens it, and it must not
+    leave the triple unlinked."""
     org = unique_org("ersumre")
     _seed(ch_client, org)
     ch_client.command(
@@ -236,3 +238,33 @@ async def test_a_reopened_link_delete_takes_the_triples_its_links_alone_held(ch_
         await _run(_STEPS[:1] + _STEPS[6:7], org, ch)
     triples = f"SELECT subject FROM loom.entity_triples{_WHERE}"
     assert _column(ch_client, org, triples) == ["bob"]
+
+
+async def test_a_purge_takes_what_a_summary_written_late_fed(ch_client, ch) -> None:
+    """A summary of alice's memory written after the steps that delete what summaries
+    fed: in a purge `memory.retire` deletes the rows that name it, so it takes its
+    history and chunks first."""
+    org = unique_org("ersumlt")
+    _seed(ch_client, org)
+    late = "00000000-0000-4000-8000-000000000004"
+    with erasure_mutations.purge_scope(True), erasure_mutations.saga_scope(f"erasure-{org}"):
+        await _run(_STEPS[:-1], org, ch)
+        row = [org, "ns", "a", "-", "-", "topic-late", "fact", "alice is vegetarian", 1]
+        row += [["consolidated", "src:user_diet"], late]
+        _insert(ch_client, "loom.memory", _MEMORY_COLS, [row])
+        text = "alice is vegetarian, late"
+        _insert(
+            ch_client,
+            "loom.memory_chunks",
+            ["org", "namespace", "agent", "user_id", "session_id", "chunk_index", "content"]
+            + ["content_sha256", "parent_memory_key", "embedding"],
+            [
+                [org, "ns", "a", "-", "-", 0, text, hashlib.sha256(text.encode()).hexdigest()]
+                + ["topic-late", _VECTOR]
+            ],
+        )
+        await _run(_STEPS[-1:], org, ch)
+    history = f"SELECT memory_key FROM loom.memory_versions{_WHERE}"
+    assert "topic-late" not in _column(ch_client, org, history)
+    chunks = f"SELECT parent_memory_key FROM loom.memory_chunks{_WHERE}"
+    assert "topic-late" not in _column(ch_client, org, chunks)

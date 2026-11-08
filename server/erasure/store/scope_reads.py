@@ -14,9 +14,9 @@ from typing import Any, NamedTuple
 from server.core.ch_params import FIELD_BYTES, chunks
 from server.core.repo_base import _CHClient
 from server.erasure.store.predicates import (
+    SUMMARY_ROWS_FROM,
     USER_KEYS_SUBQ,
     USER_QUOTED_KEY_LIST,
-    USER_SUMMARIES,
 )
 
 
@@ -55,8 +55,7 @@ class SummaryRows(NamedTuple):
 async def user_summary_rows(org: str, user_id: str, *, ch: _CHClient) -> SummaryRows:
     rows = await ch.query_all(
         "SELECT DISTINCT toString(namespace) AS ns, agent, user_id, memory_key, "
-        "toString(memory_id) AS id FROM loom.memory "
-        f"WHERE org = {{org:String}} AND {USER_SUMMARIES}",
+        f"toString(memory_id) AS id {SUMMARY_ROWS_FROM}",
         params={"org": org, "uid": user_id},
     )
     found = [

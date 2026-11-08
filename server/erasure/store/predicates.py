@@ -117,19 +117,25 @@ USER_QUOTED_KEY_LIST = f"arrayConcat({USER_KEY_LIST}, {USER_SUMMARY_KEY_LIST})"
 # entity vectors (by the summary's agent, user and key), its row links (by its id) and
 # its graph key links (by its key alone: those tables carry no identity, so another
 # memory at the same key loses its links, as for the user's own keys). A summary any of
-# whose versions matched counts, so a summary rebuilt without the user loses these
-# re-derivable rows too, until its old version merges away. `USER_GRAPH_KEYS` is the
-# user's keys and the summaries'.
-_USER_SUMMARY_ROWS = f"FROM loom.memory WHERE org = {{org:String}} AND {USER_SUMMARIES}"
-USER_SUMMARY_KEYS_SUBQ = f"(SELECT toString(namespace), memory_key {_USER_SUMMARY_ROWS})"
+# whose versions matched counts, read from the rows and the history: a summary rebuilt
+# without the user keeps the graph links its old text gave its key, and loses these rows
+# until its next write derives them again. `USER_GRAPH_KEYS` is the user's keys and the
+# summaries'.
+_SUMMARY_COLUMNS = "namespace, agent, user_id, memory_key, memory_id, tags"
+SUMMARY_ROWS_FROM = (
+    f"FROM (SELECT {_SUMMARY_COLUMNS} FROM loom.memory WHERE org = {{org:String}} "
+    f"UNION ALL SELECT {_SUMMARY_COLUMNS} FROM loom.memory_versions "
+    f"WHERE org = {{org:String}}) WHERE {USER_SUMMARIES}"
+)
+USER_SUMMARY_KEYS_SUBQ = f"(SELECT toString(namespace), memory_key {SUMMARY_ROWS_FROM})"
 _USER_SUMMARY_IDENTITIES = (
-    f"(SELECT toString(namespace), agent, user_id, memory_key {_USER_SUMMARY_ROWS})"
+    f"(SELECT toString(namespace), agent, user_id, memory_key {SUMMARY_ROWS_FROM})"
 )
 USER_SUMMARY_CHUNKS = (
     f"(namespace, agent, user_id, parent_memory_key) IN {_USER_SUMMARY_IDENTITIES}"
 )
 USER_SUMMARY_VECTORS = f"(namespace, agent, user_id, memory_key) IN {_USER_SUMMARY_IDENTITIES}"
-USER_SUMMARY_IDS = f"memory_id IN (SELECT memory_id {_USER_SUMMARY_ROWS})"
+USER_SUMMARY_IDS = f"memory_id IN (SELECT memory_id {SUMMARY_ROWS_FROM})"
 USER_GRAPH_KEYS = (
     f"((namespace, memory_key) IN {USER_KEYS_SUBQ} "
     f"OR (namespace, memory_key) IN {USER_SUMMARY_KEYS_SUBQ})"
