@@ -162,7 +162,7 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
     # ---- client programs
     dict.fromkeys(
         (
-            "code.coverage.unwatch",
+                "code.coverage.unwatch",
             "code.coverage.watch",
             "code.outcome",
             "code.scip_ingest",
@@ -194,6 +194,14 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
     ),
     # ---- the dashboard does this through another op
     {
+        "grants.share_agent": (
+            "an agent shares its own namespace and the handler refuses any other caller; "
+            "a person shares a namespace from the Sharing page with grants.create"
+        ),
+        "grants.unshare_agent": (
+            "an agent withdraws its own share and the handler refuses any other caller; "
+            "a person revokes a grant from the Sharing page with grants.revoke"
+        ),
         "memory.import": (
             "run by the program that exports from another memory system; the dashboard imports "
             "files with memory.import_curated"
@@ -218,6 +226,9 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
         "namespace.summary": (
             "an agent's one-call orientation on a namespace; the Assistant page's overview reads "
             "namespace.inventory"
+        ),
+        "procedure.list": (
+            "memory.list under the procedure_ key prefix; the Memories page lists the same rows"
         ),
         "search.query": (
             "each page searches its own plane: Memories memory.search, the Library "
