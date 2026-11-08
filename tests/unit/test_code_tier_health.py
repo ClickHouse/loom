@@ -431,24 +431,22 @@ async def test_the_full_run_records_its_own_tier_and_an_entry_not_due_records_no
 
 
 @pytest.mark.asyncio
-async def test_a_checkout_gc_failure_is_not_the_tiers_failure(tmp_path: Path) -> None:
+async def test_a_checkout_the_worker_cannot_search_is_not_the_tiers_failure(
+    tmp_path: Path,
+) -> None:
     repo = _StateRepo()
-    (tmp_path / ".git").mkdir()
-    calls: list[str] = []
+    checkout = tmp_path / "checkout"
+    (checkout / ".git").mkdir(parents=True)
+    checkout.chmod(0)  # its .git cannot be stat'ed: is_dir raises PermissionError
 
     async def not_due(*_: Any) -> bool:
         return False
 
-    async def denied(git_dir: str) -> None:
-        calls.append(git_dir)
-        raise PermissionError(13, "Permission denied", f"{git_dir}/loom-gc")
-
-    with (
-        patch.object(compiler_tier, "checkout_for", return_value=str(tmp_path)),
-        patch("server.code.app.index.mirrors.gc_if_due", denied),
-    ):
-        result = await _run_tier("server.code.workers.scip_full", repo, not_due)
-    assert calls == [str(tmp_path / ".git")]
+    try:
+        with patch.object(compiler_tier, "checkout_for", return_value=str(checkout)):
+            result = await _run_tier("server.code.workers.scip_full", repo, not_due)
+    finally:
+        checkout.chmod(0o700)
     assert "tier_health:clang_full" not in repo.state
     assert result.errors == []
 

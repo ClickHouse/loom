@@ -85,10 +85,11 @@ async def run_tier[R: TierResult](
     entry with a network remote gets no tier at all (`unsandboxed_skip`). With
     `gc_checkout` each entry's checkout is repacked when due (`gc_if_due`) after its
     work, under the entry lock where the tier takes it; only this tier's worker moves
-    that tree. A failed gc is logged, not recorded: a later pass with nothing due could
-    not clear it. Each entry's outcome is its `health_tier` record (default: `producer`;
-    `tier_health.record`): a failure, or a success unless `run_repo` returned False (it
-    attempted nothing: the entry was not due) or added a skip. An entry the tier does
+    that tree. A failed gc (a checkout this user cannot search) is logged, not recorded:
+    a later pass with nothing due could not clear it. Each entry's outcome is its
+    `health_tier` record (default: `producer`; `tier_health.record`): a failure, or a
+    success unless `run_repo` returned False (it attempted nothing: the entry was not
+    due) or added a skip. An entry the tier does
     not own drops its record (`tier_health.forget`)."""
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
