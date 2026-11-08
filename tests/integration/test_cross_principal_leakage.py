@@ -44,6 +44,10 @@ sys.path.insert(0, str(ROOT))
 # probing them as B against A only tests the writer gate, which test_grants
 # already covers, and some (namespace.register) would create rows.
 _SKIP_OPS = {
+    # Not a read: a model-backed answer on the caller's behalf, which spends from the
+    # namespace's daily model cost cap (and, with no LibreChat, answers its
+    # configuration refusal). Its isolation is the answer token's: tests/unit.
+    "assistant.ask",
     "namespace.register",
     "namespace.join",
     "namespace.leave",
