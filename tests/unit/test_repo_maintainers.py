@@ -944,7 +944,9 @@ async def test_the_registrar_syncs_a_branch_once_the_registry_is_read(
     synced.clear()
     standard = [entry("code-z-3", "standard"), entry("code-z-2", "standard")]
     await maintainers.sync_restricted_page_branches(standard)
-    await maintainers.sync_restricted_page_branches([entry("code-z-1", "restricted"), *standard])
+    snapshot = [entry("code-z-1", "restricted"), *standard]
+    monkeypatch.setattr(repos, "configured_repos", lambda: snapshot)
+    await maintainers.sync_restricted_page_branches(snapshot)
     assert synced == ["code-z-2", "code-z-1"]
     await maintainers.sync_restricted_page_branches(standard, exhausted=lambda: True)
     assert synced == ["code-z-2", "code-z-1"]  # past the pass budget

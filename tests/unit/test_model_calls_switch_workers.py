@@ -728,6 +728,7 @@ def test_code_ingest_runs_no_repository_of_a_switched_off_org(monkeypatch) -> No
         return {}
 
     monkeypatch.setattr("server.identity.app.registration.classifications", no_rows)
+    monkeypatch.setattr("server.code.domain.index.repos.configured_repos", lambda: repos)
     monkeypatch.setattr("server.code.app.index.repo_registry.refresh_db_repos", nothing)
     monkeypatch.setattr(ip, "_inactive_namespaces", nothing)
     monkeypatch.setattr(ip, "selected_repos", lambda org, ns: repos)

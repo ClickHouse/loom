@@ -24,7 +24,7 @@ gives no grant on the operator's namespaces.
   branches inherit), and by the ingest pass on every pass for a repository with
   a restricted branch added from the page. Each pass also revokes, on a
   restricted branch added from the page, every copy that does not trace to an
-  operator grant (`_stray`), or rewrites it as a copy of the subject's one.
+  operator grant (``_stray``), or rewrites it as a copy of the subject's one.
 * ``revoke_repo_maintainer`` — a revoked admin leaves the branches the revoke
   reaches, except a branch where they are the only active admin (the handler's
   own guard) other than a restricted branch added from the page. From an
@@ -276,13 +276,33 @@ async def _mirror_wanted(
     since, an admin's lowering say, is left to the next sync), and only while
     its source is still the admin grant it copies: a revoke that landed since
     the plan read must not be copied back."""
+    return await _copy_wanted(client, org, row, now, seen, await _source_row(client, org, row))
+
+
+async def _source_row(client: Any, org: str, row: dict[str, Any]) -> dict[str, Any] | None:
+    """The grant row a planned copy copies, read now."""
+    source_ns = row["granted_by"].removeprefix(GRANTED_BY_PREFIX)
+    source: dict[str, Any] | None = await client.query_one(
+        _GRANT_ROW_SQL, params={"org": org, "ns": source_ns, "sub": row["subject"]}
+    )
+    return source
+
+
+async def _copy_wanted(
+    client: Any,
+    org: str,
+    row: dict[str, Any],
+    now: dict[str, Any] | None,
+    seen: _Seen,
+    source: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """`_mirror_wanted` with the source row already read."""
     subject, source_ns = row["subject"], row["granted_by"].removeprefix(GRANTED_BY_PREFIX)
     if _version(now) != _version(seen.get((row["namespace"], subject))):
         return None
-    source = await client.query_one(
-        _GRANT_ROW_SQL, params={"org": org, "ns": source_ns, "sub": subject}
-    )
-    if not _live_admin(source) or _version(source) != _version(seen.get((source_ns, subject))):
+    if source is None or not _live_admin(source):
+        return None
+    if _version(source) != _version(seen.get((source_ns, subject))):
         return None
     if await _restricted_since(client, org, row["namespace"], source_ns, source):
         return None
@@ -318,15 +338,12 @@ async def _rewrite_wanted(
     no longer a live admin grant, the stray's revoke is written instead: the
     restricted branch must not keep it. One that only changed since the plan (given
     again, say) leaves the stray to the next sync."""
-    if await _mirror_wanted(client, org, row, now, seen):
+    source = await _source_row(client, org, row)
+    if await _copy_wanted(client, org, row, now, seen, source):
         return row
-    if now is None or not await _copy_unchanged(client, org, row, now, seen):
+    if _live_admin(source) or not await _copy_unchanged(client, org, row, now, seen):
         return None
-    source_ns = row["granted_by"].removeprefix(GRANTED_BY_PREFIX)
-    source = await client.query_one(
-        _GRANT_ROW_SQL, params={"org": org, "ns": source_ns, "sub": row["subject"]}
-    )
-    if _live_admin(source):
+    if now is None:  # `_copy_unchanged` read it live; this tells the type checker
         return None
     _log_stray(org, now)
     return _revoke_row(org, now)
@@ -774,13 +791,13 @@ async def sync_restricted_page_branches(
     page that is restricted, by this process's snapshot or by its directory row: the
     copies it must not hold go on every pass, even when the sync after its
     restriction failed. Stops once `exhausted` says the caller's budget is spent."""
+    from server.core.ch import get_client
+
     page = [c for c in entries if c.source == "registry"]
     done: set[tuple[str, str]] = set()
     for org in sorted({c.org for c in page}):
         mine = [c for c in page if c.org == org]
         try:
-            from server.core.ch import get_client
-
             restricted = await _restricted(get_client(), org, {c.namespace: c.source for c in mine})
         except Exception as e:  # noqa: BLE001 — an unread directory waits for the next pass
             log.warning("repo maintainers: %s classification unreadable: %s", org, e)
@@ -788,8 +805,7 @@ async def sync_restricted_page_branches(
         for cfg in mine:
             if exhausted():
                 return
-            hit = cfg.classification == "restricted" or cfg.namespace in restricted
-            if hit and (org, cfg.repo) not in done:
+            if cfg.namespace in restricted and (org, cfg.repo) not in done:
                 done.add((org, cfg.repo))
                 await sync_quietly(org, cfg.namespace)
 

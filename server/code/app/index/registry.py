@@ -130,11 +130,11 @@ async def _write_row(cfg: Any, client: Any) -> bool:
     # predate a maintainer's change. With no registry row the operator's entry decides.
     access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
     access_restricted = access is not None and str(access.get("classification")) == "restricted"
-    if opening and (
-        str(cfg.source) != "registry"
-        if access is None
-        else not access_restricted and str(access.get("join_policy")) == "open"
-    ):
+    if access is None:
+        access_open = str(cfg.source) != "registry"  # the operator's entry alone says public
+    else:
+        access_open = not access_restricted and str(access.get("join_policy")) == "open"
+    if opening and access_open:
         # The config says the repository is public; the row is brought to open +
         # discoverable. Open means joinable, not readable — the row stays
         # visibility=private; reads need the join.
