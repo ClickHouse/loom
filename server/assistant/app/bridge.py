@@ -11,6 +11,7 @@ LibreChat sends back to Loom on every tool call (docs/architecture/assistant.md)
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import itertools
 import json
 import logging
@@ -272,9 +273,12 @@ async def stream(
                 )
             try:
                 if r.status_code != 200:
-                    # The answer's deadline bounds reading the refusal too.
-                    async with asyncio.timeout_at(deadline):
-                        head = await _head(r)
+                    # The answer's deadline bounds reading the refusal too; a body that
+                    # stalls past it is still the refusal its status says.
+                    head = b""
+                    with contextlib.suppress(TimeoutError):
+                        async with asyncio.timeout_at(deadline):
+                            head = await _head(r)
                     _refused(ticket, r.status_code, _redacted(ticket, head))
                 answer.started = True
                 lines = r.aiter_lines()

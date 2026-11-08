@@ -213,6 +213,25 @@ def test_a_refusal_whose_body_never_ends_is_read_only_to_its_bound(world: _World
     assert served[0] <= bridge._REFUSAL_READ_BYTES + 1024
 
 
+def test_a_refusal_whose_body_stalls_is_still_the_refusal(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    forgotten: list[str] = []
+    monkeypatch.setattr(service, "forget_answering", forgotten.append)
+    monkeypatch.setattr(settings, "assistant_answer_ttl_s", 1)
+
+    class _Stalled(httpx.AsyncByteStream):
+        async def __aiter__(self) -> Any:
+            yield b"{"
+            await asyncio.sleep(30)
+
+    world.override = lambda _request: httpx.Response(401, stream=_Stalled())
+    with pytest.raises(AssistantUpstreamError, match="401") as refused:
+        _answer(_caller(), QUESTION)
+    # Its status, not the answer's limit, and the stale key is dropped as for any 401.
+    assert "ran past" not in str(refused.value) and forgotten
+
+
 @pytest.mark.parametrize(
     ("change", "refusal"),
     [

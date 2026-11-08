@@ -710,8 +710,8 @@ the allowlist. The bridge's tests (`tests/unit/test_assistant_bridge.py`,
 `test_delegation.py`, `test_assistant_service.py`, and `test_mcp_unauthenticated.py` for
 the MCP endpoint) show that:
 
-- an answer's token is never wider than the caller's token, never outlives it (under a
-  sign-in session, never the answer's limit) and ends with the caller's token, subject,
+- an answer's token is never wider than the caller's token, never outlives it or, under
+  a sign-in session, the answer's limit, and ends with the caller's token, subject,
   creator or sign-out; a dashboard caller in the last minutes of its access token is
   answered;
 - a request to LibreChat without a token reads nothing, and one with a token reads as
@@ -842,8 +842,8 @@ spend to the same budget as its own model calls:
   failed read: an unreadable spend refuses as `BACKEND_UNAVAILABLE` with a one-second
   retry, apart from a spent share (`RATE_LIMITED`). The assistant is held to its own
   share of the cap (`LOOM_ASSISTANT_BUDGET_SHARE`, default half), so questions cannot
-  spend what extraction and the conflict resolver need. Both surfaces record their spend under one
-  operation, `assistant.ask`, which the share check sums.
+  spend what extraction and the conflict resolver need. Both surfaces record their
+  spend under one operation, `assistant.ask`, which the share check sums.
 - The check reads spend already recorded, so answers running at once could each pass it;
   each replica runs at most a set number of answers per namespace at once
   (`LOOM_ASSISTANT_CONCURRENT_ANSWERS`, default 2), which bounds the overshoot to that
