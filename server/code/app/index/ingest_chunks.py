@@ -24,6 +24,7 @@ from server.code.domain.extract.bounded_parse import ParseTimeout
 from server.code.domain.extract.chunker import Chunk, chunk_file
 from server.code.domain.extract.context_text import build_context_text
 from server.code.domain.extract.edges_treesitter import call_sites
+from server.code.domain.extract.lang_hosts import host_kind
 from server.code.domain.extract.lang_py_islands import py_sql_units
 from server.code.domain.extract.lang_reference import REFERENCE_LANG, reference_chunk
 from server.code.domain.extract.lang_shell_islands import shell_units
@@ -228,7 +229,7 @@ def _chunks_for(
         known = {(x.qualified_name, x.id) for x in pf.symbols}
         pf.symbols.extend(x for x in sh.symbols if (x.qualified_name, x.id) not in known)
         return sh.chunks, dict(sh.prefixes), sh.facets
-    if pf.lang == "config" and _host_islands_on() and not parse_error:
+    if pf.lang == "config" and _host_islands_on() and host_kind(path) and not parse_error:
         # The host's shell islands as facet rows (programs, dialects, statement facets);
         # chunks stay the line windows. Not read again when the parse step failed on them.
         try:

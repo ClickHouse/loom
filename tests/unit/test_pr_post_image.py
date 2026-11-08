@@ -452,7 +452,8 @@ def test_an_open_brief_over_a_partial_overlay_is_served_unstored(
         return {"pr_number": inp.pr_number, "overlay_note": note}
 
     class Repo:
-        inserted: list[Any] = []
+        def __init__(self) -> None:
+            self.inserted: list[Any] = []
 
         async def get_state(self, *a: Any) -> str:
             return ""

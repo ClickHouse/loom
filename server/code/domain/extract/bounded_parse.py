@@ -58,5 +58,5 @@ def parse(parser: Any, source: bytes) -> Any:
     with lock:
         tree = parser.parse(read)
     if expired:
-        raise ParseTimeout(f"parse stopped after {budget:g}s")
+        raise ParseTimeout(f"parse stopped after {budget:g} CPU seconds")
     return tree
