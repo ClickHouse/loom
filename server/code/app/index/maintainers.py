@@ -201,6 +201,7 @@ def _row(
     revoked: bool = False,
     granted_at: datetime | None = None,
     role: str = "admin",
+    version: int | None = None,
 ) -> dict[str, Any]:
     return {
         "org": org,
@@ -213,7 +214,7 @@ def _row(
         "granted_at": granted_at or now,
         "granted_by": granted_by,
         "revoked_at": now if revoked else None,
-        "version": time.time_ns(),
+        "version": version or time.time_ns(),
     }
 
 
@@ -230,6 +231,20 @@ async def _grant_rows(client: Any, org: str, branches: list[str]) -> list[dict[s
         params={"org": org, "ns": list(branches)},
     )
     return rows
+
+
+async def _read_grants(
+    client: Any, org: str, branches: list[str]
+) -> tuple[int, list[dict[str, Any]]]:
+    """When the read began, and `_grant_rows` read with sequential consistency: a
+    lagging replica could miss a grant just made, and a stray's revoke planned from
+    the rows is versioned no later than the read (`_revoke_row`)."""
+    from server.core.ch import sequential_reads
+
+    read_at = time.time_ns()
+    with sequential_reads():
+        rows = await _grant_rows(client, org, branches)
+    return read_at, rows
 
 
 _GRANT_ROW_SQL = """
@@ -338,15 +353,14 @@ async def _rewrite_wanted(
     no longer a live admin grant, the stray's revoke is written instead: the
     restricted branch must not keep it. One that only changed since the plan (given
     again, say) leaves the stray to the next sync."""
+    read_at = time.time_ns()
     source = await _source_row(client, org, row)
     if await _copy_wanted(client, org, row, now, seen, source):
         return row
-    if _live_admin(source) or not await _copy_unchanged(client, org, row, now, seen):
-        return None
-    if now is None:  # `_copy_unchanged` read it live; this tells the type checker
+    if now is None or _live_admin(source) or not await _copy_unchanged(client, org, row, now, seen):
         return None
     _log_stray(org, now)
-    return _revoke_row(org, now)
+    return _revoke_row(org, now, read_at=read_at)
 
 
 async def _still_admin(
@@ -532,11 +546,7 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     from server.core.ch import get_client
 
     client = ch or get_client()
-    from server.core.ch import sequential_reads
-
-    # A lagging replica could miss a grant just made and plan a revoke newer than it.
-    with sequential_reads():
-        rows = await _grant_rows(client, org, branches)
+    read_at, rows = await _read_grants(client, org, branches)
     restricted = await _restricted(client, org, sources)
     config = [ns for ns in branches if sources[ns] == "config"]
     inserts: list[dict[str, Any]] = []
@@ -564,7 +574,7 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
             strays.add(key)
             if key not in planned:
                 _log_stray(org, r)
-                revokes.append(_revoke_row(org, r))
+                revokes.append(_revoke_row(org, r, read_at=read_at))
     rewrites = [r for r in inserts if (r["namespace"], r["subject"]) in strays]
     inserts = [r for r in inserts if (r["namespace"], r["subject"]) not in strays]
     written, busy = 0, None
@@ -623,7 +633,10 @@ def _log_stray(org: str, row: dict[str, Any]) -> None:
     )
 
 
-def _revoke_row(org: str, row: dict[str, Any]) -> dict[str, Any]:
+def _revoke_row(org: str, row: dict[str, Any], *, read_at: int) -> dict[str, Any]:
+    """A stray's revoke, versioned at `read_at`, when the rows it was planned from were
+    read: newer than the stray, and older than any grant made after the read, which
+    the next sync then copies onto the branch."""
     return _row(
         org,
         str(row["namespace"]),
@@ -632,6 +645,7 @@ def _revoke_row(org: str, row: dict[str, Any]) -> dict[str, Any]:
         now=naive_utc_now(),
         revoked=True,
         role=str(row.get("role") or "admin"),
+        version=read_at,
     )
 
 
@@ -707,7 +721,7 @@ async def revoke_repo_maintainer(
     restricted = await _restricted(client, org, {b: sources[b] for b in branches})
     config = [b for b, source in sources.items() if source == "config"]
     # The operator entries a page revoke does not reach are read too, for `operator_admin`.
-    rows = await _grant_rows(client, org, list(dict.fromkeys([*branches, *config])))
+    read_at, rows = await _read_grants(client, org, list(dict.fromkeys([*branches, *config])))
     admins: dict[str, dict[str, dict[str, Any]]] = {ns: {} for ns in branches}
     for r in rows:
         if _live_admin(r) and r["namespace"] in admins:
@@ -728,7 +742,7 @@ async def revoke_repo_maintainer(
         if ns in restricted and theirs is not None and _foreign(theirs, config):
             if not operator_admin:  # taken whatever the guard or the lowering
                 _log_stray(org, theirs)
-                strays.append(_revoke_row(org, theirs))
+                strays.append(_revoke_row(org, theirs, read_at=read_at))
             continue
         mine = admins[ns].get(subject)
         if mine is None:

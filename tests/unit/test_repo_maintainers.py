@@ -436,6 +436,28 @@ async def test_a_sync_plans_from_sequentially_consistent_reads(
     assert reads and all(reads)
 
 
+async def test_a_stray_s_revoke_is_older_than_an_operator_grant_made_after_the_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The next sync then copies that grant onto the branch: the revoke does not end it."""
+    import time
+
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    granted: list[dict[str, Any]] = []
+
+    class _GrantedMeanwhile(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            if "loom.namespaces" in sql and not granted:
+                granted.append(_admin("code-z", "mallory", version=time.time_ns()))
+                self.rows = [*self.rows, *granted]
+            return await super().query_all(sql, params)
+
+    ch = _GrantedMeanwhile([_admin("code-z", "ops"), _copy("code-z-26-5", "mallory", "code-z-dev")])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    (revoke,) = [r for r in ch.inserted if r["namespace"] == "code-z-26-5" and r["revoked_at"]]
+    assert revoke["version"] < granted[0]["version"]
+
+
 async def test_a_stray_whose_operator_grant_was_only_given_again_is_left_for_the_next_sync(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -944,10 +966,22 @@ async def test_the_registrar_syncs_a_branch_once_the_registry_is_read(
     await registry.ensure_registered(cfg, ch=object())
     assert synced == ["code-x", "code-x"]  # once while unread, once after, then done
 
-    # The ingest pass syncs a repository with a restricted branch added from the page
-    # on every pass, once: a restriction whose own sync failed still has its strays go.
-    # code-z-2 is restricted by its directory row alone, as a restriction cut short
-    # before its access row leaves it.
+
+async def test_the_ingest_pass_syncs_each_repository_with_a_restricted_page_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On every pass, once per repository: a restriction whose own sync failed still has
+    its strays go. code-z-2 is restricted by its directory row alone, as a restriction
+    cut short before its access row leaves it."""
+    from types import SimpleNamespace
+
+    synced: list[str] = []
+
+    async def _sync(org: str, ns: str, **_k: Any) -> None:
+        synced.append(ns)
+
+    monkeypatch.setattr(maintainers, "sync_quietly", _sync)
+
     def entry(ns: str, classification: str) -> Any:
         return SimpleNamespace(
             org="clickhouse",
@@ -960,7 +994,6 @@ async def test_the_registrar_syncs_a_branch_once_the_registry_is_read(
     ch = _FakeCH([])
     ch.restricted = {"code-z-2"}
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
-    synced.clear()
     standard = [entry("code-z-3", "standard"), entry("code-z-2", "standard")]
     await maintainers.sync_restricted_page_branches(standard)
     snapshot = [entry("code-z-1", "restricted"), *standard]
