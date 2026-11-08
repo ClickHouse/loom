@@ -205,6 +205,23 @@ async def test_a_restricted_namespace_answers_a_stranger_as_an_absent_one(
 
 
 @pytest.mark.asyncio
+async def test_a_namespace_its_configuration_restricts_answers_a_stranger_as_an_absent_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tracker namespace listed as restricted whose row is not narrowed yet (standard,
+    open): the join skips the gate, so it reads the configuration itself."""
+    import server.identity.app.namespace_classification as nc
+    import server.identity.app.namespace_membership as ns
+    from server.core.errors import NotFoundError
+
+    ch = _wire(monkeypatch, _row(kind="tracker", join_policy="open", classification="standard"))
+    monkeypatch.setattr(nc, "config_classification", lambda org, namespace: nc.RESTRICTED)
+    with pytest.raises(NotFoundError):
+        await ns.handle_namespace_join(_join("viewer"))
+    assert ch.inserted == []
+
+
+@pytest.mark.asyncio
 async def test_a_member_is_told_the_namespace_is_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     import server.identity.app.namespace_membership as ns
     from server.core.errors import AuthInsufficientError
