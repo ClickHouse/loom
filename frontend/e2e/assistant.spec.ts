@@ -9,9 +9,9 @@ import { installApi } from "./fixtures";
 
 const LONG_ID = `user-${"x".repeat(200)}`;
 const OWN_USER =
-  "Live rows filed under this user_id, whoever wrote them: what a token pinned to this user (read_scope own_user) reads. Promoted rows (memory.promote) are not counted.";
+  "Live memories saved for this user, whoever wrote them: what a token limited to this user reads. Memories promoted for every agent of the namespace are not counted.";
 const OTHERS_USER =
-  "Every other live row of the namespace. A member reads these too; a token pinned to this user does not. Promoted rows (memory.promote) are not counted.";
+  "Every other live memory of the namespace. A member reads these too; a token limited to this user does not. Memories promoted for every agent of the namespace are not counted.";
 
 const row = (key: string) => ({
   memory_key: key,
@@ -31,8 +31,10 @@ const row = (key: string) => ({
   excerpt: "Invoices go out on Fridays, and a reminder goes to the account owner two days before.",
 });
 
+// server/memory/app/inspect.py _DEFINITION_REFS["user"].
 const view = (definition: string, keys: string[]) => ({
   definition,
+  refs: ["user_id", "read_scope own_user", "memory.promote"],
   live_rows: keys.length,
   by_type: keys.length ? [{ name: "semantic", rows: keys.length }] : [],
   by_status: keys.length ? [{ name: "active", rows: keys.length }] : [],
@@ -67,7 +69,8 @@ const INSPECTION = {
     extraction_policy: "Keep costs and ages.\nNever store credentials.",
     extraction_policy_unavailable: "",
     extraction_instructions:
-      "Per request only: memory.set_from_messages takes `extraction_instructions`; no user, agent or session setting stores them.",
+      "Each request that extracts memories from messages may send extraction instructions; no user, agent or session setting stores them.",
+    extraction_instructions_refs: ["memory.set_from_messages", "extraction_instructions"],
   },
   skipped: [],
 };
@@ -76,7 +79,7 @@ const INVENTORY = {
   scope: { org: "dev", namespace: "personal-alice", read_scope: "namespace", user_id: null, session_id: null },
   sections: [
     { plane: "memories", count: 42, latest_at: "2026-11-01T10:00:00", complete: true, reason: "" },
-    { plane: "records", count: null, latest_at: null, complete: false, reason: "read failed: TimeoutError" },
+    { plane: "records", count: null, latest_at: null, complete: false, reason: "could not be read (TimeoutError)" },
     { plane: "documents", count: 3, latest_at: null, complete: true, reason: "" },
     { plane: "runs", count: 0, latest_at: null, complete: true, reason: "" },
     { plane: "integrations", count: 1, latest_at: null, complete: true, reason: "" },
@@ -164,7 +167,15 @@ const REJECTED_URI = longUri("corrupt-export.pdf");
 const DETAIL =
   "What the check matches, as the server words it: which documents or sources, and why search does or does not serve them now.";
 const REMEDY =
-  "What to do about it, as the server words it: the setting to change (LOOM_DOCUMENT_EXTRACTORS_JSON), or the original to upload again and ingest.";
+  "What to do about it, as the server words it: the setting to change, or the original to upload again and ingest.";
+// The exact names a remedy says in words, as long as the server's longest (the rechunk command).
+const REFS = [
+  "loom rechunk --org <org> --namespace <namespace> --source-uri <uri> --apply",
+  "LOOM_DOCUMENT_EXTRACTORS_JSON",
+  "GET /v1/knowledge.download",
+  "POST /v1/knowledge.upload",
+  "knowledge.ingest",
+];
 
 const contract = (code: string, kind: string) => ({
   code,
@@ -175,6 +186,7 @@ const contract = (code: string, kind: string) => ({
   samples_complete: true,
   detail: DETAIL,
   remedy: REMEDY,
+  refs: REFS,
   exceptions: "",
   uncertainty: "",
 });
@@ -284,7 +296,14 @@ const KNOWLEDGE = {
   },
   decisions: {
     definition:
-      "Live decision rows in this namespace whose source_resource_id cites a section of one of its documents (knowledge:<namespace>/<source_uri>#<section>).",
+      "Live decisions in this namespace that cite a section of one of its documents, as decision extraction and decision recording write them, within what your token reads, by stage: decided, or proposed. Decisions written into another namespace (a repository's) are not counted.",
+    refs: [
+      "source_resource_id",
+      "knowledge:<namespace>/<source_uri>#<section>",
+      "loom decisions extract",
+      "decision.record",
+      "decision:proposed",
+    ],
     all_documents: { decided: stage, proposed: stage },
   },
   listed: [
@@ -410,7 +429,7 @@ const KNOWLEDGE = {
         "Store the document with `knowledge.upsert` and write a one-paragraph memory row under the same key that points at it. See docs/guides/investigation-agent-memory.md.",
     },
   ],
-  skipped: ["memory_findings.episodic_blobs: not reported by namespace.audit"],
+  skipped: ["memory_findings.episodic_blobs: not reported by the namespace audit"],
 };
 const TUNE = {
   org: "dev",
@@ -422,7 +441,7 @@ const TUNE = {
       target: "namespace.category",
       scope: "namespace dev/personal-alice",
       title: `Register a category for the tag \`${TAG}\``,
-      rationale: `12 live rows carry the tag \`${TAG}\` and no category is named after it; 4 of them are filed under another category. A registered category is what namespace.search_categories finds, and extraction offers the first 32 by name as tags for new rows.`,
+      rationale: `12 live memories carry the tag \`${TAG}\` and no category is named after it; 4 of them are filed under another category. A registered category is what a category search finds, and extraction offers the first 32 by name as tags for new memories.`,
       current: "",
       current_revision: null,
       proposed: TAG,
@@ -450,19 +469,25 @@ const TUNE = {
       affected_agents_total: 3,
       effect: "future",
       historical:
-        "Registering files no row: rows already tagged join the category only through memory.assign_category, a separate action per row.",
+        "Registering files no memory: memories already tagged join the category only when each is assigned to it, a separate action per memory.",
       apply: {
         op: "namespace.register_category",
-        args: { org: "dev", namespace: "personal-alice", name: TAG, description: `Rows tagged \`${TAG}\`.` },
+        args: { org: "dev", namespace: "personal-alice", name: TAG, description: `Memories tagged \`${TAG}\`.` },
         args_complete: true,
         required_role: "writer",
         via: "op",
         guard:
-          "None: registering a name that exists updates that category, so read namespace.list_categories again just before applying.",
+          "None: registering a name that exists updates that category, so list the categories again just before applying.",
       },
       apply_also: [],
       preview: null,
       limits: "A tag used for two meanings would need two categories, not one.",
+      refs: [
+        "memory.set_from_messages",
+        "namespace.search_categories",
+        "memory.assign_category",
+        "namespace.list_categories",
+      ],
     },
     {
       id: "9c0d3a71e5b24f68",
@@ -471,9 +496,9 @@ const TUNE = {
       title: "Cut documents into chunks of 6000 characters",
       rationale:
         "Of 2 documents of dev/personal-alice cut again at the current values, 2 of 10 sampled chunks have an embedding input over gemini-embedding-001's 2048-token limit (the largest is 3050), which the provider refuses, so a write cut like them fails. At size 6000 and stride 4800 the same sample makes 12 chunks (now 10), cuts 1 of 11 sections (now 1) and its largest embedding input is 1530 tokens (now 3050). The stride keeps its ratio to the size.",
-      current: "LOOM_KNOWLEDGE_CHUNK_SIZE=12000, LOOM_KNOWLEDGE_CHUNK_STRIDE=9600",
+      current: "knowledge_chunk_size=12000, knowledge_chunk_stride=9600",
       current_revision: null,
-      proposed: "LOOM_KNOWLEDGE_CHUNK_SIZE=6000, LOOM_KNOWLEDGE_CHUNK_STRIDE=4800",
+      proposed: "knowledge_chunk_size=6000, knowledge_chunk_stride=4800",
       evidence: {
         finding_codes: [],
         supporting_count: 1,
@@ -485,14 +510,24 @@ const TUNE = {
       affected_agents_total: 1,
       effect: "future",
       historical:
-        "Documents already stored keep their chunks. A text document is cut again by loom rechunk --org <org> --namespace <namespace> --apply; an ingested one only by a new knowledge.ingest of its original (loom rechunk would turn it into a text document). Each is a separate action with its own approval.",
+        "Documents already stored keep their chunks. A text document is cut again by the rechunk command; an ingested one only by downloading its original, uploading it again and ingesting it (the rechunk command would turn it into a text document). Each is a separate action with its own approval.",
+      // server/knowledge/app/tune.py _CHUNKS_REFS.
+      refs: [
+        "loom rechunk --org <org> --namespace <namespace> --apply",
+        "GET /v1/knowledge.download",
+        "POST /v1/knowledge.upload",
+        "knowledge.ingest",
+        "settings.set knowledge_chunk_size",
+        "settings.set knowledge_chunk_stride",
+        "expected",
+      ],
       apply: {
         op: "settings.set",
         via: "admin_route",
         args: { name: "knowledge_chunk_size", value: 6000, expected: 12000 },
         args_complete: true,
         required_role: "platform_admin",
-        guard: "expected: the change is refused when the value in force is no longer the drafted current one.",
+        guard: "The value it was drafted against: the change is refused when the value in force is no longer that one.",
       },
       apply_also: [
         {
@@ -501,7 +536,8 @@ const TUNE = {
           args: { name: "knowledge_chunk_stride", value: 4800, expected: 9600 },
           args_complete: true,
           required_role: "platform_admin",
-          guard: "expected: the change is refused when the value in force is no longer the drafted current one.",
+          guard:
+            "The value it was drafted against: the change is refused when the value in force is no longer that one.",
         },
       ],
       preview: { before: CUT_NOW, after: CUT_PROPOSED },
@@ -514,7 +550,7 @@ const TUNE = {
       scope: "every namespace of this deployment (a deployment setting)",
       title: "Route xlsx to an extractor that declares it",
       rationale:
-        'xlsx: 1 source failed format_unavailable; they go to LOOM_DOCUMENT_EXTRACTOR_URL, which does not declare it; the service LOOM_DOCUMENT_EXTRACTORS_JSON["pptx"] names declares xlsx. Counts are dev/personal-alice\'s.',
+        'xlsx: 1 source failed because no extractor took the format; it goes to LOOM_DOCUMENT_EXTRACTOR_URL, which does not declare it; the service LOOM_DOCUMENT_EXTRACTORS_JSON["pptx"] names declares xlsx. Counts are dev/personal-alice\'s.',
       current: '{"pptx": "<as set>"}',
       current_revision: null,
       proposed: '{"pptx": "<as set>", "xlsx": "<the URL LOOM_DOCUMENT_EXTRACTORS_JSON[\\"pptx\\"] names>"}',
@@ -530,7 +566,16 @@ const TUNE = {
       affected_agents_total: 1,
       effect: "future",
       historical:
-        "Sources already ingested keep their extraction, and a failed job does not run again: each is re-extracted only by uploading its original again and running knowledge.ingest, a separate action with its own approval.",
+        "Sources already ingested keep their extraction, and a failed job does not run again: each is extracted again only by uploading its original again and ingesting it, a separate action with its own approval.",
+      // server/knowledge/app/tune.py: format_unavailable (a source failed), then _ROUTES_REFS.
+      refs: [
+        "format_unavailable",
+        "LOOM_DOCUMENT_EXTRACTORS_JSON",
+        "current",
+        "POST /v1/knowledge.upload",
+        "knowledge.ingest",
+        "knowledge.inspect",
+      ],
       apply: {
         op: "LOOM_DOCUMENT_EXTRACTORS_JSON",
         via: "environment",
@@ -543,12 +588,12 @@ const TUNE = {
         args_complete: false,
         required_role: "platform_admin",
         guard:
-          "None: an environment setting has no revision; compare the deployment's value with `current` before setting it. It is in force once each server and worker restarts.",
+          "None: an environment setting has no revision; compare the deployment's value with the current one shown here before setting it. It is in force once each server and worker restarts.",
       },
       apply_also: [],
       preview: null,
       limits:
-        "A URL is not shown, as an extractor URL can carry a credential: each placeholder names the setting whose URL it is, and `<as set>` keeps a route as the deployment has it. A service's capabilities name the formats it takes, not what it keeps: ingest one listed source through the new route and read its coverage (knowledge.inspect) before relying on it. A format's own route wins over a media-type route (`application/pdf`), so the drafted route also takes the sources a media-type route sends elsewhere now.",
+        "A URL is not shown, as an extractor URL can carry a credential: each placeholder names the setting whose URL it is, and `<as set>` keeps a route as the deployment has it. A service's capabilities name the formats it takes, not what it keeps: ingest one listed source through the new route and inspect the documents' coverage before relying on it. A format's own route wins over a media-type route (`application/pdf`), so the drafted route also takes the sources a media-type route sends elsewhere now.",
     },
   ],
   // namespace_tune_document_sample (default 50) and MAX_SAMPLE_CHARS (8 Mi).
@@ -568,7 +613,7 @@ const TUNE = {
   extraction_policy_unavailable: "",
   skipped: [
     "audit.telemetry_unavailable: window within the ledger lag",
-    "decision_extraction: no instruction is drafted: loom decisions extract and the source sync's mining build their prompt from fixed text, and no request, namespace or org setting carries instructions for them",
+    "decision_extraction: no instruction is drafted: decision extraction and a source sync's decision mining build their prompt from fixed text, and no request, namespace or org setting carries instructions for them",
   ],
   model_used: false,
 };
@@ -596,6 +641,10 @@ async function openWithEveryPanel(page: Page) {
   await expect(page.getByTestId("assistant-inspection")).toBeVisible();
   await page.getByRole("button", { name: "Draft improvements" }).click();
   await expect(page.getByTestId("assistant-review")).toBeVisible();
+  // Exact names on every tab are part of what must fit and pass the checks.
+  await expect(page.getByTestId("assistant-review").getByTestId("exact-names").first()).toBeVisible();
+  await expect(page.getByTestId("assistant-documents").getByTestId("exact-names").first()).toBeVisible();
+  await expect(page.getByTestId("assistant-inspection").getByTestId("exact-names").first()).toBeVisible();
   await page.waitForTimeout(300); // entry animations
 }
 
@@ -657,7 +706,7 @@ test("blocked picks with a long id fit the phone width", async ({ page }) => {
   const pick = page.getByTestId("pick-user").first();
   await expect(pick).toHaveAttribute("aria-disabled", "true");
   // The reason describes it; the tip adds the whole id under the reason.
-  await expect(pick).toHaveAccessibleDescription(/bound to one user or session/);
+  await expect(pick).toHaveAccessibleDescription(/limited to one user or session/);
   await pick.hover();
   await expect(page.getByRole("tooltip")).toContainText(LONG_ID);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);

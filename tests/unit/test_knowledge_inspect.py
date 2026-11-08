@@ -431,13 +431,23 @@ async def test_each_check_is_a_finding_with_its_kind_and_clean_ones_are_info(
     assert other.samples == ["a", "b"] and not other.samples_complete
     # The two ingested documents are named apart, and the remedy says to ingest them.
     assert (other.ingested, other.ingested_samples) == (2, ["b", "c"])
-    assert "knowledge.ingest" in other.remedy and "--source-uri" in other.remedy
-    assert all("knowledge.ingest" in f.remedy for f in out.findings)
+    assert any("--source-uri" in r for r in other.refs)
+    assert all("knowledge.ingest" in f.refs for f in out.findings)
+    # The exact names ride `refs`; the detail and remedy say them in words (a name that is
+    # a plain word, such as `ingested`, may be said as one).
+    assert all(
+        not any(
+            r in f.detail + f.remedy + f.exceptions + f.uncertainty
+            for r in f.refs
+            if not r.isalpha()
+        )
+        for f in out.findings
+    )
     assert other.share == pytest.approx(0.5)
     mixed = by_code["mixed_live_versions"]
     assert mixed.kind == "usage_heuristic" and mixed.source_op == "knowledge.inspect"
     # An ingest's publish window passes through this state too.
-    assert "knowledge.ingest publish" in mixed.uncertainty
+    assert "An ingestion passes through this state" in mixed.uncertainty
     assert all(f.rule_version == 1 and f.sample_limit == 2 for f in out.findings)
 
 
@@ -541,7 +551,7 @@ async def test_a_skipped_audit_rule_keeps_no_finding_the_audit_still_listed(
 async def test_a_rule_the_audit_did_not_report_says_so(stubs: Stubs) -> None:
     stubs.audit = _audit(findings=[])
     out = await ki.handle_knowledge_inspect(_inp())
-    assert "memory_findings.oversized_values: not reported by namespace.audit" in out.skipped
+    assert "memory_findings.oversized_values: not reported by the namespace audit" in out.skipped
 
 
 @pytest.mark.asyncio
@@ -624,6 +634,9 @@ async def test_failed_decision_and_audit_reads_are_skipped(stubs: Stubs) -> None
     assert "decisions: RuntimeError" in out.skipped and "memory_findings: ValueError" in out.skipped
     assert out.decisions.all_documents is None and all(d.decisions is None for d in out.listed)
     assert out.decisions.definition and out.memory_findings == []
+    # The definition says it in words; the exact names ride the refs.
+    assert out.decisions.refs == ki._DECISIONS_REFS
+    assert not any(r in out.decisions.definition for r in out.decisions.refs)
 
 
 @pytest.mark.asyncio
@@ -783,19 +796,30 @@ async def test_each_ingest_state_is_its_own_finding_with_its_kind(stubs: Stubs) 
     incomplete = by["extraction_incomplete"]
     assert (incomplete.count, incomplete.population, incomplete.ingestion_ids) == (2, 4, [])
     # Each remedy names the real op or setting it takes.
-    assert "knowledge.ingest_cancel" in backlog.remedy
-    assert "LOOM_KNOWLEDGE_INGEST_ENABLED" in backlog.remedy
-    assert "LOOM_DOCUMENT_EXTRACTORS_JSON" in by["extractor_unavailable"].remedy
-    assert "LOOM_DOCUMENT_EXTRACTOR_TOKEN" in access.remedy
-    assert "allow_partial" in by["ingest_content_rejected"].remedy
+    assert "knowledge.ingest_cancel" in backlog.refs
+    assert "LOOM_KNOWLEDGE_INGEST_ENABLED" in backlog.refs
+    assert "LOOM_DOCUMENT_EXTRACTORS_JSON" in by["extractor_unavailable"].refs
+    assert "LOOM_DOCUMENT_EXTRACTOR_TOKEN" in access.refs
+    assert "allow an incomplete extraction to publish" in by["ingest_content_rejected"].remedy
     server = by["ingest_failed_on_server"]
     assert (server.samples, server.ingestion_ids, server.without_document) == (
         ["new/z.md"],
         ["job-10"],
         1,
     )
-    assert "knowledge_ingest_max_attempts" in server.detail and "internal" in server.detail
-    assert all("knowledge.ingest" in f.remedy for f in by.values())
+    assert "attempt limit" in server.detail and "server defect" in server.detail
+    assert "LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS" in server.refs
+    # Every remedy's exact names ride `refs`; the remedy itself says them in words (a code
+    # that is a plain word, such as `encoding`, may be said as one).
+    assert all(
+        f.refs
+        and not any(
+            r in f.detail + f.remedy + f.exceptions + f.uncertainty
+            for r in f.refs
+            if not r.isalpha()
+        )
+        for f in by.values()
+    )
     assert all(f.source_op == "knowledge.inspect" for f in by.values())
 
 
@@ -962,3 +986,194 @@ async def test_decisions_and_memory_findings_are_read_at_one_projection_wait(
     assert out.decisions.all_documents is not None and stubs.calls["decisions"]
     assert out.memory_findings
     assert [s.split(": ")[:2] for s in out.skipped] == [["projection", "PROJECTION_BEHIND"]]
+
+
+# Each check's `refs` list as written: a change to one is made here too, on purpose.
+_PINNED_REFS = {
+    "documents_without_chunks": [
+        "knowledge.search",
+        "knowledge.upsert",
+        "loom rechunk --org <org> --namespace <namespace> --source-uri <uri> --apply",
+        "ingested",
+        "GET /v1/knowledge.download",
+        "POST /v1/knowledge.upload",
+        "knowledge.ingest",
+    ],
+    "unembedded_chunks": [
+        "knowledge.search",
+        "loom rechunk --org <org> --namespace <namespace> --source-uri <uri> --apply",
+        "ingested",
+        "GET /v1/knowledge.download",
+        "POST /v1/knowledge.upload",
+        "knowledge.ingest",
+    ],
+    "chunks_under_other_model": [
+        "knowledge.search",
+        "documents_without_chunks",
+        "loom rechunk --org <org> --namespace <namespace> --source-uri <uri> --apply",
+        "ingested",
+        "GET /v1/knowledge.download",
+        "POST /v1/knowledge.upload",
+        "knowledge.ingest",
+    ],
+    "mixed_live_versions": [
+        "knowledge.search",
+        "knowledge.add",
+        "source_uri",
+        "knowledge.upsert",
+        "knowledge.ingest",
+        "knowledge.ingest_status",
+        "ingested",
+        "POST /v1/knowledge.upload",
+    ],
+    "ingest_backlog": [
+        "knowledge.search",
+        "knowledge.ingest",
+        "LOOM_KNOWLEDGE_INGEST_ENABLED",
+        "LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS",
+        "LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS",
+        "LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS",
+        "pending",
+        "processing",
+        "ingestions.worker_enabled",
+        "ingestions.stalled",
+        "failure_class",
+        "retrying",
+        "knowledge.ingest_status",
+        "ingestion_ids",
+        "jobs",
+        "error_code",
+        "knowledge.ingest_cancel",
+        "extractor_unavailable",
+        "ingest_missing_access",
+    ],
+    "extractor_unavailable": [
+        "LOOM_DOCUMENT_EXTRACTOR_URL",
+        "LOOM_DOCUMENT_EXTRACTORS_JSON",
+        "LOOM_DOCUMENT_EXTRACTOR_TIMEOUT_S",
+        "ingestions.extractor_configured",
+        "pending",
+        "format_unavailable",
+        "invalid_artifact",
+        "POST /v1/knowledge.upload",
+        "knowledge.ingest",
+        "knowledge.ingest_status",
+        "ingestion_ids",
+        "jobs",
+        "error_code",
+    ],
+    "ingest_missing_access": [
+        "LOOM_DOCUMENT_EXTRACTOR_TOKEN",
+        "LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON",
+        "original_gone",
+        "POST /v1/knowledge.upload",
+        "knowledge.ingest",
+        "knowledge.ingest_status",
+        "ingestion_ids",
+        "jobs",
+        "error_code",
+    ],
+    "ingest_content_rejected": [
+        "knowledge.search",
+        "knowledge.ingest_status",
+        "error_code",
+        "format",
+        "format_mismatch",
+        "encoding",
+        "corrupt",
+        "unsupported_format",
+        "too_large",
+        "incomplete_extraction",
+        "no_text",
+        "resource_limit",
+        "sql_dialect",
+        "allow_partial",
+        "extraction_incomplete",
+        "LOOM_EXTRACTOR_MEMORY_MB",
+        "LOOM_EXTRACTOR_MAX_ARTIFACT_BYTES",
+        "LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES",
+        "settings.set knowledge_ingest_max_chunks",
+        "POST /v1/knowledge.upload",
+        "knowledge.ingest",
+    ],
+    "ingest_failed_on_server": [
+        "LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS",
+        "LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS",
+        "LOOM_DOCUMENT_EXTRACTOR_TIMEOUT_S",
+        "retries_exhausted",
+        "internal",
+        "POST /v1/knowledge.upload",
+        "knowledge.ingest",
+        "knowledge.ingest_status",
+        "ingestion_ids",
+        "jobs",
+        "error_code",
+        "extractor_unavailable",
+        "ingest_missing_access",
+    ],
+    "extraction_incomplete": [
+        "knowledge.search",
+        "extraction",
+        "extraction.lost",
+        "sql_structure",
+        "exact_keys",
+        "section_path",
+        "LOOM_DOCUMENT_EXTRACTORS_JSON",
+        "POST /v1/knowledge.upload",
+        "knowledge.ingest",
+    ],
+}
+
+
+def test_each_checks_refs_list_is_pinned() -> None:
+    by = {code: t[-1] for code, t in {**ki._CHECKS, **ki._INGEST_CHECKS}.items()}
+    assert by == _PINNED_REFS
+
+
+def test_every_ref_list_names_registered_ops_and_settings_as_they_are_changed() -> None:
+    from server.identity.app import namespace_tune
+    from server.knowledge.app import tune as knowledge_tune
+    from server.memory.app import inspect as memory_inspect
+    from server.operations.registry import ALL_OPERATIONS
+    from server.settings import Settings
+    from server.settings._live import is_live
+
+    lists = [t[-1] for t in {**ki._CHECKS, **ki._INGEST_CHECKS}.values()]
+    lists += [ki._DECISIONS_REFS, knowledge_tune._CHUNKS_REFS, knowledge_tune._ROUTES_REFS]
+    lists += [
+        namespace_tune._EXTRACTION_REFS,
+        namespace_tune._CATEGORY_REFS,
+        namespace_tune._GUIDE_REFS,
+    ]
+    lists += [memory_inspect.InspectSettings().extraction_instructions_refs]
+    lists += list(memory_inspect._DEFINITION_REFS.values())
+    lists += [list(namespace_tune._FINDING_RULE_REFS.values())]
+    refs = {r for refs in lists for r in refs}
+    ops = {op.name for op in ALL_OPERATIONS}
+    fields = Settings.model_fields
+    planes = ("knowledge.", "memory.", "namespace.", "context.", "working_memory.", "decision.")
+    for r in refs:
+        if r.startswith("settings.set "):
+            # A setting `settings.set` changes live.
+            assert is_live(fields[r.removeprefix("settings.set ")]), r
+        elif r.startswith("LOOM_") and not r.startswith("LOOM_EXTRACTOR_"):
+            # A setting only the environment sets (the extractor service's own are not ours).
+            name = r.removeprefix("LOOM_").lower()
+            assert name in fields and not is_live(fields[name]), r
+        elif r.startswith(planes) and " " not in r:
+            assert r in ops, r
+
+
+def test_an_exception_names_another_finding_by_its_label_on_the_page() -> None:
+    import re
+    from pathlib import Path
+
+    page = Path(__file__).parents[2] / "frontend/src/views/assistant/DocumentInspection.tsx"
+    body = page.read_text(encoding="utf-8").split("const FINDING_LABEL", 1)[1].split("};", 1)[0]
+    labels = dict(re.findall(r'(\w+): "([^"]+)"', body))
+    assert f"counted under {labels['documents_without_chunks']}." in (
+        ki._CHECKS["chunks_under_other_model"][0].exceptions
+    )
+    assert f"counted under {labels['extraction_incomplete']}." in (
+        ki._INGEST_CHECKS["ingest_content_rejected"][0].exceptions
+    )

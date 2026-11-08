@@ -51,7 +51,7 @@ from server.tasks.app.run import run_tally
 
 log = logging.getLogger(__name__)
 
-_NARROWED = "not counted under a read scope bound to one user or session"
+_NARROWED = "not counted for a token limited to one user or session"
 # Observed population → the memory column that names it.
 _COLUMN: dict[ObservedPopulation, IdentityColumn] = {
     "agents": "agent",
@@ -154,7 +154,7 @@ async def _members(org: str, ns: str) -> InventoryPopulation:
     # Grants hold no user's memory: counted under any scope, as `grants.list` lists them.
     if sharing.is_personal(ns):
         # A personal collection takes no grant: its owner reaches it by name.
-        return _not_counted("members", "a personal collection: its owner holds no grant")
+        return _not_counted("members", "a personal collection: its owner reads it without a grant")
 
     # A collection's readers hold a grant on it or on an ancestor (`lineage`, it first).
     lineage = [ns]
@@ -215,4 +215,4 @@ async def _attempt[T](what: str, read: Awaitable[T]) -> tuple[T | None, str]:
 
 def _failed(what: str, e: Exception) -> str:
     log.warning("namespace.inventory: %s read failed: %s", what, e, exc_info=True)
-    return f"read failed: {type(e).__name__}"
+    return f"could not be read ({type(e).__name__})"

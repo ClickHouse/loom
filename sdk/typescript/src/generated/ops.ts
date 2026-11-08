@@ -3534,6 +3534,7 @@ export interface ChunkModelCount {
 
 export interface DecisionTotals {
   definition: string;
+  refs?: string[];
   all_documents?: DocumentDecisions | null;
 }
 
@@ -3631,6 +3632,7 @@ export interface DocumentFinding {
   ingested_samples?: string[];
   detail: string;
   remedy: string;
+  refs?: string[];
 }
 
 export interface FindingEvidence {
@@ -3695,6 +3697,7 @@ export interface IngestFinding {
   without_document?: number;
   detail: string;
   remedy: string;
+  refs?: string[];
 }
 
 export interface MemoryFindingRef {
@@ -5601,6 +5604,7 @@ export interface MemoryInspectInput {
 
 export interface InspectView {
   definition: string;
+  refs?: string[];
   live_rows?: number;
   by_type?: InspectCount[];
   by_status?: InspectCount[];
@@ -5657,6 +5661,7 @@ export interface InspectSettings {
   extraction_policy?: string | null;
   extraction_policy_unavailable?: string;
   extraction_instructions?: string;
+  extraction_instructions_refs?: string[];
 }
 
 export interface MemoryInspectOutput {
@@ -7915,6 +7920,7 @@ export interface TuneProposal {
   apply_also?: TuneApply[];
   preview?: ChunkingPreview | null;
   limits?: string;
+  refs?: string[];
 }
 
 export interface TuneEvidence {

@@ -98,7 +98,7 @@ def test_an_unreadable_admin_check_is_the_servers_failure(
     monkeypatch.setattr(namespace_inventory, "check_authorized", unverified)
     monkeypatch.setattr(namespace_inventory, "note_answered_unverified", lambda: noted.append(True))
     sections = {s.plane: s for s in _run().sections}
-    assert sections["integrations"].reason.startswith("read failed")
+    assert sections["integrations"].reason.startswith("could not be read")
     assert noted == [True]
     assert all(s.complete for p, s in sections.items() if p != "integrations")
 
@@ -184,7 +184,7 @@ def test_an_unexpected_admin_check_error_leaves_the_rest_standing(
     _ch().install(monkeypatch, *_GET_CLIENT)
     monkeypatch.setattr(namespace_inventory, "check_authorized", broken)
     sections = {s.plane: s for s in _run().sections}
-    assert sections["integrations"].reason == "read failed: RuntimeError"
+    assert sections["integrations"].reason == "could not be read (RuntimeError)"
     assert all(s.complete for p, s in sections.items() if p != "integrations")
 
 
@@ -247,7 +247,7 @@ def test_a_failed_read_is_labeled_and_the_rest_still_answer(
     out = _run()
     sections = {s.plane: s for s in out.sections}
     assert not sections["records"].complete and sections["records"].count is None
-    assert sections["records"].reason == "read failed: RuntimeError"
+    assert sections["records"].reason == "could not be read (RuntimeError)"
     assert all(s.complete for p, s in sections.items() if p != "records")
     pops = {p.population: p for p in out.populations}
     assert not pops["authors"].complete and pops["subjects"].complete

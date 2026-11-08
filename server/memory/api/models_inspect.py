@@ -86,6 +86,9 @@ class InspectView(BaseModel):
 
     # Which rows this view holds, in one sentence.
     definition: str
+    # The exact identity column, and the read scope and op where the definition names one,
+    # that the definition says in words.
+    refs: list[str] = Field(default_factory=list)
     # Live rows in the view.
     live_rows: int = 0
     # The view's rows by memory type, by status and by source class, most first.
@@ -155,8 +158,12 @@ class InspectSettings(BaseModel):
     # Where per-request extraction instructions come from: no stored per-user, per-agent or
     # per-session setting exists, so they are whatever each writer sends.
     extraction_instructions: str = (
-        "Per request only: memory.set_from_messages takes `extraction_instructions`; no "
-        "user, agent or session setting stores them."
+        "Each request that extracts memories from messages may send extraction "
+        "instructions; no user, agent or session setting stores them."
+    )
+    # The exact op and argument `extraction_instructions` names in words.
+    extraction_instructions_refs: list[str] = Field(
+        default_factory=lambda: ["memory.set_from_messages", "extraction_instructions"]
     )
 
 

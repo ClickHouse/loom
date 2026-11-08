@@ -86,7 +86,7 @@ async def test_tune_drafts_from_the_rows_and_changes_nothing(
         assert out["model_used"] is False
         # Extraction writes nothing here yet: the one skipped note says no rule is drafted.
         assert [s.split(",")[0] for s in out["skipped"]] == [
-            "extraction: memory.set_from_messages writes no row here"
+            "extraction: no live memory here records extraction from messages as its source"
         ], out["skipped"]
         by_target = {p["target"]: p for p in out["proposals"]}
 
@@ -113,7 +113,7 @@ async def test_tune_drafts_from_the_rows_and_changes_nothing(
 
         guide = by_target["namespace.guide"]
         assert guide["current_revision"] == 0 and guide["apply"]["args"]["expected_revision"] == 0
-        assert "`billing/…`: 10 rows" in guide["proposed"]
+        assert "`billing/…`: 10 memories" in guide["proposed"]
 
         assert snapshot() == before
         assert (await post("namespace.guide_get", {}))["found"] is False
@@ -130,7 +130,10 @@ async def test_tune_drafts_from_the_rows_and_changes_nothing(
         out = await post("namespace.tune", {"sample_limit": 3}, viewer)
         assert not [p for p in out["proposals"] if p["target"] == "extraction_instructions.request"]
         assert any(
-            s.startswith("extraction: no cited row of double_encoded_values")
+            s.startswith(
+                "extraction: none of the memories the audit cited for double-encoded values "
+                "(double_encoded_values)"
+            )
             for s in out["skipped"]
         ), out["skipped"]
 

@@ -147,12 +147,13 @@ async def test_tune_cuts_the_documents_again_and_writes_nothing(
     assert "settings.document_extractors_json" not in targets
     served = next(f["available"] for f in formats["formats"] if f["format"] == "parquet")
     said = (
-        "the service they go to declares it now"
+        "the service it goes to declares parquet now"
         if served
         else "no configured extractor declares parquet"
     )
     assert any(
-        s.startswith("extractor.parquet: 1 source failed format_unavailable") and said in s
+        s.startswith("extractor.parquet: 1 source failed because no extractor took the format")
+        and said in s
         for s in skipped
     ), skipped
     assert any(s.startswith("decision_extraction:") for s in skipped)

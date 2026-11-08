@@ -60,26 +60,33 @@ TOP_TAGS = 20
 
 # subject: (own, others) definitions. Neither view counts the namespace's promoted rows
 # (`memory.promote`, `loom.shared`), which a search serves to every agent as well.
-_PROMOTED = " Promoted rows (memory.promote) are not counted."
+_PROMOTED = " Memories promoted for every agent of the namespace are not counted."
 _DEFINITIONS: dict[str, tuple[str, str]] = {
     "user": (
-        "Live rows filed under this user_id, whoever wrote them: what a token pinned to "
-        "this user (read_scope own_user) reads." + _PROMOTED,
-        "Every other live row of the namespace. A member reads these too; a token pinned "
-        "to this user does not." + _PROMOTED,
+        "Live memories saved for this user, whoever wrote them: what a token limited to "
+        "this user reads." + _PROMOTED,
+        "Every other live memory of the namespace. A member reads these too; a token "
+        "limited to this user does not." + _PROMOTED,
     ),
     "agent": (
-        "Live rows written under this agent name. The name records the writer; it is not a "
-        "read boundary." + _PROMOTED,
-        "Every live row other agents wrote. This agent reads them as well, under the same "
-        "namespace grant." + _PROMOTED,
+        "Live memories written under this agent's name. The name says which agent a memory "
+        "is from; it does not limit what the agent reads." + _PROMOTED,
+        "Every live memory written under other agents' names. This agent reads them as well, "
+        "with the same access to the namespace." + _PROMOTED,
     ),
     "session": (
-        "Live rows written in this session_id, by any user. A token pinned to one user and "
-        "this session (read_scope own_session) reads that user's part." + _PROMOTED,
-        "Every other live row of the namespace. A member's session reads these too; a "
-        "token pinned to a user and this session does not." + _PROMOTED,
+        "Live memories written in this session, by any user. A token limited to one user "
+        "and this session reads that user's part." + _PROMOTED,
+        "Every other live memory of the namespace. A member's session reads these too; a "
+        "token limited to a user and this session does not." + _PROMOTED,
     ),
+}
+
+# subject: the exact names the definitions say in words, for `refs`.
+_DEFINITION_REFS: dict[str, list[str]] = {
+    "user": ["user_id", "read_scope own_user", "memory.promote"],
+    "agent": ["agent", "memory.promote"],
+    "session": ["session_id", "read_scope own_session", "memory.promote"],
 }
 
 
@@ -130,7 +137,7 @@ class _Inspect:
         i = self.inp
         args = (i.org, i.namespace, i.subject, i.id, which)
         scope = self.scope
-        out = InspectView(definition=definition)
+        out = InspectView(definition=definition, refs=_DEFINITION_REFS[i.subject])
         read = await self.guarded(
             f"{which}.counts", lambda: store.view_counts(*args, scope=scope), None
         )
@@ -225,9 +232,8 @@ class _Inspect:
         # no gap is claimed.
         keep = 0 if own is None else own or int(settings.retention_agent_events_days)
         if keep and keep * 86400 < i.window_seconds:
-            out.gap = (
-                f"The ledger keeps calls for a {keep}-day window, so older ones are not counted."
-            )
+            days = "1 day" if keep == 1 else f"{keep} days"
+            out.gap = f"Calls are kept for {days}, so older ones are not counted."
         return out
 
     async def settings_section(self) -> InspectSettings:

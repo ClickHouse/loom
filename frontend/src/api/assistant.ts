@@ -80,6 +80,8 @@ export interface InspectRow {
 
 export interface InspectView {
   definition: string;
+  /** The exact column, read scope and op the definition names in words. */
+  refs?: string[];
   live_rows: number;
   by_type: InspectCount[];
   by_status: InspectCount[];
@@ -116,6 +118,8 @@ export interface MemoryInspection {
     extraction_policy: string | null;
     extraction_policy_unavailable: string;
     extraction_instructions: string;
+    /** The exact op and argument `extraction_instructions` names in words. */
+    extraction_instructions_refs?: string[];
   };
   skipped: string[];
 }
@@ -191,6 +195,8 @@ export interface TuneProposal {
   /** The deterministic before/after a chunking draft rests on; null for other drafts. */
   preview?: { before: ChunkStats; after: ChunkStats } | null;
   limits: string;
+  /** Each exact name the text says in words (an op, setting, command, code or field). */
+  refs?: string[];
 }
 
 /** The ordinary write that would apply a proposal (server: TuneApply). */
@@ -358,6 +364,8 @@ interface FindingFields {
   samples_complete: boolean;
   detail: string;
   remedy: string;
+  /** Each exact name the text says in words (an op, setting, command, code or field). */
+  refs?: string[];
   exceptions: string;
   uncertainty: string;
 }
@@ -406,7 +414,8 @@ export interface KnowledgeInspection {
     unembedded: number | null;
     by_model: Array<{ model: string; live: number; embedded: number }>;
   };
-  decisions: { definition: string; all_documents: DocumentDecisions | null };
+  /** `refs`: the exact field, citation format, command, op and tag the definition names. */
+  decisions: { definition: string; refs?: string[]; all_documents: DocumentDecisions | null };
   listed: InspectDocument[];
   listed_complete: boolean;
   findings: DocumentFinding[];

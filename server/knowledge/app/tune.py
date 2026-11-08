@@ -93,20 +93,37 @@ MAX_AFFECTED_AGENTS = 20  # not a setting: bounds one response
 
 _SCOPE = "every namespace of this deployment (a deployment setting)"
 _HISTORICAL_CHUNKS = (
-    "Documents already stored keep their chunks. A text document is cut again by loom "
-    "rechunk --org <org> --namespace <namespace> --apply; an ingested one only by a new "
-    "knowledge.ingest of its original (loom rechunk would turn it into a text document). "
-    "Each is a separate action with its own approval."
+    "Documents already stored keep their chunks. A text document is cut again by the "
+    "rechunk command; an ingested one only by downloading its original, uploading it again "
+    "and ingesting it (the rechunk command would turn it into a text document). Each is a "
+    "separate action with its own approval."
 )
+_CHUNKS_REFS = [
+    "loom rechunk --org <org> --namespace <namespace> --apply",
+    "GET /v1/knowledge.download",
+    "POST /v1/knowledge.upload",
+    "knowledge.ingest",
+    "settings.set knowledge_chunk_size",
+    "settings.set knowledge_chunk_stride",
+    "expected",
+]
+# The exact names every extractor-routes draft's text says in words.
+_ROUTES_REFS = [
+    "LOOM_DOCUMENT_EXTRACTORS_JSON",
+    "current",
+    "POST /v1/knowledge.upload",
+    "knowledge.ingest",
+    "knowledge.inspect",
+]
 _HISTORICAL_ROUTES = (
     "Sources already ingested keep their extraction, and a failed job does not run again: "
-    "each is re-extracted only by uploading its original again and running knowledge.ingest, "
-    "a separate action with its own approval."
+    "each is extracted again only by uploading its original again and ingesting it, a "
+    "separate action with its own approval."
 )
 DECISIONS_SKIPPED = (
-    "decision_extraction: no instruction is drafted: loom decisions extract and the source "
-    "sync's mining build their prompt from fixed text, and no request, namespace or org "
-    "setting carries instructions for them"
+    "decision_extraction: no instruction is drafted: decision extraction and a source "
+    "sync's decision mining build their prompt from fixed text, and no request, namespace or "
+    "org setting carries instructions for them"
 )
 
 
@@ -252,16 +269,16 @@ async def _load(org: str, namespace: str, rows: list[dict[str, Any]]) -> tuple[l
 
 
 def _setting_apply(env: str, value: int, current: int) -> TuneApply:
-    """settings.set of the setting `env` names (LOOM_<FIELD>, the name a person sees in
-    the configuration reference), guarded by its current value."""
+    """settings.set of the LIVE field that `env` (LOOM_<FIELD>) names, guarded by its
+    current value."""
     return TuneApply(
         op="settings.set",
         via="admin_route",
         args={"name": env.removeprefix("LOOM_").lower(), "value": value, "expected": current},
         required_role="platform_admin",
         guard=(
-            "expected: the change is refused when the value in force is no longer the "
-            "drafted current one."
+            "The value it was drafted against: the change is refused when the value in force "
+            "is no longer that one."
         ),
     )
 
@@ -310,14 +327,16 @@ async def _chunking(
     cur = before.stats
     if size <= 0:
         skipped.append(
-            f"chunking: knowledge_chunk_size is {size} (no window: a text document is one "
-            "chunk, an ingested one a chunk per block); no size is drafted"
+            f"chunking: the chunk size (settings.set knowledge_chunk_size) is {size} (no "
+            "window: a text document is one chunk, an ingested one a chunk per block); no size "
+            "is drafted"
         )
         return sample, None
     if set_stride <= 0:
         skipped.append(
-            f"chunking: knowledge_chunk_stride is {set_stride} (no window: a section or block "
-            "longer than the size is one chunk); no size is drafted"
+            f"chunking: the chunk stride (settings.set knowledge_chunk_stride) is {set_stride} "
+            "(no window: a section or block longer than the size is one chunk); no size is "
+            "drafted"
         )
         return sample, None
     if limit is not None and cur.over_input_limit:
@@ -336,15 +355,16 @@ async def _chunking(
         share = f"{cur.sections_cut} of {cur.sections} sampled sections"
         if len(docs) < MIN_SAMPLE_DOCUMENTS:
             skipped.append(
-                f"chunking: the size cuts {share}, judged on {len(docs)} documents, fewer "
-                f"than the {MIN_SAMPLE_DOCUMENTS} the rule needs"
+                f"chunking: the chunk size (settings.set knowledge_chunk_size) cuts {share}, "
+                f"judged on {len(docs)} documents, fewer than the {MIN_SAMPLE_DOCUMENTS} the "
+                "rule needs"
             )
             return sample, None
         if limit is None:
             skipped.append(
-                f"chunking: the size cuts {share}, and no larger size is drafted: "
-                f"{model}'s input limit is not known, so a longer chunk could be cut short "
-                "or refused when embedded"
+                f"chunking: the chunk size (settings.set knowledge_chunk_size) cuts {share}, and "
+                f"no larger size is drafted: {model}'s input limit is not known, so a longer "
+                "chunk could be cut short or refused when embedded"
             )
             return sample, None
         flagged, shrink = before.cut, False
@@ -362,8 +382,8 @@ async def _chunking(
         return sample, None
     if not sizes:
         skipped.append(
-            f"chunking: {why}; knowledge_chunk_size {size} is at or below the smallest "
-            f"drafted size, {MIN_CHUNK_SIZE}"
+            f"chunking: {why}; the chunk size (settings.set knowledge_chunk_size), {size}, is "
+            f"at or below the smallest drafted size, {MIN_CHUNK_SIZE}"
         )
         return sample, None
     after = None
@@ -376,7 +396,10 @@ async def _chunking(
             break
     if after is None:
         tried = ", ".join(str(n) for n in sizes)
-        skipped.append(f"chunking: {why}; no size tried ({tried}) gives {fits}")
+        skipped.append(
+            f"chunking: {why}; none of the chunk sizes (settings.set knowledge_chunk_size) "
+            f"tried ({tried}) gives {fits}"
+        )
         return sample, None
     return sample, _chunking_proposal(
         inp, sample, before, after, why, flagged, agents, total, size, set_stride
@@ -414,10 +437,8 @@ def _chunking_proposal(
             f"its largest embedding input is {after.max_input_tokens} tokens (now "
             f"{cur.max_input_tokens}). The stride keeps its ratio to the size."
         ),
-        current=f"LOOM_KNOWLEDGE_CHUNK_SIZE={size}, LOOM_KNOWLEDGE_CHUNK_STRIDE={set_stride}",
-        proposed=(
-            f"LOOM_KNOWLEDGE_CHUNK_SIZE={after.size}, LOOM_KNOWLEDGE_CHUNK_STRIDE={after.stride}"
-        ),
+        current=f"knowledge_chunk_size={size}, knowledge_chunk_stride={set_stride}",
+        proposed=f"knowledge_chunk_size={after.size}, knowledge_chunk_stride={after.stride}",
         evidence=TuneEvidence(
             supporting_count=len(flagged),
             documents=flagged[: inp.sample_limit],
@@ -426,6 +447,7 @@ def _chunking_proposal(
         affected_agents=agents,
         affected_agents_total=total,
         historical=_HISTORICAL_CHUNKS,
+        refs=_CHUNKS_REFS,
         apply=_setting_apply("LOOM_KNOWLEDGE_CHUNK_SIZE", after.size, size),
         apply_also=also,
         preview=ChunkingPreview(before=cur, after=after),
@@ -486,14 +508,31 @@ class _Route:
     incomplete: bool = False
 
 
+# Capability codes in words, as knowledge.inspect says them; another code an extractor
+# declares is said with spaces for its underscores.
+_CAPABILITY_WORDS = {
+    "sql_structure": "SQL structure",
+    "exact_keys": "exact keys",
+    "section_path": "section paths",
+}
+
+
 def _lost(row: dict[str, Any]) -> str:
-    lost = ", ".join(str(x) for x in row["lost"]) or "units it could not extract"
+    """What the extractions lost, in words; a draft's codes ride its `refs`."""
+    words = (_CAPABILITY_WORDS.get(str(x), str(x).replace("_", " ")) for x in row["lost"])
+    lost = ", ".join(words) or "units it could not extract"
     noun = "document" if int(row["documents"]) == 1 else "documents"
     return f"{row['incomplete']} of {row['documents']} {noun} extracted lost {lost}"
 
 
+def _lost_noted(row: dict[str, Any]) -> str:
+    """`_lost` for a skipped note, which has no `refs`: the codes follow in parentheses."""
+    codes = f" ({', '.join(str(x) for x in row['lost'])})" if row["lost"] else ""
+    return _lost(row) + codes
+
+
 def _sources(n: int) -> str:
-    return f"{n} {'source' if n == 1 else 'sources'} failed format_unavailable"
+    return f"{n} {'source' if n == 1 else 'sources'} failed because no extractor took the format"
 
 
 def _judge_format(
@@ -520,9 +559,12 @@ def _judge_format(
     producers, whole = served("incomplete_types"), served("complete_types")
     now = {u for u in by_url if u in declared}
     if now:
+        n = sum(len(by_url[u]) for u in now)
+        them, each = ("it goes", "its original") if n == 1 else ("they go", "each original")
         skipped.append(
-            f"extractor.{fmt}: {_sources(sum(len(by_url[u]) for u in now))}, and the service "
-            "they go to declares it now: upload each original again and knowledge.ingest it"
+            f"extractor.{fmt}: {_sources(n)} (format_unavailable), and the service {them} to "
+            f"declares {fmt} now: upload {each} again and ingest it "
+            "(POST /v1/knowledge.upload, knowledge.ingest)"
         )
     stuck = {u: v for u, v in by_url.items() if u not in declared}
     lossy = row is not None and int(row["incomplete"]) > 0
@@ -536,11 +578,12 @@ def _judge_format(
         unread = sum(1 for s in services if s.formats is None)
         note = f" ({unread} configured could not be read)" if unread else ""
         what = (
-            f"{failed}, and no configured extractor declares {fmt}{note}: deploy one that "
-            f"does (the extractor contract) and route {fmt} to it in "
-            "LOOM_DOCUMENT_EXTRACTORS_JSON"
+            f"{failed} (format_unavailable), and no configured extractor declares {fmt}{note}: "
+            "deploy one that "
+            f"does (the extractor contract) and route {fmt} to it in the deployment's "
+            "extractor routes (LOOM_DOCUMENT_EXTRACTORS_JSON)"
             if stuck
-            else f"{_lost(row or {})}, and no other configured extractor declares {fmt}{note}"
+            else f"{_lost_noted(row or {})}, and no other configured extractor declares {fmt}{note}"
         )
         skipped.append(f"extractor.{fmt}: {what}")
         return None
@@ -559,7 +602,8 @@ def _judge_format(
     if not routed:
         goes_to = "no extractor is configured for it"
     elif not unrouted:
-        goes_to = f"they go to {named}"
+        one = sum(len(v) for v in routed.values()) == 1
+        goes_to = f"{'it goes' if one else 'they go'} to {named}"
     else:
         n = sum(len(v) for v in routed.values())
         goes_to = (
@@ -571,8 +615,8 @@ def _judge_format(
         parts.append(f"{_lost(row or {})} under {_names(services, producers)}")
     elif lossy:
         skipped.append(
-            f"extractor.{fmt}: {_lost(row or {})} under {_names(services, producers)}, the "
-            "service the route drafted for its failed sources goes to"
+            f"extractor.{fmt}: {_lost_noted(row or {})} under {_names(services, producers)}, "
+            "the service the route drafted for its failed sources goes to"
         )
     why = f"{fmt}: {'; '.join(parts)}; the service {pick.setting} names declares {fmt}."
     if moved := whole - {pick.url, ""}:
@@ -608,7 +652,8 @@ async def _routes(
         jobs = jobs[: inspect_store.MAX_FORMAT_SOURCES]
         skipped.append(
             f"extractor.jobs: more than {inspect_store.MAX_FORMAT_SOURCES} sources failed "
-            "format_unavailable; the counts cover the first"
+            "because no extractor took their format (format_unavailable); the counts cover the "
+            "first"
         )
     if coverage is not None and len(coverage) > inspect_store.MAX_GROUPS:
         coverage = coverage[: inspect_store.MAX_GROUPS]
@@ -674,6 +719,12 @@ async def _routes(
         affected_agents=agents,
         affected_agents_total=total,
         historical=_HISTORICAL_ROUTES,
+        refs=[
+            *(["format_unavailable"] if failed else []),
+            *_ROUTES_REFS,
+            # The capabilities the rationale says were lost, by code.
+            *sorted({str(x) for f in fmts if drafted[f].incomplete for x in lossy[f]["lost"]}),
+        ],
         apply=TuneApply(
             op="LOOM_DOCUMENT_EXTRACTORS_JSON",
             via="environment",
@@ -682,16 +733,16 @@ async def _routes(
             required_role="platform_admin",
             guard=(
                 "None: an environment setting has no revision; compare the deployment's "
-                "value with `current` before setting it. It is in force once each server "
-                "and worker restarts."
+                "value with the current one shown here before setting it. It is in force "
+                "once each server and worker restarts."
             ),
         ),
         limits=(
             "A URL is not shown, as an extractor URL can carry a credential: each "
             "placeholder names the setting whose URL it is, and `<as set>` keeps a route as "
             "the deployment has it. A service's capabilities name the formats it takes, not "
-            "what it keeps: ingest one listed source through the new route and read its "
-            "coverage (knowledge.inspect) before relying on it. A format's own route wins "
+            "what it keeps: ingest one listed source through the new route and inspect the "
+            "documents' coverage before relying on it. A format's own route wins "
             "over a media-type route (`application/pdf`), so the drafted route also takes "
             "the sources a media-type route sends elsewhere now."
         ),

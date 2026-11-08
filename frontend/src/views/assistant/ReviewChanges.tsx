@@ -5,6 +5,7 @@ import type { ChunkStats, ChunkingSample, NamespaceTune, TuneApply, TuneProposal
 import { AgentBadge } from "../../components/AgentBadge";
 import { KeyButton } from "../../components/ui/KeyButton";
 import { CodeBlock } from "./CodeBlock";
+import { ExactNames } from "./ExactNames";
 import { useStore } from "../../lib/state";
 
 const TARGET_LABEL: Record<TuneTarget, string> = {
@@ -67,7 +68,7 @@ function counterText(target: TuneTarget, n: number): string {
   if (target === "namespace.category") return `${rows} already filed under another category`;
   if (target === "settings.knowledge_chunking") return `${rows} sampled documents it does not flag`;
   if (target === "settings.document_extractors_json") return `${rows} documents of these formats extracted whole`;
-  return `at least ${rows} unflagged rows it must keep working for`;
+  return `at least ${rows} unflagged memories it must keep working for`;
 }
 
 /** The write as a person would make it: an op, an admin endpoint, or a variable set in the
@@ -96,7 +97,7 @@ function argsCaption(a: TuneApply): string {
   if (a.via === "environment")
     return a.args_complete ? "Value to set:" : "Value to set, once each placeholder is filled in:";
   if (a.via === "admin_route") return a.args_complete ? "Arguments:" : "Arguments, once each placeholder is filled in:";
-  return a.args_complete ? "Arguments:" : `Each writer adds these arguments to its own ${a.op} requests:`;
+  return a.args_complete ? "Arguments:" : "Each writer adds these arguments to its own requests:";
 }
 
 function ApplyBlock({ apply: a, testId }: { apply: TuneApply; testId: string }) {
@@ -224,7 +225,7 @@ function ProposalCard({ proposal: p }: { proposal: TuneProposal }) {
         </ul>
       )}
       {p.evidence.supporting.length > 0 && (
-        <ul className="flex flex-wrap gap-x-3" aria-label={`Rows cited for ${p.title}`}>
+        <ul className="flex flex-wrap gap-x-3" aria-label={`Memories cited for ${p.title}`}>
           {p.evidence.supporting.map((r) => (
             <li key={r.memory_id}>
               <KeyButton
@@ -254,6 +255,7 @@ function ProposalCard({ proposal: p }: { proposal: TuneProposal }) {
         Applies to {DOCUMENT_TARGETS.has(p.target) ? "documents" : "memories"} written after the change. {p.historical}
         {p.limits && ` ${p.limits}`}
       </p>
+      <ExactNames refs={p.refs} />
       <div className="space-y-2">
         <p className="text-xs text-text" data-testid="how-to-apply">
           <span className="font-medium">How to apply:</span> {howToApply(p)}
