@@ -97,7 +97,7 @@ describe("StructureTab", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Accept works_at" }));
     await waitFor(() =>
-      // The whole entry goes back, so accepting keeps its cardinality and description.
+      // Accepting sends its description and cardinality back, so they are kept.
       expect(api.registerOntologyTerm).toHaveBeenCalledWith(
         expect.objectContaining(scope),
         expect.objectContaining({
@@ -276,5 +276,70 @@ describe("StructureTab", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Records" }));
     await userEvent.click(await screen.findByRole("button", { name: "Prior record of inv/A-1" }));
     expect(screen.getByRole("button", { name: "Prior record of inv/B-2" })).toBeDisabled();
+  });
+
+  it("keeps the records when the disagreements fail, with a Retry of their own", async () => {
+    signIn("viewer");
+    vi.mocked(api.recordConflicts).mockRejectedValueOnce(new Error("down"));
+    render(<StructureTab />);
+    await userEvent.click(await screen.findByRole("button", { name: "Records" }));
+    const dialog = await screen.findByRole("dialog", { name: "Records of invoice" });
+    expect(await within(dialog).findByText("A-1")).toBeInTheDocument();
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(api.recordConflicts).toHaveBeenCalledTimes(2));
+  });
+
+  it("lists records by key in the schema's field order, then keys an older field set left", async () => {
+    signIn("viewer");
+    vi.mocked(api.queryRecords).mockResolvedValueOnce({
+      truncated: false,
+      rows: [
+        {
+          record_id: "r1",
+          memory_key: "inv/1",
+          record: { legacy: "x", number: "A-1" },
+          status: "active",
+          valid_at: null,
+          valid_to: null,
+        },
+      ],
+    });
+    render(<StructureTab />);
+    await userEvent.click(await screen.findByRole("button", { name: "Records" }));
+    const table = await screen.findByRole("table", { name: "Records of invoice" });
+    const headers = within(table)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent);
+    expect(headers).toEqual(["Key", "number", "legacy"]);
+    expect(within(table).getByText("inv/1")).toBeInTheDocument();
+  });
+
+  it("aborts the prior record's read when the dialog closes", async () => {
+    signIn("viewer");
+    vi.mocked(api.recordConflicts).mockResolvedValueOnce({
+      truncated: false,
+      rows: [
+        {
+          memory_key: "inv/A-1",
+          field_name: "amount",
+          prior_value: 1,
+          incoming_value: 2,
+          prior_record_id: "r-a",
+          incoming_record_id: "r-a2",
+          detected_at: null,
+        },
+      ],
+    });
+    let signal: AbortSignal | undefined;
+    vi.mocked(api.recordHistory).mockImplementationOnce((_id, _record, opts) => {
+      signal = opts?.signal;
+      return new Promise(() => {});
+    });
+    render(<StructureTab />);
+    await userEvent.click(await screen.findByRole("button", { name: "Records" }));
+    const dialog = await screen.findByRole("dialog", { name: "Records of invoice" });
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Prior record of inv/A-1" }));
+    await userEvent.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1) as HTMLElement);
+    await waitFor(() => expect(signal?.aborted).toBe(true));
   });
 });

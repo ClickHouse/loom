@@ -336,7 +336,10 @@ function RecordsDialog({ schema, onClose }: { schema: RecordSchema; onClose: () 
     }
   };
   const rows = records.data;
-  const columns = schema.fields.map((f) => f.name);
+  // The schema's fields in order, then any key an older field set left in a record.
+  const columns = [
+    ...new Set([...schema.fields.map((f) => f.name), ...(rows?.rows ?? []).flatMap((r) => Object.keys(r.record))]),
+  ];
   return (
     <Modal
       open
@@ -447,7 +450,6 @@ function ProfileSchemaPanel({ canSet, canClear }: { canSet: boolean; canClear: b
 
   const save = async (clear: boolean) => {
     if (clear && !(await confirmAction({ title: "Remove the profile schema?", danger: true }))) return;
-    // A change to the properties leaves every user's profile out of date until rebuilt.
     const replacing = !clear && data?.found;
     if (
       replacing &&

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const post = vi.hoisted(() => vi.fn());
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), post }));
 import { listOntology, listRecordSchemas, queryRecords, recordConflicts, registerOntologyTerm } from "./structure";
+import type { OntologyEntry } from "./structure";
 
 const id = { org: "acme", namespace: "team" };
 
@@ -23,14 +24,18 @@ describe("structure client", () => {
     expect(entries.map((e) => e.name)).toEqual(["works_at", "Customer"]);
   });
 
-  it("sends a term's whole entry, cardinality too, when it accepts one", async () => {
+  it("sends only the four fields a registration takes, even from a listed entry", async () => {
     post.mockResolvedValueOnce({ registered: true });
-    await registerOntologyTerm(id, {
+    const listed = {
       kind: "relation_verb",
       name: "works_at",
       description: "employer",
       cardinality: "one",
-    });
+      status: "pending",
+      created_by: "agent",
+      updated_at: "2000-01-01 00:00:00",
+    } as OntologyEntry;
+    await registerOntologyTerm(id, listed);
     expect(post).toHaveBeenCalledWith("/v1/namespace.register_ontology", {
       ...id,
       kind: "relation_verb",
