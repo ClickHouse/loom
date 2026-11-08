@@ -27,6 +27,7 @@ from server.auth.public_url import (
     origin_matches_host,
     same_origin,
 )
+from server.code.app.index.repo_modes import repo_umask
 from server.core import readiness as _readiness
 from server.core.ch import get_client, probe_reader_user
 from server.core.errors import classified
@@ -307,6 +308,17 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await boot.close_storage_authority()
 
 
+@asynccontextmanager
+async def _with_repo_umask(target: FastAPI) -> AsyncIterator[None]:
+    """`lifespan` under the code repos umask, so with `code_repos_shared_gid` set every
+    clone, checkout and workers child this process starts writes group-writable files.
+    The previous umask comes back once the lifespan ends, after the inline workers stop
+    or a failed start."""
+    with repo_umask():
+        async with lifespan(target):
+            yield
+
+
 app = FastAPI(
     title="Loom Control Plane",
     description=(
@@ -314,7 +326,7 @@ app = FastAPI(
         "— backed by ClickHouse."
     ),
     version=__version__,
-    lifespan=participant_lifespan(lifespan),
+    lifespan=participant_lifespan(_with_repo_umask),
 )
 
 # Register the typed-error → JSON serializer: server.core.errors.LoomServerError

@@ -1,10 +1,11 @@
 """A configured entry is not read into Loom before its first index, and a restricted
-entry's bare mirror is mode 0700 whenever it became restricted.
+entry's bare mirror is closed to other users whenever it became restricted: 2770 when
+it belongs to `code_repos_shared_gid`, 0700 otherwise.
 
 The runbook restricts a private repository between `loom code init` and `loom code
 backfill`: until the backfill writes `git_head`, no worker writes the repository's
 content into the still-standard namespace, and once it is restricted (by the entry or
-by `code.repo.set_access`) the mirror cloned meanwhile is tightened on every host."""
+by `code.repo.set_access`) the mirror cloned meanwhile is set to that mode on every host."""
 
 from __future__ import annotations
 
@@ -92,7 +93,7 @@ class _Client:
 
 
 @pytest.mark.asyncio
-async def test_every_ingest_pass_tightens_a_restricted_entrys_mirror(
+async def test_every_ingest_pass_sets_a_restricted_entrys_mirror_to_repo_dir_mode(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Not once per process: the entry may be restricted after this host first saw it."""
@@ -116,10 +117,19 @@ async def test_every_ingest_pass_tightens_a_restricted_entrys_mirror(
     os.chmod(git_dir, 0o755)
     await ip._run_repo(restricted, CodeIngestResult())
     assert _mode(git_dir) == 0o700
+    # an older build's exact 0700 cleared setgid: in the shared group the group's bits
+    # come back, and the setgid bit with them
+    os.chmod(os.path.dirname(git_dir), 0o2775)
+    monkeypatch.setattr(
+        "server.settings.settings.code_repos_shared_gid", os.stat(os.path.dirname(git_dir)).st_gid
+    )
+    os.chmod(git_dir, 0o700)
+    await ip._run_repo(restricted, CodeIngestResult())
+    assert os.stat(git_dir).st_mode & 0o7777 == 0o2770
 
 
 @pytest.mark.asyncio
-async def test_set_access_restricted_tightens_the_mirror(
+async def test_set_access_restricted_sets_the_mirror_to_repo_dir_mode(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.code.app import repo_admin as h
@@ -161,7 +171,7 @@ async def test_set_access_restricted_tightens_the_mirror(
 
 
 @pytest.mark.asyncio
-async def test_each_host_round_tightens_a_restricted_entrys_mirror(
+async def test_each_host_round_sets_a_restricted_entrys_mirror_to_repo_dir_mode(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import server.identity.app.namespace_classification as nc
@@ -193,7 +203,7 @@ async def test_each_host_round_tightens_a_restricted_entrys_mirror(
     assert _mode(restricted) == _mode(by_directory) == 0o700 and _mode(standard) == 0o755
 
 
-def test_a_host_without_the_mirror_has_nothing_to_tighten(tmp_path: Any) -> None:
+def test_a_host_without_the_mirror_has_nothing_to_change(tmp_path: Any) -> None:
     from server.code.app.index.bootstrap import restrict_dir
 
     absent = tmp_path / "absent.git"
@@ -219,15 +229,15 @@ def test_a_failed_chmod_is_logged_once_per_path(
     with caplog.at_level(logging.WARNING, logger="loom.code_index.bootstrap"):
         for _ in range(3):
             bootstrap.restrict_dir(git_dir)
-    assert sum("could not set" in r.getMessage() for r in caplog.records) == 1
+    assert sum("could not change the mode" in r.getMessage() for r in caplog.records) == 1
 
 
 @pytest.mark.asyncio
 async def test_an_unreadable_classification_skips_the_pass_and_changes_nothing(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Tightening every entry on an outage could not be undone when it ends; the next
-    pass, which reads the classification, tightens what is restricted."""
+    """Restricting every entry on an outage could not be undone when it ends; the next
+    pass, which reads the classification, sets what is restricted to `repo_dir_mode`."""
     from server.auth.directory import ClassificationUnavailable
     from server.code.app.index import bootstrap
 
@@ -241,8 +251,12 @@ async def test_an_unreadable_classification_skips_the_pass_and_changes_nothing(
     assert _mode(git_dir) == 0o755
 
 
-def test_every_compiler_checkout_is_created_0700(tmp_path: Any) -> None:
+def test_every_compiler_checkout_is_private_with_no_shared_gid(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from server.code.app.index.compiler_tier import resolve_checkout
+
+    monkeypatch.setattr("server.settings.settings.code_repos_shared_gid", None)
 
     bare = _mirror(tmp_path)
     for classification, name in (("restricted", "co-r"), ("standard", "co-s")):
@@ -300,8 +314,12 @@ async def test_a_restriction_joins_the_snapshot_and_a_widening_drops_it(
 
 
 @pytest.mark.asyncio
-async def test_a_cloned_mirror_is_0700_whatever_mode_the_clone_left(tmp_path) -> None:
+async def test_a_cloned_mirror_is_private_with_no_shared_gid_whatever_mode_the_clone_left(
+    tmp_path, monkeypatch
+) -> None:
     from server.code.app.index import bootstrap, sandbox
+
+    monkeypatch.setattr("server.settings.settings.code_repos_shared_gid", None)
 
     git_dir = str(tmp_path / "private.git")
     cfg = repo_config(
@@ -315,32 +333,133 @@ async def test_a_cloned_mirror_is_0700_whatever_mode_the_clone_left(tmp_path) ->
 
     with patch.object(sandbox, "run_job", clone):
         assert await bootstrap.clone_mirror(cfg) == ""
-    assert os.stat(git_dir).st_mode & 0o777 == 0o700
+    assert os.stat(git_dir).st_mode & 0o7777 == 0o700
 
 
 @pytest.mark.asyncio
-async def test_a_mirror_loom_code_init_clones_is_0700(tmp_path, monkeypatch) -> None:
+async def test_loom_code_init_clones_the_mirror_the_way_the_worker_does(
+    tmp_path, monkeypatch
+) -> None:
+    """Under the clone lock, into a temp tree at `repo_dir_mode` from the start (so the
+    other uid can remove it if this clone is killed) that becomes the mirror at that
+    mode: here 2770, the shared gid's, whatever mode the clone left."""
     from server.cli import code_maintenance as cm
-
-    git_dir = str(tmp_path / "standard.git")
-    cfg = repo_config(git_dir=git_dir, git_remote="https://github.com/Org/Repo.git")
-
-    umasks: list[int] = []
-
-    async def clone(*argv: str, **kw: Any) -> None:
-        umasks.append(kw["umask"])  # git creates the mirror private from its first file
-        os.makedirs(argv[-1], 0o755)
+    from server.code.app.index import sandbox
 
     class _Stop(Exception):
         pass
 
-    async def stop() -> None:
+    async def _stop() -> None:
         raise _Stop
 
+    git_dir = tmp_path / "standard.git"
+    cfg = repo_config(git_dir=str(git_dir), git_remote="https://github.com/Org/Repo.git")
+    modes: list[int] = []
+
+    async def clone(argv: list[str], **_: Any) -> SimpleNamespace:
+        modes.append(os.stat(argv[-1]).st_mode & 0o7777)  # what git fills
+        os.chmod(argv[-1], 0o755)  # an exact mode, as a clone may leave: setgid cleared
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    os.chmod(tmp_path, 0o2775)  # the root, prepared as the runbook says
+    monkeypatch.setattr("server.settings.settings.code_repos_shared_gid", tmp_path.stat().st_gid)
     monkeypatch.setattr(cm, "_repo_cfg", lambda _args: cfg)
-    monkeypatch.setattr(cm.asyncio, "create_subprocess_exec", clone)
-    monkeypatch.setattr(cm, "wait_or_stop", AsyncMock(return_value=0))
-    monkeypatch.setattr("server.core.ch.get_client", lambda: SimpleNamespace(connect=stop))
+    monkeypatch.setattr(sandbox, "run_job", clone)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: SimpleNamespace(connect=_stop))
     with pytest.raises(_Stop):  # stops after the clone, before any ClickHouse write
         await cm._init(SimpleNamespace())
-    assert umasks == [0o077] and _mode(git_dir) == 0o700
+    assert modes == [0o2770] and git_dir.stat().st_mode & 0o7777 == 0o2770
+
+
+@pytest.mark.asyncio
+async def test_a_failed_loom_code_init_clone_leaves_no_mirror(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """The next `init` would take a directory left behind for a clone and skip it."""
+    from server.cli import code_maintenance as cm
+    from server.code.app.index import sandbox
+
+    git_dir = tmp_path / "standard.git"
+    cfg = repo_config(git_dir=str(git_dir), git_remote="https://github.com/Org/Repo.git")
+
+    async def clone(argv: list[str], **_: Any) -> SimpleNamespace:
+        return SimpleNamespace(returncode=128, stderr=b"fatal: repository not found")
+
+    monkeypatch.setattr("server.settings.settings.code_bootstrap_clone_timeout_s", 1800.0)
+    monkeypatch.setattr(cm, "_repo_cfg", lambda _args: cfg)
+    monkeypatch.setattr(sandbox, "run_job", clone)
+    assert await cm._init(SimpleNamespace()) == 1
+    out = capsys.readouterr()
+    assert "at most 1800s, code_bootstrap_clone_timeout_s" in out.out  # the time bound
+    assert "git clone failed (exit 128)" in out.err
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["standard.git.clone-lock"]
+
+
+@pytest.mark.asyncio
+async def test_loom_code_init_is_refused_where_the_sandbox_is_required_and_cannot_run(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from server.cli import code_maintenance as cm
+    from server.code.app.index import sandbox
+    from server.code.domain.index.state import SANDBOX_REQUIRED_REFUSAL
+
+    git_dir = tmp_path / "standard.git"
+    cfg = repo_config(git_dir=str(git_dir), git_remote="https://github.com/Org/Repo.git")
+    monkeypatch.setattr(cm, "_repo_cfg", lambda _args: cfg)
+    monkeypatch.setattr(sandbox, "sandbox_available", lambda: False)
+    monkeypatch.setattr("server.settings.settings.code_sandbox_required", True)
+    assert await cm._init(SimpleNamespace()) == 1
+    assert SANDBOX_REQUIRED_REFUSAL in capsys.readouterr().err
+    assert not git_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_loom_code_init_clone_names_the_bound(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """`init` has no next pass to retry in: it names the setting that bounds the clone."""
+    from server.cli import code_maintenance as cm
+    from server.code.app.index import sandbox
+
+    cfg = repo_config(
+        git_dir=str(tmp_path / "standard.git"), git_remote="https://github.com/Org/Repo.git"
+    )
+
+    async def clone(argv: list[str], **_: Any) -> SimpleNamespace:
+        raise TimeoutError
+
+    monkeypatch.setattr(cm, "_repo_cfg", lambda _args: cfg)
+    monkeypatch.setattr(sandbox, "run_job", clone)
+    assert await cm._init(SimpleNamespace()) == 1
+    assert "clone timed out (code_bootstrap_clone_timeout_s)" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_loom_code_init_clone_leaves_only_the_lock_file(
+    tmp_path, monkeypatch
+) -> None:
+    """SIGTERM or Ctrl-C cancels `init` mid-clone: the temp tree goes, so the next `init`
+    clones again (`run_job` itself kills the job's process group)."""
+    import asyncio
+
+    from server.cli import code_maintenance as cm
+    from server.code.app.index import sandbox
+
+    cfg = repo_config(
+        git_dir=str(tmp_path / "standard.git"), git_remote="https://github.com/Org/Repo.git"
+    )
+    started = asyncio.Event()
+
+    async def clone(argv: list[str], **_: Any) -> SimpleNamespace:
+        started.set()
+        await asyncio.sleep(60)
+        raise AssertionError("not cancelled")
+
+    monkeypatch.setattr(cm, "_repo_cfg", lambda _args: cfg)
+    monkeypatch.setattr(sandbox, "run_job", clone)
+    task = asyncio.create_task(cm._init(SimpleNamespace()))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["standard.git.clone-lock"]

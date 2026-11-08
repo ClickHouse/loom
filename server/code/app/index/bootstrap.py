@@ -25,6 +25,7 @@ import logging
 import math
 import os
 import shutil
+import stat
 import time
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,7 @@ from server.code.app.index.mirror_locks import (
     partial_mirror,
     partial_temp_dir,
 )
+from server.code.app.index.repo_modes import PRIVATE_DIR_MODE, repo_dir_mode, set_repo_dir_mode
 from server.code.domain.index.state import (
     CLONE_TIMED_OUT,
     SANDBOX_REQUIRED_REFUSAL,
@@ -138,24 +140,38 @@ _CHMOD_FAILED: set[str] = set()
 
 
 def restrict_dir(path: str) -> None:
-    """Mode 0700 on one of a restricted entry's directories, so only the server's user
-    reads it. A host that does not hold the directory has nothing to change."""
+    """`repo_dir_mode` on one of a restricted entry's directories: other users lose what
+    they could read, and in the shared group the group gets back the bits an older
+    build's exact 0700 removed. A host that does not hold the directory has nothing to
+    change."""
     if not path:
         return
     try:
-        if os.stat(path).st_mode & 0o077:
-            os.chmod(path, 0o700)
-            logger.warning("bootstrap: %s set to mode 0700 (the entry is restricted)", path)
+        st = os.stat(path)
+        mode, want = stat.S_IMODE(st.st_mode), repo_dir_mode(st.st_gid)
+        # A private directory only needs fixing when its group or others can use it; a
+        # setgid bit or owner bits alone give nobody anything.
+        if mode != want and (want != PRIVATE_DIR_MODE or mode & 0o077):
+            os.chmod(path, want)
+            # Taking access away is worth a warning. Adding the group's bits is not, and
+            # an older build sharing the root undoes it every round.
+            log = logger.warning if mode & ~want & 0o077 else logger.debug
+            log(
+                "bootstrap: %s set to mode %04o from %04o (the entry is restricted)",
+                path,
+                want,
+                mode,
+            )
     except FileNotFoundError:
         return
     except OSError as e:
         if path not in _CHMOD_FAILED:
             _CHMOD_FAILED.add(path)
-            logger.warning("bootstrap: could not set %s to mode 0700: %s", path, e)
+            logger.warning("bootstrap: could not change the mode of %s: %s", path, e)
 
 
 def restrict_entry(cfg: Any) -> None:
-    """Mode 0700 on the entry's bare mirror and on every compiler-tier checkout it may
+    """`repo_dir_mode` on the entry's bare mirror and on every compiler-tier checkout it may
     have (`checkout_for` each producer). Sync: callers run it in a thread."""
     from server.code.app.index.producer_inference import PRODUCERS
     from server.code.domain.index.repos import checkout_for
@@ -169,8 +185,8 @@ def restrict_entry(cfg: Any) -> None:
 async def restrict_if_restricted(cfg: Any) -> None:
     """`restrict_entry` when the entry is restricted by its config, by a maintainer's
     access row or by its directory row alone. Run on every ingest pass and every host's
-    mirror round, so a directory created before the restriction is tightened on each
-    host that holds it. An unreadable classification skips the call: tightening every
+    mirror round, so a directory created before the restriction gets `repo_dir_mode` on each
+    host that holds it. An unreadable classification skips the call: restricting every
     entry on an outage could not be undone, and the next pass retries."""
     from server.auth.directory import ClassificationUnavailable
     from server.identity.app.namespace_classification import is_restricted
@@ -253,9 +269,10 @@ async def clone_mirror(cfg: Any, *, pin: bool = False) -> str:
             mirror = partial_mirror(stale)
             if mirror is not None and os.path.basename(mirror) == os.path.basename(git_dir):
                 await asyncio.to_thread(shutil.rmtree, stale, True)
-        # 0700 for every entry: a restricted one is never readable by another user, and
-        # a standard one loses nothing (only the server's user reads a mirror).
-        await asyncio.to_thread(os.makedirs, tmp, 0o700)
+        # Set to `repo_dir_mode` before git writes into it: closed to other users, and in
+        # the shared group the other uid can remove it if this clone is killed.
+        await asyncio.to_thread(os.makedirs, tmp, PRIVATE_DIR_MODE)
+        await asyncio.to_thread(set_repo_dir_mode, tmp)
         # The clone runs as a repository job: the empty target its one writable path.
         done = await run_job(
             ["git", "clone", "-c", "gc.auto=0", "-c", "maintenance.auto=false"]
@@ -271,8 +288,9 @@ async def clone_mirror(cfg: Any, *, pin: bool = False) -> str:
             stderr = done.stderr.decode(errors="replace").strip()[-600:]
             logger.warning("mirror clone exited %s: %s", done.returncode, stderr)
             return f"git clone failed (exit {done.returncode})"
-        # Whatever mode the clone left on the directory, the mirror is the server's alone.
-        await asyncio.to_thread(os.chmod, tmp, 0o700)
+        # Whatever mode the clone left on the directory, the mirror gets `repo_dir_mode`:
+        # closed to other users.
+        await asyncio.to_thread(set_repo_dir_mode, tmp)
         await asyncio.to_thread(os.rename, tmp, git_dir)
         if pin:
             await _pin_ledger_merges(cfg)

@@ -50,17 +50,46 @@ when the deployment indexes more than one repository.
 - **An embedder.** Chunks are embedded with the server's `LOOM_EMBEDDING_MODEL`.
   `loom code backfill --embed` refuses the fake embedder unless you pass
   `--allow-fake-embedder` (development only).
-- **Writable git mirrors.** The workers run as uid/gid 999 and fetch into the bare clones
-  under `var/code_repos` (bind-mounted into the containers). Prepare the host directory
-  once so both the host operator and uid 999 can write:
+- **Writable git mirrors.** The workers run as uid 999 and fetch into the bare clones
+  under `var/code_repos` (bind-mounted into the containers). The host operator shares
+  that directory with them through a group, gid 999 here. Prepare it once:
 
   ```bash
-  sudo chgrp -R 999 var/code_repos && sudo chmod -R g+rwX var/code_repos
+  sudo chgrp -R 999 var/code_repos && sudo chmod -R g+rwX,o-rwx var/code_repos
   sudo find var/code_repos -type d -exec chmod g+s {} +
   ```
 
-  After `loom code init` creates a clone, run
-  `git --git-dir var/code_repos/<name>.git config core.sharedRepository group`.
+  The setgid bit keeps new entries in the group. Then add the host operator to the
+  group and set `LOOM_CODE_REPOS_SHARED_GID=999` in `.env`, which the containers and
+  the host's `loom code` commands both read. A mirror or checkout directory Loom
+  creates in that group is mode 2770; every other one is 0700, open to the server's
+  user only, so nothing is shared until the setting names the group. With the
+  setting, the server and every `loom code` command run with umask 007: the
+  directories and lock files they create are writable by the group, git's files give
+  the group what they give the owner (its objects stay read-only), and other users get
+  nothing. Run a harness by hand on a checkout under the root through
+  `loom code entry-lock`, which runs it under the same umask. Loom changes an existing
+  directory's mode only for a restricted entry: run the commands again for files an
+  older build or another tool created.
+
+  The group reads every mirror, restricted ones included, so it must hold only the
+  users that run Loom: the host operator and the containers' user (`getent group 999`).
+  When gid 999 is already a system group with other members (`systemd-journal` on many
+  distributions), run the containers with a dedicated group instead (Compose
+  `user: "999:<gid>"`) and use that gid in the commands and the setting. Keep every
+  path the host and the containers share (`code_repos_root`, `code_scip_checkout_dir`
+  and each entry's `git_dir` and `scip_checkout_dir`) inside the prepared directory: a
+  directory or lock file Loom creates elsewhere takes its parent's group under a
+  setgid parent and the creating process's group otherwise, and with the umask that
+  group could write it.
+
+  The umask covers every file those processes write, outside the root too, where a
+  file takes the writer's primary group: the host operator's primary group must be
+  its own (a user private group, the default on most distributions), not one shared
+  with others such as `users`.
+
+  Upgrade the host checkout that runs `loom code` jobs together with the image, and
+  run the commands above again once a colour deployment's previous colour has stopped.
 
 - **A GitHub token** (`LOOM_CODE_GITHUB_TOKEN`, or `github_token` per entry) for
   merged-PR history and for private remotes.
@@ -129,11 +158,14 @@ configured restricted namespace, so a private repository is set up in this order
 3. The maintainer restricts it with `code.repo.set_access` (`classification: "restricted"`
    and `join_policy: "approval"` or `"closed"`; both are required); then set
    `classification: "restricted"` on the entry as well, so either input restricts, and run
-   `loom code backfill`. Mirrors and compiler-tier checkouts are created at mode 0700;
-   one an older build created, or whose mode was changed by hand, is set to 0700 at once
+   `loom code backfill`. Mirrors and compiler-tier checkouts are created at mode 2770
+   when they belong to `code_repos_shared_gid`, open to the server's
+   user and that group only, and 0700 otherwise (see "Writable git mirrors"); one an
+   older build created, or whose mode was changed by hand, is set to that mode at once
    on the host that serves the call, and on every other host that holds it at that
    host's next mirror round, once the host reads the namespace's directory row as
-   restricted (within half a minute).
+   restricted (within half a minute). Only the directory itself changes: what an older
+   build created inside it needs the commands in "Writable git mirrors".
 
 The restriction is per branch: each branch's index is its own namespace. A person whose
 own token reads the repository on its host can still add another of its branches with
@@ -567,9 +599,8 @@ dependency install, compiler tier, `loom code scip-full`'s harness) runs as a pl
 process. The ingest pass and the compiler tiers skip every entry, operator ones
 included, and name the skip on the pass note; `loom code scip-full` exits 1; any job
 that still reaches the runner fails with `SandboxRequiredError`. `/v1/health` reports
-`repo_jobs_unsandboxed` as an error. One command is outside it: `loom code init`, the
-operator's first bare clone of an entry they configured, runs `git clone` as a plain
-process (it runs no repository code; the remote is the operator's own).
+`repo_jobs_unsandboxed` as an error. `loom code init`'s first bare clone is the
+worker's clone, a repository job like the rest: it exits 1 with the refusal too.
 
 **Turning it off.** To run the colours without the sandbox again, remove both the
 `security_opt` block and `LOOM_CODE_SANDBOX_REQUIRED` from both services in

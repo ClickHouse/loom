@@ -402,7 +402,7 @@ async def _run_repo(
 
     await ensure_registered(cfg)
     # Every pass, not once per process: a mirror an older build cloned, or one whose
-    # mode was changed by hand, is tightened once the entry is restricted.
+    # mode was changed by hand, is set to `repo_dir_mode` once the entry is restricted.
     await restrict_if_restricted(cfg)
 
     if not await fetch_entry(cfg, git_dir, repo, result):

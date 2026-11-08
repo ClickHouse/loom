@@ -853,6 +853,9 @@ class CodeSettings(BaseModel):
     # Where the code ingest worker clones a self-service entry's bare mirror (one per
     # GitHub repository, shared by its branches).
     code_repos_root: str = "var/code_repos/self"
+    # Numeric gid of the prepared var/code_repos: mirror and checkout directories in it 2770,
+    # locks 0660, server and `loom code` umask 007. Unset: 0700, 0600, the caller's umask.
+    code_repos_shared_gid: int | None = Field(default=None, ge=0)
     # Active self-service entries per org (branches count); past it the add
     # refuses with a message.
     code_self_service_max_repos: int = 20

@@ -957,6 +957,11 @@ settings:
   # GitHub repository, shared by its branches). [restart]
   # code_repos_root: "var/code_repos/self"
 
+  # Numeric gid of the prepared var/code_repos: mirror and checkout directories in it
+  # 2770, locks 0660, server and `loom code` umask 007. Unset: 0700, 0600, the caller's
+  # umask. [restart]
+  # code_repos_shared_gid: null
+
   # Active self-service entries per org (branches count); past it the add refuses with a
   # message. [restart]
   # code_self_service_max_repos: 20

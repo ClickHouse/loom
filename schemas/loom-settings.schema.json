@@ -1432,6 +1432,19 @@
           "type": "string",
           "description": "Where the code ingest worker clones a self-service entry's bare mirror (one per GitHub repository, shared by its branches)."
         },
+        "code_repos_shared_gid": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Numeric gid of the prepared var/code_repos: mirror and checkout directories in it 2770, locks 0660, server and `loom code` umask 007. Unset: 0700, 0600, the caller's umask."
+        },
         "code_review_brief_mirror_miss_ttl_s": {
           "default": 600.0,
           "exclusiveMinimum": 0,

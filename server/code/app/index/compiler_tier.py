@@ -23,6 +23,7 @@ from server.code.app.index import tier_health
 from server.code.app.index.entry_lock import EntryLockHeld, EntryLockLost, check_held, entry_lock
 from server.code.app.index.gitrepo import is_local_remote, upload_pack_args
 from server.code.app.index.producer_inference import worker_owns
+from server.code.app.index.repo_modes import PRIVATE_DIR_MODE, set_repo_dir_mode
 from server.code.app.index.sandbox import run_job, sandbox_available
 from server.code.domain.index.repos import checkout_for
 from server.settings import settings
@@ -231,10 +232,11 @@ def resolve_checkout(cfg: RepoConfig, producer: str) -> tuple[Path, Path, str | 
         # harness configures its build tree on the first run.
         from server.code.app.index.gitrepo import auth_env
 
-        # Made before `git init`, which keeps its mode: no checkout is readable by
-        # another user, and an entry restricted later needs no window closed.
+        # Made before `git init`, which keeps its mode, so an entry restricted later
+        # needs no window closed.
         try:
-            os.makedirs(checkout, mode=0o700, exist_ok=True)
+            os.makedirs(checkout, mode=PRIVATE_DIR_MODE, exist_ok=True)
+            set_repo_dir_mode(str(checkout))
         except OSError as e:
             logger.warning("compiler tier: could not create %s: %s", checkout, e)
             return checkout, bare, f"checkout missing at {checkout} (mkdir failed)"
