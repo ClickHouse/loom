@@ -77,7 +77,7 @@ def test_a_checkout_that_cannot_be_created_is_reported_with_the_reason(tmp_path:
     _actual, _bare, missing = resolve_checkout(cfg, "python")
 
     assert missing is not None and missing.startswith("checkout missing at ")
-    assert "(mkdir: Not a directory)" in missing  # made 0700 before `git init` runs
+    assert "(mkdir failed)" in missing  # made 0700 before `git init` runs
 
 
 @pytest.mark.asyncio
