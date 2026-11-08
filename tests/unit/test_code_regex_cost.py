@@ -185,7 +185,7 @@ def test_a_pattern_costs_linear_time(name: str, pattern: re.Pattern) -> None:
 # grows more than 8 times, so a cubic pattern stops at 8,000 characters, not hours later.
 _SIZES = (500, 2_000, 8_000, 32_000)
 _PREFIXES = ("a", "- a", "a:a", "a = a", "export default a", "'a")
-_SEPS = ("", "a=", "a(", "a ", "#a ")  # after an opener: `*a=`, `@if(`, `{#if `
+_SEPS = ("", " a", "a=", "a(", "a ", "#a ")  # after an opener: `*a=`, `@if(`, `{#if `
 
 
 def _composites(p: re.Pattern) -> list[tuple[str, str, str]]:

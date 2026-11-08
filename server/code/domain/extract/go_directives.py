@@ -57,8 +57,8 @@ GO_FACET_KINDS: frozenset[str] = frozenset(
     }
 )
 
-_EMBED_RE = re.compile(r"^//go:embed\s+(.+?)\s*$")
-_GENERATE_RE = re.compile(r"^//go:generate\s+(.+?)\s*$")
+_EMBED_RE = re.compile(r"^//go:embed\s++(.*\S)\s*$")
+_GENERATE_RE = re.compile(r"^//go:generate\s++(.*\S)\s*$")
 _MARKER_RE = re.compile(r"^//\s*\+(kubebuilder|k8s|optional|required|genclient)(?::([\w-]+))?")
 _TAG_RE = re.compile(r'(?<!\w)(\w+):"([^"]*)"')  # from a word's start: linear in a long one
 _SKIPPED_TAG_KEYS: frozenset[str] = frozenset({"protobuf", "protobuf_oneof"})

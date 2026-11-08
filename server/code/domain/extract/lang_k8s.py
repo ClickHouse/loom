@@ -79,7 +79,7 @@ CHUNK_OPTIONS: dict[str, Any] = {
 _MANIFEST_EXTENSIONS: frozenset[str] = frozenset({".yaml", ".yml"})
 _API_RE = re.compile(r"(?m)^apiVersion:\s*\S")
 _KIND_RE = re.compile(r"(?m)^kind:\s*([A-Za-z][\w.-]*)\s*$")
-_NAME_RE = re.compile(r"^  name:\s*(.+?)\s*$")
+_NAME_RE = re.compile(r"^  name:\s*+(.*\S)\s*$")
 _CRD_KIND_RE = re.compile(r"(?m)^[^\S\n]+kind:\s*([A-Za-z][\w]*)\s*$")
 _REF_BLOCK_RE = re.compile(
     r"^(\s*)(?:-\s*)?(configMapRef|configMapKeyRef|configMap|secretRef|secretKeyRef|roleRef|"

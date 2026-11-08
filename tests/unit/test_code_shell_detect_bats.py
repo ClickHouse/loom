@@ -11,6 +11,7 @@ from server.code.app.index.ingest_parse import parse_file
 from server.code.domain.extract import lang_bats as lb
 from server.code.domain.extract import lang_detect as ld
 from server.code.domain.extract.chunker import chunk_file
+from tests.unit.code_fixtures import grows_linearly
 
 _BATS = b"""#!/usr/bin/env bats
 # bats file_tags=core, slow
@@ -101,3 +102,9 @@ def test_ingest_dispatches_bats_and_new_shell_names() -> None:
     rc = parse_file("home/.bashrc", b"alias ll='ls -la'\nexport PATH=$PATH:~/bin\n")
     assert rc is not None and rc.lang == "shell"
     assert parse_file("docs/notes", b"plain prose here\n") is None
+
+
+def test_a_tag_line_of_spaces_is_read_once() -> None:
+    grows_linearly(
+        lambda n: lb._TAGS_RE.findall("# bats test_tags=a" + " " * n + "b"), 8_000, 32_000
+    )

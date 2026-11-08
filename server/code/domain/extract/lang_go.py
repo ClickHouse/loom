@@ -151,7 +151,7 @@ _BUILTIN_TYPES = frozenset(
         "comparable",
     }
 )
-_GO_BUILD_RE = re.compile(r"(?m)^//go:build\s+(.+?)\s*$")
+_GO_BUILD_RE = re.compile(r"(?m)^//go:build\s++(.*\S)\s*$")
 KIND_METHOD = "method"  # an interface's method signature: body-less
 KIND_FIELD = "field"  # a struct field: body-less, signature = its type
 KIND_CONST = "const"

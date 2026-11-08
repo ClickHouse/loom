@@ -36,7 +36,7 @@ _TEST_HEADER_RE = re.compile(
 )
 _LOAD_RE = re.compile(r"^[^\S\n]*load\s+(['\"]?)([^'\"\s]+)\1", re.M)
 _LOAD_LIB_RE = re.compile(r"^[^\S\n]*bats_load_library\s+(['\"]?)([^'\"\s]+)\1", re.M)
-_TAGS_RE = re.compile(r"^[^\S\n]*#\s*bats\s+(test_tags|file_tags)\s*=\s*(.+?)\s*$", re.M)
+_TAGS_RE = re.compile(r"^[^\S\n]*#\s*bats\s+(test_tags|file_tags)\s*=\s*+(.*\S)\s*$", re.M)
 _SLUG_RE = re.compile(r"[^A-Za-z0-9]+")
 HOOKS: frozenset[str] = frozenset(
     {
