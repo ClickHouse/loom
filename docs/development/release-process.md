@@ -219,12 +219,12 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    waiting one, which must then be re-run by hand (Re-run failed jobs). A refusal here
    comes after `docker-tag` pushed the tag's image tags (and `:latest` when it is the highest
    final version). A re-run keeps the run's inputs and fails again, so dispatch the tag instead,
-   which also publishes the SDKs and the MCP Registry listing. Either with the newer release the
-   error names, if it dumps the tag's `schemas/schema.sql`:
+   which also publishes the SDKs and the MCP Registry listing. Dispatch it either with the newer
+   release the error names, when that release dumps the tag's `schemas/schema.sql`:
    `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`;
    or accepting the downgrade:
    `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
-   Otherwise move `:latest` back to the previous release by hand, on both
+   When neither is taken, move `:latest` back to the previous release by hand, on both
    `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`.
 
 The server and extractor images are published before the GitHub Release, so an installer
