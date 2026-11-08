@@ -691,8 +691,8 @@ async def _my_standing(org: str, subject: str) -> dict[str, tuple[_Standing, str
 
 
 async def _restricted_names(org: str) -> set[str] | None:
-    """Every namespace of `org` restricted by its directory row or its repository
-    config; None when the directory cannot be read."""
+    """Every namespace of `org` restricted by its directory row or its configuration
+    (repository entries and tracker sources); None when the directory cannot be read."""
     from server.auth.directory import ClassificationUnavailable, directory
 
     try:

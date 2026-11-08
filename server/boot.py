@@ -271,7 +271,7 @@ async def _register_tracker_namespaces_once(ch: Any) -> bool:
     claims; True when a namespace was skipped or the pass failed. Its queries carry
     their own tag, reset on return: at boot it runs inside the lifespan, whose later
     queries are not registration."""
-    from server.core.ch import query_tag_var
+    from server.core.ch import query_tag
     from server.tracker.app import registry_sources
     from server.tracker.app.registry import (
         configured_pending,
@@ -279,18 +279,16 @@ async def _register_tracker_namespaces_once(ch: Any) -> bool:
     )
 
     async with _TRACKER_PASS:
-        tag = query_tag_var.set("boot.tracker_namespaces")
-        try:
-            await registry_sources.refresh_db_sources(force=True, ch=ch)
-            done = await ensure_configured_tracker_namespaces(ch=ch)
-            if done:
-                logging.getLogger(__name__).info("qa namespaces registered: %s", done)
-            return configured_pending()
-        except Exception as e:  # noqa: BLE001 — registration never fails boot; the gate keeps refusing
-            logging.getLogger(__name__).warning("qa namespace registration failed: %s", e)
-            return True
-        finally:
-            query_tag_var.reset(tag)
+        with query_tag("boot.tracker_namespaces"):
+            try:
+                await registry_sources.refresh_db_sources(force=True, ch=ch)
+                done = await ensure_configured_tracker_namespaces(ch=ch)
+                if done:
+                    logging.getLogger(__name__).info("qa namespaces registered: %s", done)
+                return configured_pending()
+            except Exception as e:  # noqa: BLE001 — registration never fails boot; the gate keeps refusing
+                logging.getLogger(__name__).warning("qa namespace registration failed: %s", e)
+                return True
 
 
 async def require_clickhouse_ready() -> None:
