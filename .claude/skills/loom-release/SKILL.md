@@ -95,7 +95,7 @@ The plugins, in a throwaway `HOME`: `claude plugin marketplace add ClickHouse/lo
   - A candidate took neither.
 
   Never delete a release's assets or tag: an installed version reruns its installer from them. A host already on the bad release keeps it until the patch: the older installer refuses to run over a newer install; going back is [downgrading an installer install](../../../docs/operations/upgrades.md#downgrading-an-installer-install), ClickHouse pinned first.
-- **An SDK is bad**: yank it on PyPI (the project's settings: the release, Yank, with the reason), which keeps pinned installs working; `npm deprecate @clickhouse/loom@X.Y.Z "<reason>; use <fixed version>"` and move the dist-tag it took (`latest`, or `release-X.Y` for a patch to an older line) back to the previous version that held it (`npm dist-tag add @clickhouse/loom@<previous> <tag>`), or remove it when none did (`npm dist-tag rm @clickhouse/loom release-X.Y`). A version number is never reused: the fix is a new patch.
+- **An SDK is bad**: yank it on PyPI (the project's settings: the release, Yank, with the reason), which keeps pinned installs working; `npm deprecate @clickhouse/loom@X.Y.Z "<reason>; use <fixed version>"` and move the dist-tag it took back, as for the images: `latest` to the version that held it before, `release-X.Y` to the previous patch of that line (`npm dist-tag add @clickhouse/loom@<that version> <tag>`). A version number is never reused: the fix is a new patch.
 - **The MCP Registry listing**: publish the patch; the registry lists the newest version.
 
 ## 7. A patch release
