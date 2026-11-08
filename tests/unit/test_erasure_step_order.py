@@ -445,15 +445,9 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     (
         "memory.retire",
         (
-            (L, "loom.memory_embeddings"),
+            # the user's late rows stamped, the summaries retired, the answers that quoted
+            # either, what a summary written since fed, then the rows
             (U, "loom.memory"),
-            (D, "loom.memory_code_links"),
-            (U, "loom.memory"),
-            (D, "loom.llm_response_cache"),
-            (D, "loom.memory_ask_precedents"),
-            (L, "loom.code_answers"),
-            # a summary written since: retired, the answers that quoted it, what it fed,
-            # before the rows that name it go
             (L, "loom.memory_embeddings"),
             (U, "loom.memory"),
             (D, "loom.memory_code_links"),

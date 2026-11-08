@@ -117,8 +117,9 @@ USER_SUMMARY_KEY_LIST = f"(SELECT groupUniqArray(memory_key) {SUMMARY_ROWS_FROM}
 USER_QUOTED_KEY_LIST = f"arrayConcat({USER_KEY_LIST}, {USER_SUMMARY_KEY_LIST})"
 # What was chunked or extracted from a summary is the user's too: chunks and entity
 # vectors by the summary's agent, user and key (neither carries the memory's session: a
-# chunk's is derived from its key), row links by (namespace, id), graph key links by
-# (namespace, key), as for the user's own keys.
+# chunk's is derived from its key; a legacy '-' chunk at the key of a summary written
+# under another user stays, as the '-' memory there is another row), row links by
+# (namespace, id), graph key links by (namespace, key), as for the user's own keys.
 # Each read form has its bound form beside it.
 _USER_SUMMARY_KEYS_SUBQ = f"(SELECT toString(namespace), memory_key {SUMMARY_ROWS_FROM})"
 _USER_SUMMARY_IDENTITIES = (

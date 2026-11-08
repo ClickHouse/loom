@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
 
 from server.core import object_store
 from server.core.background import gather_or_cancel
@@ -206,6 +207,20 @@ async def delete_last_seen_by_user(
 # `promoted_from` (`org/namespace/agent/user_id/session_id/memory_key`) whose
 # fourth segment is the user.
 _PROMOTED_FROM_USER = "arrayExists(x -> splitByChar('/', x)[4] = {uid:String}, promoted_from)"
+# Or from a summary of the user's memories, by its (namespace, agent, user_id, key); a
+# key may hold slashes, so it is the rest of the entry.
+_PROMOTED_FROM_SUMMARY = (
+    "arrayExists(x -> has({rows:Array(Tuple(String, String, String, String))}, "
+    "(splitByChar('/', x)[2], splitByChar('/', x)[3], splitByChar('/', x)[4], "
+    "arrayStringConcat(arraySlice(splitByChar('/', x), 6), '/'))), promoted_from)"
+)
+_PROMOTED_FROM = f"({_PROMOTED_FROM_USER} OR {_PROMOTED_FROM_SUMMARY})"
+
+
+async def _promoted_slices(org: str, user_id: str, *, ch: _CHClient) -> list[dict[str, Any]]:
+    """The bound values of `_PROMOTED_FROM`, a slice of the summaries at a time."""
+    summaries = (await user_summary_rows(org, user_id, ch=ch)).identities
+    return [{"uid": user_id, "rows": part} for part in slices_or_one_empty(summaries)]
 
 
 async def tombstone_shared_by_user(
@@ -220,11 +235,16 @@ async def tombstone_shared_by_user(
     The repr format is `org/namespace/agent/user_id/session_id/memory_key`,
     so position 4 of the slash-split is the user_id. If ANY entry names the
     erased user, the shared row is tombstoned — partial-source erasure still
-    requires full removal because the value may carry that user's contribution.
+    requires full removal because the value may carry that user's contribution. So is
+    one promoted from a summary of the user's memories.
     """
-    return await tombstone_scoped(
-        "loom.shared", org=org, scope_where=_PROMOTED_FROM_USER, params={"uid": user_id}, ch=ch
-    )
+    ch = ch or _default_client()
+    total = 0
+    for params in await _promoted_slices(org, user_id, ch=ch):
+        total += await tombstone_scoped(
+            "loom.shared", org=org, scope_where=_PROMOTED_FROM, params=params, ch=ch
+        )
+    return total
 
 
 async def tombstone_shared_embeddings_by_user(
@@ -242,12 +262,15 @@ async def tombstone_shared_embeddings_by_user(
     key alone would reach another namespace's shared row of the same spelling.
     """
     ch = ch or _default_client()
-    rows = await ch.query_all(
-        "SELECT DISTINCT namespace, memory_key FROM loom.shared FINAL "
-        f"WHERE org = {{org:String}} AND {_PROMOTED_FROM_USER}",
-        params={"org": org, "uid": user_id},
-    )
-    pairs = sorted((str(r["namespace"]), str(r["memory_key"])) for r in rows)
+    found: set[tuple[str, str]] = set()
+    for params in await _promoted_slices(org, user_id, ch=ch):
+        rows = await ch.query_all(
+            "SELECT DISTINCT namespace, memory_key FROM loom.shared FINAL "
+            f"WHERE org = {{org:String}} AND {_PROMOTED_FROM}",
+            params={"org": org, **params},
+        )
+        found.update((str(r["namespace"]), str(r["memory_key"])) for r in rows)
+    pairs = sorted(found)
     total = 0
     for part in chunks(pairs):
         total += await tombstone_scoped(

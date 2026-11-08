@@ -297,7 +297,9 @@ async def test_tombstone_shared_embeddings_by_user_names_each_namespace_with_its
         "alice",
         ch=ch,
     )
-    ((read_sql, read_params),) = ch.read_calls[:1]
+    # the summaries of the user's memories first, then the shared rows promoted from either
+    assert "has(tags, 'consolidated')" in ch.read_calls[0][0]
+    ((read_sql, read_params),) = [c for c in ch.read_calls if "FROM loom.shared FINAL" in c[0]]
     assert "SELECT DISTINCT namespace, memory_key FROM loom.shared FINAL" in read_sql
     assert "splitByChar('/', x)[4]" in read_sql and read_params["uid"] == "alice"
     sel_sql, _ = ch.query_one_calls[0]
@@ -356,12 +358,8 @@ async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_th
     """In a purge, `memory.tombstone` and the summaries' tombstone still stamp
     loom.memory, so the cache steps between can read the keys; `memory.retire`
     deletes the summaries and then the user's rows."""
-
-    # what a late summary fed is run again first (test_erasure_step_order pins it)
-    async def no_late_summaries(org: str, user_id: str, *, ch: Any) -> int:
-        return 0
-
-    monkeypatch.setattr(graph_steps, "_retire_late_summaries", no_late_summaries)
+    # and what a summary written since fed (test_erasure_step_order pins them)
+    monkeypatch.setattr(graph_steps, "_SUMMARY_DERIVED_STEPS", ())
     pairs = ("namespace, memory_key FROM", [{"namespace": "ns", "memory_key": "k1"}])
     with erasure_mutations.purge_scope(True):
         ch = StubCH()
@@ -378,7 +376,8 @@ async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_th
         assert embeddings.startswith("DELETE FROM loom.memory_embeddings")
         assert memory.startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
 
-        # the summaries' rows are tombstoned and their links go; the answers quoting them
+        # the user's late rows are stamped; the summaries' rows are tombstoned and their
+        # links go; the answers quoting them
         # go again, while their keys still find them; the rows are deleted last, so a
         # step stopped part way still finds the summaries through them
         topic = "00000000-0000-0000-0000-0000000000c1"
@@ -395,7 +394,7 @@ async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_th
         # delete here (memory.tombstone counts none in a purge, the late stamp neither)
         assert await graph_steps.retire_memory_by_user("o", "alice", ch=ch) == 8
         calls = [(" ".join(sql.split()), params) for sql, params in ch.execute_calls]
-        embeddings, summaries, (links, link_params), stamp, cache, precedents, code, *rest = calls
+        stamp, embeddings, summaries, (links, link_params), cache, precedents, code, *rest = calls
         assert stamp[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
         (memory, memory_params), (own, own_params) = rest
         assert embeddings[0].startswith("DELETE FROM loom.memory_embeddings")

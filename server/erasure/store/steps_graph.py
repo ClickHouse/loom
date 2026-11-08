@@ -17,7 +17,6 @@ from server.erasure.store.mutations import (
     namespaces_of,
     purge_mode,
     purge_scope,
-    step_scope,
     tombstone_scoped,
 )
 from server.erasure.store.predicates import (
@@ -461,22 +460,6 @@ _SUMMARY_DERIVED_STEPS = (
 )
 
 
-async def _retire_late_summaries(org: str, user_id: str, *, ch: _CHClient) -> int:
-    """In a purge, before the rows that name the summaries go: a summary written since
-    the steps above is retired, then what it fed and the answers that quoted it, since
-    after the purge nothing, not even the census, finds them. Under a scope of its own,
-    so no statement shares a tag with one `memory.retire` sent already."""
-    with step_scope("memory.retire:late"):
-        total, _ = await _retire_summaries(org, user_id, ch=ch)
-        # the answers before the history goes, as in the saga
-        total += await delete_llm_response_cache_by_user(org, user_id, ch=ch)
-        total += await delete_ask_precedents_by_user(org, user_id, ch=ch)
-        total += await delete_code_answers_by_user(org, user_id, ch=ch)
-        for step in _SUMMARY_DERIVED_STEPS:
-            total += await step(org, user_id, ch=ch)
-    return total
-
-
 async def retire_memory_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
     """After every step that finds rows by the user's memory keys: the summaries built
     from the user's memories, the cached answers and precedents that quote them or the
@@ -485,19 +468,36 @@ async def retire_memory_by_user(org: str, user_id: str, *, ch: _CHClient | None 
     purge it deletes what those steps only tombstoned, and counts the user's rows. The
     summaries go first, while the user's rows still name them."""
     ch = ch or _default_client()
-    total, slices = await _retire_summaries(org, user_id, ch=ch)
+    if purge_mode():
+        return await _purge_memory_by_user(org, user_id, ch=ch)
+    total, _ = await _retire_summaries(org, user_id, ch=ch)
     # the rows written since memory.tombstone are stamped before the answers go, so no
     # new answer quotes them in between
+    total += await tombstone_scoped(
+        "loom.memory", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+    )
+    return total + await _delete_quoting_answers(org, user_id, ch=ch)
+
+
+async def _delete_quoting_answers(org: str, user_id: str, *, ch: _CHClient) -> int:
+    total = await delete_llm_response_cache_by_user(org, user_id, ch=ch)
+    total += await delete_ask_precedents_by_user(org, user_id, ch=ch)
+    return total + await delete_code_answers_by_user(org, user_id, ch=ch)
+
+
+async def _purge_memory_by_user(org: str, user_id: str, *, ch: _CHClient) -> int:
+    """`memory.retire` in a purge. A summary written since the steps that delete what
+    summaries fed goes with what it fed, before the rows that name it go: after the
+    purge nothing, not even the census, finds them."""
     with purge_scope(False):
-        stamped = await tombstone_scoped(
+        await tombstone_scoped(
             "loom.memory", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
         )
-    total += await delete_llm_response_cache_by_user(org, user_id, ch=ch)
-    total += await delete_ask_precedents_by_user(org, user_id, ch=ch)
-    total += await delete_code_answers_by_user(org, user_id, ch=ch)
-    if not purge_mode():
-        return total + stamped
-    total += await _retire_late_summaries(org, user_id, ch=ch)
+    total, slices = await _retire_summaries(org, user_id, ch=ch)
+    # the answers before the history goes, as in the saga
+    total += await _delete_quoting_answers(org, user_id, ch=ch)
+    for step in _SUMMARY_DERIVED_STEPS:
+        total += await step(org, user_id, ch=ch)
     for params in slices:
         # counted at their tombstone in this saga; one tombstoned before it is not
         await delete_scoped(

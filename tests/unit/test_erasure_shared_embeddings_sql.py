@@ -39,6 +39,8 @@ async def test_a_shared_row_of_the_same_key_in_another_namespace_keeps_its_embed
     ch = KeptCH(
         tmp_path,
         ddl("shared"),
+        ddl("memory"),
+        ddl("memory_versions"),
         *EMBEDDINGS,
         _shared("team-a", "alice"),
         _shared("team-b", "bob"),

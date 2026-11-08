@@ -260,8 +260,8 @@ USER_STEPS: tuple[UserStep, ...] = (
     # The triples, edges and community rows only this user's memories (or summaries of
     # them) carried leave with them. Ownership is read from the link tables, so these
     # run before graph_links.delete removes them. That step reads ownership again
-    # first, for a run the census reopens: three more statements, four scans of the
-    # org's link tables.
+    # first, for a run the census reopens: two more passes over the org's link tables,
+    # each with its read of the summaries.
     ("entity_graph.delete", graph_steps.delete_entity_graph_by_user),
     ("entity_communities.delete", graph_steps.delete_entity_communities_by_user),
     ("entity_vectors.delete", graph_steps.delete_entity_vectors_by_user),

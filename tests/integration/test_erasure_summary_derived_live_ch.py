@@ -10,7 +10,9 @@ LOOM_CH_HOST."""
 from __future__ import annotations
 
 import hashlib
+import uuid
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -44,6 +46,7 @@ _COUNTED = {
 _STEPS = (
     ("memory.tombstone", memory_steps.tombstone_memory_by_user),
     ("consolidated.tombstone", graph_steps.tombstone_consolidated_dependents_by_user),
+    ("shared.tombstone", memory_steps.tombstone_shared_by_user),
     ("memory_chunks.tombstone", memory_steps.tombstone_memory_chunks_by_user),
     ("entity_graph.delete", graph_steps.delete_entity_graph_by_user),
     ("entity_communities.delete", graph_steps.delete_entity_communities_by_user),
@@ -177,6 +180,26 @@ def _seed(ch_client: Any, org: str) -> None:
     )
 
 
+def _seed_shared(ch_client: Any, org: str) -> None:
+    """Org-wide copies promoted from the two summaries."""
+    _insert(
+        ch_client,
+        "loom.shared",
+        ["org", "namespace", "memory_key", "value", "memory_type", "confidence"]
+        + ["promoted_from", "promotion_event", "promoted_by", "reversible_until", "version"],
+        [
+            [org, "ns", key, "text", "fact", 1.0, [f"{org}/ns/a/-/-/{key}"]]
+            + [
+                uuid.UUID(f"00000000-0000-4000-8000-00000000010{i}"),
+                "explicit",
+                datetime(2099, 1, 1),
+                1,
+            ]
+            for i, key in enumerate(("topic-diets", "topic-bob"))
+        ],
+    )
+
+
 def _column(ch_client: Any, org: str, sql: str) -> list[str]:
     rows = ch_client.query(sql, parameters={"org": org}).result_rows
     return sorted(str(r[0]) for r in rows)
@@ -194,6 +217,7 @@ async def test_what_a_summary_of_the_users_memories_fed_leaves_with_it(
 ) -> None:
     org = unique_org("ersumdv")
     _seed(ch_client, org)
+    _seed_shared(ch_client, org)
     with erasure_mutations.purge_scope(purge), erasure_mutations.saga_scope(f"erasure-{org}"):
         before = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
         assert {t: before[t] for t in _COUNTED} == _COUNTED
@@ -228,12 +252,14 @@ async def test_what_a_summary_of_the_users_memories_fed_leaves_with_it(
     assert _column(ch_client, org, communities) == ["fish"]
     vectors = f"SELECT concat(user_id, ':', memory_key) FROM loom.entity_vectors{_WHERE}"
     assert _column(ch_client, org, vectors) == ["-:topic-bob", "carol:topic-diets"]
+    shared = f"SELECT memory_key FROM loom.shared FINAL{_WHERE} AND tombstoned_at IS NULL"
+    assert _column(ch_client, org, shared) == ["topic-bob"]
 
 
 async def test_a_reopened_link_delete_takes_the_triples_its_links_alone_held(ch_client, ch) -> None:
-    """The saga ran `graph_links.delete` without the summary's links (a build without
-    this change, or a summary linked since): the census reopens it, and it must not
-    leave the triple unlinked."""
+    """`graph_links.delete` ran without the summary's links (a build whose step did not
+    take them, or a summary linked since): the census reopens it, and it must not leave
+    the triple unlinked."""
     org = unique_org("ersumre")
     _seed(ch_client, org)
     ch_client.command(
@@ -242,7 +268,8 @@ async def test_a_reopened_link_delete_takes_the_triples_its_links_alone_held(ch_
         parameters={"org": org},
     )
     with erasure_mutations.saga_scope(f"erasure-{org}"):
-        await _run(_STEPS[:1] + _STEPS[6:7], org, ch)
+        steps = [s for s in _STEPS if s[0] in ("memory.tombstone", "graph_links.delete")]
+        await _run(steps, org, ch)
     triples = f"SELECT subject FROM loom.entity_triples{_WHERE}"
     assert _column(ch_client, org, triples) == ["bob"]
 
