@@ -81,15 +81,9 @@ USER_KEY_LIST = (
     "(SELECT groupUniqArray(memory_key) FROM loom.memory "
     "WHERE org = {org:String} AND user_id = {uid:String})"
 )
-# Summaries synthesised FROM an erased user's rows. A consolidated topic
-# memory (or merged canonical row) lives under the identity that ran the
-# consolidation — often `user_id='-'` — and carries its sources' content
-# verbatim by design, tagged `src:<key>`. A user_id match never reaches it. A `src:`
-# tag names a key of the summary's own namespace, as consolidation writes it (a copy
-# into another namespace keeps the tags, and is not the user's there); the next dense
-# pass rebuilds a retired summary from the surviving sources. The user's tags let the
-# skip index prune; their (namespace, tag) pairs decide, on each version.
-# `scope_reads.summary_slices` binds them; `USER_SUMMARIES` is the same match as a read.
+# A summary built from the user's rows, under any identity: tagged `src:<key>` with a key
+# the user wrote in the summary's own namespace, on each version. `USER_SUMMARIES` is the
+# read form.
 CONSOLIDATED_IN = (
     "has(tags, 'consolidated') AND hasAny(tags, {src:Array(String)}) "
     "AND hasAny(arrayMap(t -> (namespace, t), tags), {pairs:Array(Tuple(String, String))})"
@@ -115,12 +109,9 @@ SUMMARY_ROWS_FROM = (
 # steps run while the history still names a rebuilt one.
 USER_SUMMARY_KEY_LIST = f"(SELECT groupUniqArray(memory_key) {SUMMARY_ROWS_FROM})"
 USER_QUOTED_KEY_LIST = f"arrayConcat({USER_KEY_LIST}, {USER_SUMMARY_KEY_LIST})"
-# What was chunked or extracted from a summary is the user's too: chunks and entity
-# vectors by the summary's agent, user and key (neither carries the memory's session: a
-# chunk's is derived from its key; a legacy '-' chunk at the key of a summary written
-# under another user stays, as the '-' memory there is another row), row links by
-# (namespace, id), graph key links by (namespace, key), as for the user's own keys.
-# Each read form has its bound form beside it; the key links bind `PARENT_KEYS_IN`.
+# What was derived from a summary is the user's too: chunks and entity vectors by its
+# agent, user and key (neither carries the memory's session), row links by (namespace,
+# id), key links by (namespace, key) through `PARENT_KEYS_IN`.
 _USER_SUMMARY_KEYS_SUBQ = f"(SELECT toString(namespace), memory_key {SUMMARY_ROWS_FROM})"
 _USER_SUMMARY_IDENTITIES = (
     f"(SELECT toString(namespace), agent, user_id, memory_key {SUMMARY_ROWS_FROM})"
