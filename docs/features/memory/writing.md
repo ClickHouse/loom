@@ -336,12 +336,12 @@ trial when it names the key in `run.complete(memories_used=…)` and is graded w
 (`min_passes`, `max_fails`, `reject_after_fails`). See [runs](../runs.md).
 
 With the policy left `manual` (the default), a writer accepts or rejects a proposal on the
-**Proposals** tab of the **Review queue**, which a writer opens at `/admin/review_queue`
-(the admin drawer does not always list it: [dashboard](../dashboard.md#the-admin-drawer)). A
-decision names a key and decides its newest row, so the tab offers no decision for a key
-that more than one listed proposal holds. Accepting a proposal that recorded a contradiction
-while on trial stores it `conflicted`, and it waits on the **Conflicts** tab. Learnings have
-a review of their own:
+**Proposals** tab of the **Review queue** at `/admin/review_queue`. Only an admin has the
+drawer that links that page, and it does not always list it
+([dashboard](../dashboard.md#the-admin-drawer)). A decision names a key and decides its
+newest row, so the tab offers no decision for a key that more than one listed proposal
+holds. Accepting a proposal that recorded a contradiction while on trial stores it
+`conflicted`, and it waits on the **Conflicts** tab. Learnings have a review of their own:
 [learnings review queue](./procedures-and-learnings.md#learnings-review-queue).
 
 ## Typed records
