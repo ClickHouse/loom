@@ -93,12 +93,19 @@ pull request the tag ships.
    ```
 
 4. The tag push runs `.github/workflows/release.yml` (below), publishes the server and
-   extractor images, and only then creates the GitHub Release. Check the images and release files.
+   extractor images, and only then creates the GitHub Release, then checks the published installer
+   from outside (`release-check`). Read that run before step 5.
 5. To publish the SDKs and the MCP Registry listing, run the same workflow manually on the tag:
 
    ```bash
    gh workflow run release.yml --ref vX.Y.Z
    ```
+
+   Once that run's `pypi` and `npm` jobs pass, check the SDKs as a user installs them, with the
+   upgrade from the previous release:
+   `gh workflow run release-check.yml -f version=X.Y.Z -f previous_version=<previous X.Y.Z>`.
+   `previous_version` must be a published release earlier than `version` that carries
+   `install.sh` and `loom-stack.tar.gz`; leave it out when there is none.
 
 6. Paste the release notes made at the final tag's commit ([release notes](#release-notes)) into
    the GitHub Release, above the generated notes.
@@ -135,10 +142,10 @@ ghcr.io, without the provenance and SBOM attestations that only a registry keeps
 `docker-smoke` loads them from there. The `preflight` job reports each missing
 [prerequisite](#before-the-first-release) as a warning instead of failing. What only a published
 release exercises, a dry run does not: `docker-tag` (joining each image's two digests, the Latest
-decision, `:latest`), the GitHub Release, the registry publishes, the published-images check
-(`scripts/release/published_images.sh`) with the skipped-build path it selects, the
-candidate-order check (`prepare.py check-tag`, which a dry run of a branch skips with a notice),
-and the chart check when the version is already tagged on another commit.
+decision, `:latest`), the GitHub Release, the registry publishes, `release-check`, the
+published-images check (`scripts/release/published_images.sh`) with the skipped-build path it
+selects, the candidate-order check (`prepare.py check-tag`, which a dry run of a branch skips with
+a notice), and the chart check when the version is already tagged on another commit.
 
 ## Before the first release
 
@@ -191,11 +198,13 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),
    and zips of the two plugins (`loom-claude-code-plugin-vX.Y.Z.zip`,
    `loom-codex-plugin-vX.Y.Z.zip`); it also builds the source-free Compose bundle and its
-   SHA-256 file, naming that ClickHouse release;
+   SHA-256 file, naming that ClickHouse release, and the release's `install.sh`, which installs
+   this version;
 5. `verify` checks those exact files: their names and embedded versions, the plugin
    manifests, no tests in the Claude Code zip, the executable bits git records, and
-   that the bundle names the ClickHouse release the `clickhouse` job checked, and
-   smoke-tests the wheel in a clean venv with `scripts/gates/sdk_wheel_smoke.py`;
+   that the bundle names the ClickHouse release the `clickhouse` job checked and `install.sh`
+   installs this version, and smoke-tests the wheel in a clean venv
+   (`scripts/gates/sdk_wheel_smoke.py`);
 6. `docker` builds `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`
    (the document extractor service), each for linux/amd64 and linux/arm64 on that
    architecture's own runner and without the build cache (so from the package archives as
@@ -203,7 +212,11 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    `docker-tag` joins each image's two digests under its tags, and tags neither image until
    all four have passed (a failure there can leave one tagged, and re-running it tags both);
 7. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
-   names, on amd64 and arm64;
+   names, on amd64 and arm64, then runs the release's own `install.sh` and bundle as the
+   one-liner in clean Debian, Ubuntu and Alpine containers (install, round trip, re-run, a
+   refused downgrade under each one's own `sh` and `awk`, and an upgrade over the previous
+   final release's installer, or, in a dry run of a commit after its version's release, over
+   that release's own; `scripts/gates/installer_rehearsal.py`);
 8. `github-release` creates the GitHub Release only after both images exist, with notes
    generated from the commits since the previous final release (`prepare.py previous`, an
    output of `version`; a candidate's notes start there too), or updates it on a re-run, keeping
@@ -225,15 +238,18 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    or accepting the downgrade:
    `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
    When neither is taken, move `:latest` back to the previous release by hand, on both
-   `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`.
+   `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`;
+9. `release-check` (on a tag push) runs `.github/workflows/release-check.yml` against what
+   was just published, signed in to nothing: the one-liner from github.com in the same clean
+   containers, pulling both images anonymously.
 
 The server and extractor images are published before the GitHub Release, so an installer
 shown on the release page never points at a missing image.
 
-**On manual dispatch** (`workflow_dispatch` on a tag ref), the same jobs run (`build`
-also runs the TypeScript SDK's `npm run check`: lint, types, version, README examples,
-tests), building no image when the images are already published (below), and then three publish
-jobs:
+**On manual dispatch** (`workflow_dispatch` on a tag ref), the same jobs run except
+`release-check`, building no image when the images are already published (below). `build` also
+runs the TypeScript SDK's `npm run check` (lint, types, version, README examples, tests). Then
+three publish jobs run:
 
 | Job            | Publishes                                                        | How                                                                                                                                                                                                                                   |
 | -------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

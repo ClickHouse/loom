@@ -23,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from scripts.release.build_stack_bundle import build  # noqa: E402
+from server import __version__  # noqa: E402
 
 
 def request(base: str, path: str, body: dict | None = None) -> dict:
@@ -96,7 +97,7 @@ def latest_release() -> str:
 def smoke(image: str, extractor_image: str, clickhouse_image: str) -> None:
     with tempfile.TemporaryDirectory(prefix="loom-docker-smoke-") as temp:
         root = Path(temp)
-        archive, checksum = build("smoke", root / "bundle", clickhouse_image)
+        archive, checksum = build(__version__, root / "bundle", clickhouse_image)
         stack = root / "stack"
         env = {
             **os.environ,

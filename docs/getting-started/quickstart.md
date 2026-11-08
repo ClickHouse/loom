@@ -53,11 +53,15 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
   | sh -s -- --clickhouse https://loom@abc123.us-east-1.aws.clickhouse.cloud:8443
 ```
 
-Pin a release or inspect everything before starting:
+Each release's `install.sh` installs that release, so the copy `latest` serves installs the
+latest release, and a saved copy installs the same version every time it runs. Over a newer
+install, an older release's copy refuses to install, rather than start an older Loom and
+ClickHouse on newer data; to downgrade on purpose, follow
+[downgrading an installer install](../operations/upgrades.md#downgrading-an-installer-install).
+Pin a release, or inspect everything before starting:
 
 ```bash
-curl -fsSL https://github.com/ClickHouse/loom/releases/download/v1.2.3/install.sh \
-  | LOOM_VERSION=1.2.3 sh
+curl -fsSL https://github.com/ClickHouse/loom/releases/download/v1.2.3/install.sh | sh
 
 curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz
 curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz.sha256

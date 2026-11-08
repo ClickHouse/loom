@@ -149,6 +149,8 @@ keep the columns it does not know
 There are no down-migrations. To return to an earlier schema, restore a backup taken
 before the upgrade ([backup and recovery](./backup-and-recovery.md)).
 
+### Downgrading an installer install
+
 Each installer bundle names the ClickHouse release it was built with, so installing an
 earlier Loom version also runs an earlier ClickHouse on a volume the newer one wrote,
 which it may not read. To roll back Loom alone, keep the newer ClickHouse: before running
@@ -160,6 +162,13 @@ earlier `LOOM_CLICKHOUSE_IMAGE` line:
 dir=${LOOM_INSTALL_DIR:-$HOME/.loom}
 echo "LOOM_CLICKHOUSE_IMAGE=$(docker inspect -f '{{.Config.Image}}' \
   "$(docker compose --project-directory "$dir" ps -q clickhouse)")"
+```
+
+Then run the earlier release's installer naming its version, as an older installer over a
+newer install refuses otherwise:
+
+```bash
+curl -fsSL https://github.com/ClickHouse/loom/releases/download/vX.Y.Z/install.sh | LOOM_VERSION=X.Y.Z sh
 ```
 
 The installer keeps `.env`, so the pin holds ClickHouse through later upgrades too:

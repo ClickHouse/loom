@@ -75,6 +75,14 @@ image as `LOOM_BUILD_COMMIT`, reported as `build_commit`). The remaining
 | `LOOM_IMAGE_REPOSITORY`, `LOOM_VERSION`         | `compose.yaml`, `install.sh`                               | `ghcr.io/clickhouse/loom`, `latest`   | The image and tag the standalone stack runs; the installer pins the tag in `.env`.                                                            |
 | `LOOM_EXTRACTOR_IMAGE_REPOSITORY`               | `compose.yaml`, `install.sh`                               | `ghcr.io/clickhouse/loom-extractor`   | The document extractor service's image, run at `LOOM_VERSION`.                                                                                |
 | `LOOM_PORT`                                     | `compose.yaml`, `install.sh`                               | `7777`                                | The host port the standalone stack publishes.                                                                                                 |
+| `LOOM_REPOSITORY`                               | `install.sh`                                               | `ClickHouse/loom`                     | The GitHub repository whose releases the installer downloads.                                                                                 |
+| `LOOM_RELEASES_URL`                             | `install.sh`                                               | GitHub                                | Where the installer downloads release files, an `https://` URL; by default `https://github.com/$LOOM_REPOSITORY/releases`.                    |
+
+Given to the installer, `LOOM_VERSION` installs the release it names. Without it, a release's
+`install.sh` installs its own release and the repository's copy installs `latest`; an older
+release over a newer install is refused unless `LOOM_VERSION` names it
+(pin ClickHouse first:
+[downgrading an installer install](../operations/upgrades.md#downgrading-an-installer-install)).
 
 Other `${LOOM_*}` references in the compose files are settings fields given a
 compose-level default and the uvicorn variables above. The installer keeps the two image
