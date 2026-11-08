@@ -722,3 +722,30 @@ def test_a_mirrored_overlay_with_unreached_files_is_not_cached(
     later = load()
     assert later is not partial and later.symbols and later.unreached == 0
     assert load() is later  # a complete overlay is cached
+
+
+def test_a_queued_parse_started_too_late_is_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.05)
+    calls: list[str] = []
+
+    def parse(path: str, source: bytes) -> Any:
+        calls.append(path)
+        time.sleep(0.4)
+        return None, po._Facts((path,), frozenset(), False)
+
+    monkeypatch.setattr(po, "_parsed_facts", parse)
+
+    async def queued() -> Any:
+        # two other namespaces hold both pool threads
+        for ns in ("one", "two"):
+            asyncio.ensure_future(
+                po._file_facts(("acme", ns), f"{ns}.go", b"", ns, time.monotonic() + 60)
+            )
+        await asyncio.sleep(0.02)
+        got = await po._file_facts(("acme", "three"), "c.go", b"", "c", time.monotonic() + 0.05)
+        await asyncio.sleep(0.6)
+        return got
+
+    assert asyncio.run(queued()) is None
+    assert sorted(calls) == ["one.go", "two.go"]  # the late job never ran
+    assert po._FILE_FACTS.get(("c.go", "c")) is None

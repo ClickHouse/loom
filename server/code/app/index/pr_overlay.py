@@ -557,18 +557,23 @@ async def _in_turn[T](
     else:
         if time.monotonic() > deadline:
             return None
-        call = functools.partial(contextvars.copy_context().run, fn, *args)
+        # a request waits for its parse until one parse deadline after its own; a job the
+        # full pool starts later than that is dropped unrun
+        late = deadline + settings.code_parse_timeout_s
+        context = contextvars.copy_context()
+
+        def call() -> T | None:
+            return None if time.monotonic() > late else context.run(fn, *args)
+
         task = asyncio.get_running_loop().run_in_executor(_PARSE_POOL, call)
         _RUNNING[scope] = (key, task)
 
         def finished(t: asyncio.Future[Any]) -> None:
             _RUNNING.pop(scope, None)
-            if not t.cancelled() and t.exception() is None:
+            if not t.cancelled() and t.exception() is None and t.result() is not None:
                 store(t.result())  # kept even when every request waiting on it went away
 
         task.add_done_callback(finished)
-    # a parse waiting on its grammar's lock elsewhere in the process is not waited for
-    # past one parse deadline after the request's own
     wait = max(0.0, deadline + settings.code_parse_timeout_s - time.monotonic())
     done, _ = await asyncio.wait({task}, timeout=wait)
     return cast("T", task.result()) if done else None
