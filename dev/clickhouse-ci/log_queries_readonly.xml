@@ -1,7 +1,7 @@
 <!--
-  CI only: no user on this server may change log_queries, as on ClickHouse Cloud,
-  so a statement or settings profile that turns query logging off fails here
-  as it does there.
+  CI only: Loom's user, on the default profile, may not change how its queries
+  are logged, as on ClickHouse Cloud, so a statement or settings profile that
+  turns query logging off fails here as it does there.
 -->
 <clickhouse>
     <profiles>
@@ -10,6 +10,12 @@
                 <log_queries>
                     <readonly/>
                 </log_queries>
+                <log_query_settings>
+                    <readonly/>
+                </log_query_settings>
+                <log_queries_min_type>
+                    <readonly/>
+                </log_queries_min_type>
             </constraints>
         </default>
     </profiles>

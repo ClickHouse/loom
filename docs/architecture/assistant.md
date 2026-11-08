@@ -342,18 +342,18 @@ changes it. It keeps the secrets out of what is logged instead:
 
 - Every statement that carries the key or the password runs with
   `log_queries_cut_to_length = 1` (`TEXT_CUT_FROM_LOG` in
-  `server/insights/domain/analysis.py`), which any user may set. ClickHouse then logs
+  `server/insights/domain/analysis.py`), which ClickHouse Cloud leaves unconstrained.
+  ClickHouse then logs
   the statement, in `system.query_log` and in its server log, as only the number of
   characters it removed. The printed SQL sets it first, for the session it runs in.
 - ClickHouse itself leaves the password out of a logged `IDENTIFIED BY`.
 - An error raised inside a row policy quotes the policy, and ClickHouse logs that error
   in `system.query_log`'s `exception` column; the probe's unsigned read raises one on
   every table by design. So the key's two padded forms, the only places the key enters
-  the HMAC, are written in the policy as `decrypt('aes-256-ecb', …)` of themselves
-  sealed under the key, which ClickHouse prints as `[HIDDEN]` in an error message and in
-  `SHOW CREATE ROW POLICY`. The HMAC is the same, so the signature Loom computes does not
-  change, so a build N-1, which wrote the pads in clear, signs statements that these
-  policies accept.
+  the HMAC, are masked in the policy by a `decrypt('aes-256-ecb', …)` of themselves
+  under the key, which ClickHouse prints as `[HIDDEN]` in an error message and in
+  `SHOW CREATE ROW POLICY`. The HMAC is the same, so a build N-1, which wrote the pads
+  in clear, signs statements these policies accept.
 
 The key is in ClickHouse's own access storage (on disk, or in Keeper when access is
 replicated), in a backup of the access entities, in the distributed DDL queue of a

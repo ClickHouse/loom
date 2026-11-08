@@ -23,6 +23,9 @@ import hmac
 from dataclasses import dataclass
 from typing import NamedTuple
 
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
 from server.core.sql_literal import sql_string
 
 # Bumped whenever the allowlist, the profile or the policy shape changes. The
@@ -60,8 +63,9 @@ CAPS_DIGEST_SETTING = "SQL_loom_analyst_caps_digest"
 # A statement's text in system.query_log and the server log is cut to this
 # many bytes, and a text cut that short is logged as only its length. Loom
 # cannot turn query logging off everywhere (ClickHouse Cloud pins
-# `log_queries` for its users), but any user may set this one.
-TEXT_CUT_FROM_LOG = {"log_queries_cut_to_length": 1}
+# `log_queries` for its users) but Cloud leaves this one unconstrained.
+LOG_CUT_SETTING = "log_queries_cut_to_length"
+TEXT_CUT_FROM_LOG = {LOG_CUT_SETTING: 1}
 
 _BLOCK = 64  # SHA-256 block size, for HMAC's inner and outer pads
 
@@ -274,14 +278,12 @@ def _setting(name: str) -> str:
     return f"toString(getSetting('{name}'))"
 
 
-def _sealed_literal(key: bytes, data: bytes) -> str:
+def _masked_bytes(key: bytes, data: bytes) -> str:
     """`data` as a `decrypt` expression, whose arguments ClickHouse prints as [HIDDEN]."""
-    from cryptography.hazmat.primitives import padding
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
     padder = padding.PKCS7(128).padder()
     # The key sits beside the ciphertext: this masks the pads in ClickHouse's
-    # printing, it does not keep them secret.
+    # printing, it does not keep them secret. ECB is deterministic, so every
+    # write spells the same policy.
     encryptor = Cipher(algorithms.AES(key), modes.ECB()).encryptor()
     sealed = encryptor.update(padder.update(data) + padder.finalize()) + encryptor.finalize()
     return f"decrypt('aes-256-ecb', unhex('{sealed.hex()}'), unhex('{key.hex()}'))"
@@ -291,8 +293,8 @@ def _hmac_sql(key: bytes, payload: str) -> str:
     """HMAC-SHA256 of `payload` under `key` as ClickHouse computes it, spelled
     as the key's inner and outer pads."""
     padded = key.ljust(_BLOCK, b"\0")
-    ipad = _sealed_literal(key, bytes(b ^ 0x36 for b in padded))
-    opad = _sealed_literal(key, bytes(b ^ 0x5C for b in padded))
+    ipad = _masked_bytes(key, bytes(b ^ 0x36 for b in padded))
+    opad = _masked_bytes(key, bytes(b ^ 0x5C for b in padded))
     inner = f"SHA256(concat({ipad}, {payload}))"
     return f"hex(SHA256(concat({opad}, {inner})))"
 
@@ -337,7 +339,7 @@ def profile_settings() -> list[str]:
         "final = 1 CONST",
         "apply_row_policy_after_final = 1 CONST",
         # A statement that runs is logged without its text; the ledger keeps its digest.
-        *(f"{name} = {value} CONST" for name, value in TEXT_CUT_FROM_LOG.items()),
+        f"{LOG_CUT_SETTING} = 1 CONST",
         "read_overflow_mode = 'throw' CONST",
         "result_overflow_mode = 'throw' CONST",
         "timeout_overflow_mode = 'throw' CONST",

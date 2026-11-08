@@ -3,6 +3,7 @@ the one allowlist, and every allowlisted table is one erasure reaches."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import re
@@ -12,6 +13,7 @@ import pytest
 from server.core.sql_literal import sql_string
 from server.erasure.store import census
 from server.insights.domain import analysis as boundary
+from server.insights.store import analysis as store
 from tests.unit import clickhouse_local
 
 CAPS = boundary.Caps(
@@ -189,10 +191,6 @@ def test_no_entity_statement_changes_log_queries() -> None:
 
 
 def test_entity_statements_are_sent_with_their_text_cut_from_the_log() -> None:
-    import asyncio
-
-    from server.insights.store import analysis as store
-
     sent: list[tuple[str, dict[str, object]]] = []
 
     class _Client:
