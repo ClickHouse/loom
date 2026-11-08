@@ -703,7 +703,7 @@ def test_a_mirrored_overlay_with_unreached_files_is_not_cached(
     async def names(git_dir: str, base: str, head: str) -> list[str]:
         return [PATH]
 
-    async def show(git_dir: str, head: str, path: str) -> bytes:
+    async def show(git_dir: str, head: str, path: str, **kw: Any) -> bytes:
         return POST.encode()
 
     for name, fake in (
