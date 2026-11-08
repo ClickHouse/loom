@@ -453,10 +453,12 @@ _CENSUS: tuple[Substrate, ...] = (
 #   shared*.tombstone                — org-wide promoted rows, matched by
 #                                       provenance not by scope.
 #   consolidated.tombstone           — loom.memory rows under another identity,
-#                                       and their code links; counted by the
-#                                       memory row for the namespace scope only.
-#                                       `memory.retire` (the user-scope owner of
-#                                       loom.memory) runs the same pass again.
+#                                       their vectors and code links. The memory
+#                                       row counts the summaries in both scopes;
+#                                       their vectors and code links only in the
+#                                       namespace scope. `memory.retire` (the
+#                                       user-scope owner of loom.memory) runs the
+#                                       same pass again.
 #   procedure_runs / query_nodes / session_outcomes / term_aggregates .delete
 #                                    — derived ledgers without a read path
 #                                       into memory content; not censused.

@@ -388,8 +388,9 @@ async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_th
             [one, one, one, one, keys, one, keys, one, keys, one, one, one, {"n": 2}]
         )
         # each row counts once: the summary's at its tombstone, the user's at their
-        # delete here (memory.tombstone counts none in a purge, the late stamp neither)
-        assert await graph_steps.retire_memory_by_user("o", "alice", ch=ch) == 8
+        # delete here (memory.tombstone counts none in a purge, the late stamp neither);
+        # a late summary's vectors count at their second tombstone
+        assert await graph_steps.retire_memory_by_user("o", "alice", ch=ch) == 9
         calls = [(" ".join(sql.split()), params) for sql, params in ch.execute_calls]
         embeddings, summaries, (links, link_params), stamp, cache, precedents, code, *rest = calls
         assert stamp[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")

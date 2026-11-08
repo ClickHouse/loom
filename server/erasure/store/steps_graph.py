@@ -488,7 +488,7 @@ async def retire_memory_by_user(org: str, user_id: str, *, ch: _CHClient | None 
         for step in _SUMMARY_DERIVED_STEPS:
             total += await step(org, user_id, ch=ch)
         for params in slices:
-            await tombstone_scoped(
+            total += await tombstone_scoped(
                 "loom.memory_embeddings",
                 org=org,
                 scope_where=CONSOLIDATED_IN,

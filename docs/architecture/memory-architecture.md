@@ -1325,7 +1325,8 @@ it.
 
 Under the Postgres authority the journal's revisions of a summary go with it when its
 current head names the user; a summary rebuilt without the user keeps its older
-revisions there.
+revisions there. The user-scope census counts a summary's row, not its vector or code
+link rows, which `consolidated.tombstone` and `memory.retire` retire with it.
 
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no
