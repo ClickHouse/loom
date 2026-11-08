@@ -207,6 +207,8 @@ def test_a_budget_refusal_is_the_requests_error_and_touches_nothing_else(wire) -
     assert refused.value.status_code == 403 and refused.value.code == "MODEL_CALL_REFUSED"
     detail = refused.value.to_detail()
     assert (detail["gateway_status"], detail["gateway_code"]) == (429, "budget_exceeded")
+    # Extraction rows and agent events store the message: the gateway's own text stays out.
+    assert detail["message"] == "the inference gateway refused this call (429 budget_exceeded)"
     assert wire.agents == ["agent-a"]  # not retried
     assert provider_health.status() == {"degraded": False, "providers": {}}
     assert asyncio.run(customer.switched_off_orgs()) == frozenset()  # no org is off

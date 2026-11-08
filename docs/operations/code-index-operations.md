@@ -173,7 +173,7 @@ docker exec loom-workers loom code backfill-prs --namespace code-myrepo --org ac
   (`LOOM_CODE_MIRROR_WARMUP`) and, every `LOOM_CODE_MIRROR_FETCH_INTERVAL_S`, fetches
   the refs the leader's pass recorded in ClickHouse that it lacks (no `ls-remote`, and
   no network call when it is current). Until a host has the mirror, its history reads
-  answer `no_git_mirror: cloning <entry>`; `/v1/health?include=mirrors` lists the host's
+  answer `no_git_mirror: cloning <entry>`; `/v1/health?include=mirrors` counts the host's
   mirrors under `mirrors`. Disk: every host holds a copy of every mirror (N replicas, N copies), and
   an operator `git_dir` must be writable by the `loom` user. Network: a host with an
   empty disk makes one full clone per indexed repository; keep `LOOM_CODE_REPOS_ROOT`

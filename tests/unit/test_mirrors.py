@@ -108,7 +108,8 @@ async def test_any_other_fetch_failure_still_raises(monkeypatch, tmp_path) -> No
     assert pass_fetch.unpinned(str(tmp_path)) == set()
 
 
-def test_mirror_status_by_entry_label(monkeypatch, tmp_path) -> None:
+def test_mirror_status_counts_and_names_no_entry(monkeypatch, tmp_path) -> None:
+    """`/v1/health?include=mirrors` answers without a token: no org or namespace label."""
     ready = _Cfg(str(tmp_path / "a.git"), "code-a")
     os.makedirs(ready.git_dir)
     queued = _Cfg(str(tmp_path / "b.git"), "code-b")
@@ -117,8 +118,13 @@ def test_mirror_status_by_entry_label(monkeypatch, tmp_path) -> None:
     mirrors._QUEUED.add(queued.git_dir)
     _repos(monkeypatch, [ready, queued, no_remote])
     got = mirrors.mirror_status()
-    assert got["ready"] == ["o/code-a"] and got["cloning"] == ["o/code-b"]
-    assert got["absent"] == {"o/code-c": "names no remote to clone"}
+    assert got == {
+        "ready": 1,
+        "cloning": 1,
+        "failed": {},
+        "absent": {"names no remote to clone": 1},
+        "unpinned_merges": 0,
+    }
 
 
 @pytest.mark.asyncio

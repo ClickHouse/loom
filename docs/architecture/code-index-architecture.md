@@ -109,9 +109,9 @@ remote, and any host can rebuild the mirror from it.
   erasure census does not count them. A removed repository's copies go with the sweep
   on each host.
 
-`/v1/health?include=mirrors` carries `mirrors`: this host's entries by label as `ready`, `cloning`,
-`failed` (with the reason) and `absent` (with why). Disk use is the size of every
-mirror on every host: N replicas hold N copies.
+`/v1/health?include=mirrors` carries `mirrors`: how many of this host's entries are `ready`
+and `cloning`, and `failed` and `absent` counted by reason. It answers without a token, so
+it names no entry. Disk use is the size of every mirror on every host: N replicas hold N copies.
 
 ## Components
 

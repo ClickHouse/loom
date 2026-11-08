@@ -45,7 +45,6 @@ from typing import Any
 import httpx
 
 from server.clients._http import refuse_off_gateway
-from server.clients._http_errors import provider_error_detail
 from server.core.errors import LoomServerError, ModelCallDeferred, ModelCallRefused
 from server.settings import settings
 from server.settings.catalog import IDENTITY_REFUSAL_FIELDS, url_host
@@ -381,7 +380,8 @@ def _hold(response: httpx.Response, entry: Mapping[str, Any], *, wait: bool) -> 
             seconds,
         )
     what = "asked this call to wait" if wait else "refused this call"
-    said = " ".join(filter(None, (str(status), provider_error_detail(response))))
+    # The status and code, never the gateway's text: job rows store this message.
+    said = " ".join(filter(None, (str(status), code)))
     return _held_error(status, code, wait, seconds, f"the inference gateway {what} ({said})")
 
 

@@ -251,8 +251,9 @@ def test_mirrors_wait_for_clones_and_not_for_failures(monkeypatch, tmp_path) -> 
         lambda d: ("failed", "auth refused") if d == entries[2].git_dir else ("", ""),
     )
     status = mirrors.mirror_status()
-    assert status["ready"] == ["here"] and status["failed"] == {"broken": "auth refused"}
-    assert asyncio.run(mirrors.readiness_check()).reason == "mirrors cloning: queued"
+    assert status["ready"] == 1 and status["failed"] == {"auth refused": 1}
+    # `/v1/health/ready` answers without a token: a count, no entry's label.
+    assert asyncio.run(mirrors.readiness_check()).reason == "mirrors cloning: 1"
     monkeypatch.setattr(mirrors, "_QUEUED", set())
     assert asyncio.run(mirrors.readiness_check()).ok
 
