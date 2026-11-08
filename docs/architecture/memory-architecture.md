@@ -1286,7 +1286,8 @@ none of the three lists.
 
 A user-scope step reaches a table with no `user_id` column through a predicate that holds
 a subquery: the user's memory keys, record ids or shared keys, or the graph keys and
-entities only the user's memories link (`server/erasure/store/predicates.py`). The census
+entities only the user's memories link, and the same of the summaries built from them
+(`server/erasure/store/predicates.py`). The census
 counts with that predicate as written. A replicated table refuses a mutation with a
 subquery or with `now()`, so the step reads the subquery first and mutates by what it
 returned, bound as an array a slice at a time (`server/erasure/store/scope_reads.py`), and

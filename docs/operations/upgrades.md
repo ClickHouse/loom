@@ -143,7 +143,8 @@ and a bot that build saves keeps 3600 as its maximum; reapply a shorter or longe
 once the newer build serves
 ([rolling upgrades](../architecture/rolling-upgrades.md), rule 26).
 A user erasure the previous build runs leaves what a summary of the user's memories
-fed; request it again once the newer build serves (rule 37).
+fed; request again each one run without `purge` once the newer build serves; a purge it
+completed is not found again (rule 37).
 Do not roll back past the build that adds the document bucket while any catalog row
 names an object in it: an older build answers those downloads `410 BLOB_GONE`, its
 erasure deletes the rows and cannot reach their objects, and its sweep never walks the
