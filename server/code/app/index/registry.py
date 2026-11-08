@@ -91,7 +91,7 @@ async def ensure_registered(
 
 async def insert_first_row(cfg: Any, client: Any, *, restricted: bool, join_policy: str) -> None:
     """Write a code namespace's first directory row. The caller holds the namespace's
-    admins claim, under which it found no row."""
+    account and admins claims, under which it found no row."""
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     row = {
         "org": cfg.org,

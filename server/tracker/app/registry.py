@@ -30,6 +30,7 @@ async def ensure_tracker_registered(
     ch: Any | None = None,
     join_policy: str = "",
 ) -> bool:
+    """The caller holds the namespace's account claim."""
     key = (org, namespace)
     if key in _DONE:
         return False
@@ -88,8 +89,7 @@ async def ensure_tracker_registered(
 
 async def ensure_configured_tracker_namespaces(*, ch: Any | None = None) -> list[str]:
     """Directory rows for every namespace in the QA configuration.
-    Best effort per namespace; returns the ones registered
-    or narrowed this call."""
+    Best effort per namespace; returns the ones registered this call."""
     from server.auth.grant_claims import account_change
     from server.tracker.domain.namespaces import configured_namespaces
     from server.tracker.store.source import qa_intel
