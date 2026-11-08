@@ -122,9 +122,9 @@ function RenameDialog({
   );
 }
 
-/** The thread across every agent, read for its owner and what is left (one turn, the least
- *  the read returns); `agent` is the row's owner while a row is left, else the oldest
- *  remaining turn's writer. */
+/** The thread across every agent, one turn of it: whether it is `found`, its `msg_count`,
+ *  its `created_at` (null when no row is left) and its `agent` (the row's owner while a
+ *  row is left, else the oldest remaining turn's writer). */
 const readHead = (id: Pick<Identity, "org" | "namespace">, threadId: string) =>
   getConversationThread(id, "*", threadId, { limit: 1 });
 
