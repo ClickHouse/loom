@@ -31,8 +31,8 @@ export function Inspection({ result }: { result: MemoryInspection }) {
         {SUBJECT_COPY[result.subject].label}{" "}
         <span className="font-mono break-all">{shownName(result.subject, result.id)}</span>
       </p>
-      {/* Both views' definitions mean the same names: shown once. */}
-      <ExactNames refs={[...new Set([...(result.own.refs ?? []), ...(result.others.refs ?? [])])]} />
+      {/* Both views' definitions mean the same names (the server sends one list): shown once. */}
+      <ExactNames refs={result.own.refs} />
       <InspectViewBlock
         id="inspect-own"
         title={OWN_HEADING[result.subject]}

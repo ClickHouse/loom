@@ -262,7 +262,8 @@ and calls no model. Each proposal names:
   acts on it. A setting is named as it is changed: `settings.set <field>` when it changes
   live, its `LOOM_` variable when only the environment sets it. A `skipped` reason about a
   setting, a lost capability, a finding or an error code, or one that tells the reader to
-  act, names the exact names in parentheses.
+  act, names the exact names in parentheses; the `projection:` line and the `audit.<check>`
+  lines carry their source's text as it is.
 
 The drafts come from fixed rules: an extraction rule per writer-side audit finding
 (double-encoded values, JSON-prefix excerpts, oversized values, episodic blobs,
