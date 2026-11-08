@@ -899,7 +899,11 @@ async def _retry_expiry_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str
         ):
             return "malformed_payload"
         recorded.append((cast(IdentityKey, tuple(key)), version, action))
-    await replay_mirror(recorded, ch=ch)
+    from server.core.ch import sequential_reads
+
+    # The vector reads see every row that landed before the replay, as the head read does.
+    with sequential_reads():
+        await replay_mirror(recorded, ch=ch)
     return ""
 
 

@@ -614,8 +614,11 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
     _DEMOTE_REEMITS.clear()
     clients: list[Any] = []
 
+    from server.core.ch import sequential_reads_active
+
     async def _retire_ok(items, *, ch=None, bare=False) -> int:
         assert bare  # a late copy of the text could land after a redaction's purge
+        assert sequential_reads_active()  # sees a copy that landed on another replica
         clients.append(ch)
         for (_o, _n, _a, _u, _s, key), version in items:
             retired.append((key, version))
