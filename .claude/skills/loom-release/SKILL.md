@@ -91,7 +91,7 @@ The plugins, in a throwaway `HOME`: `claude plugin marketplace add ClickHouse/lo
 
 - **The installer or an image is bad**: move back only the tags the bad release took, checking the previous release's signature before moving each ([a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature) has the commands), then ship a patch.
   - A final took `:X.Y`: point it at the previous patch of that line. An `X.Y.0` has none, so `:X.Y` stays until `X.Y.1`.
-  - When the bad release is also Latest (`GITHUB_REPOSITORY=ClickHouse/loom python3 scripts/release/make_latest.py X.Y.Z` prints `true`, with `gh` signed in), point Latest at the release before it (`gh release edit v<previous> -R ClickHouse/loom --latest`) and both images' `:latest` there. After that, never dispatch or re-run the bad tag: its `github-release` job makes it Latest again until a higher final is tagged.
+  - When the bad release is also Latest (`GITHUB_REPOSITORY=ClickHouse/loom python3 scripts/release/make_latest.py X.Y.Z` prints `true`, with `gh` signed in), point Latest at the release that held it before, the highest final below it (`gh release edit v<that release> -R ClickHouse/loom --latest`), and both images' `:latest` there. After that, never dispatch or re-run the bad tag: its `github-release` job makes it Latest again until a higher final is tagged.
   - A candidate took neither.
 
   Never delete a release's assets or tag: an installed version reruns its installer from them. A host already on the bad release keeps it until the patch: the older installer refuses to run over a newer install; going back is [downgrading an installer install](../../../docs/operations/upgrades.md#downgrading-an-installer-install), ClickHouse pinned first.
