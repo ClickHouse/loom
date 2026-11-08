@@ -436,10 +436,10 @@ schema. These rules keep that safe. The operator procedure is in
     when N-1 ran its `shared.tombstone`, which deleted the rows they are found by.
     After a purge that passed `memory.retire`, including one N-1 completed, the user's
     keys are gone and nothing finds the summaries' rows.
-    The ledger does not name the build that ran a saga: once N serves alone, request
-    again each user erasure without `purge` that completed since the rollout began (the
-    `user_id` rows of `loom.erasure_requests`), and after a rollback, those N-1 completed
-    once N serves again ([upgrade procedure](../operations/upgrades.md#upgrade-procedure),
+    Every build before N leaves them, and the ledger does not name the build that ran a
+    saga: once N serves alone, request again each user erasure without `purge` that
+    completed before then (the completed `user_id` rows of `loom.erasure_requests`), and
+    after a rollback, those N-1 completed once N serves again ([upgrade procedure](../operations/upgrades.md#upgrade-procedure),
     step 10); no gate holds the rollout.
 
 ## What checks them
