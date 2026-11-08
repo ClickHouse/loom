@@ -286,8 +286,8 @@ async def reembed_table(
     """Re-embed one table's off-model rows to `embedder`. Returns rows written.
     Pages of `batch` rows in sort-key order; `start_after` (a resume token's
     key) continues after that row. `left_orgs` collects the orgs whose rows were
-    left unwritten: switched off during the run, or with a row still stored with other
-    text when its page was read again (`--delete-old` keeps their old vectors).
+    left unwritten: switched off during the run, or with an off-model row still stored
+    with other text when its page was read again (`--delete-old` keeps their old vectors).
     `key_only`: every live row of the scope but an import key with no key
     vector gets its key-axis vector rebuilt from `key_axis_text` (the value
     vector is kept); tables without a key axis are skipped."""
@@ -431,8 +431,8 @@ async def _rewrite_page(
 ) -> dict[str, int]:
     """Re-embed and write `chunk`; returns the rows it left unwritten per org,
     of an org whose model calls were switched off during the run. `still_stored`
-    filters the rows read (by position), after their vectors are made and before the
-    insert."""
+    returns the rows read (by position) as stored now, without those to skip, after
+    their vectors are made and before the insert."""
     cfg = _TABLES[table]
     model, dim = embedder.model_name, embedder.dim
     vecs: list[list[float]] | None = [[] for _ in chunk] if not key_only else None
@@ -648,7 +648,7 @@ async def reembed_all(
         # Every org whose rows wait keeps its old vectors: off at the start, off
         # during the run or by now, or with a row the re-read found with other text.
         keep = frozenset(off | left_orgs | await customer.switched_off_orgs())
-        if kept := sorted(keep & {org} if org else keep):
+        if kept := sorted(keep & {org}) if org else sorted(keep):
             log(f"old-model rows kept for a later run in: {', '.join(kept)}")
         for table in _TABLES:
             await delete_off_model(
