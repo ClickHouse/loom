@@ -109,6 +109,17 @@ def test_a_subject_granted_elsewhere_in_the_org_cannot_be_claimed(
     assert _signup(namespace="carol", email="carol@x.io").subject == "carol"
 
 
+class _Local:
+    """The sign-up reservation read, run on clickhouse-local over `setup`."""
+
+    def __init__(self, setup: list[str]) -> None:
+        self.setup = setup
+
+    async def query_one(self, sql: str, params: Any = None) -> Any:
+        rows = run(self.setup, sql, params)
+        return rows[0] if rows else None
+
+
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 def test_only_an_unrevoked_grant_reserves_a_name() -> None:
     """A revoked grant carries no power to inherit, so it frees its name; a pending
@@ -143,22 +154,17 @@ def test_only_an_unrevoked_grant_reserves_a_name() -> None:
         ddl("tasks"),
     ]
 
-    class _Local:
-        async def query_one(self, sql: str, params: Any = None) -> Any:
-            rows = run(setup, sql, params)
-            return rows[0] if rows else None
-
-    asyncio.run(ss._refuse_empowered(_Local(), "dev", "carol"))
+    asyncio.run(ss._refuse_empowered(_Local(setup), "dev", "carol"))
     with pytest.raises(HTTPException) as ei:
-        asyncio.run(ss._refuse_empowered(_Local(), "dev", "dave"))
+        asyncio.run(ss._refuse_empowered(_Local(setup), "dev", "dave"))
     assert ei.value.status_code == 409
     with pytest.raises(HTTPException):
-        asyncio.run(ss._refuse_empowered(_Local(), "dev", "erin"))
+        asyncio.run(ss._refuse_empowered(_Local(setup), "dev", "erin"))
     with pytest.raises(HTTPException):  # a namespace's owner may rewrite it
-        asyncio.run(ss._refuse_empowered(_Local(), "dev", "frank"))
+        asyncio.run(ss._refuse_empowered(_Local(setup), "dev", "frank"))
     with pytest.raises(HTTPException):
-        asyncio.run(ss._refuse_empowered(_Local(), "dev", "gail"))
-    asyncio.run(ss._refuse_empowered(_Local(), "dev", "hal"))  # its token was revoked
+        asyncio.run(ss._refuse_empowered(_Local(setup), "dev", "gail"))
+    asyncio.run(ss._refuse_empowered(_Local(setup), "dev", "hal"))  # its token was revoked
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
@@ -187,16 +193,11 @@ def test_a_task_inbox_row_naming_a_subject_reserves_its_name() -> None:
         " VALUES ('dev', 'gone', generateUUIDv4(), 'Max', 1, 1)",
     ]
 
-    class _Local:
-        async def query_one(self, sql: str, params: Any = None) -> Any:
-            rows = run(setup, sql, params)
-            return rows[0] if rows else None
-
     for name in ("ivy", "jo", "pat", "lee", "max"):
         with pytest.raises(HTTPException):
-            asyncio.run(ss._refuse_empowered(_Local(), "dev", name))
+            asyncio.run(ss._refuse_empowered(_Local(setup), "dev", name))
     for name in ("kim", "ned"):
-        asyncio.run(ss._refuse_empowered(_Local(), "dev", name))
+        asyncio.run(ss._refuse_empowered(_Local(setup), "dev", name))
 
 
 @pytest.mark.parametrize("org", ["eve-org", "clickhouse"])

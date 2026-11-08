@@ -79,8 +79,8 @@ def test_an_owned_auto_row_beats_an_ownerless_one_whatever_lands_last(owned_firs
             f" ('o', 'n', '{owner}', toDateTime({int(version.timestamp())}, 'UTC'))"
         )
 
-    rows = [row("w", autoreg.AUTO_ROW_VERSION), row("", autoreg.OWNERLESS_ROW_VERSION)]
-    setup = [clickhouse_local.ddl("namespaces"), *(rows if owned_first else rows[::-1])]
+    inserts = [row("w", autoreg.AUTO_ROW_VERSION), row("", autoreg.OWNERLESS_ROW_VERSION)]
+    setup = [clickhouse_local.ddl("namespaces"), *(inserts if owned_first else inserts[::-1])]
     rows = clickhouse_local.run(setup, "SELECT owner_email FROM loom.namespaces FINAL")
     assert rows == [{"owner_email": "w"}]
 
