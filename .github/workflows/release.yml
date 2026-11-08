@@ -15,8 +15,8 @@ name: release
 # prerequisites, in seconds) -> clickhouse (the ClickHouse release the
 # installer bundle names, migrated and schema-checked) -> build -> verify
 # (inspect the exact files) -> docker (build and scan each image on each
-# architecture's own runner) -> docker-tag -> sign (keyless, the digests
-# docker-tag made; every run verifies them) and docker-smoke (the
+# architecture's own runner) -> docker-tag -> sign (keyless, the indexes
+# docker-tag made; every run verifies both version tags) and docker-smoke (the
 # quickstart and the installer rehearsal) -> github-release -> release-check
 # (tag push only), and pypi, npm, mcp-registry (dispatch only). A re-run after a
 # partial publish is safe: the bundle keeps the ClickHouse release it was first
@@ -543,7 +543,7 @@ jobs:
         with:
           name: scanned-${{ matrix.artifact }}-${{ matrix.arch }}
           path: scanned/
-          retention-days: ${{ inputs.dry_run && 1 || 0 }} # 0: the repository's default
+          retention-days: ${{ inputs.dry_run && 1 || 30 }} # as long as the run can be re-run
           compression-level: ${{ inputs.dry_run && 1 || 6 }}
 
   docker-tag:
@@ -638,7 +638,6 @@ jobs:
         env:
           DIGESTS: ${{ needs.docker-tag.outputs.digests }}
         run: |
-          [ -n "$DIGESTS" ] || { echo "::error::docker-tag named no digests"; exit 1; }
           for ref in $DIGESTS; do cosign sign --yes "$ref"; done
       # After signing, and on a published tag: what users and release-check verify.
       - name: Verify both images' signatures
@@ -650,7 +649,7 @@ jobs:
             cosign verify "$image:$VERSION" \
               --certificate-identity "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v$VERSION" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null \
-              || { echo "::error::could not verify release.yml's signature on $image:$VERSION (cosign's error above): if it is unsigned, use \"Re-run failed jobs\" (not \"Re-run all jobs\") on the run that tagged it, within 30 days; past that, release a new version (docs/development/release-process.md#a-failed-tag-or-signature)"; exit 1; }
+              || { echo "::error::could not verify release.yml's signature on $image:$VERSION (cosign's error above); see docs/development/release-process.md#a-failed-tag-or-signature"; exit 1; }
           done
 
   docker-smoke:

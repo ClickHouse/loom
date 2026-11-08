@@ -389,11 +389,13 @@ def test_published_images_refuses_images_built_from_another_commit(tmp_path: Pat
 
 
 def test_one_image_out_without_the_other_fails_with_the_recovery(tmp_path: Path) -> None:
-    """A docker-tag that stopped halfway: a new build would move the published tags."""
+    """A docker-tag that stopped halfway: the error points at the recovery section."""
     result = _published(tmp_path, PUBLISHED="clickhouse/loom:1.2.0")
     assert result.returncode == 1 and result.stdout == ""
     assert "only ghcr.io/clickhouse/loom carries 1.2.0" in result.stderr
-    assert "Re-run failed jobs (not all jobs)" in result.stderr
+    assert "docs/development/release-process.md#a-failed-tag-or-signature" in result.stderr
+    page = (ROOT / "docs/development/release-process.md").read_text()
+    assert "### A failed tag or signature" in page
 
 
 def test_published_images_fails_on_an_outage_instead_of_rebuilding(tmp_path: Path) -> None:
