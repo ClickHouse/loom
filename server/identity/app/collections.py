@@ -28,6 +28,7 @@ from server.identity.api.models_collections import (
     CollectionMoveOutput,
     _CollectionEntry,
 )
+from server.identity.app import registration
 from server.identity.app.namespace import (
     delete_namespace,
     insert_admin_grant,
@@ -100,6 +101,9 @@ async def handle_collection_create(input: CollectionCreateInput) -> CollectionCr
             g for g in await grants_repo.list_active(org, namespace) if g["subject"] != caller
         ]
         if others:
+            raise taken
+        # Data under the name with no directory row would join the new collection.
+        if current is None and await registration.refused_as_in_use(org, namespace):
             raise taken
         if current is not None and directory_row is not None:
             if current["parent"] != parent:

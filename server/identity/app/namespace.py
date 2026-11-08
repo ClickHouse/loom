@@ -14,6 +14,7 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from server.auth.aliases import subject_aliases
 from server.auth.claim_codes import CLAIMED_TAG
 from server.auth.grant_claims import account_change
 from server.auth.sharing import PERSONAL_ALIAS, is_collection, is_personal
@@ -36,6 +37,7 @@ from server.identity.api.models import (
     _BrowseEntry,
     _NamespaceEntry,
 )
+from server.identity.app import registration
 from server.identity.domain import join_policy as _jp
 from server.identity.domain.account_ties import owner_moved
 from server.identity.store import grants as grants_repo
@@ -318,15 +320,17 @@ async def require_admin_of_existing(
             raise AuthInsufficientError(
                 f"{org}/{namespace} is restricted and cannot be made public"
             )
-    # A row born from a bare first write names its writer as owner and carries no grant.
-    # That owner may complete the registration with the form; anyone else needs admin.
-    owner_completes = owner_may_complete and _is_auto_registered_owner(existing, caller)
-    if not owner_completes and not await _is_admin(auth, org, namespace, caller):
-        from server.core.errors import AuthInsufficientError
-
-        raise AuthInsufficientError(
-            f"{caller!r} is not an admin of {org}/{namespace}; cannot update an existing namespace"
+    # A first write's row names its writer owner, who may complete the form while nobody
+    # else holds a live grant there (the form sets who may join); anyone else needs admin.
+    owner_completes = (
+        owner_may_complete
+        and _is_auto_registered_owner(existing, caller)
+        and not await grants_repo.held_by_another(
+            org, namespace, await subject_aliases(org, caller), ch=get_client()
         )
+    )
+    if not owner_completes and not await _is_admin(auth, org, namespace, caller):
+        raise registration.not_admin_error(org, namespace, caller)
 
 
 def refuse_sso_name(namespace: str) -> None:
@@ -374,6 +378,8 @@ async def handle_namespace_register(
                 )
         else:
             refuse_sso_name(input.namespace)
+            if await registration.refused_as_in_use(input.org, input.namespace, ch=ch):
+                raise registration.not_admin_error(input.org, input.namespace, caller)
 
         now = naive_utc_now_seconds()
         row = registry_row(input, existing, now)

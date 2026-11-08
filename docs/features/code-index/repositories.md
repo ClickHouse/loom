@@ -69,9 +69,10 @@ Rules:
 
 - An org holds at most `LOOM_CODE_SELF_SERVICE_MAX_REPOS` (20) active self-service
   entries, branches included (`REPO_QUOTA`). A branch already indexed, under any
-  namespace, is refused with `REPO_EXISTS`; join that index instead. A branch of an
-  operator-configured entry with no first index yet is refused with `REPO_NOT_INDEXED`
-  until `loom code backfill` has run for it.
+  namespace, or whose namespace holds data or grants you do not administer, is refused
+  with `REPO_EXISTS`; join an index instead. A branch of an operator-configured entry
+  with no first index yet is refused with `REPO_NOT_INDEXED` until `loom code backfill`
+  has run for it.
 - Admin grants flow between a repository's branches in one direction. The operator's
   entries pass their admins to every branch of the repository, and a branch added here
   passes its admins only to other branches added here.

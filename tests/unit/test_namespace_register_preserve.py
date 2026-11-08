@@ -102,6 +102,9 @@ class _CH:
     async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any] | None:
         return dict(self.stored) if "FROM loom.namespaces" in sql else None
 
+    async def query_all(self, sql: str, params: Any = None, **_: Any) -> list[Any]:
+        return []  # no grants on the name
+
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
         self.inserts.append((table, [dict(r) for r in rows]))
 

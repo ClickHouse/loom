@@ -175,6 +175,8 @@ class FakeReplica:
                 for r in self._visible("loom.service_accounts")
             )
             return [{"held": 1}] if held or owned or made else []
+        if "AS in_use" in sql:  # the in-use check: only its grant branch is answered
+            return self._grants_on(p)
         if "FROM loom.namespaces" in sql:
             return self._namespaces(sql, p)
         if "FROM loom.oauth_state" in sql:
@@ -225,6 +227,23 @@ class FakeReplica:
             return []
         last = max(rows, key=lambda r: r.get("updated_at") or datetime.min)
         return [{"owner": last.get("owner_email", ""), "present": 1, "x": 1, **last}]
+
+    def _grants_on(self, p: dict[str, Any]) -> list[dict[str, Any]]:
+        """The grant branch alone, as FINAL reads it: the newest version per subject,
+        live and active. The fake holds no data-table rows to answer the rest."""
+        newest: dict[str, dict[str, Any]] = {}
+        for r in self._visible("loom.namespace_grants"):
+            if (r["org"], r["namespace"]) != (p.get("org"), p.get("ns")):
+                continue
+            prev = newest.get(r["subject"])
+            if prev is None or r.get("version", 0) >= prev.get("version", 0):
+                newest[r["subject"]] = r
+        live = [
+            r
+            for r in newest.values()
+            if not r["revoked_at"] and r.get("status", "active") == "active"
+        ]
+        return [{"in_use": 1}] if live else []
 
     def _oauth(self, sql: str, p: dict[str, Any]) -> list[dict[str, Any]]:
         rtype = p.get("t") or ("client" if "'client'" in sql else "oidc_pending")

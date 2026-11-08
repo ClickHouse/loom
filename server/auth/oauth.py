@@ -1660,6 +1660,9 @@ async def _machine_tokens(
 @router.post("/oauth/token")
 async def token(request: Request) -> JSONResponse:
     from server.auth import device
+    from server.core.ch import set_query_tag
+
+    set_query_tag("auth.oauth_token")  # this route is not under the transports
 
     f = await form_body(request)
     grant_type = f.get("grant_type", "")

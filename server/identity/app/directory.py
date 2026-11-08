@@ -1,12 +1,18 @@
 """The identity domain's answers to the authorization gate's namespace
 questions (`server.auth.directory.NamespaceDirectory`): the classification
-cache, the code-plane repo config and the kind directory, read at call time."""
+cache, the code-plane repo config and the kind directory, read at call time; and
+whether a name a path would register as new already holds data or grants."""
 
 from __future__ import annotations
 
 from server.code.domain.index import repos
 from server.code.domain.index.repos import RepoConfig
+from server.core.ch import sequential_reads
+from server.core.repo_base import _CHClient
+from server.erasure.app import ledger_reads
 from server.identity.app import namespace_classification, namespace_kinds, namespace_visibility
+from server.identity.store import namespace_census
+from server.tracker.domain.namespaces import tracker_namespace
 
 
 class IdentityDirectory:
@@ -44,3 +50,18 @@ class IdentityDirectory:
     async def public_namespaces(self, org: str, namespaces: list[str]) -> set[str]:
         visibility = await namespace_visibility.visibility_map(org, namespaces)
         return {ns for ns, vis in visibility.items() if vis == "public"}
+
+    async def in_use(self, org: str, namespace: str, *, ch: _CHClient | None = None) -> bool:
+        """A configured code-plane entry or tracker namespace is in use before its
+        registry row or first row lands; any other name when Postgres holds a memory of it
+        or `namespace_census.in_use` finds a row, read sequentially: one another replica
+        wrote a moment ago counts."""
+        if self.code_entry(org, namespace) is not None:
+            return True
+        if tracker_namespace(org, namespace) is not None:
+            return True
+        if await ledger_reads.pg_holds_namespace(org, namespace):
+            return True
+        tables = ledger_reads.namespace_tables()
+        with sequential_reads():
+            return await namespace_census.in_use(org, namespace, tables, ch=ch)

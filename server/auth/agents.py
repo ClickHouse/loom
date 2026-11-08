@@ -150,6 +150,7 @@ async def ensure_namespace(m: machines.Machine, agent: str, *, by: str = "") -> 
     revoked. Held as a release holds it (its reads are sequential under the
     claim), so two first exchanges make one, and one released is not made again.
     `by` is who made it when not the trust's exchange (an admin's, ahead of it)."""
+    from server.auth.directory import directory
     from server.auth.grant_claims import bot_change
     from server.auth.self_signup import provision_account
 
@@ -175,6 +176,9 @@ async def ensure_namespace(m: machines.Machine, agent: str, *, by: str = "") -> 
                 # and so before it counted and audited the agent: this one does.
                 made = await _finish_grant(org, ns, who)
         else:
+            # Data or grants under the name with no row are someone else's.
+            if await directory().in_use(org, ns):
+                raise machines.Refused("invalid_grant", f"{org}/{ns} is not this trust's")
             # The trust's own claim: two new agents at once must not both see room.
             async with bot_change(m["name"]):
                 if await _made(org, m["name"]) >= m["max_agents"]:

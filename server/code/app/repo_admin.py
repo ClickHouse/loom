@@ -19,6 +19,7 @@ from typing import Any
 
 from server.auth import authz
 from server.auth.context import current_caller
+from server.auth.grant_claims import NotClaimed, account_change
 from server.code.api.models_repos import (
     CodeRepoAddBranchInput,
     CodeRepoAddInput,
@@ -36,7 +37,13 @@ from server.code.domain.index import repos as code_repos
 from server.code.domain.index.remote import repo_key
 from server.code.domain.index.repos import registry_repos
 from server.core.ch import own_write_reads
-from server.core.errors import AuthInsufficientError, BackendUnavailableError, ValidationError
+from server.core.errors import (
+    AuthInsufficientError,
+    BackendUnavailableError,
+    GrantBusyError,
+    LoomServerError,
+    ValidationError,
+)
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -80,14 +87,12 @@ def _require_same_org(org: str) -> None:
 
 
 async def _namespace_taken(org: str, namespace: str) -> bool:
-    from server.auth.default_namespace import auth_off_subject
     from server.code.domain.index.repos import repo_for_namespace
     from server.identity.app.registration import namespace_claimable
 
     if repo_for_namespace(org, namespace) is not None:
         return True
-    subject = current_caller()[0] or auth_off_subject()
-    return not await namespace_claimable(org, namespace, subject)
+    return not await namespace_claimable(org, namespace)
 
 
 def _indexed(org: str, repo: str, git_remote: str, branch: str) -> bool:
@@ -99,12 +104,17 @@ def _indexed(org: str, repo: str, git_remote: str, branch: str) -> bool:
     )
 
 
-async def _make_maintainer(org: str, namespace: str, subject: str) -> None:
-    from server.identity.app.registration import grant_self_admin
 
-    await grant_self_admin(org, namespace, subject)
-    # The repository's maintainers get this branch, and the creator gets
-    # the repository's other branches added from the page.
+def _in_use_error(repo: str, branch: str, namespace: str) -> ValidationError:
+    return ValidationError(
+        f"{repo} @ {branch} is {namespace}, already in use here (join it if it is indexed)",
+        code="REPO_EXISTS",
+    )
+
+
+async def _sync_maintainers(org: str, namespace: str) -> None:
+    """The repository's other maintainers get this branch and the creator gets the
+    repository's other branches; outside the account claim, as its own claims wait."""
     from server.code.app.index import maintainers
 
     await maintainers.sync_quietly(org, namespace)
@@ -135,30 +145,38 @@ async def _register(
     subject = current_caller()[0] or auth_off_subject()
     # Rows a removed namespace of this name left (N-1 clears none; the purge is detached).
     await _empty_tracker_links(org, namespace, detail="stale row of a removed namespace")
-    await reg.insert_entry(
-        org=org,
-        namespace=namespace,
-        repo=repo,
-        git_remote=git_remote,
-        branch=branch,
-        classification=classification,
-        join_policy=join_policy,
-        github_token=github_token,
-        path_prefixes=path_prefixes,
-        exclude=exclude,
-        created_by=subject,
-        exclude_generated=exclude_generated,
-        scip_producer=scip_producer,
-    )
-    await reg.refresh_db_repos(force=True)
-    cfg = next(
-        (c for c in registry_repos() if c.org == org and c.namespace == namespace),
-        None,
-    )
-    if cfg is not None:
-        await ensure_registered(cfg)
-    if subject:
-        await _make_maintainer(org, namespace, subject)
+    # Checked again under the account claim sign-up and register hold: the probe took time.
+    async with account_change(org, namespace):
+        if await _namespace_taken(org, namespace):
+            raise _in_use_error(repo, branch, namespace)
+        # The grant first: a replica that has not loaded the entry yet sees the name in use.
+        if subject:
+            from server.identity.app.registration import grant_self_admin
+
+            await grant_self_admin(org, namespace, subject)
+        await reg.insert_entry(
+            org=org,
+            namespace=namespace,
+            repo=repo,
+            git_remote=git_remote,
+            branch=branch,
+            classification=classification,
+            join_policy=join_policy,
+            github_token=github_token,
+            path_prefixes=path_prefixes,
+            exclude=exclude,
+            created_by=subject,
+            exclude_generated=exclude_generated,
+            scip_producer=scip_producer,
+        )
+        await reg.refresh_db_repos(force=True)
+        cfg = next(
+            (c for c in registry_repos() if c.org == org and c.namespace == namespace),
+            None,
+        )
+        if cfg is not None:
+            await ensure_registered(cfg, sync=False)  # synced below, after the claim
+    await _sync_maintainers(org, namespace)
     code_repo = CodeRepo()
     await set_stage(code_repo, org, namespace, "queued", remote_head=remote_head[:12])
     return CodeRepoAddOutput(
@@ -311,22 +329,30 @@ async def _add_extra_branches(
         if await _namespace_taken(input.org, namespace):
             skipped.append({"branch": branch, "reason": f"the namespace {namespace} is taken"})
             continue
-        out = await _register(
-            org=input.org,
-            namespace=namespace,
-            repo=repo,
-            git_remote=git_remote,
-            provider=provider,
-            branch=branch,
-            classification=classification,
-            join_policy=join_policy,
-            github_token=input.access_token,
-            path_prefixes=[p.strip() for p in input.path_prefixes if p.strip()],
-            exclude=[p.strip() for p in input.exclude if p.strip()],
-            remote_head=head,
-            exclude_generated=bool(input.exclude_generated),
-            scip_producer=str(input.scip_producer or ""),
-        )
+        try:
+            out = await _register(
+                org=input.org,
+                namespace=namespace,
+                repo=repo,
+                git_remote=git_remote,
+                provider=provider,
+                branch=branch,
+                classification=classification,
+                join_policy=join_policy,
+                github_token=input.access_token,
+                path_prefixes=[p.strip() for p in input.path_prefixes if p.strip()],
+                exclude=[p.strip() for p in input.exclude if p.strip()],
+                remote_head=head,
+                exclude_generated=bool(input.exclude_generated),
+                scip_producer=str(input.scip_producer or ""),
+            )
+        except (ValidationError, GrantBusyError, NotClaimed) as e:  # before any write
+            skipped.append({"branch": branch, "reason": str(e)})
+            continue
+        except LoomServerError as e:  # failed or cut short under its claim
+            reason = f"{namespace}: {e}; it may be partly set up, check it before adding again"
+            skipped.append({"branch": branch, "reason": reason})
+            continue
         also.append({"branch": branch, "namespace": out.namespace, "remote_head": out.remote_head})
     return also, skipped
 

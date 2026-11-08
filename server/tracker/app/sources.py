@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from server.auth import authz
 from server.auth.context import current_auth, current_caller
+from server.auth.grant_claims import accounts_change
 from server.core.errors import AuthInsufficientError, ValidationError, caller_text
 from server.identity.api.models import NamespaceDeleteInput
 from server.identity.app import namespace as namespace_ops
@@ -425,16 +426,18 @@ def _namespace_specs(input: Any) -> list[dict[str, Any]]:
     return specs
 
 
+async def _refuse_taken(org: str, namespace: str) -> None:
+    if await _namespace_taken(org, namespace):
+        raise ValidationError(f"{namespace} is already in use", code="NAMESPACE_TAKEN")
+
+
 async def _namespace_taken(org: str, namespace: str) -> bool:
-    from server.auth.context import current_caller
-    from server.auth.default_namespace import auth_off_subject
     from server.identity.app.registration import namespace_claimable
     from server.tracker.domain import sources
 
     if namespace in sources.namespace_entries():
         return True
-    subject = current_caller()[0] or auth_off_subject()
-    return not await namespace_claimable(org, namespace, subject)
+    return not await namespace_claimable(org, namespace)
 
 
 async def _probe_or_refuse(
@@ -547,9 +550,7 @@ async def _make_admin(org: str, namespace: str, subject: str) -> None:
     await grant_self_admin(org, namespace, subject)
 
 
-async def _register_namespaces(
-    org: str, specs: list[dict[str, Any]], subject: str
-) -> list[dict[str, Any]]:
+async def _register_namespaces(org: str, specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     from server.tracker.app.registry import ensure_tracker_registered
 
     out: list[dict[str, Any]] = []
@@ -559,8 +560,6 @@ async def _register_namespaces(
         await ensure_tracker_registered(
             org, spec["namespace"], classification=classification, join_policy=join_policy
         )
-        if subject:
-            await _make_admin(org, spec["namespace"], subject)
         out.append(
             {
                 "namespace": spec["namespace"],
@@ -604,10 +603,7 @@ async def _admissible(input: Any) -> tuple[str, list[dict[str, Any]]]:
             f"a tracker source named {name!r} already exists", code="SOURCE_EXISTS"
         )
     for spec in specs:
-        if await _namespace_taken(input.org, spec["namespace"]):
-            raise ValidationError(
-                f"{spec['namespace']} already exists; join it instead", code="NAMESPACE_TAKEN"
-            )
+        await _refuse_taken(input.org, spec["namespace"])
     cap = int(settings.tracker_self_service_max_sources)
     if await registry_sources.active_count(input.org) >= cap:
         raise ValidationError(
@@ -689,10 +685,18 @@ async def handle_tracker_source_add(input: TrackerSourceAddInput) -> TrackerSour
         created_by=subject,
         mapping_json=mp.to_json() if mp is not None else "",
     )
-    await registry_sources.insert_source(src)
-    await registry_sources.refresh_db_sources(force=True)
-    contract_reports.remember(name, report)
-    registered = await _register_namespaces(input.org, specs, subject)
+    # Checked again under the account claims sign-up and register hold: the probe took time.
+    async with accounts_change(input.org, [spec["namespace"] for spec in specs]):
+        for spec in specs:
+            await _refuse_taken(input.org, spec["namespace"])
+        # The grants first: a replica that has not loaded the source yet sees them in use.
+        if subject:
+            for spec in specs:
+                await _make_admin(input.org, spec["namespace"], subject)
+        await registry_sources.insert_source(src)
+        await registry_sources.refresh_db_sources(force=True)
+        contract_reports.remember(name, report)
+        registered = await _register_namespaces(input.org, specs)
     return TrackerSourceAddOutput(
         name=name,
         host=host,

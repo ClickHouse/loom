@@ -1,5 +1,6 @@
-"""The namespace facts the authorization gate reads, and the ones an all_mine
-fan-out narrows by (kind, visibility).
+"""The namespace facts the authorization gate reads, the ones an all_mine
+fan-out narrows by (kind, visibility), and whether a name a path would register
+as new is already in use.
 
 The gate is platform code; what it decides on belongs to the domains: which
 namespaces of an org are restricted (the directory rows and the code-plane
@@ -16,6 +17,8 @@ on an unreadable directory denies on it too.
 from __future__ import annotations
 
 from typing import Protocol
+
+from server.core.repo_base import _CHClient
 
 
 class ClassificationUnavailable(RuntimeError):
@@ -74,6 +77,13 @@ class NamespaceDirectory(Protocol):
     async def public_namespaces(self, org: str, namespaces: list[str]) -> set[str]:
         """Those of `namespaces` whose visibility is public; one of unknown
         visibility is not."""
+        ...
+
+    async def in_use(self, org: str, namespace: str, *, ch: _CHClient | None = None) -> bool:
+        """Whether (org, namespace) holds state a later owner would inherit, registered or
+        not: data (a memory only Postgres holds included), a live row of
+        `namespace_census.STATE_TABLES`, or a configured code-plane repository or tracker
+        namespace. Raises when it cannot be read."""
         ...
 
 

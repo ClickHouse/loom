@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from server.auth import agents, machines, self_signup
+from server.identity.app.directory import IdentityDirectory
 from server.observability import audit
 
 _NOW = datetime(2026, 10, 16, 12, 0, 0)
@@ -31,7 +32,13 @@ _TRUST: machines.Machine = {
 
 @pytest.fixture
 def world(monkeypatch) -> dict[str, Any]:
-    state: dict[str, Any] = {"rows": {}, "made": [], "granted": [], "grant_rows": set()}
+    state: dict[str, Any] = {
+        "rows": {},
+        "made": [],
+        "granted": [],
+        "grant_rows": set(),
+        "used": set(),
+    }
 
     class _CH:
         async def query_one(self, sql: str, params: dict[str, Any]) -> Any:
@@ -58,6 +65,10 @@ def world(monkeypatch) -> dict[str, Any]:
     async def emit(*a: Any, **k: Any) -> str:
         return ""
 
+    async def in_use(self: Any, org: str, namespace: str, **_k: Any) -> bool:
+        return namespace in state["used"]
+
+    monkeypatch.setattr(IdentityDirectory, "in_use", in_use)
     monkeypatch.setattr(agents, "get_client", lambda: _CH())
     monkeypatch.setattr(self_signup, "provision_account", provision)
     monkeypatch.setattr(self_signup, "insert_owner_grant", grant)
@@ -86,6 +97,14 @@ def test_a_name_the_trust_did_not_make_is_refused(world) -> None:
         with pytest.raises(machines.Refused, match="not this trust's"):
             _ensure()
     assert world["made"] == []
+
+
+def test_a_name_holding_data_with_no_row_is_not_made(world) -> None:
+    """The issuer names the agent, so its namespace may already hold someone's data."""
+    world["used"].add("fleet-a1")
+    with pytest.raises(machines.Refused, match="not this trust's"):
+        _ensure()
+    assert world["made"] == [] and world["granted"] == []
 
 
 def test_a_released_agent_namespace_is_not_made_again(world) -> None:

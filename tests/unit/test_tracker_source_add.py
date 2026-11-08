@@ -110,6 +110,8 @@ class _Ch:
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> dict | None:
         p = dict(params or {})
+        if "AS in_use" in sql:
+            return None  # the name holds no data with no registry row
         if "count() AS n FROM loom.qa_sources" in sql:
             return {"n": self.active_sources + len(self._sources())}
         if "SELECT role FROM loom.namespace_grants" in sql:  # the gate's grant read
@@ -404,6 +406,80 @@ async def test_add_registers_the_source_its_namespaces_and_the_registrant(_cfg) 
         "tracker-stack-private",
     }
     assert "s3cret" not in json.dumps(listed.model_dump())
+
+
+@pytest.mark.asyncio
+async def test_a_namespace_taken_during_the_probe_writes_nothing(_cfg, monkeypatch) -> None:
+    """The free-name check runs again under each namespace's account claim, after the
+    remote probe: a sign-up or a register that took a name meanwhile wins."""
+    from contextlib import asynccontextmanager
+
+    import server.tracker.app.sources as sources_app
+
+    ch = _cfg
+    held: list[list[str]] = []
+    asked: list[tuple[str, bool]] = []
+
+    @asynccontextmanager
+    async def _accounts_change(org: str, namespaces: list[str]) -> Any:
+        held.append(sorted(namespaces))
+        yield
+        held.append([])
+
+    async def _taken(org: str, namespace: str) -> bool:
+        asked.append((namespace, bool(held and held[-1])))
+        return len(asked) > 2  # free at admission (two namespaces), taken on the re-check
+
+    monkeypatch.setattr(sources_app, "accounts_change", _accounts_change)
+    monkeypatch.setattr(sources_app, "_namespace_taken", _taken)
+    with pytest.raises(ValidationError) as e:
+        await handle_tracker_source_add(_add_input())
+    assert e.value.to_detail()["code"] == "NAMESPACE_TAKEN"
+    assert held[0] == ["tracker-clickstack", "tracker-stack-private"]
+    assert [under for _ns, under in asked] == [False, False, True]  # the re-check, held
+    assert "loom.qa_sources" not in ch.inserted
+    assert "loom.namespace_grants" not in ch.inserted
+
+
+@pytest.mark.asyncio
+async def test_a_busy_namespace_claim_writes_nothing(_cfg, monkeypatch) -> None:
+    from contextlib import asynccontextmanager
+
+    import server.tracker.app.sources as sources_app
+    from server.core.errors import GrantBusyError
+
+    @asynccontextmanager
+    async def _busy(org: str, namespaces: list[str]) -> Any:
+        raise GrantBusyError("another change to the account is running; retry shortly")
+        yield
+
+    monkeypatch.setattr(sources_app, "accounts_change", _busy)
+    with pytest.raises(GrantBusyError):
+        await handle_tracker_source_add(_add_input())
+    assert "loom.qa_sources" not in _cfg.inserted
+    assert "loom.namespace_grants" not in _cfg.inserted
+
+
+@pytest.mark.asyncio
+async def test_the_registrants_grants_are_written_before_the_source(_cfg, monkeypatch) -> None:
+    """A replica that has not loaded the new source sees its namespaces in use."""
+    import server.tracker.app.sources as sources_app
+
+    order: list[str] = []
+    real_grant, real_insert = sources_app._make_admin, rs.insert_source
+
+    async def _grant(*a: Any) -> None:
+        order.append("grant")
+        await real_grant(*a)
+
+    async def _insert(*a: Any, **k: Any) -> None:
+        order.append("source")
+        await real_insert(*a, **k)
+
+    monkeypatch.setattr(sources_app, "_make_admin", _grant)
+    monkeypatch.setattr(rs, "insert_source", _insert)
+    await handle_tracker_source_add(_add_input())
+    assert order == ["grant", "grant", "source"]
 
 
 @pytest.mark.asyncio

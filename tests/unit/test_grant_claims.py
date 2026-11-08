@@ -5,6 +5,7 @@ grant waits instead of being written over."""
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 import pytest
@@ -27,6 +28,7 @@ class _Lease:
     def __init__(self, released: list[str], name: str) -> None:
         self.released = released
         self.name = name
+        self.renewed_at = time.monotonic()
 
     async def release(self) -> None:
         self.released.append(self.name)
@@ -112,7 +114,8 @@ def test_a_change_waits_for_the_holder_then_gives_up_retryably(
     monkeypatch.setattr(grant_claims, "take", _taken)
     with pytest.raises(GrantBusyError) as busy:
         asyncio.run(_change([], "a", ("acme", "team", "alice"), 0))
-    assert waits == [grant_claims.WAIT_S], "it waited for the holder before giving up"
+    [waited] = waits
+    assert grant_claims.WAIT_S - 0.5 < waited <= grant_claims.WAIT_S, "it waited for the holder"
     assert busy.value.status_code == 503 and busy.value.extra["retry_after_s"] == 1
 
 
@@ -401,3 +404,112 @@ def test_a_revoke_counts_the_admins_only_for_an_admin(
         )
     )
     assert out.revoked and claims.count("admins") == admins
+
+
+def test_several_account_claims_are_taken_sorted_and_all_released(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`accounts_change` takes each namespace once, sorted, holds them through one
+    bounded change and releases them all; a busy one releases those already held."""
+    claims = MemoryClaims()
+    monkeypatch.setattr(grant_claims, "take", claims.take)
+
+    async def _run(names: list[str]) -> None:
+        async with grant_claims.accounts_change("dev", names):
+            assert len(claims.held) == len(set(names))
+
+    asyncio.run(_run(["tracker-b", "tracker-a", "tracker-b"]))
+    assert claims.taken == [
+        'account:["dev", "tracker-a"]',
+        'account:["dev", "tracker-b"]',
+    ]
+    assert claims.held == set()
+    claims.held.add('account:["dev", "tracker-b"]')
+    with pytest.raises(GrantBusyError):
+        asyncio.run(_run(["tracker-a", "tracker-b"]))
+    assert claims.held == {'account:["dev", "tracker-b"]'}
+
+
+def test_no_claim_is_attempted_once_the_wait_is_spent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A slow first take spends the wait: the next claim is not attempted, and the one
+    held is released."""
+    released: list[str] = []
+    attempts: list[str] = []
+
+    async def _slow(name: str, *, wait_s: float, **_k: Any) -> Any:
+        attempts.append(name)
+        await asyncio.sleep(0.15)
+        return _Lease(released, name)
+
+    monkeypatch.setattr(grant_claims, "take", _slow)
+    monkeypatch.setattr(grant_claims, "WAIT_S", 0.1)
+
+    async def _run() -> None:
+        async with grant_claims.accounts_change("dev", ["a", "b"]):
+            raise AssertionError("the change must not start")
+
+    with pytest.raises(GrantBusyError):
+        asyncio.run(_run())
+    assert attempts == ['account:["dev", "a"]'] and released == attempts
+
+
+def test_the_change_ends_inside_the_first_claim_s_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The bound counts from when the first claim was taken, not from when the last
+    was: a first claim taken long ago leaves the change no time."""
+    released: list[str] = []
+
+    async def _take(name: str, **_k: Any) -> Any:
+        lease = _Lease(released, name)
+        lease.renewed_at -= grant_claims.TTL_S  # taken a TTL ago
+        return lease
+
+    monkeypatch.setattr(grant_claims, "take", _take)
+
+    async def _run() -> None:
+        async with grant_claims.account_change("dev", "team"):
+            raise AssertionError("the change must not start")
+
+    with pytest.raises(BackendUnavailableError, match="did not finish in time"):
+        asyncio.run(_run())
+    assert released == ['account:["dev", "team"]']
+
+
+def test_an_account_claim_that_does_not_wait_answers_busy_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    claims = MemoryClaims()
+    monkeypatch.setattr(grant_claims, "take", claims.take)
+    claims.held.add('account:["dev", "personal-bob"]')
+
+    async def _run() -> None:
+        async with grant_claims.account_change("dev", "personal-bob", wait_s=0):
+            pass
+
+    started = time.monotonic()
+    with pytest.raises(GrantBusyError):
+        asyncio.run(_run())
+    assert time.monotonic() - started < grant_claims.WAIT_S / 2
+
+
+def test_several_claims_share_one_wait_so_the_first_is_not_held_past_its_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each later claim waits only for what is left of one `WAIT_S`."""
+    waits: list[float] = []
+
+    async def _take(name: str, *, wait_s: float, **_k: Any) -> Any:
+        waits.append(wait_s)
+        await asyncio.sleep(0.05)
+        return _Lease([], name)
+
+    monkeypatch.setattr(grant_claims, "take", _take)
+    monkeypatch.setattr(grant_claims, "WAIT_S", 0.2)
+
+    async def _run() -> None:
+        async with grant_claims.accounts_change("dev", ["a", "b", "c"]):
+            pass
+
+    asyncio.run(_run())
+    assert waits[0] <= 0.2 and all(
+        later < earlier for earlier, later in zip(waits, waits[1:], strict=False)
+    )

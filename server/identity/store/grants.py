@@ -435,6 +435,24 @@ async def stored_spellings(
     return [str(r["subject"]) for r in found]
 
 
+async def held_by_another(
+    org: str, namespace: str, subjects: list[str], *, ch: _CHClient | None = None
+) -> bool:
+    """Whether a subject other than `subjects` (one person's spellings) holds a live
+    grant, any role, on (org, namespace)."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        """
+        SELECT 1 AS held FROM loom.namespace_grants FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND lower(subject) NOT IN {subs:Array(String)} AND {live}
+        LIMIT 1
+        """.replace("{live}", LIVE_GRANT),
+        params={"org": org, "ns": namespace, "subs": [s.lower() for s in subjects]},
+    )
+    return row is not None
+
+
 async def count_active_admins(
     org: str,
     namespace: str,

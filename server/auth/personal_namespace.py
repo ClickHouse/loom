@@ -15,7 +15,12 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from contextlib import AsyncExitStack
 from typing import Any, Final
+
+from server.auth.directory import directory
+from server.auth.grant_claims import account_change
+from server.core.errors import GrantBusyError
 
 log = logging.getLogger(__name__)
 
@@ -63,13 +68,13 @@ async def ensure_personal_namespace(
 
     Picks ``personal-<slug>`` from :func:`derive_personal_slug`. If that
     name is taken by a different owner (two ``bob@*.com`` callers fighting
-    for ``personal-bob``), falls back to ``personal-<slug>-<sha6>`` so
-    the second caller still gets a namespace.
+    for ``personal-bob``), or holds data or grants with no row, falls back to
+    ``personal-<slug>-<sha6>`` so the second caller still gets a namespace.
 
     Returns the resolved namespace name on success (whether created or
     pre-existing), ``None`` only in the pathological case where every
     candidate is owned by someone else. Raises PersonalNamespaceBusy while
-    another process holds a candidate's claim.
+    another process holds a candidate's claim or its account's.
     """
     from server.core import leases
 
@@ -79,25 +84,36 @@ async def ensure_personal_namespace(
         async with leases.holding(f"personal-ns:{org}:{cand}", ttl_s=CLAIM_TTL_S, ch=ch) as held:
             if not held:
                 raise PersonalNamespaceBusy(cand)
-            owner = await namespace_owner(ch, org, cand)
-            if owner is None:
-                from server.auth.self_signup import provision_account
+            # register's account claim, not waited for (busy: retried next request).
+            async with AsyncExitStack() as stack:
+                try:
+                    await stack.enter_async_context(
+                        account_change(
+                            org, cand, wait_s=0, statement_s=leases.statement_bound(CLAIM_TTL_S)
+                        )
+                    )
+                except GrantBusyError:
+                    raise PersonalNamespaceBusy(cand) from None
+                owner = await namespace_owner(ch, org, cand)
+                # Data or grants under the name with no row are someone else's.
+                if owner is None and not await directory().in_use(org, cand, ch=ch):
+                    from server.auth.self_signup import provision_account
 
-                await provision_account(
-                    org=org,
-                    namespace=cand,
-                    subject=sub,
-                    contact_email="",
-                    description="Auto-claimed personal namespace.",
-                    ch=ch,
-                )
-                log.info(
-                    "auto-claimed personal namespace %s/%s for subject=%s",
-                    org,
-                    cand,
-                    sub,
-                )
-                return cand
+                    await provision_account(
+                        org=org,
+                        namespace=cand,
+                        subject=sub,
+                        contact_email="",
+                        description="Auto-claimed personal namespace.",
+                        ch=ch,
+                    )
+                    log.info(
+                        "auto-claimed personal namespace %s/%s for subject=%s",
+                        org,
+                        cand,
+                        sub,
+                    )
+                    return cand
         if owner == sub:
             return cand
     return None

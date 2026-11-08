@@ -15,8 +15,8 @@ writer an admin of every namespace it touched (`memory.unlock` open to writers;
 `grants.revoke` refusing to remove "the only admin"), and `resolve_my_namespaces` unions a
 wildcard token's grants, so a subject's searches fanned out across every namespace it had
 ever written to. The owner named on an auto-registered row may complete its registration
-with `namespace.register` (the handler checks the row's owner and tag); nothing else changes
-for the writer.
+with `namespace.register` while nobody else holds a live grant on it; nothing
+else changes for the writer.
 
 The row also opts into nothing an absent row did not: every column reader
 treats "no row" and the register defaults alike.

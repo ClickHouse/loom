@@ -24,7 +24,7 @@ import re
 import secrets
 import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from urllib.parse import urlencode
@@ -34,6 +34,8 @@ from pydantic import BaseModel, Field
 
 from server.auth.attempts import Attempts, client_address
 from server.auth.claim_codes import hash_claim_code_off_loop
+from server.auth.directory import directory
+from server.auth.grant_claims import account_change
 from server.auth.jwt import mint_token
 from server.auth.passwords import (
     PASSWORD_MAX_LENGTH,
@@ -41,8 +43,9 @@ from server.auth.passwords import (
     hash_password_off_loop,
 )
 from server.core import grant_cache, leases
-from server.core.ch import get_client, sequential_reads
+from server.core.ch import get_client, sequential_reads, set_query_tag
 from server.core.datetimes import naive_utc_now_seconds
+from server.core.errors import GrantBusyError
 from server.settings import settings
 
 router = APIRouter()
@@ -166,6 +169,7 @@ def _signup_gate() -> None:
 
 @router.post("/v1/auth/self-signup", response_model=SelfSignupOutput)
 async def self_signup(input: SelfSignupInput, request: Request) -> SelfSignupOutput:
+    set_query_tag("auth.self_signup")  # these routes are not under the transports
     _signup_gate()
     org = signup_org(input.org)
     namespace = _claimable_namespace(input.namespace)
@@ -173,7 +177,12 @@ async def self_signup(input: SelfSignupInput, request: Request) -> SelfSignupOut
         raise _rate_limited(f"at most {HUMAN_SIGNUPS_PER_HOUR} sign-ups per address per hour")
     # The name's claim, then the email's: each check-then-insert runs under its
     # deployment-wide claim, so a second sign-up on any replica is refused.
-    async with _claimed(name_claim(org, namespace)), _claimed(email_claim(org, input.email)):
+    # The account claim too, which namespace.register holds (order: `grant_claims`).
+    async with (
+        _claimed(name_claim(org, namespace)),
+        _account_claimed(org, namespace),
+        _claimed(email_claim(org, input.email)),
+    ):
         return await _claim_account(input, org, namespace)
 
 
@@ -182,7 +191,8 @@ async def _claim_account(input: SelfSignupInput, org: str, namespace: str) -> Se
 
     # First-claim-wins. If the namespace already exists, refuse — without
     # this, a second caller typing the same name receives a JWT with the
-    # same `sub`, effectively impersonating the original claimer.
+    # same `sub`, effectively impersonating the original claimer. A name in
+    # use without a registry row is refused the same way (`directory().in_use`).
     ch = get_client()
     with sequential_reads():  # an account another replica just provisioned
         return await _claim_checked(input, org, namespace, subject, ch)
@@ -200,7 +210,7 @@ async def _claim_checked(
         """,
         params={"org": org, "ns": namespace},
     )
-    if existing is not None:
+    if existing is not None or await directory().in_use(org, namespace, ch=ch):
         raise _name_claimed(namespace)
     await _refuse_empowered(ch, org, namespace)
 
@@ -305,8 +315,10 @@ def _claimable_namespace(name: str) -> str:
     """The namespace name, which is also the account's token subject, in the
     shared namespace shape — so it can never spell an email, a service-account
     `sa:` subject or a wildcard that grants under that subject would honour.
-    `personal-*` is reserved for per-subject auto-provisioning. (SSO's `u-`
+    `personal-*` is reserved for per-subject auto-provisioning and a collection name for
+    `collection.create`, as `namespace.register` refuses it. (SSO's `u-`
     names need no check here: self-signup is closed whenever SSO is on.)"""
+    from server.auth.sharing import is_collection
     from server.core.naming import validate_namespace_name
 
     try:
@@ -315,6 +327,14 @@ def _claimable_namespace(name: str) -> str:
         raise HTTPException(
             status_code=422, detail={"code": "VALIDATION_FAILED", "message": str(e)}
         ) from e
+    if is_collection(namespace):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": "collection names are made with collection.create",
+            },
+        )
     if namespace.startswith("personal-"):
         raise HTTPException(
             status_code=422,
@@ -381,6 +401,9 @@ _human_signups = Attempts("signup.human", HUMAN_SIGNUPS_PER_HOUR, 3600)
 # A claim outlives the check, the password hash and the inserts with room to spare;
 # a holder that dies is taken over after it.
 CLAIM_TTL_S = 60
+# The wait for the account claim inside the name claim, short so the name claim's 24 s cut
+# is not reached; another change to the account answers SIGNUP_IN_PROGRESS.
+ACCOUNT_WAIT_S = 2.0
 
 
 def agent_namespace(name: str) -> str | None:
@@ -403,6 +426,16 @@ def email_claim(org: str, email: str) -> str:
     return f"signup-email:{org}:{digest}"
 
 
+def _in_progress() -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "SIGNUP_IN_PROGRESS",
+            "message": "another sign-up for this name or email is running; retry in a moment",
+        },
+    )
+
+
 @asynccontextmanager
 async def _claimed(name: str) -> AsyncIterator[None]:
     """Hold the deployment-wide claim `name` from the existence check to the insert;
@@ -411,14 +444,7 @@ async def _claimed(name: str) -> AsyncIterator[None]:
     try:
         async with leases.holding(name, ttl_s=CLAIM_TTL_S) as held:
             if not held:
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "code": "SIGNUP_IN_PROGRESS",
-                        "message": "another sign-up for this name or email is running; "
-                        "retry in a moment",
-                    },
-                )
+                raise _in_progress()
             yield
     except leases.ClaimExpired as e:
         raise HTTPException(
@@ -426,6 +452,26 @@ async def _claimed(name: str) -> AsyncIterator[None]:
             detail={"code": "SIGNUP_UNAVAILABLE", "message": "sign-up timed out; retry"},
             headers={"Retry-After": "5"},
         ) from e
+
+
+@asynccontextmanager
+async def _account_claimed(org: str, namespace: str) -> AsyncIterator[None]:
+    """`account_change`, with a busy claim answered as another sign-up's (409
+    SIGNUP_IN_PROGRESS)."""
+    async with AsyncExitStack() as stack:
+        try:
+            # A short wait, statements bounded as the name claim's are; a slow change
+            # ends in a 503 from this claim's bound or the name claim's.
+            claim = account_change(
+                org,
+                namespace,
+                wait_s=ACCOUNT_WAIT_S,
+                statement_s=leases.statement_bound(CLAIM_TTL_S),
+            )
+            await stack.enter_async_context(claim)
+        except GrantBusyError:
+            raise _in_progress() from None
+        yield
 
 
 def _rate_limited(message: str) -> HTTPException:
@@ -474,6 +520,7 @@ async def agent_signup(input: AgentSignupInput, request: Request) -> AgentSignup
     then sign in as the namespace, its admin, and the agent's token keeps
     working. First-claim-wins on the name, like the human route.
     """
+    set_query_tag("auth.agent_signup")
     if settings.effective_identity_provider() == "single-user":
         # Creates nothing, so the per-address limit does not apply.
         return await _single_user_agent(input, request)
@@ -490,7 +537,7 @@ async def agent_signup(input: AgentSignupInput, request: Request) -> AgentSignup
             },
         )
     org = signup_org(input.org)
-    async with _claimed(name_claim(org, namespace)):
+    async with _claimed(name_claim(org, namespace)), _account_claimed(org, namespace):
         with sequential_reads():
             return await _provision_agent(input, request, org, namespace)
 
@@ -537,7 +584,7 @@ async def _provision_agent(
         """,
         params={"org": org, "ns": namespace},
     )
-    if existing is not None:
+    if existing is not None or await directory().in_use(org, namespace, ch=ch):
         raise _name_claimed(namespace)
     # A person claims the account later under the name, as its subject.
     await _refuse_empowered(ch, org, namespace)

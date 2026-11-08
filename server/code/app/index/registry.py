@@ -44,13 +44,14 @@ async def _sync_maintainers(cfg: Any, client: Any) -> None:
         _SYNCED.add((cfg.org, cfg.namespace))
 
 
-async def ensure_registered(cfg: Any, *, ch: Any | None = None) -> bool:
-    """Idempotent. Returns True when a row was inserted this call."""
+async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = True) -> bool:
+    """Idempotent. Returns True when a row was inserted this call. `sync=False` leaves the
+    maintainers' fan-out, whose claims wait, to a caller holding a claim of its own."""
     from server.core.ch import get_client
 
     key = (cfg.org, cfg.namespace)
     if key in _DONE:
-        if key not in _SYNCED:
+        if sync and key not in _SYNCED:
             await _sync_maintainers(cfg, ch or get_client())
         return False
     client = ch or get_client()
@@ -117,7 +118,8 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None) -> bool:
                     cfg.namespace,
                 )
             _DONE.add(key)
-            await _sync_maintainers(cfg, client)
+            if sync:
+                await _sync_maintainers(cfg, client)
             return False
         await client.insert(
             "loom.namespaces",
@@ -153,7 +155,8 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None) -> bool:
             cfg.namespace,
             "restricted" if restricted else "standard",
         )
-        await _sync_maintainers(cfg, client)
+        if sync:
+            await _sync_maintainers(cfg, client)
         return True
     except Exception as e:  # noqa: BLE001 — directory is a convenience, never block indexing
         logger.warning(

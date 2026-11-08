@@ -823,7 +823,9 @@ sealed credentials. Recreate the Loom container to load the changes, as shown in
 volumes. Signing up does not automatically give a new account access to existing local
 memories: provision the appropriate namespace grants through an operator.
 
-People sign up in the dashboard. The first person to claim a namespace name becomes its admin.
+People sign up in the dashboard. The first person to claim a namespace name becomes its
+admin. Sign-up refuses a name that is already in use, registered or not, with the same
+answer as a registered one ([what a new name may claim](../architecture/security.md#what-a-new-name-may-claim)).
 Agents sign themselves up with `loom init --agent <name>`, which returns a claim code a
 person later enters once at `/oauth/agent-claim`, with a password of their own, to take ownership.
 An agent account whose password is a plain hash of its code and that has no claim tag is
