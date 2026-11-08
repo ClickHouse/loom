@@ -230,5 +230,13 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "each page searches its own plane: Memories memory.search, the Library "
             "knowledge.search, Conversations conversation.search"
         ),
+        "insights.catalog": (
+            "the assistant agent's tool, read before it writes SQL; no dashboard page calls "
+            "it until the Assistant page's chat"
+        ),
+        "insights.query": (
+            "the assistant agent's SQL tool; no dashboard page calls it until the Assistant "
+            "page's chat"
+        ),
     },
 )

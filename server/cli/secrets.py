@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import sys
 from datetime import UTC, datetime
@@ -32,6 +33,7 @@ SEALED: tuple[tuple[str, str, tuple[str, ...], str, str], ...] = (
         "provider-rebuild-views",
         "",
     ),
+    ("loom.analysis_secrets", "sealed", (), "analysis.secrets", ""),
     # A live session's identity-provider refresh token. Keeper's sealed copies
     # (a code, a device grant, an approval or link in flight) are not rewritten
     # here, see `in_flight`; a `family:<id>` key holds only "<generation>:<rid>".
@@ -51,6 +53,7 @@ _KEYS = {
     "loom.knowledge_sources": ("org", "namespace", "name"),
     "loom.provider_configuration": ("config_id",),
     "loom.oauth_state": ("record_type", "id"),
+    "loom.analysis_secrets": ("id",),
 }
 # A rebuild in these states rewrites its configuration row from one it read
 # earlier, which would put back what the reseal replaced.
@@ -122,24 +125,33 @@ async def reseal_all(
     counts: dict[str, int] = {}
     lost: dict[str, list[str]] = {}
     for table, column, path, purpose, where in SEALED:
-        rows = await ch.query_all(
-            f"SELECT * FROM {table} FINAL WHERE {column} != ''" + (f" AND {where}" if where else "")
-        )
-        out = []
-        unopened: list[str] = []
-        for row in rows:
-            new, opens = _resealed_value(str(row[column]), path, purpose)
-            if not opens:
-                unopened.append("/".join(str(row[k]) for k in _KEYS[table]))
-            if new is not None:
-                # The lowest version above the one read: an edit written
-                # meanwhile (at the server's clock) stays the newer row.
-                out.append({**row, column: new, "version": int(row["version"]) + 1})
-        counts[f"{table}.{column}"] = len(out)
-        if unopened:
-            lost[f"{table}.{column}"] = unopened
-        if out and not dry_run:
-            await ch.insert(table, out, settings={"async_insert": 0})
+        async with contextlib.AsyncExitStack() as held:
+            if table == "loom.analysis_secrets":
+                # One writer of the analysis row at a time, reading the newest copy.
+                from server.core.ch import own_write_reads
+                from server.insights.app.analysis import lease
+
+                await held.enter_async_context(lease(ch))
+                held.enter_context(own_write_reads())
+            rows = await ch.query_all(
+                f"SELECT * FROM {table} FINAL WHERE {column} != ''"
+                + (f" AND {where}" if where else "")
+            )
+            out = []
+            unopened: list[str] = []
+            for row in rows:
+                new, opens = _resealed_value(str(row[column]), path, purpose)
+                if not opens:
+                    unopened.append("/".join(str(row[k]) for k in _KEYS[table]))
+                if new is not None:
+                    # The lowest version above the one read: an edit written
+                    # meanwhile (at the server's clock) stays the newer row.
+                    out.append({**row, column: new, "version": int(row["version"]) + 1})
+            counts[f"{table}.{column}"] = len(out)
+            if unopened:
+                lost[f"{table}.{column}"] = unopened
+            if out and not dry_run:
+                await ch.insert(table, out, settings={"async_insert": 0})
     return counts, lost, checked
 
 

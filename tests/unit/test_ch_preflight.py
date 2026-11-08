@@ -371,7 +371,7 @@ def test_the_reader_must_not_be_the_loom_user(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(settings, "ch_user", "loom")
     monkeypatch.setattr(settings, "ch_reader_user", "loom")
-    assert ch_setup._cmd_ch_setup(argparse.Namespace(print_sql=True)) == 2
+    assert ch_setup._cmd_ch_setup(argparse.Namespace(print_sql=True, print_analyst_sql=False)) == 2
 
 
 @pytest.mark.parametrize(
@@ -677,10 +677,10 @@ def test_an_empty_reader_user_opts_out_of_the_reader(
     monkeypatch.setattr(ch_setup, "reader_status", must_not_touch)
     ch = FakeCH()
     monkeypatch.setattr(preflight, "connect", lambda: ch)
-    assert ch_setup._cmd_ch_setup(argparse.Namespace(print_sql=False)) == 0
+    assert ch_setup._cmd_ch_setup(argparse.Namespace(print_sql=False, print_analyst_sql=False)) == 0
     assert "caller-shaped reads run as 'loom_app'" in capsys.readouterr().out
     assert not any("loom_reader" in sql for sql in ch.ran)
-    ch_setup._cmd_ch_setup(argparse.Namespace(print_sql=True))
+    ch_setup._cmd_ch_setup(argparse.Namespace(print_sql=True, print_analyst_sql=False))
     assert "CREATE USER" not in capsys.readouterr().out
 
 
@@ -692,7 +692,7 @@ def test_an_unset_reader_user_means_the_default_reader(
     monkeypatch.delenv("LOOM_CH_READER_USER", raising=False)
     monkeypatch.setattr(settings, "ch_user", "loom_app")
     monkeypatch.setattr(settings, "ch_reader_user", "")
-    ch_setup._cmd_ch_setup(argparse.Namespace(print_sql=True))
+    ch_setup._cmd_ch_setup(argparse.Namespace(print_sql=True, print_analyst_sql=False))
     assert "CREATE USER OR REPLACE `loom_reader`" in capsys.readouterr().out
 
 

@@ -45,6 +45,7 @@ from server.core.ch_schema_guard import guard_pending_schema
 from server.core.ch_statement_text import capture_statement, statement_digest
 from server.core.ch_target import connection_kwargs
 from server.core.ch_writes import dedup_settings, insert_dedup_token
+from server.core.sql_literal import sql_string
 from server.core.traffic_context import traffic_class_var
 from server.settings import settings
 
@@ -154,15 +155,55 @@ def _apply_caller_ceilings(out: dict[str, Any], cls: str) -> None:
     out["read_overflow_mode"] = "throw"
 
 
+# An `insights.query` statement runs as the analyst user with the request's
+# signed scope as custom settings (`server.insights.domain.analysis`). Set
+# only by `as_analyst`; None everywhere else.
+_analyst_var: ContextVar[tuple[str, str, dict[str, Any]] | None] = ContextVar(
+    "ch_analyst", default=None
+)
+
+
+@contextmanager
+def as_analyst(user: str, password: str, extra: dict[str, Any]) -> Iterator[None]:
+    """Every statement in this block logs in as `user` and carries `extra`
+    (the signed scope and the caps), which win over every other setting."""
+    token = _analyst_var.set((user, password, dict(extra)))
+    try:
+        yield
+    finally:
+        _analyst_var.reset(token)
+
+
+# Set only by `uncaptured`: statements that carry a secret stay out of
+# LOOM_CH_CAPTURE_STATEMENTS.
+_uncaptured_var: ContextVar[bool] = ContextVar("ch_uncaptured", default=False)
+
+
+@contextmanager
+def uncaptured() -> Iterator[None]:
+    """Statements in this block are never written to the capture file: they
+    carry a password or a key in their text."""
+    token = _uncaptured_var.set(True)
+    try:
+        yield
+    finally:
+        _uncaptured_var.reset(token)
+
+
 def _reader_auth() -> dict[str, Any]:
     """Inside a `caller_shaped()` block with LOOM_CH_READER_USER set, the HTTP
     auth header that sends the read as that read-only user instead of `ch_user`.
     Only the query path sends it, where every statement is read-class and so
-    carries the caller-shaped ceilings too."""
-    user = settings.ch_reader_user
-    if not caller_shaped_var.get() or not user:
-        return {}
-    token = base64.b64encode(f"{user}:{settings.ch_password}".encode()).decode()
+    carries the caller-shaped ceilings too. Inside `as_analyst` it sends the
+    analyst user instead, always."""
+    analyst = _analyst_var.get()
+    if analyst is not None:
+        user, password = analyst[0], analyst[1]
+    else:
+        user, password = settings.ch_reader_user, settings.ch_password
+        if not caller_shaped_var.get() or not user:
+            return {}
+    token = base64.b64encode(f"{user}:{password}".encode()).decode()
     return {"transport_settings": {"Authorization": f"Basic {token}"}}
 
 
@@ -430,11 +471,19 @@ def statement_settings(
     out = query_settings(extra)
     cls = cls or statement_class(sql)
     _apply_class_timeout(out, cls)
-    if settings.ch_capture_statements:
+    if settings.ch_capture_statements and not _uncaptured_var.get():
         capture_statement(sql, settings.ch_capture_statements)
     if settings.ch_log_comment_statement_digest:
         tag = str(out.get("log_comment") or "")
         out["log_comment"] = f"{tag} {statement_digest(sql)}".strip()
+    analyst = _analyst_var.get()
+    if analyst is not None:
+        # The analyst's profile pins its own caps, its time cap included: a
+        # class deadline, a traffic class's or the caller's settings could only
+        # collide with them.
+        out.pop("max_execution_time", None)
+        out.update(analyst[2])
+        return _with_request_query_id(out)
     tclass = traffic_class_var.get()[0]
     if tclass and is_read_statement(sql):
         for name, value in traffic_class_settings(tclass).items():
@@ -540,10 +589,6 @@ async def _turn_off_unsafe_condition_cache(client: AsyncClient) -> None:
         log.info("ClickHouse %s: sessions run with use_query_condition_cache = 0", oldest)
 
 
-def _sql_string(value: str) -> str:
-    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
-
-
 _STORED_KINDS = "('MATERIALIZED', 'ALIAS', 'EPHEMERAL')"  # as rmt_carry reads the lists
 
 
@@ -551,10 +596,10 @@ def _stray_columns_sql(table: str, stored: frozenset[str]) -> str:
     """How many stored columns `table` has outside `stored`: 0 while the lists a
     carried write took still describe it."""
     db, name = split_table(table)
-    known = ", ".join(_sql_string(c) for c in sorted(stored))
+    known = ", ".join(sql_string(c) for c in sorted(stored))
     return (
-        f"SELECT count() AS n FROM system.columns WHERE database = {_sql_string(db)} "
-        f"AND table = {_sql_string(name)} AND default_kind NOT IN {_STORED_KINDS} "
+        f"SELECT count() AS n FROM system.columns WHERE database = {sql_string(db)} "
+        f"AND table = {sql_string(name)} AND default_kind NOT IN {_STORED_KINDS} "
         f"AND name NOT IN [{known}]"
     )
 
@@ -583,7 +628,7 @@ def start_guard(deadline_ms_sql: str) -> str:
     clock, epoch milliseconds: a literal or a query parameter) with `DEADLINE_MESSAGE`."""
     return (
         f"throwIf(toUnixTimestamp64Milli(now64(3)) > {deadline_ms_sql}, "
-        f"{_sql_string(DEADLINE_MESSAGE)}) = 0"
+        f"{sql_string(DEADLINE_MESSAGE)}) = 0"
     )
 
 
@@ -618,10 +663,10 @@ def _fenced_statement(
         ""
         if stored is None
         else f"throwIf(({_stray_columns_sql(table, stored)}) != 0, "
-        f"{_sql_string(FENCE_MESSAGE)}) = 0 AND "
+        f"{sql_string(FENCE_MESSAGE)}) = 0 AND "
     )
     return (
-        f"INSERT INTO {qualify(table)} ({cols}) SELECT {cols} FROM input({_sql_string(structure)}) "
+        f"INSERT INTO {qualify(table)} ({cols}) SELECT {cols} FROM input({sql_string(structure)}) "
         f"WHERE {fence}{start_guard(str(round(deadline * 1000)))} FORMAT Native\n"
     )
 
@@ -1033,6 +1078,15 @@ class CHClient:
     ) -> list[dict[str, Any]]:
         result = await self._query_fail_open("query_all", sql, params)
         return [dict(zip(result.column_names, row, strict=False)) for row in result.result_rows]
+
+    async def query_columns(
+        self, sql: str, params: dict[str, Any] | None = None
+    ) -> tuple[list[str], list[str], list[tuple[Any, ...]]]:
+        """A SELECT's column names, column type names and rows, for a statement
+        whose columns the caller does not know (two columns may share a name)."""
+        result = await self._query_fail_open("query_columns", sql, params)
+        types = [t.name for t in result.column_types]
+        return list(result.column_names), types, [tuple(r) for r in result.result_rows]
 
     async def raw_bytes(self, sql: str, params: dict[str, Any] | None = None) -> bytes:
         """A SELECT's whole output as bytes (`FORMAT RawBLOB` for one String

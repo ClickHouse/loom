@@ -35,6 +35,17 @@ def test_stored_ciphertexts_still_open(
     assert unseal(purpose, seal(purpose, "s3cret")) == "s3cret"
 
 
+@pytest.fixture(autouse=True)
+def _no_analysis_lease(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reseal holds the analysis lease over loom.analysis_secrets; these
+    fakes model the sealed tables, not the lease store."""
+    import contextlib
+
+    from server.insights.app import analysis
+
+    monkeypatch.setattr(analysis, "lease", lambda ch=None: contextlib.nullcontext())
+
+
 def test_purposes_do_not_open_each_other_and_empty_stays_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

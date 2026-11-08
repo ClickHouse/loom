@@ -1,0 +1,8 @@
+<clickhouse>
+    <!-- A user with no row policy on a table reads none of its rows, so a
+         dropped analyst policy hides rows instead of showing every tenant's.
+         Every other user reads through the permissive policy Loom writes. -->
+    <access_control_improvements>
+        <users_without_row_policies_can_read_rows>false</users_without_row_policies_can_read_rows>
+    </access_control_improvements>
+</clickhouse>

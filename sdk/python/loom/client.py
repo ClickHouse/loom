@@ -1189,6 +1189,33 @@ class InboxOps:
         )
 
 
+class InsightsOps:
+    """The `insights.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def catalog(
+        self, body: _ops.InsightsCatalogBody | None = None, /, **options: Any
+    ) -> _ops.InsightsCatalogOutput:
+        """`insights.catalog`."""
+        return cast(
+            "_ops.InsightsCatalogOutput",
+            await self._agent.call("insights.catalog", body, **options),
+        )
+
+    async def query(
+        self, body: _ops.InsightsQueryBody | None = None, /, **options: Any
+    ) -> _ops.InsightsQueryOutput:
+        """`insights.query`."""
+        return cast(
+            "_ops.InsightsQueryOutput", await self._agent.call("insights.query", body, **options)
+        )
+
+
 class KnowledgeOps:
     """The `knowledge.*` operations."""
 
@@ -3362,6 +3389,7 @@ class OpsClient:
         self.facts = FactsOps(agent)
         self.grants = GrantsOps(agent)
         self.inbox = InboxOps(agent)
+        self.insights = InsightsOps(agent)
         self.knowledge = KnowledgeOps(agent)
         self.learnings = LearningsOps(agent)
         self.memory = MemoryOps(agent)

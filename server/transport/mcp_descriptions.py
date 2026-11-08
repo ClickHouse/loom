@@ -2320,3 +2320,19 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
         "path and span it returns. `uses_brief: true` adds the top call sites."
     ),
 }
+
+TOOL_DESCRIPTIONS["insights.catalog"] = (
+    "List the tables `insights.query` can read: each column with its type and "
+    "meaning, how to read the table correctly (one live row per key, or one row "
+    "per event), and the caps a statement runs under. Call it before writing "
+    "SQL for `insights.query`."
+)
+TOOL_DESCRIPTIONS["insights.query"] = (
+    "Run one read-only SQL SELECT (or WITH) over the tables `insights.catalog` "
+    "lists, for questions no other read answers: counts, rankings and trends "
+    "over memories, conflicts, usage, documents and the request ledger. It "
+    "reads only this namespace's rows, deleted and replaced versions excluded "
+    "(FINAL is applied for you), and returns at most `limit` rows: aggregate "
+    "rather than page. A statement over a cap fails with the cap it hit; add "
+    "a time or key filter. Cite the answer's `sql_digest` with the statement."
+)

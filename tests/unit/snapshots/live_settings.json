@@ -2,6 +2,7 @@
  "audit_verify_max_rows_per_pass",
  "auth_machine_discovery_ttl_s",
  "auth_oidc_discovery_ttl_s",
+ "ch_analysis_probe_interval_s",
  "ch_batched_insert_background_wait_max_ms",
  "ch_batched_insert_wait_max_ms",
  "ch_batched_insert_wait_min_ms",

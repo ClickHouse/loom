@@ -409,12 +409,48 @@ def _set_up(ch: Any, user: str, reader: str | None) -> int:
     elif not settings.ch_reader_user:
         print(f"  set LOOM_CH_READER_USER={reader} so caller-shaped reads run as it")
 
+    _write_analyst()
     print("· Keeper: present")
     print(
         "· lightweight UPDATE: "
         + ("on" if server.lightweight_updates else "off; Loom uses mutations")
     )
     return 0
+
+
+def _analyst_sql() -> list[str]:
+    """The analyst user's SQL with this deployment's key and password, which
+    the first call makes and stores (sealed) when there are none yet."""
+    from server.cli._ch import run_connected
+    from server.insights.app import analysis
+
+    async def _go(_ch: Any) -> list[str]:
+        await analysis.load_for_print()
+        return analysis.printed_statements(await analysis.own_grant_revokes())
+
+    return run_connected(_go)
+
+
+def _write_analyst() -> None:
+    """Write insights.query's analyst user under this deployment's key, for a
+    deployment whose server user cannot (one with access management writes it
+    at boot)."""
+    from server.cli._ch import run_connected
+    from server.insights.app.analysis import SetupRefused, rewrite
+
+    try:
+        run_connected(lambda _ch: rewrite())
+    except Exception as e:  # noqa: BLE001 — insights.query is optional; the rest of setup stands
+        line = error_line(e)
+        # A refusal Loom wrote names its own next step.
+        advice = (
+            ""
+            if isinstance(e, SetupRefused)
+            else "; have an admin run the SQL `loom ch-setup --print-analyst-sql` prints"
+        )
+        print(f"· loom_analyst (insights.query): not written ({line}){advice}")
+        return
+    print("· loom_analyst (insights.query): written")
 
 
 def _cmd_ch_setup(args: argparse.Namespace) -> int:
@@ -425,8 +461,33 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
     # Unset (a checkout without it) means the default reader.
     opted_out = "LOOM_CH_READER_USER" in os.environ and not settings.ch_reader_user
     reader = None if opted_out else settings.ch_reader_user or DEFAULT_READER
-    if not (_NAME.match(user) and (reader is None or _NAME.match(reader))):
-        print(f"✗ cannot use user names {user!r} / {reader!r} in SQL", file=sys.stderr)
+    if args.print_analyst_sql:
+        from server.insights.app import analysis
+
+        try:
+            statements = _analyst_sql()
+        except Exception as e:  # noqa: BLE001 — every refusal is one line, not a traceback
+            print(f"✗ {error_line(e)}", file=sys.stderr)
+            return 2
+        print(
+            "-- Holds the analyst password and scope key: save it to a file and run it in one "
+            "session,\n-- clickhouse-client --log_queries=0 --multiquery --queries-file <file>, "
+            "so neither reaches system.query_log.\n-- First run these two checks. The first "
+            "lists permissive row policies Loom did not write on\n-- the analysis tables: drop "
+            "or make restrictive any it returns, since the policy below for\n-- every other "
+            "user would widen them. The second lists other Loom databases on this server\n-- "
+            "writing the same analyst user: analysis needs one Loom per ClickHouse service.\n-- "
+            + "\n-- ".join(analysis.printed_checks())
+        )
+        for stmt in statements:
+            print(f"{stmt};")
+        return 0
+    # The reader and admin SQL name these users.
+    if not _NAME.match(user):
+        print(f"✗ cannot use user name {user!r} in SQL", file=sys.stderr)
+        return 2
+    if reader is not None and not _NAME.match(reader):
+        print(f"✗ cannot use user name {reader!r} in SQL", file=sys.stderr)
         return 2
     if reader == user:
         print("✗ LOOM_CH_READER_USER must differ from LOOM_CH_USER", file=sys.stderr)
@@ -461,5 +522,18 @@ def register_ch_setup_cli(sub: Any) -> None:
         "--print-sql",
         action="store_true",
         help="Print the SQL for an admin (password as a placeholder); change nothing.",
+    )
+    p.add_argument(
+        "--print-analyst-sql",
+        action="store_true",
+        help=(
+            "Print the SQL that writes insights.query's analyst user, for an admin where "
+            "LOOM_CH_USER lacks access management. It holds the user's password and the "
+            "scope key stored sealed in loom.analysis_secrets (drawn when there is none; "
+            "where LOOM_CH_USER cannot list users, a missing row is drawn again, which moves "
+            "the key): run it in full with "
+            "`clickhouse-client --log_queries=0 --multiquery --queries-file <file>`, do not "
+            "store it."
+        ),
     )
     p.set_defaults(func=_cmd_ch_setup)

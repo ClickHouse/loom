@@ -3189,6 +3189,53 @@ export interface InboxRegisterOutput {
   created: boolean;
 }
 
+export interface InsightsCatalogInput {
+  org: string;
+  namespace: string;
+}
+
+export interface CatalogTable {
+  name: string;
+  comment: string;
+  notes: string;
+  columns: CatalogColumn[];
+}
+
+export interface CatalogColumn {
+  name: string;
+  type: string;
+  comment: string;
+}
+
+export interface InsightsCatalogOutput {
+  tables: CatalogTable[];
+  max_result_rows: number;
+  max_execution_s: number;
+  max_rows_to_read: number;
+}
+
+export interface InsightsQueryInput {
+  org: string;
+  namespace: string;
+  /** One SELECT or WITH statement over the tables insights.catalog lists; it reads only this namespace's rows. A trailing FORMAT is a syntax error, and SETTINGS cann */
+  sql: string;
+  /** Rows to return at most (default 100); the deployment's cap (LOOM_CH_ANALYSIS_MAX_RESULT_ROWS) wins when lower. */
+  limit?: number;
+}
+
+export interface AnalysisColumn {
+  name: string;
+  type: string;
+}
+
+export interface InsightsQueryOutput {
+  columns?: AnalysisColumn[];
+  rows?: unknown[][];
+  row_count?: number;
+  truncated?: boolean;
+  sql_digest?: string;
+}
+
 export interface KnowledgeAddInput {
   org: string;
   namespace: string;
@@ -10087,6 +10134,8 @@ export type OpName =
   | "inbox.policy_set"
   | "inbox.principals"
   | "inbox.register"
+  | "insights.catalog"
+  | "insights.query"
   | "knowledge.add"
   | "knowledge.bulk_add"
   | "knowledge.bulk_delete"
@@ -10446,6 +10495,8 @@ export interface OpMap {
   "inbox.policy_set": { input: InboxPolicySetInput; output: InboxPolicySetOutput };
   "inbox.principals": { input: InboxPrincipalsInput; output: InboxPrincipalsOutput };
   "inbox.register": { input: InboxRegisterInput; output: InboxRegisterOutput };
+  "insights.catalog": { input: InsightsCatalogInput; output: InsightsCatalogOutput };
+  "insights.query": { input: InsightsQueryInput; output: InsightsQueryOutput };
   "knowledge.add": { input: KnowledgeAddInput; output: KnowledgeAddOutput };
   "knowledge.bulk_add": { input: KnowledgeBulkAddInput; output: KnowledgeBulkAddOutput };
   "knowledge.bulk_delete": { input: KnowledgeBulkDeleteInput; output: KnowledgeBulkDeleteOutput };
@@ -10805,6 +10856,8 @@ export const OPS: readonly OpSpec[] = [
   { name: "inbox.policy_set", group: "inbox", method: "policySet", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 800, audit: true, readOnly: false },
   { name: "inbox.principals", group: "inbox", method: "principals", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: false },
   { name: "inbox.register", group: "inbox", method: "register", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 800, audit: true, readOnly: false },
+  { name: "insights.catalog", group: "insights", method: "catalog", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 20, audit: false, readOnly: true },
+  { name: "insights.query", group: "insights", method: "query", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 2000, audit: false, readOnly: true },
   { name: "knowledge.add", group: "knowledge", method: "add", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 50, audit: false, readOnly: false },
   { name: "knowledge.bulk_add", group: "knowledge", method: "bulkAdd", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 2000, audit: false, readOnly: false },
   { name: "knowledge.bulk_delete", group: "knowledge", method: "bulkDelete", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 500, audit: true, readOnly: false },
@@ -11047,4 +11100,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 356;
+export const GENERATED_OP_COUNT = 358;

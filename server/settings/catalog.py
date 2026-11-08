@@ -643,6 +643,30 @@ class ClickHouseSettings(BaseModel):
     # shipped config defines `loom_reader` (SELECT only). Empty = `ch_user`.
     ch_reader_user: str = ""
 
+    # Caps and pacing for insights.query. The statement caps are pinned as a MAX in
+    # the loom_analyst user's caps profile so no statement can raise them; a boot
+    # whose ClickHouse user has access management writes that profile when one changed.
+    # --- analysis statements (insights.query) ---
+    # Seconds one insights.query statement may run.
+    ch_analysis_max_execution_s: float = Field(default=10.0, ge=0.1, le=300.0)
+    # Rows one statement may scan; past it the statement fails (422), never a partial answer.
+    ch_analysis_max_rows_to_read: int = Field(default=200_000_000, ge=1)
+    # Bytes of memory one statement may use.
+    ch_analysis_max_memory_bytes: int = Field(default=2_000_000_000, ge=1)
+    # Rows one statement returns at most; a longer result comes back cut, marked truncated.
+    ch_analysis_max_result_rows: int = Field(default=500, ge=1, le=10_000)
+    # Bytes of result one statement may return; past it the statement fails (422).
+    ch_analysis_max_result_bytes: int = Field(default=4_000_000, ge=1)
+    # Statements the analyst user runs at once across every org and replica.
+    ch_analysis_max_concurrent: int = Field(default=8, ge=1, le=256)
+    # Threads one statement may use (pinned as a MAX, so a statement cannot take the host).
+    ch_analysis_max_threads: int = Field(default=4, ge=1, le=64)
+    # Statements one org runs at once on one replica; past it a call answers RATE_LIMITED.
+    ch_analysis_max_concurrent_per_org: int = Field(default=2, ge=1, le=64)
+    # Seconds between two probes of the analyst user in each web process; a problem
+    # an admin fixes, or a repair a write makes, shows within one interval.
+    ch_analysis_probe_interval_s: Annotated[float, LIVE] = Field(default=60.0, ge=5, le=3600)
+
     # --- traffic classes ---
     # JSON map {traffic class: ClickHouse settings} applied by
     # `server.core.ch.statement_settings` to every read (an explicit per-call
@@ -5756,6 +5780,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "inbox.policy_set": 800,
     "inbox.principals": 1500,
     "inbox.register": 800,
+    "insights.catalog": 20,
+    "insights.query": 2000,
     "knowledge.add": 50,
     "knowledge.bulk_add": 2000,
     "knowledge.bulk_delete": 500,

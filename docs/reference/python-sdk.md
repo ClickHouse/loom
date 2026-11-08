@@ -218,9 +218,10 @@ whose body has neither, or one the SDK raised itself:
 - an error raised before sending is `dependency` and retryable when a service the SDK
   needed first was down (an identity provider, a secret store; a sign-in answered 429 is
   `capacity`), `auth` when the caller is not signed in, else `input`;
-- a code the SDK never retries is `configuration` (`CODED_WIDTH_MISMATCH`,
-  `GATEWAY_REQUIRED`), `internal` (`MODEL_CALL_UNATTRIBUTED`) or `dependency`
-  (`PUBLICATION_PENDING`: the write is committed and its rows follow), not retryable;
+- a code the SDK never retries is `configuration` (`ANALYSIS_UNAVAILABLE`,
+  `CODED_WIDTH_MISMATCH`, `GATEWAY_REQUIRED`), `internal` (`MODEL_CALL_UNATTRIBUTED`) or
+  `dependency` (`PUBLICATION_PENDING`: the write is committed and its rows follow), not
+  retryable;
 - a 5xx on an op that is not idempotent is not retryable, since the call may have written,
   unless its code proves the handler never ran (`AUTH_UNAVAILABLE`). This is stricter than
   the server, which also keeps a refusal it makes before dispatch retryable

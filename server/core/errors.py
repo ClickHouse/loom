@@ -133,7 +133,9 @@ class OverloadedError(LoomServerError):
     contended. The pool: every pooled connection was busy past `ch_pool_wait_ms`; the
     lock or lease: a sibling held it past its wait; the matchers: the org's share of them
     stayed busy, and the write is refused rather than stored unchecked; a conversation
-    delete or compaction: writes to the thread's embeddings kept landing. Safe to resend
+    delete or compaction: writes to the thread's embeddings kept landing; insights.query
+    while its replica's probe has no answer from ClickHouse, or while ClickHouse is short
+    of memory. Safe to resend
     on an idempotent op, or when it came before the handler ran; `retry_after_s` is the
     wait."""
 
@@ -359,6 +361,19 @@ def stored_caller_text(text: str) -> str:
     return ""
 
 
+class AnalysisUnavailableError(LoomServerError):
+    """`insights.query` cannot run on this replica: the probe each process
+    runs on an interval found, or a statement's login met, the analyst
+    ClickHouse user missing, wider than the allowlist, or refusing this
+    replica's key or password. Only an operator's fix ends
+    it, so it is not retried: `loom doctor` names the cause and the fix. A
+    replica whose probe has no answer from ClickHouse, or a ClickHouse short
+    of memory, answers OVERLOADED instead."""
+
+    code = "ANALYSIS_UNAVAILABLE"
+    status_code = 503
+
+
 # How a caller acts on an error without knowing its code: `category` says whose move it
 # is, `retryable` whether resending the same request unchanged can succeed later (after
 # `retry_after_s` when the error names one). The status decides unless the code is listed;
@@ -384,6 +399,7 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     "SCHEMA_PENDING": ("configuration", False),
     "OVERRIDE_NOT_STORED": ("configuration", False),
     "CODED_WIDTH_MISMATCH": ("configuration", False),
+    "ANALYSIS_UNAVAILABLE": ("configuration", False),
     "GATEWAY_REQUIRED": ("configuration", False),
     "INTEGRATION_NOT_CONFIGURED": ("configuration", False),
     "MODEL_CALLS_DISABLED": ("configuration", False),

@@ -36,6 +36,8 @@ services:
       - ./deploy/clickhouse-config/nlp_user_settings.xml:/etc/clickhouse-server/users.d/nlp_user_settings.xml:ro
       # An embedded single-node Keeper for the KeeperMap tables.
       - ./deploy/clickhouse-config/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro
+      # A user with no row policy on a table reads none of it.
+      - ./deploy/clickhouse-config/access_control.xml:/etc/clickhouse-server/config.d/access_control.xml:ro
       # Named collections for the SQL ai* functions; defines none as shipped.
       # Git-ignored, so `make bootstrap` makes it: a missing file is an error,
       # not a root-owned directory Docker creates in its place.

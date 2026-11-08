@@ -86,6 +86,10 @@ class HealthState:
     ch_reader_ok: bool | None = None
     # ClickHouse's answer when that read failed.
     ch_reader_error: str = ""
+    # insights.query's analyst user: True = the last probe passed, False = a
+    # finding, None = no probe answer (`analysis_error` set once that lasts).
+    analysis_ok: bool | None = None
+    analysis_error: str = ""
     # Whether a sign-in lately found loom.oauth_signin_state at its key limit.
     oauth_signin_state_full: bool = False
     # Provider participants this process's last sweep could not retire
@@ -766,6 +770,40 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
     ]
 
 
+def _analysis_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """insights.query runs as the analyst user. A finding (the user missing or
+    wider than the allowlist) answers ANALYSIS_UNAVAILABLE; a probe that has had
+    no answer from ClickHouse for a while answers OVERLOADED, and its fix is
+    ClickHouse's reachability and load, not access."""
+    del settings
+    if state.analysis_ok is True or not state.analysis_error:
+        return []
+    if state.analysis_ok is None:
+        return [
+            Problem(
+                "analysis_user_failing",
+                "warn",
+                f"insights.query is unavailable: {state.analysis_error}",
+                "ClickHouse has not answered the analysis probe: check that it is reachable "
+                "and not overloaded (the analyst user's concurrency cap included); the next "
+                "probe that gets an answer clears it.",
+                source="runtime",
+            )
+        ]
+    return [
+        Problem(
+            "analysis_user_failing",
+            "warn",
+            f"insights.query is unavailable: {state.analysis_error}",
+            "Act on the cause above. Where it names a write the analyst user needs, give "
+            "LOOM_CH_USER access management (the bundled ClickHouse's loom user has it), which the "
+            "next probe uses, or run `loom ch-setup` as a user that has it, or "
+            "have an admin run the SQL `loom ch-setup --print-analyst-sql` prints.",
+            source="runtime",
+        )
+    ]
+
+
 def _oauth_claim_problems(settings: Any, state: HealthState) -> list[Problem]:
     """A full claims table turns new sign-ins away until the sweep frees keys.
     Nothing to say where sign-in is not mounted (auth off, no MCP connect)."""
@@ -878,6 +916,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _drift_problems(st)
         + _sandbox_problems(settings, st)
         + _reader_user_problems(settings, st)
+        + _analysis_problems(settings, st)
         + _oauth_claim_problems(settings, st)
         + _participant_problems(st)
         + _code_tier_problems(st)

@@ -20,6 +20,7 @@ from server.identity.api import ops_model_calls as model_calls
 from server.identity.api import ops_namespace as namespace
 from server.identity.api import ops_policy as policy
 from server.insights.api import ops_agents as agents
+from server.insights.api import ops_analysis as analysis
 from server.insights.api import ops_audit as audit
 from server.insights.api import ops_cost as cost
 from server.insights.api import ops_mentor as mentor
@@ -70,6 +71,7 @@ _OPERATION_MODULES = (
     conflicts,
     erasure,
     cost,
+    analysis,
     decision,
     demonstrate,
     audit,

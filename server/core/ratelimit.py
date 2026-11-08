@@ -52,6 +52,9 @@ _OP_CLASS_OVERRIDES: dict[str, str] = {
     # One call embeds and conflict-checks up to 200 items: its own bucket, sized like
     # knowledge.add, so an import never spends the namespace's memory budget.
     "memory.import": "memory.import",
+    # Up to a statement's time cap of ClickHouse each: its own bucket, so analysis
+    # never spends the budget of the ops filed under default.
+    "insights.query": "insights.query",
 }
 
 # Exact-key memory reads: one primary-key lookup each, and the shape an agent that uses loom
@@ -135,6 +138,8 @@ DEFAULT_LIMITS: dict[str, Limit] = {
     "memory.import": Limit(capacity=10, rate=2),  # each call up to 200 embedded items
     # Read-shaped code-intelligence ops; agents burst on session start.
     "code": Limit(capacity=60, rate=10),  # ~600/min
+    # One SQL statement per call, each up to the analysis time cap.
+    "insights.query": Limit(capacity=20, rate=3),  # ~180/min
     "default": Limit(capacity=50, rate=10),
 }
 

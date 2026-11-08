@@ -133,3 +133,70 @@ def test_a_polled_failure_is_logged_once_a_minute(caplog: pytest.LogCaptureFixtu
         for _ in range(3):
             assert health._shown_error(RuntimeError(_DRIVER_TEXT), "the ping") == "RuntimeError"
     assert sum("the ping failed" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_an_unreached_analysis_probe_shows_no_driver_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A probe that could not reach ClickHouse is no finding: health shows no
+    # analysis problem (the replica answers OVERLOADED), and the driver's text
+    # goes to the log only.
+    from server.insights.app import analysis
+    from server.observability import problems
+
+    async def down() -> Any:
+        raise RuntimeError(_DRIVER_TEXT)
+
+    monkeypatch.setattr(analysis, "_ready", None)
+    monkeypatch.setattr(analysis, "_problem", "")
+    monkeypatch.setattr(analysis, "_unreached_kind", "")
+    monkeypatch.setattr(analysis, "_unreached_since", 0.0)
+    monkeypatch.setattr(analysis.store, "sealed_secrets", down)
+    asyncio.run(analysis.reprobe())
+    ok, error = analysis.analysis_state()
+    shown = problems._analysis_problems(
+        settings, problems.HealthState(analysis_ok=ok, analysis_error=error)
+    )
+    assert shown == [] and "ch-internal-7" not in error
+
+
+@pytest.mark.parametrize("manages", [False, True])
+def test_an_extra_analyst_grant_names_no_database(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, manages: bool
+) -> None:
+    # With access management the write is stubbed out, so the grant survives it
+    # and the second probe's answer is the one shown.
+    from server.insights.app import analysis
+    from server.insights.domain import analysis as boundary
+    from server.observability import problems
+
+    async def run(sql: str, **_: Any) -> Any:
+        if sql.startswith("SELECT count()") and "system." not in sql:
+            return [], [], [(1,)] if boundary.CANARY_TABLE in sql else [(0,)]
+        raise RuntimeError("Code: 497. DB::Exception: Not enough privileges")
+
+    async def returns(value: Any, *_: Any, **__: Any) -> Any:
+        return value
+
+    foreign = ("*", "GRANT SELECT ON otherdb.payroll TO loom_analyst")
+    monkeypatch.setattr(analysis, "_ready", None)
+    monkeypatch.setattr(analysis, "_problem", "")
+    monkeypatch.setattr(analysis, "_loaded", (bytes(32), "pw"))
+    monkeypatch.setattr(analysis.store, "target_database", lambda: "`loom`")
+    monkeypatch.setattr(analysis.store, "sealed_secrets", lambda: returns(None))
+    monkeypatch.setattr(analysis.store, "run_statement", run)
+    monkeypatch.setattr(analysis.store, "own_version", lambda **_: returns(boundary.ENTITY_VERSION))
+    monkeypatch.setattr(analysis, "_signed_only", lambda *_: returns(True))
+    monkeypatch.setattr(
+        analysis.store,
+        "own_grants",
+        lambda **_: returns(frozenset(boundary.allowed_columns()) | {foreign}),
+    )
+    monkeypatch.setattr(analysis.store, "can_manage_access", lambda: returns(manages))
+    monkeypatch.setattr(analysis, "_write_under_lease", lambda: returns(("", "")))
+    asyncio.run(analysis.reprobe())
+    ok, error = analysis.analysis_state()
+    shown = problems._analysis_problems(
+        settings, problems.HealthState(analysis_ok=ok, analysis_error=error)
+    )
+    assert shown and "grants outside the allowlist" in shown[0].message
+    assert "payroll" not in shown[0].message
+    assert any("payroll" in r.message for r in caplog.records)

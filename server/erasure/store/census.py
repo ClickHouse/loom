@@ -522,6 +522,14 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
 # a CREATE TABLE that is in none of the three lists, so a new table is
 # classified the day it lands.
 NO_MEMORY_CONTENT: dict[str, str] = {
+    "loom.analysis_canary": (
+        "One constant row in a reserved scope (org '', namespace '') that insights.query's "
+        "probe reads; no content."
+    ),
+    "loom.analysis_secrets": (
+        "One row: insights.query's sealed scope key and analyst password; no org, "
+        "namespace or content."
+    ),
     "loom.chunk_supersessions": (
         "One row per retired knowledge ingestion — (org, namespace, "
         "embedding_model, source_uri, doc_version, superseded_at), each a copy of a "

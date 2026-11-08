@@ -377,6 +377,9 @@ MCP_ASSISTANT_OPS: frozenset[str] = frozenset(
         "knowledge.list",
         "code.search",
         "code.symbol",
+        # Read-only SQL over the analysis allowlist, held to the namespace by ClickHouse.
+        "insights.catalog",
+        "insights.query",
     }
 )
 # Per op, the arguments an assistant call always carries, whatever the model sent: a

@@ -356,6 +356,7 @@ times the namespace size), keyed by operation class. Over the limit, the respons
 | `knowledge.read`   | the other `read_only` `knowledge.*` ops, `knowledge.inspect` aside: `knowledge.get`, `knowledge.list`, …      | 50 / 10 per second              |
 | `knowledge.add`    | every other `knowledge.*` op, `knowledge.inspect`, `knowledge.synthesize` and `knowledge.dedup_list` included | 10 / 2 per second               |
 | `code`             | `code.*` (except `code.outcome`, which draws from `memory`)                                                   | 60 / 10 per second              |
+| `insights.query`   | `insights.query`                                                                                              | 20 / 3 per second               |
 | `default`          | everything else                                                                                               | 50 / 10 per second              |
 
 Requests are classed as `production`, `interactive` or `bench` (token claim from

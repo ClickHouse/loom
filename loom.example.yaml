@@ -155,6 +155,44 @@ settings:
   # config defines `loom_reader` (SELECT only). Empty = `ch_user`. [restart]
   # ch_reader_user: ""
 
+  # --- analysis statements (insights.query) ---
+  # Caps and pacing for insights.query. The statement caps are pinned as a MAX in the
+  # loom_analyst user's caps profile so no statement can raise them; a boot whose
+  # ClickHouse user has access management writes that profile when one changed.
+
+  # Seconds one insights.query statement may run. [restart]
+  # ch_analysis_max_execution_s: 10.0
+
+  # Rows one statement may scan; past it the statement fails (422), never a partial
+  # answer. [restart]
+  # ch_analysis_max_rows_to_read: 200000000
+
+  # Bytes of memory one statement may use. [restart]
+  # ch_analysis_max_memory_bytes: 2000000000
+
+  # Rows one statement returns at most; a longer result comes back cut, marked
+  # truncated. [restart]
+  # ch_analysis_max_result_rows: 500
+
+  # Bytes of result one statement may return; past it the statement fails (422).
+  # [restart]
+  # ch_analysis_max_result_bytes: 4000000
+
+  # Statements the analyst user runs at once across every org and replica. [restart]
+  # ch_analysis_max_concurrent: 8
+
+  # Threads one statement may use (pinned as a MAX, so a statement cannot take the
+  # host). [restart]
+  # ch_analysis_max_threads: 4
+
+  # Statements one org runs at once on one replica; past it a call answers RATE_LIMITED.
+  # [restart]
+  # ch_analysis_max_concurrent_per_org: 2
+
+  # Seconds between two probes of the analyst user in each web process; a problem an
+  # admin fixes, or a repair a write makes, shows within one interval. [live]
+  # ch_analysis_probe_interval_s: 60.0
+
   # --- traffic classes ---
 
   # JSON map {traffic class: ClickHouse settings} applied by
