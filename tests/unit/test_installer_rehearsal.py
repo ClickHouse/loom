@@ -195,8 +195,11 @@ def test_release_check_runs_the_published_one_liner_on_both_architectures() -> N
     assert "LOOM_RELEASES_URL" not in yaml.safe_dump(workflow)
 
 
-def _previous_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files: Path | None):
-    """The one `docker run` install_previous makes, recorded instead of run."""
+def _previous_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files: Path | None
+) -> tuple[tuple[str, ...], dict[str, str]]:
+    """The one `docker run` install_previous makes, recorded instead of run, and
+    the environment it passes with `-e`."""
     release = rehearsal.Release("1.2.0", "1.1.0", "unused", env={}, previous_files=files)
     host = rehearsal.HostDocker("/compose", 0)
     rehearsing = rehearsal.Rehearsal(release, ExitStack(), tmp_path, "id", host)
@@ -209,34 +212,31 @@ def _previous_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files: Pa
     monkeypatch.setattr(rehearsal, "run", record)
     rehearsing.install_previous("image", tmp_path, 1)
     (command,) = commands
-    for variable in (f"HOME={tmp_path}", "LOOM_PORT=1"):
-        assert command[command.index(variable) - 1] == "-e"
-    return command
+    env = dict(command[i + 1].split("=", 1) for i, arg in enumerate(command) if arg == "-e")
+    assert env["HOME"] == str(tmp_path) and env["LOOM_PORT"] == "1"
+    return command, env
 
 
 def test_the_published_previous_release_is_installed_by_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """By version: a copy from before releases stamped install.sh installs `latest`."""
-    command = _previous_install(tmp_path, monkeypatch, None)
+    command, env = _previous_install(tmp_path, monkeypatch, None)
     url = f"{rehearsal.GITHUB_RELEASES}/download/v1.1.0/install.sh"
     assert command[-1] == f'curl -fsSL "{url}" | sh'
-    assert command[command.index("LOOM_VERSION=1.1.0") - 1] == "-e"
+    assert env["LOOM_VERSION"] == "1.1.0"
 
 
 def test_a_local_previous_release_installs_its_own_mounted_bundle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     files = tmp_path / "previous"
-    command = _previous_install(tmp_path, monkeypatch, files)
+    command, env = _previous_install(tmp_path, monkeypatch, files)
     assert command[-1] == "sh /previous/install.sh"
     assert command[command.index(f"{files}:/previous:ro") - 1] == "-v"
-    for variable in (
-        "LOOM_INSTALL_BUNDLE=/previous/loom-stack.tar.gz",
-        "LOOM_INSTALL_CHECKSUM=/previous/loom-stack.tar.gz.sha256",
-    ):
-        assert command[command.index(variable) - 1] == "-e"
-    assert not any(arg.startswith("LOOM_VERSION=") for arg in command)
+    assert env["LOOM_INSTALL_BUNDLE"] == "/previous/loom-stack.tar.gz"
+    assert env["LOOM_INSTALL_CHECKSUM"] == "/previous/loom-stack.tar.gz.sha256"
+    assert "LOOM_VERSION" not in env
 
 
 @pytest.mark.parametrize("flag", ["--version", "--previous-version"])
