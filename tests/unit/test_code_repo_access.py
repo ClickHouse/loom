@@ -413,7 +413,13 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
     monkeypatch.setattr(h, "admins_change", admins)
     monkeypatch.setattr(ch, "insert", insert)
 
+    refreshed: list[bool] = []
+
     async def refresh(*a, **k):
+        from server.core.ch import sequential_reads_active
+
+        if "ch" in k:  # the one after the claims: the sync reads this snapshot
+            refreshed.append(sequential_reads_active())
         return []
 
     async def upsert(*a, **k):
@@ -458,6 +464,7 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
     inp.classification, inp.confirm = "standard", "code-weave-rc"
     await h.handle_code_repo_set_access(inp)
     assert synced == ["code-weave-rc", "code-weave-rc"]
+    assert refreshed and all(refreshed)
 
 
 @pytest.mark.parametrize("snapshot", ["standard", "restricted"])

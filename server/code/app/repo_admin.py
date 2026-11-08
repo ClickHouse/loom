@@ -722,8 +722,11 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     ):
         row = await _directory_row(ch, input.org, input.namespace)
         # Restricted by the snapshot or by the row read here, which may be newer.
-        was = "restricted" in (str(cfg.classification), (row or {}).get("classification"))
-        if was and cls == "standard" and input.confirm.strip() != input.namespace:
+        was_restricted = "restricted" in (
+            str(cfg.classification),
+            (row or {}).get("classification"),
+        )
+        if was_restricted and cls == "standard" and input.confirm.strip() != input.namespace:
             raise ValidationError(
                 f"opening a restricted repository: type the namespace ({input.namespace}) "
                 "in `confirm`",
@@ -757,7 +760,10 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         await reg.upsert_access(
             cfg, classification=cls, join_policy=pol, created_by=subject or "maintainer", ch=ch
         )
-    await reg.refresh_db_repos(force=True, ch=ch)
+    from server.core.ch import sequential_reads
+
+    with sequential_reads():  # the sync below reads this snapshot
+        await reg.refresh_db_repos(force=True, ch=ch)
     if cls == "restricted":
         # Joins this process's snapshot at once; a reset first would leave it nothing
         # to join, and the next request would wait on a directory read instead.
@@ -776,7 +782,7 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         repo=str(cfg.repo),
         classification=cls,
         join_policy=pol,
-        previous_classification="restricted" if was else "standard",
+        previous_classification="restricted" if was_restricted else "standard",
         previous_join_policy=previous_policy,
         directory_updated=directory_updated,
         effective_within_s=int(settings.code_repos_refresh_seconds),

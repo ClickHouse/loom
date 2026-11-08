@@ -238,7 +238,7 @@ async def _read_grants(
 ) -> tuple[int, list[dict[str, Any]]]:
     """When the read began, and `_grant_rows` read with sequential consistency: a
     lagging replica could miss a grant just made, and a stray's revoke planned from
-    the rows is versioned no later than the read (`_revoke_row`)."""
+    the rows is versioned at the read, or just above the stray (`_revoke_row`)."""
     from server.core.ch import sequential_reads
 
     read_at = time.time_ns()
