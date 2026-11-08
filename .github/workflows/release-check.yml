@@ -15,6 +15,12 @@ on:
       version:
         type: string
         required: true
+      previous_version:
+        type: string
+        default: ""
+      sdks:
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       version:

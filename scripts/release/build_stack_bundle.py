@@ -42,7 +42,9 @@ def _image_default(image: str) -> str:
 LATEST_CLICKHOUSE = _image_default("clickhouse/clickhouse-server:latest")
 # One exact release, as dev/clickhouse_release.sh prints it.
 EXACT_CLICKHOUSE = re.compile(r"clickhouse/clickhouse-server:\d+(?:\.\d+){3}")
-# A Loom version as the release URLs name it, without the v.
+# A Loom version as the release URLs name it, without the v: prepare.py's FINAL or
+# CANDIDATE, repeated so that this script, which an older tag's checkout and the
+# release job run on their own, imports nothing of the repository.
 VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+(?:-rc\.\d+)?")
 _PINNED = re.compile(
     re.escape("${LOOM_CLICKHOUSE_IMAGE:-") + f"({EXACT_CLICKHOUSE.pattern})" + re.escape("}")

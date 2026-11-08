@@ -78,7 +78,9 @@ REGISTRY_IMAGE = (
 
 
 def check(ok: bool, message: object) -> None:
-    """A rehearsal check, which `python -O` keeps, unlike an assert."""
+    """A check of what the rehearsal verifies, which `python -O` keeps, unlike an
+    assert. What it needs before it starts (images, tags, Docker, a readable
+    bundle) is refused with a plain SystemExit instead."""
     if not ok:
         raise SystemExit(f"FAIL {message}")
 
@@ -207,7 +209,10 @@ def publish(root: Path, version: str, files: Path) -> None:
 
 
 def bundle_version(files: Path) -> str:
-    return read_member(files / "loom-stack.tar.gz", "loom-stack/VERSION").strip()
+    version = read_member(files / "loom-stack.tar.gz", "loom-stack/VERSION").strip()
+    if not VERSION_PATTERN.fullmatch(version):
+        raise SystemExit(f"the bundle names {version!r}, not X.Y.Z or X.Y.Z-rc.N")
+    return version
 
 
 def published_installer_url(releases: str, version: str, latest: bool) -> str:
@@ -291,15 +296,15 @@ def published_release(args: argparse.Namespace) -> Release:
     return Release(args.version, args.previous_version or "", installer, env={})
 
 
-def previous_release(version: str, root: Path = ROOT) -> str:
+def previous_release(version: str, root: Path) -> str:
     """The release the upgrade starts from, or "" for none: the release that is
     out when `version` is a final tagged on another commit (main, between
     releases), otherwise the highest final below `version`'s final."""
     tags = subprocess.run(
         ["git", "tag", "--list", "v*"], cwd=root, capture_output=True, text=True, check=True
     ).stdout.split()
-    # A checkout without its tags, not a repository without releases.
-    check(bool(tags), "no v* tags: fetch them (fetch-depth: 0)")
+    if not tags:  # a checkout without its tags, not a repository without releases
+        raise SystemExit("no v* tags: fetch them (fetch-depth: 0)")
     final = prepare.final_of(version)
     if version == final and f"v{version}" in tags and not prepare.tag_on_head(version, root):
         return version
@@ -333,9 +338,6 @@ def serve_local_release(
         if subprocess.run(["docker", "image", "inspect", source], capture_output=True).returncode:
             raise SystemExit(f"{source} is not a local image: build or pull it first")
     version = bundle_version(args.release_dir)
-    check(
-        bool(VERSION_PATTERN.fullmatch(version)), f"the bundle names {version!r}, not X.Y.Z[-rc.N]"
-    )
     root = work / "releases"
     publish(root, version, args.release_dir)
     previous = build_previous_release(args.release_dir, version, work) if args.upgrade else ""
@@ -673,7 +675,7 @@ def main() -> None:
             try:
                 release = serve_local_release(args, cleanup, work, run_id)
             except ValueError as e:  # a release bundle that cannot be read
-                raise SystemExit(f"FAIL {e}") from None
+                raise SystemExit(str(e)) from None
         rehearsal = Rehearsal(release, cleanup, work, run_id, docker)
         for index, distro in enumerate(dict.fromkeys(args.distro or DISTROS)):
             with ExitStack() as stacks:

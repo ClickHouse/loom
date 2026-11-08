@@ -278,7 +278,7 @@ main() {
     # A VERSION without leading numbers (empty, dev) compares as 0.0.0 and blocks
     # nothing; an awk error refuses.
     below=$(version_below "$version" "$installed") || fail "could not compare the installed Loom $installed with $version"
-    [ "$below" = 0 ] || fail "Loom $installed is installed and this installer installs the older $version: to downgrade, pin LOOM_CLICKHOUSE_IMAGE in .env first (the upgrades guide, Rollback), then set LOOM_VERSION=$version"
+    [ "$below" = 0 ] || fail "Loom $installed is installed and this installer installs the older $version: to downgrade, pin LOOM_CLICKHOUSE_IMAGE in .env first (the upgrades guide, Downgrading an installer install), then set LOOM_VERSION=$version"
   fi
 
   mkdir -p "$INSTALL_DIR"

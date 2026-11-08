@@ -81,7 +81,8 @@ image as `LOOM_BUILD_COMMIT`, reported as `build_commit`). The remaining
 Given to the installer, `LOOM_VERSION` installs the release it names. Without it, a release's
 `install.sh` installs its own release and the repository's copy installs `latest`; an older
 release over a newer install is refused unless `LOOM_VERSION` names it
-([rollback](../operations/upgrades.md#rollback) pins ClickHouse first).
+(pin ClickHouse first:
+[downgrading an installer install](../operations/upgrades.md#downgrading-an-installer-install)).
 
 Other `${LOOM_*}` references in the compose files are settings fields given a
 compose-level default and the uvicorn variables above. The installer keeps the two image

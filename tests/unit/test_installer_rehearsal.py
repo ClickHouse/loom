@@ -359,15 +359,25 @@ def test_a_mode_refuses_the_other_modes_flags(
     assert exited.value.code == 2 and message in capsys.readouterr().err
 
 
-def test_the_previous_release_is_built_from_its_own_tag(
+def test_the_chosen_previous_release_is_the_one_built(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The release the rehearsal picks, not the bundle's version, goes to the build."""
-    repo = _repo_with_releases(tmp_path, ["v1.0.0", "v1.1.0"])
+    """The release the rehearsal picks, not the bundle's version, goes to the build;
+    tags the repository itself never has, so ROOT must be the one read."""
+    repo = _repo_with_releases(tmp_path, ["v7.0.0", "v7.1.0"])
     calls: list[tuple[str, ...]] = []
     monkeypatch.setattr(rehearsal, "ROOT", repo)
     monkeypatch.setattr(rehearsal, "pinned_image", lambda archive: "ch:pinned")
     monkeypatch.setattr(rehearsal, "run", lambda *args, **kwargs: calls.append(args))
-    assert rehearsal.build_previous_release(tmp_path, "1.2.0", tmp_path / "work") == "1.1.0"
+    assert rehearsal.build_previous_release(tmp_path, "7.2.0", tmp_path / "work") == "7.1.0"
     (call,) = calls
-    assert call[2:5] == ("1.1.0", "ch:pinned", str(tmp_path / "work" / "previous"))
+    assert call[2:5] == ("7.1.0", "ch:pinned", str(tmp_path / "work" / "previous"))
+
+
+@pytest.mark.parametrize("named", ["dev", ""])
+def test_a_bundle_that_names_no_release_is_refused(tmp_path: Path, named: str) -> None:
+    (tmp_path / "VERSION").write_text(f"{named}\n")
+    with tarfile.open(tmp_path / "loom-stack.tar.gz", "w:gz") as archive:
+        archive.add(tmp_path / "VERSION", arcname="loom-stack/VERSION")
+    with pytest.raises(SystemExit, match=f"^the bundle names '{named}', not X.Y.Z or X.Y.Z-rc.N$"):
+        rehearsal.bundle_version(tmp_path)

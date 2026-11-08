@@ -1010,7 +1010,7 @@ server stay in the image. Each release's `install.sh` installs that release; rer
 preserves `.env` (apart from advancing the pinned `LOOM_VERSION` and giving an `.env` without
 an extractor token one, and the extractor URL unless it names its own) and volumes. An older
 release's `install.sh` run over a newer install refuses; a downgrade on purpose follows
-[rollback](./upgrades.md#rollback).
+[downgrading an installer install](./upgrades.md#downgrading-an-installer-install).
 
 ## N identical replicas
 

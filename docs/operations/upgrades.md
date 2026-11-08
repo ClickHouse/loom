@@ -132,6 +132,8 @@ keep the columns it does not know
 There are no down-migrations. To return to an earlier schema, restore a backup taken
 before the upgrade ([backup and recovery](./backup-and-recovery.md)).
 
+### Downgrading an installer install
+
 Each installer bundle names the ClickHouse release it was built with, so installing an
 earlier Loom version also runs an earlier ClickHouse on a volume the newer one wrote,
 which it may not read. To roll back Loom alone, keep the newer ClickHouse: before running

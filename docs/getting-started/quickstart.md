@@ -57,8 +57,8 @@ Each release's `install.sh` installs that release, so the copy `latest` serves i
 latest release, and a saved copy installs the same version every time it runs. Over a newer
 install, an older release's copy refuses to install, rather than start an older Loom and
 ClickHouse on newer data; to downgrade on purpose, follow
-[rollback](../operations/upgrades.md#rollback). Pin a release, or inspect everything before
-starting:
+[downgrading an installer install](../operations/upgrades.md#downgrading-an-installer-install).
+Pin a release, or inspect everything before starting:
 
 ```bash
 curl -fsSL https://github.com/ClickHouse/loom/releases/download/v1.2.3/install.sh | sh
