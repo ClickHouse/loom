@@ -505,8 +505,8 @@ def _erasure_key(hit: Any, *, tags_read: bool) -> str:
     shared cache) for a summary, an entity summary, a digest, a chunk with no parent, and
     a fact written from other memories (`consolidated` or a `src:` tag): a redact of a
     source memory does not reach that row's key, nor a user erasure a `src:` row that is
-    not `consolidated`. A fact whose tags
-    were not read (`tags_read` false, or none on the hit) counts as one of those."""
+    not `consolidated`. A fact whose tags were not read (`tags_read` false, or none on
+    the hit) counts as one of those."""
     source = str(getattr(hit, "source", "fact") or "fact")
     if source == "fact":
         tags = getattr(hit, "tags", None)
