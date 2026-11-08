@@ -25,6 +25,7 @@ deletes is not removed from the index's rows (disclosed here, not hidden).
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import functools
 import hashlib
 import logging
@@ -32,12 +33,12 @@ import re
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple, cast
 
 from server.code.app.ttl_cache import TtlCache
-from server.code.domain.extract.bounded_parse import ParseTimeout
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.pr_overlay")
@@ -498,8 +499,18 @@ _FILE_FACTS: TtlCache[tuple[str, str], _Facts] = TtlCache(
 # (org, ns) -> the overlay parse in progress for it, by its cache key: at most one. A
 # namespace's dict is kept once made, so every waiter watches the same one.
 _RUNNING: defaultdict[tuple[str, str], dict[Any, asyncio.Future[Any]]] = defaultdict(dict)
+# Overlay parses run here, not in the default executor, so a pile of them never holds
+# back the process's other threaded work
+_PARSE_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="loom-overlay-parse")
+
+
+class _Edges(NamedTuple):
+    edges: tuple[OverlayEdge, ...]
+    timed_out: bool  # parsing the file again ran past the deadline
+
+
 # (path, content digest, digest of the name-table rows its names bind to) -> edges.
-_FILE_EDGES: TtlCache[tuple[str, str, str], tuple[OverlayEdge, ...]] = TtlCache(
+_FILE_EDGES: TtlCache[tuple[str, str, str], _Edges] = TtlCache(
     lambda: settings.code_pr_overlay_file_ttl_s, maxsize=512
 )
 # (org, ns, index head, name) -> the index's definitions of that name.
@@ -522,19 +533,20 @@ def _binding_digest(names: frozenset[str], table: dict[str, list[tuple[str, str,
     return h.hexdigest()
 
 
-async def _in_turn(
+async def _in_turn[T](
     scope: tuple[str, str],
     key: Any,
     deadline: float,
-    store: Callable[[Any], None],
-    fn: Callable[..., Any],
+    store: Callable[[T], None],
+    fn: Callable[..., T],
     *args: Any,
-) -> Any:
-    """`fn(*args)` in a thread, `store`d when it finishes; None when `deadline` passes
-    before it can start. Parsing is CPU work: one overlay parse runs at a time per
-    namespace (`scope`; parses of one grammar also wait for each other across the
-    process, `bounded_parse`), the event loop runs at each of the parser's reads, and
-    a request asking for the key already running awaits that one."""
+) -> T | None:
+    """`fn(*args)` on the parse pool, `store`d when it finishes; None when `deadline`
+    passes before it can start, or a parse deadline after that before it ends. Parsing
+    is CPU work: one overlay parse runs at a time per namespace (`scope`; parses of one
+    grammar also wait for each other across the process, `bounded_parse`), the event
+    loop runs at each of the parser's reads, and a request asking for the key already
+    running awaits that one."""
     running = _RUNNING[scope]
     while (task := running.get(key)) is None and running:
         left = deadline - time.monotonic()
@@ -544,7 +556,8 @@ async def _in_turn(
     if task is None:
         if time.monotonic() > deadline:
             return None
-        task = asyncio.ensure_future(asyncio.to_thread(fn, *args))
+        call = functools.partial(contextvars.copy_context().run, fn, *args)
+        task = asyncio.get_running_loop().run_in_executor(_PARSE_POOL, call)
         running[key] = task
 
         def finished(t: asyncio.Future[Any]) -> None:
@@ -553,7 +566,11 @@ async def _in_turn(
                 store(t.result())  # kept even when every request waiting on it went away
 
         task.add_done_callback(finished)
-    return await asyncio.shield(task)
+    # a parse waiting on its grammar's lock elsewhere in the process is not waited for
+    # past one more parse deadline
+    wait = max(0.0, deadline - time.monotonic()) + settings.code_parse_timeout_seconds
+    done, _ = await asyncio.wait({task}, timeout=wait)
+    return cast("T", task.result()) if done else None
 
 
 async def _file_facts(
@@ -565,17 +582,14 @@ async def _file_facts(
     hit = _FILE_FACTS.get(key)
     if hit is not None:
         return None, hit
-    return cast(
-        "tuple[Any, _Facts] | None",
-        await _in_turn(
-            scope,
-            key,
-            deadline,
-            lambda result: _FILE_FACTS.put(key, result[1]),
-            _parsed_facts,
-            path,
-            source,
-        ),
+    return await _in_turn(
+        scope,
+        key,
+        deadline,
+        lambda result: _FILE_FACTS.put(key, result[1]),
+        _parsed_facts,
+        path,
+        source,
     )
 
 
@@ -597,23 +611,22 @@ def _parsed_facts(path: str, source: bytes) -> tuple[Any, _Facts]:
 
 def _file_edges(
     pf: Any, path: str, source: bytes, table: dict[str, list[tuple[str, str, str]]]
-) -> tuple[OverlayEdge, ...]:
+) -> _Edges:
     """The calls and inherits edges of one post-image file; `pf` is its parse when this
-    request already holds it. Raises `ParseTimeout` when parsing it again ran past the
-    deadline."""
+    request already holds it."""
     from server.code.app.index.ingest_parse import parse_for_ingest, parse_timed_out
     from server.code.domain.extract.edges_treesitter import extract_edges_and_misses
 
     if pf is None:
         pf, err = parse_for_ingest(path, source)
         if parse_timed_out(err):
-            raise ParseTimeout(err)
+            return _Edges((), True)
     try:
         edges, _misses = extract_edges_and_misses(pf, table, None)
     except Exception as e:  # noqa: BLE001 — per file, never the overlay
         logger.debug("pr_overlay: edges of %s failed: %s", pf.path, e)
-        return ()
-    return tuple(
+        return _Edges((), False)
+    found = tuple(
         OverlayEdge(
             edge_kind=ed.edge_kind,
             from_symbol_id=ed.from_symbol_id,
@@ -627,6 +640,7 @@ def _file_edges(
         for ed in edges
         if ed.edge_kind in ("calls", "inherits")
     )
+    return _Edges(found, False)
 
 
 async def _parse_post_image(
@@ -637,20 +651,16 @@ async def _parse_post_image(
     *,
     read: Callable[[str], Awaitable[bytes | None]],
     path_prefixes: tuple[str, ...],
-    window: float | None = None,
 ) -> None:
-    """Parse the post-image into `ov`. An overlay starts no parse once `window` seconds
-    (`code_parse_timeout_seconds` by default) have passed since it began, so a request
-    parses for a few deadlines at most."""
+    """Parse the post-image into `ov`. An overlay starts no parse once
+    `code_pr_overlay_parse_window_seconds` have passed since it began."""
     paths = parsable_paths(ov.changed_paths, path_prefixes, ov.hunks)
     if not paths:
         return
     # path -> (source, digest, parsed file this request already holds, symbols, names)
     files: dict[str, tuple[bytes, str, Any, tuple[Any, ...], frozenset[str]]] = {}
     names: set[str] = set()
-    if window is None:
-        window = settings.code_parse_timeout_seconds
-    deadline = time.monotonic() + window
+    deadline = time.monotonic() + settings.code_pr_overlay_parse_window_seconds
     timed_out = 0
     for p in paths:
         source = await read(p)
@@ -686,25 +696,22 @@ async def _parse_post_image(
             edges = await asyncio.to_thread(_file_edges, pf, p, source, table)
             _FILE_EDGES.put(key, edges)
         elif edges is None:
-            try:
-                edges = await _in_turn(
-                    (org, ns),
-                    key,
-                    deadline,
-                    functools.partial(_FILE_EDGES.put, key),
-                    _file_edges,
-                    pf,
-                    p,
-                    source,
-                    table,
-                )
-            except ParseTimeout:
-                timed_out += 1
-                continue
+            edges = await _in_turn(
+                (org, ns),
+                key,
+                deadline,
+                functools.partial(_FILE_EDGES.put, key),
+                _file_edges,
+                pf,
+                p,
+                source,
+                table,
+            )
             if edges is None:
                 ov.unreached += 1
                 continue
-        ov.edges.extend(edges)
+        timed_out += edges.timed_out
+        ov.edges.extend(edges.edges)
     _note_left_out(ov, timed_out)
 
 

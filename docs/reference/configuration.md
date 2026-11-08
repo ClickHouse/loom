@@ -685,6 +685,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_INGEST_SIBLING_TEXT_TTL_S` | `float` | `600.0` | live | Seconds the ingest keeps a sibling-text answer (a manifest, a listing, a config, a barrel). |
 | `LOOM_CODE_PR_OVERLAY_CACHE_TTL_S` | `float` | `60.0` | live | Seconds a PR overlay (the PR's changed files over its base) is cached. |
 | `LOOM_CODE_PR_OVERLAY_FILE_TTL_S` | `float` | `3600.0` | live | Seconds one PR file's parse is kept, so a push that changes one file re-parses that file alone; a PR's next review follows its next push. |
+| `LOOM_CODE_PR_OVERLAY_PARSE_WINDOW_SECONDS` | `float` | `10.0` | live | Seconds after a PR overlay begins past which it starts no parse; the files it did not reach are counted in `overlay_note` and read by a later request. |
 | `LOOM_CODE_STATUS_LEDGER_PASSES_TTL_S` | `float` | `15.0` | live | Seconds code.repos keeps the worker-ledger answer every repository's status shares. |
 | `LOOM_CODE_STATUS_RECENT_COMMITS_TTL_S` | `float` | `60.0` | live | Seconds a repository's recent-commits listing for code.repos is cached. |
 | `LOOM_CODE_MESSAGE_GREP_ERROR_CODES_TTL_S` | `float` | `600.0` | live | Seconds a repository's error-code table is cached for message search. |

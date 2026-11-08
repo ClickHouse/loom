@@ -389,7 +389,7 @@ def test_a_push_that_changes_one_file_parses_that_file_alone(
 def test_an_overlay_past_its_parse_time_leaves_the_rest_out(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 1e-9)
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_seconds", 1e-9)
     ov = asyncio.run(po.load_posted_overlay(_Repo(), "acme", "code-ch", _img()))
     assert ov.ok and ov.symbols == [] and ov.unreached == 1
     assert po.NOT_REACHED in ov.disclosure()["overlay_note"]
@@ -431,11 +431,7 @@ def test_a_file_whose_parse_runs_past_the_deadline_is_counted(
     async def read(path: str) -> bytes:
         return sources[path]
 
-    asyncio.run(
-        po._parse_post_image(
-            _Repo(), "acme", "code-ch", ov, read=read, path_prefixes=(), window=60.0
-        )
-    )
+    asyncio.run(po._parse_post_image(_Repo(), "acme", "code-ch", ov, read=read, path_prefixes=()))
     assert "checkPartsLimit" in {s.name for s in ov.symbols}
     assert any(e.to_qualified_name.endswith("checkPartsLimit") for e in ov.edges)
     assert ov.note == "1 changed file(s) whose parse timed out" and ov.unreached == 0
@@ -542,3 +538,59 @@ def test_one_overlay_parse_runs_at_a_time_in_a_namespace(
 
     asyncio.run(many())
     assert most == 1
+
+
+def _slow_facts(seconds: float) -> Any:
+    def parse(path: str, source: bytes) -> Any:
+        time.sleep(seconds)
+        return None, po._Facts((path,), frozenset(), False)
+
+    return parse
+
+
+def test_a_request_waiting_past_its_window_leaves_the_file_unreached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(po, "_parsed_facts", _slow_facts(0.3))
+
+    async def two() -> list[Any]:
+        scope = ("acme", "code-ch")
+        first = asyncio.ensure_future(
+            po._file_facts(scope, "a.go", b"", "a", time.monotonic() + 60)
+        )
+        await asyncio.sleep(0.05)
+        second = await po._file_facts(scope, "b.go", b"", "b", time.monotonic() + 0.05)
+        return [await first, second]
+
+    first, second = asyncio.run(two())
+    assert first is not None and second is None
+
+
+def test_a_parse_is_kept_when_its_request_went_away(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(po, "_parsed_facts", _slow_facts(0.1))
+
+    async def cancelled() -> None:
+        task = asyncio.ensure_future(
+            po._file_facts(("acme", "code-ch"), "a.go", b"", "a", time.monotonic() + 60)
+        )
+        await asyncio.sleep(0.02)
+        task.cancel()
+        await asyncio.sleep(0.3)
+
+    asyncio.run(cancelled())
+    assert po._FILE_FACTS.get(("a.go", "a")) == po._Facts(("a.go",), frozenset(), False)
+
+
+def test_another_namespace_does_not_wait_for_its_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(po, "_parsed_facts", _slow_facts(0.3))
+
+    async def two() -> list[Any]:
+        first = asyncio.ensure_future(
+            po._file_facts(("acme", "one"), "a.go", b"", "a", time.monotonic() + 60)
+        )
+        await asyncio.sleep(0.05)
+        second = await po._file_facts(("acme", "two"), "b.go", b"", "b", time.monotonic() + 0.05)
+        return [await first, second]
+
+    first, second = asyncio.run(two())
+    assert first is not None and second is not None

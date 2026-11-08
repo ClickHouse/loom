@@ -47,6 +47,7 @@
  "code_parse_timeout_seconds",
  "code_pr_overlay_cache_ttl_s",
  "code_pr_overlay_file_ttl_s",
+ "code_pr_overlay_parse_window_seconds",
  "code_review_brief_mirror_miss_ttl_s",
  "code_review_brief_rationale_paths",
  "code_review_brief_rationale_rows",

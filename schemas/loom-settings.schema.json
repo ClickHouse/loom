@@ -1411,6 +1411,12 @@
           "type": "number",
           "description": "Seconds one PR file's parse is kept, so a push that changes one file re-parses that file alone; a PR's next review follows its next push."
         },
+        "code_pr_overlay_parse_window_seconds": {
+          "default": 10.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds after a PR overlay begins past which it starts no parse; the files it did not reach are counted in `overlay_note` and read by a later request."
+        },
         "code_pr_reviews_enabled": {
           "default": true,
           "type": "boolean",

@@ -115,6 +115,7 @@ def test_a_header_whose_parse_stops_is_read_as_not_indexed(
 
     monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.2)
     monkeypatch.setattr(ih, "_needs_header", lambda pf, hd: True)
+    monkeypatch.setattr(ih, "_header_cache", {})
 
     async def header_text(repo: Any, org: str, ns: str, path: str) -> tuple[str, bool]:
         return "'\\''" * 30_000, True
@@ -132,7 +133,6 @@ def test_a_header_whose_parse_stops_is_read_as_not_indexed(
     stats = FileIngestStats(path="src/a.cpp")
     asyncio.run(ih.header_context(Repo(), "acme", "code", pf, "src/a.cpp", stats))
     assert ih._header_cache[("acme", "code", "src/a.h")] is None
-    ih._header_cache.pop(("acme", "code", "src/a.h"))
 
 
 def test_two_threads_never_parse_one_grammar_at_once() -> None:

@@ -3,8 +3,8 @@
 Some grammars take quadratic time on short repeated tokens, so a 1 MB file could hold
 a worker or a serving replica for hours. Every parse of repository text goes through
 `parse`, which stops reading the source after `code_parse_timeout_seconds` of the
-parsing thread's CPU time and raises `ParseTimeout`; the callers' parse failure
-paths index the file as chunks without symbols. CPU time rather than wall-clock
+parsing thread's CPU time and raises `ParseTimeout`; each caller takes its parse
+failure path (an indexed file is then chunks without symbols). CPU time rather than wall-clock
 time, so a busy host does not time out a file that parses in time on an idle one.
 
 The parser's own progress callback cannot be used: the binding builds its arguments

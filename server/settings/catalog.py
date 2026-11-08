@@ -1692,6 +1692,9 @@ class CodeSettings(BaseModel):
     # Seconds one PR file's parse is kept, so a push that changes one file re-parses
     # that file alone; a PR's next review follows its next push.
     code_pr_overlay_file_ttl_s: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
+    # Seconds after a PR overlay begins past which it starts no parse; the files it did
+    # not reach are counted in `overlay_note` and read by a later request.
+    code_pr_overlay_parse_window_seconds: Annotated[float, LIVE] = Field(default=10.0, gt=0)
     # Seconds code.repos keeps the worker-ledger answer every repository's status
     # shares.
     code_status_ledger_passes_ttl_s: Annotated[float, LIVE] = Field(default=15.0, gt=0)

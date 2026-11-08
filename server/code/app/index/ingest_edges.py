@@ -4,6 +4,7 @@ beside the parser's own."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import posixpath
 import re
@@ -360,7 +361,8 @@ async def _simple_lane_edges(repo: CodeRepo, org: str, ns: str, pf: ParsedFile) 
     if pf.lang == "tla":
         from server.code.domain.extract.lang_tla import tla_external_edges, tla_local_edges
 
-        local, external = tla_local_edges(pf)
+        # it parses the spec again: in a thread, so the event loop runs at the parser's reads
+        local, external = await asyncio.to_thread(tla_local_edges, pf)
         if not external:
             return local
         table = await repo.name_candidates(org, ns, sorted({n for _f, n, _l in external})[:400])
