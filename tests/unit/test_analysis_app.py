@@ -504,3 +504,20 @@ def test_an_unavailable_answer_names_no_cause(monkeypatch: pytest.MonkeyPatch, r
     with pytest.raises(AnalysisUnavailableError) as caught:
         asyncio.run(app.handle_insights_query(_query()))
     assert "another Loom database" not in str(caught.value)
+
+
+def test_a_probe_that_was_not_refused_is_named_by_what_it_read(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    # /v1/health shows this text: no SQL, and no database name.
+    async def run(sql: str, **_: Any) -> Any:
+        if sql.startswith("SELECT count()") and "system." not in sql:
+            return [], [], [(1,)] if boundary.CANARY_TABLE in sql else [(0,)]
+        if "system." in sql:
+            raise RuntimeError("Code: 497. DB::Exception: Not enough privileges")
+        return [], [], [("leaked",)]
+
+    monkeypatch.setattr(app.store, "run_statement", run)
+    problem, repairable, _ = asyncio.run(app._probe())
+    assert problem == f"{boundary.ANALYST_USER} may read memory.value: its grants are too wide"
+    assert repairable and "SELECT" not in problem and "`loom`" not in problem

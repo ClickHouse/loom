@@ -158,8 +158,8 @@ def test_a_failed_analysis_probe_names_the_kind(monkeypatch: pytest.MonkeyPatch)
 def test_an_extra_analyst_grant_names_no_database(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, manages: bool
 ) -> None:
-    # With access management the repair writes, the grant survives (an admin's
-    # role, say), and the second probe's answer is the one shown.
+    # With access management the write is stubbed out, so the grant survives it
+    # and the second probe's answer is the one shown.
     from server.insights.app import analysis
     from server.insights.domain import analysis as boundary
     from server.observability import problems
