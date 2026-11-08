@@ -24,6 +24,7 @@ from server.erasure.store.mutations import (
 )
 from server.erasure.store.predicates import (
     CHUNK_KEYS_IN,
+    CONSOLIDATED_IN,
     NS_EQ,
     NS_IN,
     ORG_NS,
@@ -31,7 +32,13 @@ from server.erasure.store.predicates import (
     PARENT_KEYS_IN,
     UID,
 )
-from server.erasure.store.scope_reads import hashes, slices_or_one_empty, user_key_pairs
+from server.erasure.store.scope_reads import (
+    hashes,
+    slices_or_one_empty,
+    summary_slices,
+    user_key_pairs,
+    user_summary_rows,
+)
 from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
 from server.settings import settings
@@ -568,7 +575,8 @@ async def tombstone_memory_chunks_by_user(
     user, and the no-user ('-') chunks whose parent (namespace, key) pairs are
     the user's, read from loom.memory (tombstoned rows included — the memory
     step runs first and the chunks must follow it, not escape it). Another
-    user's chunks of a shared key stay (`CHUNK_KEYS_IN`)."""
+    user's chunks of a shared key stay (`CHUNK_KEYS_IN`). The chunks of a summary of
+    the user's memories go too, by the summary writer they are stamped with."""
     ch = ch or _default_client()
     total = 0
     for part in slices_or_one_empty(await user_key_pairs(org, user_id, ch=ch)):
@@ -577,6 +585,15 @@ async def tombstone_memory_chunks_by_user(
             org=org,
             scope_where=CHUNK_KEYS_IN,
             params={"uid": user_id, "keys": part},
+            ch=ch,
+        )
+    for rows in chunks((await user_summary_rows(org, user_id, ch=ch)).chunk_keys):
+        total += await tombstone_scoped(
+            "loom.memory_chunks",
+            org=org,
+            scope_where="(namespace, user_id, parent_memory_key) IN "
+            "{rows:Array(Tuple(String, String, String))}",
+            params={"rows": rows},
             ch=ch,
         )
     return total
@@ -622,16 +639,18 @@ async def delete_memory_versions_by_user(
     ch: _CHClient | None = None,
 ) -> int:
     """Hard-delete a user's version history across namespaces (see the
-    namespace variant)."""
-    return await count_then_mutate(
-        "loom.memory_versions",
-        count_where="org = {org:String} AND user_id = {uid:String}",
-        mutation="DELETE",
-        mutation_where="org = {org:String} AND user_id = {uid:String}",
-        params={"org": org, "uid": user_id},
-        final=False,
-        ch=ch,
+    namespace variant), and that of the summaries built from the user's memories,
+    which `memory.history` reads and a rollback re-inserts. After the cache steps:
+    they find an answer that quoted a summary by its history."""
+    ch = ch or _default_client()
+    total = await delete_scoped(
+        "loom.memory_versions", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
     )
+    for params in await summary_slices(org, user_id, ch=ch):
+        total += await delete_scoped(
+            "loom.memory_versions", org=org, scope_where=CONSOLIDATED_IN, params=params, ch=ch
+        )
+    return total
 
 
 # A memory's links to code, and the queue of memory writes the link worker reads.

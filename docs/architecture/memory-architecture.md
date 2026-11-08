@@ -1301,7 +1301,10 @@ after a crash re-reads its slices and waits for any of its own still pending.
 The user-scope steps read the user's memory keys from `loom.memory`, so a user purge
 tombstones those rows in `memory.tombstone` and deletes them in `memory.retire`, after the
 last step that reads them; the consolidated summaries built from them are deleted there
-too, after their vectors and code links.
+too, after their vectors and code links. The steps that reach the user's chunks, graph
+rows and version history treat those summaries as the user's rows, and the census counts
+them the same way. `memory_versions.delete` runs after the cache steps, which find an
+answer that quoted a summary by its history.
 
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no

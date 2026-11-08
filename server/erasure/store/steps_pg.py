@@ -22,7 +22,7 @@ from server.core import pg
 
 # The consolidated rows a user's memories fed, under another identity: tagged
 # `consolidated` and `src:<key>` with a key the user wrote in the row's own namespace
-# (`steps_graph._CONSOLIDATED`). A row of another namespace built from a key of the same
+# (`predicates.CONSOLIDATED_IN`). A row of another namespace built from a key of the same
 # name is not the user's.
 _CONSOLIDATED_IDS = """
 WITH mine AS (

@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import pytest
 
-from server.erasure.store.steps_graph import _CONSOLIDATED, _consolidated_params
+from server.erasure.store.predicates import CONSOLIDATED_IN
+from server.erasure.store.scope_reads import consolidated_params
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 # The user's (namespace, key) pairs, bound as the step binds them.
-_U1 = {"org": "o", **_consolidated_params([("mine", "prefs/editor")])}
+_U1 = {"org": "o", **consolidated_params([("mine", "prefs/editor")])}
 _SUMMARY = "00000000-0000-0000-0000-0000000000c1"
 
 
@@ -34,7 +35,7 @@ def test_a_summary_is_the_users_only_where_the_user_wrote_its_source() -> None:
             _row("mine", "notes", "-", ["src:prefs/editor"]),  # not a summary
         ],
         f"SELECT namespace, memory_key FROM loom.memory WHERE org = {{org:String}} "
-        f"AND {_CONSOLIDATED} ORDER BY namespace",
+        f"AND {CONSOLIDATED_IN} ORDER BY namespace",
         _U1,
     )
     assert rows == [{"namespace": "mine", "memory_key": "profile"}]
@@ -50,7 +51,7 @@ def test_the_step_retires_the_pair_as_a_mutation() -> None:
             _row("mine", "profile", "-", ["consolidated", "src:prefs/editor"]),
             _row("theirs", "profile", "-", ["consolidated", "src:prefs/editor"]),
             "ALTER TABLE loom.memory UPDATE tombstoned_at = now() WHERE org = {org:String} "
-            f"AND {_CONSOLIDATED} SETTINGS mutations_sync = 2",
+            f"AND {CONSOLIDATED_IN} SETTINGS mutations_sync = 2",
         ],
         "SELECT namespace FROM loom.memory WHERE memory_key = 'profile' "
         "AND tombstoned_at IS NOT NULL",

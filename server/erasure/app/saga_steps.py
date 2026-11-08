@@ -244,7 +244,6 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("pg_memory.delete", pg_steps.delete_pg_memory_by_user),
     ("memory.tombstone", memory_steps.tombstone_memory_by_user),
     ("memory_embeddings.tombstone", memory_steps.tombstone_embeddings_by_user),
-    ("memory_versions.delete", memory_steps.delete_memory_versions_by_user),
     ("code_links.delete", _step_delete_code_links_by_user),
     ("working_memory.tombstone", memory_steps.tombstone_working_memory_by_user),
     ("shared.tombstone", memory_steps.tombstone_shared_by_user),
@@ -269,6 +268,8 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("llm_response_cache.delete", graph_steps.delete_llm_response_cache_by_user),
     ("ask_precedents.delete", graph_steps.delete_ask_precedents_by_user),
     ("code_answers.delete", graph_steps.delete_code_answers_by_user),
+    # After the cache steps, which read a summary's history.
+    ("memory_versions.delete", memory_steps.delete_memory_versions_by_user),
     ("summaries.tombstone", graph_steps.tombstone_summaries_by_user),
     ("records.tombstone", graph_steps.tombstone_records_by_user),
     ("session_outcomes.delete", memory_steps.delete_session_outcomes_by_user),

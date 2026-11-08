@@ -59,14 +59,9 @@ async def test_only_triples_and_edges_owned_by_the_user_alone_are_deleted() -> N
         "SELECT cityHash64(namespace, subject, relation, object) AS h "
         "FROM loom.entity_triple_memories FINAL"
     )
-    assert (
-        "HAVING countIf((namespace, memory_key) IN (SELECT namespace, memory_key FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})) > 0"
-        in tread
-    )
-    assert (
-        "AND countIf((namespace, memory_key) NOT IN (SELECT namespace, memory_key FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})) = 0"
-        in tread
-    )
+    # the user's keys and those of the summaries built from them
+    keys = erasure_predicates.USER_GRAPH_KEYS
+    assert f"HAVING countIf({keys}) > 0 AND countIf(NOT {keys}) = 0" in tread
     assert tread_params == {"org": "o", "uid": "alice"}
     assert eread.startswith(
         "SELECT cityHash64(namespace, entity_a, entity_b) AS h FROM loom.entity_edge_memories"

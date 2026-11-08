@@ -29,10 +29,14 @@ from server.erasure.store.predicates import (
     USER_CHUNKS,
     USER_COMMUNITY_ROWS,
     USER_CONFLICT_RECORD_IDS,
+    USER_GRAPH_KEYS,
     USER_MEMORY_KEYS,
     USER_PARENT_KEYS,
     USER_PRECEDENT_KEYS,
     USER_RECORD_IDS,
+    USER_SUMMARIES,
+    USER_SUMMARY_CHUNKS,
+    USER_SUMMARY_IDS,
     USER_WINDOW_KEYS,
 )
 from server.erasure.store.provider_copies import copy_residue
@@ -87,10 +91,11 @@ _CENSUS: tuple[Substrate, ...] = (
         "memory_embeddings.tombstone",
         "memory_embeddings.tombstone",
     ),
+    # The user's history and that of the summaries built from the user's memories.
     Substrate(
         "loom.memory_versions",
         "1",
-        UID,
+        f"({UID} OR {USER_SUMMARIES})",
         "memory_versions.delete",
         "memory_versions.delete",
     ),
@@ -120,7 +125,7 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate(
         "loom.memory_chunks",
         LIVE,
-        USER_CHUNKS,
+        f"({USER_CHUNKS} OR {USER_SUMMARY_CHUNKS})",
         "memory_chunks.tombstone",
         "memory_chunks.tombstone",
     ),
@@ -141,28 +146,28 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate(
         "loom.entity_triple_memories",
         "1",
-        USER_PARENT_KEYS,
+        USER_GRAPH_KEYS,
         "graph_links.delete",
         "graph_links.delete",
     ),
     Substrate(
         "loom.entity_triple_rows",
         "1",
-        UID,
+        f"({UID} OR {USER_SUMMARY_IDS})",
         "graph_links.delete",
         "graph_links.delete",
     ),
     Substrate(
         "loom.entity_edge_memories",
         "1",
-        USER_PARENT_KEYS,
+        USER_GRAPH_KEYS,
         "graph_links.delete",
         "graph_links.delete",
     ),
     Substrate(
         "loom.entity_edge_rows",
         "1",
-        UID,
+        f"({UID} OR {USER_SUMMARY_IDS})",
         "graph_links.delete",
         "graph_links.delete",
     ),
@@ -240,7 +245,7 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate(
         "loom.entity_vectors",
         LIVE,
-        f"(user_id = {{uid:String}} OR {USER_PARENT_KEYS})",
+        f"(user_id = {{uid:String}} OR {USER_GRAPH_KEYS})",
         "entity_vectors.delete",
         "entity_vectors.delete",
     ),

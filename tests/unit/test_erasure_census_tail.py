@@ -35,7 +35,7 @@ class _CH:
         return {"n": self.count}
 
     async def query_all(self, sql, params=None):
-        if "startsWith(t.name, '_provider_rebuild_')" in sql:
+        if "startsWith(t.name, '_provider_rebuild_')" in sql or "'consolidated'" in sql:
             return []
         if "system.mutations" not in sql:
             return self.rows

@@ -81,9 +81,19 @@ USER_KEY_LIST = (
     "(SELECT groupUniqArray(memory_key) FROM loom.memory "
     "WHERE org = {org:String} AND user_id = {uid:String})"
 )
-# The summaries built from the user's memories: rows tagged `consolidated` and a
-# `src:<key>` of one of the user's keys in the row's own namespace, under any identity.
-# The read form of `steps_graph._CONSOLIDATED`, which binds the user's pairs.
+# Summaries synthesised FROM an erased user's rows. A consolidated topic
+# memory (or merged canonical row) lives under the identity that ran the
+# consolidation — often `user_id='-'` — and carries its sources' content
+# verbatim by design, tagged `src:<key>`. The per-user steps never reach it. A `src:`
+# tag names a key of the summary's own namespace, as consolidation writes it (a copy
+# into another namespace keeps the tags, and is not the user's there); the next dense
+# pass rebuilds a retired summary from the surviving sources. The user's tags let the
+# skip index prune; their (namespace, tag) pairs decide, on each version.
+# `scope_reads.summary_slices` binds them; `USER_SUMMARIES` is the same match as a read.
+CONSOLIDATED_IN = (
+    "has(tags, 'consolidated') AND hasAny(tags, {src:Array(String)}) "
+    "AND hasAny(arrayMap(t -> (namespace, t), tags), {pairs:Array(Tuple(String, String))})"
+)
 _USER_SRC_PAIRS = (
     "(SELECT groupUniqArray((toString(namespace), concat('src:', memory_key))) "
     "FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})"
@@ -94,7 +104,8 @@ USER_SUMMARIES = (
 )
 # A cached answer or a precedent that quoted such a summary quoted the user. The
 # version history too: a summary rebuilt without the user can merge its older row away,
-# so an answer quoting its new version goes too, and one cached mid-saga fails the census.
+# so an answer quoting its new version goes too, and one cached before
+# `memory_versions.delete` fails the census.
 USER_SUMMARY_KEY_LIST = (
     "arrayConcat((SELECT groupUniqArray(memory_key) FROM loom.memory "
     f"WHERE org = {{org:String}} AND {USER_SUMMARIES}), "
@@ -102,6 +113,20 @@ USER_SUMMARY_KEY_LIST = (
     f"WHERE org = {{org:String}} AND {USER_SUMMARIES}))"
 )
 USER_QUOTED_KEY_LIST = f"arrayConcat({USER_KEY_LIST}, {USER_SUMMARY_KEY_LIST})"
+# What was chunked or extracted from such a summary is the user's too: its chunks (the
+# summary writer's, by `user_id`), its graph links and entity vectors (by its key) and
+# its row links (by its id). `USER_GRAPH_KEYS` is the user's keys and the summaries'.
+_USER_SUMMARY_ROWS = f"FROM loom.memory WHERE org = {{org:String}} AND {USER_SUMMARIES}"
+USER_SUMMARY_KEYS_SUBQ = f"(SELECT toString(namespace), memory_key {_USER_SUMMARY_ROWS})"
+USER_SUMMARY_CHUNKS = (
+    "(namespace, user_id, parent_memory_key) IN "
+    f"(SELECT toString(namespace), user_id, memory_key {_USER_SUMMARY_ROWS})"
+)
+USER_SUMMARY_IDS = f"memory_id IN (SELECT memory_id {_USER_SUMMARY_ROWS})"
+USER_GRAPH_KEYS = (
+    f"((namespace, memory_key) IN {USER_KEYS_SUBQ} "
+    f"OR (namespace, memory_key) IN {USER_SUMMARY_KEYS_SUBQ})"
+)
 USER_WINDOW_KEYS = f"hasAny(window_keys, {USER_QUOTED_KEY_LIST})"
 USER_PRECEDENT_KEYS = f"hasAny(arrayConcat(window_keys, cited_keys), {USER_QUOTED_KEY_LIST})"
 WINDOW_KEYS_IN = "hasAny(window_keys, {keys:Array(String)})"
@@ -113,8 +138,8 @@ USER_MEMORY_KEYS = f"hasAny(memory_keys, {USER_QUOTED_KEY_LIST})"
 MEMORY_KEYS_IN = "hasAny(memory_keys, {keys:Array(String)})"
 # A community row names an entity (and a label — the highest-degree member of
 # its community, another entity name). The entity belongs to the user when
-# every memory linking it in the co-occurrence graph is the user's and at
-# least one is — the exclusive-ownership rule, read from the edge link
+# every memory linking it in the co-occurrence graph is the user's (or a summary
+# of theirs) and at least one is — the exclusive-ownership rule, read from the edge link
 # table, so this runs before graph_links.delete removes those rows. A row
 # whose LABEL is such an entity goes too: the label text is the residue, and
 # the communities worker relabels on its next pass from the edges that remain.
@@ -126,8 +151,7 @@ USER_COMMUNITY_ENTITIES = (
     "SELECT namespace, entity_b AS entity, memory_key FROM loom.entity_edge_memories FINAL "
     "WHERE org = {org:String}) "
     "GROUP BY namespace, entity "
-    f"HAVING countIf((namespace, memory_key) IN {USER_KEYS_SUBQ}) > 0 "
-    f"AND countIf((namespace, memory_key) NOT IN {USER_KEYS_SUBQ}) = 0)"
+    f"HAVING countIf({USER_GRAPH_KEYS}) > 0 AND countIf(NOT {USER_GRAPH_KEYS}) = 0)"
 )
 USER_COMMUNITY_ROWS = (
     f"((namespace, entity) IN {USER_COMMUNITY_ENTITIES} "

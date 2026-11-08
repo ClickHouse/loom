@@ -118,8 +118,10 @@ those as the writer's too. Chunks stamped with another user stay.
 
 A `user_id` erasure also retires the consolidated summaries built from the user's
 memories, under whatever identity wrote them
-([which ones](../../architecture/memory-architecture.md#background-passes)), and deletes
-the cached `memory.ask` answers and precedents that quoted them.
+([which ones](../../architecture/memory-architecture.md#background-passes)), with what
+was derived from them: their version history, their verbatim chunks, and the graph rows
+extracted from them. It deletes the cached `memory.ask` answers and precedents that quoted
+them too.
 
 ### The saga
 

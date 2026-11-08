@@ -47,7 +47,6 @@ _CODE_LINKS = (
 USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((U, "loom.memory_embeddings"),)),
-    ("memory_versions.delete", ((D, "loom.memory_versions"),)),
     ("code_links.delete", _CODE_LINKS),
     ("working_memory.tombstone", ((U, "loom.working_memory"),)),
     ("shared.tombstone", ((U, "loom.shared"),)),
@@ -56,7 +55,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("derived_facts.delete", ((D, "loom.derived_facts"),)),
     ("memory_reinforcement.delete", ((D, "loom.memory_reinforcement"),)),
     ("raw_evidence.delete", ((D, "loom.memory_evidence"), (D, "loom.memory_extraction_queue"))),
-    ("memory_chunks.tombstone", ((U, "loom.memory_chunks"),)),
+    ("memory_chunks.tombstone", ((U, "loom.memory_chunks"), (U, "loom.memory_chunks"))),
     (
         "source_links.tombstone",
         ((U, "loom.memory_belief_sources"), (U, "loom.memory_chunk_sources")),
@@ -80,6 +79,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),
     ("ask_precedents.delete", ((D, "loom.memory_ask_precedents"),)),
     ("code_answers.delete", ((L, "loom.code_answers"),)),
+    ("memory_versions.delete", ((D, "loom.memory_versions"), (D, "loom.memory_versions"))),
     ("summaries.tombstone", ((U, "loom.session_summaries"), (U, "loom.entity_summaries"))),
     (
         "records.tombstone",
@@ -359,7 +359,6 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
 USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((L, "loom.memory_embeddings"),)),
-    ("memory_versions.delete", ((D, "loom.memory_versions"),)),
     ("code_links.delete", _CODE_LINKS),
     ("working_memory.tombstone", ((D, "loom.working_memory"),)),
     ("shared.tombstone", ((D, "loom.shared"),)),
@@ -374,7 +373,7 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (D, "loom.memory_extraction_queue"),
         ),
     ),
-    ("memory_chunks.tombstone", ((L, "loom.memory_chunks"),)),
+    ("memory_chunks.tombstone", ((L, "loom.memory_chunks"), (L, "loom.memory_chunks"))),
     (
         "source_links.tombstone",
         (
@@ -411,6 +410,7 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),
     ("ask_precedents.delete", ((D, "loom.memory_ask_precedents"),)),
     ("code_answers.delete", ((L, "loom.code_answers"),)),
+    ("memory_versions.delete", ((D, "loom.memory_versions"), (D, "loom.memory_versions"))),
     (
         "summaries.tombstone",
         (
