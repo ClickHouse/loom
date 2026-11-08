@@ -416,7 +416,8 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
         return []
 
     async def upsert(*a, **k):
-        return None
+        # The directory row first: a restriction cut short after it still stops copies.
+        assert [t for t, _ in ch.inserts] == ["loom.namespaces"]
 
     monkeypatch.setattr(reg, "refresh_db_repos", refresh)
     monkeypatch.setattr(reg, "upsert_access", upsert)
@@ -513,3 +514,20 @@ async def test_widening_needs_confirm_when_the_row_read_now_says_restricted(monk
             )
         )
     assert e.value.to_detail()["code"] == "CONFIRM_REQUIRED" and ch.inserts == []
+
+    # With confirm, the reply names the classification the directory row had.
+    async def upsert(*a, **k):
+        return None
+
+    monkeypatch.setattr(reg, "upsert_access", upsert)
+    monkeypatch.setattr(h, "restrict_entry", lambda cfg: None)
+    out = await h.handle_code_repo_set_access(
+        SimpleNamespace(
+            org=ORG,
+            namespace="code-weave",
+            classification="standard",
+            join_policy="approval",
+            confirm="code-weave",
+        )
+    )
+    assert out.previous_classification == "restricted"

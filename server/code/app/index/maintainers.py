@@ -304,8 +304,8 @@ async def _restricted_since(
 async def _copy_unchanged(
     client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
 ) -> dict[str, Any] | None:
-    """A copy a restricted branch must not hold is revoked while it is still the
-    row the plan read, even as the branch's only admin: it never was one."""
+    """A planned row on a restricted branch added from the page is written while the
+    row the plan read is unchanged, with no last-admin guard: no copy keeps one."""
     read = seen.get((row["namespace"], row["subject"]))
     return row if read is not None and _live(now) and _version(now) == _version(read) else None
 
@@ -318,9 +318,8 @@ async def _rewrite_wanted(
     branch must not keep it."""
     if await _mirror_wanted(client, org, row, now, seen):
         return row
-    if not await _copy_unchanged(client, org, row, now, seen):
+    if now is None or not await _copy_unchanged(client, org, row, now, seen):
         return None
-    assert now is not None  # `_copy_unchanged` read it live
     _log_stray(org, now)
     return _revoke_row(org, now)
 
@@ -695,11 +694,11 @@ async def revoke_repo_maintainer(
     keeps_added = own == "config" and _given_on_added(subject, admins, sources)
     held = {(str(r["namespace"]), str(r["subject"])): r for r in rows}
     for ns in branches:
-        stray = held.get((ns, subject))
-        if ns in restricted and stray is not None and _foreign(stray, config):
+        theirs = held.get((ns, subject))
+        if ns in restricted and theirs is not None and _foreign(theirs, config):
             if not operator_admin:  # taken whatever the guard or the lowering
-                _log_stray(org, stray)
-                strays.append(_revoke_row(org, stray))
+                _log_stray(org, theirs)
+                strays.append(_revoke_row(org, theirs))
             continue
         mine = admins[ns].get(subject)
         if mine is None:

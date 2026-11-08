@@ -1,6 +1,6 @@
-"""The code namespace registry writes the classification on a
-fresh row and narrows an existing standard row when the config says
-restricted — mirroring every column — and never widens one."""
+"""The code namespace registry writes the classification on a fresh row, and
+narrows, opens or widens an existing one, mirroring every column, only while the
+registry row read again under the namespace's admins claim still says so."""
 
 from __future__ import annotations
 
@@ -116,28 +116,41 @@ async def test_existing_row_already_restricted_is_left_alone() -> None:
     assert client.inserted == []
 
 
-@pytest.mark.parametrize("access", ["standard", "restricted"])
+@pytest.mark.parametrize(
+    ("access", "written"), [("standard", "after"), ("restricted", "after"), ("standard", "before")]
+)
 @pytest.mark.asyncio
 async def test_a_maintainer_s_widening_reaches_the_row_only_while_its_access_row_says_so(
-    monkeypatch: pytest.MonkeyPatch, access: str
+    monkeypatch: pytest.MonkeyPatch, access: str, written: str
 ) -> None:
     """The snapshot says a maintainer opened it; the access row read now decides, since a
-    restriction may have landed after the snapshot was read."""
-    existing = {"org": "clickhouse", "namespace": "code-p", "classification": "restricted"}
+    restriction may have landed after the snapshot was read. An access row older than
+    the directory row is a restriction cut short before its access row was written."""
+    from datetime import datetime
+
+    access = access if written == "after" else "standard"
+    existing = {
+        "org": "clickhouse",
+        "namespace": "code-p",
+        "classification": "restricted",
+        "updated_at": datetime(2026, 9, 1, 10, 0, 0),
+    }
+    at = datetime(2026, 9, 1, 11 if written == "after" else 9, 0, 0)
 
     class _Access(_Client):
         async def query_one(self, sql, params=None):
             if "loom.code_repos" in sql:
-                return {"classification": access}
+                return {"classification": access, "updated_at": at}
             return self.existing
 
     client = _Access(existing=existing)
     cfg = dataclasses.replace(_cfg("standard"), access_source="registry")
     held = _hold_admins(monkeypatch, client)
     await registry.ensure_registered(cfg, ch=client)
+    widens = access == "standard" and written == "after"
     widened = [r["classification"] for _, rows in client.inserted for r in rows]
-    assert widened == (["standard"] if access == "standard" else [])
-    assert held == (["code-p"] if access == "standard" else [])
+    assert widened == (["standard"] if widens else [])
+    assert held == (["code-p"] if widens else [])
 
 
 def _hold_admins(monkeypatch: pytest.MonkeyPatch, client: _Client) -> list[str]:

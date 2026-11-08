@@ -745,9 +745,9 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         previous_policy = str(
             (row or {}).get("join_policy") or ("open" if cfg.public else "approval")
         )
-        await reg.upsert_access(
-            cfg, classification=cls, join_policy=pol, created_by=subject or "maintainer", ch=ch
-        )
+        # The directory row first, which every replica reads now: a restriction cut short
+        # after it still stops copies, and the registrar widens no row newer than the
+        # access row.
         directory_updated = False
         if row is not None:
             new_row = dict(row)
@@ -761,6 +761,9 @@ async def handle_code_repo_set_access(input: Any) -> Any:
             )
             await ch.insert("loom.namespaces", [new_row])
             directory_updated = True
+        await reg.upsert_access(
+            cfg, classification=cls, join_policy=pol, created_by=subject or "maintainer", ch=ch
+        )
         await reg.refresh_db_repos(force=True, ch=ch)
     if cls == "restricted":
         # Joins this process's snapshot at once; a reset first would leave it nothing

@@ -76,7 +76,7 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = Tru
     client = ch or get_client()
     try:
         # Under the claim `code.repo.set_access` restricts under, whose reads are
-        # sequential: a stale read must not open, widen or recreate a restricted row.
+        # sequential: a stale read must not open or widen a restricted row.
         async with admins_change(cfg.org, cfg.namespace):
             inserted = await _write_row(cfg, client)
         _DONE.add(key)
@@ -92,6 +92,7 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = Tru
 
 async def _write_row(cfg: Any, client: Any) -> bool:
     """`ensure_registered`'s directory write; True when a row was inserted."""
+    from server.code.store.index import CodeRepo
     from server.identity.app.namespace_classification import note_restricted
     from server.identity.app.registration import namespace_row
 
@@ -136,7 +137,19 @@ async def _write_row(cfg: Any, client: Any) -> bool:
         return True
     classification = str(row.get("classification") or "standard")
     opening = public and classification == "standard" and str(row.get("join_policy")) != "open"
-    if opening and await _access_still_open(cfg, client):
+    narrowing = restricted and classification != "restricted"
+    widening = not restricted and cfg.access_source == "registry" and classification == "restricted"
+    if not (opening or narrowing or widening):
+        return False
+    # Each follows the registry row read now: this process's snapshot of it may
+    # predate a maintainer's change. With no registry row the operator's entry decides.
+    access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
+    access_restricted = access is not None and str(access.get("classification")) == "restricted"
+    if opening and (
+        str(cfg.source) != "registry"
+        if access is None
+        else not access_restricted and str(access.get("join_policy")) == "open"
+    ):
         # The config says the repository is public; the row is brought to open +
         # discoverable. Open means joinable, not readable — the row stays
         # visibility=private; reads need the join.
@@ -148,11 +161,7 @@ async def _write_row(cfg: Any, client: Any) -> bool:
             cfg.org,
             cfg.namespace,
         )
-    if (
-        restricted
-        and classification != "restricted"
-        and await _access_still_restricted(cfg, client)
-    ):
+    if narrowing and (access is None or access_restricted):
         narrowed = dict(row)
         narrowed["classification"] = "restricted"
         narrowed["visibility"] = "private"
@@ -166,54 +175,29 @@ async def _write_row(cfg: Any, client: Any) -> bool:
             cfg.namespace,
             row.get("classification"),
         )
-    if not restricted and cfg.access_source == "registry" and classification == "restricted":
-        if await _access_still_standard(cfg, client):
-            # A maintainer opened the repository; the directory follows the access
-            # row, not the entry's default
-            widened = dict(row)
-            widened["classification"] = "standard"
-            widened["join_policy"] = "open" if public else "approval"
-            widened["updated_at"] = now
-            await client.insert("loom.namespaces", [widened])
-            logger.warning(
-                "code namespace %s/%s directory row widened to standard (a maintainer's "
-                "access row says so; the row said restricted)",
-                cfg.org,
-                cfg.namespace,
-            )
+    # `code.repo.set_access` writes the directory row first: one newer than the
+    # access row is a restriction whose access row is not written yet.
+    if widening and access is not None and not access_restricted and _newer(access, row):
+        # A maintainer opened the repository; the directory follows the access
+        # row, not the entry's default
+        widened = dict(row)
+        widened["classification"] = "standard"
+        widened["join_policy"] = "open" if public else "approval"
+        widened["updated_at"] = now
+        await client.insert("loom.namespaces", [widened])
+        logger.warning(
+            "code namespace %s/%s directory row widened to standard (a maintainer's "
+            "access row says so; the row said restricted)",
+            cfg.org,
+            cfg.namespace,
+        )
     return False
 
 
-async def _access_still_open(cfg: Any, client: Any) -> bool:
-    """The registry row read now still opens the repository; with none, the operator's
-    entry decides. This process's snapshot of it may predate a maintainer's change."""
-    from server.code.store.index import CodeRepo
-
-    access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
-    if access is None:
-        return str(cfg.source) != "registry"  # the operator's entry alone says public
-    return (
-        str(access.get("classification")) != "restricted"
-        and str(access.get("join_policy")) == "open"
-    )
-
-
-async def _access_still_restricted(cfg: Any, client: Any) -> bool:
-    """The registry row read now still restricts the repository; with none, the
-    operator's entry decides."""
-    from server.code.store.index import CodeRepo
-
-    access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
-    return access is None or str(access.get("classification")) == "restricted"
-
-
-async def _access_still_standard(cfg: Any, client: Any) -> bool:
-    """The access row read now still says standard: this process's snapshot of it
-    may predate a restriction."""
-    from server.code.store.index import CodeRepo
-
-    access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
-    return access is not None and str(access.get("classification")) != "restricted"
+def _newer(access: dict[str, Any], row: dict[str, Any]) -> bool:
+    """The access row was written after the directory row."""
+    written, seen = access.get("updated_at"), row.get("updated_at")
+    return written is not None and seen is not None and written > seen
 
 
 def reset_for_tests() -> None:
