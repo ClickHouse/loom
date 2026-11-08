@@ -70,8 +70,17 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
     monkeypatch.setattr(settings, "jwt_revocation_cache_ttl_seconds", 0.0)
     ch = KeptCH(
         tmp_path / "ch",
-        *(ddl(t) for t in ("namespaces", "namespace_grants", "service_accounts")),
-        *(ddl(t) for t in ("task_inboxes", "task_poster_policies", "tasks")),
+        *(
+            ddl(t)
+            for t in (
+                "namespaces",
+                "namespace_grants",
+                "service_accounts",
+                "task_inboxes",
+                "task_poster_policies",
+                "tasks",
+            )
+        ),
     )
     for module in (ss, agent_claim, login):
         monkeypatch.setattr(module, "get_client", lambda: ch)

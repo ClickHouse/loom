@@ -898,6 +898,7 @@ def test_an_upload_registers_its_namespace_before_it_writes(
     client: Any, world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.knowledge.app import upload_routes
+    from server.knowledge.store import blobs
 
     order: list[str] = []
 
@@ -905,13 +906,14 @@ def test_an_upload_registers_its_namespace_before_it_writes(
         order.append(f"register {op.name} {org}/{namespace}")
         return False
 
-    async def insert_upload(row: dict[str, Any], **_: Any) -> None:
-        order.append("upload")
+    async def write(*_: Any, **__: Any) -> None:
+        order.append("write")
 
     monkeypatch.setattr(upload_routes, "maybe_autoregister", autoregister)
-    monkeypatch.setattr(ingestions, "insert_upload", insert_upload)
+    monkeypatch.setattr(blobs, "put", write)
+    monkeypatch.setattr(ingestions, "insert_upload", write)
     assert _post(client, SQL).status_code == 201
-    assert order == ["register knowledge.ingest o/ns", "upload"]
+    assert order == ["register knowledge.ingest o/ns", "write", "write"]
 
 
 def test_an_upload_expires_after_knowledge_upload_ttl_seconds(

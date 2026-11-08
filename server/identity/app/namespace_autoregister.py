@@ -56,8 +56,8 @@ AUTO_ROW_VERSION = datetime(1970, 1, 1, 0, 0, 1, tzinfo=UTC)
 OWNERLESS_ROW_VERSION = datetime(1970, 1, 1, tzinfo=UTC)
 _MISSING = ("", "-", "*")
 # The census tables a read or a run writes under a name (telemetry, a query, a run's
-# metadata), so a writer who searched first still owns the name; a name holding only
-# these rows goes to its first writer.
+# ledger row with its request and response), so a writer who searched first still owns
+# the name; a name holding only these rows goes to its first writer.
 READ_TRACES: Final = frozenset(
     {
         "loom.agent_runs",
