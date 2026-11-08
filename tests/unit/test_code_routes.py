@@ -81,7 +81,17 @@ def test_nest_object_form_controller_prefixes_its_routes() -> None:
     assert [f.name for f in route_facets(pf)] == ["GET /users/:id"]
 
 
-@pytest.mark.parametrize("unit", ["@Controller(){", "@Controller({", "app.get('/a')\n", ".route({"])
+@pytest.mark.parametrize(
+    "unit",
+    [
+        "@Controller(){",
+        "@Controller({",
+        "@Controller({path:''",
+        "app.get('/a')\n",
+        ".route({",
+        ".route({method:'GET',",
+    ],
+)
 def test_route_facets_over_a_run_of_controllers_or_routes_cost_linear_time(unit: str) -> None:
     from server.code.domain.extract.treesitter import ParsedFile
 
@@ -89,5 +99,15 @@ def test_route_facets_over_a_run_of_controllers_or_routes_cost_linear_time(unit:
         route_facets(
             ParsedFile(path="a.ts", lang="typescript", tree=None, source=(unit * n).encode())
         )
+
+    grows_linearly(run, 5_000, 20_000)
+
+
+def test_route_decorators_in_one_unclosed_controller_cost_linear_time() -> None:
+    from server.code.domain.extract.treesitter import ParsedFile
+
+    def run(n: int) -> None:
+        source = ("@Controller() class A {" + "@Get(" * n).encode()
+        route_facets(ParsedFile(path="a.ts", lang="typescript", tree=None, source=source))
 
     grows_linearly(run, 5_000, 20_000)

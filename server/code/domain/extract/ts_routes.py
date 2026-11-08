@@ -34,12 +34,13 @@ FACET_KIND = "http_route"
 # Each body stops at the next `@Controller(` / `.route(`: an unclosed one is not read to
 # the end of the file again from every opener before it.
 _CONTROLLER_RE = re.compile(
-    r"""@Controller\(\s*+(?:['"`]([^'"`]*)['"`]|\{(?:(?!@Controller\()[^}])*?\bpath:\s*"""
-    r"""['"`]([^'"`]*)['"`][^}]*\})?(?:(?!@Controller\()[^)])*\)""",
+    r"""@Controller\(\s*+(?:['"`]([^'"`\n]*)['"`]|\{(?:(?!@Controller\()[^}])*?\bpath:\s*"""
+    r"""['"`]([^'"`\n]*)['"`](?:(?!@Controller\()[^}])*\})?(?:(?!@Controller\()[^)])*\)""",
     re.S,
 )
 _ROUTE_DECORATOR_RE = re.compile(
-    r"""@(Get|Post|Put|Patch|Delete|Head|Options|All)\(\s*(?:['"`]([^'"`]*)['"`])?[^)]*\)"""
+    r"""@(Get|Post|Put|Patch|Delete|Head|Options|All)\(\s*+(?:['"`]([^'"`\n]*)['"`])?"""
+    r"""(?:(?!@(?:Get|Post|Put|Patch|Delete|Head|Options|All)\()[^)])*\)"""
 )
 _REGISTRATION_RE = re.compile(
     r"""\b(?:app|router|server|api|fastify|instance|route[rs]?)"""
@@ -47,7 +48,7 @@ _REGISTRATION_RE = re.compile(
 )
 _FASTIFY_ROUTE_RE = re.compile(
     r"""\.route\(\s*\{(?:(?!\.route\()[^}])*?\bmethod\s*:\s*['"`]([A-Za-z]+)['"`]"""
-    r"""(?:(?!\.route\()[^}])*?\burl\s*:\s*['"`]([^'"`]+)['"`]""",
+    r"""(?:(?!\.route\(|\bmethod\b)[^}])*?\burl\s*:\s*['"`]([^'"`]+)['"`]""",
     re.S,
 )
 _APP_HANDLER_RE = re.compile(

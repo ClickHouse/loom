@@ -417,7 +417,8 @@ def hcl_units(path: str, text: str) -> HclUnits:
 
 
 _PROVIDER_ATTR_RE = re.compile(r"^\s*provider\s*=\s*([a-z][\w-]*)\.([A-Za-z_][\w-]*)\s*$")
-_PROVIDERS_MAP_RE = re.compile(r"\b[a-z][\w-]*\s*=\s*([a-z][\w-]*)\.([A-Za-z_][\w-]*)")
+# A key starts after no word or `-`: `\b` would start one at every letter of `a-a-a…`.
+_PROVIDERS_MAP_RE = re.compile(r"(?<![\w-])[a-z][\w-]*+\s*=\s*([a-z][\w-]*)\.([A-Za-z_][\w-]*)")
 
 
 def _provider_sites(

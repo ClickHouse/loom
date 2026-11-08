@@ -55,6 +55,8 @@ _UNITS = (
     "(",
     "<",
     "'",
+    "a$",
+    "a-",
     "'\\",
     '"\\',
     '"',
@@ -119,10 +121,7 @@ def _openers(p: re.Pattern) -> list[str]:
         return [text] if text else []
 
     src = p.pattern if isinstance(p.pattern, str) else p.pattern.decode("latin-1")
-    try:
-        return list(dict.fromkeys(lead(list(parser.parse(src, p.flags & ~re.U)))))[:8]
-    except Exception:  # noqa: BLE001 — a pattern the private parser reads differently
-        return []
+    return list(dict.fromkeys(lead(list(parser.parse(src, p.flags & ~re.U)))))[:8]
 
 
 def _units(p: re.Pattern) -> list[str]:

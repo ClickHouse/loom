@@ -56,9 +56,9 @@ _FENCE = "---"
 _EVENT_RE = re.compile(r"\bon:?[A-Za-z]+(?:\|[a-z]+)*\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*[(}]")
 # any `{ … name( … }` expression: `{format(row)}`, `{#if check(x)}`, `{@html render(x)}`,
 # `{#each sort(items) as item}` — the first identifier that is called
-_EXPR_CALL_RE = re.compile(r"\{(?:[#:@/]\w+\s+)?[^{}\n]*?\b([A-Za-z_$][\w$]*)\s*\(")
+_EXPR_CALL_RE = re.compile(r"\{(?:[#:@/]\w+\s+)?[^{}\n]*?(?<![\w$])([A-Za-z_$][\w$]*+)\s*\(")
 # a prop whose value is a bare identifier: `<Child onSave={save}>`, `formatter={fmt}`
-_PROP_RE = re.compile(r"""(?<![\w:@])([A-Za-z][\w:-]*)\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*\}""")
+_PROP_RE = re.compile(r"""(?<![\w:@-])([A-Za-z][\w:-]*+)\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*\}""")
 _HTML_COMMENT_RE = re.compile(r"^\s*+<!--(.*?)-->", re.S)  # its text is stripped after
 _MAX_DOC = 400
 _SFC_EXTS = (".svelte", ".astro", ".vue")
