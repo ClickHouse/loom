@@ -453,7 +453,7 @@ def test_code_refresh_runs_the_ingest_pass_as_its_caller(monkeypatch) -> None:
     async def nothing(*a: Any, **k: Any) -> Any:
         return set()
 
-    repo = SimpleNamespace(org="acme", namespace="code-a", label="a", source="config")
+    repo = SimpleNamespace(org="acme", namespace="code-a", label="a", source="config", row_kind="")
     monkeypatch.setattr("server.code.app.index.repo_registry.refresh_db_repos", nothing)
     monkeypatch.setattr(ip, "_inactive_namespaces", nothing)
     monkeypatch.setattr(ip, "selected_repos", lambda org, ns: [repo])

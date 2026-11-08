@@ -8,7 +8,8 @@ operator's entries pass their admins to every branch, and a branch added from th
 page (``code.repo.add``, open to any org member) passes its admins only to other
 standard branches added from the page: a restricted one (``_restricted``) takes the
 operator's admins only. Registering a branch of a repository the operator configures
-gives no grant on the operator's namespaces.
+gives no grant on the operator's namespaces. Which side a branch is on is its
+``admins_source``.
 
 * ``sync_repo_maintainers`` — every branch gets the union of the active admins
   of the branches that reach it, written where it lacks one (``granted_by =
@@ -77,13 +78,24 @@ def reset_for_tests() -> None:
     _UNSYNCED.clear()
 
 
+def admins_source(cfg: Any) -> str:
+    """``config`` when the branch's admins are the operator's: an operator entry whose
+    namespace no member added from the page first, or a branch an operator entry's
+    admin added from it (`code.repo.add_branch`); ``registry`` for any other branch
+    added from the page. A row from before `row_kind` keeps its entry's source."""
+    if cfg.row_kind == "page":
+        return "registry"
+    return "config" if cfg.row_kind == "operator" else str(cfg.source)
+
+
 def _branches(org: str, repo: str) -> dict[str, str]:
     """Every configured branch namespace of `repo`, in configuration order,
-    with its source: ``config`` for the operator's entries, ``registry`` for a
-    branch added from the page."""
+    with its `admins_source`."""
     from server.code.domain.index.repos import configured_repos
 
-    return {c.namespace: c.source for c in configured_repos() if c.org == org and c.repo == repo}
+    return {
+        c.namespace: admins_source(c) for c in configured_repos() if c.org == org and c.repo == repo
+    }
 
 
 def _reaches(source: str, target: str) -> bool:
@@ -851,7 +863,7 @@ async def sync_restricted_page_branches(
     restriction failed. Stops once `exhausted` says the caller's budget is spent."""
     from server.core.ch import get_client
 
-    page = [c for c in entries if c.source == "registry"]
+    page = [c for c in entries if admins_source(c) == "registry"]
     # A fresh order each pass: a budget spent part way does not leave the same
     # repositories unserved pass after pass.
     random.shuffle(page)
@@ -861,7 +873,9 @@ async def sync_restricted_page_branches(
             return
         mine = [c for c in page if c.org == org]
         try:
-            restricted = await _restricted(get_client(), org, {c.namespace: c.source for c in mine})
+            restricted = await _restricted(
+                get_client(), org, {c.namespace: "registry" for c in mine}
+            )
         except Exception as e:  # noqa: BLE001 — an unread directory waits for the next pass
             log.warning("repo maintainers: %s classification unreadable: %s", org, e)
             continue

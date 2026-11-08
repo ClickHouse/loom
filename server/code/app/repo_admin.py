@@ -121,6 +121,7 @@ async def _register(
     remote_head: str,
     exclude_generated: bool = True,
     scip_producer: str = "",
+    row_kind: str = "page",
 ) -> CodeRepoAddOutput:
     from server.auth.default_namespace import auth_off_subject
     from server.code.app.index.bootstrap import set_stage
@@ -158,6 +159,7 @@ async def _register(
             created_by=subject,
             exclude_generated=exclude_generated,
             scip_producer=scip_producer,
+            row_kind=row_kind,
         )
         await reg.refresh_db_repos(force=True)
         cfg = next(
@@ -523,6 +525,7 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
     _require_self_service()
     await _require_sandbox()
     _require_same_org(input.org)
+    from server.code.app.index import maintainers
     from server.code.domain.index.repos import repo_for_namespace
     from server.code.store.index import CodeRepo
 
@@ -598,6 +601,8 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
         remote_head=head,
         exclude_generated=bool(getattr(src, "exclude_generated", True)),
         scip_producer=str(getattr(src, "scip_producer", "") or ""),
+        # A branch of an operator entry, added by its admin, keeps the operator's admins.
+        row_kind="operator" if maintainers.admins_source(src) == "config" else "page",
     )
     await _inherit_tracker_links(input.org, input.namespace, namespace)
     return out

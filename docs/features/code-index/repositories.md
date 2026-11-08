@@ -74,7 +74,8 @@ Rules:
   with no first index yet is refused with `REPO_NOT_INDEXED` until `loom code backfill`
   has run for it.
 - Admin grants flow between a repository's branches in one direction. The operator's
-  entries pass their admins to every branch of the repository, and a branch added here
+  entries, and the branches an admin of one adds from it with `code.repo.add_branch`,
+  pass their admins to every branch of the repository, and a branch added here
   passes its admins only to other standard branches added here. A restricted branch
   added here takes the operator's admins only. Every sync revokes the other copies it
   holds, or makes an operator admin's one a copy of the operator grant; a copy whose
@@ -95,9 +96,13 @@ Rules:
   operator entry other than the revoked one is rewritten by the next sync instead); an
   operator copy kept there goes at the next sync once its operator grant is gone.
 - An operator entry that names a namespace already added here keeps that namespace's
-  admins, who then reach the repository's other operator entries, and its access row,
-  whose classification and join policy win over the entry's: review both before
-  listing it.
+  admins, who do not reach the repository's other operator entries, and its registry
+  row only narrows the entry's access. The server logs a warning for it: review its
+  grants, or list the entry under another namespace. A registry row
+  written before migration 089 also only narrows its entry; a wider access set from
+  the page before then goes in the entry's configuration.
+- The access row `code.repo.set_access` writes for an operator entry is dropped once
+  the entry leaves the configuration, so the namespace is no longer indexed.
 - A copy on an operator namespace whose `granted_by` is `repo-maintainers:<namespace>`
   naming a branch added here, or a namespace no longer configured, stays until revoked:
   list those grants and revoke the ones that should not stand.

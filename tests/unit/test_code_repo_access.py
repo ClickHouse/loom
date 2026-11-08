@@ -49,6 +49,7 @@ def test_an_access_row_wins_over_the_entry_but_keeps_its_other_fields(monkeypatc
         _cfg("code-weave", classification="standard", public=True, source="registry"),
         path_prefixes=("other/",),
         github_token="tok",
+        row_kind="access",
     )
     other = _cfg("code-added", classification="standard", public=True, source="registry")
     monkeypatch.setattr(repos, "registry_repos", lambda: [row, other])
@@ -79,6 +80,42 @@ def test_an_access_row_wins_over_the_entry_but_keeps_its_other_fields(monkeypatc
     # no row: the entry as it is
     monkeypatch.setattr(repos, "registry_repos", lambda: [])
     assert repos._with_registry([entry])[0].access_source == "config"
+
+
+@pytest.mark.parametrize("kind", ["page", ""])
+def test_a_row_the_operator_did_not_write_only_narrows_the_entry(monkeypatch, kind) -> None:
+    # A member's add of the namespace (or a row from before row_kind) never widens it.
+    row = dataclasses.replace(
+        _cfg("code-weave", classification="standard", public=True, source="registry"),
+        row_kind=kind,
+    )
+    monkeypatch.setattr(repos, "registry_repos", lambda: [row])
+    (weave,) = repos._with_registry([_cfg("code-weave", classification="restricted")])
+    assert weave.classification == "restricted" and weave.public is False
+    assert weave.access_source == "config" and weave.row_kind == kind
+    (closed,) = repos._with_registry([_cfg("code-weave", classification="standard")])
+    assert closed.public is False
+    narrowing = dataclasses.replace(row, classification="restricted", public=False)
+    monkeypatch.setattr(repos, "registry_repos", lambda: [narrowing])
+    (narrowed,) = repos._with_registry([_cfg("code-weave", classification="standard", public=True)])
+    assert narrowed.classification == "restricted" and narrowed.org_readable is False
+
+
+def test_a_member_add_of_an_operator_namespace_is_logged_once(monkeypatch, caplog) -> None:
+    row = dataclasses.replace(_cfg("code-weave", source="registry"), row_kind="page")
+    monkeypatch.setattr(repos, "registry_repos", lambda: [row])
+    monkeypatch.setattr(repos, "_configured_from_env", lambda: [_cfg("code-weave")])
+    monkeypatch.setattr(repos, "_taken_logged", set())
+    repos.configured_repos()
+    repos.configured_repos()
+    assert len([r for r in caplog.records if "code-weave" in r.getMessage()]) == 1
+
+
+def test_an_access_row_whose_entry_is_gone_is_not_a_branch(monkeypatch) -> None:
+    access = dataclasses.replace(_cfg("code-weave", source="registry"), row_kind="access")
+    added = dataclasses.replace(_cfg("code-added", source="registry"), row_kind="page")
+    monkeypatch.setattr(repos, "registry_repos", lambda: [access, added])
+    assert [c.namespace for c in repos._with_registry([])] == ["code-added"]
 
 
 class _CH:
@@ -334,6 +371,7 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
         "version": 1,
         "exclude_generated": True,
         "scip_producer": "go",
+        "row_kind": "page",
     }
     ch = _CH2(existing)
     await reg.upsert_access(
@@ -367,6 +405,8 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
         and row["path_prefixes"] == ["src/"]
     )
     assert row["classification"] == "standard" and row["active"] is True and "created_at" in row
+    # A member's add stays one; an entry's new row is its access row.
+    assert ch.inserts[0][1][0]["row_kind"] == "page" and row["row_kind"] == "access"
 
 
 @pytest.mark.asyncio

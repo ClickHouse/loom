@@ -31,7 +31,7 @@ class _Entry:
         self, org: str, namespace: str, source: str = "config", classification: str = "standard"
     ) -> None:
         self.org, self.namespace, self.repo, self.source = org, namespace, "It/ord", source
-        self.classification = classification
+        self.classification, self.row_kind = classification, ""
 
 
 @pytest.fixture

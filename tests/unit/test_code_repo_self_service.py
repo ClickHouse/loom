@@ -433,11 +433,21 @@ async def test_code_repo_add_branch_inherits_the_repository(plane) -> None:
     assert out.namespace == "code-widgets-release-1-2" and out.join_policy == "open"
     rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
     assert rows[-1]["path_prefixes"] == ["src/"] and rows[-1]["git_branch"] == "release/1.2"
+    assert [r["row_kind"] for r in rows] == ["page", "page"]
     with pytest.raises(ValidationError) as ei:
         await admin.handle_code_repo_add_branch(
             CodeRepoAddBranchInput(org=ORG, namespace="not-a-repo", branch="x")
         )
     assert ei.value.to_detail()["code"] == "NOT_A_REPO"
+
+
+@pytest.mark.asyncio
+async def test_a_branch_added_from_an_operator_entry_is_recorded_as_one(plane) -> None:
+    await admin.handle_code_repo_add_branch(
+        CodeRepoAddBranchInput(org=ORG, namespace="code-clickhouse", branch="26.8")
+    )
+    (row,) = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    assert row["row_kind"] == "operator"
 
 
 def _link_rows(plane: Any) -> list[tuple[str, str, str, str]]:

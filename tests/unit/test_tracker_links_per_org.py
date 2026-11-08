@@ -113,6 +113,7 @@ def test_an_operator_entry_with_a_maintainer_access_row_keeps_its_glob_link(monk
         github_token="",
         classification="restricted",
         source="registry",
+        row_kind="access",
     )
     _set_registry(monkeypatch, [access])
     (entry,) = repos.configured_repos()

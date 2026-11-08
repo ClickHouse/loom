@@ -857,7 +857,8 @@ CREATE TABLE IF NOT EXISTS loom.code_repos
     `updated_at` DateTime DEFAULT now(),
     `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
     `exclude_generated` Bool DEFAULT false,
-    `scip_producer` LowCardinality(String) DEFAULT ''
+    `scip_producer` LowCardinality(String) DEFAULT '',
+    `row_kind` LowCardinality(String) DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace)

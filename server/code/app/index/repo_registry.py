@@ -126,6 +126,7 @@ def row_to_config(r: dict[str, Any]) -> RepoConfig:
         # The two indexing knobs; '' producer = inferred
         exclude_generated=bool(r.get("exclude_generated", False)),
         scip_producer=str(r.get("scip_producer") or ""),
+        row_kind=str(r.get("row_kind") or ""),
     )
 
 
@@ -227,6 +228,7 @@ async def insert_entry(
     git_remote: str = "",
     exclude_generated: bool = True,
     scip_producer: str = "",
+    row_kind: str = "page",
     ch: Any | None = None,
 ) -> None:
     from datetime import UTC, datetime
@@ -245,6 +247,7 @@ async def insert_entry(
             "exclude": list(exclude),
             "exclude_generated": bool(exclude_generated),
             "scip_producer": str(scip_producer or ""),
+            "row_kind": row_kind,
             "classification": classification,
             "join_policy": join_policy,
             "github_token_enc": encrypt_token(github_token),
@@ -268,9 +271,10 @@ async def upsert_access(
     """A maintainer's access row for `cfg`'s namespace — a new version of the registry
     row carrying the chosen classification and join policy. An existing registry row is
     copied whole (every column, including ones added by later migrations) with only
-    those two fields, `created_by` and the stamps changed; an entry that had no row gets
-    one built from the repository as configured, so `refresh_db_repos` reads one row per
-    namespace and `_with_registry` lets it win over the entry."""
+    those two fields, `created_by` and the stamps changed, so a member's add stays one;
+    an entry that had no row gets an access row (`row_kind = 'access'`) built from the
+    repository as configured, so `refresh_db_repos` reads one row per namespace and
+    `_with_registry` lets it win over the entry."""
     from datetime import UTC, datetime
 
     from server.code.store.index import CodeRepo
@@ -291,6 +295,7 @@ async def upsert_access(
             "exclude": list(cfg.exclude),
             "github_token_enc": encrypt_token(cfg.github_token),
             "created_at": now,
+            "row_kind": "access",
         }
     row.update(
         {

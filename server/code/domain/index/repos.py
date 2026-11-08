@@ -124,6 +124,10 @@ class RepoConfig:
     # "registry" (a maintainer's access row in loom.code_repos, which wins over the
     # entry).
     access_source: str = "config"
+    # The `row_kind` of the namespace's loom.code_repos row (migration 089): "page" a
+    # member's add, "operator" a branch an operator entry's admin added, "access" an
+    # operator entry's access row, "" a row from before the column or no row.
+    row_kind: str = ""
 
     @property
     def label(self) -> str:
@@ -304,36 +308,58 @@ def configured_repos() -> list[RepoConfig]:
     self-service registry's (the operator wins on a namespace collision). Invalid JSON
     degrades to the scalar single-repo config with a loud log (a typo must not silently
     stop all indexing) — loud once, then a gauge."""
-    return _with_registry(_configured_from_env())
+    out = _with_registry(_configured_from_env())
+    for c in out:
+        if c.source == "config" and c.row_kind == "page" and c.label not in _taken_logged:
+            _taken_logged.add(c.label)
+            logger.warning(
+                "code repo %s was added from the Repositories page before the operator's configuration "
+                "listed it: its registry row only narrows the entry's access and its admins "
+                "reach no other entry; review its grants",
+                c.label,
+            )
+    return out
+
+
+# The operator entries a member added from the page first, logged once each per process.
+_taken_logged: set[str] = set()
 
 
 def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
-    """The operator's entries first, then the registry's. A registry row for an entry's
-    own namespace is a maintainer's ACCESS row — its classification and join policy win
-    over the entry's (the entry keeps every other field); the row is what
-    `code.repo.set_access` writes, so the deployment's default stays where it is and the
-    maintainer's decision survives every boot."""
+    """The operator's entries first, then the registry's. An entry's ACCESS row
+    (`code.repo.set_access`) wins with its classification and join policy (the entry
+    keeps every other field), so the maintainer's decision survives every boot. Any other
+    registry row for an entry's namespace (a member's add, or a row from before
+    `row_kind`) only narrows the entry. An access row whose entry is gone is dropped."""
     import dataclasses
 
     rows = {(c.org, c.namespace): c for c in registry_repos()}
     out: list[RepoConfig] = []
     for c in env_repos:
-        access = rows.get((c.org, c.namespace))
-        if access is None:
+        row = rows.get((c.org, c.namespace))
+        if row is None:
             out.append(c)
             continue
-        restricted = access.classification == "restricted"
+        if row.row_kind == "access":
+            restricted = row.classification == "restricted"
+            public, access_source = row.public, "registry"
+        else:
+            restricted = "restricted" in (c.classification, row.classification)
+            public, access_source = c.public and row.public, "config"
         out.append(
             dataclasses.replace(
                 c,
-                classification=access.classification,
-                public=access.public and not restricted,
+                classification="restricted" if restricted else "standard",
+                public=public and not restricted,
                 org_readable=c.org_readable and not restricted,
-                access_source="registry",
+                access_source=access_source,
+                row_kind=row.row_kind,
             )
         )
     seen = {(c.org, c.namespace) for c in env_repos}
-    extra = [c for c in registry_repos() if (c.org, c.namespace) not in seen]
+    extra = [
+        c for c in registry_repos() if (c.org, c.namespace) not in seen and c.row_kind != "access"
+    ]
     return out + extra
 
 

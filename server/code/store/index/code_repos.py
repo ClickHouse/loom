@@ -21,7 +21,8 @@ class CodeReposMixin(CodeRepoBase):
             SELECT org, namespace, repo, git_remote, git_branch, path_prefixes, exclude,
                    toString(classification) AS classification,
                    toString(join_policy) AS join_policy, github_token_enc,
-                   exclude_generated, toString(scip_producer) AS scip_producer
+                   exclude_generated, toString(scip_producer) AS scip_producer,
+                   toString(row_kind) AS row_kind
             FROM loom.code_repos FINAL
             WHERE active
             ORDER BY org, namespace
