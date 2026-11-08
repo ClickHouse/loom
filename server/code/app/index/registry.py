@@ -5,7 +5,7 @@ namespaces would be invisible to the dashboard's sidebar, un-mintable from Setup
 indistinguishable from memory namespaces. Each ingest pass calls
 ensure_registered() once per process per repo entry: if no directory row exists, insert
 one with kind='code' and visibility='private' (read access stays grant-driven — see
-docs), restricted when either the registry row read then or the snapshot says so. An
+docs), from the registry row read then, or the snapshot when there is none. An
 existing row is re-inserted in full in three cases only, each deciding from the registry
 row read again under the namespace's admins claim, as this process's snapshot of it may
 predate a maintainer's change: a standard row not yet open is opened when an access row
@@ -116,11 +116,10 @@ async def _write_row(cfg: Any, client: Any) -> bool:
     row = await namespace_row(cfg.org, cfg.namespace, ch=client)
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     if row is None:
-        # A restriction in either the registry row read now or the snapshot counts;
-        # the registry row's join policy replaces the snapshot's.
+        # The registry row read now decides over this process's snapshot of it.
         access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
         if access is not None:
-            restricted = restricted or str(access.get("classification")) == "restricted"
+            restricted = str(access.get("classification")) == "restricted"
             public = not restricted and str(access.get("join_policy")) == "open"
         join_policy = "open" if public else "approval"
         await insert_first_row(cfg, client, restricted=restricted, join_policy=join_policy)
