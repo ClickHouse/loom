@@ -17,6 +17,7 @@ import logging
 import re
 import secrets
 import time
+import uuid
 from collections.abc import AsyncIterator
 from datetime import date, datetime
 from decimal import Decimal
@@ -216,7 +217,8 @@ def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> d
     default). It sends no cap: the caps profile's apply, so a replica whose
     own settings differ from the stored caps (during a roll) still runs."""
     exp = int(time.time()) + scope_ttl_s()
-    return dict(boundary.scope_settings(key or _key(), org, namespaces, exp))
+    query_id = str(uuid.uuid4())
+    return dict(boundary.scope_settings(key or _key(), org, namespaces, exp, query_id))
 
 
 async def provision() -> None:
@@ -352,12 +354,14 @@ async def rewrite() -> None:
 
 
 def scope_ttl_s() -> int:
-    """How long a signed scope is good for: one statement's client wait (its
-    time cap and five seconds) for every attempt the retry ladder can make (the
-    first, one transient retry and the replica-bound retries), and a margin. A
-    retry past it would read no rows rather than fail."""
-    attempts = 2 + int(settings.ch_replica_bound_retries)
-    return int((float(settings.ch_analysis_max_execution_s) + 5) * attempts) + 10
+    """How long a signed scope is good for. The client's retry ladder sends one
+    statement at most max(2, 1 + ch_replica_bound_retries) times (a transient
+    retry and the replica-bound retries never follow one another), each waiting
+    up to its time cap and five seconds; the policy judges the expiry when the
+    last attempt starts, so every earlier attempt's wait and a margin for the
+    reconnects between them are enough. A retry past it would read no rows."""
+    attempts = max(2, 1 + int(settings.ch_replica_bound_retries))
+    return int((float(settings.ch_analysis_max_execution_s) + 5) * (attempts - 1)) + 30
 
 
 @contextlib.asynccontextmanager

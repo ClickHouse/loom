@@ -228,26 +228,37 @@ def allowlisted_tables() -> tuple[str, ...]:
     return tuple(t.name for t in TABLES)
 
 
-def scope_payload(org: str, namespaces: str, exp: int) -> str:
-    """Each part prefixed with its length in bytes, as ClickHouse's length()
-    counts a String, so no two scopes share a payload."""
-    return f"{len(org.encode())}:{org}{len(namespaces.encode())}:{namespaces}{exp}"
+def scope_payload(org: str, namespaces: str, exp: int, query_id: str) -> str:
+    """Each part but the last prefixed with its length in bytes, as
+    ClickHouse's length() counts a String, so no two scopes share a payload.
+    The statement's query id comes last: a signature read inside one statement
+    (getSetting) and sent with another reads nothing, since the policy signs
+    the query id ClickHouse gives the statement it checks."""
+    exp_s = str(exp)
+    return (
+        f"{len(org.encode())}:{org}{len(namespaces.encode())}:{namespaces}"
+        f"{len(exp_s)}:{exp_s}{query_id}"
+    )
 
 
-def sign_scope(key: bytes, org: str, namespaces: str, exp: int) -> str:
+def sign_scope(key: bytes, org: str, namespaces: str, exp: int, query_id: str) -> str:
     """HMAC-SHA256 of the payload, hex in upper case as ClickHouse's hex() prints it."""
-    mac = hmac.new(key, scope_payload(org, namespaces, exp).encode(), hashlib.sha256)
-    return mac.hexdigest().upper()
+    payload = scope_payload(org, namespaces, exp, query_id)
+    return hmac.new(key, payload.encode(), hashlib.sha256).hexdigest().upper()
 
 
-def scope_settings(key: bytes, org: str, namespaces: list[str], exp: int) -> dict[str, str]:
-    """The four custom settings one statement carries."""
+def scope_settings(
+    key: bytes, org: str, namespaces: list[str], exp: int, query_id: str
+) -> dict[str, str]:
+    """The settings one statement carries: the four scope settings and the
+    query id the signature covers."""
     ns = ",".join(sorted(set(namespaces)))
     return {
         ORG_SETTING: org,
         NS_SETTING: ns,
         EXP_SETTING: str(exp),
-        SIG_SETTING: sign_scope(key, org, ns, exp),
+        SIG_SETTING: sign_scope(key, org, ns, exp, query_id),
+        "query_id": query_id,
     }
 
 
@@ -270,8 +281,11 @@ def _hmac_sql(key: bytes, payload: str) -> str:
 def signature_filter(key: bytes) -> str:
     """The expiry is ahead and the scope is signed under `key`."""
     org, ns, exp, sig = map(_setting, (ORG_SETTING, NS_SETTING, EXP_SETTING, SIG_SETTING))
+    # initialQueryID(): the id of the statement Loom sent, also on any server
+    # a query fans out to.
     payload = (
-        f"concat(toString(length({org})), ':', {org}, toString(length({ns})), ':', {ns}, {exp})"
+        f"concat(toString(length({org})), ':', {org}, toString(length({ns})), ':', {ns}, "
+        f"toString(length({exp})), ':', {exp}, initialQueryID())"
     )
     return f"toUInt64OrZero({exp}) > toUnixTimestamp(now()) AND {sig} = {_hmac_sql(key, payload)}"
 

@@ -214,6 +214,39 @@ def test_escape_is_refused_or_reads_nothing_foreign(
     _assert_contained(_query(control_plane_url, seed, sql), seed)
 
 
+def test_a_scope_read_inside_one_statement_reads_nothing_from_another(
+    control_plane_url: str, seed: _Seed
+) -> None:
+    """A statement can read its own signed scope with getSetting. Sent by
+    another org's token in SETTINGS, it must read none of the first org's
+    rows: the signature covers the statement's own query id."""
+    r = _query(
+        control_plane_url,
+        seed,
+        "SELECT getSetting('SQL_loom_org'), getSetting('SQL_loom_ns'), "
+        "getSetting('SQL_loom_exp'), getSetting('SQL_loom_sig')",
+    )
+    assert r.status_code == 200, r.text
+    org, ns, exp, sig = r.json()["rows"][0]
+    replay = (
+        f"SELECT memory_key FROM loom.memory SETTINGS SQL_loom_org = '{org}', "
+        f"SQL_loom_ns = '{ns}', SQL_loom_exp = '{exp}', SQL_loom_sig = '{sig}'"
+    )
+    for token, org_called, ns_called in (
+        (seed.writer_b, seed.org_b, seed.ns_a),
+        (seed.viewer_a, seed.org_a, seed.ns_a),
+    ):
+        r = _call(
+            control_plane_url,
+            token,
+            "insights.query",
+            {"org": org_called, "namespace": ns_called, "sql": replay},
+        )
+        assert r.status_code in {200, *_REFUSED}, r.text
+        if r.status_code == 200 and org_called == seed.org_b:
+            assert f"own/{seed.nonce}" not in str(r.json()["rows"]), r.text
+
+
 def test_ledger_rows_stay_in_scope(control_plane_url: str, seed: _Seed) -> None:
     r = _query(control_plane_url, seed, "SELECT DISTINCT org, namespace FROM loom.agent_events")
     assert r.status_code == 200, r.text

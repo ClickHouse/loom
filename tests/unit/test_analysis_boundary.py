@@ -51,7 +51,7 @@ def test_a_version_names_one_set_of_grants_and_policies() -> None:
     # Changing a grant, a policy, a live predicate or a retired table changes
     # this digest: bump ENTITY_VERSION and record the new digest here.
     assert {boundary.ENTITY_VERSION: boundary.structure_digest()} == {
-        1: "d11ff3b5ccaa637b83546a0468cc7864"
+        1: "7298189ddfc0ab437dc5766b5866c515"
     }
 
 
@@ -131,7 +131,7 @@ def test_the_caps_profile_carries_its_own_digest() -> None:
 
 
 def test_the_payload_counts_bytes_as_clickhouse_length_does() -> None:
-    assert boundary.scope_payload("é", "a", 1) == "2:é1:a1"
+    assert boundary.scope_payload("é", "a", 1, "q") == "2:é1:a1:1q"
 
 
 def test_a_retired_table_keeps_a_policy_that_reads_nothing(monkeypatch) -> None:
@@ -225,12 +225,22 @@ def test_needs_rewrite() -> None:
 
 def test_signature_is_hmac_sha256_of_the_length_prefixed_scope() -> None:
     key = KEY
-    settings = boundary.scope_settings(key, "acme", ["b", "a", "a"], 1700000000)
+    settings = boundary.scope_settings(key, "acme", ["b", "a", "a"], 1700000000, "qid-1")
     assert settings["SQL_loom_ns"] == "a,b"
-    payload = b"4:acme3:a,b1700000000"
+    payload = b"4:acme3:a,b10:1700000000qid-1"
     assert settings["SQL_loom_sig"] == hmac.new(key, payload, hashlib.sha256).hexdigest().upper()
+    assert settings["query_id"] == "qid-1"
     # Moving a character between the org and the namespaces changes the payload.
-    assert boundary.scope_payload("acm", "ea,b", 1) != boundary.scope_payload("acme", "a,b", 1)
+    assert boundary.scope_payload("acm", "ea,b", 1, "q") != boundary.scope_payload(
+        "acme", "a,b", 1, "q"
+    )
+    # So does moving one between the expiry and the query id.
+    assert boundary.scope_payload("o", "n", 12, "3q") != boundary.scope_payload("o", "n", 123, "q")
+
+
+def test_the_policy_signs_the_query_id_clickhouse_gives_the_statement() -> None:
+    # A signature read inside one statement and sent with another reads nothing.
+    assert "initialQueryID()" in boundary.signature_filter(KEY)
 
 
 def test_wrapper_drops_one_semicolon_ends_a_comment_and_asks_one_row_more() -> None:

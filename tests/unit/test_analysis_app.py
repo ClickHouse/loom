@@ -627,8 +627,9 @@ def test_a_scope_outlives_every_attempt_of_one_statement(
 
     monkeypatch.setattr(settings, "ch_analysis_max_execution_s", 120.0)
     monkeypatch.setattr(settings, "ch_replica_bound_retries", 2)
-    attempts = 1 + 1 + 2
-    assert app.scope_ttl_s() > (120 + 5) * attempts
+    # The first attempt and two replica-bound retries: the last starts after
+    # two waits of the cap and five seconds.
+    assert app.scope_ttl_s() > (120 + 5) * 2
 
 
 def test_statements_under_the_analysis_lease_are_bounded_inside_it(
