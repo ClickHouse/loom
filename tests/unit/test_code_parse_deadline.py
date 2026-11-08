@@ -56,6 +56,13 @@ def test_a_host_file_whose_shell_parse_stops_keeps_its_chunks(
     chunks, _, facets = _chunks_for(pf, "Makefile", source, 4000)
     assert chunks and facets == []
 
+    def again(path: str, source: bytes) -> None:
+        raise AssertionError("the chunk step parsed the shell again")
+
+    monkeypatch.setattr("server.code.app.index.ingest_chunks.host_units_of", again)
+    chunks, _, facets = _chunks_for(pf, "Makefile", source, 4000, None, err)
+    assert chunks and facets == []
+
 
 def _is_parser(node: ast.expr) -> bool:
     """`parser`, or a call of a function named `...parser` (`_parser(grammar)`)."""
@@ -82,8 +89,9 @@ def _receiver(node: ast.expr) -> str:
 
 
 def test_every_tree_sitter_parse_goes_through_the_deadline() -> None:
-    """Outside `bounded_parse`, no `.parse(` is called on a parser, nor at all in the code
-    plane's domain or a module that names tree-sitter but on `_NOT_A_PARSER`. A parser is
+    """Outside `bounded_parse`, no `.parse(` is called on a parser; and in the code plane's
+    domain, or in any module that names tree-sitter, no `.parse(` at all except on a
+    receiver in `_NOT_A_PARSER`. A parser is
     known by its name (`parser`, `_parser(...)`), so one held under another name outside
     those modules is not caught."""
     unbounded = []

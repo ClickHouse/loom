@@ -616,3 +616,21 @@ def test_a_started_parse_is_waited_for_one_deadline_past_the_window(
     got, waited = asyncio.run(late())
     assert got is None and waited < 0.3
     assert po._FILE_FACTS.get(("a.go", "a")) is not None
+
+
+def test_edges_not_reached_past_the_window_are_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = POST.encode()
+    ov = po.PrOverlay(pr_number=7, changed_paths=[PATH], hunks={PATH: [(1, 1)]})
+
+    async def read(path: str) -> bytes:
+        return source
+
+    asyncio.run(po._parse_post_image(_Repo(), "acme", "code-ch", ov, read=read, path_prefixes=()))
+    po._FILE_EDGES.clear()  # the facts stay cached: the edges need a parse again
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_seconds", 1e-9)
+    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 1e-9)
+    again = po.PrOverlay(pr_number=7, changed_paths=[PATH], hunks={PATH: [(1, 1)]})
+    asyncio.run(
+        po._parse_post_image(_Repo(), "acme", "code-ch", again, read=read, path_prefixes=())
+    )
+    assert again.symbols and again.edges == [] and again.unreached == 1

@@ -764,8 +764,8 @@ async def build_for_open(
     payload["head_sha"] = head_sha
     payload["base_sha"] = base_sha
     if store and po.NOT_REACHED in str(payload.get("overlay_note") or ""):
-        # served, never stored: every later read would serve the overlay a later
-        # request completes
+        # served, not stored: a stored partial brief would be served instead of the one
+        # a later request completes
         logger.info("review_brief: open PR %s served unstored, its overlay is partial", pr_number)
         payload["stored"] = False
     elif store:

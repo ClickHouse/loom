@@ -378,6 +378,7 @@ _CACHE: TtlCache[tuple[str, int], tuple[str, PrOverlay]] = TtlCache(
 
 def reset_cache_for_tests() -> None:
     _CACHE.clear()
+    _RUNNING.clear()
     _FILE_FACTS.clear()
     _FILE_EDGES.clear()
     _NAMES.clear()
@@ -578,7 +579,8 @@ async def _file_facts(
     scope: tuple[str, str], path: str, source: bytes, digest: str, deadline: float
 ) -> tuple[Any, _Facts] | None:
     """(parsed file or None when cached, facts) of one post-image file; None when it is
-    not cached and `deadline` passes before its parse can start."""
+    not cached and `deadline` passes before its parse can start, or its parse has not
+    ended one parse deadline after it."""
     key = (path, digest)
     hit = _FILE_FACTS.get(key)
     if hit is not None:
