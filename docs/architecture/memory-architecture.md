@@ -1026,20 +1026,20 @@ term plus a tag boost can exceed the gap between a good and a mediocre match.
 
 ## Background passes
 
-| Worker                    | Reads                                                        | Writes                                                                             | LLM |
-| ------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------- | --- |
-| `embedding_worker`        | Stubs and memories without an embedding row                  | Embedding rows at stub version + 1                                                 | No  |
-| `usage_fold`              | `memory_usage_totals`, `memory_exposures`, `memory_versions` | `memory_reinforcement`, and absolute `evidence_count` / `recall_count` on `memory` | No  |
-| `entity_extractor`        | Memories with empty `entities`                               | Entities on `memory` and `memory_embeddings`; missed graph rows                    | Yes |
-| `projection_repair`       | `memory_projection_failures`                                 | The failed chunk, evidence and graph projections, and triple follow-up left over   | No  |
-| `orphan_vector_reconcile` | Live embedding rows whose memory is tombstoned or gone       | Tombstones on `memory_embeddings` and `entity_vectors` (no mutation)               | No  |
-| `memory_expiry_sweep`     | Rows past `expires_at`                                       | The `on_expire` action                                                             | No  |
-| `sensitivity_sweep`       | Recent rows from paths that skip detection                   | A labelled version; `high` rows' embedding rows tombstoned                         | No  |
-| `profile_consolidation`\* | A user's preference and decision memories (namespace opt-in) | One non-searchable `profile` section, loaded by `profile.render` / `context.pack`  | Yes |
-| `structured_profile`      | Users' facts in namespaces with a profile schema             | A new version of each user's `structured_profile` row, held to the schema          | Yes |
-| `reflection_distill`\*    | Recent sessions without an outcome                           | Outcome labels, then `reflection` memories hidden from unfiltered recall           | Yes |
-| `entity_communities`\*    | The co-occurrence graph                                      | `entity_communities`                                                               | No  |
-| `recalibration`           | The embedder's score distribution                            | Calibration thresholds                                                             | No  |
+| Worker                    | Reads                                                        | Writes                                                                                         | LLM |
+| ------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | --- |
+| `embedding_worker`        | Stubs and memories without an embedding row                  | Embedding rows at stub version + 1                                                             | No  |
+| `usage_fold`              | `memory_usage_totals`, `memory_exposures`, `memory_versions` | `memory_reinforcement`, and absolute `evidence_count` / `recall_count` on `memory`             | No  |
+| `entity_extractor`        | Memories with empty `entities`                               | Entities on `memory` and `memory_embeddings`; missed graph rows                                | Yes |
+| `projection_repair`       | `memory_projection_failures`                                 | The failed chunk, evidence and graph projections, triple follow-up and expiry mirror left over | No  |
+| `orphan_vector_reconcile` | Live embedding rows whose memory is tombstoned or gone       | Tombstones on `memory_embeddings` and `entity_vectors` (no mutation)                           | No  |
+| `memory_expiry_sweep`     | Rows past `expires_at`                                       | The `on_expire` action, and a projection failure for a search mirror that failed               | No  |
+| `sensitivity_sweep`       | Recent rows from paths that skip detection                   | A labelled version; `high` rows' embedding rows tombstoned                                     | No  |
+| `profile_consolidation`\* | A user's preference and decision memories (namespace opt-in) | One non-searchable `profile` section, loaded by `profile.render` / `context.pack`              | Yes |
+| `structured_profile`      | Users' facts in namespaces with a profile schema             | A new version of each user's `structured_profile` row, held to the schema                      | Yes |
+| `reflection_distill`\*    | Recent sessions without an outcome                           | Outcome labels, then `reflection` memories hidden from unfiltered recall                       | Yes |
+| `entity_communities`\*    | The co-occurrence graph                                      | `entity_communities`                                                                           | No  |
+| `recalibration`           | The embedder's score distribution                            | Calibration thresholds                                                                         | No  |
 
 \* Off by default (`LOOM_PROFILE_CONSOLIDATION_ENABLED`,
 `LOOM_REFLECTION_DISTILL_ENABLED`, `LOOM_ENTITY_COMMUNITIES_ENABLED`).
@@ -1211,12 +1211,13 @@ Expiry is the writer's choice. `ttl_seconds`, `valid_to`, a type's or namespace'
 | `demote`              | Clears expiry and scales confidence down.                                     |
 | `anonymize`           | Replaces the value with a marker, tombstones embeddings, keeps the shell row. |
 
-The sweep then mirrors the action onto `memory_embeddings` and `entity_vectors`, at the
+The sweep then mirrors the action onto `memory_embeddings` and `entity_vectors` at the
 memory row's version, so the mirror leaves a later write's `memory_embeddings` rows
-alone (`entity_vectors`, which has no version, to the second). The next pass
-never selects a key it wrote, so a failed mirror is recorded as a `memory_expiry_mirror`
-projection failure, which `projection_repair` replays. A pass cut off between its insert
-and that record records nothing, as with any fail-open projection.
+alone. `entity_vectors` has no version, so its cutoff is the second that version was
+drawn in. The next pass never selects a key it wrote, so a failed mirror is recorded as
+a `memory_expiry_mirror` projection failure, which `projection_repair` replays. A pass
+cut off between its insert and that record records nothing, as with any fail-open
+projection.
 
 Table-level retention and tiering are operator TTLs, off by default
 ([ClickHouse](clickhouse.md#partitioning-and-ttl)).

@@ -379,9 +379,10 @@ async def apply_mirror(items: list[MirrorItem]) -> int:
     entity_vectors, at the memory row's version, so an anonymized key keeps no entity
     names in search either); demote copies them at that version with the expiry
     cleared and confidence lowered. Both touch only memory_embeddings rows below the
-    version (entity_vectors, which has none, to its second), so a replay leaves a
-    later write's vectors alone. Batched as one keyed read and one
-    insert per 500 keys, never one per key, in the sweep and in its replay."""
+    version, so a replay leaves a later write's rows alone; entity_vectors has no
+    version, so its cutoff is the second that version was drawn in. Batched as one
+    keyed read and one insert per 500 keys, never one per key, in the sweep and in its
+    replay."""
     import server.memory.store as memory_repo
 
     retires = [(key, version) for key, version, copy in items if copy is None]
@@ -404,24 +405,24 @@ async def _record_mirror_failures(items: list[MirrorItem], error: Exception) -> 
         projection_failure_row,
     )
 
-    by_writer: dict[tuple[str, str, str, str], list[MirrorItem]] = {}
+    by_writer: dict[tuple[str, ...], list[MirrorItem]] = {}
     for item in items:
-        key = item[0]
-        by_writer.setdefault((key[0], key[1], key[2], key[3]), []).append(item)
-    rows = [
-        projection_failure_row(
-            org=org,
-            namespace=namespace,
-            agent=agent,
-            projection=EXPIRY_MIRROR,
-            source_operation="memory.sweep_expired",
-            memory_keys=[key[5] for key, _v, _c in group],
-            error=error,
-            payload={"items": [[list(key), version, copy] for key, version, copy in group]},
-            user_id=user_id,
+        by_writer.setdefault(item[0][:4], []).append(item)
+    rows = []
+    for (org, namespace, agent, user_id), group in by_writer.items():
+        rows.append(
+            projection_failure_row(
+                org=org,
+                namespace=namespace,
+                agent=agent,
+                projection=EXPIRY_MIRROR,
+                source_operation="memory.sweep_expired",
+                memory_keys=[memory_key for (*_writer, memory_key), _v, _c in group],
+                error=error,
+                payload={"items": [[list(key), version, copy] for key, version, copy in group]},
+                user_id=user_id,
+            )
         )
-        for (org, namespace, agent, user_id), group in by_writer.items()
-    ]
     try:
         await insert_projection_failures(rows)
     except Exception:  # the pass reports the mirror failure either way
