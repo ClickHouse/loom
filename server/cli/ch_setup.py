@@ -442,8 +442,7 @@ def _write_analyst() -> None:
         run_connected(lambda _ch: rewrite())
     except Exception as e:  # noqa: BLE001 — insights.query is optional; the rest of setup stands
         line = error_line(e)
-        # A refusal Loom wrote names its own next step; before the first boot has
-        # migrated, the printed SQL cannot help either.
+        # A refusal Loom wrote names its own next step.
         advice = (
             ""
             if isinstance(e, SetupRefused)

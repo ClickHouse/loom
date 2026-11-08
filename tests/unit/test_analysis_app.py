@@ -482,7 +482,7 @@ def test_a_standing_problem_is_logged_once(
         (RuntimeError("Code: 497. DB::Exception: Not enough privileges"), True),
     ],
 )
-def test_ch_setups_analyst_line_advises_the_printed_sql_only_after_a_migration(
+def test_ch_setups_analyst_line_advises_the_printed_sql_only_for_errors_loom_did_not_word(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     error: Exception,
@@ -943,7 +943,7 @@ def test_ch_setup_without_access_management_says_so(
         asyncio.run(app.rewrite())
 
 
-def test_a_setup_with_no_answer_is_run_again_until_it_runs(
+def test_the_setup_runs_again_until_its_write_step_finishes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Only the setup writes a new version's entities and changed caps.
@@ -993,7 +993,6 @@ def test_provision_is_done_only_once_its_write_step_finished(
     # policy dropped, writes this build's entities.
     foreign: list[str] = ["bi_scope ON memory"]
     written = _provisioning(monkeypatch, stored=None, caps="", foreign=foreign)
-    monkeypatch.setattr(app.store, "foreign_policies", lambda: _returns(list(foreign))())
     assert asyncio.run(app.provision()) is False
     assert written == []
     foreign.clear()
@@ -1011,3 +1010,18 @@ def test_provision_with_no_answer_is_not_done(monkeypatch: pytest.MonkeyPatch, r
     monkeypatch.setattr(app, "_unreached_kind", "")
     monkeypatch.setattr(app, "_unreached_since", 0.0)
     assert asyncio.run(app.provision()) is False
+
+
+def test_a_write_clickhouse_refuses_is_a_kept_finding_and_not_done(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    _provisioning(monkeypatch, stored=None, caps="", foreign=[])
+
+    async def refuse(*_: Any, **__: Any) -> None:
+        raise RuntimeError("Code: 497. DB::Exception: Not enough privileges")
+
+    monkeypatch.setattr(app.store, "write_entities", refuse)
+    for _ in range(2):  # every run records the same finding
+        assert asyncio.run(app.provision()) is False
+        ready_now, problem = app.analysis_state()
+        assert ready_now is False and problem.startswith("writing or probing loom_analyst failed")

@@ -496,8 +496,8 @@ def start_probe_loop() -> asyncio.Task[None]:
         set_query_tag("analysis.probe")  # every process runs it, not a worker
         provisioned = False
         while True:
-            # A setup that got no answer is run again: only it writes a new
-            # version's entities and changed caps.
+            # The setup runs until its write step finishes: only it writes a
+            # new version's entities and changed caps.
             if provisioned:
                 await reprobe()
             else:
