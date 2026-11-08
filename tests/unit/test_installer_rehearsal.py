@@ -134,7 +134,7 @@ def _repo_with_releases(tmp_path: Path, tags: list[str], builder: str = WRITES_I
     ("version", "previous"),
     [
         ("1.2.0", "1.1.0"),
-        ("1.10.0", "1.9.1"),  # its own tag on HEAD: a release run
+        ("1.10.0", "1.9.1"),  # its own tag on HEAD, a release run: the one below, by number
         ("1.2.0-rc.1", "1.1.0"),
         ("1.1.0-rc.1", "1.0.0"),  # its own final already tagged
         ("1.0.0", ""),
@@ -357,3 +357,17 @@ def test_a_mode_refuses_the_other_modes_flags(
     with pytest.raises(SystemExit) as exited:
         rehearsal.main()
     assert exited.value.code == 2 and message in capsys.readouterr().err
+
+
+def test_the_previous_release_is_built_from_its_own_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The release the rehearsal picks, not the bundle's version, goes to the build."""
+    repo = _repo_with_releases(tmp_path, ["v1.0.0", "v1.1.0"])
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(rehearsal, "ROOT", repo)
+    monkeypatch.setattr(rehearsal, "pinned_image", lambda archive: "ch:pinned")
+    monkeypatch.setattr(rehearsal, "run", lambda *args, **kwargs: calls.append(args))
+    assert rehearsal.build_previous_release(tmp_path, "1.2.0", tmp_path / "work") == "1.1.0"
+    (call,) = calls
+    assert call[2:5] == ("1.1.0", "ch:pinned", str(tmp_path / "work" / "previous"))

@@ -56,8 +56,9 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 Each release's `install.sh` installs that release, so the copy `latest` serves installs the
 latest release, and a saved copy installs the same version every time it runs. Over a newer
 install, an older release's copy refuses to install, rather than start an older Loom and
-ClickHouse on newer data; `LOOM_VERSION=X.Y.Z` downgrades on purpose. Pin a release,
-or inspect everything before starting:
+ClickHouse on newer data; to downgrade on purpose, follow
+[rollback](../operations/upgrades.md#rollback). Pin a release, or inspect everything before
+starting:
 
 ```bash
 curl -fsSL https://github.com/ClickHouse/loom/releases/download/v1.2.3/install.sh | sh

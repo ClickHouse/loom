@@ -298,8 +298,8 @@ def previous_release(version: str, root: Path = ROOT) -> str:
     tags = subprocess.run(
         ["git", "tag", "--list", "v*"], cwd=root, capture_output=True, text=True, check=True
     ).stdout.split()
-    if not tags:  # a checkout without its tags, not a repository without releases
-        raise SystemExit("FAIL no v* tags: fetch them (fetch-depth: 0)")
+    # A checkout without its tags, not a repository without releases.
+    check(bool(tags), "no v* tags: fetch them (fetch-depth: 0)")
     final = prepare.final_of(version)
     if version == final and f"v{version}" in tags and not prepare.tag_on_head(version, root):
         return version
@@ -313,7 +313,7 @@ def build_previous_release(release_dir: Path, version: str, work: Path) -> str:
     """The previous release's own installer, and its bundle built from its tag on
     the ClickHouse release this release's bundle names, in `work/previous`;
     returns its version, or "" when there is none."""
-    previous = previous_release(version)
+    previous = previous_release(version, ROOT)
     if not previous:
         print(f"no final release below {version}: no upgrade rehearsed", flush=True)
         return ""
@@ -333,6 +333,9 @@ def serve_local_release(
         if subprocess.run(["docker", "image", "inspect", source], capture_output=True).returncode:
             raise SystemExit(f"{source} is not a local image: build or pull it first")
     version = bundle_version(args.release_dir)
+    check(
+        bool(VERSION_PATTERN.fullmatch(version)), f"the bundle names {version!r}, not X.Y.Z[-rc.N]"
+    )
     root = work / "releases"
     publish(root, version, args.release_dir)
     previous = build_previous_release(args.release_dir, version, work) if args.upgrade else ""

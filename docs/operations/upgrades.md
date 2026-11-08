@@ -147,7 +147,11 @@ echo "LOOM_CLICKHOUSE_IMAGE=$(docker inspect -f '{{.Config.Image}}' \
 
 Then run the earlier release's installer naming its version, as an older installer over a
 newer install refuses otherwise:
-`curl -fsSL https://github.com/ClickHouse/loom/releases/download/vX.Y.Z/install.sh | LOOM_VERSION=X.Y.Z sh`.
+
+```bash
+curl -fsSL https://github.com/ClickHouse/loom/releases/download/vX.Y.Z/install.sh | LOOM_VERSION=X.Y.Z sh
+```
+
 The installer keeps `.env`, so the pin holds ClickHouse through later upgrades too:
 delete the `LOOM_CLICKHOUSE_IMAGE` line before installing a newer Loom version, and do not
 leave `LOOM_CLICKHOUSE_IMAGE` exported in the shell, since the installer writes a value it

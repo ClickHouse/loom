@@ -1009,8 +1009,8 @@ Compose plus the ClickHouse configuration/dictionary the stack needs, while the 
 server stay in the image. Each release's `install.sh` installs that release; rerunning it
 preserves `.env` (apart from advancing the pinned `LOOM_VERSION` and giving an `.env` without
 an extractor token one, and the extractor URL unless it names its own) and volumes. An older
-release's `install.sh` run over a newer install refuses, unless `LOOM_VERSION` names the older
-version.
+release's `install.sh` run over a newer install refuses; a downgrade on purpose follows
+[rollback](./upgrades.md#rollback).
 
 ## N identical replicas
 
