@@ -2,7 +2,7 @@
 
 A request is admitted only when the caller may read the namespace, the org makes model
 calls, the namespace's assistant share of its daily model cost cap is not spent, and this
-replica runs fewer than its limit of answers there. The answer runs under a token
+web process runs fewer than its limit of answers there. The answer runs under a token
 delegated from the caller's for that answer alone (`viewer` on the namespace, consumer
 `loom-assistant`, ended with the caller's token, subject or sign-in session), which
 LibreChat sends back to Loom on every tool call (docs/architecture/assistant.md).
@@ -202,7 +202,7 @@ async def answer_token(auth: AuthInfo, org: str, namespace: str) -> str:
 
 
 def _take_slot(org: str, namespace: str) -> int:
-    """One of this replica's answers in the namespace, or OVERLOADED."""
+    """One of this web process's answers in the namespace, or OVERLOADED."""
     held = _running.setdefault((org, namespace), set())
     if len(held) >= int(settings.assistant_concurrent_answers):
         raise OverloadedError(

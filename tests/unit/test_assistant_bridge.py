@@ -282,7 +282,7 @@ def test_a_sign_in_session_is_not_refused_for_its_short_access_token(world: _Wor
         asyncio.run(bridge.authorize(_caller(expires_at=soon), ORG, NS))
 
 
-def test_a_replica_runs_its_limit_of_answers_per_namespace(
+def test_a_web_process_runs_its_limit_of_answers_per_namespace(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(settings, "assistant_concurrent_answers", 1)
@@ -1002,5 +1002,6 @@ def test_answers_draw_a_rate_limit_bucket_of_their_own(monkeypatch: pytest.Monke
         ratelimit.admit_route("assistant.ask", NS, org=ORG, actor="alice")
     with pytest.raises(RateLimitedError):
         ratelimit.admit_route("assistant.ask", NS, org=ORG, actor="alice")
-    # The namespace's default bucket keeps its tokens: answers spent none of them.
-    assert limiter.check(NS, "namespace.summary", org=ORG, actor="alice").allowed
+    # The namespace's default bucket is whole: answers spent none of its tokens.
+    first = limiter.check(NS, "namespace.summary", org=ORG, actor="alice")
+    assert first.allowed and first.remaining == ratelimit.DEFAULT_LIMITS["default"].capacity - 1

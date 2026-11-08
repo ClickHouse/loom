@@ -144,7 +144,7 @@ DEFAULT_LIMITS: dict[str, Limit] = {
     # One SQL statement per call, each up to the analysis time cap.
     "insights.query": Limit(capacity=20, rate=3),  # ~180/min
     # One answer per call, each held to the assistant's budget share and its
-    # per-replica limit; the bucket bounds a burst of asks before those apply.
+    # per-process limit; the bucket bounds a burst of asks before those apply.
     "assistant.ask": Limit(capacity=10, rate=1),  # ~60/min
     "default": Limit(capacity=50, rate=10),
 }

@@ -847,9 +847,10 @@ spend to the same budget as its own model calls:
 - The check reads spend already recorded, so answers running at once could each pass it;
   each web process runs at most a set number of answers per namespace at once
   (`LOOM_ASSISTANT_CONCURRENT_ANSWERS`, default 2), which bounds the overshoot to that
-  many answers per web process: replicas × `LOOM_WEB_WORKERS` × the setting in all. One answer's cost is its own usage: a request carries at
-  most 50 turns of history and a question, each at most 20,000 characters, and runs for
-  at most `LOOM_ASSISTANT_ANSWER_TTL_S`.
+  many answers per web process: replicas × `LOOM_WEB_WORKERS` × the setting in all. One
+  answer's cost is its own usage: a request carries at most 50 turns of history and a
+  question, each at most 20,000 characters, and runs for at most
+  `LOOM_ASSISTANT_ANSWER_TTL_S`.
 - When the answer ends, the bridge prices the token usage of the agents API's final
   chunk with the model's rate and records it as `upstream_cost_usd` on the answer's
   `agent_events` row, where every model spend is counted. An answer cut before its final
@@ -902,7 +903,7 @@ by an older build.
    ([the deployed assistant](../features/integrations/librechat.md#the-deployed-assistant)).
    Built.
 4. The bridge: the chat route and `assistant.ask`, with the answer's token, the
-   refusals, the budget share, the per-replica limit, the spend on the answer's ledger
+   refusals, the budget share, the per-process limit, the spend on the answer's ledger
    row and the answer's id on its tool calls' rows (built); then the citation check;
    then the SDKs' streaming clients.
 5. The chat on the dashboard's Assistant page.
