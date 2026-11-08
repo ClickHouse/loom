@@ -118,7 +118,7 @@ USER_QUOTED_KEY_LIST = f"arrayConcat({USER_KEY_LIST}, {USER_SUMMARY_KEY_LIST})"
 # vectors by the summary's agent, user and key (neither carries its session), row links
 # by (namespace, id), graph key links by (namespace, key), as for the user's own keys.
 # Each read form has its bound form beside it.
-USER_SUMMARY_KEYS_SUBQ = f"(SELECT toString(namespace), memory_key {SUMMARY_ROWS_FROM})"
+_USER_SUMMARY_KEYS_SUBQ = f"(SELECT toString(namespace), memory_key {SUMMARY_ROWS_FROM})"
 _USER_SUMMARY_IDENTITIES = (
     f"(SELECT toString(namespace), agent, user_id, memory_key {SUMMARY_ROWS_FROM})"
 )
@@ -135,7 +135,7 @@ USER_SUMMARY_IDS = (
 SUMMARY_IDS_IN = "(namespace, memory_id) IN {ids:Array(Tuple(String, UUID))}"
 USER_GRAPH_KEYS = (
     f"((namespace, memory_key) IN {USER_KEYS_SUBQ} "
-    f"OR (namespace, memory_key) IN {USER_SUMMARY_KEYS_SUBQ})"
+    f"OR (namespace, memory_key) IN {_USER_SUMMARY_KEYS_SUBQ})"
 )
 USER_WINDOW_KEYS = f"hasAny(window_keys, {USER_QUOTED_KEY_LIST})"
 USER_PRECEDENT_KEYS = f"hasAny(arrayConcat(window_keys, cited_keys), {USER_QUOTED_KEY_LIST})"

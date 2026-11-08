@@ -142,8 +142,10 @@ async def test_the_answers_that_quoted_a_consolidated_row_leave_with_its_source(
         monkeypatch.setattr(graph_steps, "tombstone_scoped", stop_once)
     with erasure_mutations.purge_scope(purge), erasure_mutations.saga_scope(f"erasure-{org}"):
         before = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
-        assert {t: before[t] for t in _COUNTED} == {
-            "loom.memory": 1,
+        # her row and the live summary of it; a purge counts every version, so the
+        # rebuilt summary's first too until a merge drops it
+        assert before["loom.memory"] in ((2, 3) if purge else (2,))
+        assert {t: before[t] for t in _COUNTED[1:]} == {
             "loom.llm_response_cache": 2,
             "loom.memory_ask_precedents": 2,
         }

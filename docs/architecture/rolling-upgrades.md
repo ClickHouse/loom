@@ -431,8 +431,10 @@ schema. These rules keep that safe. The operator procedure is in
     user erasure N-1 runs leaves the summary's and records `completed`. A saga N-1 left
     in progress that N resumes fails N's census on those rows, and the recovery worker's
     next resume runs their steps again; in a purge past `memory.retire` the user's keys
-    are gone and nothing finds them. Request the user's erasure again on N for an
-    erasure N-1 ran that tombstoned; no gate holds the rollout.
+    are gone and nothing finds them. The ledger does not name the build that ran a
+    saga: once N serves alone, request again each user erasure without `purge` that
+    completed since the rollout began (`loom.erasure_requests`, `scope_type =
+'user_id'`); no gate holds the rollout.
 
 ## What checks them
 

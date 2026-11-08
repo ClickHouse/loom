@@ -84,7 +84,11 @@ _HOLDS_TEXT = "(answer != '' OR citations != '')"
 _CENSUS: tuple[Substrate, ...] = (
     # In the user scope `memory.tombstone` only stamps these rows, which the later steps
     # read the user's keys from; `memory.retire` owns them and, in a purge, deletes them.
-    Substrate("loom.memory", LIVE, UID, "memory.tombstone", "memory.retire"),
+    # A live summary built from the user's memories counts too: `memory.retire` retires
+    # one written since `consolidated.tombstone`.
+    Substrate(
+        "loom.memory", LIVE, f"({UID} OR {USER_SUMMARIES})", "memory.tombstone", "memory.retire"
+    ),
     Substrate(
         "loom.memory_embeddings",
         LIVE,

@@ -277,17 +277,20 @@ async def test_a_purge_takes_what_a_summary_written_late_fed(ch_client, ch) -> N
     assert "topic-late" not in _column(ch_client, org, chunks)
 
 
-async def test_outside_a_purge_a_late_summary_fails_the_census(ch_client, ch) -> None:
-    """The same late summary outside a purge: its rows stay readable, so the census
-    finds its history and the saga reopens the step."""
+async def test_outside_a_purge_a_late_summary_reopens_its_steps(ch_client, ch) -> None:
+    """A summary of alice's memory written after `memory.retire`, outside a purge: its
+    rows stay readable, so the census counts it, and the steps it reopens retire it."""
     org = unique_org("ersumtl")
     _seed(ch_client, org)
     row = [org, "ns", "a", "-", "-", "topic-late", "fact", "alice is vegetarian", 1]
     row += [["consolidated", "src:user_diet"], "00000000-0000-4000-8000-000000000004"]
     with erasure_mutations.saga_scope(f"erasure-{org}"):
-        await _run(_STEPS[:-1], org, ch)
+        await _run(_STEPS, org, ch)
         _insert(ch_client, "loom.memory", _MEMORY_COLS, [row])
-        await _run(_STEPS[-1:], org, ch)
         residue = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
-    assert residue["loom.memory_versions"] == 1
-    assert "memory_versions.delete" in erasure_census.steps_to_reopen(residue, "user_id")
+        assert (residue["loom.memory"], residue["loom.memory_versions"]) == (1, 1)
+        reopened = erasure_census.steps_to_reopen(residue, "user_id")
+        assert {"memory_versions.delete", "memory.retire"} <= reopened
+        await _run([s for s in _STEPS if s[0] in reopened], org, ch)
+        after = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
+    assert (after["loom.memory"], after["loom.memory_versions"]) == (0, 0)
