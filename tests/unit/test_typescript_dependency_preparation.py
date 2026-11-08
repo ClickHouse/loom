@@ -185,6 +185,9 @@ async def test_an_install_timeout_is_recorded_as_a_timeout(
     with pytest.raises(RuntimeError) as failed:
         await deps.prepare_dependencies(checkout, (), _installer(tmp_path))
     assert tier_health.classify(recorder.error_text(failed.value)) == "timeout"
+    text = str(failed.value)
+    assert "(npm) timed out after" in text and "in the checkout root" in text
+    assert str(tmp_path) not in text
 
 
 def test_named_project_cannot_escape_checkout(checkout: Path) -> None:
