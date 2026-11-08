@@ -70,7 +70,8 @@ class _World:
         self.delegated: dict[str, Any] = {}
         self.cap_asked: dict[str, Any] = {}
         # The class the namespace registry gives an answer on the route.
-        self.traffic_class = "interactive"
+        self.traffic_class: str | None = "interactive"  # None: the registry read fails
+        self.classified: list[tuple[str, str]] = []
         # True: the share is spent; None: the spend cannot be read.
         self.over_cap: bool | None = False
         self.switched_off = False
@@ -365,7 +366,10 @@ def client(world: _World, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list[di
             }
         )
 
-    async def classified(*_: Any) -> tuple[str, str]:
+    async def classified(_auth: Any, org: str, namespace: str, _args: Any) -> tuple[str, str]:
+        world.classified.append((org, namespace))
+        if world.traffic_class is None:
+            raise ConnectionError("the namespace registry is down")
         return world.traffic_class, "namespace"
 
     monkeypatch.setattr(routes, "classify", classified)
@@ -799,9 +803,44 @@ def test_the_routes_answer_is_classified_as_an_op_call_is(
     world.traffic_class = "bench"
     r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
     assert r.status_code == 200
-    # Its buckets are drawn in its class, and its row carries it.
+    # Classified for the caller's org and the request's namespace; its buckets are drawn
+    # in its class, and its row carries it.
+    assert world.classified == [(ORG, NS)]
     (row,) = rows
     assert drawn == ["bench"] and row["traffic_class"] == "bench"
+
+
+def test_a_class_the_registry_cannot_give_fails_open_and_is_counted(
+    world: _World, client: tuple[Any, list[dict[str, Any]]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+    from server.core import fail_open
+
+    http, rows = client
+    monkeypatch.setattr(routes, "admit_route", lambda *_a, **_kw: None)
+    world.traffic_class = None
+    before = fail_open.counts().get("traffic_class", 0)
+    r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
+    assert r.status_code == 200
+    (row,) = rows
+    assert row["traffic_class"] == "interactive"
+    assert fail_open.counts().get("traffic_class", 0) == before + 1
+
+
+def test_a_refusal_after_the_token_is_read_carries_its_class_claim(
+    world: _World, client: tuple[Any, list[dict[str, Any]]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+
+    http, rows = client
+    monkeypatch.setattr(
+        routes, "verify_bearer_header", lambda *_a, **_k: _caller(traffic_class="bench")
+    )
+    world.denied = True  # no viewer: refused after the claim is bound, before classifying
+    r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
+    assert r.status_code == 403 and world.classified == []
+    (row,) = rows
+    assert row["traffic_class"] == "bench"
 
 
 def test_an_admission_cancelled_after_the_org_slot_frees_it_and_writes_its_row(

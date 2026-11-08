@@ -30,7 +30,7 @@ from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.context import set_current_auth
 from server.auth.gateway import effective_auth
 from server.auth.jwt import AuthInfo
-from server.core import tenant_slots
+from server.core import fail_open, tenant_slots
 from server.core.errors import (
     AssistantUnavailableError,
     AuthInsufficientError,
@@ -138,7 +138,7 @@ async def _classify(auth: AuthInfo, org: str, namespace: str, payload: Any) -> N
     try:
         cls, source = await classify(auth, org, namespace, payload)
     except Exception as e:  # noqa: BLE001 — FAILS OPEN: classification never refuses a call
-        log.debug("assistant answer: traffic class not resolved: %s", e)
+        fail_open.note("traffic_class", bridge.ASSISTANT_OP, e)
         cls, source = "interactive", "default"
     set_current_traffic_class(cls, source)
 
