@@ -312,14 +312,19 @@ async def test_tombstone_shared_embeddings_by_user_names_each_namespace_with_its
     assert "SELECT" not in mut_sql and mut_params["keys"] == [("team-a", "k1")]
 
 
-@pytest.mark.asyncio
 def _summary_row(memory_id: str) -> dict[str, str]:
     """A summary as `scope_reads.user_summary_rows` reads it."""
-    return {"ns": "ns", "agent": "a", "user_id": "-", "session_id": "-", "memory_key": "t"} | {
-        "id": memory_id
+    return {
+        "ns": "ns",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "memory_key": "t",
+        "id": memory_id,
     }
 
 
+@pytest.mark.asyncio
 async def test_consolidated_dependents_of_an_erased_user_are_tombstoned_in_both_tables() -> None:
     """A topic memory synthesised from an erased user's rows lives under
     another identity and carries the content verbatim (tag `src:<key>`); the
