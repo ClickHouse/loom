@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from server.core.ch import sequential_reads
+from server.core.ch_params import chunks
 from server.llm import customer
 from server.memory.app.model_attribution import attribution_for, memory_writers
 from server.memory.domain.import_keys import IMPORT_KEY_MATCH
@@ -392,8 +393,6 @@ async def _still_stored(
     with other text. A row a redaction deleted, an erasure tombstoned or a write gave
     other text while the page was embedded is left out; any other change (a save, a
     status, a hand-off) is written forward, not over."""
-    if not read:
-        return read, []
     cfg, keys = _TABLES[table], _KEY_COLUMNS[table]
     vectors = {cfg["vec"], cfg.get("key_vec")} - {None}  # no key axis on two of the tables
     others = [c for c in cols if c not in vectors]
@@ -403,14 +402,13 @@ async def _still_stored(
 
     # The bare key columns, so the primary key prunes to the page's rows.
     names, types = ", ".join(keys), ", ".join("String" for _ in keys)
-    wanted = [key(r) for r in read.values()]
     stored: list[dict[str, Any]] = []
     with sequential_reads():  # the redaction may have run on another replica
-        for at in range(0, len(wanted), _REREAD_KEYS):
+        for part in chunks([key(r) for r in read.values()]):  # each within the field limit
             stored += await ch.query_all(
                 f"SELECT {', '.join(others)} FROM loom.{table} FINAL "
                 f"WHERE {where_clause} AND ({names}) IN {{keys:Array(Tuple({types}))}}",
-                params={**params, "keys": wanted[at : at + _REREAD_KEYS]},
+                params={**params, "keys": part},
             )
     now = {key(r): r for r in stored}
     text = cfg["text"]
@@ -476,10 +474,6 @@ async def _rewrite_page(
         )
     return left_by_org
 
-
-# Keys per re-read statement: they travel in the request's query string, which a
-# large --batch-size would push past the HTTP limit.
-_REREAD_KEYS = 500
 
 # Each table's sort key, the keyset a run pages through and resumes after, and the
 # same as strings (the Enum `scope` by name).

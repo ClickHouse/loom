@@ -238,7 +238,8 @@ async def test_a_page_larger_than_one_re_read_is_read_again_in_parts(monkeypatch
         return await query_all(sql, params)
 
     ch.query_all = counting  # type: ignore[method-assign]
-    monkeypatch.setattr(rb, "_REREAD_KEYS", 2)
+    real_chunks = rb.chunks
+    monkeypatch.setattr(rb, "chunks", lambda values: real_chunks(values, limit=70))
     n = await rb.reembed_table(ch, _Emb(), "conversation_embeddings", log=lambda *_: None)
     assert n == 5 and ch.inserted == ["000", "001", "002", "003", "004"]
     assert sql_with_keys == [2, 2, 1]
