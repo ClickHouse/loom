@@ -124,7 +124,8 @@ _CHECKS: dict[str, tuple[RuleContract, str, str, str, list[str]]] = {
         RuleContract(
             "system_state",
             1,
-            exceptions="A document with no live chunk at all is the no-chunk finding's.",
+            exceptions="A document with no live chunk at all is counted under Documents with no "
+            "chunk.",
             uncertainty="A rolling change of the embedding model passes through this state.",
         ),
         "other_model",
@@ -271,8 +272,8 @@ _INGEST_CHECKS: dict[str, tuple[RuleContract, str, str, list[str]]] = {
         RuleContract(
             "contract_violation",
             1,
-            exceptions="A job that published an incomplete extraction, as allowed, is the "
-            "incomplete-extraction finding's.",
+            exceptions="A job that published an incomplete extraction, as allowed, is counted "
+            "under Extraction incomplete.",
         ),
         "Sources whose job failed on the file itself: the extractor refused it (a format "
         "that does not match, a bad encoding, a corrupt, unsupported or too large file, "

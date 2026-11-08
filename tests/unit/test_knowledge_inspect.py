@@ -1162,3 +1162,18 @@ def test_every_ref_list_names_registered_ops_and_settings_as_they_are_changed() 
             assert name in fields and not is_live(fields[name]), r
         elif r.startswith(planes) and " " not in r:
             assert r in ops, r
+
+
+def test_an_exception_names_another_finding_by_its_label_on_the_page() -> None:
+    import re
+    from pathlib import Path
+
+    page = Path(__file__).parents[2] / "frontend/src/views/assistant/DocumentInspection.tsx"
+    body = page.read_text(encoding="utf-8").split("const FINDING_LABEL", 1)[1].split("};", 1)[0]
+    labels = dict(re.findall(r'(\w+): "([^"]+)"', body))
+    assert f"counted under {labels['documents_without_chunks']}." in (
+        ki._CHECKS["chunks_under_other_model"][0].exceptions
+    )
+    assert f"counted under {labels['extraction_incomplete']}." in (
+        ki._INGEST_CHECKS["ingest_content_rejected"][0].exceptions
+    )
