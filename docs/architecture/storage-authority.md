@@ -74,7 +74,7 @@ and every tenant index leads with `org`.
 | `loom.authority`            | singleton                                                  | the recorded authority, its epoch and the deployment id                                                                                                                                                               |
 | `loom.scope_generations`    | `(org, scope)`                                             | the last revision number of a namespace, or a policy generation (`scope = '*'`, org `''` for the global one)                                                                                                          |
 | `loom.memory_current`       | `(org, namespace, agent, user_id, session_id, memory_key)` | the head of each key: the complete `loom.memory` row as JSON, with `memory_id`, `version`, `seq`, `content_sha256` beside it                                                                                          |
-| `loom.memory_revisions`     | `(org, namespace, seq)`                                    | every committed row, append-only (a redaction scrubs one in place), with its hash-only audit row                                                                                                                      |
+| `loom.memory_revisions`     | `(org, namespace, seq)`                                    | every committed row, append-only (a redaction scrubs one in place), with its hash-only audit row and its metadata in typed columns ([revision metadata](#revision-metadata))                                          |
 | `loom.memory_deliveries`    | `(org, namespace, seq)`                                    | the targets a revision still owes ClickHouse (bits: 1 memory row, 2 search document, 4 audit row, 8 a deleted decision's record, 16 the old vectors), its lease and fencing token; deleted when the last target lands |
 | `loom.idempotency`          | `(org, key_hash)`                                          | an op's request digest, its state (`running`, `committed`, `done`), the revisions it committed, its answer, a lease and its token                                                                                     |
 | `loom.erased_memories`      | `(org, namespace, memory_id)`                              | deletion evidence: the namespace and id of each memory an erasure removed, when, and when its publishers are quiet; no content, kept `LOOM_PG_ERASURE_EVIDENCE_HOURS`                                                 |
@@ -107,12 +107,33 @@ version, which only one row holds, and acts on that row's key.
 Mutable delivery progress lives in `loom.memory_deliveries`, apart from the revision
 payloads, so clearing a target never rewrites a revision's content.
 
-Eight maintenance indexes do not lead with `org`: `memory_deliveries (lease_until)` and
+### Revision metadata
+
+A revision keeps its key (`agent`, `session_id`, `memory_key`), `memory_type`, `status`,
+`source_trace`, whether it is a tombstone, and its redaction's time and reason in typed
+columns beside its payload (`row`). A trigger sets them from `row` whenever a writer of
+any build sets it, each falling back to the `loom.memory` column's default for a field
+`row` leaves out, and leaves them when `row` is cleared. Every reader of the journal
+matches on these columns and reads `row` only for a revision's content, which may be
+NULL:
+
+- an old version (`namespace.rollback`'s reinstated rows, `revisions_at`) is then
+  ClickHouse's `memory_versions` row of the same key, served scrubbed when the columns
+  say it is redacted, so a redaction ClickHouse's scrub has not reached yet is never
+  served; a revision the journal no longer holds (erased) is not served;
+- an admission's gap with such a revision is not cleared from the journal: the write
+  reaches its verdict again on peers read anew;
+- a redaction marks such a revision's columns, and ClickHouse's scrub reaches its text.
+
+A revision's payload is set by every commit and kept: this build clears none.
+
+Nine maintenance indexes do not lead with `org`: `memory_deliveries (lease_until)` and
 `knowledge_deliveries (lease_until)` `WHERE NOT settled` (the delivery workers' queues
 across tenants), the same two `WHERE settled`, `audit_outbox (due_at)`,
-`idempotency (expires_at)`, `erased_memories (erased_at)` and
-`erased_documents (erased_at)` (the sweeps). All eight are local to a Postgres database;
-a tenant's rows are still found by their primary keys.
+`idempotency (expires_at)`, `erased_memories (erased_at)`,
+`erased_documents (erased_at)` and `memory_revisions (committed_at) WHERE row IS NOT
+NULL` (the sweeps). All nine are local to a Postgres database; a tenant's rows are still
+found by their primary keys.
 
 ### Rejected layouts
 

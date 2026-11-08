@@ -158,6 +158,74 @@ async def test_a_read_of_clickhouses_history_right_after_a_write_sees_it(
 
 
 @pytest.mark.usefixtures("pg_authority")
+async def test_a_revisions_metadata_is_kept_from_its_row_and_outlives_it(
+    call: Any, pg_conn: Any, org: str
+) -> None:
+    """The journal's typed columns follow `row` whoever writes it: a commit, a revision
+    inserted without them (as an older build writes one), a scrub; and a cleared `row`
+    leaves them as they were."""
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    assert (await call("memory.set", _set(ns, "k", "a fact", user_id="u"))).status_code == 200
+    await _published(pg_conn, org)
+    meta = (
+        "SELECT agent, session_id, memory_key, memory_type, status, source_trace, tombstoned, "
+        "redacted_at, redaction_reason FROM loom.memory_revisions "
+        "WHERE org = $1 AND namespace = $2 AND seq = $3"
+    )
+    written = dict(await pg_conn.fetchrow(meta, org, ns, 1))
+    assert written == {
+        "agent": "a",
+        "session_id": "-",
+        "memory_key": "k",
+        "memory_type": "semantic",
+        "status": "active",
+        "source_trace": written["source_trace"],
+        "tombstoned": False,
+        "redacted_at": None,
+        "redaction_reason": "",
+    }
+    async with pg_conn.transaction():
+        seq = await pg_conn.fetchval(
+            "UPDATE loom.scope_generations SET generation = generation + 1 "
+            "WHERE org = $1 AND scope = $2 RETURNING generation",
+            org,
+            ns,
+        )
+        # The columns an older build's commit names.
+        await pg_conn.execute(
+            "INSERT INTO loom.memory_revisions (org, namespace, seq, user_id, memory_id, "
+            "version, content_sha256, actor, source_class, row, audit) "
+            "SELECT org, namespace, $3, user_id, memory_id, version + 1, content_sha256, actor, "
+            "source_class, row || jsonb_build_object('version', version + 1, 'memory_key', "
+            "'k2', 'tombstoned_at', '2026-01-01T00:00:00') - 'status', audit "
+            "FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 AND seq = 1",
+            org,
+            ns,
+            seq,
+        )
+    older = dict(await pg_conn.fetchrow(meta, org, ns, seq))
+    assert (older["memory_key"], older["status"], older["tombstoned"]) == ("k2", "active", True)
+    await pg_conn.execute(
+        "UPDATE loom.memory_revisions SET row = row || jsonb_build_object('redacted_at', "
+        "'2026-02-01T00:00:00', 'redaction_reason', 'a secret') "
+        "WHERE org = $1 AND namespace = $2 AND seq = 1",
+        org,
+        ns,
+    )
+    await pg_conn.execute(
+        "UPDATE loom.memory_revisions SET row = NULL WHERE org = $1 AND namespace = $2 AND seq = 1",
+        org,
+        ns,
+    )
+    cleared = dict(await pg_conn.fetchrow(meta, org, ns, 1))
+    assert cleared == {
+        **written,
+        "redacted_at": "2026-02-01T00:00:00",
+        "redaction_reason": "a secret",
+    }
+
+
+@pytest.mark.usefixtures("pg_authority")
 async def test_writes_made_together_share_their_clickhouse_inserts(
     call: Any, pg_conn: Any, org: str, ch_client: Any
 ) -> None:

@@ -399,9 +399,10 @@ def _authority_holds(monkeypatch: pytest.MonkeyPatch, calls: dict[str, list[Any]
     fixture's historical rows."""
     from server.memory.store import pg_memory
 
-    async def _revisions_at(org: str, ns: str, versions: list[Any]) -> dict[Any, Any]:
+    async def _revisions_at(org: str, ns: str, read: list[Any]) -> dict[Any, Any]:
         held = {(str(h.memory_id), h.version): h for h in calls["historical"]}
-        return {k: held[k] for k in versions if k in held}
+        wanted = [(str(r.memory_id), r.version) for r in read]
+        return {k: held[k] for k in wanted if k in held}
 
     monkeypatch.setattr("server.core.pg.enabled", lambda: True)
     monkeypatch.setattr(pg_memory, "revisions_at", _revisions_at)
@@ -517,7 +518,7 @@ async def test_under_postgres_a_version_redacted_since_comes_back_as_the_authori
     plain = next(h for h in calls["historical"] if h.memory_key == "plain")
     scrubbed = plain.model_copy(update={"value": "[REDACTED]", "redacted_at": _NOW})
 
-    async def _revisions_at(org: str, ns: str, versions: list[Any]) -> dict[Any, Any]:
+    async def _revisions_at(org: str, ns: str, read: list[Any]) -> dict[Any, Any]:
         return {(str(plain.memory_id), plain.version): scrubbed}
 
     monkeypatch.setattr(pg_memory, "revisions_at", _revisions_at)
@@ -583,7 +584,7 @@ async def test_under_postgres_a_reinstated_revision_is_rechecked_as_unredacted(
     plain = next(h for h in calls["historical"] if h.memory_key == "plain")
     ep = next(h for h in calls["historical"] if h.memory_key == "ep")
 
-    async def _revisions_at(org: str, ns: str, versions: list[Any]) -> dict[Any, Any]:
+    async def _revisions_at(org: str, ns: str, read: list[Any]) -> dict[Any, Any]:
         scrubbed = plain.model_copy(update={"value": "[REDACTED]", "redacted_at": _NOW})
         return {
             (str(plain.memory_id), plain.version): scrubbed,

@@ -528,6 +528,8 @@ async def _gap_cleared(conn: Any, admission: Admission, moved: dict[tuple[str, s
             after,
             through,
         )
+        if any(r["row"] is None for r in gap):
+            return False  # a payload cleared after its delivery: judged on ClickHouse's copy
         rows += [decode_row(r["row"]) for r in gap]
     return admission.gap_check(rows)
 
@@ -547,7 +549,7 @@ async def _refuse_moved_sources(
         "WITH s(memory_id, version) AS (SELECT * FROM unnest($3::uuid[], $4::bigint[])) "
         "SELECT EXISTS (SELECT 1 FROM loom.memory_revisions r JOIN s "
         "ON r.memory_id = s.memory_id AND r.version = s.version "
-        "WHERE r.org = $1 AND r.namespace = $2 AND r.row->>'redacted_at' IS NOT NULL) "
+        "WHERE r.org = $1 AND r.namespace = $2 AND r.redacted_at IS NOT NULL) "
         "OR ($5 AND EXISTS (SELECT 1 FROM s WHERE NOT EXISTS ("
         "SELECT 1 FROM loom.memory_current c WHERE c.org = $1 AND c.namespace = $2 "
         "AND c.memory_id = s.memory_id AND c.version = s.version "
@@ -1442,8 +1444,7 @@ async def profile_keys_built_from(
     if pg.unstorable(org) or pg.unstorable(namespace) or pg.unstorable(user_id):
         return []
     rows = await pg.fetch(
-        "SELECT row->>'agent' AS agent, row->>'session_id' AS session_id, "
-        f"row->>'memory_key' AS memory_key, max(version) AS newest {_PROFILE_REVISIONS} "
+        f"SELECT agent, session_id, memory_key, max(version) AS newest {_PROFILE_REVISIONS} "
         "GROUP BY 1, 2, 3 ORDER BY 1, 2, 3",
         org,
         namespace,
@@ -1465,23 +1466,25 @@ async def history_target(org: str, memory_id: str, version: int) -> dict[str, An
     if pg.unstorable(org):
         return None
     r = await pg.fetchrow(
-        "SELECT row FROM loom.memory_revisions WHERE org = $1 AND memory_id = $2 "
-        "AND version = $3 LIMIT 1",
+        "SELECT org, memory_id::text AS memory_id, namespace, agent, user_id, session_id, "
+        "memory_key, version, content_sha256, "
+        "CASE WHEN tombstoned THEN coalesce(row->>'tombstoned_at', '') END AS tombstoned_at "
+        "FROM loom.memory_revisions WHERE org = $1 AND memory_id = $2 AND version = $3 LIMIT 1",
         org,
         mid,
         version,
     )
-    return None if r is None else decode_row(r["row"])
+    return None if r is None else dict(r)
 
 
 async def status_before(key: IdentityKey, memory_id: str, version: int) -> str:
     """`history.status_before` on the authority's revisions of `key` holding `memory_id`."""
     org, namespace, agent, user_id, session_id, memory_key = key
     status = await pg.fetchval(
-        "SELECT row->>'status' FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 "
-        "AND row->>'agent' = $3 AND user_id = $4 AND row->>'session_id' = $5 "
-        "AND row->>'memory_key' = $6 AND memory_id = $7 AND version < $8 "
-        "AND row->>'status' <> 'superseded' ORDER BY version DESC LIMIT 1",
+        "SELECT status FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 "
+        "AND agent = $3 AND user_id = $4 AND session_id = $5 "
+        "AND memory_key = $6 AND memory_id = $7 AND version < $8 "
+        "AND status <> 'superseded' ORDER BY version DESC LIMIT 1",
         org,
         namespace,
         agent,
@@ -1495,24 +1498,61 @@ async def status_before(key: IdentityKey, memory_id: str, version: int) -> str:
 
 
 async def revisions_at(
-    org: str, namespace: str, versions: Sequence[tuple[str, int]]
+    org: str, namespace: str, read: Sequence[MemoryRow]
 ) -> dict[tuple[str, int], MemoryRow]:
-    """`namespace`'s revisions of these `(memory_id, version)`, as the authority holds them:
-    a redaction scrubs them before ClickHouse's copies, and an erasure removes them."""
-    wanted = [(UUID(str(mid)), int(v)) for mid, v in versions]
-    if not wanted or pg.unstorable([org, namespace]):
+    """These versions of `namespace`, read from ClickHouse's history, as the authority
+    holds them, by `(memory_id, version)`: a redaction scrubs the journal before
+    ClickHouse's copies, and an erasure removes the revision. A revision whose payload was
+    cleared after its delivery serves ClickHouse's row of the same key, scrubbed when the
+    journal says it is redacted."""
+    by_version = {(str(r.memory_id), int(r.version)): r for r in read}
+    if not by_version or pg.unstorable([org, namespace]):
         return {}
     rows = await pg.fetch(
-        "SELECT r.memory_id, r.version, r.row FROM loom.memory_revisions r "
+        "SELECT r.memory_id::text AS memory_id, r.version, r.row, r.agent, r.user_id, "
+        "r.session_id, r.memory_key, r.redacted_at, r.redaction_reason "
+        "FROM loom.memory_revisions r "
         "JOIN unnest($3::uuid[], $4::bigint[]) AS w(memory_id, version) "
         "ON r.memory_id = w.memory_id AND r.version = w.version "
         "WHERE r.org = $1 AND r.namespace = $2",
         org,
         namespace,
-        [m for m, _v in wanted],
-        [v for _m, v in wanted],
+        [UUID(m) for m, _v in by_version],
+        [v for _m, v in by_version],
     )
-    return {(str(r["memory_id"]), int(r["version"])): _hydrate(decode_row(r["row"])) for r in rows}
+    out: dict[tuple[str, int], MemoryRow] = {}
+    for r in rows:
+        at = (r["memory_id"], int(r["version"]))
+        if r["row"] is not None:
+            out[at] = _hydrate(decode_row(r["row"]))
+            continue
+        copy = by_version[at]
+        if (copy.agent, copy.user_id, copy.session_id, copy.memory_key) != (
+            r["agent"],
+            r["user_id"],
+            r["session_id"],
+            r["memory_key"],
+        ):
+            continue
+        out[at] = copy if r["redacted_at"] is None else scrubbed(copy, r)
+    return out
+
+
+def scrubbed(row: MemoryRow, journal: Mapping[str, Any]) -> MemoryRow:
+    """`row` with the text a redaction clears (`_SCRUB_VALUES`) cleared, and the
+    redaction's time and reason from its revision's columns."""
+    return row.model_copy(
+        update={
+            "value": parse_memory_value(REDACTED_VALUE),
+            "value_text": REDACTED_VALUE,
+            "value_json": "{}",
+            "evidence": "",
+            "entities": [],
+            "concepts": [],
+            "redacted_at": datetime.fromisoformat(journal["redacted_at"]),
+            "redaction_reason": journal["redaction_reason"],
+        }
+    )
 
 
 async def namespaces_of_id(org: str, memory_id: str) -> list[str]:
@@ -1599,8 +1639,8 @@ async def live_versions(
         "  FROM loom.memory_revisions r WHERE r.org = c.org AND r.memory_id = c.memory_id "
         "  AND r.namespace = c.namespace AND r.user_id = c.user_id "
         # The id may sit under another key too (a namespace restored into itself).
-        "  AND r.row->>'agent' = c.agent AND r.row->>'session_id' = c.session_id "
-        "  AND r.row->>'memory_key' = c.memory_key "
+        "  AND r.agent = c.agent AND r.session_id = c.session_id "
+        "  AND r.memory_key = c.memory_key "
         "  AND r.version <= h.version ORDER BY r.version DESC LIMIT 1)",
         org,
         *[[i[k] for i in ids] for k in range(6)],
@@ -1769,17 +1809,33 @@ async def live_heads_of(
     return [decode_row(r["row"]) for r in rows]
 
 
-# A profile row of the user ($3) built from the memory ($4): what a redaction of it
-# reaches. `{agent}` is the agent: a column of the heads, the row's field in the journal
-# (`memory_revisions_profile`).
-_PROFILE_BUILT_FROM = """user_id = $3 AND {agent} = '-'
-      AND row->>'memory_type' = 'profile'
-      AND starts_with(row->>'source_trace', 'profile.fold:')
-      AND $4::uuid::text = ANY (regexp_split_to_array(row->>'source_trace', '[:,]'))"""
+# The fields a redaction matches on: the heads' key columns and `row` fields, and the
+# journal's typed columns, which hold whether or not its payload does.
+_HEAD_FIELDS = {
+    "agent": "agent",
+    "session_id": "session_id",
+    "memory_key": "memory_key",
+    "memory_type": "row->>'memory_type'",
+    "source_trace": "row->>'source_trace'",
+    "redacted_at": "row->>'redacted_at'",
+}
+_JOURNAL_FIELDS = {f: f for f in _HEAD_FIELDS}
+
+
+def _profile_built_from(f: Mapping[str, str]) -> str:
+    """A profile row of the user ($3) built from the memory ($4): what a redaction of it
+    reaches (`memory_revisions_profile_meta` in the journal)."""
+    return (
+        f"user_id = $3 AND {f['agent']} = '-' AND {f['memory_type']} = 'profile' "
+        f"AND starts_with({f['source_trace']}, 'profile.fold:') "
+        f"AND $4::uuid::text = ANY (regexp_split_to_array({f['source_trace']}, '[:,]'))"
+    )
+
+
 # The user's profile revisions built from the memory, redacted or not.
 _PROFILE_REVISIONS = (
     "FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 AND "
-    + _PROFILE_BUILT_FROM.format(agent="row->>'agent'")
+    + _profile_built_from(_JOURNAL_FIELDS)
 )
 
 
@@ -1789,19 +1845,19 @@ _PROFILE_REVISIONS = (
 def _redacted_in(*, journal: bool, scrubbed_too: bool = False) -> str:
     """The redacted version of the key and the later versions of the key that copy its
     text (`$9`, `redaction_lineage.later_copies`), and the user's profile versions folded
-    from the memory: the rows `redaction._REDACTED_ROWS` chooses, in the heads' columns or
-    in the journal's row (`journal`). The named version takes the latest call's time and
-    reason; a copy or a profile version already redacted keeps its first, and is left out
-    unless `scrubbed_too` (a retry waits out its publishers all the same)."""
-    agent, session_id, memory_key = (
-        (f"row->>'{c}'" if journal else c) for c in ("agent", "session_id", "memory_key")
+    from the memory: the rows `redaction._REDACTED_ROWS` chooses, in the heads or in the
+    journal (`journal`). The named version takes the latest call's time and reason; a copy
+    or a profile version already redacted keeps its first, and is left out unless
+    `scrubbed_too` (a retry waits out its publishers all the same)."""
+    f = _JOURNAL_FIELDS if journal else _HEAD_FIELDS
+    key = (
+        f"user_id = $3 AND {f['agent']} = $5 AND {f['session_id']} = $6 AND {f['memory_key']} = $7"
     )
-    key = f"user_id = $3 AND {agent} = $5 AND {session_id} = $6 AND {memory_key} = $7"
-    unscrubbed = "" if scrubbed_too else " AND row->>'redacted_at' IS NULL"
+    unscrubbed = "" if scrubbed_too else f" AND {f['redacted_at']} IS NULL"
     return (
         f"org = $1 AND namespace = $2 AND (({key} AND memory_id = $4::uuid AND (version = $8 "
         f"OR (version = ANY($9::bigint[]){unscrubbed}))) "
-        f"OR ({_PROFILE_BUILT_FROM.format(agent=agent)}{unscrubbed}))"
+        f"OR ({_profile_built_from(f)}{unscrubbed}))"
     )
 
 
@@ -1865,7 +1921,7 @@ async def redact(
             "SELECT c.row FROM loom.memory_current c WHERE c.org = $1 AND c.namespace = $2 "
             "AND ((c.agent, c.user_id, c.session_id, c.memory_key) = ($5, $3, $6, $7) "
             "OR (c.agent = '-' AND c.user_id = $3 AND (c.session_id, c.memory_key) "
-            f"IN (SELECT row->>'session_id', row->>'memory_key' {_PROFILE_REVISIONS}))) "
+            f"IN (SELECT session_id, memory_key {_PROFILE_REVISIONS}))) "
             f"{_KEY_ORDER} FOR UPDATE OF c",
             *key_args,
         )
@@ -1882,7 +1938,7 @@ async def redact(
         history = await conn.fetch(
             "SELECT version, content_sha256 FROM loom.memory_revisions "
             "WHERE org = $1 AND namespace = $2 AND user_id = $3 AND memory_id = $4 "
-            "AND row->>'agent' = $5 AND row->>'session_id' = $6 AND row->>'memory_key' = $7 "
+            "AND agent = $5 AND session_id = $6 AND memory_key = $7 "
             "AND version >= $8 ORDER BY version",
             *key_args,
             int(version),
@@ -1915,15 +1971,21 @@ async def redact(
             "SELECT left_s FROM locked",
             *redacted_args,
         )
+        # A payload cleared after its delivery has nothing to scrub here: its columns
+        # say it is redacted, and ClickHouse's scrub reaches its text.
         await conn.execute(
-            f"UPDATE loom.memory_revisions SET row = {_SCRUBBED} WHERE {_REDACTED}", *args
+            f"UPDATE loom.memory_revisions SET row = {_SCRUBBED}, redacted_at = $10, "
+            f"redaction_reason = $11 WHERE {_REDACTED}",
+            *args,
         )
     return [float(r["left_s"]) for r in leases], copies
 
 
 async def revisions_since(
     org: str, namespace: str, after: int, through: int
-) -> list[dict[str, Any]]:
+) -> list[dict[str, Any]] | None:
+    """The revisions of seqs `after` (excluded) through `through`, or None when one of
+    their payloads was cleared after its delivery: a gap read that cannot see a row."""
     rows = await pg.fetch(
         "SELECT seq, row FROM loom.memory_revisions "
         "WHERE org = $1 AND namespace = $2 AND seq > $3 AND seq <= $4 ORDER BY seq",
@@ -1932,4 +1994,6 @@ async def revisions_since(
         after,
         through,
     )
+    if any(r["row"] is None for r in rows):
+        return None
     return [{"seq": int(r["seq"]), **decode_row(r["row"])} for r in rows]
