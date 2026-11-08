@@ -35,7 +35,7 @@ const KIND_WORD: Record<string, string> = {
   network: "host unreachable",
   timeout: "timed out",
   disk: "disk full",
-  permission: "not writable",
+  permission: "permission denied",
   harness: "indexer failed",
   module: "module failed to build",
   unknown: "error",
