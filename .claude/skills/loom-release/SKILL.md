@@ -29,7 +29,7 @@ Every step others see is the owner's to start: opening the release pull request 
 ## 1. The version
 
 - One version for the server, both images, the web app, both SDKs, the root skills and the chart's `appVersion`; `prepare.py` moves all of them and the chart's own `version`.
-- The coding-agent plugins keep their own version, bumped in the pull request that changes them. When a hook merged since the previous release needs an op or field this release first serves, raise both manifests' `minServerVersion` to this version and bump both plugin versions, in the release pull request: clients get a manifest only through a new plugin version.
+- The coding-agent plugins keep their own version, bumped in the pull request that changes them. Raise their `minServerVersion` as the [release process](../../../docs/development/release-process.md#cutting-the-release) step 2 says.
 - A minor for features, a patch for fixes only (on a release branch, §7), a major for a break beyond the N−1 rule. A removed field or op is announced one minor ahead in the notes and served as `ignored_args` meanwhile ([unknown and removed fields](../../../docs/reference/http-api.md#unknown-and-removed-fields)).
 
 ## 2. The release pull request
@@ -64,7 +64,7 @@ git tag vX.Y.Z <that commit>
 git push origin vX.Y.Z                                        # the owner's go-ahead first
 # watch it as in §3; after it passes, the registry dispatch (it reuses the tag run's images):
 gh workflow run release.yml -R ClickHouse/loom --ref vX.Y.Z   # the owner's go-ahead first
-git push origin "vX.Y.Z^{commit}:refs/heads/release/X.Y"      # the line's patch branch; the owner's go-ahead first
+git push origin "vX.Y.Z^{commit}:refs/heads/release/X.Y"      # X.Y.0 only: the line's patch branch; the owner's go-ahead first
 ```
 
 The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); paste the release pull request's notes above them (release process, step 6). The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a refused ClickHouse downgrade, and [a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)) are in the release process.
@@ -77,7 +77,7 @@ After the registry dispatch, check the release as a user meets it:
 gh workflow run release-check.yml -R ClickHouse/loom -f version=X.Y.Z -f previous_version=<the release before>
 ```
 
-Signed in to nothing, it runs the one-line installer (`curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh | sh`, checking that `latest` serves this version, or the version's own URL when it is not Latest) in clean Debian, Ubuntu and Alpine containers on amd64 and arm64: install, a `memory.set`/`memory.search` round trip, a re-run, and an upgrade from the previous release. It verifies both images' signatures (`scripts/release/verify_signatures.sh`) and, unless `-f sdks=false`, installs `clickhouse-loom==X.Y.Z` from PyPI and `@clickhouse/loom@X.Y.Z` from npm, checking npm's provenance. Then by hand, the MCP Registry listing:
+Signed in to nothing, it runs the one-line installer (`curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh | sh`, checking that `latest` serves this version, or the version's own URL when it is not Latest) in clean Debian, Ubuntu and Alpine containers on amd64 and arm64: install, a `memory.set`/`memory.search` round trip, a re-run, and an upgrade from the previous release. It verifies both images' signatures (`scripts/release/verify_signatures.sh`) and, unless `-f sdks=false`, installs `clickhouse-loom==X.Y.Z` from PyPI and `@clickhouse/loom@X.Y.Z` from npm, verifying the npm package's registry signatures and attestations (`npm audit signatures`). Then by hand, the MCP Registry listing:
 
 ```bash
 curl -fsS "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ClickHouse/loom" | jq '.servers[].server.version'   # lists X.Y.Z
@@ -87,7 +87,7 @@ The plugins, in a throwaway `HOME`: `claude plugin marketplace add ClickHouse/lo
 
 ## 6. Something is wrong
 
-- **The installer or an image is bad**: point Latest back with `gh release edit v<previous> -R ClickHouse/loom --latest`, move both images' `:latest` (and, for a final, `:X.Y`) back by digest after checking the previous release's signature ([a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature) has the commands), then ship a patch.
+- **The installer or an image is bad**: move back only the tags the bad release took. When it is Latest (`python3 scripts/release/make_latest.py X.Y.Z` printed `true` for it), point Latest at the release before it (`gh release edit v<previous> -R ClickHouse/loom --latest`) and both images' `:latest` there; a final also took `:X.Y`, which goes back to the previous patch of that line; a candidate took neither. [A failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature) has the commands, which check the previous release's signature before moving a tag. Then ship a patch.
 
   Never delete a release's assets or tag: an installed version reruns its installer from them. A host already on the bad release keeps it until the patch: the older installer refuses to run over a newer install; going back is [downgrading an installer install](../../../docs/operations/upgrades.md#downgrading-an-installer-install), ClickHouse pinned first.
 - **An SDK is bad**: yank it on PyPI (the project's settings: the release, Yank, with the reason), which keeps pinned installs working; `npm deprecate @clickhouse/loom@X.Y.Z "<reason>; use <fixed version>"` and, if `latest` names it, `npm dist-tag add @clickhouse/loom@<previous> latest`. A version number is never reused: the fix is a new patch.

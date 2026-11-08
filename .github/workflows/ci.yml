@@ -7,9 +7,9 @@ on:
   pull_request:
     branches: [main, "release/**"]
 
-# A new push to a pull request cancels its superseded run. Every push to main
-# runs to completion in its own group, so a failure on one merge commit is
-# never hidden by the next one.
+# A new push to a pull request cancels its superseded run. Every push (to main
+# or a release/X.Y line) runs to completion in its own group, so a failure on
+# one merge commit is never hidden by the next one.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

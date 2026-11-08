@@ -9,7 +9,7 @@ the coding-agent plugins and how a change that removes something is announced.
 
 | Line | What it gets                                                                                      |
 | ---- | ------------------------------------------------------------------------------------------------- |
-| N    | the newest minor release (`X.Y`): every fix, as a patch release (`X.Y.Z+1`) when it cannot wait   |
+| N    | the newest minor release (`X.Y`): every fix, as a patch release (`X.Y.(Z+1)`) when it cannot wait |
 | N−1  | the minor release before it: security fixes and fixes for data loss or a wrong answer, as patches |
 | N−2  | none: upgrade to N or N−1                                                                         |
 
@@ -24,8 +24,9 @@ The SDKs (`clickhouse-loom` on PyPI, `@clickhouse/loom` on npm) are published wi
 the server's version. An SDK at `X.Y` works with a server at `X.Y` or `X.(Y−1)`:
 
 - a field the SDK sends that the older server does not know is served and named in the answer's
-  `ignored_args`, except on an op that changes state, where a key close to an existing field is
-  refused with `422 UNKNOWN_ARGUMENT` and nothing is written
+  `ignored_args`, except on an op that changes state, where a key the server reads as a misspelling
+  of one of its fields (a near name, a synonym, a word of a field's name) is refused with
+  `422 UNKNOWN_ARGUMENT` and nothing is written
   ([unknown and removed fields](../reference/http-api.md#unknown-and-removed-fields));
 - an operation the older server does not serve answers `404`, which the SDKs raise as `NotFound`
   (Python `loom.errors.NotFound`, TypeScript `NotFound`): a call never succeeds silently against a
@@ -33,7 +34,8 @@ the server's version. An SDK at `X.Y` works with a server at `X.Y` or `X.(Y−1)
   apart reads `ops.capabilities` at start-up
   ([discovering what a deployment serves](../reference/http-api.md#discovering-what-a-deployment-serves)).
 
-An older SDK keeps working against a newer server for as long as the server serves what it calls; a
+A major release (`X.0`) may break the rule against the last `(X−1).Y` server; its release notes
+say what an SDK at `X.0` needs. An older SDK keeps working against a newer server for as long as the server serves what it calls; a
 removal follows the rule below.
 
 ## Coding-agent plugins

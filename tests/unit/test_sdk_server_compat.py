@@ -16,8 +16,9 @@ from server.transport import http as http_mod
 
 @pytest.fixture()
 def older_server(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
-    """The HTTP router with every op but `memory.set`, which this server predates; the
-    production app adds no middleware that answers before routing."""
+    """The HTTP router with every op but `memory.set`, which this server predates. In
+    the production app, no route or middleware answers a POST to an unrouted
+    `/v1/<op>` with anything but 404."""
     ops = [op for op in ALL_OPERATIONS if op.name != "memory.set"]
     assert len(ops) == len(ALL_OPERATIONS) - 1
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", ops)
@@ -29,7 +30,10 @@ def older_server(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
 async def test_an_op_the_older_server_does_not_serve_raises_not_found(
     older_server: FastAPI,
 ) -> None:
-    agent = Agent("acme", "support", "assistant", base_url="http://loom", auto_run=False)
+    agent = Agent(
+        "acme", "support", "assistant", base_url="http://loom", api_key="test", auto_run=False
+    )
+    await agent.transport._client.aclose()
     agent.transport._client = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=older_server), base_url="http://loom"
     )
