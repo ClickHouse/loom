@@ -78,9 +78,11 @@ def test_librechats_compose_variables_are_names_loom_does_not_read() -> None:
 
 
 def test_the_guide_keeps_the_bundled_clickhouse_when_it_adds_the_assistant() -> None:
-    # .env.example (a checkout's .env) and the installed stack's both run `bundled`.
+    # A --profile flag takes the place of COMPOSE_PROFILES: each command that names the
+    # assistant's profile names the bundled ClickHouse's beside it.
     guide = (ROOT / "docs" / "features" / "integrations" / "librechat.md").read_text()
-    for env in (ROOT / ".env.example", ROOT / "deploy" / "standalone" / "env.example"):
-        assert "COMPOSE_PROFILES=bundled\n" in env.read_text(), env
-    assert "COMPOSE_PROFILES=bundled,assistant/' .env" in guide
-    assert "--profile assistant" not in guide
+    commands = guide.replace("\\\n", " ").split("\n")
+    flagged = [c for c in commands if "--profile assistant" in c]
+    assert flagged and all("--profile bundled" in c for c in flagged), flagged
+    # An installed stack's COMPOSE_PROFILES is extended, whatever it holds.
+    assert "COMPOSE_PROFILES=\\1,assistant/" in guide

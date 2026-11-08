@@ -214,12 +214,9 @@ to that LibreChat; each answer's tools read under a token Loom mints for that an
 sends as the request's `parent_message_id`, which the agent's MCP server sends back to
 Loom as its `Authorization` header (`deploy/librechat/assistant.librechat.yaml`).
 
-With Compose, in a repository checkout or an installed stack, add LibreChat's secrets,
-its model key and Loom's pointer at it to the `.env` beside `compose.yaml`, add
-`assistant` to its `COMPOSE_PROFILES` (`bundled,assistant` with the bundled ClickHouse,
-the default; `assistant` alone with your own), and start the stack. A `--profile` flag
-would replace `COMPOSE_PROFILES` and leave the bundled ClickHouse out of the project, so
-`make dev` and `loom up`, which pass `--profile bundled`, do not start the assistant.
+With Compose, add LibreChat's secrets, its model key and Loom's pointer at it to the
+`.env` beside `compose.yaml`, then start the `assistant` profile beside the profiles the
+stack already runs:
 
 ```bash
 echo "LIBRECHAT_CREDS_KEY=$(openssl rand -hex 32)" >> .env
@@ -228,9 +225,22 @@ echo "LIBRECHAT_JWT_SECRET=$(openssl rand -hex 32)" >> .env
 echo "LIBRECHAT_JWT_REFRESH_SECRET=$(openssl rand -hex 32)" >> .env
 echo "LIBRECHAT_ANTHROPIC_API_KEY=<your key>" >> .env
 echo "LOOM_ASSISTANT_LIBRECHAT_URL=http://librechat:3080" >> .env
-# with your own ClickHouse, write COMPOSE_PROFILES=assistant instead
-sed -i.bak 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=bundled,assistant/' .env
+```
+
+An installed stack runs the profiles `COMPOSE_PROFILES` names (`bundled` with its own
+ClickHouse, none with yours), so add `assistant` there and start it:
+
+```bash
+sed -i.bak 's/^COMPOSE_PROFILES=\(.\{1,\}\)$/COMPOSE_PROFILES=\1,assistant/; s/^COMPOSE_PROFILES=$/COMPOSE_PROFILES=assistant/' .env
 docker compose up -d
+```
+
+A checkout runs this build through `make dev`, whose `--profile bundled` takes the place
+of `COMPOSE_PROFILES`; pass the assistant's profile beside it:
+
+```bash
+docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml \
+  --profile bundled --profile assistant up -d --build
 ```
 
 At boot Loom registers its service user, creates the agents API key and the agent from
@@ -254,7 +264,8 @@ services:
 ```
 
 ```bash
-docker compose -f compose.yaml -f compose.qualify.yaml up -d
+docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml \
+  -f compose.qualify.yaml --profile bundled --profile assistant up -d --build
 Q=integrations/librechat/qualification/qualify.py
 python $Q seed
 python $Q --librechat-url http://localhost:3080 setup-deployed
