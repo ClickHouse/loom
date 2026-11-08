@@ -9,6 +9,7 @@ reads that record usage told not to, whatever the model sent.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import re
 from typing import Any, get_args
 
@@ -761,6 +762,11 @@ def test_a_refused_assistant_tool_call_is_ledgered_under_its_answer(
         is_service_account=False,
         consumer="loom-assistant",
     )
-    set_answer_run(answer)
-    mcp_ledger.emit_token_refusal("memory.search", auth, error_code="NAMESPACE_NOT_ACCESSIBLE")
+
+    def _refuse() -> None:
+        set_answer_run(answer)
+        mcp_ledger.emit_token_refusal("memory.search", auth, error_code="NAMESPACE_NOT_ACCESSIBLE")
+
+    # In a copy of the context, so the answer id is set for this test alone.
+    contextvars.copy_context().run(_refuse)
     assert seen == [run]
