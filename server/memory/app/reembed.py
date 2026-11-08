@@ -320,12 +320,12 @@ async def reembed_table(
     keys = _KEYS[table]
     order = ", ".join(keys)
     after = list(start_after) if start_after else None
-    written = held = changed = 0  # changed: rows removed or given other text since read
-    page_changed = 0
+    # changed: rows removed or given other text since their page was read (this page's)
+    written = held = changed = page_changed = 0
 
-    async def reread(read: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    async def read_again(read: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
         nonlocal page_changed
-        kept, rewritten = await _still_stored(
+        kept, rewritten = await _read_again(
             ch, table, cols, read, where_clause, params, key_only=key_only
         )
         page_changed = len(read) - len(kept)
@@ -357,7 +357,7 @@ async def reembed_table(
             # memory row's vector follows its own sensitivity label instead.
             page = without_high(page, lambda r: str(r.get(cfg["text"]) or ""))
         held += len(rows) - len(page)
-        left = await _rewrite_page(ch, embedder, table, page, key_only, reread)
+        left = await _rewrite_page(ch, embedder, table, page, key_only, read_again)
         written += len(page) - sum(left.values()) - page_changed
         changed += page_changed
         if left:
@@ -383,7 +383,12 @@ def _without_key(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if k != "_k"}
 
 
-async def _still_stored(
+# The re-read `_rewrite_page` calls before its insert: the rows read, by position, as
+# stored now, without those to skip.
+_ReadAgain = Callable[[dict[int, dict[str, Any]]], Awaitable[dict[int, dict[str, Any]]]]
+
+
+async def _read_again(
     ch: Any,
     table: str,
     cols: list[str],
@@ -391,7 +396,7 @@ async def _still_stored(
     where_clause: str,
     params: dict[str, Any],
     *,
-    key_only: bool = False,
+    key_only: bool,
 ) -> tuple[dict[int, dict[str, Any]], list[int]]:
     """The rows of `read` as stored now, read FINAL by their keys under the run's filter,
     each with the vectors being rebuilt as it was read (with `key_only` the key vector
@@ -431,11 +436,10 @@ async def _rewrite_page(
     table: str,
     chunk: list[dict[str, Any]],
     key_only: bool,
-    still_stored: Callable[[dict[int, dict[str, Any]]], Awaitable[dict[int, dict[str, Any]]]]
-    | None = None,
+    read_again: _ReadAgain | None = None,
 ) -> dict[str, int]:
     """Re-embed and write `chunk`; returns the rows it left unwritten per org,
-    of an org whose model calls were switched off during the run. `still_stored`
+    of an org whose model calls were switched off during the run. `read_again`
     returns the rows read (by position) as stored now, without those to skip, after
     their vectors are made and before the insert."""
     cfg = _TABLES[table]
@@ -470,7 +474,7 @@ async def _rewrite_page(
             left.update(positions)
             left_by_org[who.org] = left_by_org.get(who.org, 0) + len(positions)
     read = {i: r for i, r in enumerate(chunk) if i not in left}
-    kept = await still_stored(read) if still_stored else read
+    kept = await read_again(read) if read_again else read
     out = [
         rewrite_row(r, cfg, model, dim, vecs[i] if vecs else None, kvecs[i] if kvecs else None)
         for i, r in kept.items()
@@ -656,9 +660,8 @@ async def reembed_all(
         # Every org whose rows wait keeps its old vectors: off at the start, off
         # during the run or by now, or with a row the re-read found with other text.
         keep = frozenset(off | left_orgs | await customer.switched_off_orgs())
-        kept_orgs = sorted(keep & {org} if org else keep)
-        if kept_orgs:
-            log(f"old-model rows kept for a later run in: {', '.join(kept_orgs)}")
+        if off | left_orgs:
+            log(f"old-model rows kept for a later run in: {', '.join(sorted(off | left_orgs))}")
         for table in _TABLES:
             await delete_off_model(
                 ch, table, embedder.model_name, org=org, namespace=namespace, keep_orgs=keep

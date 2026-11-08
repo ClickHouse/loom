@@ -289,51 +289,61 @@ async def test_the_re_read_finds_a_live_row_by_its_key_and_leaves_its_vectors_ou
         i: {**row(k), "content_excerpt": "x"}
         for i, k in enumerate(["live", "tombstoned", "deleted"])
     }
-    await rb._still_stored(capture, table, cols, read, where, params)
+    await rb._read_again(capture, table, cols, read, where, params, key_only=False)
     found = run(setup, capture.sql, capture.params)
     assert [r["memory_key"] for r in found] == ["live"]
     assert not {"embedding", "memory_key_embedding"} & set(found[0])
 
 
+_MEMORY_ROW = {
+    "org": "o",
+    "namespace": "ns",
+    "agent": "a",
+    "user_id": "-",
+    "session_id": "-",
+    "scope": "private",
+    "embedding_model": "m2",
+    "memory_key": "k",
+    "content_excerpt": "x",
+    "embedding": [0.0, 0.0],
+    "embedding_dim": 2,
+    "memory_key_embedding": [0.0, 0.0],
+    "memory_key_embedding_dim": 2,
+    "version": 1,
+}
+
+
+class _KeyOnlyCH:
+    """One memory row on the current model; the re-read answers `stored_now`."""
+
+    def __init__(self, stored_now: dict[str, Any]) -> None:
+        self.stored_now = stored_now
+        self.written: list[dict[str, Any]] = []
+
+    async def query_all(self, sql: str, params: Any = None) -> list[dict]:
+        if "system.columns" in sql:
+            return [{"name": c} for c in _MEMORY_ROW]
+        if "keys" in (params or {}):
+            return [self.stored_now]
+        if "k0" in (params or {}):
+            return []
+        return [{**_MEMORY_ROW, "_k": tuple(_MEMORY_ROW.values())[:8]}]
+
+    async def query_one(self, sql: str, params: Any = None) -> dict:
+        return {"n": 1}
+
+    async def insert(self, table: str, rows: list[dict], settings: Any = None) -> None:
+        self.written.extend(rows)
+
+
 @pytest.mark.asyncio
 async def test_a_key_only_row_rewritten_on_the_current_model_keeps_no_org() -> None:
     """It already has its vectors: --delete-old need not wait for it."""
-    row = {
-        "org": "o",
-        "namespace": "ns",
-        "agent": "a",
-        "user_id": "-",
-        "session_id": "-",
-        "scope": "private",
-        "embedding_model": "m2",
-        "memory_key": "k",
-        "content_excerpt": "x",
-        "embedding": [0.0, 0.0],
-        "embedding_dim": 2,
-        "memory_key_embedding": [0.0, 0.0],
-        "memory_key_embedding_dim": 2,
-        "version": 1,
-    }
-
-    class _KeyCH:
-        async def query_all(self, sql: str, params: Any = None) -> list[dict]:
-            if "system.columns" in sql:
-                return [{"name": c} for c in row]
-            if "keys" in (params or {}):
-                return [{**row, "content_excerpt": "other text"}]
-            return [] if "k0" in (params or {}) else [{**row, "_k": tuple(row.values())[:8]}]
-
-        async def query_one(self, sql: str, params: Any = None) -> dict:
-            return {"n": 1}
-
-        async def insert(self, table: str, rows: list[dict], settings: Any = None) -> None:
-            raise AssertionError("a rewritten row is not written")
-
-    kept: set[str] = set()
+    ch, kept = _KeyOnlyCH({**_MEMORY_ROW, "content_excerpt": "other text"}), set()
     n = await rb.reembed_table(
-        _KeyCH(), _Emb(), "memory_embeddings", key_only=True, left_orgs=kept, log=lambda *_: None
+        ch, _Emb(), "memory_embeddings", key_only=True, left_orgs=kept, log=lambda *_: None
     )
-    assert n == 0 and kept == set()
+    assert n == 0 and ch.written == [] and kept == set()
 
 
 @pytest.mark.asyncio
@@ -363,41 +373,7 @@ async def test_a_resume_token_carries_the_orgs_delete_old_keeps(monkeypatch) -> 
 async def test_a_key_only_rewrite_keeps_the_value_vector_stored_now() -> None:
     """Only the key vector is rebuilt: a write that landed since the page was read keeps
     its own value vector."""
-    row = {
-        "org": "o",
-        "namespace": "ns",
-        "agent": "a",
-        "user_id": "-",
-        "session_id": "-",
-        "scope": "private",
-        "embedding_model": "m2",
-        "memory_key": "k",
-        "content_excerpt": "x",
-        "embedding": [0.0, 0.0],
-        "embedding_dim": 2,
-        "memory_key_embedding": [0.0, 0.0],
-        "memory_key_embedding_dim": 2,
-        "version": 1,
-    }
-    written: list[dict[str, Any]] = []
-
-    class _KeyCH:
-        async def query_all(self, sql: str, params: Any = None) -> list[dict]:
-            if "system.columns" in sql:
-                return [{"name": c} for c in row]
-            if "keys" in (params or {}):
-                assert "memory_key_embedding," not in sql and " embedding," in sql
-                return [{**row, "embedding": [0.5, 0.5], "version": 7}]
-            return [] if "k0" in (params or {}) else [{**row, "_k": tuple(row.values())[:8]}]
-
-        async def query_one(self, sql: str, params: Any = None) -> dict:
-            return {"n": 1}
-
-        async def insert(self, table: str, rows: list[dict], settings: Any = None) -> None:
-            written.extend(rows)
-
-    n = await rb.reembed_table(
-        _KeyCH(), _Emb(), "memory_embeddings", key_only=True, log=lambda *_: None
-    )
-    assert n == 1 and written[0]["embedding"] == [0.5, 0.5] and written[0]["version"] == 8
-    assert written[0]["memory_key_embedding"] == [0.1, 0.2]
+    ch = _KeyOnlyCH({**_MEMORY_ROW, "embedding": [0.5, 0.5], "version": 7})
+    n = await rb.reembed_table(ch, _Emb(), "memory_embeddings", key_only=True, log=lambda *_: None)
+    assert n == 1 and ch.written[0]["embedding"] == [0.5, 0.5] and ch.written[0]["version"] == 8
+    assert ch.written[0]["memory_key_embedding"] == [0.1, 0.2]

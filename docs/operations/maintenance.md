@@ -32,12 +32,13 @@ before ClickHouse applies it; watch `system.mutations`.
   `--delete-old` keeps its org's old-model rows for a later run; the rest are written with
   their other columns as that second read found them. A deletion, redaction or erasure
   that lands between that read and the insert, or whose mutation has not reached the row
-  yet, can leave the row live with its new vector. `--in-database` reads each table once,
-  as its statement starts, so run it while nothing redacts or erases. The Python path
-  never sends a conversation turn whose text reads as high to the embedder: the row stays
-  on the old model, which search does not read, until `--delete-old` removes it. A memory
-  row's vector follows its sensitivity label. `--in-database` cannot check the text and
-  re-embeds such a turn too; search still holds it back
+  yet, can leave the row live with its new vector; run such a redaction again after the
+  run. `--in-database` reads each table once, as its statement starts, so run it while
+  nothing redacts or erases. The Python path never sends a conversation turn whose text
+  reads as high to the embedder: the row stays on the old model, which search does not
+  read, until `--delete-old` removes it. A memory row's vector follows its sensitivity
+  label. `--in-database` cannot check the text and re-embeds such a turn too; search still
+  holds it back
   ([sensitivity](../architecture/security.md#sensitivity)).
 - **A model of another width.** On ClickHouse 26.8 or later a fresh install codes its
   vector columns (`Quantized`) where `enable_quantized_codec` can be on
