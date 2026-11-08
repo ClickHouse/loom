@@ -377,10 +377,23 @@ class AnalysisUnavailableError(LoomServerError):
 class AssistantUnavailableError(LoomServerError):
     """The assistant cannot answer on this replica: no LibreChat is configured
     (`LOOM_ASSISTANT_LIBRECHAT_URL`), or the boot has not set up its service user
-    and agent yet. `loom doctor` names the cause (`assistant_service_failing`)."""
+    and agent yet. `/v1/health` names the cause (`assistant_service_failing`)."""
 
     code = "ASSISTANT_UNAVAILABLE"
     status_code = 503
+
+
+class AssistantUpstreamError(LoomServerError):
+    """503 — LibreChat could not give this answer: it was unreachable, refused the
+    request, ended the answer with an error, or ran past the answer's limit. The
+    message names none of LibreChat's text. Ask again: each answer spends model
+    budget, so the SDKs do not resend one on their own."""
+
+    code = "ASSISTANT_UPSTREAM_FAILED"
+    status_code = 503
+
+    def __init__(self, message: str = "", *, retry_after_s: int = 5) -> None:
+        super().__init__(message, retry_after_s=retry_after_s)
 
 
 # How a caller acts on an error without knowing its code: `category` says whose move it
@@ -410,6 +423,7 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     "CODED_WIDTH_MISMATCH": ("configuration", False),
     "ANALYSIS_UNAVAILABLE": ("configuration", False),
     "ASSISTANT_UNAVAILABLE": ("configuration", False),
+    "ASSISTANT_UPSTREAM_FAILED": ("dependency", True),
     "GATEWAY_REQUIRED": ("configuration", False),
     "INTEGRATION_NOT_CONFIGURED": ("configuration", False),
     "MODEL_CALLS_DISABLED": ("configuration", False),

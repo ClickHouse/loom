@@ -840,8 +840,10 @@ spend to the same budget as its own model calls:
   share check sums.
 - The check reads spend already recorded, so answers running at once could each pass it;
   each replica runs at most a set number of answers per namespace at once
-  (`LOOM_ASSISTANT_CONCURRENT_ANSWERS`, default 2), which bounds the overshoot to that many answers per replica, each
-  at most the per-answer ceiling.
+  (`LOOM_ASSISTANT_CONCURRENT_ANSWERS`, default 2), which bounds the overshoot to that
+  many answers per replica. One answer's cost is its own usage: a request carries at
+  most 50 turns of history and a question, each at most 20,000 characters, and runs for
+  at most `LOOM_ASSISTANT_ANSWER_TTL_S`.
 - When the answer ends, the bridge prices the token usage of the agents API's final
   chunk with the model's rate and records it as `upstream_cost_usd` on the answer's
   `agent_events` row, where every model spend is counted. An answer cut before its final

@@ -709,12 +709,11 @@ def test_an_assistant_tool_call_is_ledgered_under_its_answer(on_assistant: bool,
     assert asyncio.run(_run()) == run
 
 
-def test_only_an_assistant_connection_reads_the_answer_header() -> None:
-    import inspect
-
+@pytest.mark.parametrize(("toolset", "run"), [("assistant", "chatcmpl-1"), ("core", "")])
+def test_only_an_assistant_connection_reads_the_answer_header(toolset: str, run: str) -> None:
     import server.transport.mcp as mcp_module
 
-    source = inspect.getsource(mcp_module)
-    read = source.index('set_answer_run(clean_run_id(request.headers.get("X-Loom-Run-Id")))')
-    guard = source.rindex('if assistant_connection(listing["toolset"]):', 0, read)
-    assert read - guard < 200  # the header is read inside the assistant-connection branch
+    class _Request:
+        headers = {"X-Loom-Run-Id": "chatcmpl-1"}
+
+    assert mcp_module.answer_run_of(_Request(), toolset) == run

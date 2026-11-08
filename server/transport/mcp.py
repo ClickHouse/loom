@@ -101,6 +101,14 @@ log = logging.getLogger(__name__)
 # ============================================================
 
 
+def answer_run_of(request: Any, toolset: str | None) -> str:
+    """The answer an assistant connection's call serves (its `X-Loom-Run-Id`, which the
+    agent's MCP server sends): its tool calls are ledgered under it. '' elsewhere."""
+    if not assistant_connection(toolset):
+        return ""
+    return clean_run_id(request.headers.get("X-Loom-Run-Id"))
+
+
 def _listing_params(request: Any) -> dict[str, str | None]:
     """The per-request `tools/list` selectors on the MCP URL:
     `?schema_profile=` and `?toolset=`."""
@@ -408,9 +416,7 @@ def attach(app: FastAPI) -> None:
             client_name = _resolve_client_name(req, session_id)
             # One read of the selectors, so routing, the screen and the call agree.
             listing = _listing_params(request)
-            if assistant_connection(listing["toolset"]):
-                # The assistant's tool calls are ledgered under the answer they serve.
-                set_answer_run(clean_run_id(request.headers.get("X-Loom-Run-Id")))
+            set_answer_run(answer_run_of(request, listing["toolset"]))
             req, early = route_loom_op(req, toolset=listing["toolset"], auth=auth)
             if early is not None:
                 return early  # classified where its text is rendered (mcp_op._result)

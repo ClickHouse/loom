@@ -56,6 +56,8 @@ _ready: bool | None = None
 _problem = ""
 # The agent id and agents API key answers run with, once a setup succeeded.
 _answering: tuple[str, str] | None = None
+# This process's setup loop, while it runs.
+_loop: asyncio.Task[None] | None = None
 
 
 class ServiceRefused(RuntimeError):
@@ -70,6 +72,17 @@ def assistant_state() -> tuple[bool | None, str]:
 def answering() -> tuple[str, str] | None:
     """(agent id, agents API key) once this process set the service up, else None."""
     return _answering
+
+
+def forget_answering(why: str) -> None:
+    """LibreChat no longer takes the stored key or agent (another replica replaced it,
+    or LibreChat's database was): drop them and set the service up again, which reads
+    the row another replica may have written or repairs it."""
+    global _answering, _ready, _problem
+    _answering = None
+    _ready, _problem = False, f"setting up the assistant again: {why}"
+    if _loop is None or _loop.done():
+        start_setup_loop()
 
 
 def current_definition() -> agent_definition.Definition:
@@ -313,7 +326,9 @@ def start_setup_loop() -> asyncio.Task[None] | None:
             await asyncio.sleep(float(settings.assistant_setup_retry_s) * 2 ** min(failures, 4))
             failures += 1
 
-    return asyncio.get_running_loop().create_task(_run(), name="loom-assistant-service")
+    global _loop
+    _loop = asyncio.get_running_loop().create_task(_run(), name="loom-assistant-service")
+    return _loop
 
 
 __all__ = [

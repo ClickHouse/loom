@@ -16,6 +16,7 @@ from server.assistant.app import bridge, service
 from server.auth.jwt import AuthInfo
 from server.core.errors import (
     AssistantUnavailableError,
+    AssistantUpstreamError,
     AuthInsufficientError,
     OverloadedError,
     RateLimitedError,
@@ -177,7 +178,7 @@ def test_an_answer_cut_before_its_usage_is_charged_the_ceiling(world: _World) ->
 
 def test_a_refused_answer_names_no_librechat_text(world: _World) -> None:
     world.status, world.stream_body = 500, b"internal detail at librechat:3080"
-    with pytest.raises(AssistantUnavailableError) as e:
+    with pytest.raises(AssistantUpstreamError) as e:
         _answer(_caller(), QUESTION)
     assert "librechat:3080" not in str(e.value) and "500" in str(e.value)
 
@@ -352,7 +353,7 @@ def test_an_answer_librechat_refused_is_not_charged_and_frees_its_slot(world: _W
 
     async def run() -> Any:
         acc = cost_accumulator.begin_op()
-        with pytest.raises(AssistantUnavailableError):
+        with pytest.raises(AssistantUpstreamError):
             async for _ in bridge.stream(ticket, QUESTION, bridge.Answer()):
                 pass
         return acc
@@ -372,7 +373,7 @@ def test_an_unreachable_librechat_is_unavailable(world: _World) -> None:
         async for _ in bridge.stream(ticket, QUESTION, bridge.Answer()):
             pass
 
-    with pytest.raises(AssistantUnavailableError) as e:
+    with pytest.raises(AssistantUpstreamError) as e:
         asyncio.run(run())
     assert "librechat:3080" not in str(e.value) and bridge._running == {}
 
@@ -389,7 +390,7 @@ def test_an_error_librechat_streams_ends_the_answer_unavailable(world: _World) -
         async for chunk in bridge.stream(ticket, QUESTION, bridge.Answer()):
             seen.append(chunk)
 
-    with pytest.raises(AssistantUnavailableError) as e:
+    with pytest.raises(AssistantUpstreamError) as e:
         asyncio.run(run())
     assert "librechat:3080" not in str(e.value)
     assert not any(b"upstream model" in c for c in seen)  # LibreChat's text never passes
@@ -408,7 +409,7 @@ def test_an_answer_past_its_limit_is_cut(world: _World, monkeypatch: pytest.Monk
         async for _ in bridge.stream(ticket, QUESTION, bridge.Answer()):
             pass
 
-    with pytest.raises(AssistantUnavailableError, match="ran past"):
+    with pytest.raises(AssistantUpstreamError, match="ran past"):
         asyncio.run(run())
 
 
@@ -461,10 +462,12 @@ def test_a_refused_on_behalf_of_header_is_a_403(
     def refuse(auth: Any, header: str) -> Any:
         raise PermissionError("a grant principal cannot be acted for")
 
-    http, _ = client
+    http, rows = client
     monkeypatch.setattr(routes, "effective_auth", refuse)
     r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
     assert r.status_code == 403 and r.json()["detail"]["code"] == "AUTH_INSUFFICIENT"
+    (row,) = rows
+    assert row["error_code"] == "AUTH_INSUFFICIENT"
 
 
 def test_a_delegation_refusal_keeps_its_status_and_leaves_its_row(
@@ -508,3 +511,100 @@ def test_a_client_that_went_away_is_its_own_failure(monkeypatch: pytest.MonkeyPa
     (row,) = rows
     assert row["error_code"] == "HTTP_499"
     assert status_class(False, row["error_code"], row["error"]) == "client"
+
+
+def test_a_key_librechat_no_longer_takes_is_set_up_again(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    forgotten: list[str] = []
+    monkeypatch.setattr(service, "forget_answering", forgotten.append)
+    world.status = 401
+    ticket = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
+
+    async def run() -> None:
+        async for _ in bridge.stream(ticket, QUESTION, bridge.Answer()):
+            pass
+
+    with pytest.raises(AssistantUnavailableError):
+        asyncio.run(run())
+    assert forgotten and "401" in forgotten[0]
+
+
+def test_a_forgotten_service_is_set_up_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    started: list[bool] = []
+    monkeypatch.setattr(service, "_answering", ("agent_1", "sk-old"))
+    monkeypatch.setattr(service, "_loop", None)
+    monkeypatch.setattr(service, "start_setup_loop", lambda: started.append(True))
+    service.forget_answering("LibreChat refused the stored key or agent (401)")
+    assert service.answering() is None and started == [True]
+    ready, problem = service.assistant_state()
+    assert ready is False and "401" in problem
+
+
+def test_a_request_past_the_ops_bounds_is_refused() -> None:
+    with pytest.raises(ValidationError):
+        bridge.admitted_messages([{"role": "user", "content": "x"}] * 52)
+    with pytest.raises(ValidationError):
+        bridge.admitted_messages([{"role": "user", "content": "x" * 20_001}])
+
+
+def test_an_org_at_its_in_flight_limit_is_refused_before_the_stream(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core import tenant_slots
+
+    http, rows = client
+    monkeypatch.setattr(tenant_slots, "inflight_cap", lambda: 1)
+    monkeypatch.setattr(tenant_slots, "_IN_FLIGHT", {ORG: 1})
+    r = http.post(ROUTE, headers=HEADERS, json={"stream": True, "messages": QUESTION})
+    assert r.status_code == 429 and r.json()["detail"]["code"] == "RATE_LIMITED"
+    (row,) = rows
+    assert row["error_code"] == "RATE_LIMITED" and bridge._running == {}
+
+
+def test_a_caller_refused_access_draws_no_rate_limit(
+    client: Any, world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+
+    drawn: list[str] = []
+    monkeypatch.setattr(routes, "admit_route", lambda op, ns, **_: drawn.append(ns))
+    http, _ = client
+    world.denied = True
+    assert http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION}).status_code == 403
+    assert drawn == []
+    world.denied = False
+    assert http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION}).status_code == 200
+    assert drawn == [NS]
+
+
+def test_a_client_leaving_a_stream_releases_it_and_records_its_own_failure(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+
+    rows: list[dict[str, Any]] = []
+    monkeypatch.setattr(routes, "emit_agent_event", lambda **kw: rows.append(kw))
+
+    async def run() -> None:
+        ticket = await bridge.open_answer(_caller(), ORG, NS)
+        row = routes._Row(_caller(), ORG, NS)
+        held = routes._Held(ticket, row)
+        answer = bridge.Answer()
+        response = routes._AnswerStream(
+            routes._streamed(bridge.stream(ticket, QUESTION, answer), held), held
+        )
+
+        async def receive() -> dict[str, Any]:
+            await asyncio.sleep(10)
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, Any]) -> None:
+            raise asyncio.CancelledError  # the client went away before the first chunk
+
+        with pytest.raises(asyncio.CancelledError):
+            await response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send)
+
+    asyncio.run(run())
+    (row,) = rows
+    assert row["error_code"] == "HTTP_499" and bridge._running == {}

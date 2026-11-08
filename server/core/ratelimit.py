@@ -799,3 +799,20 @@ _limiter = Limiter()
 
 def get_limiter() -> Limiter:
     return _limiter
+
+
+def admit_route(op_name: str, namespace: str, *, org: str, actor: str | None) -> None:
+    """The rate-limit buckets of `op_name`, drawn for a route that serves it outside
+    the op dispatcher, as the transports draw them for the op: RATE_LIMITED when one is
+    empty; a limiter that fails admits the request, as it admits an op."""
+    from server.core import fail_open
+    from server.core.errors import RateLimitedError
+
+    try:
+        rl = get_limiter().check(namespace, op_name, org=org, actor=actor or None)
+    except Exception as e:  # noqa: BLE001 — the limiter fails open: the request is admitted
+        fail_open.note("rate_limit", op_name, e)
+        return
+    if not rl.allowed:
+        wait = max(1, int(rl.retry_after_s + 0.99))
+        raise RateLimitedError("rate limit exceeded; retry later", retry_after_s=wait)

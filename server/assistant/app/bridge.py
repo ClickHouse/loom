@@ -17,7 +17,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 
@@ -27,6 +27,7 @@ from server.auth.delegation import delegate
 from server.auth.jwt import AuthInfo
 from server.core.errors import (
     AssistantUnavailableError,
+    AssistantUpstreamError,
     AuthInsufficientError,
     LoomServerError,
     OverloadedError,
@@ -45,6 +46,9 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 
 ASSISTANT_OP = "assistant.ask"
+# What a request may carry, as assistant.ask's input model bounds it.
+_MAX_MESSAGES = 51  # not a setting: the op's 50 turns of history and the question
+_MAX_MESSAGE_CHARS = 20_000  # not a setting: the op's bound on one message
 # A refused share check (the cap is spent) is retried after this: the cap is a rolling day.
 _CAP_RETRY_S = 3600  # not a setting: a hint; the cap's own window is the setting
 # Seconds to reach LibreChat; an answer then runs up to LOOM_ASSISTANT_ANSWER_TTL_S.
@@ -93,8 +97,8 @@ def admitted_messages(messages: Any) -> list[dict[str, str]]:
     message would override the agent's instructions and a tool message is LibreChat's
     own, so both are dropped, as are files and images; the last message is the
     question."""
-    if not isinstance(messages, list):
-        raise ValidationError("messages must be a list")
+    if not isinstance(messages, list) or len(messages) > _MAX_MESSAGES:
+        raise ValidationError(f"messages must be a list of at most {_MAX_MESSAGES}")
     kept: list[dict[str, str]] = []
     for m in messages:
         if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
@@ -107,6 +111,8 @@ def admitted_messages(messages: Any) -> list[dict[str, str]]:
                 if isinstance(p, dict) and p.get("type") == "text"
             )
         if isinstance(content, str) and content.strip():
+            if len(content) > _MAX_MESSAGE_CHARS:
+                raise ValidationError(f"a message is at most {_MAX_MESSAGE_CHARS} characters")
             kept.append({"role": str(m["role"]), "content": content})
     if not kept or kept[-1]["role"] != "user":
         raise ValidationError("the last message must be the caller's question")
@@ -233,47 +239,64 @@ async def stream(
         "parent_message_id": ticket.token,
     }
     headers = {"Authorization": f"Bearer {ticket.api_key}", "Accept-Encoding": "identity"}
-    timeout = httpx.Timeout(float(settings.assistant_answer_ttl_s), connect=_CONNECT_S)
+    ttl = float(settings.assistant_answer_ttl_s)
+    timeout = httpx.Timeout(ttl, connect=_CONNECT_S)
+    deadline = asyncio.get_running_loop().time() + ttl
     try:
-        async with asyncio.timeout(float(settings.assistant_answer_ttl_s)):
-            async with httpx.AsyncClient(
-                base_url=str(settings.assistant_librechat_url), timeout=timeout
-            ) as client:
-                async with client.stream(
-                    "POST", "/api/agents/v1/chat/completions", json=body, headers=headers
-                ) as r:
-                    if r.status_code != 200:
-                        log.warning(
-                            "LibreChat refused an answer (%s): %s",
-                            r.status_code,
-                            (await r.aread())[:300],
-                        )
-                        raise AssistantUnavailableError(
-                            f"LibreChat refused the answer ({r.status_code})"
-                        )
-                    answer.started = True
-                    async for line in r.aiter_lines():
-                        if not line.startswith("data: ") or line == "data: [DONE]":
-                            continue
-                        _note(answer, line[6:])
-                        if answer.error:
-                            log.warning("LibreChat ended an answer with an error: %s", answer.error)
-                            raise AssistantUnavailableError(
-                                "LibreChat ended the answer with an error"
-                            )
-                        yield (line + "\n\n").encode()
+        async with httpx.AsyncClient(
+            base_url=str(settings.assistant_librechat_url), timeout=timeout
+        ) as client:
+            async with asyncio.timeout_at(deadline):
+                r = await client.send(
+                    client.build_request(
+                        "POST", "/api/agents/v1/chat/completions", json=body, headers=headers
+                    ),
+                    stream=True,
+                )
+            try:
+                if r.status_code != 200:
+                    _refused(r.status_code, (await r.aread())[:300])
+                answer.started = True
+                lines = r.aiter_lines()
+                while True:
+                    # The deadline bounds each read from LibreChat, never a send to the
+                    # caller: nothing is yielded inside it.
+                    async with asyncio.timeout_at(deadline):
+                        try:
+                            line = await anext(lines)
+                        except StopAsyncIteration:
+                            break
+                    if not line.startswith("data: ") or line == "data: [DONE]":
+                        continue
+                    _note(answer, line[6:])
+                    if answer.error:
+                        log.warning("LibreChat ended an answer with an error: %s", answer.error)
+                        raise AssistantUpstreamError("LibreChat ended the answer with an error")
+                    yield (line + "\n\n").encode()
+            finally:
+                await r.aclose()
     except httpx.HTTPError as e:
         log.warning("reaching LibreChat for an answer failed: %s", e)
-        raise AssistantUnavailableError(f"LibreChat could not be reached ({error_kind(e)})") from e
+        raise AssistantUpstreamError(f"LibreChat could not be reached ({error_kind(e)})") from e
     except TimeoutError as e:
-        raise AssistantUnavailableError(
-            f"the answer ran past {int(settings.assistant_answer_ttl_s)} s"
-        ) from e
+        raise AssistantUpstreamError(f"the answer ran past {int(ttl)} s") from e
     finally:
         ticket.release()
         if answer.started:
             _charge(answer)
     yield b"data: [DONE]\n\n"
+
+
+def _refused(status: int, text: bytes) -> NoReturn:
+    """LibreChat refused the request. A key or agent it no longer knows (401, 403, 404)
+    means the stored ones went stale: the service is set up again."""
+    log.warning("LibreChat refused an answer (%s): %s", status, text)
+    if status in (401, 403, 404):
+        service.forget_answering(f"LibreChat refused the stored key or agent ({status})")
+        raise AssistantUnavailableError(
+            "the assistant is being set up again on this replica: ask again shortly"
+        )
+    raise AssistantUpstreamError(f"LibreChat refused the answer ({status})")
 
 
 def _note(answer: Answer, data: str) -> None:

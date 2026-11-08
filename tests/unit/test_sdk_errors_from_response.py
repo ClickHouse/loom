@@ -153,6 +153,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "POSTGRES_REFUSED": BackendUnavailable,
     "ANALYSIS_UNAVAILABLE": BackendUnavailable,  # a 503 with no SDK class, never retried
     "ASSISTANT_UNAVAILABLE": BackendUnavailable,  # a 503 with no SDK class, never retried
+    "ASSISTANT_UPSTREAM_FAILED": BackendUnavailable,  # a 503 with no SDK class
 }
 
 

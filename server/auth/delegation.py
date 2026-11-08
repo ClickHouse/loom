@@ -233,17 +233,15 @@ def _child_org(parent: AuthInfo, org: str) -> str:
 
 
 def _child_ttl(parent: AuthInfo, ttl_seconds: int | None) -> int | None:
-    """The child's TTL in seconds (None: never expires): the one asked for,
-    else the default. A child never outlives its parent. A session of Loom's
-    own sign-in (`first_party`: `loom login`, the dashboard) has an access
-    token that lives an hour and the next refresh replaces it, so its
-    children take what was asked: they are what the person made for agents
-    and CI, outlive the session (a logout, a lost refresh answer), and are
-    revoked one by one or with the person; one asked to end with the session
-    (`ends_with_session`) still takes what was asked, and a sign-out ends it.
-    A third-party MCP client's session
-    gets no such reach: its children end with its access token, or sooner
-    with the session (`delegate` names it in their `parents`)."""
+    """The child's TTL in seconds (None: never expires): the one asked for, else the
+    default. A child never outlives its parent. A session of Loom's own sign-in
+    (`first_party`: `loom login`, the dashboard) has an access token that lives an hour
+    and the next refresh replaces it, so its children take what was asked: they are what
+    the person made for agents and CI, outlive the session (a logout, a lost refresh
+    answer), and are revoked one by one or with the person; one asked to end with the
+    session (`ends_with_session`) still takes what was asked, and a sign-out ends it. A
+    third-party MCP client's session gets no such reach: its children end with its
+    access token, or sooner with the session (`delegate` names it in their `parents`)."""
     ttl = DEFAULT_TTL_DAYS * 86400 if ttl_seconds is None else ttl_seconds
     never = ttl == NEVER
     if (parent.session_id and parent.first_party) or parent.expires_at is None:

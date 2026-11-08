@@ -6,13 +6,14 @@ when absent), with the earlier turns in `messages`; Loom stores no conversation.
 answer streams as chat-completion chunks (`stream: true`) or comes back whole, and
 leaves one ledger row (`operation = assistant.ask`) carrying its model spend and the
 answer's id as `run_id`, the id its tool calls are ledgered under. The route is admitted
-as an op is: `assistant.ask`'s rate-limit buckets before anything runs, and one of the
-org's in-flight slots while the answer runs.
+as an op is: once the caller is authorized, `assistant.ask`'s rate-limit buckets and one
+of the org's in-flight slots, held until the response ends.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -28,14 +29,14 @@ from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.context import set_current_auth
 from server.auth.gateway import effective_auth
 from server.auth.jwt import AuthInfo
-from server.core import fail_open, tenant_slots
+from server.core import tenant_slots
 from server.core.errors import (
     AssistantUnavailableError,
     AuthInsufficientError,
     LoomServerError,
-    RateLimitedError,
     ValidationError,
 )
+from server.core.ratelimit import admit_route
 from server.identity.app.caller_home import default_namespace
 from server.identity.app.restricted_access import note_restricted_access
 from server.observability import cost_accumulator, sli
@@ -61,46 +62,30 @@ def _refusal(e: BaseException) -> LoomServerError | HTTPException:
     return AuthInsufficientError("the caller may not ask the assistant here")
 
 
-async def _caller(request: Request) -> AuthInfo:
+def _bearer(request: Request) -> AuthInfo:
     auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None:
         if not settings.auth_actually_required():
             # Each answer reads under a token delegated from the caller's.
             raise AssistantUnavailableError("the assistant answers as its caller: it needs auth on")
         raise missing_bearer()
-    try:
-        auth = effective_auth(auth, request.headers.get("X-Loom-On-Behalf-Of") or "")
-    except PermissionError as e:
-        raise _refusal(e) from e
-    set_current_auth(auth)
     return auth
 
 
-def _admit(auth: AuthInfo, org: str, namespace: str) -> None:
-    """`assistant.ask`'s rate-limit buckets, as the transports draw them for the op; a
-    limiter that fails admits the request, as it admits an op."""
-    from server.core.ratelimit import get_limiter
-
-    try:
-        rl = get_limiter().check(namespace, bridge.ASSISTANT_OP, org=org, actor=auth.subject)
-    except Exception as e:  # noqa: BLE001 — the limiter fails open: the request is admitted
-        fail_open.note("rate_limit", bridge.ASSISTANT_OP, e)
-        return
-    if not rl.allowed:
-        wait = max(1, int(rl.retry_after_s + 0.99))
-        raise RateLimitedError("rate limit exceeded; retry later", retry_after_s=wait)
-
-
 class _Row:
-    """The answer's one ledger row, written when it ends however it ends."""
+    """The answer's one ledger row, written once, when it ends however it ends."""
 
     def __init__(self, auth: AuthInfo, org: str, namespace: str) -> None:
         self.auth, self.org, self.namespace = auth, org, namespace
         self.request_id = uuid.uuid4().hex
         self.started = time.perf_counter()
+        self.written = False
         cost_accumulator.begin_op()  # the answer's spend lands on this row
 
     def write(self, error: BaseException | None) -> None:
+        if self.written:
+            return
+        self.written = True
         if error is None:
             code = ""
         elif isinstance(error, LoomServerError):
@@ -116,7 +101,7 @@ class _Row:
                 op_name=bridge.ASSISTANT_OP,
                 identity={
                     "org": self.org,
-                    "namespace": self.namespace,
+                    "namespace": self.namespace or "-",
                     "agent": "-",
                     "user_id": "-",
                     "session_id": "-",
@@ -139,26 +124,69 @@ class _Row:
             log.debug("assistant answer: ledger row not written: %s", e)
 
 
+class _Held:
+    """What one admitted answer holds until its response ends: its per-replica slot and
+    one of the org's in-flight slots, and its row."""
+
+    def __init__(self, ticket: bridge.Ticket, row: _Row) -> None:
+        self.ticket, self.row = ticket, row
+        self.slots = contextlib.ExitStack()
+        self.slots.enter_context(tenant_slots.hold(ticket.org))
+
+    def close(self, error: BaseException | None) -> None:
+        self.ticket.release()
+        self.slots.close()
+        self.row.write(error)
+
+
+class _AnswerStream(StreamingResponse):
+    """A streamed answer whose holds are given back however the response ends: its
+    `__call__` runs in the request's task, so a client that leaves before the first
+    chunk, which never starts the body, still releases them."""
+
+    def __init__(self, body: AsyncIterator[bytes], held: _Held) -> None:
+        super().__init__(
+            body,
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Request-Id": held.row.request_id},
+        )
+        self.held = held
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        except BaseException as e:  # a disconnect cancels the response
+            self.held.close(e)
+            raise
+        self.held.close(None)
+
+
 @router.post("/v1/assistant/chat/completions")
 async def chat_completions(request: Request) -> Any:
     """One answer from the Loom assistant. Body: OpenAI's chat request (`messages`,
     `stream`); any `model`, `conversation_id`, system message, tool or file is ignored.
     The caller needs `viewer` on the namespace."""
-    auth = await _caller(request)
+    bearer = _bearer(request)
+    row = _Row(bearer, bearer.org, request.headers.get("X-Loom-Namespace") or "")
     try:
-        payload = await request.json()
-    except ValueError as e:
-        raise ValidationError("the body must be JSON") from e
-    if not isinstance(payload, dict):
-        raise ValidationError("the body must be a JSON object")
-    org = auth.org
-    namespace = request.headers.get("X-Loom-Namespace") or await default_namespace(auth, org)
-    if not namespace:
-        raise ValidationError("name a namespace (X-Loom-Namespace)")
-    row = _Row(auth, org, namespace)
-    try:
+        try:
+            auth = effective_auth(bearer, request.headers.get("X-Loom-On-Behalf-Of") or "")
+        except PermissionError as e:
+            raise _refusal(e) from e
+        set_current_auth(auth)
+        row.auth = auth
+        try:
+            payload = await request.json()
+        except ValueError as e:
+            raise ValidationError("the body must be JSON") from e
+        if not isinstance(payload, dict):
+            raise ValidationError("the body must be a JSON object")
+        org = auth.org
+        namespace = row.namespace or await default_namespace(auth, org)
+        if not namespace:
+            raise ValidationError("name a namespace (X-Loom-Namespace)")
+        row.org, row.namespace = org, namespace
         messages = bridge.admitted_messages(payload.get("messages"))
-        _admit(auth, org, namespace)
         await check_acted_for(auth, org)
         ticket = await bridge.open_answer(auth, org, namespace)
     except (LoomServerError, HTTPException, PermissionError) as e:
@@ -166,58 +194,47 @@ async def chat_completions(request: Request) -> Any:
         row.write(refused)  # a refused answer leaves its row, as a refused op does
         raise refused from e
     try:
-        await note_restricted_access(
-            auth, op=bridge.ASSISTANT_OP, org=org, namespace=namespace, transport="http"
-        )
+        # Drawn once the caller is admitted, as the op transport draws them.
+        admit_route(bridge.ASSISTANT_OP, namespace, org=org, actor=auth.subject)
+        held = _Held(ticket, row)
     except BaseException as e:
         ticket.release()
         row.write(e)
         raise
+    try:
+        await note_restricted_access(
+            auth, op=bridge.ASSISTANT_OP, org=org, namespace=namespace, transport="http"
+        )
+    except BaseException as e:
+        held.close(e)
+        raise
     answer = bridge.Answer()
     chunks = bridge.stream(ticket, messages, answer)
     if payload.get("stream"):
-        return StreamingResponse(
-            _streamed(chunks, ticket, row),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-store", "X-Request-Id": row.request_id},
-        )
-    return await _whole(chunks, ticket, answer, row)
+        return _AnswerStream(_streamed(chunks, held), held)
+    return await _whole(chunks, answer, held)
 
 
-async def _streamed(
-    chunks: AsyncIterator[bytes], ticket: bridge.Ticket, row: _Row
-) -> AsyncIterator[bytes]:
-    error: BaseException | None = None
+async def _streamed(chunks: AsyncIterator[bytes], held: _Held) -> AsyncIterator[bytes]:
     try:
-        with tenant_slots.hold(ticket.org):
-            async for chunk in chunks:
-                yield chunk
+        async for chunk in chunks:
+            yield chunk
     except LoomServerError as e:
-        # The status is sent: the refusal goes out as an error event.
-        error = e
+        # The status is sent: the refusal goes out as an error event, and on the row.
+        held.row.write(e)
         yield bridge.error_event(e)
-    except BaseException as e:  # a disconnect cancels the stream
-        error = e
-        raise
-    finally:
-        ticket.release()  # a stream cancelled before it began never gave it back
-        row.write(error)
 
 
-async def _whole(
-    chunks: AsyncIterator[bytes], ticket: bridge.Ticket, answer: bridge.Answer, row: _Row
-) -> JSONResponse:
+async def _whole(chunks: AsyncIterator[bytes], answer: bridge.Answer, held: _Held) -> JSONResponse:
     error: BaseException | None = None
     try:
-        with tenant_slots.hold(ticket.org):
-            async for _ in chunks:
-                pass
+        async for _ in chunks:
+            pass
     except BaseException as e:
         error = e
         raise
     finally:
-        ticket.release()
-        row.write(error)
+        held.close(error)
     return JSONResponse(
         {
             "id": answer.run_id,
@@ -236,7 +253,7 @@ async def _whole(
                 "total_tokens": answer.prompt_tokens + answer.completion_tokens,
             },
         },
-        headers={"X-Request-Id": row.request_id},
+        headers={"X-Request-Id": held.row.request_id},
     )
 
 
