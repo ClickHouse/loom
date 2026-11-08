@@ -74,4 +74,16 @@ describe("RunGrade", () => {
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Already graded as held up", "info"));
     expect(screen.queryByText(/Graded as/)).toBeNull();
   });
+
+  it("counts the proposals an unchanged grade decided", async () => {
+    vi.mocked(api.gradeRun).mockResolvedValueOnce({
+      graded: 0,
+      skipped_active: 0,
+      unchanged: 1,
+      proposals_decided: [{ memory_key: "fact_a", decision: "accept", passes: 3, fails: 0 }],
+    });
+    render(<RunGrade identity={identity} run={run({ grade: "pass", grade_source: "dashboard" })} />);
+    await userEvent.click(screen.getByRole("button", { name: "Regrade: held up" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Already graded as held up, 1 proposal decided", "info"));
+  });
 });

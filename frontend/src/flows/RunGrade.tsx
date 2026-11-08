@@ -20,16 +20,14 @@ export function RunGrade({ identity, run }: { identity: Pick<Identity, "org" | "
     setBusy(true);
     try {
       const r = await gradeRun(identity, run.run_id, g, reason.trim(), grader);
+      // Under an owner's auto policy any grade, an unchanged one too, may accept or reject proposals.
+      const n = r.proposals_decided.length;
+      const decided = n ? `, ${n} proposal${n === 1 ? "" : "s"} decided` : "";
       if (r.skipped_active) toast("The run is still active; it can be graded once it ends.", "info");
-      else if (r.unchanged) toast(`Already graded as ${VERDICT[g]}`, "info");
+      else if (r.unchanged) toast(`Already graded as ${VERDICT[g]}${decided}`, "info");
       else {
         setCurrent({ grade: g, source: grader, reason: reason.trim() });
-        // Under an owner's auto policy a grade also accepts or rejects proposals.
-        const decided = r.proposals_decided.length;
-        toast(
-          `Graded: ${VERDICT[g]}${decided ? `, ${decided} proposal${decided === 1 ? "" : "s"} decided` : ""}`,
-          "ok",
-        );
+        toast(`Graded: ${VERDICT[g]}${decided}`, "ok");
       }
     } catch (e) {
       toast(`Grade failed: ${humanizeError(e)}`, "error");
