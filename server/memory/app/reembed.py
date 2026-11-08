@@ -326,8 +326,10 @@ async def reembed_table(
         nonlocal page_changed
         kept, rewritten = await _still_stored(ch, table, cols, read, where_clause, params)
         page_changed = len(read) - len(kept)
-        if left_orgs is not None:  # a rewritten row has no new-model copy yet
-            left_orgs.update(read[i]["org"] for i in rewritten)
+        if left_orgs is not None:  # an off-model row rewritten since has no new-model copy yet
+            left_orgs.update(
+                read[i]["org"] for i in rewritten if read[i]["embedding_model"] != model
+            )
         return kept
 
     while True:

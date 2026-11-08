@@ -290,3 +290,44 @@ async def test_the_re_read_finds_a_live_row_by_its_key_and_leaves_its_vectors_ou
     found = run(setup, capture.sql, capture.params)
     assert [r["memory_key"] for r in found] == ["live"]
     assert not {"embedding", "memory_key_embedding"} & set(found[0])
+
+
+@pytest.mark.asyncio
+async def test_a_key_only_row_rewritten_on_the_current_model_keeps_no_org() -> None:
+    """It already has its vectors: --delete-old need not wait for it."""
+    row = {
+        "org": "o",
+        "namespace": "ns",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "scope": "private",
+        "embedding_model": "m2",
+        "memory_key": "k",
+        "content_excerpt": "x",
+        "embedding": [0.0, 0.0],
+        "embedding_dim": 2,
+        "memory_key_embedding": [0.0, 0.0],
+        "memory_key_embedding_dim": 2,
+        "version": 1,
+    }
+
+    class _KeyCH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict]:
+            if "system.columns" in sql:
+                return [{"name": c} for c in row]
+            if "keys" in (params or {}):
+                return [{**row, "content_excerpt": "other text"}]
+            return [] if "k0" in (params or {}) else [{**row, "_k": tuple(row.values())[:8]}]
+
+        async def query_one(self, sql: str, params: Any = None) -> dict:
+            return {"n": 1}
+
+        async def insert(self, table: str, rows: list[dict], settings: Any = None) -> None:
+            raise AssertionError("a rewritten row is not written")
+
+    kept: set[str] = set()
+    n = await rb.reembed_table(
+        _KeyCH(), _Emb(), "memory_embeddings", key_only=True, left_orgs=kept, log=lambda *_: None
+    )
+    assert n == 0 and kept == set()
