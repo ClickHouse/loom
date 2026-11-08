@@ -175,8 +175,8 @@ async def test_sweep_writes_one_batched_insert_and_mirrors(monkeypatch: pytest.M
         ("e", {"expires_at": None, "confidence": 0.4, "version": written["e"]["version"]}),
     ]
     assert res.failures == [] and len(res.sample) == 4
-    # One batched retire and one batched demote copy for the pass, never one per key;
-    # each retire carries its memory row's version.
+    # One batched retire per action and one batched demote copy for the pass, never one
+    # per key; each retire carries its memory row's version.
     assert reemit_calls == [2]
     assert sorted(retired) == sorted((k, written[k]["version"]) for k in ("a", "c"))
     # Only the anonymize retires bare: a tombstone keeps its vector for memory.restore.
@@ -765,7 +765,8 @@ async def test_a_replayed_demote_copies_the_head_as_it_is_now(
     # Writes since the sweep moved the heads: a touch set a new expiry, a lock changed
     # neither expiry nor confidence, and one key was deleted. Each demote copies its
     # head's expiry and confidence as a metadata copy (read + 1, no pinned version, so a
-    # row a later set or update lands is newer); the deleted key has nothing to copy.
+    # row a later set or update lands is newer); the deleted key, and the one relabelled
+    # 'high' (no vector), have nothing to copy.
     # The anonymize runs as recorded.
     applied: list[Any] = []
     copied: list[Any] = []
@@ -779,8 +780,9 @@ async def test_a_replayed_demote_copies_the_head_as_it_is_now(
         return 0
 
     later = _REAL_NOW + timedelta(hours=1)
-    touched, locked, deleted, anonymized = (
-        ("o", "n", "a", "-", "-", k) for k in ("touched", "locked", "deleted", "anonymized")
+    touched, locked, deleted, relabelled, anonymized = (
+        ("o", "n", "a", "-", "-", k)
+        for k in ("touched", "locked", "deleted", "relabelled", "anonymized")
     )
 
     async def _heads(keys, *, ch=None, sequential=False) -> dict[Any, Any]:
@@ -788,14 +790,20 @@ async def test_a_replayed_demote_copies_the_head_as_it_is_now(
         live = {
             touched: SimpleNamespace(expires_at=later, confidence=0.4),
             locked: SimpleNamespace(expires_at=None, confidence=0.4),
+            relabelled: SimpleNamespace(expires_at=None, confidence=0.4),
         }
-        return {k: SimpleNamespace(**vars(live[k]), sensitivity="") for k in keys if k in live}
+        return {
+            k: SimpleNamespace(**vars(live[k]), sensitivity="high" if k == relabelled else "")
+            for k in keys
+            if k in live
+        }
 
     monkeypatch.setattr(X, "apply_mirror", _apply)
     monkeypatch.setattr("server.memory.store.reemit_embedding_rows_for_keys", _reemit)
     monkeypatch.setattr("server.memory.store.memory_rows_by_identity_keys", _heads)
     await X.replay_mirror(
-        [(k, 200, "demote") for k in (touched, locked, deleted)] + [(anonymized, 200, "anonymize")]
+        [(k, 200, "demote") for k in (touched, locked, deleted, relabelled)]
+        + [(anonymized, 200, "anonymize")]
     )
     assert applied == [[(anonymized, 200, "anonymize", None)]]
     assert copied == [

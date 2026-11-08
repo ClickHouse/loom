@@ -377,12 +377,13 @@ async def apply_mirror(items: list[MirrorItem], *, ch: Any | None = None) -> int
     """Search reads loom.memory_embeddings, so the post-action lands there too, at the
     memory row's version: only rows below it change, never one a later write landed
     above it (entity_vectors has no version: its cutoff is that version's second).
-    Tombstone retires the key's vectors (memory_embeddings and entity_vectors), keeping
-    the vector in the tombstone for `memory.restore`. Anonymize retires them bare, with
-    no text or vector, so an anonymized key keeps no entity names in search and one
-    landing after a redaction's purge carries nothing. Demote copies them with the
-    expiry cleared and confidence lowered. Batched as one keyed read and one insert per
-    500 keys, never one per key."""
+    Tombstone and anonymize retire the key's vectors in memory_embeddings and
+    entity_vectors, so an anonymized key keeps no entity names in search. A
+    tombstone's memory_embeddings rows keep the vector for `memory.restore`; an
+    anonymize's are bare, with no text or vector, so one landing after a redaction's
+    purge carries nothing. Demote copies the memory_embeddings rows with the expiry
+    cleared and confidence lowered. One batched call per action, each one keyed read
+    and one insert per 500 keys, never one per key."""
     import server.memory.store as memory_repo
 
     def pins(action: str) -> list[tuple[IdentityKey, int]]:
