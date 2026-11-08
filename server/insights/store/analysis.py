@@ -20,6 +20,10 @@ from server.insights.domain import analysis as boundary
 
 log = logging.getLogger(__name__)
 
+# ClickHouse's answer to a read of a setting nobody set: an unsigned read of a
+# table under Loom's scope policy, or a profile with no version stamp yet.
+UNKNOWN_SETTING = 115
+
 
 class _AnalystClient(_CHClient, Protocol):
     """The client the analyst's own reads need: rows with their column names
@@ -214,7 +218,7 @@ async def own_version(
                 f"SELECT toString(getSetting('{boundary.VERSION_SETTING}'))"
             )
         except Exception as e:
-            if error_code(e) == _UNKNOWN_SETTING:
+            if error_code(e) == UNKNOWN_SETTING:
                 return 0  # no stamp yet: the setting is unknown
             raise
     try:
@@ -271,8 +275,6 @@ def target_database() -> str:
     return quote(database())
 
 
-_UNKNOWN_SETTING = 115
-
 # Reads the analyst must be refused, each with what it reads: ClickHouse lets
 # every user read system.one and the rows of system.tables and system.columns
 # it holds grants on, so the probe asks for what it must not. LIMIT 1: a
@@ -289,7 +291,7 @@ async def count_rows(table: str, *, password: str, extra: dict[str, Any]) -> int
     _, _, rows = await run_statement(
         f"SELECT count() FROM {target_database()}.{table}", password=password, extra=extra
     )
-    return int(rows[0][0]) if rows else 0
+    return int(rows[0][0])
 
 
 async def read_refused(name: str, *, password: str, extra: dict[str, Any]) -> None:

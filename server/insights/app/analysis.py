@@ -437,9 +437,6 @@ def _scrubbed(text: str) -> str:
     return _KEY_LITERAL.sub("unhex(…)", text)
 
 
-_UNKNOWN_SETTING = 115
-
-
 async def _probe() -> tuple[str, bool, str]:
     """('', _, '') when the analyst user is held as the allowlist says, else
     why not, whether a write of the entities repairs it, and the names behind
@@ -507,7 +504,7 @@ async def _signed_only(table: str) -> bool:
     try:
         await store.read_unsigned(table, password=_password())
     except Exception as e:
-        if error_code(e) == _UNKNOWN_SETTING:
+        if error_code(e) == store.UNKNOWN_SETTING:
             return True
         raise
     return False

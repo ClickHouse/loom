@@ -479,28 +479,27 @@ background, as the analyst itself, so the probe needs no access management:
   analyst policy counts rows too, which a write repairs; a write is never made over a
   permissive policy Loom did not write, which is named instead);
 - a `system` table, and a column outside the allowlist (`memory.value`), must be refused;
-- when the stored version is this build's: an unsigned read of each allowlisted table
-  and of the canary must fail for want of the scope settings (the table has a policy
-  that reads them), and the analyst's own `SHOW GRANTS` must name nothing but the
-  allowlist and the canary. A
-  build older than the stored version skips these, since the entities are another
-  build's.
+- unless the stored version is newer than this build's: an unsigned read of each
+  allowlisted table and of the canary must fail for want of the scope settings (the
+  table has a policy that reads them), and the analyst's own `SHOW GRANTS` must name
+  nothing but the allowlist and the canary. A build older than the stored version skips
+  these, since the entities are a newer build's; a missing or older stamp runs them.
 
 A failed check answers `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem.
 `/v1/health` answers without a token, so the problem it shows is Loom's own text, an
 error as its kind; the driver's text and the names of policies and databases go to the
-server log, and the 503 a caller gets names no cause. When the stored version is its
-own, a replica that writes the entities itself writes them again under the lease after a
-check failed with a definite answer that a write repairs: a table without its policy, a
-canary under another key (with [part 2](#build-order), checked again once three settle
-times have passed since the row's stored time, as `loom doctor` does, since a server
-still applying a rotation looks the same), a grant outside the allowlist. Elsewhere
-`loom doctor` names `loom ch-setup` as the fix. A policy Loom did not write, which a
-write cannot remove, is left to an admin: `loom doctor` reports it, and the server log
-names it where Loom's user can list policies, or the table that admits rows in the
-reserved scope where it cannot. The canary shows only that its own policy has the key; a
-single table's policy under another key, which only a hand edit leaves, shows as empty
-answers from that table.
+server log, and the 503 a caller gets names no cause. Unless the stored version is newer
+than its own, a replica that writes the entities itself writes them again under the
+lease after a check failed with a definite answer that a write repairs: a table without
+its policy, a canary under another key (with [part 2](#build-order), checked again once
+three settle times have passed since the row's stored time, as `loom doctor` does, since
+a server still applying a rotation looks the same), a grant outside the allowlist.
+Elsewhere `loom doctor` names `loom ch-setup` as the fix. A policy Loom did not write,
+which a write cannot remove, is left to an admin: `loom doctor` reports it, and the
+server log names it where Loom's user can list policies, or the table that admits rows
+in the reserved scope where it cannot. The canary shows only that its own policy has the
+key; a single table's policy under another key, which only a hand edit leaves, shows as
+empty answers from that table.
 
 Between a policy dropped by hand and the next probe, ClickHouse by default lets the
 analyst read every row of that table. The ClickHouse that Loom configures itself (the

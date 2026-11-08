@@ -250,3 +250,9 @@ def test_the_stamp_is_written_last() -> None:
     assert SQL[-1].startswith("ALTER SETTINGS PROFILE `loom_analyst` SETTINGS ")
     assert boundary.DIGEST_SETTING in SQL[-1]
     assert all(boundary.DIGEST_SETTING not in s for s in SQL[:-1])
+
+
+def test_revokes_for_skips_a_line_that_is_not_a_grant() -> None:
+    assert boundary.revokes_for(["not a grant", "GRANT r TO loom_analyst"]) == [
+        "REVOKE r FROM loom_analyst"
+    ]
