@@ -1531,7 +1531,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "name (`sumMap`) seeds the class its registration hands over."
         " `pr_number` (an open PR) merges its post-image over the index: a "
         "function the PR adds is the seed, its own call sites are edges of "
-        "tier 'overlay' (`overlay: true`)."
+        "tier 'overlay' (`overlay: true`; `overlay_note` says what it did not "
+        "fully read)."
     ),
     "code.context_pack": (
         "Briefing at the START of a task, instead of exploring file by file. "
@@ -1576,7 +1577,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         " `open: true` with pr_number briefs an OPEN PR: its head on the mirror "
         "against its merge-base, the functions it adds seeded through the "
         "post-image overlay (`overlay: true`, `overlay_head_sha`; a head the "
-        "mirror lacks is `missing`, `overlay_note: head_not_in_mirror`)."
+        "mirror lacks is `missing`, `overlay_note: head_not_in_mirror`; a note "
+        "on a served brief says what its overlay did not fully read)."
     ),
     "code.first_build": (
         "Which CI build first carried a commit. Give `sha` (7-40 hex) or "
