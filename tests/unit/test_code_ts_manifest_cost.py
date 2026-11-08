@@ -185,6 +185,10 @@ def test_an_import_list_holding_the_word_import_keeps_its_names() -> None:
     assert got == [("Foo", "Foo", "./foo"), ("$import", "$import", "./foo")]
     glob = 'const g = "/*";\nimport { A } from "./a";\n'  # a string's `/*` opens no comment
     assert _import_names(SimpleNamespace(source=glob.encode()), {"A": "./a"}) == [("A", "A", "./a")]
+    trim = 'const t = (p) => p.replace(/^\\/*/, "");\nimport { A } from "./a";\n'  # no `*/` after
+    assert _import_names(SimpleNamespace(source=trim.encode()), {"A": "./a"}) == [("A", "A", "./a")]
+    unclosed = lambda n: _import_names(SimpleNamespace(source=("/* " * n).encode()), {})  # noqa: E731
+    grows_linearly(unclosed, 20_000, 80_000)
     assert [
         m.group(2) for m in ts_reexports._IMPORT_RE.finditer('import { $import } from "./a"')
     ] == ["./a"]

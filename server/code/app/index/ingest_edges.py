@@ -662,11 +662,39 @@ async def _reexport_chains(
 # search on to the end of the file from each one, quadratic in a file of them. It runs on
 # the text without comments, whose `import` would end a clause early; strings are kept
 # (a `//` in one is no comment), an unclosed quote to the end of its line.
-_COMMENT_OR_STRING_RE = re.compile(
-    r"""("(?:[^"\\\n]|\\.)*+"?|'(?:[^'\\\n]|\\.)*+'?|`(?:[^`\\]|\\.)*+`?)"""
-    r"|//[^\n]*|/\*.*?(?:\*/|\Z)",
-    re.S,
+_STRING_RE = re.compile(
+    r"""\"(?:[^"\\\n]|\\.)*+"?|'(?:[^'\\\n]|\\.)*+'?|`(?:[^`\\]|\\.)*+`?""", re.S
 )
+_OPENER_RE = re.compile(r"""["'`]|//|/\*""")
+
+
+def _without_comments(text: str) -> str:
+    """`text` with its comments blanked and its strings kept, in one pass. A `/*` with no
+    `*/` after it is text, as `ts_config.strip_comments` reads it (`/^\\/*/` is a regex),
+    and no later one closes either."""
+    out: list[str] = []
+    i = 0
+    closed = True
+    while m := _OPENER_RE.search(text, i):
+        j, tok = m.start(), m.group()
+        if tok == "//":
+            end = text.find("\n", j)
+            out.append(text[i:j] + " ")
+            i = len(text) if end < 0 else end
+        elif tok == "/*":
+            end = text.find("*/", j + 2) if closed else -1
+            closed = end >= 0
+            out.append(text[i:j] + " " if closed else text[i : j + 1])
+            i = end + 2 if closed else j + 1
+        else:
+            string = _STRING_RE.match(text, j)  # always matches: the closer is optional
+            end = string.end() if string else j + 1
+            out.append(text[i:end])
+            i = end
+    out.append(text[i:])
+    return "".join(out)
+
+
 _IMPORT_CLAUSE_RE = re.compile(
     r"""(?<![\w$])import\s++((?:(?!(?<![\w$])import(?![\w$]))[^;'"])+?)(?<=\S)\s+from\s*["']([^"']+)["']"""
 )
@@ -675,8 +703,7 @@ _IMPORT_CLAUSE_RE = re.compile(
 def _import_names(pf: ParsedFile, bindings: dict[str, str]) -> list[tuple[str, str, str]]:
     """(local name, imported name | 'default', specifier) per import binding;
     namespace imports are skipped (their members bind through the root)."""
-    raw = pf.source.decode("utf-8", "replace")
-    text = _COMMENT_OR_STRING_RE.sub(lambda m: m.group(1) or " ", raw)
+    text = _without_comments(pf.source.decode("utf-8", "replace"))
     out: list[tuple[str, str, str]] = []
     for m in _IMPORT_CLAUSE_RE.finditer(text):
         clause, spec = m.group(1), m.group(2)
