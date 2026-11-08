@@ -476,15 +476,22 @@ def test_a_standing_problem_is_logged_once(
 
 @pytest.mark.parametrize(
     ("error", "advised"),
-    [(app.NOT_MIGRATED, False), ("Code: 497. DB::Exception: Not enough privileges", True)],
+    [
+        # A refusal Loom wrote names its own next step.
+        (app.SetupRefused(app.NOT_MIGRATED), False),
+        (RuntimeError("Code: 497. DB::Exception: Not enough privileges"), True),
+    ],
 )
 def test_ch_setups_analyst_line_advises_the_printed_sql_only_after_a_migration(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: str, advised: bool
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: Exception,
+    advised: bool,
 ) -> None:
     from server.cli import _ch, ch_setup
 
     async def fail() -> None:
-        raise RuntimeError(error)
+        raise error
 
     monkeypatch.setattr(app, "rewrite", fail)
     monkeypatch.setattr(_ch, "run_connected", lambda fn: asyncio.run(fn(None)))
@@ -977,3 +984,30 @@ def test_a_serving_replica_whose_probe_gets_no_answer_says_so(
     asyncio.run(app.reprobe())
     with pytest.raises(OverloadedError, match="no answer from ClickHouse"):
         asyncio.run(app.handle_insights_query(_query()))
+
+
+def test_provision_is_done_only_once_its_write_step_finished(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    # A foreign policy stops the write: the setup runs again and, with the
+    # policy dropped, writes this build's entities.
+    foreign: list[str] = ["bi_scope ON memory"]
+    written = _provisioning(monkeypatch, stored=None, caps="", foreign=foreign)
+    monkeypatch.setattr(app.store, "foreign_policies", lambda: _returns(list(foreign))())
+    assert asyncio.run(app.provision()) is False
+    assert written == []
+    foreign.clear()
+    assert asyncio.run(app.provision()) is True
+    assert written == [app.entity_statements()]
+
+
+def test_provision_with_no_answer_is_not_done(monkeypatch: pytest.MonkeyPatch, ready: None) -> None:
+    _provisioning(monkeypatch, stored=None, caps="", foreign=[])
+
+    async def no_answer(*_: Any, **__: Any) -> Any:
+        raise TimeoutError("read timed out")
+
+    monkeypatch.setattr(app.store, "stored_entities", no_answer)
+    monkeypatch.setattr(app, "_unreached_kind", "")
+    monkeypatch.setattr(app, "_unreached_since", 0.0)
+    assert asyncio.run(app.provision()) is False

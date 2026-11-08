@@ -436,16 +436,17 @@ def _write_analyst() -> None:
     deployment whose server user cannot (one with access management writes it
     at boot)."""
     from server.cli._ch import run_connected
-    from server.insights.app.analysis import NOT_MIGRATED, rewrite
+    from server.insights.app.analysis import SetupRefused, rewrite
 
     try:
         run_connected(lambda _ch: rewrite())
     except Exception as e:  # noqa: BLE001 — insights.query is optional; the rest of setup stands
         line = error_line(e)
-        # Before the first boot has migrated, the printed SQL cannot help either.
+        # A refusal Loom wrote names its own next step; before the first boot has
+        # migrated, the printed SQL cannot help either.
         advice = (
             ""
-            if line == NOT_MIGRATED
+            if isinstance(e, SetupRefused)
             else "; have an admin run the SQL `loom ch-setup --print-analyst-sql` prints"
         )
         print(f"· loom_analyst (insights.query): not written ({line}){advice}")

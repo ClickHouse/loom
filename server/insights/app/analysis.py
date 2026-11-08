@@ -237,9 +237,11 @@ def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> d
 async def provision() -> bool:
     """Load the secrets, write the analyst user when the stored entities
     differ from this build's and are not a newer build's, then probe it. Each
-    process runs it once in the background of its start (`start_probe_loop`),
-    one at a time under the lease. True once the setup ran, whatever it found;
-    False when it got no answer, for the loop to run it again."""
+    process runs it in the background of its start (`start_probe_loop`) until
+    one run's write step finishes, one at a time under the lease. True once
+    that step finished (or there is nothing this user may write); False when a
+    policy Loom did not write stopped it or it raised, for the loop to run it
+    again."""
     try:
         async with lease():
             await load_secrets(may_draw=await store.analyst_user_absent())
@@ -259,12 +261,12 @@ async def provision() -> bool:
                     await store.write_entities(boundary.caps_sql(caps()))
         if foreign and foreign[0]:
             _set_problem(*foreign)
-            return True
+            return False  # nothing written: run again, once the policy is dropped
         await reprobe()
         return True
     except Exception as e:  # noqa: BLE001 — a failed setup is a reported problem, never fatal to boot
         _probe_failed(f"writing or probing {boundary.ANALYST_USER} failed", e)
-        return not _no_answer(e)
+        return False  # the write may not have finished: run the setup again
 
 
 async def _current_statements() -> list[str]:
@@ -484,8 +486,9 @@ def _probe_failed(what: str, e: BaseException) -> None:
 
 
 def start_probe_loop() -> asyncio.Task[None]:
-    """Provision once, then probe every `ch_analysis_probe_interval_s`, in this
-    process's background, so no request waits on the lease or on a repair."""
+    """Provision until one run's write step finishes, then probe, once every
+    `ch_analysis_probe_interval_s`, in this process's background, so no
+    request waits on the lease or on a repair."""
 
     async def _run() -> None:
         from server.core.ch import set_query_tag
@@ -679,8 +682,6 @@ async def handle_insights_query(input: InsightsQueryInput) -> InsightsQueryOutpu
     if "," in input.namespace:
         raise ValidationError("a namespace name cannot hold a comma")
     if _ready is None:
-        # The first probe runs in the background and can wait on the lease; a
-        # resend after retry_after_s finds it done.
         raise OverloadedError(
             "insights.query has no probe answer on this replica yet, or its last probe got "
             "no answer from ClickHouse",
