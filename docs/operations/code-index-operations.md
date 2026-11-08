@@ -79,8 +79,10 @@ when the deployment indexes more than one repository.
   `user: "999:<gid>"`) and use that gid in the commands and the setting. Keep every
   path the host and the containers share (`code_repos_root`, `code_scip_checkout_dir`
   and each entry's `git_dir` and `scip_checkout_dir`) inside the prepared directory: a
-  directory or lock file Loom creates elsewhere takes its parent's group, and with the
-  umask that group could write it.
+  directory or lock file Loom creates elsewhere takes its parent's group under a
+  setgid parent and the creating process's group otherwise, and with the umask that
+  group could write it.
+
   The umask covers every file those processes write, outside the root too, where a
   file takes the writer's primary group: the host operator's primary group must be
   its own (a user private group, the default on most distributions), not one shared
