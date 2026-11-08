@@ -142,7 +142,7 @@ ghcr.io, without the provenance and SBOM attestations that only a registry keeps
 `docker-smoke` loads them from there. The `preflight` job reports each missing
 [prerequisite](#before-the-first-release) as a warning instead of failing. What only a published
 release exercises, a dry run does not: `docker-tag` (joining each image's two digests, the Latest
-decision, `:latest`), the GitHub Release, the registry publishes, `release-check`, the
+decision, `:latest`), `sign`, the GitHub Release, the registry publishes, `release-check`, the
 published-images check (`scripts/release/published_images.sh`) with the skipped-build path it
 selects, the candidate-order check (`prepare.py check-tag`, which a dry run of a branch skips with
 a notice), and the chart check when the version is already tagged on another commit.
@@ -254,7 +254,9 @@ the package's visibility to public in its settings, then re-run the failed jobs.
      --certificate-oidc-issuer https://token.actions.githubusercontent.com
    ```
 
-   Releases before 1.2.0 carry no signature, so a check of one fails its `signatures` job.
+   With cosign 3 or later, which reads the signature the release's cosign stores. A release
+   published before the release workflow signed carries none, so a check of it fails its
+   `signatures` job.
 
 The server and extractor images are published before the GitHub Release, so an installer
 shown on the release page never points at a missing image.

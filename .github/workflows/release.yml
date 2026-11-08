@@ -15,8 +15,9 @@ name: release
 # prerequisites, in seconds) -> clickhouse (the ClickHouse release the
 # installer bundle names, migrated and schema-checked) -> build -> verify
 # (inspect the exact files) -> docker (build and scan each image on each
-# architecture's own runner) -> docker-tag -> docker-smoke (the quickstart and
-# the installer rehearsal) -> github-release -> release-check (tag push only),
+# architecture's own runner) -> docker-tag -> sign (keyless, every publishing
+# run) and docker-smoke (the quickstart and the installer rehearsal) ->
+# github-release -> release-check (tag push only),
 # and pypi, npm, mcp-registry (dispatch only). A re-run after a partial publish is
 # safe: the bundle keeps the ClickHouse release it was first published with,
 # the release is updated in place, PyPI skips files it already has, npm and the
@@ -67,6 +68,8 @@ permissions:
   contents: read
 
 env:
+  # Every image the docker matrix builds (a unit test keeps the two equal).
+  IMAGES: ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "22"
   UV_VERSION: "0.12.19"
@@ -146,9 +149,6 @@ jobs:
     timeout-minutes: 5
     outputs:
       images_published: ${{ steps.images.outputs.published }}
-    env:
-      # Every image the docker matrix builds (a unit test keeps the two equal).
-      IMAGES: ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor
     permissions:
       contents: read
       packages: write # the push probe asks for the access the docker job uses
@@ -629,7 +629,6 @@ jobs:
       - name: Sign each image's index
         env:
           VERSION: ${{ needs.version.outputs.version }}
-          IMAGES: ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor
         run: |
           for image in $IMAGES; do
             # jq -e: a failed inspect leaves no digest, which fails the step.
@@ -708,7 +707,7 @@ jobs:
   github-release:
     name: GitHub Release (artifacts attached)
     if: ${{ !cancelled() && !inputs.dry_run && needs.verify.result == 'success' && needs.docker-smoke.result == 'success' && needs.sign.result == 'success' }}
-    needs: [version, preflight, verify, docker-tag, sign, docker-smoke]
+    needs: [version, verify, sign, docker-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # One publish at a time across every tag, so the downgrade check below

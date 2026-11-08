@@ -7,8 +7,7 @@ name: release-check
 # the SDKs from PyPI and npm. The release workflow calls it after publishing,
 # with neither the upgrade nor the SDKs (they publish later, from the registry
 # dispatch); a maintainer dispatches it for any release, with `previous_version`
-# and `sdks`
-# (docs/development/release-process.md).
+# and `sdks` (docs/development/release-process.md).
 
 on:
   workflow_call:

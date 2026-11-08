@@ -150,10 +150,9 @@ def test_a_tag_push_whose_images_are_published_builds_and_tags_none() -> None:
     assert ran == BUILD | {"sign", "docker-smoke", "github-release", "release-check"}
 
 
-def test_a_failed_smoke_on_the_published_tag_publishes_nothing() -> None:
-    ran = run(
-        event="workflow_dispatch", dry_run=False, published=True, fail=frozenset({"docker-smoke"})
-    )
+@pytest.mark.parametrize("failed", ["docker-smoke", "sign"])
+def test_a_failed_smoke_or_signature_on_the_published_tag_publishes_nothing(failed: str) -> None:
+    ran = run(event="workflow_dispatch", dry_run=False, published=True, fail=frozenset({failed}))
     assert not ran & ({"github-release", "release-check"} | REGISTRIES)
 
 
