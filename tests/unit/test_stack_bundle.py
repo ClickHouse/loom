@@ -38,6 +38,7 @@ def test_release_stack_bundle_is_complete_and_checksummed(tmp_path: Path) -> Non
             "loom-stack/deploy/lemmagen3/LICENSE",
             "loom-stack/deploy/lemmagen3/README.md",
             "loom-stack/deploy/clickhouse-config/named_collections.xml",
+            "loom-stack/integrations/librechat/assistant.librechat.yaml",
         } <= names
         assert bundle.extractfile("loom-stack/VERSION").read() == b"1.2.3\n"
         compose = bundle.extractfile("loom-stack/compose.yaml").read().decode()
@@ -423,3 +424,25 @@ def test_the_installer_env_names_the_default_local_model_at_its_width() -> None:
         int(values["LOOM_EMBEDDING_DIM"])
         == LOCAL_EMBEDDING_MODELS[DEFAULT_LOCAL_EMBEDDING_MODEL][1]
     )
+
+
+def test_every_host_path_compose_mounts_is_in_the_bundle(tmp_path: Path) -> None:
+    # A bind mount whose path the bundle lacks becomes an empty directory in the container.
+    import yaml
+
+    compose = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))
+    mounted = {
+        volume.split(":", 1)[0].removeprefix("./")
+        for service in compose["services"].values()
+        for volume in service.get("volumes", [])
+        if isinstance(volume, str) and volume.startswith("./")
+    }
+    archive, _ = build_stack_bundle.build(
+        "1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11"
+    )
+    with tarfile.open(archive) as bundle:
+        names = {n.removeprefix("loom-stack/") for n in bundle.getnames()}
+    missing = {
+        p for p in mounted if p not in names and not any(n.startswith(p + "/") for n in names)
+    }
+    assert not missing, missing

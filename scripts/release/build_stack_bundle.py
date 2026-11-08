@@ -18,6 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 # The bundle keeps the repository's layout, so compose.yaml's paths hold in both.
 CONFIG = "deploy/clickhouse-config"
+LIBRECHAT = "integrations/librechat/assistant.librechat.yaml"
 FILES = {
     "LICENSE": "LICENSE",
     "NOTICE": "NOTICE",
@@ -27,10 +28,13 @@ FILES = {
     f"{CONFIG}/lemmatizers.xml": f"{CONFIG}/lemmatizers.xml",
     f"{CONFIG}/nlp_user_settings.xml": f"{CONFIG}/nlp_user_settings.xml",
     f"{CONFIG}/keeper.xml": f"{CONFIG}/keeper.xml",
+    f"{CONFIG}/access_control.xml": f"{CONFIG}/access_control.xml",
     f"{CONFIG}/named_collections.xml.template": f"{CONFIG}/named_collections.xml",
     "deploy/lemmagen3/en.bin": "deploy/lemmagen3/en.bin",
     "deploy/lemmagen3/LICENSE": "deploy/lemmagen3/LICENSE",
     "deploy/lemmagen3/README.md": "deploy/lemmagen3/README.md",
+    # The `assistant` profile's LibreChat configuration.
+    LIBRECHAT: LIBRECHAT,
 }
 
 

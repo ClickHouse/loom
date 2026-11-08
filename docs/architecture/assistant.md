@@ -800,16 +800,16 @@ token.
 
 ## Stored data and erasure
 
-| Where                                       | What the assistant leaves                                                              | How it is deleted                                     |
-| ------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
-| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                           | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
-| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                            | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
-| `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                 | as every ledger row                                   |
-| LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot  | kept; no memory content                               |
-| LibreChat `transactions`                    | token counts per answer and its message id, no content                                 | kept, a few hundred bytes per answer                  |
-| LibreChat logs                              | the service user's id and email and request ids, no message text, token or password    | LibreChat's default: one file per day, kept 14 days   |
-| the dashboard                               | the current chat, in the tab's memory                                                  | gone when the tab closes                              |
+| Where                                       | What the assistant leaves                                                                           | How it is deleted                                     |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key              | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
+| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                                        | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
+| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                                         | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
+| `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                              | as every ledger row                                   |
+| LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot that signs in | kept; no memory content                               |
+| LibreChat `transactions`                    | token counts per answer and its message id, no content                                              | kept, a few hundred bytes per answer                  |
+| LibreChat logs                              | the service user's id and email and request ids, no message text, token or password                 | LibreChat's default: one file per day, kept 14 days   |
+| the dashboard                               | the current chat, in the tab's memory                                                               | gone when the tab closes                              |
 
 The agents API stores no questions, answers or tool outputs, so LibreChat holds nothing
 an erasure must reach. An answer is computed from the rows the answer's token reads at
@@ -819,7 +819,7 @@ goes to its caller only and is stored nowhere, as any read in flight.
 
 ## Model and cost
 
-The model will be the agent definition's: `LOOM_ASSISTANT_MODEL` when set (Loom writes
+The model is the agent definition's: `LOOM_ASSISTANT_MODEL` when set (Loom writes
 it into the definition when it seeds), `claude-haiku-4-5` otherwise. The model runs in
 LibreChat on its own key, so Loom's provider layer does not call it, but Loom holds its
 spend to the same budget as its own model calls:
