@@ -43,6 +43,7 @@ from server.core.errors import (
     GrantBusyError,
     LoomServerError,
     ValidationError,
+    caller_text,
 )
 from server.settings import settings
 
@@ -348,10 +349,11 @@ async def _add_extra_branches(
                 scip_producer=str(input.scip_producer or ""),
             )
         except (ValidationError, GrantBusyError, NotClaimed) as e:  # before any write
-            skipped.append({"branch": branch, "reason": str(e)})
+            skipped.append({"branch": branch, "reason": caller_text(e)})
             continue
         except LoomServerError as e:  # failed or cut short under its claim
-            reason = f"{namespace}: {e}; it may be partly set up, check it before adding again"
+            why = caller_text(e)
+            reason = f"{namespace}: {why}; it may be partly set up, check it before adding again"
             skipped.append({"branch": branch, "reason": reason})
             continue
         also.append({"branch": branch, "namespace": out.namespace, "remote_head": out.remote_head})
