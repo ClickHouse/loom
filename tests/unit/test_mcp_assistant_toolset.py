@@ -691,3 +691,30 @@ def test_an_assistant_tool_call_naming_no_namespace_is_filled_with_the_tokens(
 
     asyncio.run(_run())
     assert arguments["org"] == "acme" and arguments["namespace"] == "acme-handbook"
+
+
+@pytest.mark.parametrize(("on_assistant", "run"), [(True, "chatcmpl-1"), (False, "")])
+def test_an_assistant_tool_call_is_ledgered_under_its_answer(on_assistant: bool, run: str) -> None:
+    # The agent's MCP server sends the answer's id as X-Loom-Run-Id; only an assistant
+    # call takes it as its row's run_id (it opens no session run).
+    from server.observability.run_context import current_ledger_run
+    from server.transport.assistant_call import set_answer_run, set_assistant_call
+
+    async def _run() -> str:
+        set_assistant_call(on_assistant)
+        set_answer_run("chatcmpl-1")
+        await mcp_call._bind_session_run(OPERATIONS_BY_NAME["memory.search"], None, "", None)
+        return current_ledger_run()
+
+    assert asyncio.run(_run()) == run
+
+
+def test_only_an_assistant_connection_reads_the_answer_header() -> None:
+    import inspect
+
+    import server.transport.mcp as mcp_module
+
+    source = inspect.getsource(mcp_module)
+    read = source.index('set_answer_run(clean_run_id(request.headers.get("X-Loom-Run-Id")))')
+    guard = source.rindex('if assistant_connection(listing["toolset"]):', 0, read)
+    assert read - guard < 200  # the header is read inside the assistant-connection branch

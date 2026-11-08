@@ -151,7 +151,7 @@ Fields for every `assistant` op: [operations/assistant.md](operations/assistant.
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`assistant.ask`](operations/assistant.md#assistantask) |  | viewer | write | no |  |
+| [`assistant.ask`](operations/assistant.md#assistantask) | Ask the Loom assistant one question about this namespace and get one cited answer: what it holds, how it is used, counts over its rows, and how to write it better. | viewer | write | no |  |
 
 ### audit
 

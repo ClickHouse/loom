@@ -10,7 +10,8 @@ LibreChat sends back to Loom on every tool call (docs/architecture/assistant.md)
 
 from __future__ import annotations
 
-import contextlib
+import asyncio
+import itertools
 import json
 import logging
 import time
@@ -31,6 +32,7 @@ from server.core.errors import (
     OverloadedError,
     RateLimitedError,
     ValidationError,
+    error_kind,
 )
 from server.llm.customer import ModelCallsDisabled, switched_off
 from server.observability import cost_accumulator
@@ -48,19 +50,28 @@ _CAP_RETRY_S = 3600  # not a setting: a hint; the cap's own window is the settin
 # Seconds to reach LibreChat; an answer then runs up to LOOM_ASSISTANT_ANSWER_TTL_S.
 _CONNECT_S = 10.0  # not a setting: LibreChat is on the same network
 
-# Answers this replica runs per (org, namespace).
-_running: dict[tuple[str, str], int] = {}
+# The answers this replica runs per (org, namespace): slot id -> when it was taken.
+_running: dict[tuple[str, str], dict[int, float]] = {}
+_slot_ids = itertools.count(1)
+# A slot older than an answer's limit and this is one a cancelled stream never gave back.
+_SLOT_GRACE_S = 60.0  # not a setting: a margin on LOOM_ASSISTANT_ANSWER_TTL_S
 
 
-@dataclass(frozen=True)
+@dataclass
 class Ticket:
-    """An admitted answer: where it runs and the token it reads under."""
+    """An admitted answer: where it runs, the token it reads under, and its slot."""
 
     org: str
     namespace: str
     agent_id: str
     api_key: str
     token: str
+    subject: str
+    slot: int
+
+    def release(self) -> None:
+        """Give the answer's slot back; a second call does nothing."""
+        _give_back(self.org, self.namespace, self.slot)
 
 
 @dataclass
@@ -72,6 +83,8 @@ class Answer:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     usage_seen: bool = False
+    # LibreChat's stream began: from here the answer is charged.
+    started: bool = False
     error: str = ""
 
 
@@ -163,56 +176,66 @@ async def answer_token(auth: AuthInfo, org: str, namespace: str) -> str:
     return delegated.mint(auth.subject, consumer=ASSISTANT_CONSUMER)
 
 
-def _refuse_when_busy(org: str, namespace: str) -> None:
-    running = _running.get((org, namespace), 0)
-    if running >= int(settings.assistant_concurrent_answers):
+def _take_slot(org: str, namespace: str) -> int:
+    """One of this replica's answers in the namespace, or OVERLOADED. A slot an answer
+    never gave back (a stream cancelled before it began) stops counting once an answer
+    could no longer be running."""
+    now = time.monotonic()
+    held = _running.setdefault((org, namespace), {})
+    for slot, since in list(held.items()):
+        if now - since > float(settings.assistant_answer_ttl_s) + _SLOT_GRACE_S:
+            del held[slot]
+    if len(held) >= int(settings.assistant_concurrent_answers):
         raise OverloadedError(
-            f"the assistant is already answering {running} questions in {namespace!r}",
+            f"the assistant is already answering {len(held)} questions in {namespace!r}",
             retry_after_s=5,
         )
+    slot = next(_slot_ids)
+    held[slot] = now
+    return slot
 
 
 async def open_answer(auth: AuthInfo, org: str, namespace: str) -> Ticket:
-    """Every refusal, then the answer's token: run before anything streams, so a
-    refused request is an HTTP error."""
+    """Every refusal, the answer's slot and its token: run before anything streams, so a
+    refused request is an HTTP error. The stream gives the slot back; so does
+    `Ticket.release` on a refusal after this."""
     agent_id, api_key = await admit(auth, org, namespace)
-    _refuse_when_busy(org, namespace)
-    token = await answer_token(auth, org, namespace)
-    return Ticket(org, namespace, agent_id, api_key, token)
-
-
-@contextlib.contextmanager
-def _slot(org: str, namespace: str) -> Any:
-    """One of this replica's answers in the namespace, or OVERLOADED."""
-    _refuse_when_busy(org, namespace)
-    key = (org, namespace)
-    _running[key] = _running.get(key, 0) + 1
+    slot = _take_slot(org, namespace)
     try:
-        yield
-    finally:
-        _running[key] -= 1
-        if not _running[key]:
-            del _running[key]
+        token = await answer_token(auth, org, namespace)
+    except BaseException:
+        _give_back(org, namespace, slot)
+        raise
+    return Ticket(org, namespace, agent_id, api_key, token, auth.subject, slot)
+
+
+def _give_back(org: str, namespace: str, slot: int) -> None:
+    held = _running.get((org, namespace), {})
+    held.pop(slot, None)
+    if not held:
+        _running.pop((org, namespace), None)
 
 
 async def stream(
     ticket: Ticket, messages: list[dict[str, str]], answer: Answer
 ) -> AsyncIterator[bytes]:
     """The admitted answer as LibreChat's agents API streams it (OpenAI chat-completion
-    chunks as server-sent events), with `answer` filled as it goes. Its spend is charged
-    to the request's cost accumulator when the stream ends, however it ends."""
-    with _slot(ticket.org, ticket.namespace):
-        body = {
-            "model": ticket.agent_id,
-            "messages": messages,
-            "stream": True,
-            "stream_options": {"include_usage": True},
-            # The answer's token: the agent's MCP server sends it back as its bearer.
-            "parent_message_id": ticket.token,
-        }
-        headers = {"Authorization": f"Bearer {ticket.api_key}", "Accept-Encoding": "identity"}
-        timeout = httpx.Timeout(float(settings.assistant_answer_ttl_s), connect=_CONNECT_S)
-        try:
+    chunks as server-sent events), with `answer` filled as it goes, for at most
+    LOOM_ASSISTANT_ANSWER_TTL_S. LibreChat unreachable, refusing or ending the answer
+    with an error raises ASSISTANT_UNAVAILABLE, naming none of LibreChat's text. Once
+    LibreChat's stream has begun, the answer's spend is charged however it ends."""
+    body = {
+        "model": ticket.agent_id,
+        "messages": messages,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        # The answer's token: the agent's MCP server sends it back as its bearer.
+        "parent_message_id": ticket.token,
+    }
+    headers = {"Authorization": f"Bearer {ticket.api_key}", "Accept-Encoding": "identity"}
+    timeout = httpx.Timeout(float(settings.assistant_answer_ttl_s), connect=_CONNECT_S)
+    try:
+        async with asyncio.timeout(float(settings.assistant_answer_ttl_s)):
             async with httpx.AsyncClient(
                 base_url=str(settings.assistant_librechat_url), timeout=timeout
             ) as client:
@@ -228,12 +251,27 @@ async def stream(
                         raise AssistantUnavailableError(
                             f"LibreChat refused the answer ({r.status_code})"
                         )
+                    answer.started = True
                     async for line in r.aiter_lines():
                         if not line.startswith("data: ") or line == "data: [DONE]":
                             continue
                         _note(answer, line[6:])
+                        if answer.error:
+                            log.warning("LibreChat ended an answer with an error: %s", answer.error)
+                            raise AssistantUnavailableError(
+                                "LibreChat ended the answer with an error"
+                            )
                         yield (line + "\n\n").encode()
-        finally:
+    except httpx.HTTPError as e:
+        log.warning("reaching LibreChat for an answer failed: %s", e)
+        raise AssistantUnavailableError(f"LibreChat could not be reached ({error_kind(e)})") from e
+    except TimeoutError as e:
+        raise AssistantUnavailableError(
+            f"the answer ran past {int(settings.assistant_answer_ttl_s)} s"
+        ) from e
+    finally:
+        ticket.release()
+        if answer.started:
             _charge(answer)
     yield b"data: [DONE]\n\n"
 

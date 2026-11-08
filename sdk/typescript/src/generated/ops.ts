@@ -66,7 +66,7 @@ export interface AssistantMessage {
 export interface AssistantAskInput {
   org: string;
   namespace: string;
-  /** The question, about what this namespace holds and how it is used. The answer reads only what the caller may read, writes nothing, and spends from the namespace' */
+  /** The question about this namespace, answered as the caller. */
   question: string;
   /** Earlier turns of the conversation, oldest first; Loom stores none. */
   history?: AssistantMessage[];

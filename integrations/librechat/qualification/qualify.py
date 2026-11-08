@@ -342,7 +342,13 @@ def cmd_setup_bridge(args: argparse.Namespace) -> None:
             if code != 200:
                 sys.exit(f"grants.create {person['name']}: {code} {out}")
     st["bridge"] = True
-    st["model"] = args.model
+    # The agent's model, for the report's prices: agent.yaml's, unless the server sets
+    # LOOM_ASSISTANT_MODEL, which the harness cannot see.
+    agent = (HERE.parents[0] / "agent.yaml").read_text()
+    st["model"] = next(
+        (line.split(":", 1)[1].strip() for line in agent.splitlines() if line.startswith("model:")),
+        args.model,
+    )
     save_state(st)
     print(f"granted {len(people)} people; the cases go through {st['loom_url']}")
 

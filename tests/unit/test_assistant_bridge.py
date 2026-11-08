@@ -69,8 +69,12 @@ class _World:
         self.over_cap = False
         self.switched_off = False
         self.denied = False
+        # Another answer for LibreChat to give, in place of the stream above.
+        self.override: Any = None
 
     def handle(self, request: httpx.Request) -> httpx.Response:
+        if self.override is not None:
+            return self.override(request)  # type: ignore[no-any-return]
         self.librechat_body = json.loads(request.content)
         self.librechat_headers = dict(request.headers)
         return httpx.Response(self.status, content=self.stream_body)
@@ -227,11 +231,23 @@ def test_a_replica_runs_its_limit_of_answers_per_namespace(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(settings, "assistant_concurrent_answers", 1)
-    monkeypatch.setattr(bridge, "_running", {(ORG, NS): 1})
+    first = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
+    # The slot is taken before anything streams, so a second ask is an HTTP refusal.
     with pytest.raises(OverloadedError):
         asyncio.run(bridge.open_answer(_caller(), ORG, NS))
-    # Another namespace is not held back.
+    # Another namespace is not held back, and a released slot is free again.
     asyncio.run(bridge.open_answer(_caller(namespaces=(NS, "other")), ORG, "other"))
+    first.release()
+    asyncio.run(bridge.open_answer(_caller(), ORG, NS))
+
+
+def test_a_slot_a_cancelled_stream_never_gave_back_stops_counting(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "assistant_concurrent_answers", 1)
+    stale = time.monotonic() - settings.assistant_answer_ttl_s - bridge._SLOT_GRACE_S - 1
+    monkeypatch.setattr(bridge, "_running", {(ORG, NS): {0: stale}})
+    asyncio.run(bridge.open_answer(_caller(), ORG, NS))
 
 
 def test_a_finished_answer_frees_its_slot(world: _World) -> None:
@@ -328,3 +344,167 @@ def test_a_refused_question_is_an_http_error_with_its_row(client: Any, world: _W
     (row,) = rows
     assert row["success"] is False and row["error_code"] == "RATE_LIMITED"
     assert world.librechat_body == {}
+
+
+def test_an_answer_librechat_refused_is_not_charged_and_frees_its_slot(world: _World) -> None:
+    world.status = 503
+    ticket = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
+
+    async def run() -> Any:
+        acc = cost_accumulator.begin_op()
+        with pytest.raises(AssistantUnavailableError):
+            async for _ in bridge.stream(ticket, QUESTION, bridge.Answer()):
+                pass
+        return acc
+
+    acc = asyncio.run(run())
+    assert acc.cost_usd == 0 and bridge._running == {}
+
+
+def test_an_unreachable_librechat_is_unavailable(world: _World) -> None:
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused to librechat:3080")
+
+    world.override = refuse
+    ticket = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
+
+    async def run() -> None:
+        async for _ in bridge.stream(ticket, QUESTION, bridge.Answer()):
+            pass
+
+    with pytest.raises(AssistantUnavailableError) as e:
+        asyncio.run(run())
+    assert "librechat:3080" not in str(e.value) and bridge._running == {}
+
+
+def test_an_error_librechat_streams_ends_the_answer_unavailable(world: _World) -> None:
+    world.stream_body = _sse(
+        {"id": "chatcmpl-3", "choices": [{"delta": {"content": "Sev"}}]},
+        {"error": {"message": "upstream model said no, at librechat:3080"}},
+    )
+    ticket = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
+    seen: list[bytes] = []
+
+    async def run() -> None:
+        async for chunk in bridge.stream(ticket, QUESTION, bridge.Answer()):
+            seen.append(chunk)
+
+    with pytest.raises(AssistantUnavailableError) as e:
+        asyncio.run(run())
+    assert "librechat:3080" not in str(e.value)
+    assert not any(b"upstream model" in c for c in seen)  # LibreChat's text never passes
+
+
+def test_an_answer_past_its_limit_is_cut(world: _World, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def slow() -> Any:
+        yield b'data: {"id": "chatcmpl-4", "choices": [{"delta": {"content": "a"}}]}\n\n'
+        await asyncio.sleep(5)
+
+    world.override = lambda request: httpx.Response(200, content=slow())
+    monkeypatch.setattr(settings, "assistant_answer_ttl_s", 0.2)
+    ticket = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
+
+    async def run() -> None:
+        async for _ in bridge.stream(ticket, QUESTION, bridge.Answer()):
+            pass
+
+    with pytest.raises(AssistantUnavailableError, match="ran past"):
+        asyncio.run(run())
+
+
+def test_the_op_answers_with_the_agents_text_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.assistant.api.models import AssistantAskInput
+    from server.assistant.app import ask
+
+    seen: dict[str, Any] = {}
+
+    async def fake_ask(auth: Any, org: str, ns: str, messages: Any) -> bridge.Answer:
+        seen["messages"] = messages
+        return bridge.Answer(run_id="chatcmpl-5", text=["Seven."], error="raw LibreChat text")
+
+    monkeypatch.setattr(ask, "current_auth", lambda: _caller())
+    monkeypatch.setattr(ask.bridge, "ask", fake_ask)
+    inp = AssistantAskInput(
+        org=ORG,
+        namespace=NS,
+        question="How many?",
+        history=[{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}],
+    )
+    out = asyncio.run(ask.handle_assistant_ask(inp))
+    assert out.answer == "Seven." and out.run_id == "chatcmpl-5"
+    assert seen["messages"][-1] == {"role": "user", "content": "How many?"}
+    assert len(seen["messages"]) == 3
+
+
+def test_a_refused_acted_for_caller_is_a_403_with_its_row(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+
+    async def revoked(*_: Any) -> None:
+        raise PermissionError("the acted-for subject is deactivated")
+
+    http, rows = client
+    monkeypatch.setattr(routes, "check_acted_for", revoked)
+    r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "AUTH_INSUFFICIENT"
+    assert "deactivated" not in r.text
+    (row,) = rows
+    assert row["error_code"] == "AUTH_INSUFFICIENT" and bridge._running == {}
+
+
+def test_a_refused_on_behalf_of_header_is_a_403(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+
+    def refuse(auth: Any, header: str) -> Any:
+        raise PermissionError("a grant principal cannot be acted for")
+
+    http, _ = client
+    monkeypatch.setattr(routes, "effective_auth", refuse)
+    r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "AUTH_INSUFFICIENT"
+
+
+def test_a_delegation_refusal_keeps_its_status_and_leaves_its_row(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi import HTTPException
+
+    async def refuse(*_: Any, **__: Any) -> Any:
+        raise HTTPException(status_code=401, detail={"code": "AUTH_REVOKED", "message": "no"})
+
+    http, rows = client
+    monkeypatch.setattr(bridge, "delegate", refuse)
+    r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
+    assert r.status_code == 401
+    (row,) = rows
+    assert row["error_code"] == "HTTP_401" and bridge._running == {}
+
+
+def test_the_answers_row_names_who_acted_and_its_budget(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+
+    http, rows = client
+    monkeypatch.setattr(
+        routes, "verify_bearer_header", lambda *_a, **_k: _caller(impersonated_by="trusted-ui")
+    )
+    http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
+    (row,) = rows
+    assert row["impersonated_by"] == "trusted-ui"
+    assert row["slo_class"] == "read" and row["budget_ms"] > 0
+
+
+def test_a_client_that_went_away_is_its_own_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.assistant.app import routes
+    from server.observability.sli import status_class
+
+    rows: list[dict[str, Any]] = []
+    monkeypatch.setattr(routes, "emit_agent_event", lambda **kw: rows.append(kw))
+    routes._Row(_caller(), ORG, NS).write(asyncio.CancelledError())
+    (row,) = rows
+    assert row["error_code"] == "HTTP_499"
+    assert status_class(False, row["error_code"], row["error"]) == "client"

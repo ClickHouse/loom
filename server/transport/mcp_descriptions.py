@@ -2018,6 +2018,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
 
 
 # ---- tracker.*: addressed at a tracker namespace ----
+TOOL_DESCRIPTIONS["assistant.ask"] = (
+    "Ask the Loom assistant one question about this namespace and get one cited answer: "
+    "what it holds, how it is used, counts over its rows, and how to write it better. "
+    "It reads only what you may read, writes nothing, and spends from the namespace's "
+    "daily model cost cap, so ask what one search or read would not answer."
+)
 TOOL_DESCRIPTIONS["tracker.test_signal"] = (
     "Before blaming a change for a failing CI test, read the test's own "
     "history. Give `test_name` (a stateless `NNNNN_name`, an integration "

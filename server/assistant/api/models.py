@@ -19,11 +19,7 @@ class AssistantAskInput(BaseModel):
         ...,
         min_length=1,
         max_length=20_000,
-        description=(
-            "The question, about what this namespace holds and how it is used. The answer "
-            "reads only what the caller may read, writes nothing, and spends from the "
-            "namespace's daily model cost cap."
-        ),
+        description="The question about this namespace, answered as the caller.",
     )
     history: list[AssistantMessage] = Field(
         default_factory=list,

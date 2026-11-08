@@ -10,13 +10,15 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `assistant.ask`
 
+Ask the Loom assistant one question about this namespace and get one cited answer: what it holds, how it is used, counts over its rows, and how to write it better.
+
 `POST /v1/assistant.ask` · MCP `loom_assistant_ask` · role `viewer` · write · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `question` | `str` | required | The question, about what this namespace holds and how it is used. |
+| `question` | `str` | required | The question about this namespace, answered as the caller. |
 | `history` | `list[AssistantMessage]` | *(computed)* | Earlier turns of the conversation, oldest first; Loom stores none. |
 
 | Output field | Type | Meaning |
