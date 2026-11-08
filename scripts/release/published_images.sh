@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prints `true` when every image already carries the version's tag on ghcr.io,
 # `false` when none does, and fails when only some do (a docker-tag that stopped
-# halfway: re-run the failed jobs of the tag's run, which tag the same build).
+# halfway: re-run the failed jobs of the run that tagged, which tag the same build).
 # A run on a tag whose images are out (the registry dispatch, a later dispatch)
 # then builds and tags none: an uncached rebuild would move the version's tags
 # onto other bytes.
@@ -72,6 +72,6 @@ for image in "$@"; do
   out+=("$image")
 done
 if [ "${#out[@]}" -gt 0 ] && [ "${#missing[@]}" -gt 0 ]; then
-  fail "only ${out[*]} carries $version, not ${missing[*]}: use Re-run failed jobs (not all jobs) on the tag's run, which tags the same build; a new build would move the published tags (docs/development/release-process.md#what-the-release-workflow-does)"
+  fail "only ${out[*]} carries $version, not ${missing[*]} (half-tagged): re-run the failed jobs of the run that tagged it (docs/development/release-process.md#a-failed-tag-or-signature)"
 fi
 [ "${#missing[@]}" -eq 0 ] && echo true || echo false

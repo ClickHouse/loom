@@ -137,15 +137,16 @@ nothing: no image push, GitHub Release or registry upload.
 gh workflow run release.yml --ref <branch> -f dry_run=true
 ```
 
-It runs at the version `server/__init__.py` names. Its images go to run artifacts instead of
-ghcr.io, without the provenance and SBOM attestations that only a registry keeps, and
-`docker-smoke` loads them from there. The `preflight` job reports each missing
-[prerequisite](#before-the-first-release) as a warning instead of failing. What only a published
-release exercises, a dry run does not: `docker-tag` (joining each image's two digests, the Latest
-decision, `:latest`), the GitHub Release, the registry publishes, `release-check`, the
-published-images check (`scripts/release/published_images.sh`) with the skipped-build path it
-selects, the candidate-order check (`prepare.py check-tag`, which a dry run of a branch skips with
-a notice), and the chart check when the version is already tagged on another commit.
+It runs at the version `server/__init__.py` names, and keeps its artifacts one day (a release keeps
+them 30 days, as long as a run can be re-run). Its images go to run artifacts instead of ghcr.io,
+without the provenance and SBOM attestations that only a registry keeps, and `docker-smoke` loads
+them from there. The `preflight` job reports each missing [prerequisite](#before-the-first-release)
+as a warning instead of failing. What only a published release exercises, a dry run does not:
+`docker-tag` (joining each image's two digests, the Latest decision, `:latest`), `sign`, the GitHub
+Release, the registry publishes, `release-check`, the published-images check
+(`scripts/release/published_images.sh`) with the skipped-build path it selects, the candidate-order
+check (`prepare.py check-tag`, which a dry run of a branch skips with a notice), and the chart check
+when the version is already tagged on another commit.
 
 ## Before the first release
 
@@ -161,10 +162,15 @@ in seconds, before any build, and names the fix for each one it finds missing:
 | A `pypi` environment and a PyPI trusted publisher for `release.yml`              | the `pypi` job                                       |
 | An `npm` environment, and npm trusted publishing or an `NPM_TOKEN` secret        | the `npm` job                                        |
 | An `mcp-registry` environment with the same protection rules as `pypi` and `npm` | the `mcp-registry` job                               |
+| The repository's artifact retention is at least 30 days (Settings > Actions)     | nothing                                              |
 
 Only a push creates a ghcr.io package, and it creates it private. For an image no release has pushed
 yet, `preflight` warns instead of failing, and that run's `docker-smoke` jobs fail to pull it: set
 the package's visibility to public in its settings, then re-run the failed jobs.
+
+Until a release has been signed, make the next tag a release candidate (`vX.Y.Z-rc.1`). Its run
+signs the images and verifies them from outside, and a candidate never moves `:latest`, so a fault
+there costs a candidate number, not a final version.
 
 ## What the release workflow does
 
@@ -211,13 +217,18 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    they are that day), with provenance and an SBOM, pushes each by digest and scans it;
    `docker-tag` joins each image's two digests under its tags, and tags neither image until
    all four have passed (a failure there can leave one tagged, and re-running it tags both);
+   `sign` then signs, by digest, the index `docker-tag` made for each image, with a keyless
+   signature (cosign, with the run's GitHub identity, so the certificate names `release.yml`
+   and the tag); a run on a tag whose images are out signs nothing. Every run then verifies
+   both images' signatures as users do, so the GitHub Release, PyPI, npm and the MCP Registry
+   wait for a signature that checks ([a failed tag or signature](#a-failed-tag-or-signature));
 7. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
    names, on amd64 and arm64, then runs the release's own `install.sh` and bundle as the
    one-liner in clean Debian, Ubuntu and Alpine containers (install, round trip, re-run, a
    refused downgrade under each one's own `sh` and `awk`, and an upgrade over the previous
    final release's installer, or, in a dry run of a commit after its version's release, over
    that release's own; `scripts/gates/installer_rehearsal.py`);
-8. `github-release` creates the GitHub Release only after both images exist, with notes
+8. `github-release` creates the GitHub Release once both images exist and are verified, with notes
    generated from the commits since the previous final release (`prepare.py previous`, an
    output of `version`; a candidate's notes start there too), or updates it on a re-run, keeping
    its notes as they are, and attaches the verified files. A bundle the release already
@@ -237,11 +248,14 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`;
    or accepting the downgrade:
    `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
-   When neither is taken, move `:latest` back to the previous release by hand, on both
-   `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`;
+   When neither is taken, move `:latest` (if it moved) and, for a final, `:X.Y` back to the
+   previous release on both images, as in [a failed tag or signature](#a-failed-tag-or-signature);
 9. `release-check` (on a tag push) runs `.github/workflows/release-check.yml` against what
    was just published, signed in to nothing: the one-liner from github.com in the same clean
-   containers, pulling both images anonymously.
+   containers, pulling both images anonymously, and verifies both images' signatures, which
+   must come from `release.yml` on that tag, as a user does
+   ([container images](../operations/deployment.md#container-images)). A release published
+   before the release workflow signed carries none, so a check of it fails its `signatures` job.
 
 The server and extractor images are published before the GitHub Release, so an installer
 shown on the release page never points at a missing image.
@@ -262,22 +276,8 @@ version builds and tags none (`scripts/release/published_images.sh`), smoke-test
 ones, and goes on to the registries. Release images build without the cache, so a rebuild would
 move the version's tags onto other bytes.
 
-When only one of the two carries the version (a failed `docker-tag`), use "Re-run failed jobs" on
-the tag's run, which tags the same build. "Re-run all jobs" would start with a `preflight` that
-refuses the half-tagged version, and every "Re-run failed jobs" after it fails in that `preflight`
-again. To recover from there, tag the missing image by hand from that run's digests (from its
-`scanned-<artifact>-<arch>` artifacts), adding `-t ghcr.io/clickhouse/<image>:X.Y` for a final
-version and `-t ghcr.io/clickhouse/<image>:latest` when
-`python3 scripts/release/make_latest.py X.Y.Z` prints `true` (with `GH_TOKEN` and
-`GITHUB_REPOSITORY=ClickHouse/loom` set), then dispatch the tag:
-
-```bash
-docker buildx imagetools create -t ghcr.io/clickhouse/<image>:X.Y.Z \
-  ghcr.io/clickhouse/<image>@<amd64 digest> ghcr.io/clickhouse/<image>@<arm64 digest>
-```
-
-Never move a tag whose images are published: `published_images.sh` fails when a published image
-was built from another commit than the run's, and a fix needs a new version.
+Never move a published `X.Y.Z` tag: `published_images.sh` fails when a published image was built
+from another commit than the run's, and a fix needs a new version.
 
 A re-run after a partial publish is safe: each publish job skips what already exists.
 
@@ -289,6 +289,45 @@ A re-run after a partial publish is safe: each publish job skips what already ex
 a version twice. Publishing SDKs only on dispatch lets the release files be checked first.
 The server image is automatic because it is a prerequisite of the GitHub Release's
 installer, and creating the signed release tag is its review gate.
+
+### A failed tag or signature
+
+A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigstore down, say):
+
+- Use "Re-run failed jobs" on the run that tagged the images (the tag push, or the dispatch that
+  built and tagged them), within 30 days of it; the run's artifacts are kept as long, unless the
+  repository's artifact retention limit is shorter. That attempt keeps its `preflight` result and
+  `docker-tag`'s digests, so it tags the same build and signs what it tagged.
+- Once the tagging run has signed, a failed dispatch or second push on the tag recovers with its
+  own "Re-run failed jobs", or a new dispatch.
+- Never re-run a run that failed before tagging once another run has tagged: its `preflight` saw
+  no images, so it rebuilds and would move the published tags.
+- Once "Re-run all jobs" has replaced the tagging run's attempt, or the 30 days have passed, no
+  run can tag or sign that build: a run on a half-tagged version fails its `preflight`, and a run
+  on a published tag verifies signatures but cannot make them. Release a new version.
+
+Until that version is out, the build's moving tags still name it. Point `:latest` (if it moved) and,
+for a final, `:X.Y` back at the previous release that carried each, for both images. An `X.Y.0` has
+no earlier release carrying `:X.Y`, which names this build until `X.Y.1` is out. With
+`<previous>` that release's version, the tag moves only once that release's signature verifies:
+
+```bash
+digest=$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<previous> \
+  --format '{{json .Manifest}}' | jq -re .digest)
+cosign verify "ghcr.io/clickhouse/<image>@$digest" \
+  --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v<previous> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null \
+  && docker buildx imagetools create -t ghcr.io/clickhouse/<image>:<tag> "ghcr.io/clickhouse/<image>@$digest"
+```
+
+For a `<previous>` published before the release workflow signed, which carries no signature, run
+the `digest=` line, then the `docker buildx imagetools create` command without the
+`cosign verify … &&` before it. Either way, check that the tag names the digest:
+
+```bash
+[ -n "$digest" ] && [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<tag> --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ] \
+  || { echo "<tag> does not name $digest" >&2; false; }
+```
 
 ### When the clickhouse job stops
 

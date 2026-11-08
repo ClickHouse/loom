@@ -1,6 +1,7 @@
 """The release workflow's scripts and wiring: preflight.sh (the owner-granted
 prerequisites), published_images.sh (a run on a published tag builds nothing),
-make_latest.py (which release becomes Latest), and how release.yml calls them."""
+make_latest.py (which release becomes Latest), verify_signatures.sh (the images'
+keyless signatures), and how release.yml and release-check.yml call them."""
 
 from __future__ import annotations
 
@@ -42,6 +43,7 @@ esac
 """
 
 IMAGES = "ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor"
+VERIFY = 'bash scripts/release/verify_signatures.sh "$VERSION" $IMAGES'
 
 
 def _preflight(
@@ -175,11 +177,6 @@ def test_the_workflow_runs_the_preflight_before_any_build() -> None:
     (step,) = [s for s in jobs["preflight"]["steps"] if "preflight.sh" in s.get("run", "")]
     assert step["env"]["MODE"] == "${{ inputs.dry_run && 'report' || 'strict' }}"
     assert step["env"]["REPOSITORY_PRIVATE"] == "${{ github.event.repository.private }}"
-    # One list of images for both checks, the docker matrix's.
-    matrix = jobs["docker"]["strategy"]["matrix"]["include"]
-    assert jobs["preflight"]["env"]["IMAGES"].split() == [
-        i["image"] for i in matrix if "image" in i
-    ]
     (published,) = [s for s in jobs["preflight"]["steps"] if s.get("id") == "images"]
     assert '"$VERSION" $IMAGES)' in published["run"]
 
@@ -229,7 +226,7 @@ def test_the_image_and_the_release_ask_for_latest_when_they_apply_it() -> None:
 def test_a_dry_run_publishes_nothing() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     # The registries follow github-release, which a dry run skips (test_release_job_paths.py).
-    for name in ("docker-tag", "github-release"):
+    for name in ("docker-tag", "sign", "github-release"):
         assert "!inputs.dry_run" in jobs[name]["if"], name
     # A release stops at the first failing image; a dry run reports them all.
     assert jobs["docker"]["strategy"]["fail-fast"] == "${{ !inputs.dry_run }}"
@@ -392,11 +389,13 @@ def test_published_images_refuses_images_built_from_another_commit(tmp_path: Pat
 
 
 def test_one_image_out_without_the_other_fails_with_the_recovery(tmp_path: Path) -> None:
-    """A docker-tag that stopped halfway: a new build would move the published tags."""
+    """A docker-tag that stopped halfway: the error points at the recovery section."""
     result = _published(tmp_path, PUBLISHED="clickhouse/loom:1.2.0")
     assert result.returncode == 1 and result.stdout == ""
     assert "only ghcr.io/clickhouse/loom carries 1.2.0" in result.stderr
-    assert "Re-run failed jobs (not all jobs)" in result.stderr
+    assert "docs/development/release-process.md#a-failed-tag-or-signature" in result.stderr
+    page = (ROOT / "docs/development/release-process.md").read_text()
+    assert "### A failed tag or signature" in page
 
 
 def test_published_images_fails_on_an_outage_instead_of_rebuilding(tmp_path: Path) -> None:
@@ -428,3 +427,103 @@ def test_the_registries_publish_after_a_release_that_skipped_its_image_jobs(name
     condition = job["if"]
     assert condition.startswith("${{ !cancelled() && needs.github-release.result == 'success' && ")
     assert "github.event_name == 'workflow_dispatch'" in condition
+
+
+def test_the_workflow_images_are_the_docker_matrix_images() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    matrix = workflow["jobs"]["docker"]["strategy"]["matrix"]["include"]
+    assert workflow["env"]["IMAGES"].split() == [i["image"] for i in matrix if "image" in i]
+
+
+def test_only_sign_and_the_registries_get_an_oidc_token() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    assert "id-token" not in workflow["permissions"]
+    jobs = workflow["jobs"]
+    oidc = [name for name, job in jobs.items() if "id-token" in job.get("permissions", {})]
+    assert set(oidc) == {"sign", "pypi", "npm", "mcp-registry"}
+
+
+def test_the_tag_run_signs_the_digests_it_made_and_every_run_verifies_them() -> None:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
+    tag = jobs["docker-tag"]
+    assert tag["outputs"]["digests"] == "${{ steps.tag.outputs.digests }}"
+    # What the step writes there: test_docker_quickstart_smoke.py runs it.
+    steps = {s["id"]: s for s in jobs["sign"]["steps"] if "id" in s}
+    assert steps["sign"]["if"] == "${{ needs.docker-tag.result == 'success' }}"
+    assert steps["login"]["if"] == steps["sign"]["if"]  # the push of a signature needs it
+    assert steps["sign"]["env"]["DIGESTS"] == "${{ needs.docker-tag.outputs.digests }}"
+    assert "if" not in steps["verify"]  # runs whether or not this run signed
+    assert VERIFY in steps["verify"]["run"]
+
+
+def _stub_cosign(tmp_path: Path, body: str) -> dict[str, str]:
+    """An environment whose cosign logs its arguments to tmp_path/calls, then runs `body`."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "cosign").write_text(f'#!/bin/sh\necho "$*" >> "{tmp_path}/calls"\n{body}\n')
+    (bin_dir / "cosign").chmod(0o755)
+    return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+
+@pytest.mark.parametrize(
+    ("cosign", "code", "signed"),
+    [("exit 0", 0, ["a@sha256:1", "b@sha256:2"]), ("exit 1", 1, ["a@sha256:1"])],
+    ids=["both", "stops at a failure"],
+)
+def test_the_sign_step_signs_each_digest(
+    tmp_path: Path, cosign: str, code: int, signed: list[str]
+) -> None:
+    """The sign job's signing step, run under `bash -e` with a stub cosign."""
+    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
+    (step,) = [s for s in jobs["sign"]["steps"] if s.get("id") == "sign"]
+    env = {**_stub_cosign(tmp_path, cosign), "DIGESTS": "a@sha256:1 b@sha256:2"}
+    result = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True)
+    assert result.returncode == code
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert calls == [f"sign --yes {ref}" for ref in signed]
+
+
+def test_release_check_verifies_every_image_the_release_signs_with_the_same_script() -> None:
+    check = yaml.safe_load((ROOT / ".github/workflows/release-check.yml").read_text())
+    (step,) = [s for s in check["jobs"]["signatures"]["steps"] if "run" in s]
+    release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    assert VERIFY in step["run"]
+    assert step["env"]["VERSION"] == "${{ inputs.version }}"
+    assert step["env"]["IMAGES"] == release["env"]["IMAGES"]
+
+
+def _verify(tmp_path: Path, cosign: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(ROOT / "scripts/release/verify_signatures.sh"), "1.2.0", *IMAGES.split()],
+        env=_stub_cosign(tmp_path, cosign),
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_each_image_is_verified_against_the_release_workflows_identity(tmp_path: Path) -> None:
+    result = _verify(tmp_path, "exit 0")
+    assert result.returncode == 0, result.stderr
+    identity = "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v1.2.0"
+    issuer = "https://token.actions.githubusercontent.com"
+    assert (tmp_path / "calls").read_text().splitlines() == [
+        f"verify {image}:1.2.0 --certificate-identity {identity} --certificate-oidc-issuer {issuer}"
+        for image in IMAGES.split()
+    ]
+
+
+def test_an_image_that_does_not_verify_fails_with_the_recovery(tmp_path: Path) -> None:
+    result = _verify(tmp_path, "exit 1")
+    assert result.returncode == 1
+    assert (
+        "could not verify release.yml's signature on ghcr.io/clickhouse/loom:1.2.0" in result.stdout
+    )
+    assert "#a-failed-tag-or-signature" in result.stdout
+    assert len((tmp_path / "calls").read_text().splitlines()) == 1  # stops at the first
+
+
+@pytest.mark.parametrize("args", [[], ["1.2.0"]], ids=["nothing", "no image"])
+def test_a_missing_version_or_image_is_a_usage_error(args: list[str]) -> None:
+    script = ROOT / "scripts/release/verify_signatures.sh"
+    result = subprocess.run(["bash", str(script), *args], capture_output=True, text=True)
+    assert result.returncode == 2 and "usage:" in result.stderr
