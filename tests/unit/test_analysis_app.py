@@ -351,7 +351,11 @@ def test_print_sql_refuses_a_new_key_beside_a_live_analyst_user(
     monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
     monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
     monkeypatch.setattr(app.store, "analyst_user_absent", _returns(False))
-    monkeypatch.setattr(app, "load_secrets", lambda **kw: drew.append(kw["may_draw"]))
+
+    async def load(*, may_draw: bool) -> None:
+        drew.append(may_draw)
+
+    monkeypatch.setattr(app, "load_secrets", load)
     with pytest.raises(RuntimeError, match="DROP USER"):
         asyncio.run(app.load_for_print())
     assert not drew
@@ -371,3 +375,22 @@ def test_print_sql_draws_where_it_cannot_see_the_users(
     monkeypatch.setattr(app, "load_secrets", load)
     asyncio.run(app.load_for_print())
     assert drew == [True]
+
+
+def test_ch_setup_prints_a_refusal_as_one_line_and_nothing_to_stdout(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import argparse
+
+    from server.cli import ch_setup
+
+    def refuse() -> list[str]:
+        raise RuntimeError("the key the replicas hold is lost")
+
+    monkeypatch.setattr(ch_setup, "_analyst_sql", refuse)
+    monkeypatch.setattr(ch_setup, "caps_problem", lambda: "")
+    args = argparse.Namespace(print_analyst_sql=True, print_sql=False)
+    assert ch_setup._cmd_ch_setup(args) == 2
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert out.err.strip() == "✗ the key the replicas hold is lost"

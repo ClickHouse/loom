@@ -469,6 +469,11 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
     if args.print_analyst_sql:
         from server.insights.app import analysis
 
+        try:
+            statements = _analyst_sql()
+        except RuntimeError as e:
+            print(f"✗ {e}", file=sys.stderr)
+            return 2
         print(
             "-- Holds the analyst password and scope key: save it to a file and run it in one "
             "session,\n-- clickhouse-client --log_queries=0 --multiquery --queries-file <file>, "
@@ -479,7 +484,7 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
             "writing the same analyst user: analysis needs one Loom per ClickHouse service.\n-- "
             + "\n-- ".join(analysis.printed_checks())
         )
-        for stmt in _analyst_sql():
+        for stmt in statements:
             print(f"{stmt};")
         return 0
     if args.print_sql:
