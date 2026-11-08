@@ -75,7 +75,8 @@ class InsightsCatalogOutput(BaseModel):
     tables: list[CatalogTable]
     # The most rows one statement returns; past it the answer is truncated.
     max_result_rows: int
-    # The longest one statement runs before ClickHouse stops it.
+    # The longest one statement runs before ClickHouse stops it (this replica's cap;
+    # during a roll the stored caps profile may differ).
     max_execution_s: float
     # The most rows one statement may read; add a time or key filter past it.
     max_rows_to_read: int

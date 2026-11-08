@@ -225,12 +225,12 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "knowledge.search, Conversations conversation.search"
         ),
         "insights.catalog": (
-            "the assistant agent reads it before writing SQL; a person asks the assistant "
-            "on the Assistant page"
+            "the assistant agent's tool, read before it writes SQL; no dashboard page calls "
+            "it until the Assistant page's chat"
         ),
         "insights.query": (
-            "the assistant agent's SQL tool; a person asks the assistant on the Assistant "
-            "page, which shows the SQL each answer ran"
+            "the assistant agent's SQL tool; no dashboard page calls it until the Assistant "
+            "page's chat"
         ),
     },
 )

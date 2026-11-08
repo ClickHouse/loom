@@ -481,6 +481,7 @@ def statement_settings(
         # class deadline, a traffic class's or the caller's settings could only
         # collide with them.
         out.pop("max_execution_time", None)
+        out.pop("use_query_condition_cache", None)  # pinned CONST in the profile
         out.update(analyst[2])
         return _with_request_query_id(out)
     tclass = traffic_class_var.get()[0]

@@ -327,7 +327,7 @@ def test_analyst_statements_send_no_time_cap_of_their_own() -> None:
 
 def test_the_printed_checks_name_looms_database(monkeypatch: pytest.MonkeyPatch) -> None:
     # The admin's session may sit in another database: the checks never read currentDatabase().
-    monkeypatch.setattr(app, "database", lambda: "loom_prod")
+    monkeypatch.setattr(app.store, "database", lambda: "loom_prod")
     checks = app.printed_checks()
     assert all("currentDatabase" not in c for c in checks)
     assert "database = 'loom_prod'" in checks[0]

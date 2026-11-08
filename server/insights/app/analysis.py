@@ -25,7 +25,6 @@ from uuid import UUID
 from server.core import leases
 from server.core.ch import statement_timeout
 from server.core.ch_errors import error_code, error_line
-from server.core.ch_names import database
 from server.core.errors import AnalysisUnavailableError, RateLimitedError, ValidationError
 from server.core.secrets_at_rest import seal, unseal
 from server.insights.api.models_analysis import (
@@ -181,24 +180,8 @@ def entity_statements(
 
 
 def printed_checks() -> list[str]:
-    """What `loom ch-setup --print-analyst-sql` tells an admin to run first,
-    naming Loom's database, since the admin's session may be in another:
-    the permissive policies Loom did not write on the analysis tables, and
-    other databases whose tables carry the analyst's scope policy."""
-    db = _sql_string(database())
-    tables = ", ".join(_sql_string(t) for t in boundary.allowlisted_tables())
-    ours = f"{_sql_string(boundary.POLICY_NAME)}, {_sql_string(boundary.OTHERS_POLICY_NAME)}"
-    return [
-        "SELECT short_name, table FROM system.row_policies "
-        f"WHERE database = {db} AND table IN ({tables}) AND NOT is_restrictive "
-        f"AND short_name NOT IN ({ours});",
-        "SELECT DISTINCT database FROM system.row_policies "
-        f"WHERE short_name = {_sql_string(boundary.POLICY_NAME)} AND database != {db};",
-    ]
-
-
-def _sql_string(value: str) -> str:
-    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+    """What `loom ch-setup --print-analyst-sql` tells an admin to run first."""
+    return store.printed_checks()
 
 
 async def own_grant_revokes() -> list[str]:
@@ -553,8 +536,9 @@ async def _run(input: InsightsQueryInput) -> InsightsQueryOutput:
     sql = boundary.wrap_statement(input.sql, limit)
     extra = _scope_extra(input.org, [input.namespace])
     try:
-        # The client waits a little past the time cap, so ClickHouse's own
-        # timeout answers first and the statement does not outlive its call.
+        # The client waits a little past this replica's time cap, so ClickHouse's
+        # own timeout answers first. During a roll that raises the stored cap,
+        # a statement can outlive its call by the difference.
         with statement_timeout(float(settings.ch_analysis_max_execution_s) + 5):
             names, types, rows = await store.run_statement(sql, password=_password(), extra=extra)
     except Exception as e:

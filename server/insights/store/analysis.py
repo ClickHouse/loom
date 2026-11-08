@@ -109,38 +109,47 @@ async def stored_caps_digest(*, ch: _CHClient | None = None) -> str:
     return str(row["value"]).strip("'") if row else ""
 
 
-async def foreign_policies(*, ch: _CHClient | None = None) -> list[str]:
+def foreign_policies_sql(db: str) -> str:
     """Permissive row policies on the allowlisted tables that Loom did not
-    write. ClickHouse ORs permissive policies, so Loom's `USING 1` policy for
-    every other user would widen what each of them lets its users read."""
-    ch = ch or _default_client()
-    rows = await ch.query_all(
-        """
-        SELECT short_name, table FROM system.row_policies
-        WHERE database = currentDatabase() AND table IN {tables:Array(String)}
-          AND NOT is_restrictive AND short_name NOT IN {ours:Array(String)}
-        ORDER BY table, short_name
-        """,
-        {
-            "tables": list(boundary.allowlisted_tables()),
-            "ours": [boundary.POLICY_NAME, boundary.OTHERS_POLICY_NAME],
-        },
+    write, in the database the SQL expression `db` names. ClickHouse ORs
+    permissive policies, so Loom's `USING 1` policy for every other user
+    would widen what each of them lets its users read."""
+    tables = ", ".join(boundary.sql_literal(t) for t in boundary.allowlisted_tables())
+    ours = ", ".join(
+        boundary.sql_literal(n) for n in (boundary.POLICY_NAME, boundary.OTHERS_POLICY_NAME)
     )
+    return (
+        f"SELECT short_name, table FROM system.row_policies WHERE database = {db} "
+        f"AND table IN ({tables}) AND NOT is_restrictive AND short_name NOT IN ({ours}) "
+        "ORDER BY table, short_name"
+    )
+
+
+def other_deployments_sql(db: str) -> str:
+    """Databases other than the one `db` names whose tables carry the
+    analyst's scope policy: another Loom writing the same server-wide user."""
+    return (
+        "SELECT DISTINCT database FROM system.row_policies WHERE short_name = "
+        f"{boundary.sql_literal(boundary.POLICY_NAME)} AND database != {db} ORDER BY database"
+    )
+
+
+def printed_checks() -> list[str]:
+    """Both checks naming Loom's database, for an admin whose session may
+    sit in another one."""
+    db = boundary.sql_literal(database())
+    return [f"{foreign_policies_sql(db)};", f"{other_deployments_sql(db)};"]
+
+
+async def foreign_policies(*, ch: _CHClient | None = None) -> list[str]:
+    ch = ch or _default_client()
+    rows = await ch.query_all(foreign_policies_sql("currentDatabase()"))
     return [f"{r['short_name']} ON {r['table']}" for r in rows]
 
 
 async def other_deployments(*, ch: _CHClient | None = None) -> list[str]:
-    """Other databases on this ClickHouse whose tables carry the analyst's
-    scope policy: another Loom deployment writing the same server-wide user."""
     ch = ch or _default_client()
-    rows = await ch.query_all(
-        """
-        SELECT DISTINCT database FROM system.row_policies
-        WHERE short_name = {name:String} AND database != currentDatabase()
-        ORDER BY database
-        """,
-        {"name": boundary.POLICY_NAME},
-    )
+    rows = await ch.query_all(other_deployments_sql("currentDatabase()"))
     return [str(r["database"]) for r in rows]
 
 

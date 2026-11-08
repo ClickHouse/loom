@@ -23,7 +23,7 @@ List the tables `insights.query` can read: each column with its type and meaning
 | --- | --- | --- |
 | `tables` | `list[CatalogTable]` | The tables insights.query reads, with their columns and how to read them. |
 | `max_result_rows` | `int` | The most rows one statement returns; past it the answer is truncated. |
-| `max_execution_s` | `float` | The longest one statement runs before ClickHouse stops it. |
+| `max_execution_s` | `float` | The longest one statement runs before ClickHouse stops it (this replica's cap; during a roll the stored caps profile may differ). |
 | `max_rows_to_read` | `int` | The most rows one statement may read; add a time or key filter past it. |
 
 ## `insights.query`

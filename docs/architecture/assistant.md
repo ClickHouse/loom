@@ -289,23 +289,23 @@ database writes nothing and names it.
 The key and the analyst's password are random and kept together, as one sealed value, in
 one row of `loom.analysis_secrets`, sealed with `server/core/secrets_at_rest.py` in the
 shape `loom secrets reseal` rewrites (`SEALED` in `server/cli/secrets.py`). Part 1 moves
-the reseal's reads under `own_write_reads` and has it skip a row that is gone. The CLI
-rotation and the reseal both hold the analysis lease, so they never interleave; the
-printed SQL, which takes no lease, stores its row at a version from ClickHouse's clock
-at insert time in nanoseconds, far above any reseal's `version + 1`. A row a reseal puts
-back during a rotation is handled by the [order of a write](#provisioning). The first
-write draws them under the lease below and every replica reads the same row. A
-root-secret rotation only reseals them, so the policies never change key; when the key
-cannot be read, [provisioning](#provisioning) says what happens. The analyst user cannot
-read the key: it has no grant on `system.row_policies` or on `loom.analysis_secrets`,
-and it cannot run `EXPLAIN`. Every statement that carries the key runs with
-`log_queries = 0`, so the key is not in `system.query_log`. It is in ClickHouse's own
-access storage (on disk, or in Keeper when access is replicated), in a backup of the
-access entities, in the distributed DDL queue of a cluster that writes access
-`ON CLUSTER`, in `system.row_policies` and in the server log at `debug` level: all read
-only by whoever administers the ClickHouse host, who can read every row anyway, and by
-Loom's own user where it has `SHOW ROW POLICIES`; that user can already open the sealed
-row.
+the reseal's reads under `own_write_reads` and has it skip a row that is gone. With
+[part 2](#build-order), the CLI rotation and the reseal both hold the analysis lease, so
+they never interleave, and the printed rotation, which takes no lease, stores its row at
+a version from ClickHouse's clock at insert time in nanoseconds, far above any reseal's
+`version + 1`. A row a reseal puts back during a rotation is handled by the [order of a
+write](#provisioning). The first write draws them under the lease below and every
+replica reads the same row. A root-secret rotation only reseals them, so the policies
+never change key; when the key cannot be read, [provisioning](#provisioning) says what
+happens. The analyst user cannot read the key: it has no grant on `system.row_policies`
+or on `loom.analysis_secrets`, and it cannot run `EXPLAIN`. Every statement that carries
+the key runs with `log_queries = 0`, so the key is not in `system.query_log`. It is in
+ClickHouse's own access storage (on disk, or in Keeper when access is replicated), in a
+backup of the access entities, in the distributed DDL queue of a cluster that writes
+access `ON CLUSTER`, in `system.row_policies` and in the server log at `debug` level:
+all read only by whoever administers the ClickHouse host, who can read every row anyway,
+and by Loom's own user where it has `SHOW ROW POLICIES`; that user can already open the
+sealed row.
 
 **Why not ClickHouse credentials in LibreChat.** A ClickHouse login in the agent would
 read every org, skip the request ledger and the exposure records, and keep no link to
@@ -333,12 +333,11 @@ stored key. Elsewhere an admin uses one of two commands:
   `loom ch-setup` would run, with the reader's password as a placeholder). It draws the
   secrets on a first install and otherwise prints the stored key's entity set, with a
   `REVOKE` before the grants for each grant the analyst's own `SHOW GRANTS` lists,
-  headed by the command that runs it in one session and by the query that lists the
-  permissive policies Loom did not write, which the admin checks first. With
-  [part 2](#build-order) it proves its `LOOM_JWT_SECRET` as the rotation below does,
-  draws a fresh key and password, and prints a complete rotation, in the order of a
-  write, with the command that runs it in
-  one session
+  headed by the command that runs it in one session and by two checks the admin runs
+  first: the permissive policies Loom did not write, and other databases carrying the
+  analyst's scope policy. With [part 2](#build-order) it proves its `LOOM_JWT_SECRET` as
+  the rotation below does, draws a fresh key and password, and prints a complete
+  rotation, in the order of a write, with the command that runs it in one session
   (`clickhouse-client --log_queries=0 --distributed_ddl_output_mode=throw --multiquery --queries-file <file>`):
   the delete, the new password, the `KILL QUERY`, the rest of the entity set under the
   new key, a settle of `SELECT sleep(...)` statements, the `KILL QUERY` again, and last
@@ -448,11 +447,11 @@ keeps:
   it, the one under the lease included, runs with the read-your-writes setting Loom uses
   across replicas (`own_write_reads` in `server/core/ch.py`). A replica reads the key
   from the row at each probe (with [part 2](#build-order), before each statement); a
-  rotation's `KILL QUERY` (the order of a write) ends the statements already running. A row that does not open, or is gone while the
-  analyst user exists, answers `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem.
-  Until [part 2](#build-order) the recovery is to drop the analyst user and run
-  `loom ch-setup` again; with it, the recovery is `loom ch-setup --rotate-analysis-key`,
-  which runs from a CLI at least as
+  rotation's `KILL QUERY` (the order of a write) ends the statements already running. A
+  row that does not open, or is gone while the analyst user exists, answers
+  `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem. Until [part 2](#build-order)
+  the recovery is to drop the analyst user and run `loom ch-setup` again; with it, the
+  recovery is `loom ch-setup --rotate-analysis-key`, which runs from a CLI at least as
   new as the stored version, first proves its `LOOM_JWT_SECRET` is the deployment's
   against the root's own record in `loom.signing_keys` (refusing where none is
   recorded), and refuses while the analysis row opens; then, holding the lease, it draws
