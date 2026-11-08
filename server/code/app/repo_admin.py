@@ -757,7 +757,7 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         await reg.upsert_access(
             cfg, classification=cls, join_policy=pol, created_by=subject or "maintainer", ch=ch
         )
-        await reg.refresh_db_repos(force=True, ch=ch)
+    await reg.refresh_db_repos(force=True, ch=ch)
     if cls == "restricted":
         # Joins this process's snapshot at once; a reset first would leave it nothing
         # to join, and the next request would wait on a directory read instead.
@@ -767,8 +767,8 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     else:
         nc.reset()  # a widening drops the stale restricted entry
     # A restriction revokes the copies its siblings added from the page gave it; a
-    # widening brings them back. A failure is the ingest pass's to finish, as the
-    # decision itself is written and audited.
+    # widening copies the siblings' admins it never held. A failure is the ingest
+    # pass's to finish, as the decision itself is written and audited.
     await maintainers.sync_quietly(input.org, input.namespace, ch=ch)
     return CodeRepoSetAccessOutput(
         org=input.org,
