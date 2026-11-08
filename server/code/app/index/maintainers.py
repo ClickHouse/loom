@@ -275,20 +275,23 @@ async def _mirror_wanted(
     subject, source_ns = row["subject"], row["granted_by"].removeprefix(GRANTED_BY_PREFIX)
     if _version(now) != _version(seen.get((row["namespace"], subject))):
         return None
-    if await _restricted_since(client, org, row["namespace"], source_ns):
-        return None
     source = await client.query_one(
         _GRANT_ROW_SQL, params={"org": org, "ns": source_ns, "sub": subject}
     )
-    unchanged = _version(source) == _version(seen.get((source_ns, subject)))
-    return row if _live_admin(source) and unchanged else None
+    if not _live_admin(source) or _version(source) != _version(seen.get((source_ns, subject))):
+        return None
+    if await _restricted_since(client, org, row["namespace"], source_ns, source):
+        return None
+    return row
 
 
-async def _restricted_since(client: Any, org: str, target: str, source: str) -> bool:
-    """Re-reads the target's classification under the claims for a copy whose source
-    is not an operator entry."""
+async def _restricted_since(
+    client: Any, org: str, target: str, source: str, source_row: dict[str, Any] | None
+) -> bool:
+    """Re-reads the target's classification under the claims, unless the copy is of
+    an admin grant given on an operator entry."""
     sources = _branches(org, repo_of(org, target) or "")
-    if sources.get(source) == "config":
+    if sources.get(source) == "config" and source_row is not None and not _is_copy(source_row):
         return False
     # A target the snapshot no longer places is read as one added from the page.
     return target in await _restricted(client, org, {target: sources.get(target, "registry")})
@@ -510,13 +513,12 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
             inserts += _plan_mirrors(org, rows, read, targets, branches)
     held = {(str(r["namespace"]), str(r["subject"])): r for r in rows}
     for ns in sorted(restricted):
-        # A copy it must not hold does not count, so an operator admin's is rewritten;
-        # a lowered one still does, so the lowering stands. A foreign copy on an
-        # operator entry is no source for it either, its page source gone or not.
         kept = [
             r
             for r in rows
+            # A stray admin copy does not count, so an operator admin's is rewritten.
             if not (r["namespace"] == ns and _live_admin(r) and _stray(r, config, held))
+            # A page copy on an operator entry is no source for it.
             and not (r["namespace"] in config and _foreign(r, config))
         ]
         inserts += _plan_mirrors(org, kept, [*config, ns], [ns], branches)
@@ -564,17 +566,25 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
 
 
 def _stray(row: dict[str, Any], config: list[str], held: _Seen) -> bool:
-    """On a restricted branch added from the page: a live copy that is no copy of a
-    live operator admin grant. Its source is no operator entry (`_foreign`), or the
-    subject's row there is no live admin or is itself such a copy, as a mirror
-    standing in for a gone source is written with its holder's name."""
-    if _foreign(row, config):
-        return True
+    """On a restricted branch added from the page: a live copy that does not lead,
+    copy by copy across the operator entries, to a grant given on one with at least
+    its role. A mirror standing in for a gone source is written with its holder's
+    name, so the name alone proves nothing."""
     if not (_live(row) and _is_copy(row)):
         return False
-    source = str(row["granted_by"]).removeprefix(GRANTED_BY_PREFIX)
-    there = held.get((source, str(row["subject"])))
-    return there is None or not _live_admin(there) or _foreign(there, config)
+    visited: set[tuple[str, str]] = set()
+    while _is_copy(row):
+        if not _live(row) or _foreign(row, config):
+            return True
+        key = (str(row["granted_by"]).removeprefix(GRANTED_BY_PREFIX), str(row["subject"]))
+        source = held.get(key)
+        if key in visited or source is None or not _live(source):
+            return True
+        if row.get("role") == "admin" and source.get("role") != "admin":
+            return True
+        visited.add(key)
+        row = source
+    return False
 
 
 def _log_stray(org: str, row: dict[str, Any]) -> None:

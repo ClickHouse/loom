@@ -442,6 +442,27 @@ async def test_a_copy_planned_before_a_restriction_is_not_written_after_it(
     ch = _RestrictedMeanwhile([_admin("code-z", "ops"), _admin("code-z-dev", "mallory")])
     await maintainers.sync_repo_maintainers("clickhouse", "code-z-dev", ch=ch)
     assert _on(ch, "code-z-26-5") == {"ops"}
+    # A stand-in on the operator entry is written under its name: read again too.
+    stand_in = _copy("code-z", "mallory", "code-z-gone")
+    ch = _RestrictedMeanwhile([_admin("code-z", "ops"), stand_in])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert _on(ch, "code-z-26-5") == {"ops"}
+
+
+async def test_a_lowering_from_an_operator_entry_stands_on_a_restricted_page_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    ch = _FakeCH(
+        [
+            _admin("code-z", "ops", role="writer"),
+            _admin("code-z", "alice"),
+            _copy("code-z-26-5", "ops", "code-z") | {"role": "writer"},
+            _copy("code-z-26-5", "alice", "code-z"),
+        ]
+    )
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert [r for r in ch.inserted if r["namespace"] == "code-z-26-5"] == []
 
 
 async def test_an_unreadable_classification_writes_nothing(
@@ -498,8 +519,8 @@ async def test_an_operator_admin_s_copy_from_a_page_branch_becomes_a_copy_of_the
     assert [(r["namespace"], r["granted_by"], r["revoked_at"]) for r in ch.inserted] == [
         ("code-z-26-5", "repo-maintainers:code-z", None)
     ]
-    # Lowered there after their operator grant: the lowering stands, and the stray
-    # copy it left goes.
+    # Lowered there after their operator grant: admin is not copied back, and the
+    # lowered stray copy is revoked.
     lowered = _copy("code-z-26-5", "ops", "code-z-dev") | {"role": "writer"}
     ch = _FakeCH([*rows[:2], lowered])
     await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)

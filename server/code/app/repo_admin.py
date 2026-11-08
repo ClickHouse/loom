@@ -720,9 +720,7 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     subject, _org = current_caller()
     from server.auth.grant_claims import admins_change
 
-    # A maintainer sync copies onto this branch under the same claim, whose reads are
-    # sequential: it reads the classification after both rows, or the sync below
-    # reads its copy.
+    # A copy onto this branch holds this claim: it lands before the sync below, or sees both rows.
     async with admins_change(input.org, input.namespace):
         row = await _directory_row(ch, input.org, input.namespace)
         if row is None and cls == "restricted" and cfg.source == "registry":
