@@ -849,7 +849,8 @@ settings:
   # assistant_service_email: "loom-assistant@loom.invalid"
 
   # Seconds before a failed assistant setup is tried again; each next failure doubles
-  # the wait, up to 16 times (docs/architecture/assistant.md#deployment). [restart]
+  # the wait, up to 16 times as long (docs/architecture/assistant.md#deployment).
+  # [restart]
   # assistant_setup_retry_s: 60.0
 
   # ===== The code plane: ingest, indexes, search, ask, review =====

@@ -16,6 +16,7 @@ from server.assistant.app import service
 from server.assistant.domain import definition
 from server.assistant.store import service as store
 from server.settings import settings
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 
 def _definition(**overrides: Any) -> definition.Definition:
@@ -136,7 +137,8 @@ class _LibreChat:
             if body["email"] not in self.users:
                 return httpx.Response(404, json={"message": "Email does not exist."})
             if self.users[body["email"]] != body["password"]:
-                return httpx.Response(401, json={"message": "Incorrect password."})
+                # v0.8.8 answers a wrong password as it answers an unknown email.
+                return httpx.Response(404, json={"message": "Incorrect password."})
             return httpx.Response(200, json={"token": "jwt"})
         if call == "POST /api/auth/register":
             self.users[body["email"]] = body["password"]
@@ -379,3 +381,87 @@ def test_a_failed_setup_is_tried_again_after_the_interval(
     asyncio.run(_run())
     # The wait doubles after each failure.
     assert waits == [90.0, 180.0] and outcomes == []
+
+
+def test_a_key_kept_across_a_new_librechat_database_is_replaced(
+    setup: tuple[_Row, _LibreChat],
+) -> None:
+    # A boot stored the key and stopped before the agent; then LibreChat lost its database.
+    row, lc = setup
+    lc.fail_on = "POST /api/agents"
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(service.ensure_service())
+    lc.fail_on = ""
+    lc.forget_everything()
+    asyncio.run(service.ensure_service())
+    stored = service.opened(row.row.sealed)  # type: ignore[union-attr]
+    # The key the row holds is the new user's: the one LibreChat knows.
+    assert stored is not None and [k["key"] for k in lc.keys] == [stored["api_key"]]
+
+
+def test_a_librechat_that_cannot_sign_in_is_not_called_a_foreign_database(
+    setup: tuple[_Row, _LibreChat],
+) -> None:
+    _, lc = setup
+    lc.fail_on, lc.fail_status = "POST /api/auth/login", 500
+    assert asyncio.run(service._setup_once()) is False
+    _, problem = service.assistant_state()
+    assert "unavailable" in problem and "TRUNCATE" not in problem
+
+
+def test_a_wrong_password_is_called_a_foreign_database(setup: tuple[_Row, _LibreChat]) -> None:
+    row, lc = setup
+    asyncio.run(service.ensure_service())
+    lc.users = {email: "another password" for email in lc.users}
+    lc.keys.clear()  # the stored key is gone too, so the setup signs in
+    assert asyncio.run(service._setup_once()) is False
+    _, problem = service.assistant_state()
+    assert "TRUNCATE TABLE loom.assistant_service" in problem
+
+
+@pytest.mark.parametrize(("ok", "shown"), [(None, False), (True, False), (False, True)])
+def test_health_names_a_failed_setup_only(ok: bool | None, shown: bool) -> None:
+    from server.observability.problems import HealthState, _assistant_problems
+
+    problems = _assistant_problems(settings, HealthState(assistant_ok=ok, assistant_error="x"))
+    assert [p.code for p in problems] == (["assistant_service_failing"] if shown else [])
+    if shown:
+        assert problems[0].severity == "warn" and "TRUNCATE" in problems[0].fix
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
+def test_the_service_row_reads_back_as_written() -> None:
+    row = store.ServiceRow(
+        email="loom-assistant@loom.invalid",
+        sealed="sealed-value",
+        agent_id="agent_1",
+        definition_version=3,
+        definition_model="claude-haiku-4-5",
+        version=7,
+    )
+
+    class _LocalCH:
+        """loom.assistant_service on clickhouse-local: what the store inserts, then reads."""
+
+        def __init__(self) -> None:
+            self.inserted: list[dict[str, Any]] = []
+
+        async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+            assert table == "loom.assistant_service"
+            self.inserted.extend(rows)
+
+        async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
+            cols = sorted(self.inserted[0])
+            values = ", ".join(
+                "(" + ", ".join(repr(r[c]) for c in cols) + ")" for r in self.inserted
+            )
+            setup = [
+                ddl("assistant_service"),
+                f"INSERT INTO loom.assistant_service ({', '.join(cols)}) VALUES {values}",
+            ]
+            rows = run(setup, sql, params)
+            return rows[0] if rows else None
+
+    ch = _LocalCH()
+    asyncio.run(store.write(row, ch=ch))  # type: ignore[arg-type]
+    assert asyncio.run(store.read(ch=ch)) == row  # type: ignore[arg-type]

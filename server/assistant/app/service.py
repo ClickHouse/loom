@@ -106,6 +106,8 @@ class _LibreChat:
         self._email = email
         self._password = password
         self._token = ""
+        # This try registered the service user: LibreChat's database was new to it.
+        self.registered = False
 
     async def _auth(self) -> dict[str, str]:
         if not self._token:
@@ -132,11 +134,17 @@ class _LibreChat:
                 raise ServiceRefused(
                     f"LibreChat refused to register the service user ({r.status_code})"
                 )
+            self.registered = True
             r = await self._client.post("/api/auth/login", json=body)
         if r.status_code == 429:
             raise ServiceRefused(
                 "LibreChat limited the service user's sign-ins (429); the next try waits "
                 "for its window"
+            )
+        if r.status_code >= 500:
+            raise ServiceRefused(
+                f"LibreChat could not sign the service user in ({r.status_code}): it or its "
+                "database is unavailable; the next try asks again"
             )
         if r.status_code != 200:
             raise ServiceRefused(
@@ -222,7 +230,8 @@ async def ensure_service() -> None:
             lc = _LibreChat(client, row.email, password)
             if key and agent_id:
                 key, agent_id = await _still_held(lc, key, agent_id)
-            if not key:
+            made_key = not key
+            if made_key:
                 key = await lc.replace_key(defn.name)
                 row = row.advanced(sealed=_sealed(password, key))
                 await store.write(row)
@@ -234,6 +243,11 @@ async def ensure_service() -> None:
                 row = row.advanced(
                     agent_id=await lc.one_agent(defn), definition_version=0, definition_model=""
                 )
+                await store.write(row)
+            if lc.registered and not made_key:
+                # A user this try registered cannot own the key the row held.
+                key = await lc.replace_key(defn.name)
+                row = row.advanced(sealed=_sealed(password, key))
                 await store.write(row)
             if agent_definition.needs_write(row.definition_version, row.definition_model, defn):
                 await lc.write_agent(row.agent_id, defn)

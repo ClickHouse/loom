@@ -165,10 +165,13 @@ over a complete row checks with the stored key that LibreChat still holds the ke
 the agent, making either again when it does not ([Deployment](#deployment)). Answers run
 on the stored key whatever a sign-in does. Two failures need an operator, and
 `/v1/health` names each as `assistant_service_failing`: a row whose sealed value opens
-with neither `LOOM_JWT_SECRET` nor `LOOM_JWT_SECRET_PREVIOUS` (set the previous secret and
-run `loom secrets reseal`), and a refused sign-in (LibreChat's database restored from
-another deployment, say: empty it and run `TRUNCATE TABLE loom.assistant_service`, and
-the next boot recreates both).
+with neither `LOOM_JWT_SECRET` nor `LOOM_JWT_SECRET_PREVIOUS` (set the previous secret
+and run `loom secrets reseal`), and a sign-in LibreChat refuses with a 4xx other than
+its 429 limit (its database restored from another deployment, say; v0.8.8 answers a
+wrong password 404 `Incorrect password.`): empty it and run `TRUNCATE TABLE
+loom.assistant_service`, and the next boot recreates both. A 5xx sign-in is LibreChat or
+its database being unavailable, which the next try asks again. A try that registers the
+service user also makes a new key, since that user cannot own the one the row held.
 Until the row has its key and agent id, the assistant answers `ASSISTANT_UNAVAILABLE`.
 
 **Conversations live with the caller.** LibreChat's agents API (the OpenAI-compatible

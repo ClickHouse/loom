@@ -55,7 +55,7 @@ class AssistantSettings(BaseModel):
     # boot writes loom.assistant_service; LibreChat sends it no mail.
     assistant_service_email: str = "loom-assistant@loom.invalid"
     # Seconds before a failed assistant setup is tried again; each next failure doubles
-    # the wait, up to 16 times (docs/architecture/assistant.md#deployment).
+    # the wait, up to 16 times as long (docs/architecture/assistant.md#deployment).
     assistant_setup_retry_s: float = Field(default=60.0, ge=60, le=3600)
 
 
