@@ -1,7 +1,7 @@
 """The release workflow's scripts and wiring: preflight.sh (the owner-granted
 prerequisites), published_images.sh (a run on a published tag builds nothing),
-make_latest.py (which release becomes Latest), the sign job, and how release.yml
-calls them."""
+make_latest.py (which release becomes Latest), verify_signatures.sh (the images'
+keyless signatures), and how release.yml and release-check.yml call them."""
 
 from __future__ import annotations
 
@@ -450,7 +450,7 @@ def test_the_tag_run_signs_the_digests_it_made_and_every_run_verifies_them() -> 
     steps = {s["id"]: s for s in jobs["sign"]["steps"] if "id" in s}
     assert steps["sign"]["if"] == "${{ needs.docker-tag.result == 'success' }}"
     assert steps["sign"]["env"]["DIGESTS"] == "${{ needs.docker-tag.outputs.digests }}"
-    assert "if" not in steps["verify"]  # after signing too, before anything publishes
+    assert "if" not in steps["verify"]  # runs whether or not this run signed
     assert VERIFY in steps["verify"]["run"]
 
 
@@ -466,7 +466,7 @@ def test_release_check_verifies_every_image_the_release_signs_with_the_same_scri
 def _verify(tmp_path: Path, cosign: str) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "cosign").write_text(f'#!/bin/sh\necho "$*" >> {tmp_path}/calls\n{cosign}\n')
+    (bin_dir / "cosign").write_text(f'#!/bin/sh\necho "$*" >> "{tmp_path}/calls"\n{cosign}\n')
     (bin_dir / "cosign").chmod(0o755)
     return subprocess.run(
         ["bash", str(ROOT / "scripts/release/verify_signatures.sh"), "1.2.0", *IMAGES.split()],

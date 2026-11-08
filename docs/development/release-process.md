@@ -305,7 +305,7 @@ A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigs
   ```bash
   digest=$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<previous X.Y.Z> --format '{{json .Manifest}}' | jq -re .digest)
   docker buildx imagetools create -t ghcr.io/clickhouse/<image>:latest "ghcr.io/clickhouse/<image>@$digest"
-  [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:latest --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ]
+  [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:latest --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ] || echo "latest does not name $digest"
   cosign verify ghcr.io/clickhouse/<image>:latest \
     --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v<previous X.Y.Z> \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
