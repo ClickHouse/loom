@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from server.core.ch import sequential_reads_active
 from server.memory.app import reembed as rb
 from tests.unit._fake_credentials import OPENAI_KEY
 
@@ -52,7 +53,7 @@ class _CH:
             return [{"name": c} for c in self.rows[0]]
         p = dict(params or {})
         if "keys" in p:  # the re-read before an insert, by the page's keys
-            assert "tombstoned_at IS NULL" in sql
+            assert "tombstoned_at IS NULL" in sql and sequential_reads_active()
             return [
                 dict(r) for r in self.rows if key(r) in p["keys"] and r["tombstoned_at"] is None
             ]
@@ -163,21 +164,31 @@ async def test_a_memory_row_is_re_embedded_whatever_its_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_row_deleted_or_changed_while_its_page_is_embedded_is_not_written_back() -> None:
-    """A redaction deletes a key's rows, an erasure tombstones them and a write stamps a
-    newer row or hands the row to another agent at the same stamp: the page read before
-    must not insert its old copy again."""
-    ch, lines = _CH(5), []
+async def test_a_row_removed_while_its_page_is_embedded_is_not_written_back() -> None:
+    """A redaction deletes a key's rows, an erasure tombstones them and a write gives a
+    row other text: the page read before must not insert its old copy again. A row
+    changed otherwise (saved, handed to another agent at the same stamp) is written with
+    its columns as stored now, so --delete-old leaves it a vector."""
+    ch, lines, written = _CH(5), [], []
 
     class _Redacting(_Emb):
         async def embed_many(self, texts: list[str]) -> list[list[float]]:
-            deleted, written, handed, tombstoned = ch.rows[1:]
+            deleted, rewritten, handed, tombstoned = ch.rows[1:]
             ch.rows.remove(deleted)
-            written["ts"] = 99
+            rewritten["content_excerpt"] = "other text"
             handed["agent"] = "peer"
             tombstoned["tombstoned_at"] = "now"
             return await super().embed_many(texts)
 
+    insert = ch.insert
+
+    async def _insert(table: str, rows: list[dict], settings: Any = None) -> None:
+        written.extend(rows)
+        await insert(table, rows, settings)
+
+    ch.insert = _insert  # type: ignore[method-assign]
     n = await rb.reembed_table(ch, _Redacting(), "conversation_embeddings", log=lines.append)
-    assert n == 1 and ch.inserted == ["000"]
-    assert any("4 changed since read, skipped" in line for line in lines)
+    assert n == 2 and ch.inserted == ["000", "003"]
+    assert [r["agent"] for r in written] == ["a", "peer"]
+    assert all(r["embedding_model"] == "m2" and r["embedding"] == [0.1, 0.2] for r in written)
+    assert any("3 removed or rewritten since read, skipped" in line for line in lines)

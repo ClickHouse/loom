@@ -129,10 +129,10 @@ def rewrite_row(
         out[cfg["key_vec"]] = key_vec
         out[cfg["key_dim"]] = dim if key_vec else 0
     if cfg["version"] == "version":
-        # One above the row it was read from: it replaces that row (the
-        # key-only rewrite shares its sort key) and loses to any version a
-        # live writer stamped after the snapshot (wall-clock ns), so a run
-        # that races a write or a delete never brings the older content back.
+        # One above the row it was read from: a key-only rewrite, which shares its sort
+        # key, replaces that row and loses to any version a live writer stamped since
+        # (wall-clock ns). A new model's row has its own sort key; the re-read before
+        # the insert (`_still_stored`) keeps it from bringing removed content back.
         out["version"] = int(row.get("version") or 0) + 1
     elif cfg["version"] == "created_at":
         # newer created_at wins the ReplacingMergeTree(created_at) merge
@@ -321,7 +321,7 @@ async def reembed_table(
     order = ", ".join(keys)
     after = list(start_after) if start_after else None
     written = held = changed = 0
-    gone: list[int] = []  # per page, the rows another write removed or changed since its read
+    gone: list[int] = []  # per page, the rows removed or given other text since its read
 
     async def still_stored(read: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
         kept = await _still_stored(ch, table, cols, read, where_clause, params)
@@ -363,7 +363,7 @@ async def reembed_table(
             )
         after = [str(x) for x in rows[-1]["_k"]]
         progress = f"{written}/{total}" + (f" ({held} held as high)" if held else "")
-        progress += f" ({changed} changed since read, skipped)" if changed else ""
+        progress += f" ({changed} removed or rewritten since read, skipped)" if changed else ""
         log(f"  {table}: {progress}  resume: {encode_resume(table, after)}")
         if len(rows) < batch:
             break
@@ -384,14 +384,15 @@ async def _still_stored(
     where_clause: str,
     params: dict[str, Any],
 ) -> dict[int, dict[str, Any]]:
-    """The rows of `read` still stored as read (every column but the vectors) and still
-    matching the run's filter, read FINAL now by their keys: a row a redaction deleted,
-    an erasure tombstoned or any write changed while the page was embedded is not
-    written back."""
+    """The rows of `read` as stored now, read FINAL by their keys under the run's filter,
+    each with the vectors it was read with: a row a redaction deleted, an erasure
+    tombstoned or a write gave other text while the page was embedded is left out, and
+    any other change (a save, a status, a hand-off) is written forward, not over."""
     if not read:
         return read
     cfg, keys = _TABLES[table], _KEY_COLUMNS[table]
-    same = [c for c in cols if c not in (cfg["vec"], cfg.get("key_vec"))]
+    vectors = (cfg["vec"], cfg.get("key_vec"))
+    others = [c for c in cols if c not in vectors]
 
     def key(r: dict[str, Any]) -> tuple[str, ...]:
         return tuple(str(r[c]) for c in keys)
@@ -400,15 +401,15 @@ async def _still_stored(
     names, types = ", ".join(keys), ", ".join("String" for _ in keys)
     with sequential_reads():  # the redaction may have run on another replica
         stored = await ch.query_all(
-            f"SELECT {', '.join(same)} FROM loom.{table} FINAL "
+            f"SELECT {', '.join(others)} FROM loom.{table} FINAL "
             f"WHERE {where_clause} AND ({names}) IN {{keys:Array(Tuple({types}))}}",
             params={**params, "keys": [key(r) for r in read.values()]},
         )
     now = {key(r): r for r in stored}
     return {
-        i: r
+        i: r | now[key(r)]
         for i, r in read.items()
-        if (row := now.get(key(r))) is not None and all(row[c] == r[c] for c in same)
+        if key(r) in now and now[key(r)][cfg["text"]] == r[cfg["text"]]
     }
 
 
