@@ -138,6 +138,10 @@ _HISTORICAL_EXTRACTION = (
 )
 
 
+def _memories(n: int) -> str:
+    return f"{n} {'memory' if n == 1 else 'memories'}"
+
+
 def _named(findings: list[Any]) -> str:
     """Findings in words with their codes, for a skipped note (which has no `refs`)."""
     return ", ".join(f"{_FINDING_WORDS[f.code]} ({f.code})" for f in findings)
@@ -285,9 +289,9 @@ async def _extraction_proposal(
         return None
     rule_text = "\n".join(f"- {_FINDING_RULES[f.code]}" for f in drafted)
     counts = "; ".join(
-        f"{_FINDING_WORDS[f.code]}: {f.count} of {f.population} memories"
+        f"{_FINDING_WORDS[f.code]}: {f.count} of {_memories(f.population)}"
         if f.population is not None
-        else f"{_FINDING_WORDS[f.code]}: {f.count} memories"
+        else f"{_FINDING_WORDS[f.code]}: {_memories(f.count)}"
         for f in drafted
     )
     extraction_rows = int(writers[0]["total_rows"])
@@ -479,7 +483,7 @@ def _spelling_limits(tag: str, spellings: list[tuple[str, int]]) -> str:
     """The draft's limits, naming any other spelling of its tag, which new rows filed
     under the category's exact name would stay apart from."""
     text = "A tag used for two meanings would need two categories, not one."
-    others = [f"`{t}` ({n} memories)" for t, n in spellings if t != tag]
+    others = [f"`{t}` ({_memories(n)})" for t, n in spellings if t != tag]
     if others:
         text += (
             f" Also tagged {', '.join(others)}: extraction tags new memories with the "
@@ -533,7 +537,11 @@ def _guide_proposal(
             )
             return None
         title = "Name the key prefixes the guide leaves out"
-        why = f"{len(missing)} key prefixes holding memories are not named in the guide"
+        n = len(missing)
+        why = (
+            f"{n} key {'prefix' if n == 1 else 'prefixes'} holding memories "
+            f"{'is' if n == 1 else 'are'} not named in the guide"
+        )
         if len(missing) > len(listed):
             why += f" (the {len(listed)} most used are drafted)"
     else:

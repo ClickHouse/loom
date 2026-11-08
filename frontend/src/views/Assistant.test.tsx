@@ -190,7 +190,7 @@ const GUIDE: TuneProposal = served({
   scope: "namespace dev/team",
   title: "Name the key prefixes the guide leaves out",
   rationale:
-    "1 key prefixes holding memories are not named in the guide. A writer reads the guide before its first write, so it names the layout new memories should follow; the counts are today's live memories.",
+    "1 key prefix holding memories is not named in the guide. A writer reads the guide before its first write, so it names the layout new memories should follow; the counts are today's live memories.",
   current: GUIDE_CURRENT,
   current_revision: 2,
   proposed: GUIDE_PROPOSED,

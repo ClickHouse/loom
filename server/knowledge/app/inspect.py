@@ -146,10 +146,9 @@ _CHECKS: dict[str, tuple[RuleContract, str, str, str, list[str]]] = {
         ),
         "mixed_versions",
         "Live documents with live chunks of more than one version under the server's "
-        "model: search serves both texts. Adding a document at a source that already has "
-        "one keeps the earlier version beside it; writing it again replaces it.",
-        "Write a changed text document again so it replaces the earlier version, not beside "
-        "it. For an ingested one, an "
+        "model: search serves both texts. Adding a document again at the same source keeps "
+        "the earlier version beside it; replacing the document at that source retires it.",
+        "Replace a changed text document, not add it again. For an ingested one, an "
         "ingestion of the source still at its publish stage settles this state on its next "
         "run (its status, by the id the ingestion returned, shows the stage); only when no "
         "ingestion of the source is open, upload its original again and ingest it.",

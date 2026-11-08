@@ -848,3 +848,7 @@ def test_the_documents_tab_labels_the_memory_checks_as_the_audit_panel_does() ->
     panel = labels("frontend/src/components/NamespaceAuditPanel.tsx", "const CODE_LABELS")
     tab = labels("frontend/src/views/assistant/DocumentInspection.tsx", "const MEMORY_CHECK_LABEL")
     assert tab and all(panel[code] == label for code, label in tab.items())
+
+
+def test_a_count_of_one_is_said_in_the_singular() -> None:
+    assert tune._memories(1) == "1 memory" and tune._memories(2) == "2 memories"
