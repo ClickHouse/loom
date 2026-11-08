@@ -6,8 +6,9 @@ retention policy and no kind.
 
 The first write a principal makes into an unregistered namespace inserts the registry row
 `namespace.register` would have written for it, with that op's defaults: owner = the token
-subject, `kind = 'bench'` when the name is under one of `namespace_bench_prefixes` (else
-`memory`), `retention_days = 0`. The row is the only write: no TTL clause is touched (a
+subject, or none when the name is already in use (`directory().in_use`), `kind = 'bench'`
+when the name is under one of `namespace_bench_prefixes` (else `memory`),
+`retention_days = 0`. The row is the only write: no TTL clause is touched (a
 per-namespace retention is a clause in eight tables' TTL expressions, and setting one
 re-issues `MODIFY TTL` on all of them), no ALTER is issued, and no grant is written. An
 owner row is not elevation: the register op's admin grant for its caller would have made a
@@ -130,15 +131,19 @@ async def ensure_registered(
             _remember(org, namespace)
             return False
         import server.operations  # noqa: F401 — wires handlers before importing one
+        from server.auth.directory import directory
         from server.identity.app.namespace import registry_row
 
+        # A name that already holds state (data written with auth off, a grant) is not its
+        # first writer's to own: the row names no owner, so only an admin completes it.
+        in_use = await directory().in_use(org, namespace, ch=ch)
         kind = classify_kind(namespace)
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         row = registry_row(
             NamespaceRegisterInput(
                 org=org,
                 namespace=namespace,
-                owner_email=subject,
+                owner_email="" if in_use else subject,
                 description=f"Auto-registered on first write ({op_name}) by {subject}.",
                 kind=None,  # classified by name (`classify_kind`), as `kind` above
                 tags=[AUTO_REGISTER_TAG] + (["bench"] if kind == "bench" else []),
@@ -161,7 +166,7 @@ async def ensure_registered(
             org,
             namespace,
             kind,
-            subject,
+            row["owner_email"] or "-",
             op_name,
         )
         return True

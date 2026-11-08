@@ -11,8 +11,9 @@ its row in `loom.namespaces`. The identity model is in
 re-registering an existing namespace needs admin. A name with no row that already holds data or a live grant is
 refused unless the caller is already its admin ([what a new name may
 claim](../architecture/security.md#what-a-new-name-may-claim)). With `LOOM_NAMESPACE_AUTOREGISTER_ENABLED` on
-(default), a first write into a namespace with no row registers it, with the token subject as owner and
-`retention_days = 0`. That owner may complete the registration while nobody else holds a live grant on the name.
+(default), a first write into a namespace with no row registers it, with the token subject as owner (no owner when
+the name is already in use) and `retention_days = 0`. That owner may complete the registration while nobody else holds
+a live grant on the name.
 
 Re-registering is a partial update: an omitted field keeps its stored value. `tags` is replaced whole. For
 `conflict_threshold`, `capture_generation_io` and `coverage_sweep`, omitted keeps the stored choice and an explicit

@@ -137,6 +137,8 @@ def test_only_an_unrevoked_grant_reserves_a_name() -> None:
         " VALUES ('dev', 'ci', 'sa:ci-abc', 'Gail', 1)",
         "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by, revoked_at,"
         " version) VALUES ('dev', 'old', 'sa:old-abc', 'hal', '2026-01-01 00:00:00', 1)",
+        ddl("task_inboxes"),
+        ddl("task_poster_policies"),
     ]
 
     class _Local:
@@ -155,6 +157,35 @@ def test_only_an_unrevoked_grant_reserves_a_name() -> None:
     with pytest.raises(HTTPException):
         asyncio.run(ss._refuse_empowered(_Local(), "dev", "gail"))
     asyncio.run(ss._refuse_empowered(_Local(), "dev", "hal"))  # its token was revoked
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_a_task_inbox_row_naming_a_subject_reserves_its_name() -> None:
+    """An inbox's owner and posters, and a poster rule, act as the subject they name, so
+    each reserves it; a deleted row frees it."""
+    setup = [
+        ddl("namespace_grants"),
+        ddl("namespaces"),
+        ddl("service_accounts"),
+        ddl("task_inboxes"),
+        "INSERT INTO loom.task_inboxes (org, inbox, owner_agent, owner_namespace, posters,"
+        " created_by, version) VALUES ('dev', 'ops', 'a', 'team', ['Ivy'], 'human:Jo', 1)",
+        "INSERT INTO loom.task_inboxes (org, inbox, owner_agent, owner_namespace, posters,"
+        " version, is_deleted) VALUES ('dev', 'old', 'a', 'team', ['kim'], 1, 1)",
+        ddl("task_poster_policies"),
+        "INSERT INTO loom.task_poster_policies (org, inbox, poster, kind, mode, version)"
+        " VALUES ('dev', 'ops', 'Lee', '*', 'auto', 1)",
+    ]
+
+    class _Local:
+        async def query_one(self, sql: str, params: Any = None) -> Any:
+            rows = run(setup, sql, params)
+            return rows[0] if rows else None
+
+    for name in ("ivy", "jo", "lee"):
+        with pytest.raises(HTTPException):
+            asyncio.run(ss._refuse_empowered(_Local(), "dev", name))
+    asyncio.run(ss._refuse_empowered(_Local(), "dev", "kim"))
 
 
 @pytest.mark.parametrize("org", ["eve-org", "clickhouse"])

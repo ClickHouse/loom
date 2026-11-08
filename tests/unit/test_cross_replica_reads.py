@@ -66,7 +66,7 @@ def test_an_auto_row_carries_the_lowest_version() -> None:
     )
     ((table, rows, _),) = ch.inserts
     assert table == "loom.namespaces" and rows[0]["updated_at"] == autoreg.AUTO_ROW_VERSION
-    assert ch.sequential == [True]
+    assert ch.sequential == [True, True]  # the registry read, the in-use read
 
 
 # ---- history-policy witnesses land before the answer ------------------------

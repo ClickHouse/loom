@@ -202,10 +202,10 @@ Each op declares `required_role`.
   never assigns it.
 - Self-signup and agent sign-up make the name the account's subject, so they refuse a
   trusted caller's subject, a platform-admin handle and any subject holding an unrevoked
-  grant (a pending join request included), a namespace or an unrevoked token in the org,
-  answering as for a taken name, and their tokens carry `writer` only. Other rows that
-  name a subject, such as a task inbox's posters, reserve nothing: name an email subject
-  there. A grant reserves its subject's name whoever wrote it, since a grant to someone
+  grant (a pending join request included), a namespace, an unrevoked token or a task
+  inbox's owner, poster or poster rule in the org, answering as for a taken name, and their
+  tokens carry `writer` only. Other rows that name a subject reserve nothing: name an email
+  subject there. A grant reserves its subject's name whoever wrote it, since a grant to someone
   who has not signed up yet is the power a stranger typing that name would take. A
   namespace admin can therefore reserve names by granting them, a self-signup account on
   its own namespace included, so the names one account holds back are bounded by the op
@@ -760,7 +760,9 @@ one statement that stops at the first row in each table
 the account's (`account_change`, which `namespace.register` and `namespace.restore` hold
 too) with sequential consistency; when it cannot be read the sign-up fails and nothing is
 provisioned. The personal-namespace auto-claim passes over a name in use to its fallback
-name, and a workload trust's exchange refuses an agent name in use. Every other path that
+name, a workload trust's exchange refuses an agent name in use, and a first write's
+auto-registration names no owner on a name in use, so its writer cannot complete the
+registration. Every other path that
 registers a name as new and makes its caller admin (`namespace.register`,
 `namespace.restore` into a fresh target, `collection.create`, a self-service code
 repository or tracker source, which checks again under the account's claim after its
