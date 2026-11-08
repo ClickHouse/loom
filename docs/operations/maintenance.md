@@ -28,15 +28,16 @@ before ClickHouse applies it; watch `system.mutations`.
   `--batch-size` rows at a time in sort-key order and prints a `resume:` token after each
   page; `--resume <token>` continues an interrupted run there. Before each page's insert
   it reads the page's rows again by key: a row deleted, tombstoned or given other text
-  since is skipped, and `--delete-old` then keeps that org's old-model rows for a later
-  run; the rest are written with their columns as stored then. A deletion, redaction or
-  erasure that lands between that read and the insert, or whose mutation has not reached
-  the row yet, can leave the row live with its new vector. `--in-database` reads each
-  table once, as its statement starts, so run it while nothing redacts or erases. The
-  Python path never sends a conversation turn whose text reads as high to the embedder:
-  the row stays on the old model, which search does not read, until `--delete-old` removes
-  it. A memory row's vector follows its sensitivity label. `--in-database` cannot check
-  the text and re-embeds such a turn too; search still holds it back
+  since the page was read is skipped, and for a row given other text `--delete-old` keeps
+  its org's old-model rows for a later run; the rest are written with their columns as
+  stored then. A deletion, redaction or erasure that lands between that read and the
+  insert, or whose mutation has not reached the row yet, can leave the row live with its
+  new vector. `--in-database` reads each table once, as its statement starts, so run it
+  while nothing redacts or erases. The Python path never sends a conversation turn whose
+  text reads as high to the embedder: the row stays on the old model, which search does
+  not read, until `--delete-old` removes it. A memory row's vector follows its sensitivity
+  label. `--in-database` cannot check the text and re-embeds such a turn too; search still
+  holds it back
   ([sensitivity](../architecture/security.md#sensitivity)).
 - **A model of another width.** On ClickHouse 26.8 or later a fresh install codes its
   vector columns (`Quantized`) where `enable_quantized_codec` can be on

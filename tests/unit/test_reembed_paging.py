@@ -11,6 +11,7 @@ import pytest
 from server.core.ch import sequential_reads_active
 from server.memory.app import reembed as rb
 from tests.unit._fake_credentials import OPENAI_KEY
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 
 class _Emb:
@@ -211,19 +212,82 @@ async def test_delete_old_keeps_the_old_rows_of_an_org_with_a_skipped_row(monkey
     async def width(table: str, dim: int) -> None:
         return None
 
-    async def not_reembedded(*a: Any, **k: Any) -> int:
-        return 0
-
     ch.execute = execute  # type: ignore[attr-defined]
     monkeypatch.setattr("server.core.vectors.codes_state.refuse_width", width)
     real = rb.reembed_table
 
     async def only_turns(ch: Any, embedder: Any, table: str, **kw: Any) -> int:
         if table != "conversation_embeddings":
-            return await not_reembedded()
+            return 0
         return await real(ch, embedder, table, **kw)
 
     monkeypatch.setattr(rb, "reembed_table", only_turns)
     await rb.reembed_all(ch, _Rewriting(), delete_old=True, log=lambda *_: None)
     assert ch.inserted == ["000"]
     assert deletes and all(p.get("off") == ["o"] for p in deletes)
+
+
+@pytest.mark.asyncio
+async def test_a_page_larger_than_one_re_read_is_read_again_in_parts(monkeypatch) -> None:
+    ch, sql_with_keys = _CH(5), []
+    query_all = ch.query_all
+
+    async def counting(sql: str, params: dict[str, Any] | None = None) -> list[dict]:
+        if "keys" in (params or {}):
+            sql_with_keys.append(len(params["keys"]))
+        return await query_all(sql, params)
+
+    ch.query_all = counting  # type: ignore[method-assign]
+    monkeypatch.setattr(rb, "_REREAD_KEYS", 2)
+    n = await rb.reembed_table(ch, _Emb(), "conversation_embeddings", log=lambda *_: None)
+    assert n == 5 and ch.inserted == ["000", "001", "002", "003", "004"]
+    assert sql_with_keys == [2, 2, 1]
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
+@pytest.mark.asyncio
+async def test_the_re_read_finds_a_live_row_by_its_key_and_leaves_its_vectors_out() -> None:
+    """On the production table definition: the Enum `scope` matches by name, a tombstoned
+    or lightweight-deleted row is not found, and no vector column is read."""
+    import re
+
+    table = "memory_embeddings"
+    create = re.sub(r"CODEC\(Quantized\([^)]*\)[^)]*\)", "", ddl(table))
+    head = "org, namespace, agent, user_id, session_id, scope, embedding_model, memory_key"
+    setup = [
+        create,
+        f"INSERT INTO loom.{table} ({head}, content_excerpt, embedding_dim, tombstoned_at) "
+        "VALUES ('o','n','a','-','-','private','m1','live','x',2,NULL), "
+        "('o','n','a','-','-','private','m1','tombstoned','x',2,now()), "
+        "('o','n','a','-','-','private','m1','deleted','x',2,NULL)",
+        f"DELETE FROM loom.{table} WHERE memory_key = 'deleted'",
+    ]
+    cols = [
+        r["name"]
+        for r in run(
+            setup,
+            "SELECT name FROM system.columns WHERE database = 'loom' "
+            f"AND table = '{table}' AND default_kind != 'MATERIALIZED' ORDER BY position",
+        )
+    ]
+    where, params = rb.where_sql(table, cols, "m2", org="o", namespace=None)
+
+    class _Capture:
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list:
+            self.sql, self.params = sql, params
+            return []
+
+    def row(k: str) -> dict[str, Any]:
+        return dict(
+            zip(head.split(", "), ["o", "n", "a", "-", "-", "private", "m1", k], strict=True)
+        )
+
+    capture = _Capture()
+    read = {
+        i: {**row(k), "content_excerpt": "x"}
+        for i, k in enumerate(["live", "tombstoned", "deleted"])
+    }
+    await rb._still_stored(capture, table, cols, read, where, params)
+    found = run(setup, capture.sql, capture.params)
+    assert [r["memory_key"] for r in found] == ["live"]
+    assert not {"embedding", "memory_key_embedding"} & set(found[0])
