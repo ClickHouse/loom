@@ -3,7 +3,10 @@
 This page connects Claude Code, Codex, Cursor or another MCP client to a running Loom
 server. Install the plugin (or wire the MCP entry), point it at the server, and work as
 usual. Loom captures each session, and the next session starts with what the last one
-saved. To run a server yourself, start with the [quickstart](quickstart.md).
+saved. To run a server yourself, start with the [quickstart](quickstart.md); to have your agent
+install a pinned release and prove it works, give it the latest release's
+`https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt`
+([Set up Loom with your coding agent](agent-setup.md)).
 
 ## What you need
 

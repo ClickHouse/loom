@@ -204,14 +204,17 @@ there costs a candidate number, not a final version.
    Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),
    and zips of the two plugins (`loom-claude-code-plugin-vX.Y.Z.zip`,
    `loom-codex-plugin-vX.Y.Z.zip`); it also builds the source-free Compose bundle and its
-   SHA-256 file, naming that ClickHouse release, and the release's `install.sh`, which installs
-   this version;
+   SHA-256 file (naming that ClickHouse release), the release's `install.sh`, which installs
+   this version, and `agent-setup.txt`, the
+   [agent setup contract](../getting-started/agent-setup.md) with this version and commit
+   filled in (`scripts/release/agent_setup.py`);
 5. `verify` checks those exact files: their names and embedded versions, the plugin
    manifests, no tests in the Claude Code zip, the executable bits git records, and
-   that the bundle names the ClickHouse release the `clickhouse` job checked and `install.sh`
-   installs this version, and smoke-tests the wheel in a clean venv
-   (`scripts/gates/sdk_wheel_smoke.py`);
-6. `docker` builds `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`
+   that the bundle names the ClickHouse release the `clickhouse` job checked,
+   `install.sh` installs this version and `agent-setup.txt` pins it, and smoke-tests
+   the wheel in a clean venv (`scripts/gates/sdk_wheel_smoke.py`);
+6. `docker` builds `ghcr.io/clickhouse/loom` (with the tag's commit as `LOOM_BUILD_COMMIT`,
+   what `/v1/health` reports as `build_commit`) and `ghcr.io/clickhouse/loom-extractor`
    (the document extractor service), each for linux/amd64 and linux/arm64 on that
    architecture's own runner and without the build cache (so from the package archives as
    they are that day), with provenance and an SBOM, pushes each by digest and scans it;
@@ -223,11 +226,12 @@ there costs a candidate number, not a final version.
    both images' signatures as users do, so the GitHub Release, PyPI, npm and the MCP Registry
    wait for a signature that checks ([a failed tag or signature](#a-failed-tag-or-signature));
 7. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
-   names, on amd64 and arm64, then runs the release's own `install.sh` and bundle as the
-   one-liner in clean Debian, Ubuntu and Alpine containers (install, round trip, re-run, a
-   refused downgrade under each one's own `sh` and `awk`, and an upgrade over the previous
-   final release's installer, or, in a dry run of a commit after its version's release, over
-   that release's own; `scripts/gates/installer_rehearsal.py`);
+   names, on amd64 and arm64, checks the server image names the tag's commit, then runs
+   the release's own `install.sh` and bundle as the one-liner in clean Debian, Ubuntu
+   and Alpine containers (install, round trip, re-run, a refused downgrade under each
+   one's own `sh` and `awk`, and an upgrade over the previous final release's
+   installer, or, in a dry run of a commit after its version's release, over that
+   release's own; `scripts/gates/installer_rehearsal.py`);
 8. `github-release` creates the GitHub Release once both images exist and are verified, with notes
    generated from the commits since the previous final release (`prepare.py previous`, an
    output of `version`; a candidate's notes start there too), or updates it on a re-run, keeping
