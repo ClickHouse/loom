@@ -28,7 +28,7 @@ describe("AgentSpend", () => {
     });
     render(<AgentSpend />);
     expect(await screen.findByText("claude-x")).toBeInTheDocument();
-    expect(screen.getByText("$1.5000 over the last 7 days, 2 turns unpriced")).toBeInTheDocument();
+    expect(screen.getByText("$1.5000 in team over the last 7 days, 2 turns unpriced")).toBeInTheDocument();
     expect(screen.getByText("$1.5000")).toBeInTheDocument();
     // A model none of whose turns has a price reads as unpriced, not free.
     expect(screen.getByText("—")).toBeInTheDocument();
@@ -47,7 +47,7 @@ describe("AgentSpend", () => {
       unpriced_turns: 2,
     });
     render(<AgentSpend />);
-    expect(await screen.findByText("2 turns over the last 7 days, none priced")).toBeInTheDocument();
+    expect(await screen.findByText("2 turns in team over the last 7 days, none priced")).toBeInTheDocument();
     cleanup();
     vi.mocked(api.getAgentSpend).mockResolvedValueOnce({
       rows: [
@@ -59,6 +59,6 @@ describe("AgentSpend", () => {
       unpriced_turns: 1,
     });
     render(<AgentSpend />);
-    expect(await screen.findByText("$0.2500 over the last 7 days, 1 turn unpriced")).toBeInTheDocument();
+    expect(await screen.findByText("$0.2500 in team over the last 7 days, 1 turn unpriced")).toBeInTheDocument();
   });
 });

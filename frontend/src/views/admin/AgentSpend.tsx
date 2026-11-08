@@ -11,13 +11,13 @@ const DAYS = 7;
 
 const turns = (n: number) => `${n} ${n === 1 ? "turn" : "turns"}`;
 
-function caption(data: AgentSpendSummary): string {
+function caption(data: AgentSpendSummary, namespace: string): string {
   // An unpriced turn counts as $0, so a window with no priced turn has no cost to show.
   if (data.total_turns > 0 && data.unpriced_turns === data.total_turns) {
-    return `${turns(data.total_turns)} over the last ${DAYS} days, none priced`;
+    return `${turns(data.total_turns)} in ${namespace} over the last ${DAYS} days, none priced`;
   }
   const unpriced = data.unpriced_turns ? `, ${turns(data.unpriced_turns)} unpriced` : "";
-  return `$${data.total_cost_usd.toFixed(4)} over the last ${DAYS} days${unpriced}`;
+  return `$${data.total_cost_usd.toFixed(4)} in ${namespace} over the last ${DAYS} days${unpriced}`;
 }
 
 /** The coding agents' own model spend in this namespace (cost.agent_summary), by model. */
@@ -41,7 +41,11 @@ export function AgentSpend() {
       <SectionHeading
         label="Coding agents"
         level={2}
-        caption={data ? caption(data) : `What the coding agents spent on their own model calls, the last ${DAYS} days.`}
+        caption={
+          data
+            ? caption(data, identity.namespace)
+            : `What the coding agents spent on their own model calls in ${identity.namespace}, the last ${DAYS} days.`
+        }
       />
       {!!error && (
         <ListState kind="error" things="coding agent spend" error={error} onRetry={() => setReload((n) => n + 1)} />

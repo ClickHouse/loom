@@ -140,6 +140,12 @@ describe("GuideDialog", () => {
     await waitFor(() => expect(api.guideHistory).toHaveBeenCalledTimes(2));
   });
 
+  it("shows why the current revision changed beside its byline", async () => {
+    vi.mocked(api.getNamespaceGuide).mockResolvedValue({ ...GUIDE, note: "added the tier keys" });
+    open(false);
+    expect(await screen.findByText("— added the tier keys")).toBeInTheDocument();
+  });
+
   it("offers no History on a guide's first revision", async () => {
     vi.mocked(api.getNamespaceGuide).mockResolvedValue({ ...GUIDE, revision: 1 });
     open(false);

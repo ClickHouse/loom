@@ -1184,8 +1184,8 @@ export interface MyNamespaceEntry {
   is_new: boolean;
 }
 
-/** POST /v1/namespace.mark_seen: the caller opened `namespace`, so list_mine stops
- *  calling it new. */
+/** POST /v1/namespace.mark_seen: the caller picked `namespace` in the picker, so list_mine
+ *  stops calling it new. */
 export async function markNamespaceSeen(org: string, namespace: string): Promise<void> {
   return post("/v1/namespace.mark_seen", { org, namespace });
 }

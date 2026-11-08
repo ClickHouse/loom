@@ -47,7 +47,7 @@ export function RunGrade({ identity, run }: { identity: Pick<Identity, "org" | "
         </p>
       )}
       <div className="flex flex-wrap items-end gap-2">
-        <TextField id="run-grade-reason" label="Why (optional)" value={reason} onChange={setReason} />
+        <TextField id="run-grade-reason" label="Why (optional)" value={reason} onChange={setReason} maxLength={2000} />
         <Button type="secondary" htmlType="button" disabled={busy} onClick={() => void grade("fail")}>
           {current.grade ? "Regrade: did not hold" : "Did not hold"}
         </Button>

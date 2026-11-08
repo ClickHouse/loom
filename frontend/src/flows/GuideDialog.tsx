@@ -132,7 +132,10 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
         <div className="space-y-3">
           {guide.found ? (
             <>
-              <p className="text-xs text-text-muted">{byline(guide)}</p>
+              <p className="text-xs text-text-muted">
+                {byline(guide)}
+                {guide.note && <span className="text-text"> — {guide.note}</span>}
+              </p>
               {guide.summary && <p className="text-sm text-text">{guide.summary}</p>}
               <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded border border-border p-3 font-mono text-xs text-text">
                 {guide.content}
