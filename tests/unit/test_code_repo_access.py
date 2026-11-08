@@ -96,7 +96,7 @@ class _CH:
         # The caller holds an admin grant given there, unless a test says otherwise.
         return [
             {
-                "namespace": params["ns"][0],
+                "namespace": params["ns"],
                 "subject": params["subs"][0],
                 "role": "admin",
                 "status": "active",
@@ -599,53 +599,77 @@ async def test_widening_needs_confirm_when_the_row_read_now_says_restricted(monk
     assert out.previous_classification == "restricted"
 
 
-@pytest.mark.parametrize("revoked", [False, True])
+_STRAY = {
+    "subject": "Mallory@corp.example",  # another spelling of the caller
+    "role": "admin",
+    "status": "active",
+    "revoked_at": None,
+    "granted_by": "repo-maintainers:code-weave-dev",
+}
+
+
+@pytest.mark.parametrize(
+    ("rows", "allowed"),
+    [
+        ([_STRAY], False),  # a stray copy only
+        ([], False),  # the copy revoked since the gate passed: no live admin row left
+        ([_STRAY, {**_STRAY, "subject": "mallory", "granted_by": "alice"}], True),
+        ([{**_STRAY, "granted_by": "repo-maintainers:code-weave"}], True),  # an operator copy
+    ],
+)
 @pytest.mark.asyncio
-async def test_a_stray_copy_cannot_widen_a_restricted_branch(monkeypatch, revoked: bool) -> None:
-    """Its holder could otherwise widen the branch before the next sync revokes the copy,
-    and keep it for good; a copy revoked since the gate passed counts as none either."""
+async def test_only_an_own_admin_grant_widens_a_restricted_branch(
+    monkeypatch, rows: list[dict[str, Any]], allowed: bool
+) -> None:
+    """A stray copy's holder could otherwise widen the branch before the next sync revokes
+    the copy, and keep it for good. Every spelling of the caller counts."""
     from server.code.app import repo_admin as h
     from server.core.errors import AuthInsufficientError
 
     async def refresh(*a, **k):
         return []
 
+    async def quiet(*a, **k):
+        return None
+
     mine = _cfg("code-weave-rc", classification="restricted", source="registry")
     sibling = dataclasses.replace(mine, namespace="code-weave-dev", classification="standard")
+    operator = dataclasses.replace(mine, namespace="code-weave", source="config")
     monkeypatch.setattr(reg, "refresh_db_repos", refresh)
-    monkeypatch.setattr(repos, "configured_repos", lambda: [sibling, mine])
+    monkeypatch.setattr(reg, "upsert_access", quiet)
+    monkeypatch.setattr(repos, "configured_repos", lambda: [operator, sibling, mine])
     monkeypatch.setattr("server.code.domain.index.repos.repo_for_namespace", lambda org, ns: mine)
+    from server.code.app.index import maintainers
+
+    monkeypatch.setattr(maintainers, "sync_quietly", quiet)
     seen: list[list[str]] = []
 
-    class _Stray(_CH):
+    class _Grants(_CH):
         async def query_all(self, sql, params=None):
             seen.append(params["subs"])
-            return [
-                {
-                    "namespace": "code-weave-rc",
-                    "subject": "Mallory@corp.example",  # another spelling of the caller
-                    "role": "admin",
-                    "status": "active",
-                    "revoked_at": "2026-09-01 00:00:00" if revoked else None,
-                    "granted_by": "repo-maintainers:code-weave-dev",
-                }
-            ]
+            return [r | {"namespace": "code-weave-rc"} for r in rows]
 
     async def aliases(org: str, subject: str, **_: Any) -> list[str]:
         return [subject, "Mallory@corp.example"]
 
     monkeypatch.setattr("server.auth.aliases.subject_aliases", aliases)
-    ch = _Stray({"org": ORG, "namespace": "code-weave-rc", "classification": "restricted"})
+    monkeypatch.setattr("server.auth.context.current_auth", lambda: object())  # auth on
+    monkeypatch.setattr(h, "_require_same_org", lambda org: None)
+    ch = _Grants({"org": ORG, "namespace": "code-weave-rc", "classification": "restricted"})
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     monkeypatch.setattr(h, "current_caller", lambda: ("mallory", ORG))
-    with pytest.raises(AuthInsufficientError):
-        await h.handle_code_repo_set_access(
-            SimpleNamespace(
-                org=ORG,
-                namespace="code-weave-rc",
-                classification="standard",
-                join_policy="approval",
-                confirm="code-weave-rc",
-            )
-        )
-    assert ch.inserts == [] and seen == [["mallory", "mallory@corp.example"]]
+    widen = SimpleNamespace(
+        org=ORG,
+        namespace="code-weave-rc",
+        classification="standard",
+        join_policy="approval",
+        confirm="code-weave-rc",
+    )
+    if allowed:
+        await h.handle_code_repo_set_access(widen)
+        assert [t for t, _ in ch.inserts] == ["loom.namespaces"]
+    else:
+        with pytest.raises(AuthInsufficientError):
+            await h.handle_code_repo_set_access(widen)
+        assert ch.inserts == []
+    assert seen == [["mallory", "mallory@corp.example"]]

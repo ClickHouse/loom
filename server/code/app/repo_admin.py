@@ -686,10 +686,13 @@ async def _require_widening(input: Any, subject: str, ch: Any) -> None:
     """Widening a restricted branch, under the call's claims: `confirm` = namespace, and
     an admin grant of the caller's own there. A copy the next sync revokes, or one revoked
     since the gate passed, must not widen the branch and keep itself."""
+    from server.auth.context import current_auth
     from server.code.app.index import maintainers
 
     _require_confirm(input)
-    if subject and not await maintainers.holds_own_admin(ch, input.org, input.namespace, subject):
+    if current_auth() is None:
+        return  # auth off: no principal to hold a grant
+    if not await maintainers.holds_own_admin(ch, input.org, input.namespace, subject):
         raise AuthInsufficientError(
             f"{input.namespace} is restricted and you hold no admin grant of its own there "
             "(a copy that does not come from one of the repository's operator entries does "
