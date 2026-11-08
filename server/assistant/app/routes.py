@@ -22,6 +22,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.requests import ClientDisconnect
 
 from server.assistant.app import bridge, service
 from server.auth.authz import check_acted_for
@@ -42,6 +43,7 @@ from server.identity.app.restricted_access import note_restricted_access
 from server.observability import cost_accumulator, sli
 from server.observability.budgets import effective_budget_ms
 from server.observability.ledger import emit_agent_event
+from server.observability.run_context import set_ledger_run
 from server.settings import settings
 from server.settings.catalog import OP_BUDGETS_P99_MS
 
@@ -92,7 +94,7 @@ class _Row:
             code = error.code
         elif isinstance(error, HTTPException):
             code = f"HTTP_{error.status_code}"
-        elif isinstance(error, asyncio.CancelledError | GeneratorExit):
+        elif isinstance(error, asyncio.CancelledError | GeneratorExit | ClientDisconnect):
             code = _CLIENT_CLOSED
         else:
             code = "INTERNAL_ERROR"
@@ -125,17 +127,22 @@ class _Row:
 
 
 class _Held:
-    """What one admitted answer holds until its response ends: its per-replica slot and
-    one of the org's in-flight slots, and its row."""
+    """What one admitted answer holds until its response ends: its per-replica slot, one
+    of the org's in-flight slots, and its row."""
 
     def __init__(self, ticket: bridge.Ticket, row: _Row) -> None:
         self.ticket, self.row = ticket, row
+        self.answer = bridge.Answer()
+        self.finished = False  # the stream reached its end, or its error event
         self.slots = contextlib.ExitStack()
         self.slots.enter_context(tenant_slots.hold(ticket.org))
 
     def close(self, error: BaseException | None) -> None:
         self.ticket.release()
         self.slots.close()
+        # The answer's id from the answer itself: a streamed body runs in a task of its
+        # own, whose context this row does not see.
+        set_ledger_run(self.answer.run_id)
         self.row.write(error)
 
 
@@ -153,12 +160,20 @@ class _AnswerStream(StreamingResponse):
         self.held = held
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        error: BaseException | None = None
         try:
             await super().__call__(scope, receive, send)
-        except BaseException as e:  # a disconnect cancels the response
-            self.held.close(e)
+        except BaseException as e:  # a disconnect cancels the response, or ends it
+            error = e
             raise
-        self.held.close(None)
+        finally:
+            # Ends the body however the response ended, so its charge lands on the row.
+            await self.body_iterator.aclose()  # type: ignore[attr-defined]
+            if error is None and not self.held.finished:
+                # The response returned with the stream unfinished: the client left
+                # (below ASGI 2.4 Starlette absorbs the disconnect).
+                error = asyncio.CancelledError()
+            self.held.close(error)
 
 
 @router.post("/v1/assistant/chat/completions")
@@ -188,14 +203,16 @@ async def chat_completions(request: Request) -> Any:
         row.org, row.namespace = org, namespace
         messages = bridge.admitted_messages(payload.get("messages"))
         await check_acted_for(auth, org)
+        await bridge.authorize(auth, org, namespace)
+        # Drawn once the caller is authorized and before any cost check, as the op
+        # transport draws them.
+        admit_route(bridge.ASSISTANT_OP, namespace, org=org, actor=auth.subject)
         ticket = await bridge.open_answer(auth, org, namespace)
     except (LoomServerError, HTTPException, PermissionError) as e:
         refused = _refusal(e)
         row.write(refused)  # a refused answer leaves its row, as a refused op does
         raise refused from e
     try:
-        # Drawn once the caller is admitted, as the op transport draws them.
-        admit_route(bridge.ASSISTANT_OP, namespace, org=org, actor=auth.subject)
         held = _Held(ticket, row)
     except BaseException as e:
         ticket.release()
@@ -208,11 +225,10 @@ async def chat_completions(request: Request) -> Any:
     except BaseException as e:
         held.close(e)
         raise
-    answer = bridge.Answer()
-    chunks = bridge.stream(ticket, messages, answer)
+    chunks = bridge.stream(ticket, messages, held.answer)
     if payload.get("stream"):
         return _AnswerStream(_streamed(chunks, held), held)
-    return await _whole(chunks, answer, held)
+    return await _whole(chunks, held)
 
 
 async def _streamed(chunks: AsyncIterator[bytes], held: _Held) -> AsyncIterator[bytes]:
@@ -221,11 +237,18 @@ async def _streamed(chunks: AsyncIterator[bytes], held: _Held) -> AsyncIterator[
             yield chunk
     except LoomServerError as e:
         # The status is sent: the refusal goes out as an error event, and on the row.
+        set_ledger_run(held.answer.run_id)
         held.row.write(e)
+        held.finished = True
         yield bridge.error_event(e)
+        return
+    finally:
+        await chunks.aclose()  # type: ignore[attr-defined]
+    held.finished = True
 
 
-async def _whole(chunks: AsyncIterator[bytes], answer: bridge.Answer, held: _Held) -> JSONResponse:
+async def _whole(chunks: AsyncIterator[bytes], held: _Held) -> JSONResponse:
+    answer = held.answer
     error: BaseException | None = None
     try:
         async for _ in chunks:

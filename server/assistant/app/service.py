@@ -333,6 +333,7 @@ def start_setup_loop() -> asyncio.Task[None] | None:
 
 __all__ = [
     "answering",
+    "forget_answering",
     "assistant_state",
     "current_definition",
     "ensure_service",

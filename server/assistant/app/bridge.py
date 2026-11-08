@@ -54,11 +54,9 @@ _CAP_RETRY_S = 3600  # not a setting: a hint; the cap's own window is the settin
 # Seconds to reach LibreChat; an answer then runs up to LOOM_ASSISTANT_ANSWER_TTL_S.
 _CONNECT_S = 10.0  # not a setting: LibreChat is on the same network
 
-# The answers this replica runs per (org, namespace): slot id -> when it was taken.
-_running: dict[tuple[str, str], dict[int, float]] = {}
+# The answers this replica runs per (org, namespace), by slot id.
+_running: dict[tuple[str, str], set[int]] = {}
 _slot_ids = itertools.count(1)
-# A slot older than an answer's limit and this is one a cancelled stream never gave back.
-_SLOT_GRACE_S = 60.0  # not a setting: a margin on LOOM_ASSISTANT_ANSWER_TTL_S
 
 
 @dataclass
@@ -119,17 +117,13 @@ def admitted_messages(messages: Any) -> list[dict[str, str]]:
     return kept
 
 
-async def admit(auth: AuthInfo, org: str, namespace: str) -> tuple[str, str]:
-    """Refuse a request the assistant must not answer, before LibreChat is called;
-    (agent id, API key) when admitted."""
+async def authorize(auth: AuthInfo, org: str, namespace: str) -> None:
+    """The refusals that need no model spend read: no assistant here, a token that may
+    not ask, a caller without `viewer`. A caller's rate-limit buckets are drawn after
+    these, and the cost checks after them (`open_answer`)."""
     if not settings.assistant_librechat_url:
         raise AssistantUnavailableError(
             "no LibreChat is configured for the assistant (LOOM_ASSISTANT_LIBRECHAT_URL)"
-        )
-    answering = service.answering()
-    if answering is None:
-        raise AssistantUnavailableError(
-            "the assistant is not set up on this replica yet: /v1/health names why"
         )
     if auth.org == "*":
         raise AuthInsufficientError(
@@ -153,6 +147,16 @@ async def admit(auth: AuthInfo, org: str, namespace: str) -> tuple[str, str]:
             raise
         log.debug("assistant refused: %s", e)
         raise AuthInsufficientError(f"the caller cannot read {namespace!r} in {org!r}") from e
+
+
+async def _afford(org: str, namespace: str) -> tuple[str, str]:
+    """The org makes model calls and the assistant's share of the namespace's daily cap
+    is not spent; (agent id, API key) when so."""
+    answering = service.answering()
+    if answering is None:
+        raise AssistantUnavailableError(
+            "the assistant is not set up on this replica yet: /v1/health names why"
+        )
     if await switched_off(org):
         raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")
     share = float(settings.assistant_budget_share)
@@ -183,29 +187,24 @@ async def answer_token(auth: AuthInfo, org: str, namespace: str) -> str:
 
 
 def _take_slot(org: str, namespace: str) -> int:
-    """One of this replica's answers in the namespace, or OVERLOADED. A slot an answer
-    never gave back (a stream cancelled before it began) stops counting once an answer
-    could no longer be running."""
-    now = time.monotonic()
-    held = _running.setdefault((org, namespace), {})
-    for slot, since in list(held.items()):
-        if now - since > float(settings.assistant_answer_ttl_s) + _SLOT_GRACE_S:
-            del held[slot]
+    """One of this replica's answers in the namespace, or OVERLOADED."""
+    held = _running.setdefault((org, namespace), set())
     if len(held) >= int(settings.assistant_concurrent_answers):
         raise OverloadedError(
             f"the assistant is already answering {len(held)} questions in {namespace!r}",
             retry_after_s=5,
         )
     slot = next(_slot_ids)
-    held[slot] = now
+    held.add(slot)
     return slot
 
 
 async def open_answer(auth: AuthInfo, org: str, namespace: str) -> Ticket:
-    """Every refusal, the answer's slot and its token: run before anything streams, so a
-    refused request is an HTTP error. The stream gives the slot back; so does
-    `Ticket.release` on a refusal after this."""
-    agent_id, api_key = await admit(auth, org, namespace)
+    """After `authorize` and the caller's rate-limit buckets: the cost refusals, the
+    answer's slot and its token, run before anything streams, so a refused request is an
+    HTTP error. The stream gives the slot back; so does `Ticket.release` on a refusal
+    after this."""
+    agent_id, api_key = await _afford(org, namespace)
     slot = _take_slot(org, namespace)
     try:
         token = await answer_token(auth, org, namespace)
@@ -216,8 +215,8 @@ async def open_answer(auth: AuthInfo, org: str, namespace: str) -> Ticket:
 
 
 def _give_back(org: str, namespace: str, slot: int) -> None:
-    held = _running.get((org, namespace), {})
-    held.pop(slot, None)
+    held = _running.get((org, namespace), set())
+    held.discard(slot)
     if not held:
         _running.pop((org, namespace), None)
 
@@ -227,9 +226,10 @@ async def stream(
 ) -> AsyncIterator[bytes]:
     """The admitted answer as LibreChat's agents API streams it (OpenAI chat-completion
     chunks as server-sent events), with `answer` filled as it goes, for at most
-    LOOM_ASSISTANT_ANSWER_TTL_S. LibreChat unreachable, refusing or ending the answer
-    with an error raises ASSISTANT_UNAVAILABLE, naming none of LibreChat's text. Once
-    LibreChat's stream has begun, the answer's spend is charged however it ends."""
+    LOOM_ASSISTANT_ANSWER_TTL_S. LibreChat unreachable, refusing, ending the answer with
+    an error or running past the limit raises ASSISTANT_UPSTREAM_FAILED, naming none of
+    LibreChat's text. Once LibreChat's stream has begun, the answer's spend is charged
+    however it ends."""
     body = {
         "model": ticket.agent_id,
         "messages": messages,
@@ -255,7 +255,7 @@ async def stream(
                 )
             try:
                 if r.status_code != 200:
-                    _refused(r.status_code, (await r.aread())[:300])
+                    _refused(ticket, r.status_code, (await r.aread())[:300])
                 answer.started = True
                 lines = r.aiter_lines()
                 while True:
@@ -287,14 +287,17 @@ async def stream(
     yield b"data: [DONE]\n\n"
 
 
-def _refused(status: int, text: bytes) -> NoReturn:
+def _refused(ticket: Ticket, status: int, text: bytes) -> NoReturn:
     """LibreChat refused the request. A key or agent it no longer knows (401, 403, 404)
-    means the stored ones went stale: the service is set up again."""
+    means the stored ones went stale: the service is set up again, unless another answer
+    already did and this one only carried the key it replaced."""
     log.warning("LibreChat refused an answer (%s): %s", status, text)
     if status in (401, 403, 404):
-        service.forget_answering(f"LibreChat refused the stored key or agent ({status})")
-        raise AssistantUnavailableError(
-            "the assistant is being set up again on this replica: ask again shortly"
+        if service.answering() == (ticket.agent_id, ticket.api_key):
+            service.forget_answering(f"LibreChat refused the stored key or agent ({status})")
+        raise AssistantUpstreamError(
+            f"LibreChat refused the stored key or agent ({status}); this replica is "
+            "setting the assistant up again"
         )
     raise AssistantUpstreamError(f"LibreChat refused the answer ({status})")
 
@@ -339,6 +342,7 @@ def error_event(e: LoomServerError) -> bytes:
 async def ask(auth: AuthInfo, org: str, namespace: str, messages: Any) -> Answer:
     """One whole answer, for `assistant.ask`."""
     kept = admitted_messages(messages)
+    await authorize(auth, org, namespace)
     ticket = await open_answer(auth, org, namespace)
     answer = Answer()
     async for _ in stream(ticket, kept, answer):
@@ -350,7 +354,7 @@ __all__ = [
     "ASSISTANT_OP",
     "Answer",
     "Ticket",
-    "admit",
+    "authorize",
     "admitted_messages",
     "answer_token",
     "ask",
