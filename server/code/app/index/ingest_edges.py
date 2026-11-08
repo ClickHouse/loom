@@ -669,15 +669,18 @@ _OPENER_RE = re.compile(r"""["'`]|//|/\*""")
 
 
 def _without_comments(text: str) -> str:
-    """`text` with its comments blanked and its strings kept, in one pass. A `/*` with no
-    `*/` after it is text, as `ts_config.strip_comments` reads it (`/^\\/*/` is a regex),
-    and no later one closes either."""
+    """`text` with its comments blanked and its strings kept, in one pass. A `/*` or `//`
+    after a backslash is a regex's (`/^\\/*/`), and a `/*` with no `*/` after it is text,
+    as `ts_config.strip_comments` reads it, with no later one closing either."""
     out: list[str] = []
     i = 0
     closed = True
     while m := _OPENER_RE.search(text, i):
         j, tok = m.start(), m.group()
-        if tok == "//":
+        if tok[0] == "/" and text[j - 1 : j] == "\\":
+            out.append(text[i : j + 1])
+            i = j + 1
+        elif tok == "//":
             end = text.find("\n", j)
             out.append(text[i:j] + " ")
             i = len(text) if end < 0 else end
@@ -687,7 +690,7 @@ def _without_comments(text: str) -> str:
             out.append(text[i:j] + " " if closed else text[i : j + 1])
             i = end + 2 if closed else j + 1
         else:
-            string = _STRING_RE.match(text, j)  # always matches: the closer is optional
+            string = _STRING_RE.match(text, j)
             end = string.end() if string else j + 1
             out.append(text[i:end])
             i = end

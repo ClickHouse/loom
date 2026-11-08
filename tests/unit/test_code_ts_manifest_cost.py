@@ -135,9 +135,9 @@ def test_the_parsed_manifests_are_bounded_by_their_texts_length() -> None:
         ingest_resolve._manifest_view(json.dumps({"main": f"m{i}.js", "pad": pad}))
     assert views.weight <= ingest_resolve.MANIFEST_VIEWS_BYTES
     views.clear()
-    wide = json.dumps({"main": "\U0001f600" * 10}, ensure_ascii=False)
+    wide = json.dumps({"main": "a" * 1000 + "\U0001f600"}, ensure_ascii=False)
     ingest_resolve._manifest_view(wide)
-    assert views.weight == len(wide.encode())  # its UTF-8 bytes, not its characters
+    assert views.weight >= 4 * len(wide)  # what the str holds: one wide char widens them all
     assert 1 <= len(views) <= 4
 
 
@@ -185,8 +185,10 @@ def test_an_import_list_holding_the_word_import_keeps_its_names() -> None:
     assert got == [("Foo", "Foo", "./foo"), ("$import", "$import", "./foo")]
     glob = 'const g = "/*";\nimport { A } from "./a";\n'  # a string's `/*` opens no comment
     assert _import_names(SimpleNamespace(source=glob.encode()), {"A": "./a"}) == [("A", "A", "./a")]
-    trim = 'const t = (p) => p.replace(/^\\/*/, "");\nimport { A } from "./a";\n'  # no `*/` after
-    assert _import_names(SimpleNamespace(source=trim.encode()), {"A": "./a"}) == [("A", "A", "./a")]
+    trim = 'const t = (p) => p.replace(/^\\/*/, "");\nimport { A } from "./a";\n'
+    for tail in ("", "/** doc */\nexport function f() {}\n"):  # a regex's `\\/*` opens nothing
+        got = _import_names(SimpleNamespace(source=(trim + tail).encode()), {"A": "./a"})
+        assert got == [("A", "A", "./a")], tail
     unclosed = lambda n: _import_names(SimpleNamespace(source=("/* " * n).encode()), {})  # noqa: E731
     grows_linearly(unclosed, 20_000, 80_000)
     assert [

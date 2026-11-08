@@ -29,6 +29,24 @@ def _count_record(counters: dict[str, int], recorded: FileIngestStats | Literal[
     counters[key] = counters.get(key, 0) + 1
 
 
+def _edge_source(git_dir: str, head: str, sem: asyncio.Semaphore) -> Any:
+    """The edges-only pass's reader: a file over `code_ingest_max_file_bytes` reads as
+    absent, its row left as the index phase (this run's or an earlier one's) wrote it."""
+    from server.code.app.index import gitrepo
+    from server.code.app.index.gitrepo import BlobTooLarge
+    from server.settings import settings
+
+    async def _source(path: str) -> tuple[str, bytes | None]:
+        async with sem:
+            try:
+                cap = int(settings.code_ingest_max_file_bytes)
+                return path, await gitrepo.show_file(git_dir, head, path, max_bytes=cap)
+            except BlobTooLarge:
+                return path, None
+
+    return _source
+
+
 async def _backfill(args: argparse.Namespace) -> int:
     from server.code.app.index import gitrepo
     from server.code.store.index import CodeRepo
@@ -105,11 +123,8 @@ async def _backfill(args: argparse.Namespace) -> int:
     started = time.monotonic()
     sem = asyncio.Semaphore(max(1, args.concurrency))
     counters = {"files": 0, "chunks": 0, "symbols": 0, "edges": 0, "errors": 0}
-    oversize: set[str] = set()  # recorded once; the edge pass reads them again
 
     async def _source(path: str) -> tuple[str, bytes | None]:
-        if path in oversize:
-            return path, None
         async with sem:
             source, recorded = await read_capped(
                 gitrepo.show_file,
@@ -123,7 +138,6 @@ async def _backfill(args: argparse.Namespace) -> int:
                 denylist=denylist,
             )
         if recorded is not None:
-            oversize.add(path)
             _count_record(counters, recorded)
         return path, source
 
@@ -196,7 +210,7 @@ async def _backfill(args: argparse.Namespace) -> int:
             org,
             ns,
             paths,
-            source=_source,
+            source=_edge_source(cfg.git_dir, head, sem),
             denylist=denylist,
             head=head,
             model_name=model_name,

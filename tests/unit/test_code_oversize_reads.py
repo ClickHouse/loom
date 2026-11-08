@@ -407,3 +407,13 @@ def test_a_memory_link_read_of_an_oversize_file_is_a_parse_failure(tmp_path, mon
     with pytest.raises(memory_links.ParseFailed):
         asyncio.run(memory_links.names_at("o", "code-ns", sha, "big.py"))
     assert asyncio.run(memory_links.names_at("o", "code-ns", sha, "a.py"))
+
+
+def test_the_backfill_edge_pass_reads_an_oversize_file_as_absent(tmp_path, monkeypatch) -> None:
+    from server.cli import code_backfill
+
+    git_dir, sha = _commit(tmp_path, {"big.json": _BIG, "a.py": b"x = 1\n"})
+    monkeypatch.setattr(settings, "code_ingest_max_file_bytes", 100)
+    source = code_backfill._edge_source(git_dir, sha, asyncio.Semaphore(1))
+    assert asyncio.run(source("big.json")) == ("big.json", None)  # nothing recorded again
+    assert asyncio.run(source("a.py")) == ("a.py", b"x = 1\n")
