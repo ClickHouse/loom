@@ -167,8 +167,8 @@ async def test_a_memory_row_is_re_embedded_whatever_its_text() -> None:
 async def test_a_row_removed_while_its_page_is_embedded_is_not_written_back() -> None:
     """A redaction deletes a key's rows, an erasure tombstones them and a write gives a
     row other text: the page read before must not insert its old copy again. A row
-    changed otherwise (saved, handed to another agent at the same stamp) is written with
-    its columns as stored now, so --delete-old leaves it a vector."""
+    changed otherwise (handed to another agent at the same stamp) is written with its
+    columns as stored now, so --delete-old leaves it a vector."""
     ch, lines, written = _CH(5), [], []
 
     class _Redacting(_Emb):

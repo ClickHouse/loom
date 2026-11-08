@@ -320,12 +320,12 @@ async def reembed_table(
     keys = _KEYS[table]
     order = ", ".join(keys)
     after = list(start_after) if start_after else None
-    written = held = changed = 0
-    gone: list[int] = []  # per page, the rows removed or given other text since its read
+    written = held = changed = 0  # changed: rows removed or given other text since read
 
     async def still_stored(read: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
+        nonlocal changed
         kept = await _still_stored(ch, table, cols, read, where_clause, params)
-        gone.append(len(read) - len(kept))
+        changed += len(read) - len(kept)
         return kept
 
     while True:
@@ -350,10 +350,9 @@ async def reembed_table(
             # memory row's vector follows its own sensitivity label instead.
             page = without_high(page, lambda r: str(r.get(cfg["text"]) or ""))
         held += len(rows) - len(page)
-        gone.clear()
+        before = changed
         left = await _rewrite_page(ch, embedder, table, page, key_only, still_stored)
-        written += len(page) - sum(left.values()) - sum(gone)
-        changed += sum(gone)
+        written += len(page) - sum(left.values()) - (changed - before)
         if left:
             if left_orgs is not None:
                 left_orgs.update(left)
