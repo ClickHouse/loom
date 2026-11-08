@@ -250,7 +250,17 @@ async def test_the_sweep_removes_what_no_active_entry_names(monkeypatch, tmp_pat
 
     class _Repo:
         async def registry_rows(self) -> list[dict[str, Any]]:
-            return [{"org": "o", "namespace": "code-kept", "repo": "o/kept", "active": True}]
+            return [
+                {"org": "o", "namespace": "code-kept", "repo": "o/kept", "active": True},
+                # An operator entry's access row names no self-service clone.
+                {
+                    "org": "o",
+                    "namespace": "code-removed",
+                    "repo": "o/removed",
+                    "active": True,
+                    "row_kind": "access",
+                },
+            ]
 
     monkeypatch.setattr(store, "CodeRepo", _Repo)
     _repos(monkeypatch, [])

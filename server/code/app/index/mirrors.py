@@ -424,7 +424,12 @@ async def _named_paths() -> tuple[set[str], set[str]] | None:
     if repos.config_error_count():
         return None
     try:
-        rows = [r for r in await code_store.CodeRepo().registry_rows() if r.get("active")]
+        # An access row's entry uses its own clone, so its self-service paths name nothing.
+        rows = [
+            r
+            for r in await code_store.CodeRepo().registry_rows()
+            if r.get("active") and r.get("row_kind") != "access"
+        ]
     except Exception as e:  # noqa: BLE001 — unknown registry: sweep nothing
         logger.info("mirror sweep skipped: registry unreadable (%s)", e)
         return None

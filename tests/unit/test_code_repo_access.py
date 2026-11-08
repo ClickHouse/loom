@@ -85,19 +85,16 @@ def test_an_access_row_wins_over_the_entry_but_keeps_its_other_fields(monkeypatc
 def test_an_entry_whose_namespace_a_member_added_is_skipped(monkeypatch, caplog) -> None:
     # The member's branch is listed as it was, and the entry is logged once.
     row = dataclasses.replace(_cfg("code-weave", source="registry"), row_kind="page")
-    for name in ("_registry_repos", "_registry_namespaces", "_page_namespaces"):
-        monkeypatch.setattr(repos, name, getattr(repos, name))  # restored after the test
     monkeypatch.setattr(repos, "registry_repos", lambda: [row])
-    repos.set_registry_repos([row], frozenset({(ORG, "code-weave")}))
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
     monkeypatch.setattr(repos, "_skipped_logged", set())
     assert repos._with_registry([_cfg("code-weave")]) == [row]
     assert repos._with_registry([_cfg("code-weave")]) == [row]
     assert len([r for r in caplog.records if "code-weave" in r.getMessage()]) == 1
     # Removed since: the namespace still holds the member's grants, so it stays skipped.
     monkeypatch.setattr(repos, "registry_repos", lambda: [])
-    repos.set_registry_repos([], frozenset({(ORG, "code-weave")}))
     assert repos._with_registry([_cfg("code-weave")]) == []
-    repos.set_registry_repos([], frozenset())
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset())
     assert repos._with_registry([_cfg("code-weave")]) == [_cfg("code-weave")]
 
 

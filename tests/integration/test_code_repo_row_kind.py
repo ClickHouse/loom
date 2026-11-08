@@ -92,3 +92,27 @@ async def test_a_removed_page_branch_keeps_its_namespace_from_the_operator(org: 
         "registry",
     )
     assert await reg.active_count(org) == 1  # the access row is not counted
+
+
+async def test_an_access_change_on_a_page_branch_keeps_every_column(org: str) -> None:
+    await _add(org, "code-page")
+    before = await CodeRepo().code_repo_row(org, "code-page")
+    page = repos.RepoConfig(**{**vars(_entry(org, "code-page")), "source": "registry"})
+    await reg.upsert_access(
+        page,
+        classification="restricted",
+        join_policy="approval",
+        created_by="admin",
+        current=await reg.live_row(page),
+    )
+    after = await CodeRepo().code_repo_row(org, "code-page")
+    assert before is not None and after is not None
+    changed = {"classification", "join_policy", "created_by", "updated_at", "version"}
+    assert {k: v for k, v in after.items() if k not in changed} == {
+        k: v for k, v in before.items() if k not in changed
+    }
+    assert (after["row_kind"], after["classification"], after["created_by"]) == (
+        "page",
+        "restricted",
+        "admin",
+    )

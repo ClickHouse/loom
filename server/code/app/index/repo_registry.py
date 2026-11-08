@@ -281,8 +281,13 @@ async def live_row(cfg: Any, ch: Any | None = None) -> dict[str, Any] | None:
         current = await CodeRepo(ch).code_repo_row(cfg.org, cfg.namespace)
     if current and current.get("active"):
         return current
-    if cfg.source != "config" or (current or {}).get("row_kind") == "page":
+    if cfg.source != "config":
         raise ValidationError(f"{cfg.namespace} was removed", code="NOT_A_REPO")
+    if (current or {}).get("row_kind") == "page":
+        raise ValidationError(
+            f"a member added {cfg.namespace} from the page; list the entry under another namespace",
+            code="NOT_A_REPO",
+        )
     return None
 
 
