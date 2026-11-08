@@ -23,8 +23,11 @@ BRANCHES = ("code-ord", "code-ord-26-5")
 
 
 class _Entry:
-    def __init__(self, org: str, namespace: str, source: str = "config") -> None:
+    def __init__(
+        self, org: str, namespace: str, source: str = "config", classification: str = "standard"
+    ) -> None:
         self.org, self.namespace, self.repo, self.source = org, namespace, "It/ord", source
+        self.classification = classification
 
 
 @pytest.fixture
@@ -145,3 +148,38 @@ async def test_a_page_added_branch_admin_never_reaches_the_operator_entry(
     monkeypatch.setattr(repo_registry, "read_registry", _read)
     await maintainers.revoke_repo_maintainer(org, "code-ord", "ops", repo="It/ord", ch=client)
     assert await _state(client, org, "code-ord-dev", "ops") == "admin/active/revoked"
+
+
+async def test_a_restricted_page_branch_drops_a_page_copy_and_takes_an_operator_grant_after(
+    ch: tuple[Any, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On ClickHouse: the sync's revoke replaces the page copy under FINAL, and an
+    operator grant made afterwards is copied onto the branch, not held back by it."""
+    client, org = ch
+    entries = [
+        _Entry(org, "code-ord"),
+        _Entry(org, "code-ord-dev", source="registry"),
+        _Entry(org, "code-ord-rc", source="registry", classification="restricted"),
+    ]
+    monkeypatch.setattr(repos, "configured_repos", lambda: entries)
+    second = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    await _grant(client, org, "code-ord-dev", "admin", second, subject="mallory")
+    copy = {
+        "org": org,
+        "namespace": "code-ord-rc",
+        "subject": "mallory",
+        "role": "admin",
+        "status": "active",
+        "granted_at": second,
+        "granted_by": "repo-maintainers:code-ord-dev",
+        "revoked_at": None,
+        "version": time.time_ns(),
+    }
+    await client.insert(
+        "loom.namespace_grants", [copy], settings={"async_insert": 0, "wait_for_async_insert": 1}
+    )
+    await maintainers.sync_repo_maintainers(org, "code-ord", ch=client)
+    assert await _state(client, org, "code-ord-rc", "mallory") == "admin/active/revoked"
+    await _grant(client, org, "code-ord", "admin", second, subject="mallory")
+    await maintainers.sync_repo_maintainers(org, "code-ord", ch=client)
+    assert await _state(client, org, "code-ord-rc", "mallory") == "admin/active"

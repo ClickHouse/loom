@@ -15,16 +15,17 @@ gives no grant on the operator's namespaces.
   repo-maintainers:<source namespace>``), from the admin grants given on a
   branch, not mirrored there; a subject whose grant was given on a branch no
   longer configured is mirrored from a mirror of it onto the branches they have
-  no row on. A revocation or a lower role set on a branch after
-  the subject's newest such grant is respected, and so is a request made there
-  since: admin is not re-added. An older row of any kind is replaced. Called
-  after an admin grant is created or approved on a code namespace, when a branch
-  is added, restricted or widened, and by the registrar on each pass until the
+  no row on. A revocation or a lower role set on a branch after the subject's
+  newest such grant is respected, and so is a request made there since: admin
+  is not re-added. An older row of any kind is replaced. Called after an admin
+  grant is created or approved on a code namespace, when a branch is added,
+  restricted or widened, and by the registrar on each pass until the
   self-service registry is read, then once per process per namespace (so
-  environment-registered branches inherit), and by the ingest pass on every pass
-  for a repository with a restricted branch added from the page. Each pass also revokes, on a
-  restricted branch added from the page, every copy that does not trace to an
-  operator grant (``_stray``), or rewrites it as a copy of the subject's one.
+  environment-registered branches inherit), and by the ingest pass on every
+  pass for a repository with a restricted branch added from the page. Each pass
+  also revokes, on a restricted branch added from the page, every copy that
+  does not trace to an operator grant (``_stray``), or rewrites it as a copy of
+  the subject's one.
 * ``revoke_repo_maintainer`` — a revoked admin leaves the branches the revoke
   reaches, except a branch where they are the only active admin (the handler's
   own guard). From an operator entry it takes off a branch added from the page
