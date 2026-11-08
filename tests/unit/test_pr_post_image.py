@@ -743,7 +743,6 @@ def test_a_queued_parse_started_too_late_is_dropped(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(po, "_parsed_facts", parse)
 
     async def queued() -> Any:
-        await _settled()  # the pool is free
         # two other namespaces hold both pool threads
         for ns in ("one", "two"):
             asyncio.ensure_future(

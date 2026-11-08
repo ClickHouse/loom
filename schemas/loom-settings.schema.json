@@ -1352,7 +1352,7 @@
           "default": 3.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "CPU seconds after which a tree-sitter parse stops reading its file, which then takes its reader's fallback (`code.index_errors` lists most); raising it re-reads nothing."
+          "description": "CPU seconds after which a tree-sitter parse stops reading its file (raising it re-reads nothing); a PR overlay also waits up to this long, wall-clock, past its window."
         },
         "code_path_prefixes": {
           "default": "",
