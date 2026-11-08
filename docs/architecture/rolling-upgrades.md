@@ -439,8 +439,9 @@ schema. These rules keep that safe. The operator procedure is in
     Every build before N leaves them, and the ledger does not name the build that ran a
     saga: once N serves alone, request again each user erasure without `purge` that
     completed before then (the completed `user_id` rows of `loom.erasure_requests`), and
-    after a rollback, those N-1 completed once N serves again ([upgrade procedure](../operations/upgrades.md#upgrade-procedure),
-    step 10); no gate holds the rollout.
+    after a rollback, those N-1 completed once N serves again
+    ([upgrade procedure](../operations/upgrades.md#upgrade-procedure), step 10); no gate
+    holds the rollout.
 
 ## What checks them
 

@@ -116,9 +116,10 @@ checkout.
     user's memories fed, a roll forward after a rollback included: once the newer build
     serves alone, request again each user erasure without `purge` that an older build
     completed, now or at any time before (the completed `user_id` rows of
-    `loom.erasure_requests`). An older build's saga left the summary's history, chunks, vectors, graph rows and shared copies
-    ([rolling upgrades](../architecture/rolling-upgrades.md), rule 37). A user purge
-    the old build completed left them too, and no later user erasure finds them: the
+    `loom.erasure_requests`). An older build's saga left the summary's history, chunks,
+    vectors, graph rows and shared copies
+    ([rolling upgrades](../architecture/rolling-upgrades.md), rule 37). A user purge an
+    older build completed left them too, and no later user erasure finds them: the
     user's keys are gone. One it ran past `shared.tombstone` also left the search rows of
     shared copies of the user's own memories, whichever build finished it.
 

@@ -120,7 +120,7 @@ USER_QUOTED_KEY_LIST = f"arrayConcat({USER_KEY_LIST}, {USER_SUMMARY_KEY_LIST})"
 # chunk's is derived from its key; a legacy '-' chunk at the key of a summary written
 # under another user stays, as the '-' memory there is another row), row links by
 # (namespace, id), graph key links by (namespace, key), as for the user's own keys.
-# Each read form has its bound form beside it.
+# Each read form has its bound form beside it; the key links bind `PARENT_KEYS_IN`.
 _USER_SUMMARY_KEYS_SUBQ = f"(SELECT toString(namespace), memory_key {SUMMARY_ROWS_FROM})"
 _USER_SUMMARY_IDENTITIES = (
     f"(SELECT toString(namespace), agent, user_id, memory_key {SUMMARY_ROWS_FROM})"
