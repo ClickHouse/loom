@@ -450,12 +450,25 @@ async def test_a_branch_added_from_an_operator_entry_is_one_only_by_its_own_admi
     plane, monkeypatch, own
 ) -> None:
     # A caller whose admin there is only a copy from a page branch adds a page branch.
+    from contextlib import asynccontextmanager
+
     from server.code.app.index import maintainers
+
+    held: list[tuple[str | None, str]] = []
+
+    @asynccontextmanager
+    async def _repo_change(org: str, repo: str | None, subject: str) -> Any:
+        held.append((repo, subject))
+        yield
+        held.pop()
 
     async def _holds(_ch: Any, org: str, ns: str, subject: str) -> bool:
         assert (org, ns, subject) == (ORG, "code-clickhouse", "alice@x")
+        # Under the caller's maintainer claim, which a revoke of their admin holds.
+        assert held == [("ClickHouse/ClickHouse", "alice@x")]
         return own
 
+    monkeypatch.setattr(maintainers, "repo_change", _repo_change)
     monkeypatch.setattr(maintainers, "holds_own_admin", _holds)
     await admin.handle_code_repo_add_branch(
         CodeRepoAddBranchInput(org=ORG, namespace="code-clickhouse", branch="26.8")

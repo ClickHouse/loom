@@ -136,14 +136,15 @@ def plane(monkeypatch):
         repos.set_registry_repos(
             [reg.row_to_config(r) for r in state["rows"]]
             if ch_mod.get_client().registry_active
-            else []
+            else [],
+            frozenset(),
         )
         return repos.registry_repos()
 
     monkeypatch.setattr(reg, "refresh_db_repos", _refresh)
     monkeypatch.setattr(repos, "_registry_namespaces", repos._registry_namespaces)
     monkeypatch.setattr(repos, "_registry_repos", repos._registry_repos)
-    repos.set_registry_repos([reg.row_to_config(row)])
+    repos.set_registry_repos([reg.row_to_config(row)], frozenset())
 
     import server.code.store.index as code_repo_mod
 

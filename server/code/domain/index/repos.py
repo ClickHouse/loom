@@ -297,7 +297,7 @@ def registry_namespaces() -> frozenset[tuple[str, str]]:
 
 
 def set_registry_repos(
-    entries: list[RepoConfig], page_namespaces: frozenset[tuple[str, str]] = frozenset()
+    entries: list[RepoConfig], page_namespaces: frozenset[tuple[str, str]]
 ) -> None:
     """Replace the registry snapshot with a fresh read: the active entries, and the
     (org, namespace) of every branch a member added from the page, removed ones too."""

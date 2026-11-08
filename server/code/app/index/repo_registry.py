@@ -196,7 +196,7 @@ async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
 
 def reset_for_tests() -> None:
     global _LOADED_AT, _EVER_LOADED
-    set_registry_repos([])
+    set_registry_repos([], frozenset())
     _LOADED_AT = -1e12
     _EVER_LOADED = False
 
@@ -289,7 +289,7 @@ async def upsert_access(
     with sequential_reads():  # a lagging read must not replace a row with a new one
         current = await repo.code_repo_row(cfg.org, cfg.namespace)
     # An inactive row (a removed branch) is not brought back to life.
-    if current and current.get("active") is not False:
+    if current and current.get("active"):
         row = dict(current)
     elif cfg.source != "config" or (current or {}).get("row_kind") == "page":
         # A removed branch added from the page: an operator entry is never listed for

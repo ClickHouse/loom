@@ -78,7 +78,8 @@ async def env(ch_client, monkeypatch):
                 github_token="",
                 source="registry",
             )
-        ]
+        ],
+        frozenset(),
     )
     # The registry snapshot set above is the one the run reads: no refresh replaces it.
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
@@ -109,7 +110,7 @@ async def env(ch_client, monkeypatch):
         )
     )
     yield trunk, person, repo_tag(REMOTE)
-    set_registry_repos([])
+    set_registry_repos([], frozenset())
 
 
 async def _extract(person: str, into: str) -> Any:
