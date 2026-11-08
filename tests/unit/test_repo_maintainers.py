@@ -436,6 +436,12 @@ async def test_a_sync_plans_from_sequentially_consistent_reads(
     assert reads and all(reads)
 
 
+def test_a_stray_s_revoke_outranks_a_stray_written_after_the_read() -> None:
+    stray = _copy("code-z-26-5", "mallory", "code-z-dev") | {"version": 2_000}
+    assert maintainers._revoke_row("clickhouse", stray, read_at=1_000)["version"] == 2_001
+    assert maintainers._revoke_row("clickhouse", stray, read_at=5_000)["version"] == 5_000
+
+
 async def test_a_stray_s_revoke_is_older_than_an_operator_grant_made_after_the_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -410,6 +410,7 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
         ch.inserts.append((table, rows))
 
     monkeypatch.setattr(grant_claims, "admins_change", admins)
+    monkeypatch.setattr(h, "admins_change", admins)
     monkeypatch.setattr(ch, "insert", insert)
 
     async def refresh(*a, **k):
@@ -417,7 +418,7 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
 
     async def upsert(*a, **k):
         # The directory row first: a restriction cut short after it still stops copies.
-        assert [t for t, _ in ch.inserts] == ["loom.namespaces"]
+        assert ch.inserts[-1][0] == "loom.namespaces"
 
     monkeypatch.setattr(reg, "refresh_db_repos", refresh)
     monkeypatch.setattr(reg, "upsert_access", upsert)
@@ -442,15 +443,21 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
         ("code-weave-rc", "mallory", True)
     ]
 
-    # A sync that fails fails the call, after the restriction is written: a retry ends it.
-    async def busy(*a: Any, **k: Any) -> int:
+    # A sync that fails leaves the decision written and the call answered (so audited):
+    # the ingest pass finishes it. A widening syncs too, bringing the siblings back.
+    synced: list[str] = []
+
+    async def busy(org: str, ns: str, **k: Any) -> int:
+        synced.append(ns)
         raise GrantBusyError("busy")
 
     monkeypatch.setattr(maintainers, "sync_repo_maintainers", busy)
     ch.inserts.clear()
-    with pytest.raises(GrantBusyError):
-        await h.handle_code_repo_set_access(inp)
+    await h.handle_code_repo_set_access(inp)
     assert [t for t, _ in ch.inserts] == ["loom.namespaces"]
+    inp.classification, inp.confirm = "standard", "code-weave-rc"
+    await h.handle_code_repo_set_access(inp)
+    assert synced == ["code-weave-rc", "code-weave-rc"]
 
 
 @pytest.mark.parametrize("snapshot", ["standard", "restricted"])

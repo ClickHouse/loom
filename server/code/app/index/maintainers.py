@@ -635,8 +635,8 @@ def _log_stray(org: str, row: dict[str, Any]) -> None:
 
 def _revoke_row(org: str, row: dict[str, Any], *, read_at: int) -> dict[str, Any]:
     """A stray's revoke, versioned at `read_at`, when the rows it was planned from were
-    read: newer than the stray, and older than any grant made after the read, which
-    the next sync then copies onto the branch."""
+    read, or just above the stray if that is later: older than any grant made after
+    the read, which the next sync then copies onto the branch."""
     return _row(
         org,
         str(row["namespace"]),
@@ -645,7 +645,8 @@ def _revoke_row(org: str, row: dict[str, Any], *, read_at: int) -> dict[str, Any
         now=naive_utc_now(),
         revoked=True,
         role=str(row.get("role") or "admin"),
-        version=read_at,
+        # Above the stray, which a sync may have written after the read.
+        version=max(read_at, int(row["version"]) + 1),
     )
 
 

@@ -19,7 +19,7 @@ from typing import Any
 
 from server.auth import authz
 from server.auth.context import current_caller
-from server.auth.grant_claims import NotClaimed, account_change
+from server.auth.grant_claims import NotClaimed, account_change, admins_change
 from server.code.api.models_repos import (
     CodeRepoAddBranchInput,
     CodeRepoAddInput,
@@ -682,9 +682,9 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     joins the classification snapshot, a widening drops it), and every other
     process re-reads the row
     within `code_repos_refresh_seconds`. Widening restricted → standard
-    needs `confirm` = namespace; a restricted index is never `open`. A restriction
-    then syncs the repository's maintainers; when that fails the call fails after
-    the restriction is written, and a retry or any later sync finishes it."""
+    needs `confirm` = namespace; a restricted index is never `open`. The change
+    then syncs the repository's maintainers, quietly: a sync that fails is finished
+    by the ingest pass."""
     require_code_intel()
     from server.code.domain.index.repos import repo_for_namespace
     from server.core.ch import get_client
@@ -712,7 +712,6 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         raise ValidationError(f"{input.namespace} is not a repository index", code="NOT_A_REPO")
     ch = get_client()
     subject, _org = current_caller()
-    from server.auth.grant_claims import admins_change
     from server.code.app.index import maintainers
 
     # A fan-out write onto this branch holds these claims: it lands before the sync
@@ -765,10 +764,12 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         nc.note_restricted(input.org, input.namespace)
         # This host's mirror at once; every other host's at its next mirror round.
         await asyncio.to_thread(restrict_entry, cfg)
-        # Revokes the admins its siblings added from the page copied onto it.
-        await maintainers.sync_repo_maintainers(input.org, input.namespace, ch=ch)
     else:
         nc.reset()  # a widening drops the stale restricted entry
+    # A restriction revokes the copies its siblings added from the page gave it; a
+    # widening brings them back. A failure is the ingest pass's to finish, as the
+    # decision itself is written and audited.
+    await maintainers.sync_quietly(input.org, input.namespace, ch=ch)
     return CodeRepoSetAccessOutput(
         org=input.org,
         namespace=input.namespace,
