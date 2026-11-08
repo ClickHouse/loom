@@ -430,9 +430,7 @@ async def replay_mirror(recorded: list[RecordedMirror], *, ch: Any | None = None
     import server.memory.store as memory_repo
 
     keys = [key for key, _version, action in recorded if action != "tombstone"]
-    heads = (
-        await memory_repo.memory_rows_by_identity_keys(keys, ch=ch, sequential=True) if keys else {}
-    )
+    heads = await memory_repo.memory_rows_by_identity_keys(keys, ch=ch, sequential=True)
     retires: list[MirrorItem] = []
     copies = []
     for key, version, action in recorded:
@@ -442,7 +440,7 @@ async def replay_mirror(recorded: list[RecordedMirror], *, ch: Any | None = None
         elif action == "anonymize":
             pin = version
             if head is not None and _is_anonymized_shell(head):
-                pin = max(version, head.version + 1)
+                pin = head.version + 1  # the head is the sweep's row or one above it
             retires.append((key, pin, action, None))
         elif head is not None and head.sensitivity != "high":
             copies.append((key, {"expires_at": head.expires_at, "confidence": head.confidence}))
