@@ -538,18 +538,22 @@ def test_an_unrefused_probe_is_named_by_the_column_not_the_sql(
     assert asyncio.run(app._probe()) == (expected, repairable, "")
 
 
-@pytest.mark.parametrize(
-    ("error", "version"), [("Code: 115. DB::Exception: Unknown setting", 0), ("Code: 159.", None)]
-)
-def test_only_an_unknown_stamp_reads_as_no_version(error: str, version: int | None) -> None:
-    # Any other failure must raise: a 0 here would skip the probe's last checks.
-    class _Ch:
-        async def query_columns(self, sql: str, params: Any = None) -> Any:
-            raise RuntimeError(error)
+class _FailingRead:
+    def __init__(self, error: str) -> None:
+        self.error = error
 
-    read = app.store.own_version(password="pw", extra={}, ch=_Ch())
-    if version is None:
-        with pytest.raises(RuntimeError, match="159"):
-            asyncio.run(read)
-    else:
-        assert asyncio.run(read) == version
+    async def query_columns(self, sql: str, params: Any = None) -> Any:
+        raise RuntimeError(self.error)
+
+
+def test_an_unknown_stamp_reads_as_no_version() -> None:
+    read = app.store.own_version(password="pw", extra={}, ch=_FailingRead("Code: 115."))
+    assert asyncio.run(read) == 0
+
+
+def test_a_failed_stamp_read_raises() -> None:
+    # Read as 0, a timeout under a newer build's entities would run checks that
+    # are that build's to make, and report a wrong cause instead of the failure.
+    read = app.store.own_version(password="pw", extra={}, ch=_FailingRead("Code: 159."))
+    with pytest.raises(RuntimeError, match="159"):
+        asyncio.run(read)

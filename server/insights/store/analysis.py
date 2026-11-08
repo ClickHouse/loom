@@ -61,6 +61,7 @@ async def stored_entities(*, ch: _CHClient | None = None) -> boundary.Stored | N
     try:
         version = int(found.get(boundary.VERSION_SETTING, "0"))
     except ValueError:
+        # A stamp edited by hand reads as the oldest version, which a write replaces.
         version = 0
     return boundary.Stored(version, found[boundary.DIGEST_SETTING])
 
@@ -221,10 +222,7 @@ async def own_version(
             if error_code(e) == UNKNOWN_SETTING:
                 return 0  # no stamp yet: the setting is unknown
             raise
-    try:
-        return int(str(rows[0][0]).strip("'"))
-    except (IndexError, ValueError):
-        return 0
+    return int(str(rows[0][0]).strip("'"))
 
 
 _GRANT = re.compile(

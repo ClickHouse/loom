@@ -482,8 +482,8 @@ background, as the analyst itself, so the probe needs no access management:
 - unless the stored version is newer than this build's: an unsigned read of each
   allowlisted table and of the canary must fail for want of the scope settings (the
   table has a policy that reads them), and the analyst's own `SHOW GRANTS` must name
-  nothing but the allowlist and the canary. A build older than the stored version skips
-  these, since the entities are a newer build's; a missing or older stamp runs them.
+  nothing but the allowlist and the canary. A newer build's entities are its own to
+  check.
 
 A failed check answers `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem.
 `/v1/health` answers without a token, so the problem it shows is Loom's own text, an
